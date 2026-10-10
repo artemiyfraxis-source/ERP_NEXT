@@ -317,7 +317,16 @@ function buildDisplaySamples(document: HarnessDesignDocument, segmentId: string)
 export function projectPipeBundleControls(document: HarnessDesignDocument, segmentId: string, points: readonly Point[]): Point[] {
   if (!hasPipeBundleProjection(document, segmentId)) return [...points];
   const route = physicalSegmentPoints(document, document.physicalTopology!.segments.find(s => s.id === segmentId)!);
-  return points.map(point => projectPipeBundlePoint(document, segmentId, projectOntoPolyline(route, point).fraction, point));
+  const display = pipeBundleDisplaySamples(document, segmentId);
+  if (!display?.length) return points.map(point => projectPipeBundlePoint(document, segmentId, projectOntoPolyline(route, point).fraction, point));
+  // A rounded source route and the sharp authored route have different
+  // arclength at a corner. Projecting the authored vertex while preserving
+  // that difference places its grip beside the painted pipe. Handles belong
+  // to the visible route, so resolve them from the same sampled display path.
+  return points.map(point => {
+    const fraction=projectOntoPolyline(route, point).fraction;
+    return fraction<=1e-9||fraction>=1-1e-9 ? point : at(display, fraction);
+  });
 }
 
 /** Pointer deltas act on authored vertices, not on the generated convergence

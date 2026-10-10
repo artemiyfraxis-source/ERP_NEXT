@@ -125,7 +125,7 @@ describe("drawing tables and position leaders",()=>{
     const h=executeEditorCommand(createEditorHistory(d),{type:"set-drawing-documents",documents});
     expect(parseHarnessDesignDocument(JSON.parse(JSON.stringify(h.present))).drawingDocuments).toEqual(documents);
     expect(undoEditorCommand(h).present).toBe(d);
-    expect(JSON.parse(drawingDocumentScene(h.present)[0]!.metadata!.headers!)).toEqual(["Поз.","Индекс","Обозначение","Наименование","Кол-во","Примечание"]);
+    expect(drawingDocumentScene(h.present).some(o=>o.kind==="drawing-table")).toBe(false); // tables are windows with server rows
     expect(drawingDocumentScene({...h.present,connectors:[]}).find(o=>o.id==="L")!.label).toBe("?");
     expect(()=>parseHarnessDesignDocument({...h.present,drawingDocuments:{...documents,tables:[{...documents.tables[0],position:{x:NaN,y:0}}]}})).toThrow();
   });

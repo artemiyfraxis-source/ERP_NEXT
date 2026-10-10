@@ -14,7 +14,8 @@ from copy import deepcopy
 
 SOURCE_COMMIT = "e63befb85edb79f0c1635ac8314539ac24d2486a"
 SHA = "a" * 64
-UUID = "11111111-2222-3333-4444-555555555555"
+UUID = "11111111-2222-3333-8444-555555555555"
+TEMPLATE = "22222222-3333-4444-8555-666666666666"
 SHF_KEY = "3:JST|14:SHF-001T-0.8BS|8:BL2018TS|3:SHF"
 
 
@@ -56,7 +57,7 @@ DESIGN = {
     "customWireColors": [],
     "connectors": [
         {"id": "x1", "designation": "X1", "partNumber": "I-DS1069-SCW004",
-         "libraryBinding": {"mode": "template", "templateId": "t1", "templateVersion": 3, "versionSha256": SHA,
+         "libraryBinding": {"mode": "template", "templateId": TEMPLATE, "templateVersion": 3, "versionSha256": SHA,
                             "articleVariantId": "v1",
                             "article": {"sourceId": "technology", "entityType": "connector", "articleKey": "I-DS1069-SCW004"},
                             "snapshot": {"code": "DS1069", "name": "Разъём DS1069", "contacts": [
@@ -184,10 +185,10 @@ def snapshot() -> dict:
             "payloadSha256": SHA, "capturedUtc": "2026-10-01T00:00:00Z",
         }],
         "componentSnapshots": [{
-            "snapshotId": UUID, "sourceTemplateId": "t1", "sourceVersion": 3, "sourceVersionSha256": SHA, "schemaVersion": 5,
+            "snapshotId": UUID, "sourceTemplateId": TEMPLATE, "sourceVersion": 3, "sourceVersionSha256": SHA, "schemaVersion": 5,
             "code": "DS1069", "name": "Разъём DS1069",
             "articleBindings": [{"sourceId": "technology", "entityType": "connector", "articleKey": "I-DS1069-SCW004"}],
-            "assets": [], "content": {}, "createdUtc": "2026-10-01T00:00:00Z", "updatedUtc": "2026-10-01T00:00:00Z",
+            "assets": [], "content": {"schemaVersion": 5}, "createdUtc": "2026-10-01T00:00:00Z", "updatedUtc": "2026-10-01T00:00:00Z",
         }],
         "componentPlacements": [{
             "placementId": "pl1", "harnessId": "h-kb1", "snapshotId": UUID, "sourceId": "technology",
@@ -195,3 +196,17 @@ def snapshot() -> dict:
             "createdUtc": "2026-10-01T00:00:00Z", "updatedUtc": "2026-10-01T00:00:00Z",
         }],
     }
+
+
+def library(factory) -> None:
+    """Puts the template X1 pins (DS1069 v3, the export's component snapshot) into the component library — a save
+    of a drawing with that connector needs it there (migration 0091)."""
+    from datetime import datetime
+
+    from app.modules.techcards.harness.application import absorb
+    from app.modules.techcards.harness.components import candidate_from_snapshot
+
+    with factory() as uow:
+        absorb(uow.harness_components, candidate_from_snapshot(snapshot()["componentSnapshots"][0]),
+               by="Василий", at=datetime(2026, 10, 1))
+        uow.commit()

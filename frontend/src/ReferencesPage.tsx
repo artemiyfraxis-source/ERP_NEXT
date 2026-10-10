@@ -197,7 +197,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         techcardsApi.templates(),
         canRefs ? referencesApi.techOperations("op", "", 5000) : Promise.resolve({ records: [] as TechOperationRecord[] }),
       ]).then(([library, ops]) => setOpCount(operationCardCount(library.items, ops.records))).catch(() => setOpCount(null));
-      techcardsApi.connectorFamilies().then((result) => setConnectorCount(result.items.length)).catch(() => setConnectorCount(null));
+      techcardsApi.connectorFamilies().then((result) => setConnectorCount(result.series_count ?? result.items.length)).catch(() => setConnectorCount(null));
     }
   }, [canRefs, canTemplates]); // eslint-disable-line react-hooks/exhaustive-deps
 

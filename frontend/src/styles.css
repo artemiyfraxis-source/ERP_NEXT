@@ -447,6 +447,7 @@ table.ship-lines td:first-child { width: 1%; }
 .notifications-page .row-actions { display: inline-flex; gap: 14px; opacity: .5; transition: opacity .12s; }
 .notifications-page tr:hover .row-actions, .notifications-page tr:focus-within .row-actions, .notifications-page tr.open .row-actions { opacity: 1; }
 .notifications-page .row-actions .link-button { padding: 0; }
+@media (max-width: 1600px) { .notifications-page .data-table .cell-wrap { max-width: min(520px, 40vw); } .notifications-page .row-actions { flex-direction: column; gap: 2px; } }
 @media (hover: none) { .notifications-page .row-actions { opacity: 1; } }
 @media (pointer: coarse) { .notifications-page .row-actions .link-button { min-height: 40px; } }
 .operations-metrics { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; margin: 18px 0; }
@@ -1819,14 +1820,44 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-sketch:focus-visible, .etk-sketch:focus { border-color: var(--primary); }
 .etk-sketch img { display: block; max-width: 100%; max-height: 520px; margin: 0 auto; border-radius: 6px; background: #fff; }
 .etk-sketch-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.conn-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
-.conn-card { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
-.conn-card svg { display: block; width: 100%; height: auto; }
-.conn-card b { font-size: 13px; }
-.conn-card small { display: block; color: var(--muted-foreground); font-size: 12px; }
-.conn-card .conn-face { grid-column: 1 / -1; display: flex; justify-content: center; }
-.conn-card .conn-face svg { width: auto; max-width: 100%; }
-.conn-card small.conn-warn { color: #b3261e; }
+/* «База данных → Разъёмы»: список серий → серия со всеми корпусами (ConnectorGallery.tsx). */
+.conn-base { display: grid; gap: 12px; }
+.conn-base svg { display: block; max-width: 100%; height: auto; }
+.conn-warn { color: var(--tone-danger); }
+.conn-muted { color: var(--muted-foreground); font-size: 12px; }
+.conn-series-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.conn-series { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; min-height: 72px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; }
+.conn-series:hover, .conn-series:focus-visible { border-color: var(--primary); background: var(--accent); }
+.conn-series-pic { display: flex; align-items: center; justify-content: center; height: 56px; }
+.conn-series-pic svg { max-height: 56px; width: auto; }
+.conn-series-text { display: grid; gap: 1px; min-width: 0; }
+.conn-series-text b { font-size: 14px; }
+.conn-series-text small { font-size: 12px; color: var(--muted-foreground); }
+.conn-series-text small.conn-warn { color: var(--tone-danger); }
+.conn-series-text small.tone-warn { color: var(--tone-warn); }
+.conn-series-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.conn-series-head h2 { margin: 0; font-size: 18px; }
+.conn-series-head a { color: var(--primary); font-weight: 600; }
+.conn-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 6px; }
+.conn-series-view { display: grid; gap: 12px; }
+.conn-variant h3 { margin: 4px 0 8px; font-size: 14px; }
+.conn-variant h3 .muted { font-weight: 400; }
+.conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.conn-grid-wide { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); margin-top: 8px; }
+.conn-grid-wide .conn-face svg { max-height: 150px; }
+.conn-housing { display: grid; grid-template-columns: 1fr 130px; grid-template-areas: "head model" "face face" "boards boards"; gap: 4px 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.conn-housing.conn-hit { border-color: var(--primary); box-shadow: 0 0 0 2px var(--accent); }
+.conn-housing-head { grid-area: head; align-self: start; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.conn-housing-head b { font-size: 13px; }
+.conn-housing-head span { font-size: 12px; color: var(--muted-foreground); }
+.conn-housing-head small { font-size: 12px; }
+.conn-housing-model { grid-area: model; display: flex; justify-content: center; }
+.conn-housing .conn-face { grid-area: face; display: flex; justify-content: center; }
+.conn-housing .conn-face svg { max-height: 120px; width: auto; }
+.conn-housing-model svg { max-height: 84px; width: auto; }
+.conn-headers { grid-area: boards; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--foreground); }
+.conn-headers i { font-style: normal; color: var(--muted-foreground); }
+.conn-base .warning-inline .conn-grid { margin-top: 8px; }
 .etk-op .tr-tooling { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .etk-op .tr-tooling .tr-sec { margin: 0; padding: 10px 12px; border-left: 1px solid var(--border); align-content: start; }
 .etk-op .tr-tooling .tr-sec:first-child { border-left: 0; }
@@ -2825,13 +2856,26 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 
 /* Чертёж жгута на весь экран: шапка в одну строку, редактор занимает остальную высоту. */
 .harness-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; padding: 8px 12px 0; background: var(--background); }
-.harness-page-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; }
-.harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; }
-.harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.harness-page-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; min-width: 0; }
+.harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.harness-page-head > .muted, .harness-save { white-space: nowrap; }
+.harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex-shrink: 0; }
+.harness-page-note { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.harness-conflict { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--warn-border); border-radius: 6px; background: var(--warn-soft); color: var(--foreground); font-size: 13px; }
+.harness-conflict > span { flex: 1; min-width: 0; }
 .harness-page .button-link { display: inline-flex; align-items: center; text-decoration: none; }
 .harness-save { font-size: 13px; font-weight: 600; }
 .harness-page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; }
+.harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+/* Редактор сам по себе во весь экран (100dvh); здесь под шапкой страницы — ровно оставшаяся высота, иначе низ поля
+   (масштаб «100% · Ctrl + колесо», окна таблиц снизу) уходит за край экрана на высоту шапки. */
+.harness-page-body > .harness-root > .he-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.harness-page-body > .harness-root > .he-host > .harness-editor { flex: 1; height: auto; min-height: 0; }
+/* «История версий» чертежа: сбоку поверх редактора; строка выбирается кликом, действие одно — в шапке. */
+.harness-history-actions { display: flex; align-items: center; gap: 12px; }
+.harness-history-current { margin-left: 8px; font-size: 12px; font-weight: 500; }
+.harness-history .data-table tr.selected td, .harness-history .data-table tr.selected:hover td { background: var(--sheet-selected); }
+.harness-history .data-table tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
 
 /* ── Обход на 16" ноутбуке (1536×864): всё меню и профиль без прокрутки меню; действия строки сотрудника в одну строку ── */
 @media (hover: hover) and (pointer: fine) and (min-width: 901px) and (max-height: 960px) {

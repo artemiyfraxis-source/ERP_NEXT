@@ -1,11 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
 import {
-  createInMemoryHarnessDesignApi,
   HarnessDesignApiError,
   parseHarnessDesignSnapshot,
   parseRecoverableHarnessDesignContent,
 } from "./design-api";
+import { createInMemoryHarnessDesignApi } from "../testing/in-memory";
 import { createBuiltInConnectorInstance } from "./connector-series-demo";
 import { applyEditorCommand, createConnector, createWire } from "./commands";
 import { createEmptyHarnessDesign, parseHarnessDesignDocument } from "./model";

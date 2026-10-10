@@ -26,7 +26,7 @@ ROUTE_CONTRACT = 1
 KNOWN_KEYS = frozenset({
     "schemaVersion", "requiredWriterContractVersion", "drawingDocuments", "physicalTopology", "manufacturingRoute",
     "customWireColors", "connectors", "wires", "cables", "junctions", "diffPairs", "screens", "views",
-    # ERP keeps the library placements of this harness inside its document (harness_api.COMPONENT_GRAPH_KEYS).
+    # ERP keeps the library placements of this harness inside its document (schema.COMPONENT_GRAPH_KEYS).
     "componentSnapshots", "componentPlacements",
 })
 SECTIONS = {"cables": "Кабели", "junctions": "Сростки", "diffPairs": "Дифпары", "screens": "Экраны"}
