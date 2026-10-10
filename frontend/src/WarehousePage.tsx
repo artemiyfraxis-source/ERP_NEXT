@@ -18,6 +18,7 @@ import {
 } from "./api";
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
+import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
@@ -241,7 +242,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
-        <input className="search stock-search" aria-label="Поиск по складу" placeholder="поиск: резистор 6-1 …" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input className="search stock-search" aria-label="Поиск по складу" placeholder="Поиск: резистор, 6-1, ГРН…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <label className="check-inline"><input type="checkbox" checked={includeZero} onChange={(event) => setIncludeZero(event.target.checked)} />показывать нулевые</label>
         <label className="inline-select">группировать<select aria-label="Группировка склада" value={groupBy} onChange={(event) => setGroupBy(event.target.value as typeof groupBy)}>
           <option value="">нет</option><option value="type">по типу</option><option value="place">по месту (полка)</option><option value="name">по наименованию</option><option value="series">по серии</option><option value="grn">по ГРН</option>
@@ -598,7 +599,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   readOnly: boolean;
 }) {
   return <>
-    {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {group.totals?.articles ?? group.articles.length}</span>{group.totals && <span className="stock-group-sum"> партий {group.totals.lots}{group.totals.units.length === 1 ? ` · остаток ${group.totals.balance} ${group.totals.units[0]}` : ""}</span>}</td></tr>}
+    {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {countLabel(group.totals?.articles ?? group.articles.length, ["артикул", "артикула", "артикулов"])}</span>{group.totals && <span className="stock-group-sum"> · {countLabel(group.totals.lots, ["партия", "партии", "партий"])}{group.totals.units.length === 1 ? ` · остаток ${group.totals.balance} ${group.totals.units[0]}` : ""}</span>}</td></tr>}
     {group.articles.map((item) => {
       const open = expanded.has(item.key);
       return <Fragment key={item.key}>
