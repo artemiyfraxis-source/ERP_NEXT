@@ -18,7 +18,7 @@ from app.modules.production.infrastructure import ProductionAbsenceRow
 from app.shared.clock import MOSCOW
 
 BEFORE = "0088_api_tokens_assembly_drafts"
-AFTER = "0089_identity_leave_requests"
+AFTER = "0095_identity_leave_requests"
 NOW = datetime(2026, 10, 14, 10, 0, tzinfo=MOSCOW)
 USER = uuid4()
 

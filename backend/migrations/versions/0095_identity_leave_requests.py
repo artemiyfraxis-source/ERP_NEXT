@@ -19,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0089_identity_leave_requests"
-down_revision: str | None = "0088_api_tokens_assembly_drafts"
+revision: str = "0095_identity_leave_requests"
+down_revision: str | None = "0094_production_job_flow"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
