@@ -9,10 +9,11 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, case, func, or_, select, text
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.identity import Actor
 from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.project_number import normalize_project_number, project_from_purpose
 
 from .application import StoredReceivingFile
 from .domain import (
@@ -46,6 +47,8 @@ class ReceivingLineRow(Base):
         Index("ix_receiving_created_id", "created_at", "id"),
         Index("ix_receiving_status_created_id", "status", "created_at", "id"),
         Index("ix_receiving_warehouse_status_created_id", "warehouse", "status", "created_at", "id"),
+        # Все строки строки закупки, архивные и партии тоже (уникальный индекс выше — только живые).
+        Index("ix_receiving_lines_procurement_line_id", "procurement_line_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -117,8 +120,20 @@ class ReceivingLineRow(Base):
     complaint_act_date: Mapped[date | None] = mapped_column(Date)
     use_permit_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
     use_permit_date: Mapped[date | None] = mapped_column(Date)
+    # Проект НАЗНАЧЕНИЯ и ЦЕЛИ для сравнения (`project_from_purpose`; «» — проекта нет): строки проекта по индексу.
+    # Ставятся при записи своих полей; NULL — строка мимо ORM (читается и сверяется в Python).
+    purpose_project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    goal_project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+    @validates("purpose", "goal")
+    def _keep_project_keys(self, name: str, value: str) -> str:
+        if name == "purpose":
+            self.purpose_project_key = project_from_purpose(value)
+        else:
+            self.goal_project_key = project_from_purpose(value)
+        return value
 
 
 def _row(line: ReceivingLine) -> ReceivingLineRow:
@@ -361,6 +376,30 @@ class SqlAlchemyReceivingRepository:
             statement.order_by(ReceivingLineRow.created_at, ReceivingLineRow.id).limit(limit)
         )
         return [_domain(row) for row in rows]
+
+    def for_project(self, project: str, procurement_line_ids: Sequence[UUID] = ()) -> list[ReceivingLine]:
+        """Строки одного проекта: по строке закупки из `procurement_line_ids` или по НАЗНАЧЕНИЮ/ЦЕЛИ (точно по
+        ключу), всё по индексам; архив и партии тоже. Порядок `queue()`, без общего лимита."""
+        key = normalize_project_number(project)
+        ids = list(dict.fromkeys(procurement_line_ids))
+        conditions = [ReceivingLineRow.procurement_line_id.in_(ids)] if ids else []
+        if key:
+            conditions += [
+                ReceivingLineRow.purpose_project_key == key, ReceivingLineRow.goal_project_key == key,
+                ReceivingLineRow.purpose_project_key.is_(None), ReceivingLineRow.goal_project_key.is_(None),
+            ]
+        if not conditions:
+            return []
+        rows = self.session.scalars(
+            select(ReceivingLineRow).where(or_(*conditions))
+            .order_by(ReceivingLineRow.created_at, ReceivingLineRow.id)
+        )
+        wanted = set(ids)
+        return [
+            _domain(row) for row in rows
+            if row.procurement_line_id in wanted
+            or (key and key in (project_from_purpose(row.purpose), project_from_purpose(row.goal)))
+        ]
 
     def work_queue(
         self,

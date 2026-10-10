@@ -31,7 +31,9 @@ class SecurityHeadersMiddleware:
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(scope=message)
-                headers["Content-Security-Policy"] = self.content_security_policy
+                # A stored file carries its own, stricter policy (shared/stored_files.py) — keep it.
+                if "content-security-policy" not in headers:
+                    headers["Content-Security-Policy"] = self.content_security_policy
                 headers["X-Content-Type-Options"] = "nosniff"
                 headers["X-Frame-Options"] = "DENY"
                 headers["Referrer-Policy"] = "no-referrer"

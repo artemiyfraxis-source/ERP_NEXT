@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import logging
 
 from app.shared.events import AuditEvent, OutboxMessage
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
 from app.shared.print_sheet import PrintSheet
@@ -86,6 +87,7 @@ class ProcurementRepository(Protocol):
         self, limit: int, after_id: UUID | None = None
     ) -> Sequence[ProcurementLine]: ...
     def list(self, limit: int = 10_000) -> Sequence[ProcurementLine]: ...
+    def for_project(self, project: str, request_ids: Sequence[UUID] = ()) -> Sequence[ProcurementLine]: ...
     def legacy_ids_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def ready_for_request(self) -> Sequence[ProcurementLine]: ...
     def order_numbers_with_prefix(self, prefix: str) -> Sequence[str]: ...
@@ -1419,7 +1421,7 @@ def upload_line_document(command: UploadLineDocumentCommand, uow: UnitOfWork) ->
             id=uuid4(),
             line_id=current.id,
             file_name=str(command.file_name or "").strip()[:512] or "файл",
-            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(command.content),
             size=len(command.content),
             uploaded_by=command.actor.name,
             uploaded_at=command.now,
@@ -1598,6 +1600,16 @@ def invoice_file_url(file_id: UUID) -> str:
     return f"{INVOICE_FILE_PATH}{file_id}"
 
 
+def _invoice_upload_line(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> ProcurementLine:
+    line = uow.procurement.get(command.line_id)
+    if line is None:
+        raise KeyError("Строка закупки не найдена")
+    line._require_owner(command.actor)
+    if line.status is ProcurementStatus.CANCELLED:
+        raise ProcurementValidationError("Счёт отменённой строки не загружается")
+    return line
+
+
 def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> UploadedInvoice:
     """`uploadInvoice`, first half: recognise № and date, store the file named after them.
 
@@ -1609,21 +1621,19 @@ def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> U
         raise ProcurementValidationError("Файл не передан")
     if len(command.content) > INVOICE_FILE_LIMIT:
         raise ProcurementValidationError("Файл счёта больше 20 МБ")
+    # Access first, then the (budgeted) reading outside any transaction, then the store re-checks the line (audit F05).
+    with uow:
+        _invoice_upload_line(command, uow)
     info, hint = recognise_invoice(command.content)
     with uow:
-        line = uow.procurement.get(command.line_id)
-        if line is None:
-            raise KeyError("Строка закупки не найдена")
-        line._require_owner(command.actor)
-        if line.status is ProcurementStatus.CANCELLED:
-            raise ProcurementValidationError("Счёт отменённой строки не загружается")
+        line = _invoice_upload_line(command, uow)
         stored = StoredInvoiceFile(
             id=uuid4(),
             line_id=line.id,
             file_name=invoice_file_name(
                 info, line.supplier or "", line.designation, line.order_number or "", command.file_name,
             ),
-            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(command.content),
             size=len(command.content),
             uploaded_by=command.actor.name,
             uploaded_at=command.now,
@@ -3120,6 +3130,9 @@ def recognise_order_document(command: RecogniseOrderDocumentCommand, uow: UnitOf
         raise ProcurementValidationError("Файл не передан")
     if len(command.content) > INVOICE_FILE_LIMIT:
         raise ProcurementValidationError("Файл больше 20 МБ")
+    # The buyer's order lines first, the (budgeted) reading outside any transaction, then the store (audit F05).
+    with uow:
+        _document_lines(reference, command.actor, uow)
     document = read_supplier_document(command.file_name, command.content, kind)
     with uow:
         lines = _document_lines(reference, command.actor, uow)
@@ -3133,7 +3146,7 @@ def recognise_order_document(command: RecogniseOrderDocumentCommand, uow: UnitOf
                 if kind == "invoice"
                 else kp_file_name(info, first.supplier or "", reference, command.file_name)
             ),
-            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(command.content),
             size=len(command.content),
             uploaded_by=command.actor.name,
             uploaded_at=command.now,

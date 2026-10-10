@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { SuggestInput } from "./SuggestInput";
+import { useLatestSearch } from "./useLatestSearch";
 import {
   receivingApi,
   requestsApi,
@@ -12,6 +13,8 @@ import {
   type WarehouseManualItem,
   type WarehouseRackLayout,
   type WarehouseRowEdit,
+  type WarehouseTotal,
+  type WarehouseTotals,
 } from "./api";
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
@@ -59,6 +62,9 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [totalsStamp, setTotalsStamp] = useState(0);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [warehouse, setWarehouse] = useState("");
@@ -82,7 +88,16 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   // Своё сообщение: загрузка склада (через 250 мс после открытия) сбрасывает общую ошибку и стёрла бы его.
   const [putawayError, setPutawayError] = useState("");
   const requestVersion = useRef(0);
-  const groupedLots = useMemo(() => warehouseGroups(lots, groupBy, sort), [lots, groupBy, sort]);
+  // Group and article totals come from the server for the whole filter, so they do not depend on how many lots are
+  // loaded. The request follows the grouping and every (re)load/change (the stamp); filter changes bump the stamp
+  // through reload(), which already waits for the typing to stop.
+  const totalsState = useLatestSearch<WarehouseTotals | null>(
+    () => flat ? Promise.resolve(null) : warehouseApi.totals({ group: groupBy, query, includeZero, warehouse }),
+    [flat, groupBy, totalsStamp],
+    { delay: 0, fallback: "Итоги не получены" },
+  );
+  const totals = totalsState.data?.group === groupBy ? totalsState.data : null;
+  const groupedLots = useMemo(() => warehouseGroups(lots, groupBy, sort, totals, !cursor), [lots, groupBy, sort, totals, cursor]);
   // «Колонки»: each table has its own order and set of columns, the viewer changes both (remembered in this browser).
   // The name is always there; the column the rows are grouped by is the group header already, not repeated in every row.
   const [layouts, setLayouts] = useState(readLayouts);
@@ -108,33 +123,48 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
     return () => observer.disconnect();
   }, [flat]);
 
-  async function loadAllLots() {
-    const loaded: WarehouseLot[] = [];
-    let cursor: string | undefined;
-    let total = 0;
-    do {
-      const page = await warehouseApi.list({ after: cursor, query, includeZero, warehouse });
-      loaded.push(...page.lots);
-      total = page.total;
-      cursor = page.next_cursor ?? undefined;
-    } while (cursor);
-    return { lots: [...new Map(loaded.map((lot) => [lot.id, lot])).values()], total };
-  }
-
+  /** The first server page only: the table is on screen after one request; the rest comes on demand. */
   async function reload() {
     const version = ++requestVersion.current;
+    setTotalsStamp((value) => value + 1);
     setLoading(true);
     setError("");
     try {
-      const result = await loadAllLots();
+      const page = await warehouseApi.list({ query, includeZero, warehouse });
       if (version !== requestVersion.current) return;
-      setLots(result.lots);
-      setTotal(result.total);
+      setLots(mergeLots([], page.lots));
+      setTotal(page.total);
+      setCursor(page.next_cursor);
     } catch (reason) {
       if (version !== requestVersion.current) return;
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить склад");
     } finally {
       if (version === requestVersion.current) setLoading(false);
+    }
+  }
+
+  /** «Показать ещё» — the next server page; «Загрузить всё» — every remaining page (group totals need them). */
+  async function loadMore(all: boolean) {
+    if (!cursor || loadingMore) return;
+    const version = requestVersion.current;
+    setLoadingMore(true);
+    setError("");
+    try {
+      let next: string | null = cursor;
+      let loaded = lots;
+      do {
+        const page = await warehouseApi.list({ after: next, query, includeZero, warehouse });
+        if (version !== requestVersion.current) return;
+        loaded = mergeLots(loaded, page.lots);
+        setLots(loaded);
+        setTotal(page.total);
+        next = page.next_cursor;
+        setCursor(next);
+      } while (all && next);
+    } catch (reason) {
+      if (version === requestVersion.current) setError(reason instanceof Error ? reason.message : "Не удалось загрузить склад");
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -168,10 +198,11 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
     setBusy(key);
     setError("");
     try {
-      await operation();
-      const result = await loadAllLots();
-      setLots(result.lots);
-      setTotal(result.total);
+      const result = await operation();
+      // The server answers with the touched lot(s): only those rows change, nothing is re-read.
+      const touched = touchedLots(result);
+      if (touched) { setLots((current) => replaceLots(current, touched)); setTotalsStamp((value) => value + 1); }
+      else await reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Складская операция не выполнена");
       throw reason;
@@ -316,21 +347,49 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           />)}</tbody>
         </table>
       </div>}
+      {cursor && <div className="table-more">
+        <span className="page-sub" role="status">Показано {lots.length} из {total}.{totalsState.error ? ` ${totalsState.error}.` : ""}</span>
+        <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(false)}>{loadingMore ? "Загружаем…" : "Показать ещё"}</button>
+        <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(true)}>Загрузить всё</button>
+      </div>}
       {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «показывать нулевые», чтобы увидеть израсходованные партии."}</div>}
     </section>
   );
 }
 
+/** Lots with the same id once, in the order they came. */
+function mergeLots(current: WarehouseLot[], more: WarehouseLot[]) {
+  return [...new Map([...current, ...more].map((lot) => [lot.id, lot])).values()];
+}
+
+/** The lots an operation returned (`lot` or `lots`), or null when its answer names none. */
+function touchedLots(result: unknown): WarehouseLot[] | null {
+  const answer = result as { lot?: WarehouseLot; lots?: WarehouseLot[] } | null | undefined;
+  if (answer?.lot?.id) return [answer.lot];
+  if (Array.isArray(answer?.lots) && answer.lots.every((lot) => lot?.id)) return answer.lots;
+  return null;
+}
+
+function replaceLots(current: WarehouseLot[], touched: WarehouseLot[]) {
+  const byId = new Map(touched.map((lot) => [lot.id, lot]));
+  return current.map((lot) => byId.has(lot.id) ? { ...lot, ...byId.get(lot.id)! } : lot);
+}
+
+/** Sums of an article or a group over every lot of the filter; null while the server has not answered and not all lots are loaded. */
+type RowTotals = { balance: string; lots: number; units: string[] };
+
 type WarehouseArticle = {
   key: string;
   article: string;
   lots: WarehouseLot[];
+  totals: RowTotals | null;
 };
 
 type WarehouseGroup = {
   key: string;
   label: string;
   articles: WarehouseArticle[];
+  totals: (RowTotals & { articles: number }) | null;
 };
 
 const warehouseCollator = new Intl.Collator("ru", { numeric: true, sensitivity: "base" });
@@ -397,8 +456,8 @@ function sortValue(item: WarehouseArticle, key: SortKey): string | number {
   switch (key) {
     case "type": return distinct(item.lots, "item_type");
     case "grn": return distinct(item.lots, "grn");
-    case "balance": return Number(quantity(item.lots, "balance"));
-    case "lots": return item.lots.length;
+    case "balance": return Number(item.totals?.balance ?? quantity(item.lots, "balance"));
+    case "lots": return item.totals?.lots ?? item.lots.length;
     case "place": return distinct(item.lots, "storage_location");
     case "series": return distinct(item.lots, "series");
     case "name": return distinct(item.lots, "name");
@@ -414,7 +473,19 @@ function compareArticles(left: WarehouseArticle, right: WarehouseArticle, sort: 
   return (sort.desc ? -order : order) || warehouseCollator.compare(left.key, right.key);
 }
 
-function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | "name" | "series" | "grn", sort: { key: SortKey; desc: boolean }): WarehouseGroup[] {
+function loadedTotals(lots: WarehouseLot[]): RowTotals {
+  return { balance: quantity(lots, "balance"), lots: lots.length, units: [...new Set(lots.map((lot) => lot.unit).filter(Boolean))] };
+}
+
+function warehouseGroups(
+  lots: WarehouseLot[],
+  groupBy: "" | "type" | "place" | "name" | "series" | "grn",
+  sort: { key: SortKey; desc: boolean },
+  totals: WarehouseTotals | null = null,
+  complete = false,
+): WarehouseGroup[] {
+  const byGroup = new Map<string, WarehouseTotals["groups"][number]>((totals?.groups ?? []).map((item) => [item.group, item]));
+  const byArticle = new Map<string, WarehouseTotal>((totals?.articles ?? []).map((item) => [`${item.group}\u0000${item.article}`, item]));
   const groupMap = new Map<string, WarehouseLot[]>();
   for (const lot of lots) {
     const value = groupBy === "type" ? lot.item_type
@@ -434,11 +505,21 @@ function warehouseGroups(lots: WarehouseLot[], groupBy: "" | "type" | "place" | 
         const key = articleKey(lot);
         articleMap.set(key, [...(articleMap.get(key) ?? []), lot]);
       }
+      const groupTotal = byGroup.get(groupKey);
       return {
+        totals: groupTotal ? { ...groupTotal } : complete ? { ...loadedTotals(groupLots), articles: articleMap.size } : null,
         key: `${groupBy}:${groupKey}`,
         label: !groupBy ? "" : groupKey || ({ type: "Без типа", place: "Без места", name: "Без наименования", series: "Без серии", grn: "Без ГРН" })[groupBy],
         articles: [...articleMap.entries()]
-          .map(([key, articleLots]) => ({ key: `${groupBy}:${groupKey}:${key}`, article: articleLots[0].article || articleLots[0].name, lots: articleLots }))
+          .map(([key, articleLots]) => {
+            const found = byArticle.get(`${groupKey}\u0000${key}`);
+            return {
+              key: `${groupBy}:${groupKey}:${key}`,
+              article: articleLots[0].article || articleLots[0].name,
+              lots: articleLots,
+              totals: found ?? (complete ? loadedTotals(articleLots) : null),
+            };
+          })
           .sort((left, right) => compareArticles(left, right, sort)),
       };
     });
@@ -490,10 +571,11 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
     case "article": return cutCell(key, item.article || "—", pinned);
     case "grn": return cutCell(key, distinct(item.lots, "grn"), pinned, "stock-grn");
     case "balance": {
-      const unit = distinct(item.lots, "unit");
-      return <td key={key} className={classes("num", pinned && "stock-pin")}><strong>{quantity(item.lots, "balance")}{unit ? ` ${unit}` : ""}</strong></td>;
+      if (!item.totals) return <td key={key} className={classes("num", pinned && "stock-pin")} title="Итог считается">…</td>;
+      const unit = item.totals.units.join(" · ");
+      return <td key={key} className={classes("num", pinned && "stock-pin")}><strong>{item.totals.balance}{unit ? ` ${unit}` : ""}</strong></td>;
     }
-    case "lots": return <td key={key} className={classes("num", pinned && "stock-pin")}>{item.lots.length}</td>;
+    case "lots": return <td key={key} className={classes("num", pinned && "stock-pin")}>{item.totals ? item.totals.lots : "…"}</td>;
     case "place": return <td key={key} className={classes("cut", pinned && "stock-pin")} title={distinct(item.lots, "storage_location") || undefined}>{places(item.lots)}</td>;
     case "warehouse": return cutCell(key, distinct(item.lots, "warehouse"), pinned);
     case "series": return cutCell(key, distinct(item.lots, "series"), pinned);
@@ -516,7 +598,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   readOnly: boolean;
 }) {
   return <>
-    {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {group.articles.length}</span></td></tr>}
+    {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {group.totals?.articles ?? group.articles.length}</span>{group.totals && <span className="stock-group-sum"> партий {group.totals.lots}{group.totals.units.length === 1 ? ` · остаток ${group.totals.balance} ${group.totals.units[0]}` : ""}</span>}</td></tr>}
     {group.articles.map((item) => {
       const open = expanded.has(item.key);
       return <Fragment key={item.key}>

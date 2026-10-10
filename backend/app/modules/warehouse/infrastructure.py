@@ -337,6 +337,19 @@ class SqlAlchemyWarehouseRepository:
         )
         return int(self.session.scalar(statement) or 0)
 
+    def filtered(
+        self,
+        query: str = "",
+        warehouse: str | None = None,
+        include_zero: bool = False,
+    ) -> list[StockLot]:
+        """Every lot under the same filters as `list`, no paging (the source of the group totals)."""
+        rows = self.session.scalars(select(StockLotRow).where(*self._filters(warehouse, include_zero)))
+        lots = [_domain(row) for row in rows]
+        if str(query or "").strip():
+            lots = [lot for lot in lots if self._matches(lot, query)]
+        return lots
+
     def every(self) -> list[StockLot]:
         """Every lot, zero balance included, ЦАР before ЖУК (the sheet order of SUPPLYMAP), then by ГРН and пакет."""
         rows = self.session.scalars(select(StockLotRow).order_by(StockLotRow.grn, StockLotRow.package))

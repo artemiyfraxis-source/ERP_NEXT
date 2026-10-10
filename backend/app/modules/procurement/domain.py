@@ -35,6 +35,11 @@ class ProcurementValidationError(ValueError):
     """A procurement operation violates a business invariant."""
 
 
+class ProcurementAccessDenied(ProcurementValidationError):
+    """The line belongs to another buyer. Still a validation error for the commands that answer 422; the invoice
+    upload answers 403 before reading the file (audit F05)."""
+
+
 class _Unset:
     pass
 
@@ -1065,7 +1070,7 @@ class ProcurementLine:
     def _require_owner(self, actor: Actor) -> None:
         _validate_actor(actor)
         if not _same_actor(self.buyer, actor):
-            raise ProcurementValidationError("Закупщик может изменять только свои строки")
+            raise ProcurementAccessDenied("Закупщик может изменять только свои строки")
 
 
 # Удаление проекта (owner 04.10, «заявки не удалились при сносе проекта»): a line still on the buyer's own desk

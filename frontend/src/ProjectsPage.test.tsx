@@ -355,7 +355,7 @@ describe("ProjectsPage", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Спецификация" }));
     const per = screen.getByLabelText("На 1 шт UL1007 22AWG");
     fireEvent.change(per, { target: { value: "2" } });
-    expect(screen.getAllByText("21")).toHaveLength(2);
+    expect(screen.getAllByText("20")).toHaveLength(2);  // вровень: 2 × 10, без запаса на брак
     fireEvent.blur(per);
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/techcards/kitsets/708%D0%9A.4/lines", expect.objectContaining({ method: "PUT" })));
     const saved = vi.mocked(fetch).mock.calls.find(([url]) => decodeURIComponent(String(url)).endsWith("/lines"));
@@ -395,7 +395,7 @@ describe("ProjectsPage", () => {
     it("shows the reserved part against the batch need and the new wording", async () => {
       serve(withLot({ quantity: "6", unit: "шт", lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "" }));
       await openSpec();
-      expect(await screen.findByRole("button", { name: "FRX.26.0000001 · резерв 6 из 21" })).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "FRX.26.0000001 · резерв 6 из 20" })).toBeTruthy();
       expect(screen.getByText(/резервируется сразу при выборе/)).toBeTruthy();
       expect(screen.queryByText(/при отправке на комплектацию;/)).toBeNull();
     });
@@ -441,6 +441,42 @@ describe("ProjectsPage", () => {
       const warning = await screen.findByText(/FRX\.26\.0000001: партия занята/);
       expect(warning.closest(".warning-banner")).toBeTruthy();
     });
+
+    it("lists a КБ already sent with its request number and sends only the rest (прод 180К.11)", async () => {
+      const posts: string[] = [];
+      serve(card, (url, method) => {
+        if (!url.endsWith("/issue")) return undefined;
+        if (method === "GET") return json({ project: "708К.4", assemblies: [
+          { index: "КБ1", name: "Жгут питания", has_items: true, request: { id: "r1", no: "REQ.26.0000018", status: "Недоукомплектован" } },
+          { index: "КБ2", name: "Жгут сигнальный", has_items: true, request: null },
+        ] });
+        posts.push(url);
+        return json({ created: [{ no: "REQ.26.0000030", index: "КБ2", shortfall: [] }], skipped: [], message: "Заявок создано: 1; уже отправлены: КБ1 (REQ.26.0000018)." });
+      });
+      await openSpec();
+      fireEvent.click(screen.getByRole("button", { name: "Отправить на комплектацию" }));
+
+      const list = await screen.findByRole("list", { name: "КБ проекта" });
+      expect(within(list).getByText("уже отправлена: REQ.26.0000018 · Недоукомплектован")).toBeTruthy();
+      expect(within(list).getByText("уйдёт")).toBeTruthy();
+      fireEvent.change(screen.getByLabelText("Дедлайн"), { target: { value: "2026-10-20" } });
+      fireEvent.click(screen.getByRole("button", { name: "Отправить КБ2" }));
+      await waitFor(() => expect(posts).toHaveLength(1));
+    });
+
+    it("sends nothing when every КБ already has its request", async () => {
+      serve(card, (url, method) => url.endsWith("/issue") && method === "GET"
+        ? json({ project: "708К.4", assemblies: [
+          { index: "КБ1", name: "Жгут питания", has_items: true, request: { id: "r1", no: "REQ.26.0000018", status: "Новая" } },
+        ] })
+        : undefined);
+      await openSpec();
+      fireEvent.click(screen.getByRole("button", { name: "Отправить на комплектацию" }));
+
+      expect(await screen.findByText(/Все КБ уже отправлены: КБ1 \(REQ\.26\.0000018\)/)).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Отправить" }) as HTMLButtonElement).disabled).toBe(true);
+      expect(screen.queryByLabelText("Дедлайн")).toBeNull();
+    });
   });
 
   it("shows a piece line's batch in whole pieces while typing", async () => {
@@ -448,8 +484,8 @@ describe("ProjectsPage", () => {
     fireEvent.click(await screen.findByText("708К.4"));
     fireEvent.click(await screen.findByRole("tab", { name: "Спецификация" }));
     fireEvent.change(screen.getByLabelText("На 1 шт 43025-0400"), { target: { value: "1,5" } });
-    expect(screen.getByText("16")).toBeTruthy();  // 1,5 × 10 × 1,05 = 15,75 → 16 шт
-    expect(screen.getByText("15.75")).toBeTruthy();  // провод в метрах — до сотых
+    // Выдаём вровень (10.10.2026): запас на брак не добавляется — 1,5 × 10 = 15 шт; провод 1,5 × 10 = 15 м.
+    expect(screen.getAllByText("15")).toHaveLength(2);
   });
 
   it("orders what the project lacks from «Снабжение»: picked lines, the project deadline, the result banner", async () => {
@@ -670,13 +706,14 @@ describe("ProjectsPage", () => {
   });
 
   it("mirrors the server batch formula and delete summary", () => {
-    expect(kitBatch("1,5", "10", "5", "м")).toBe(15.75);
-    expect(kitBatch("1,5", "3", "5", "м")).toBe(4.73);
+    // Выдаём вровень (10.10.2026): «% брака» хранится, но к «На партию» не добавляется.
+    expect(kitBatch("1,5", "10", "5", "м")).toBe(15);
+    expect(kitBatch("1,5", "3", "5", "м")).toBe(4.5);
     expect(kitBatch("", "10", "5", "м")).toBe(0);
-    // Штучное — вверх до целого после брака (половинки штуки не бывает): 4,725 → 5; целое остаётся целым.
+    // Штучное — вверх до целого (половинки штуки не бывает): 4,5 → 5; целое остаётся целым.
     expect(kitBatch("1,5", "3", "5", "шт")).toBe(5);
-    expect(kitBatch("0.333", "3", "5", "шт")).toBe(2);
-    expect(kitBatch("2", "10", "5", "шт")).toBe(21);
+    expect(kitBatch("0.333", "3", "5", "шт")).toBe(1);  // 0,999 → 1
+    expect(kitBatch("2", "10", "5", "шт")).toBe(20);
     expect(kitBatch("0.1", "30", "0", "шт")).toBe(3);
     expect(kitBatch("", "10", "5", "шт")).toBe(0);
     expect(deleteSummary({ project: "708К.4", deleted: 3, erp: { "Проекты": 1 }, cards: { cards: 2, revisions: 1 }, gp: { deleted: 2, kept: 1 } }))

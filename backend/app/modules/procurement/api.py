@@ -122,6 +122,7 @@ from .domain import (
     MoneyEntry,
     ProcurementFacts,
     ProcurementTraceability,
+    ProcurementAccessDenied,
     ProcurementLine,
     ProcurementValidationError,
     ReplacementDecision,
@@ -1279,13 +1280,7 @@ def supplier_request_document(
         meta, content = supplier_order_document(order_number, uow_factory())
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Документ запроса не найден") from error
-    disposition = "attachment" if download else "inline"
-    return Response(content=content, media_type=meta.content_type, headers={
-        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(f'Запрос {order_number}.pdf')}",
-        # Без sandbox: он ломает встроенный просмотрщик PDF в Chrome. Скрипты и ресурсы файлу не нужны.
-        "Content-Security-Policy": "default-src 'none'",
-        "X-Content-Type-Options": "nosniff",
-    })
+    return file_response(content, f"Запрос {order_number}.pdf", download=download)
 
 
 @router.patch("/{line_id}/replacement")
@@ -1522,6 +1517,8 @@ def upload_invoice(
             ),
             uow_factory(),
         )
+    except ProcurementAccessDenied as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except ProcurementValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
@@ -1546,7 +1543,7 @@ def download_invoice(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл не найден")
     meta, content = found
-    return file_response(content, meta.content_type, meta.file_name)
+    return file_response(content, meta.file_name)
 
 
 # --- «Вставить КП» / «Вставить счёт» (owner, 05.10): prices read from the supplier's document --------------------
