@@ -76,7 +76,9 @@ def test_backfill_reproduces_the_position_chain_and_downgrade_drops_the_graph(tm
     }
     assert stage_keys == {None}
 
-    # Текущий код читает перенесённый граф: финал — последняя операция, входы — предыдущий номер.
+    # Текущий код читает перенесённый граф: финал — последняя операция, входы — предыдущий номер. Код знает и колонки
+    # поздних миграций (0089: план задания) — читаем на голове цепочки.
+    command.upgrade(config, "head")
     engine = create_engine(f"sqlite+pysqlite:///{database_path.as_posix()}")
     with SqlAlchemyProductionUnitOfWork(sessionmaker(bind=engine, class_=Session)) as uow:
         task = uow.production.get(UUID(chain_task))
