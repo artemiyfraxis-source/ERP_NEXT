@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 
-BEFORE = "0096_cable_structure"
 AFTER = "0099_worker_heartbeats"
 
 
@@ -15,6 +15,10 @@ def _config(database_path: Path) -> Config:
     config = Config(Path(__file__).parents[2] / "alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
     return config
+
+
+# The revision right before this migration (it changes when the migration is renumbered at merge).
+BEFORE = ScriptDirectory.from_config(_config(Path("unused.db"))).get_revision(AFTER).down_revision
 
 
 def test_upgrade_creates_the_heartbeat_table_and_downgrade_drops_it(tmp_path):
