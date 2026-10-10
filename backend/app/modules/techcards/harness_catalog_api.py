@@ -17,21 +17,21 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Response
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab
-from app.shared.http_auth import projects_view_principal, techcards_view_principal
+from app.shared.http_auth import projects_view_principal
 
 from .api import optional_references_uow_factory, techcards_uow_factory
 from .harness import application as harness
 from .harness.components import summary_json, template_json
 from .harness_catalog import TABS, build_harness_catalog
 
-# The component library is read with the right the drawing itself is read with: «Проекты: просмотр» (the editor opens
-# from a position of a project). The gate is the routes' own contract gate, so an API token never reads them.
+# The catalog and the component library are read with the right the drawing itself is read with: «Проекты: просмотр»
+# (the editor opens from a position of a project). The routes' own contract gate: an API token never reads them.
 router = APIRouter(prefix="/api/techcards", tags=["Редактор жгута"])
 
 RECORD_LIMIT = 100_000
 
 
-@router.get("/harness-catalog", dependencies=[Depends(techcards_view_principal)])
+@router.get("/harness-catalog", dependencies=[Depends(projects_view_principal)])
 def harness_catalog(
     references_factory: Annotated[
         Callable[[], ReferencesUnitOfWork] | None,

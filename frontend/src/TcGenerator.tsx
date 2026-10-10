@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assemblyApi,
+  harnessApi,
   kitsetsApi,
   referencesApi,
   techcardsApi,
@@ -260,7 +261,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   useEffect(() => {
     if (!manualTab || drawing?.key === harnessKey) return;
     let alive = true;
-    kitsetsApi.harness(card.project, card.item_index)
+    harnessApi.drawing(card.project, card.item_index)
       .then((found) => { if (alive) setDrawing({ key: harnessKey, version: kdVersionOf(found), error: "" }); })
       .catch((reason) => { if (alive) setDrawing({ key: harnessKey, version: null, error: reason instanceof Error ? reason.message : "КД не прочитана" }); });
     return () => { alive = false; };
@@ -280,10 +281,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   async function proposeKd() {
     setKdBusy(true); setKdProposal(null);
     try {
-      const version = kdVersionOf(await kitsetsApi.harness(card.project, card.item_index));
+      const version = kdVersionOf(await harnessApi.drawing(card.project, card.item_index));
       setDrawing({ key: harnessKey, version, error: "" });
       if (!version) { setStatus({ text: "В КД нет чертежа жгута.", error: true }); return; }
-      const result = await kitsetsApi.deriveHarness(card.project, card.item_index);
+      const result = await harnessApi.derive(card.project, card.item_index);
       const read = manualFromConfig(result.build_config);
       if (!read) throw new Error("Схема из КД не прочитана");
       const derived = fillKdCards(read, pickKdCard);
@@ -382,7 +383,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   async function marksFromDrawing() {
     setMarkDrawing({ busy: true, note: "" });
     try {
-      const found = await kitsetsApi.harness(card.project, card.item_index);
+      const found = await harnessApi.drawing(card.project, card.item_index);
       const rows = found?.design ? markRowsFromHarness(found.design, kitMarkArt()) : [];
       const note = !found?.design ? "У позиции нет чертежа жгута." : rows.length ? "" : "В чертеже жгута нет обозначений разъёмов и маркировки проводов.";
       setMarkDrawing({ busy: false, note });

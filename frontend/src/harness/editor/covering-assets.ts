@@ -18,29 +18,14 @@ export interface GlobalMaterial {
 }
 
 /**
- * Covering materials and project textures. Uploading photos/images is not part of the ERP port;
- * the adapter only lists what already exists and pins a material's texture into the project.
+ * Covering materials and project textures (ERP: the coverings of БД.МАТ, drawn with the ERP hatching set —
+ * `erpCatalog.erpCoveringMaterials`). Uploading photos/images is not part of the ERP.
  */
 export interface CoveringMaterialApi {
   listMaterials():Promise<readonly GlobalMaterial[]>;
   /** Returns the project texture entry for a texture-based material, pinning it when needed. */
   pinTexture(projectId:string,material:GlobalMaterial):Promise<CoveringTextureEntry>;
   listTextures(projectId:string):Promise<readonly {readonly entry:CoveringTextureEntry;readonly url:string}[]>;
-}
-
-export function createInMemoryCoveringMaterialApi(
-  materials:readonly GlobalMaterial[]=[],
-  textures:Readonly<Record<string,{readonly entry:CoveringTextureEntry;readonly url:string}>>={},
-):CoveringMaterialApi {
-  return {
-    async listMaterials(){return materials;},
-    async pinTexture(_projectId,material){
-      const found=textures[material.materialId];
-      if(!found)throw new Error("Не загружена текстура материала.");
-      return {...found.entry,name:material.name};
-    },
-    async listTextures(){return Object.values(textures);},
-  };
 }
 
 export function useCoveringAssets(api:CoveringMaterialApi,projectId:string,needed:boolean,version="") {

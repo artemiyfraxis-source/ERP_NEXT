@@ -75,7 +75,15 @@ describe("ERP harness catalog adapter", () => {
     expect(fetch).toHaveBeenCalledWith("/api/techcards/harness-components", expect.anything());
     expect(editorCatalog.templates.assetContentUrl("t", 2, "a")).toBe("/api/techcards/harness-components/t/versions/2/assets/a");
     vi.unstubAllGlobals();
-    expect(await editorCatalog.materials.listMaterials()).toEqual([]);
+    // Covering materials: the coverings of БД.МАТ that have a kind, hatched with the ERP set, no textures.
+    const materials = await editorCatalog.materials.listMaterials();
+    const coverings = snapshot("technology-database").records
+      .filter((record) => record.entityType === "protective-covering" && record.payload.coveringKind);
+    expect(materials.map((material) => material.name)).toEqual(coverings.map((record) => record.sourceKey).sort((a, b) => a.localeCompare(b, "ru")));
+    expect(materials.length).toBeGreaterThan(0);
+    expect(materials.every((material) => /^Ш\d$/.test(material.hatchCode ?? "") && material.coveringKind)).toBe(true);
+    expect(await editorCatalog.materials.listTextures("708К.4")).toEqual([]);
+    await expect(editorCatalog.materials.pinTexture("708К.4", materials[0]!)).rejects.toThrow(/штриховкой/);
     expect((await editorCatalog.references.getActive("technology-coax-terminations"))?.records).toHaveLength(3);
   });
 });

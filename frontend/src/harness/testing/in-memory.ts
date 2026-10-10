@@ -2,7 +2,8 @@
 // drawing and library over `harnessApi`, the reference books over the ERP catalog). Ported from TECHMAP-GRAPHER
 // (© Василий, SaveOurSouls, used with the author's permission) where its in-memory stores served the same purpose.
 import type { ComponentTemplate, ComponentTemplateApi } from "../component-library/component-template-api";
-import { createInMemoryCoveringMaterialApi } from "../editor/covering-assets";
+import type { CoveringMaterialApi, GlobalMaterial } from "../editor/covering-assets";
+import type { CoveringTextureEntry } from "../editor/covering-library";
 import {
   HarnessDesignApiError,
   parseHarnessDesignSnapshot,
@@ -18,7 +19,7 @@ import type {
 } from "../editor/component-placement-api";
 import type { HarnessEditorCatalogApi } from "../editor/HarnessDesignEditor";
 import { createEmptyHarnessDesign, type HarnessDesignDocument } from "../editor/model";
-import { createInMemoryReferenceCatalog } from "../reference-catalog";
+import { snapshotReferenceCatalog } from "../reference-catalog";
 
 export interface InMemoryHarnessDesignApi extends HarnessDesignApi {
   /** Snapshot v1 JSON of the stored document, or null when nothing was saved yet. */
@@ -168,11 +169,27 @@ export function createInMemoryComponentPlacementApi(
   };
 }
 
+/** Covering materials and project textures in memory. */
+export function createInMemoryCoveringMaterialApi(
+  materials: readonly GlobalMaterial[] = [],
+  textures: Readonly<Record<string, { readonly entry: CoveringTextureEntry; readonly url: string }>> = {},
+): CoveringMaterialApi {
+  return {
+    async listMaterials() { return materials; },
+    async pinTexture(_projectId, material) {
+      const found = textures[material.materialId];
+      if (!found) throw new Error("Не загружена текстура материала.");
+      return { ...found.entry, name: material.name };
+    },
+    async listTextures() { return Object.values(textures); },
+  };
+}
+
 /** The editor's catalog in memory: empty unless parts are given. */
 export function createInMemoryHarnessEditorCatalog(parts: Partial<HarnessEditorCatalogApi> = {}): HarnessEditorCatalogApi {
   return {
     templates: parts.templates ?? createInMemoryComponentTemplateCatalog(),
-    references: parts.references ?? createInMemoryReferenceCatalog(),
+    references: parts.references ?? snapshotReferenceCatalog(),
     materials: parts.materials ?? createInMemoryCoveringMaterialApi(),
   };
 }

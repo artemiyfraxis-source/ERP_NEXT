@@ -1,9 +1,9 @@
 // Документы чертежа жгута — «Таблица соединений», «Карта резки», «Спецификация» — строит сервер
-// (techcards/harness/documents.py, `kitsetsApi.harnessDocuments`). Окна редактора спрашивают его по текущему чертежу из
+// (techcards/harness/documents.py, `harnessApi.documents`). Окна редактора спрашивают его по текущему чертежу из
 // редактора, поэтому правка видна сразу, без ожидания автосохранения; файл для Excel — по сохранённому чертежу.
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import "./panels.css";
-import { failureText, kitsetsApi, type HarnessDocumentKind, type HarnessDocuments } from "../../api";
+import { failureText, harnessApi, type HarnessDocumentKind, type HarnessDocuments } from "../../api";
 import type { HarnessDesignDocument } from "../editor/model";
 
 export interface HarnessDocumentsSource {
@@ -15,10 +15,10 @@ export interface HarnessDocumentsSource {
 export function serverDocumentsSource(project: string, index: string): HarnessDocumentsSource {
   return {
     load: (kind, quantity, design) =>
-      kitsetsApi.harnessDocuments(project, index, kind, quantity, design as unknown as Record<string, unknown>),
+      harnessApi.documents(project, index, kind, quantity, design as unknown as Record<string, unknown>),
     download: (kind, quantity) => {
       const link = window.document.createElement("a");
-      link.href = kitsetsApi.harnessDocumentsExcelUrl(project, index, kind, quantity);
+      link.href = harnessApi.documentsExcelUrl(project, index, kind, quantity);
       link.download = "";
       link.click();
     },

@@ -13,7 +13,7 @@ export interface HarnessDesignResource {
   readonly recoveryWarning?: string;
 }
 
-/** Loads and saves one harness design document (snapshot v1). The ERP backend adapter comes later. */
+/** Loads and saves the drawing of a harness (ERP: `drawing.ts` over `harnessApi`). */
 export interface HarnessDesignApi {
   get(projectId: string, harnessId: string): Promise<HarnessDesignResource>;
   save(projectId: string, harnessId: string, expectedRevision: number, content: HarnessDesignDocument): Promise<HarnessDesignResource>;

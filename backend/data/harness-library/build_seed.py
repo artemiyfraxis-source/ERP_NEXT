@@ -28,7 +28,7 @@ SEED = HERE / "seed.json"
 SOURCE_ID = "erp-connectors"
 ENTITY_TYPE = "connector"
 # Pixels of the artwork → template units of the drawing view (the artwork is 768 px tall, a pitch is 136 px).
-SCALE = 0.05
+SCALE = 0.1
 PITCH_PX, FIRST_PX, HEIGHT_PX, WIRE_SIDE_PX = 136, 260, 768, 70
 E4_ROW, E4_WIDTH = 20.0, 70.0
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { failureText, kitsetsApi, type HarnessRevision, type HarnessRevisions } from "./api";
+import { failureText, harnessApi, type HarnessRevision, type HarnessRevisions } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 
@@ -42,7 +42,7 @@ export function HarnessHistory({ project, index, canEdit, onClose, onRestored }:
   useEffect(() => {
     let live = true;
     setError("");
-    kitsetsApi.harnessRevisions(project, index)
+    harnessApi.revisions(project, index)
       .then((loaded) => { if (live) setHistory(loaded); })
       .catch((reason) => { if (live) setError(failureText(reason, "История версий не прочитана")); });
     return () => { live = false; };
@@ -53,7 +53,7 @@ export function HarnessHistory({ project, index, canEdit, onClose, onRestored }:
     if (!window.confirm(`Восстановить версию ${revision}? Она станет текущим чертежом (версия ${history.current + 1}); несохранённые правки в редакторе пропадут.`)) return;
     setBusy(true); setError("");
     try {
-      const restored = await kitsetsApi.restoreHarnessRevision(project, index, revision, history.current);
+      const restored = await harnessApi.restoreRevision(project, index, revision, history.current);
       onRestored(revision, restored.revision ?? history.current + 1);
       setSelected(null);
       setGeneration((value) => value + 1);

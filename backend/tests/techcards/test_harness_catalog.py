@@ -199,7 +199,17 @@ def catalog_api():
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+    from uuid import UUID as Uuid
+
+    from app.shared.http_auth import Principal, authenticated_principal
+    from app.shared.identity import Actor
+
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=Uuid(int=8), name="Технолог", department="Производство"), email="tech@example.test",
+        roles=frozenset({"staff"}), permissions={"projects": "view"},
+    )
     yield TestClient(app)
+    app.dependency_overrides.pop(authenticated_principal, None)
     del app.state.references_uow_factory
     engine.dispose()
 
@@ -220,17 +230,22 @@ def test_catalog_endpoint_without_references_is_empty_not_an_error(catalog_api):
     assert all(count == 0 for source, count in response.json()["counts"].items() if source != CONNECTORS)
 
 
-def test_catalog_endpoint_needs_a_techcards_section():
+@pytest.mark.parametrize("permissions, status", [
+    ({"projects": "view"}, 200),     # the drawing's own right: whoever reads the drawing reads its pickers
+    ({"warehouse": "edit"}, 403),
+    ({"techcards": "view"}, 403),    # without «Проекты» the drawing itself does not open
+])
+def test_catalog_endpoint_reads_with_the_drawing_right(catalog_api, permissions, status):
     from uuid import UUID as Uuid
 
     from app.shared.http_auth import Principal, authenticated_principal
     from app.shared.identity import Actor
 
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
-        actor=Actor(id=Uuid(int=7), name="Кладовщик", department="Склад"), email="store@example.test",
-        roles=frozenset({"staff"}), permissions={"warehouse": "edit"},
+        actor=Actor(id=Uuid(int=7), name="Сотрудник", department="Отдел"), email="staff@example.test",
+        roles=frozenset({"staff"}), permissions=permissions,
     )
     try:
-        assert TestClient(app).get("/api/techcards/harness-catalog").status_code == 403
+        assert catalog_api.get("/api/techcards/harness-catalog").status_code == status
     finally:
         app.dependency_overrides.pop(authenticated_principal, None)

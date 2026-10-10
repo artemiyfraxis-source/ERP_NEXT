@@ -5,17 +5,24 @@ import { createEmptyHarnessDesign } from "./harness/editor/model";
 import { HarnessPage } from "./HarnessPage";
 
 // Настоящий редактор тяжёлый (его проверяет harness/HarnessEditor.smoke.test): здесь он заменён кнопкой «Правка»,
-// которая читает и сохраняет чертёж через переданный адаптер так же, как автосохранение редактора.
-vi.mock("./harness", () => ({
-  loadHarnessAdapters: async () => ({ createErpHarnessEditorCatalog: () => ({ erp: true, templates: { assetContentUrl: () => "" } }) }),
-  HarnessEditorLazy: ({ api: apiOverride, projectId, harnessId, harnessDesignation, catalog: catalogOverride, readOnly, placements: componentPlacementApiOverride }: HarnessDesignEditorProps) => {
-    const edit = async () => {
-      const resource = await apiOverride!.get(projectId, harnessId);
-      await apiOverride!.save(projectId, harnessId, resource.revision, resource.content).catch(() => undefined);
-    };
-    return <div data-testid="editor" data-read-only={String(Boolean(readOnly))} data-placements={String(Boolean(componentPlacementApiOverride))} data-erp-catalog={String(Boolean((catalogOverride as unknown as { erp?: boolean })?.erp))}><span>{harnessDesignation}</span><button onClick={() => void edit()}>Правка</button></div>;
-  },
-}));
+// которая читает и сохраняет чертёж через настоящий `harnessDrawing` так же, как автосохранение редактора.
+vi.mock("./harness", async () => {
+  const { harnessDrawing } = await vi.importActual<typeof import("./harness/drawing")>("./harness/drawing");
+  return {
+    loadHarnessDrawing: async () => ({
+      harnessDrawing,
+      createErpHarnessEditorCatalog: () => ({ erp: true, templates: { assetContentUrl: () => "" } }),
+    }),
+    HarnessEditorLazy: ({ api, projectId, harnessId, harnessDesignation, catalog, readOnly, placements }: HarnessDesignEditorProps) => {
+      const edit = async () => {
+        const resource = await api.get(projectId, harnessId);
+        const changed = { ...resource.content, customWireColors: ["#123456"] };
+        await api.save(projectId, harnessId, resource.revision, changed).catch(() => undefined);
+      };
+      return <div data-testid="editor" data-read-only={String(Boolean(readOnly))} data-placements={String(Boolean(placements))} data-erp-catalog={String(Boolean((catalog as unknown as { erp?: boolean })?.erp))}><span>{harnessDesignation}</span><button onClick={() => void edit()}>Правка</button></div>;
+    },
+  };
+});
 
 const design = JSON.parse(JSON.stringify(createEmptyHarnessDesign()));
 const drawing = (revision: number) => ({ document: { id: "h1", index: "КБ1", name: "Чертёж", size: 1, stored: true, url: null, uploaded_at: "2026-10-06T10:00:00", who: "Т", kind: "harness" }, design, revision, version: String(revision), warnings: [] });
@@ -28,6 +35,7 @@ describe("HarnessPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     calls = []; putStatus = 200;
+    window.sessionStorage.clear();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = decodeURIComponent(String(input)); const method = init?.method || "GET";
       calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
@@ -54,9 +62,9 @@ describe("HarnessPage", () => {
     expect(await screen.findByTestId("editor")).toBeTruthy();
     expect(screen.getByTestId("editor").getAttribute("data-erp-catalog")).toBe("true");
     expect(screen.getByRole("status").textContent).toBe("Сохранено");
-    expect(screen.getByRole("link", { name: "Скачать для TECHMAP-GRAPHER" }).getAttribute("href"))
+    expect(screen.getByRole("link", { name: "Скачать .zip" }).getAttribute("href"))
       .toBe("/api/techcards/kitsets/708%D0%9A.4/harness/%D0%9A%D0%911/export");
-    expect(screen.getByRole("button", { name: "Загрузить .techmap-project.zip" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Загрузить .zip" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "← Назад" })).toBeTruthy();
   });
 
@@ -68,16 +76,38 @@ describe("HarnessPage", () => {
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Сохранено"));
   });
 
-  it("409: «Конфликт», сохранение остановлено, «Обновить чертёж» перечитывает", async () => {
+  it("409: правки не теряются — «Сохранить мою поверх» сохраняет их со свежей версией", async () => {
     putStatus = 409;
     render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
     fireEvent.click(await screen.findByRole("button", { name: "Правка" }));
-    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Конфликт: чертёж изменили — обновить"));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Не сохранено — чертёж изменили"));
     expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+    const alert = await screen.findByText(/Ваши правки от .* не сохранены/);
+    expect(alert.closest(".harness-conflict")!.textContent).toMatch(/не сохранены — чертёж жгута только что сохранили. Правки остались на экране/);
+    // The copy survives a reload of the tab.
+    expect(JSON.parse(window.sessionStorage.getItem("harness-conflict:708К.4:КБ1")!).design.customWireColors).toEqual(["#123456"]);
     putStatus = 200;
-    fireEvent.click(screen.getByRole("button", { name: "Обновить чертёж" }));
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить мою поверх" }));
+    expect(await screen.findByText("Ваша версия сохранена поверх — версия 2.")).toBeTruthy();
+    const overwrite = calls.filter((call) => call.method === "PUT").at(-1)!;
+    expect(overwrite.body).toMatchObject({ revision: 1, design: { customWireColors: ["#123456"] } });
+    expect(screen.queryByText(/Ваши правки от .* не сохранены/)).toBeNull();
+    expect(window.sessionStorage.getItem("harness-conflict:708К.4:КБ1")).toBeNull();
+  });
+
+  it("409 и «Взять их версию»: копия правок отброшена, редактор перечитывает сохранённый чертёж", async () => {
+    putStatus = 409;
+    const view = render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Правка" }));
+    await screen.findByText(/Ваши правки от .* не сохранены/);
+    view.unmount();
+    // A reload of the tab still offers the kept edits.
+    render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
+    expect(await screen.findByText(/Ваши правки от .* не сохранены/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Взять их версию" }));
+    expect(await screen.findByText("Открыта сохранённая версия, ваши правки отброшены.")).toBeTruthy();
+    expect(window.sessionStorage.getItem("harness-conflict:708К.4:КБ1")).toBeNull();
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Сохранено"));
-    expect(screen.queryByRole("button", { name: "Обновить чертёж" })).toBeNull();
   });
 
   it("загрузка .techmap-project.zip: подтверждение, версия текущего чертежа, перезагрузка редактора", async () => {
@@ -149,8 +179,8 @@ describe("HarnessPage", () => {
     const editor = await screen.findByTestId("editor");
     expect(editor.getAttribute("data-read-only")).toBe("true");
     expect(screen.getByRole("status").textContent).toBe("Только просмотр");
-    expect(screen.queryByRole("button", { name: "Загрузить .techmap-project.zip" })).toBeNull();
-    expect(screen.getByRole("link", { name: "Скачать для TECHMAP-GRAPHER" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Загрузить .zip" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Скачать .zip" })).toBeTruthy();
     // Даже если редактор попробует сохранить, адаптер просмотра откажет, не дойдя до сервера.
     fireEvent.click(screen.getByRole("button", { name: "Правка" }));
     await waitFor(() => expect(calls.some((call) => call.url.endsWith("/harness/КБ1") && call.method === "GET")).toBe(true));

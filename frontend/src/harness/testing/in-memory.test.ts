@@ -1,28 +1,25 @@
 // @vitest-environment node
+// The test doubles of the editor's ports behave as the ERP does (placement = saving the drawing with the connector
+// under the revision check), and the snapshot reference books search as the pickers expect.
 import { describe, expect, it } from "vitest";
 import {
   addContactPointV2,
   constantExpressionV2,
   linkLogicalContactPointV2,
   newTemplateContentV2,
-} from "./component-library/template-commands-v2";
-import { upgradeTemplateContentV2ToV3 } from "./component-library/template-upgrade-v3";
-import type { ArticleVariantV3, TemplateContentV3 } from "./component-library/template-model-v3";
-import {
-  HarnessDesignApiError,
-  createInMemoryReferenceCatalog,
-  ReferenceCatalogApiError,
-  type ComponentTemplate,
-  type ReferenceCatalogSnapshot,
-} from "./adapters";
-import { componentPlacementRequest, type PlaceComponentRequest } from "./editor/component-placement-api";
-import { createEmptyHarnessDesign } from "./editor/model";
-import { createInMemoryComponentPlacementApi, createInMemoryComponentTemplateCatalog, createInMemoryHarnessDesignApi } from "./testing/in-memory";
+} from "../component-library/template-commands-v2";
+import { upgradeTemplateContentV2ToV3 } from "../component-library/template-upgrade-v3";
+import type { ArticleVariantV3, TemplateContentV3 } from "../component-library/template-model-v3";
+import type { ComponentTemplate } from "../component-library/component-template-api";
+import { HarnessDesignApiError } from "../editor/design-api";
+import { ReferenceCatalogApiError, snapshotReferenceCatalog, type ReferenceCatalogSnapshot } from "../reference-catalog";
+import { componentPlacementRequest, type PlaceComponentRequest } from "../editor/component-placement-api";
+import { createEmptyHarnessDesign } from "../editor/model";
+import { createConnectorInstanceFromComponentTemplateV3, type ComponentTemplatePlacementEnvelopeV3 } from "../editor/component-template-placement";
+import { buildComponentTemplateViewInstances, buildProjectComponentSnapshotLookup } from "../editor/HarnessDesignEditor";
+import { createInMemoryComponentPlacementApi, createInMemoryComponentTemplateCatalog, createInMemoryHarnessDesignApi } from "./in-memory";
 
 const placed = (body: PlaceComponentRequest) => ({ ...createEmptyHarnessDesign(), connectors: [body.instance] });
-import { createConnectorInstanceFromComponentTemplateV3, type ComponentTemplatePlacementEnvelopeV3 } from "./editor/component-template-placement";
-import { buildComponentTemplateViewInstances, buildProjectComponentSnapshotLookup } from "./editor/HarnessDesignEditor";
-
 const projectId = "p-1";
 const harnessId = "h-1";
 const VARIANT_ID = "10000000-0000-4000-8000-000000000001";
@@ -122,7 +119,7 @@ describe("in-memory adapters of the harness editor", () => {
         recordId: String(index), entityType: "wire", sourceKey: key, payload: { name: key }, sourceLocation: null,
       })),
     };
-    const references = createInMemoryReferenceCatalog([snapshot]);
+    const references = snapshotReferenceCatalog([snapshot]);
     const request = { text: "пугв", exactSourceKey: null, entityTypes: ["wire"], filters: [], filterLogic: "all" as const,
       sort: "source-key-asc" as const, pageSize: 1, cursor: null };
     const first = await references.searchCatalog("technology-wires", request);

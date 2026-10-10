@@ -14,14 +14,14 @@
   gap: 9px;
   border: 1px solid var(--muted-foreground);
   border-radius: 7px;
-  background: rgb(255 247 247 / 98%);
+  background: var(--sheet-invalid-bg);
   color: var(--tone-danger);
   font-size: 11px;
   font-weight: 650;
-  box-shadow: 0 7px 24px rgb(38 75 94 / 18%);
+  box-shadow: 0 7px 24px color-mix(in srgb, var(--foreground) 18%, transparent);
   transform: translateX(-50%);
 }
-.harness-root .he-recovery-draft { border-color: var(--warn-border); background: rgb(255 250 239 / 98%); color: var(--tone-warn); }
+.harness-root .he-recovery-draft { border-color: var(--warn-border); background: var(--warn-soft); color: var(--tone-warn); }
 .harness-root .he-recovery-draft > span { min-width: 0; flex: 1 1 auto; }
 .harness-root .he-recovery-draft button { flex: 0 0 auto; padding: 5px 9px; border: 1px solid var(--tone-warn); border-radius: 5px; background: var(--card); color: inherit; font: inherit; cursor: pointer; }
 .harness-root .he-recovery-draft button:hover { background: var(--warn-soft); }
@@ -40,23 +40,23 @@
   gap: 10px;
   border: 1px solid var(--muted-foreground);
   border-radius: 7px;
-  background: rgb(244 251 254 / 97%);
+  background: var(--card);
   color: var(--primary);
   font-size: 10px;
   font-weight: 700;
-  box-shadow: 0 7px 24px rgb(38 75 94 / 18%);
+  box-shadow: 0 7px 24px color-mix(in srgb, var(--foreground) 18%, transparent);
   transform: translateX(-50%);
 }
 .harness-root .he-placement-busy { pointer-events: none; }
-.harness-root .he-placement-pending { border-color: var(--warn-border); background: rgb(255 250 239 / 98%); color: var(--tone-warn); }
+.harness-root .he-placement-pending { border-color: var(--warn-border); background: var(--warn-soft); color: var(--tone-warn); }
 .harness-root .he-placement-pending button { flex: 0 0 auto; padding: 5px 9px; border: 1px solid var(--tone-warn); border-radius: 5px; background: var(--card); color: var(--tone-warn); font: inherit; cursor: pointer; }
 .harness-root .he-placement-pending button:hover { background: var(--warn-soft); }
 
 .harness-root .harness-editor {
-  --he-line: #d8e1e6;
-  --he-muted: #6f7f8b;
-  --he-ink: #163548;
-  --he-accent: #087bad;
+  --he-line: var(--border);
+  --he-muted: var(--muted-foreground);
+  --he-ink: var(--foreground);
+  --he-accent: var(--primary);
   width: 100%;
   min-width: 0;
   height: 100dvh;
@@ -68,7 +68,7 @@
   border-radius: 10px;
   background: var(--panel-soft);
   color: var(--he-ink);
-  box-shadow: 0 16px 44px rgb(33 65 83 / 12%);
+  box-shadow: 0 16px 44px color-mix(in srgb, var(--foreground) 12%, transparent);
 }
 
 .harness-root .he-loading.error > span { display: block; margin-top: 6px; color: var(--muted-foreground); }
@@ -83,7 +83,7 @@
   align-items: center;
   border-bottom: 1px solid var(--he-line);
   background: var(--card);
-  box-shadow: 0 2px 8px rgb(40 70 87 / 5%);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 5%, transparent);
 }
 
 .harness-root .he-header-identity { min-width: 0; display: flex; align-items: center; gap: 11px; }
@@ -96,7 +96,7 @@
 .harness-root .he-view-tabs { padding: 3px; display: flex; gap: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--accent); }
 .harness-root .he-view-tabs button { min-width: 112px; height: 32px; padding: 0 16px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 12px; font-weight: 750; cursor: pointer; }
 .harness-root .he-view-tabs button:hover { color: var(--primary); }
-.harness-root .he-view-tabs button.active { background: var(--card); color: var(--primary); box-shadow: 0 1px 5px rgb(41 71 87 / 13%); }
+.harness-root .he-view-tabs button.active { background: var(--card); color: var(--primary); box-shadow: 0 1px 5px color-mix(in srgb, var(--foreground) 13%, transparent); }
 
 .harness-root .he-save-state { justify-self: end; padding: 6px 8px; display: flex; align-items: center; gap: 7px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-foreground); font-size: 11px; font-weight: 650; }
 .harness-root .he-save-state:not(:disabled) { cursor: pointer; }
@@ -129,7 +129,7 @@
   flex-direction: column;
   border-right: 1px solid var(--he-line);
   background: var(--panel-soft);
-  box-shadow: 2px 0 12px rgb(38 72 88 / 5%);
+  box-shadow: 2px 0 12px color-mix(in srgb, var(--foreground) 5%, transparent);
 }
 .harness-root .he-utility-panel.closed { width: 42px; }
 .harness-root .he-utility-toggle {
@@ -192,7 +192,7 @@
 .harness-root .he-zoom-tools .he-fit-tool { font-size: 14px; }
 .harness-root .he-zoom-select { width: 39px; height: 29px; padding: 0 1px; border: 1px solid var(--border); border-radius: 6px; outline: 0; background: var(--card); color: var(--muted-foreground); font-size: 9px; font-weight: 750; cursor: pointer; }
 .harness-root .he-zoom-select:hover { border-color: var(--muted-foreground); background: var(--panel-soft); }
-.harness-root .he-zoom-select:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 2px rgb(58 147 188 / 14%); }
+.harness-root .he-zoom-select:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 14%, transparent); }
 
 .harness-root .he-canvas-frame { position: relative; min-width: 0; min-height: 0; grid-column: 3; grid-row: 1; overflow: hidden; background: var(--panel-soft); }
 .harness-root .he-table-window-layer { position:relative; z-index:20; grid-column:3; grid-row:1 / -1; min-width:0; min-height:0; pointer-events:none; }
@@ -207,10 +207,10 @@
 .harness-root .he-canvas-frame.tool-dimension .he-canvas,
 .harness-root .he-canvas-frame.tool-text .he-canvas { cursor: crosshair; }
 .harness-root .he-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--primary); }
-.harness-root .he-canvas-status { position: absolute; left: 12px; bottom: 10px; padding: 5px 8px; display: flex; gap: 10px; border: 1px solid rgb(205 220 227 / 85%); border-radius: 6px; background: rgb(255 255 255 / 91%); color: var(--muted-foreground); font-size: 9px; box-shadow: 0 2px 8px rgb(43 67 80 / 8%); pointer-events: none; }
+.harness-root .he-canvas-status { position: absolute; left: 12px; bottom: 10px; padding: 5px 8px; display: flex; gap: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--muted-foreground); font-size: 9px; box-shadow: 0 2px 8px color-mix(in srgb, var(--foreground) 8%, transparent); pointer-events: none; }
 .harness-root .he-e4-wire-popover { position: absolute; z-index: 12; top: 12px; right: 12px; max-height: calc(100% - 24px); overflow: auto; }
 .harness-root .he-e4-diagnostic-popover { position: absolute; z-index: 12; right: 12px; bottom: 42px; width: min(310px, calc(100% - 24px)); max-height: 220px; overflow: auto; }
-.harness-root .he-e4-diagnostic-list { overflow: hidden; border: 1px solid var(--tone-danger); border-radius: 8px; background: rgb(255 250 250 / 96%); box-shadow: 0 8px 24px rgb(83 34 34 / 15%); }
+.harness-root .he-e4-diagnostic-list { overflow: hidden; border: 1px solid var(--tone-danger); border-radius: 8px; background: var(--sheet-invalid-bg); box-shadow: 0 8px 24px color-mix(in srgb, var(--tone-danger) 15%, transparent); }
 .harness-root .he-e4-diagnostic-list > header { height: 34px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--tone-danger); color: var(--tone-danger); font-size: 11px; }
 .harness-root .he-e4-diagnostic-list > header span { min-width: 20px; padding: 2px 6px; border-radius: 10px; background: var(--tone-danger); color: var(--primary-foreground); text-align: center; font-size: 9px; }
 .harness-root .he-e4-diagnostic-list > button { width: 100%; min-height: 43px; padding: 7px 9px; display: grid; grid-template-columns: 21px minmax(0, 1fr); align-items: center; gap: 7px; border: 0; border-bottom: 1px solid var(--sheet-invalid-bg); background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
@@ -224,7 +224,7 @@
 .harness-root .he-e4-inline-editor.has-error { outline: 2px solid var(--tone-danger); outline-offset: 2px; }
 .harness-root .he-e4-inline-editor.has-error::after { content: "!"; position: absolute; z-index: 3; top: 4px; right: 4px; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; background: var(--tone-danger); color: var(--primary-foreground); font: 800 11px/1 Inter, Arial, sans-serif; pointer-events: none; }
 .harness-root .he-canvas-status span:first-child { min-width: 31px; color: var(--muted-foreground); font-weight: 800; }
-.harness-root .he-routing-preview-error { z-index: 13; grid-column: 3; grid-row: 1; align-self: end; justify-self: center; max-width: min(620px, calc(100% - 32px)); margin-bottom: 42px; padding: 7px 10px; border: 1px solid var(--tone-danger); border-radius: 6px; background: rgb(255 244 244 / 96%); color: var(--tone-danger); font-size: 10px; font-weight: 650; box-shadow: 0 4px 16px rgb(100 42 42 / 12%); pointer-events: none; }
+.harness-root .he-routing-preview-error { z-index: 13; grid-column: 3; grid-row: 1; align-self: end; justify-self: center; max-width: min(620px, calc(100% - 32px)); margin-bottom: 42px; padding: 7px 10px; border: 1px solid var(--tone-danger); border-radius: 6px; background: var(--sheet-invalid-bg); color: var(--tone-danger); font-size: 10px; font-weight: 650; box-shadow: 0 4px 16px color-mix(in srgb, var(--tone-danger) 12%, transparent); pointer-events: none; }
 
 .harness-root .he-right-panel { z-index: 4; min-width: 0; min-height: 0; grid-column: 4; grid-row: 1 / 3; display: grid; grid-template-rows: auto minmax(0, 1fr); border-left: 1px solid var(--he-line); background: var(--card); }
 .harness-root .he-inspector-tabs { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid var(--he-line); }
@@ -253,7 +253,7 @@
 .harness-root .he-property-form input:not([type="color"]):not([type="checkbox"]):hover:not(:disabled),
 .harness-root .he-property-form select:hover:not(:disabled) { border-color: var(--muted-foreground); }
 .harness-root .he-property-form input:focus,
-.harness-root .he-property-form select:focus { border-color: var(--muted-foreground); outline: 0; box-shadow: 0 0 0 3px rgb(58 147 188 / 14%); }
+.harness-root .he-property-form select:focus { border-color: var(--muted-foreground); outline: 0; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 14%, transparent); }
 .harness-root .he-property-form input:disabled { background: var(--accent); color: var(--muted-foreground); }
 .harness-root .he-property-form .he-toggle-field { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .harness-root .he-toggle-field input { width: 15px; height: 15px; margin: 0; accent-color: var(--he-accent); }
@@ -289,7 +289,7 @@
 .harness-root .he-wire-strip-profile > header > strong { color: var(--muted-foreground); font-size: 11px; }
 .harness-root .he-wire-end-tabs { padding: 2px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--accent); }
 .harness-root .he-wire-end-tabs button { height: 27px; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground); font-size: 9px; font-weight: 750; cursor: pointer; }
-.harness-root .he-wire-end-tabs button.active { background: var(--card); color: var(--primary); box-shadow: 0 1px 4px rgb(34 73 91 / 13%); }
+.harness-root .he-wire-end-tabs button.active { background: var(--card); color: var(--primary); box-shadow: 0 1px 4px color-mix(in srgb, var(--foreground) 13%, transparent); }
 .harness-root .he-wire-end-tabs button:disabled { cursor: default; opacity: .6; }
 .harness-root .he-wire-strip-identity { min-width: 0; display: grid; gap: 2px; }
 .harness-root .he-wire-strip-identity span { overflow: hidden; color: var(--foreground); font-size: 11px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
@@ -311,7 +311,7 @@
 .harness-root .he-color-field input { width: 29px; height: 25px; padding: 0; border: 0; background: transparent; }
 .harness-root .he-color-field code { color: var(--muted-foreground); font: 600 10px Consolas, monospace; }
 .harness-root .he-wire-standard-colors { padding: 6px; display: grid; grid-template-columns: repeat(7, 23px); gap: 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-soft); }
-.harness-root .he-wire-standard-colors button { width: 23px; height: 23px; padding: 0; border: 1px solid rgb(32 62 80 / 24%); border-radius: 4px; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 35%); cursor: pointer; }
+.harness-root .he-wire-standard-colors button { width: 23px; height: 23px; padding: 0; border: 1px solid color-mix(in srgb, var(--foreground) 24%, transparent); border-radius: 4px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card) 35%, transparent); cursor: pointer; }
 .harness-root .he-wire-standard-colors button:hover:not(:disabled),
 .harness-root .he-wire-standard-colors button.active { outline: 2px solid var(--primary); outline-offset: 1px; }
 .harness-root .he-wire-standard-colors button:disabled { cursor: default; opacity: .55; }
@@ -390,7 +390,7 @@
 .harness-root .he-catalog-categories button.active { background: var(--border); color: var(--primary); font-weight: 800; }
 .harness-root .he-catalog-results { padding: 8px; display: grid; grid-auto-columns: minmax(190px, 230px); grid-auto-flow: column; grid-template-rows: repeat(2, 62px); gap: 6px; overflow-x: auto; overflow-y: hidden; }
 .harness-root .he-catalog-card { width: 100%; min-width: 0; padding: 7px 8px; display: grid; grid-template-columns: 41px minmax(0, 1fr) 21px; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); color: var(--foreground); text-align: left; cursor: grab; }
-.harness-root .he-catalog-card:hover { border-color: var(--muted-foreground); box-shadow: 0 3px 10px rgb(43 78 95 / 8%); }
+.harness-root .he-catalog-card:hover { border-color: var(--muted-foreground); box-shadow: 0 3px 10px color-mix(in srgb, var(--foreground) 8%, transparent); }
 .harness-root .he-catalog-card:active { cursor: grabbing; }
 .harness-root .he-catalog-card > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
 .harness-root .he-catalog-card strong,
@@ -478,7 +478,7 @@
 .harness-root .he-wire-row i { width:9px; height:9px; display:inline-block; border:1px solid var(--muted-foreground); border-radius:50%; }
 .harness-root .he-bom-note { display:grid; gap:2px; }
 .harness-root .he-bom-note .he-relations-actions { margin:0; }
-.harness-root .he-table-window { border-color:var(--muted-foreground); box-shadow:0 8px 26px rgb(35 73 90 / 18%); }
+.harness-root .he-table-window { border-color:var(--muted-foreground); box-shadow:0 8px 26px color-mix(in srgb, var(--foreground) 18%, transparent); }
 .harness-root .he-table-window>header { min-height:34px; padding:6px 9px; background:var(--foreground); color:var(--primary-foreground); }
 .harness-root .he-table-window>header strong { color:var(--primary-foreground); letter-spacing:.02em; }
 .harness-root .he-table-window>header select { border-color:var(--muted-foreground); background:var(--foreground); color:var(--primary-foreground); }
@@ -492,8 +492,9 @@
 .harness-root .harness-editor .he-view-tabs { border:0; border-radius:4px; background:var(--foreground); }
 .harness-root .harness-editor .he-view-tabs button { color:var(--border); }
 .harness-root .harness-editor .he-view-tabs button.active { background:var(--primary); color:var(--primary-foreground); box-shadow:none; }
-.harness-root .harness-editor .he-save-state { color:var(--border); }
-.harness-root .harness-editor .he-save-state:not(:disabled) { background:var(--primary); color:var(--primary-foreground); }
+.harness-root .harness-editor .he-save-state { color:var(--muted-foreground); }
+.harness-root .harness-editor .he-save-state:not(:disabled) { border:1px solid var(--border); background:var(--card); color:var(--foreground); }
+.harness-root .harness-editor .he-save-state.error { border-color:var(--tone-danger); background:var(--sheet-invalid-bg); color:var(--tone-danger); }
 .harness-root .harness-editor .he-back { background:var(--foreground); color:var(--border); border-color:var(--muted-foreground); }
 .harness-root .harness-editor .he-tool.active { background:var(--border); color:var(--primary); border-color:var(--muted-foreground); }
 .harness-root .he-workspace { grid-template-rows:minmax(0,1fr) auto auto; }
