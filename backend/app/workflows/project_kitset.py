@@ -1627,7 +1627,7 @@ def _purge_requests(
 
 def attach_document(
     project: str, index: str, file_name: str, content_type: str, content: bytes, actor: Actor, now: datetime,
-    techcards_uow: Callable[[], TechcardsUnitOfWork],
+    techcards_uow: Callable[[], TechcardsUnitOfWork], audit_extra: dict[str, str] | None = None,
 ) -> KitDocument:
     """`tcKdAdd`: the file name carries the product id in front («708К.4КБ1 — …») so it is recognised outside
     the card too — in search, mail, print. The bytes live in the ERP database: the owner's decision of 29.09 is
@@ -1653,7 +1653,7 @@ def attach_document(
         )
         uow.kitsets.add_document(document, content)
         _audit(uow, kitset.project, "techcards.kitset_document_added", actor, now, {
-            "item_index": index, "file": document.file_name, "size": str(document.size),
+            "item_index": index, "file": document.file_name, "size": str(document.size), **(audit_extra or {}),
         })
         uow.commit()
     return document

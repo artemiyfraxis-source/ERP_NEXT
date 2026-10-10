@@ -3081,10 +3081,11 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, document }),
     }),
-  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string) =>
+  /** generatorOrigin — типовая сборка, из которой «Поправить вручную» сделало ручную (`generator_origin`, та же форма). */
+  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build`, {
       method: "POST",
-      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}) }),
+      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}), ...(generatorOrigin ? { generator_origin: generatorOrigin } : {}) }),
     }),
   issue: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {
@@ -3263,6 +3264,50 @@ export const employeeCardApi = {
   me: () => api<EmployeeCard>("/api/employee-card/me"),
   /** Чужая — только с доступом к разделу «Сотрудники» (403 без него, 404 — нет такого сотрудника). */
   byId: (id: string) => api<EmployeeCard>(`/api/employee-card/${encodeURIComponent(id)}`),
+  /** «Рабочее время»: месяц ГГГГ-ММ (не задан — текущий) по дням и баланс года; чужой — по доступу к «Сотрудникам». */
+  worktime: (month?: string, id?: string) =>
+    api<WorkTimeView>(`/api/employee-card/${id ? encodeURIComponent(id) : "me"}/worktime${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+};
+
+export type WorkTimeDay = {
+  date: string;
+  /** «пн» … «вс». */
+  weekday: string;
+  workday: boolean;
+  /** Вид отсутствия («отпуск», «Отгул» …) или null. */
+  absence: string | null;
+  day_off: boolean;
+  future: boolean;
+  norm_hours: number;
+  worked_hours: number | null;
+  overtime_hours: number | null;
+};
+export type WorkTimeBalance = {
+  year: number;
+  from: string;
+  to: string;
+  overtime_hours: number;
+  day_off_days: number;
+  day_off_hours: number;
+  balance_hours: number;
+  state: "debt" | "overtime" | "even";
+  label: string;
+};
+export type WorkTimeView = {
+  employee_id: string;
+  month: string;
+  /** «октябрь 2026». */
+  label: string;
+  as_of: string;
+  source: string;
+  note: string;
+  available: boolean;
+  /** «Нет данных: …» — когда available = false. */
+  no_data_reason: string | null;
+  shift_hours: number | null;
+  days: WorkTimeDay[];
+  totals: { norm_hours: number; worked_hours: number; overtime_hours: number } | null;
+  balance: WorkTimeBalance | null;
 };
 
 /**
@@ -3850,6 +3895,11 @@ export const assemblyApi = {
     api<{ id: string; name: string; url: string | null }>("/api/techcards/assembly/drawings", {
       method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, content_base64: contentBase64 }),
     }),
+  /** Несколько PDF в заданном порядке — один файл КД позиции; сервер читает все части и сохраняет всё или ничего. */
+  uploadMergedDrawing: (project: string, itemIndex: string, fileName: string, files: { file_name: string; content_base64: string }[]) =>
+    api<{ id: string; name: string; url: string | null; pages: { file_name: string; pages: number }[] }>("/api/techcards/assembly/drawings/merge", {
+      method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, files }),
+    }),
 };
 
 /* Токены API (генератор техкарт, черновики сборки): выпускает и отзывает только полный доступ. */
@@ -3878,4 +3928,79 @@ export const apiTokensApi = {
     api<ApiTokenIssued>("/api/auth/api-tokens", { method: "POST", body: JSON.stringify(payload) }),
   revoke: (id: string) =>
     api<ApiTokenRow>(`/api/auth/api-tokens/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({}) }),
+};
+
+/** «Документы с ознакомлением» (Личная карточка, фаза 3): PDF приходит и уходит base64 внутри JSON. */
+export type DocumentKind = "job_description" | "regulation" | "other";
+export type DocumentScope = "all" | "department" | "job_title";
+export type DocumentVersionView = {
+  id: string;
+  version_no: number;
+  file_name: string;
+  size: number;
+  sha256: string;
+  uploaded_by_name: string;
+  uploaded_at: string;
+};
+export type DocumentBase = {
+  id: string;
+  title: string;
+  kind: DocumentKind;
+  kind_label: string;
+  scope: DocumentScope;
+  scope_label: string;
+  scope_value: string;
+  /** «Все сотрудники» / «Отдел: Монтаж» / «Должность: Мастер». */
+  audience: string;
+  archived: boolean;
+  created_by_name: string;
+  created_at: string;
+  current: DocumentVersionView | null;
+};
+export type OwnDocument = DocumentBase & {
+  signed: { signed_at: string; method_label: string } | null;
+  /** Номер ранее подписанной редакции, когда текущая ещё не подписана. */
+  signed_earlier_version: number | null;
+};
+export type JournalDocument = DocumentBase & {
+  versions: DocumentVersionView[];
+  readers: number;
+  signed: number;
+};
+export type DocumentsOverview = { own: OwnDocument[]; journal: JournalDocument[] | null; hr: boolean };
+export type SheetRow = {
+  user_id: string;
+  name: string;
+  department: string | null;
+  job_title: string | null;
+  in_scope: boolean;
+  signed_at: string | null;
+  method_label: string | null;
+};
+export type DocumentSheet = DocumentBase & {
+  versions: DocumentVersionView[];
+  version: DocumentVersionView;
+  is_current: boolean;
+  readers: number;
+  signed: number;
+  rows: SheetRow[];
+};
+export type DocumentDraft = { title: string; kind: DocumentKind; scope: DocumentScope; scope_value: string };
+
+export const documentsApi = {
+  overview: () => api<DocumentsOverview>("/api/documents"),
+  pending: () => api<{ count: number }>("/api/documents/pending"),
+  fileUrl: (versionId: string) => `/api/documents/versions/${encodeURIComponent(versionId)}/file`,
+  create: (draft: DocumentDraft, file_name: string, content_base64: string) =>
+    api<DocumentSheet>("/api/documents", { method: "POST", body: JSON.stringify({ ...draft, file_name, content_base64 }) }),
+  sheet: (id: string, versionNo?: number) =>
+    api<DocumentSheet>(`/api/documents/${encodeURIComponent(id)}/sheet${versionNo ? `?version_no=${versionNo}` : ""}`),
+  addVersion: (id: string, file_name: string, content_base64: string) =>
+    api<DocumentSheet>(`/api/documents/${encodeURIComponent(id)}/versions`, { method: "POST", body: JSON.stringify({ file_name, content_base64 }) }),
+  archive: (id: string, archived: boolean) =>
+    api<DocumentSheet>(`/api/documents/${encodeURIComponent(id)}/archive`, { method: "POST", body: JSON.stringify({ archived }) }),
+  removeVersion: (versionId: string) =>
+    api<{ deleted_document: boolean; document: DocumentSheet | null }>(`/api/documents/versions/${encodeURIComponent(versionId)}`, { method: "DELETE" }),
+  acknowledge: (versionId: string, secret: string) =>
+    api<DocumentsOverview>(`/api/documents/versions/${encodeURIComponent(versionId)}/acknowledge`, { method: "POST", body: JSON.stringify({ secret }) }),
 };

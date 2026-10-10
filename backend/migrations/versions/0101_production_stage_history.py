@@ -28,8 +28,8 @@ from alembic import context, op
 import sqlalchemy as sa
 
 
-revision: str = "0100_production_stage_history"
-down_revision: str | None = "0099_worker_heartbeats"
+revision: str = "0101_production_stage_history"
+down_revision: str | None = "0100_identity_documents"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

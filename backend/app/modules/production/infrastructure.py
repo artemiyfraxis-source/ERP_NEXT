@@ -261,7 +261,7 @@ def _sql_in(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN ({', '.join(chr(39) + value.replace(chr(39), chr(39) * 2) + chr(39) for value in values)})"
 
 
-# Migration 0100_production_stage_history adds the same checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
+# Migration 0101_production_stage_history adds the same checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
 # the journal only grows; DELETE stays for a deleted project). The value column comes first in each check: the
 # head-1 seeder (tests/migrations/seed_any_revision.py) fills a checked column with the first literal.
 PLAN_EVENT_CHECKS = {

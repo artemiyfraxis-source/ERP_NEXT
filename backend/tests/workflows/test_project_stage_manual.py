@@ -44,7 +44,7 @@ from tests.factories import Actor
 ACTOR = Actor(name="Мастер", department="Производство")
 NOW = datetime(2026, 10, 10, 12, 0)
 BACKEND = Path(__file__).resolve().parents[2]
-MIGRATION = BACKEND / "migrations" / "versions" / "0100_production_stage_history.py"
+MIGRATION = BACKEND / "migrations" / "versions" / "0101_production_stage_history.py"
 
 
 def _kit(index, status, *, manual=False, auto=None, shipped=False):
@@ -358,7 +358,7 @@ def _revision(path: Path) -> str:
 
 def test_migration_checks_block_updates_and_downgrades_cleanly(database):
     _insert(database, "Этап КБ", "В работе")
-    command.upgrade(_config(database), "0100_production_stage_history")
+    command.upgrade(_config(database), "0101_production_stage_history")
 
     with sqlite3.connect(database) as connection:
         assert connection.execute("SELECT from_value, reason, value FROM production_plan_events").fetchall() == [
@@ -388,11 +388,11 @@ def test_violating_rows_stop_the_migration_on_request_and_are_kept_by_default(da
     _insert(database, "Этап КБ", "Готово", 2)
 
     with pytest.raises(RuntimeError, match="остановлена, данные не тронуты") as stopped:
-        command.upgrade(_config(database, "on_violation=stop"), "0100_production_stage_history")
+        command.upgrade(_config(database, "on_violation=stop"), "0101_production_stage_history")
     assert "2 строк(и) нарушают" in str(stopped.value) and "«Готово»" in str(stopped.value)
     assert _revision(database) == "0099_worker_heartbeats"
 
-    command.upgrade(_config(database), "0100_production_stage_history")
+    command.upgrade(_config(database), "0101_production_stage_history")
     assert "2 строк(и) нарушают" in capsys.readouterr().out
     with sqlite3.connect(database) as connection:
         assert sorted(connection.execute("SELECT kind, value FROM production_plan_events").fetchall()) == [
