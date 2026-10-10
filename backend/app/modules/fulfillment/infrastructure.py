@@ -15,7 +15,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.infrastructure import SqlAlchemyStockCoverRepository
 from app.modules.production.domain import ProductionStatus
-from app.modules.production.plan import normalize_project_number, project_from_purpose
+from app.shared.project_number import digit_stem, normalize_project_number, project_from_purpose
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
@@ -352,6 +352,22 @@ class SqlAlchemyFulfillmentRepository:
         order = (FulfillmentRequestRow.created_at, FulfillmentRequestRow.number)
         rows = self.session.scalars(statement.order_by(*order).limit(limit))
         return [self._domain(row) for row in rows]
+
+    def for_project(self, project: str) -> list[FulfillmentRequest]:
+        """Запросы одного проекта (проект НАЗНАЧЕНИЯ точно по ключу), в порядке `list()`, без общего лимита.
+        Колонки ключа здесь нет (её заводит ветка «одна заявка на КБ», #254): база отбирает НАЗНАЧЕНИЯ с цифрами
+        номера (`digit_stem`), точное сравнение — после; цифры ключа стоят в тексте подряд, так что ничего не теряется."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        statement = select(FulfillmentRequestRow)
+        stem = digit_stem(key)
+        if stem:
+            statement = statement.where(FulfillmentRequestRow.purpose.contains(stem, autoescape=True))
+        rows = self.session.scalars(
+            statement.order_by(FulfillmentRequestRow.created_at, FulfillmentRequestRow.number)
+        )
+        return [self._domain(row) for row in rows if project_from_purpose(row.purpose) == key]
 
     def add(self, request: FulfillmentRequest) -> None:
         row = self.session.get(FulfillmentRequestRow, request.id)

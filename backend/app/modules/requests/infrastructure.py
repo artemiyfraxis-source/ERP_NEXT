@@ -19,9 +19,10 @@ from sqlalchemy import (
     or_,
     select,
 )
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.identity import Actor
+from app.shared.project_number import normalize_project_number, project_from_purpose
 from app.shared.persistence import (
     AuditEventRow,
     Base,
@@ -79,11 +80,35 @@ class RequestRow(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     price_with_vat: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
     comment: Mapped[str | None] = mapped_column(Text)
+    # Проект заявки для сравнения — из трёх мест, как `request_matches_project`: № ПРОЕКТА (`normalize_project_number`),
+    # ЦЕЛЬ и ОБОЗНАЧЕНИЕ «проект.NNN» (`project_from_purpose`); «» — проекта там нет. Заявки проекта — по индексам.
+    # Ставятся при записи своих полей; NULL — строка мимо ORM (читается и сверяется в Python).
+    project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    purpose_project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    designation_project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     __mapper_args__ = {
         "version_id_col": version,
         "version_id_generator": False,
     }
+
+    @validates("project_reference", "purpose", "designation")
+    def _keep_project_keys(self, name: str, value: str | None) -> str | None:
+        if name == "project_reference":
+            self.project_key = normalize_project_number(value) if value else ""
+        elif name == "purpose":
+            self.purpose_project_key = project_from_purpose(value)
+        else:
+            self.designation_project_key = project_from_purpose(value)
+        return value
+
+
+def request_project_keys(project_reference: str | None, purpose: str | None, designation: str | None) -> set[str]:
+    """Проекты заявки — те же три места, что у ключей RequestRow (и `request_matches_project`)."""
+    return {
+        normalize_project_number(project_reference) if project_reference else "",
+        project_from_purpose(purpose), project_from_purpose(designation),
+    } - {""}
 
 
 class RequestDesignationRow(Base):
@@ -277,6 +302,27 @@ class SqlAlchemyRequestRepository:
             .limit(limit)
         )
         return [_request_domain(row) for row in self.session.scalars(statement)]
+
+    def for_project(self, project: str) -> list[Request]:
+        """Заявки одного проекта — по № ПРОЕКТА, ЦЕЛИ или ОБОЗНАЧЕНИЮ, точно по ключу (индексы трёх ключей), без
+        общего лимита ленты; свежие первыми, как `recent`."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        statement = (
+            select(RequestRow)
+            .where(or_(
+                RequestRow.project_key == key, RequestRow.purpose_project_key == key,
+                RequestRow.designation_project_key == key,
+                RequestRow.project_key.is_(None), RequestRow.purpose_project_key.is_(None),
+                RequestRow.designation_project_key.is_(None),
+            ))
+            .order_by(RequestRow.created_at.desc(), RequestRow.creation_index)
+        )
+        return [
+            _request_domain(row) for row in self.session.scalars(statement)
+            if key in request_project_keys(row.project_reference, row.purpose, row.designation)
+        ]
 
     def by_initiator(
         self, actor_id: UUID, limit: int, offset: int, search: str = ""

@@ -8,6 +8,8 @@ import re
 from typing import Collection, Iterable, Mapping
 from uuid import UUID, uuid4
 
+from app.shared.project_number import normalize_project_number, project_from_purpose  # noqa: F401 — зовут отсюда
+
 from .domain import ProductionValidationError
 
 
@@ -49,24 +51,8 @@ PLAN_MARK_FLAG_FIELDS = ("in_plan", "kit_checked", "kit_present", "zkp", "tc_rea
 PLAN_DAY_FIELD_PREFIX = "day:"
 PLAN_DAY_NOTE_MAX = 16
 _KIT_STAGE_FACTS = ("", "tc", "kit", "work", "stock", "shipped")
-_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
-
-
-def normalize_project_number(value: object) -> str:
-    normalized = re.sub(r"\s+", "", str(value or "").strip().upper()).translate(_HOMOGLYPHS)
-    if re.fullmatch(r"[1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?\.?", normalized):
-        return normalized.rstrip(".") + ".1"
-    return normalized
-
-
+# № проекта сравнивается по `app.shared.project_number` (normalize_project_number / project_from_purpose выше).
 MANUAL_TECHCARD_PROJECTS = frozenset(("714К.1", "35К.М.34"))
-
-
-def project_from_purpose(value: object) -> str:
-    purpose = re.sub(r"[\s·,;:\-—]*КБ\s*\d+[\s\S]*$", "", str(value or "").strip(), flags=re.I)
-    token = re.split(r"[\s·,;]+", purpose)[0] if purpose else ""
-    token = re.sub(r"\.\d{3,}$", "", token)
-    return normalize_project_number(token) if token else ""
 
 
 def kit_stage_key(project: object, item_index: object) -> str:

@@ -42,7 +42,6 @@ CROSS_MODULE_ALLOWLIST = frozenset(
         ("app.modules.fulfillment.infrastructure", "app.modules.identity.infrastructure"),
         ("app.modules.fulfillment.infrastructure", "app.modules.procurement.infrastructure"),
         ("app.modules.fulfillment.infrastructure", "app.modules.production.infrastructure"),
-        ("app.modules.fulfillment.infrastructure", "app.modules.production.plan"),
         ("app.modules.fulfillment.infrastructure", "app.modules.warehouse.infrastructure"),
         ("app.modules.operations.api", "app.modules.production.plan"),
         ("app.modules.operations.infrastructure", "app.modules.identity.audience_directory"),
