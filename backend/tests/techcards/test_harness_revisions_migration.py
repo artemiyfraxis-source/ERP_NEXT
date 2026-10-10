@@ -10,8 +10,8 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-BEFORE = "0089_harness_one_linked_drawing"
-AFTER = "0090_harness_revisions"
+BEFORE = "0090_harness_one_linked_drawing"
+AFTER = "0091_harness_revisions"
 LINKED = "application/vnd.fraxis.harness+json"
 UNLINKED = "application/vnd.fraxis.harness-unlinked+json"
 

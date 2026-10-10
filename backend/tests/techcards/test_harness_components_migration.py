@@ -14,8 +14,8 @@ from alembic.config import Config
 
 from app.modules.techcards.harness.components import candidate_from_snapshot, version_sha256
 
-BEFORE = "0090_harness_revisions"
-AFTER = "0091_harness_component_library"
+BEFORE = "0091_harness_revisions"
+AFTER = "0092_harness_component_library"
 LINKED = "application/vnd.fraxis.harness+json"
 UNLINKED = "application/vnd.fraxis.harness-unlinked+json"
 TEMPLATE = "22222222-3333-4444-8555-666666666666"
