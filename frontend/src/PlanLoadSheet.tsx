@@ -1,11 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import type { ProductionPlanRow, ProductionPlanSheetCell, ProductionPlanSheetField } from "./api";
+import { AutoTextarea } from "./AutoTextarea";
 import { matchesWords } from "./DataTable";
-import { formatDate } from "./format";
+import { formatDate, formatDayMonth } from "./format";
+import { StatusChip } from "./StatusChip";
+import { statusLabel, statusTone, type Tone } from "./statusTone";
 
 /* Лист цеха «ЗАГРУЗ» в ERP (владелец 04.10: «тут вот такое представление я хочу»): строка — проект, слева
-   закреплённые колонки листа, справа календарь по дням с полосой плановых работ. Значения считает ERP, ручная
-   отметка («Отметка плана») ставится поверх и видна уголком в ячейке. */
+   закреплённые колонки листа, справа календарь по дням (или по неделям) с полосой плановых работ. Значения считает
+   ERP, ручная отметка («Отметка плана») ставится поверх и видна уголком в ячейке. */
 
 export type SheetGroup = "hold" | "active" | "done" | "closed";
 export const SHEET_GROUPS: Array<[SheetGroup, string]> = [
@@ -16,16 +19,13 @@ export const SHEET_GROUPS: Array<[SheetGroup, string]> = [
 ];
 
 export type SheetMark = { project: string; field: string; value?: string; text?: string };
+/** Масштаб календаря: день — колонка, или неделя — колонка (взгляд на 2–3 месяца). */
+export type SheetScale = "day" | "week";
 
 const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+const MONTHS_OF = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const PROJECT_COLORS = 12;
-// Цвет ячейки «Статус» по слову листа; слово этапа ERP без пары в листе — нейтральное.
-const STATUS_TONES: Record<string, string> = {
-  "ХОЛД": "hold", "СТОП": "stop", "ПАУЗА": "pause", "ПРВ КОМПЛ": "check", "К ЗАПУСК": "launch",
-  "В РАБОТЕ": "work", "ОЖИД КОМПЛ": "wait", "ОЖИД ИНФ": "wait", "ОТК": "qc", "НА ОТГР": "ship",
-  "ГОТОВО": "ready", "ОТГРУЖЕН": "shipped",
-};
 
 /** Стабильный цвет проекта: хэш номера в палитру из 12 токенов (`--zg-c0…11`). */
 export function projectColor(project: string) {
@@ -47,6 +47,16 @@ function parseDay(value: string) {
   return new Date(year, month - 1, day);
 }
 
+/** Период словами: «5–18 октября 2026», «3 октября – 9 декабря 2026», через год — год у обеих дат. */
+export function periodWords(from: string, to: string) {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  if (!fy || !ty) return "";
+  if (fy !== ty) return `${fd} ${MONTHS_OF[fm - 1]} ${fy} – ${td} ${MONTHS_OF[tm - 1]} ${ty}`;
+  if (fm === tm) return `${fd}–${td} ${MONTHS_OF[tm - 1]} ${ty}`;
+  return `${fd} ${MONTHS_OF[fm - 1]} – ${td} ${MONTHS_OF[tm - 1]} ${ty}`;
+}
+
 export interface SheetDay { iso: string; label: string; day: number; weekday: string; off: boolean; monthStart: boolean }
 
 /** Дни календаря листа от `from` до `to` включительно; выходные и праздники цеха — серые. */
@@ -65,7 +75,7 @@ export function sheetDays(from: string, to: string, holidays: string[] = []): Sh
 }
 
 /** Строка месяцев над днями: «сентябрь 2026», «октябрь»… — год у первого месяца и при смене года. */
-export function sheetMonths(days: SheetDay[]): Array<{ key: string; label: string; span: number }> {
+export function sheetMonths(days: Pick<SheetDay, "iso">[]): Array<{ key: string; label: string; span: number }> {
   const months: Array<{ key: string; label: string; span: number }> = [];
   for (const day of days) {
     const key = day.iso.slice(0, 7);
@@ -78,7 +88,26 @@ export function sheetMonths(days: SheetDay[]): Array<{ key: string; label: strin
   return months;
 }
 
-/** Сдвиг календаря при открытии: сегодня — третьим днём слева (два дня до него видны), если сегодня в листе. */
+/** Неделя листа (пн–вс) внутри его периода; `days` — только дни, попавшие в период. */
+export interface SheetWeek { iso: string; days: SheetDay[]; from: string; to: string }
+
+/** Номер дня недели с понедельника: пн — 0 … вс — 6. */
+function weekIndex(iso: string) {
+  return (parseDay(iso).getDay() + 6) % 7;
+}
+
+/** Дни листа по неделям с понедельника; первая и последняя неделя могут быть неполными. */
+export function sheetWeeks(days: SheetDay[]): SheetWeek[] {
+  const weeks: SheetWeek[] = [];
+  for (const day of days) {
+    const last = weeks[weeks.length - 1];
+    if (last && weekIndex(day.iso) !== 0) { last.days.push(day); last.to = day.iso; continue; }
+    weeks.push({ iso: day.iso, days: [day], from: day.iso, to: day.iso });
+  }
+  return weeks;
+}
+
+/** Сдвиг календаря при открытии: сегодня — третьей колонкой слева (две до него видны), если сегодня в листе. */
 export function todayScrollLeft(days: Pick<SheetDay, "iso">[], today: string, dayWidth: number, lead = 2) {
   const index = days.findIndex((day) => day.iso === today);
   return index < 0 || dayWidth <= 0 ? 0 : Math.max(0, (index - lead) * dayWidth);
@@ -98,9 +127,9 @@ export function groupSheetRows(rows: ProductionPlanRow[], query = ""): Record<Sh
 }
 
 const MARK_LABELS: Record<string, string> = {
-  comment: "Комментарий", status: "Статус", ready: "% Готов", in_plan: "В плане", customer_supplied: "Есть давал",
-  kit_checked: "Пров компл", kit_present: "Компл есть", zkp: "ЗКП", kit_arrival: "Дата прихода компл.",
-  tc_ready: "Тех кар", test_sb: "Тест С/Б", kit_picked: "Компл набр",
+  comment: "Комментарий", status: "Статус", ready: "Готовность", in_plan: "В плане", customer_supplied: "Давальческое",
+  kit_checked: "Комплект проверен", kit_present: "Комплект на складе", zkp: "ЗКП", kit_arrival: "Приход комплектующих",
+  tc_ready: "Техкарта выдана", test_sb: "Тест С/Б", kit_picked: "Комплект набран",
 };
 
 /** Текст записи «Отметка плана» в истории проекта: «Статус: ХОЛД», «Отметка 06.10: П», «В плане: расчёт ERP». */
@@ -109,16 +138,62 @@ export function markText(event: { field?: string; value: string; text: string })
   const label = field.startsWith("day:") ? `Отметка ${formatDate(field.slice(4))}` : MARK_LABELS[field] ?? field;
   const value = field === "comment" ? event.text : event.value;
   if (!value || value === "авто") return `${label}: ${field === "comment" || field.startsWith("day:") ? "очищено" : "расчёт ERP"}`;
-  return `${label}: ${/^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDate(value) : value}`;
+  return `${label}: ${/^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDate(value) : field === "status" ? statusList(value).map(statusLabel).join(", ") : value}`;
 }
 
 export function statusList(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
-function dayMonth(value: string) {
-  const formatted = formatDate(value);
-  return /^\d{2}\.\d{2}\.\d{4}$/.test(formatted) ? formatted.slice(0, 5) : formatted;
+// Главный статус строки — самый тревожный: стоп и ожидание раньше «в работе», «готово» и «новый».
+const TONE_ORDER: Record<Tone, number> = { danger: 0, warning: 1, info: 2, success: 3, neutral: 4 };
+
+/** Статусы ячейки по тревожности (стоп, ожидание, в работе, готово, новое); равные — в порядке листа. */
+export function orderStatuses(value: string) {
+  return statusList(value)
+    .map((word, index) => ({ word, index, rank: TONE_ORDER[statusTone(word)] }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((item) => item.word);
+}
+
+// Ширина подписи чипа (12 px, полужирный): заглавные шире строчных; оценка с запасом, чтобы слово не резалось.
+function chipTextWidth(text: string) {
+  let width = 0;
+  for (const char of text) {
+    if (char === " ") width += 3.6;
+    else if (/\d/.test(char)) width += 7.2;
+    else if (char !== char.toLowerCase()) width += 9.2;
+    else if (char !== char.toUpperCase()) width += 7.2;
+    else width += 5;
+  }
+  return width;
+}
+
+export const STATUS_WIDTH = { min: 84, max: 200, more: 26 };
+
+/** Ширина колонки «Статус» по самому длинному главному слову листа (+ место под «+N»): слово не обрезается. */
+export function statusColumnWidth(rows: Pick<ProductionPlanRow, "sheet">[]) {
+  let widest = 0;
+  for (const row of rows) {
+    const [first, ...rest] = orderStatuses(row.sheet?.status?.value ?? "");
+    if (!first) continue;
+    widest = Math.max(widest, Math.ceil(chipTextWidth(statusLabel(first)) + 16 + 10 + (rest.length ? STATUS_WIDTH.more : 0)));
+  }
+  return Math.min(STATUS_WIDTH.max, Math.max(STATUS_WIDTH.min, widest));
+}
+
+/** Количество запуска переезжает с выходного на первый рабочий день той же полосы работ: на сером его не видно. */
+export function startLabels(days: SheetDay[], work: Set<string>, starts: Record<string, number>) {
+  const labels: Record<string, number> = {};
+  for (const [iso, quantity] of Object.entries(starts)) {
+    const index = days.findIndex((day) => day.iso === iso);
+    if (index < 0) continue;
+    let at = index;
+    while (at < days.length && days[at].off && work.has(days[at].iso)) at += 1;
+    const target = at < days.length && work.has(days[at].iso) ? days[at].iso : iso;
+    labels[target] = (labels[target] ?? 0) + quantity;
+  }
+  return labels;
 }
 
 function daysTone(days: number | null) {
@@ -129,69 +204,77 @@ function daysTone(days: number | null) {
 }
 
 export type ColumnKey = ProductionPlanSheetField | "project" | "customer" | "days_left" | "deadline";
-/** `label` — короткая подпись в одну строку; `name` — полное название колонки листа (подсказка и доступное имя).
+/** `label` — короткая подпись в одну строку; `name` — полное название колонки (подсказка, «Колонки», доступное имя).
     `flag` — да/нет-отметка (узкая колонка с ✓ / —); `fold` — очередь скрытия на узком экране (1 — первой). */
 interface Column { key: ColumnKey; label: string; name: string; width: number; left?: boolean; hint?: string; flag?: boolean; fold?: number }
 
-// Порядок — как в листе «ЗАГРУЗ». Все показанные колонки закреплены; календарь начинается сразу за ними.
-// На узком экране (16") реже нужные колонки по умолчанию скрыты, чтобы календарь показал не меньше двух недель;
-// «Колонки» возвращают любую, порядок листа сохраняется.
+// Порядок — как в листе «ЗАГРУЗ», кроме «Комментария»: он в конце закреплённых колонок и скрывается первым
+// (аудит 10.10, ПП-8) — тогда комментарий виден отметкой в ячейке № с подсказкой. Все показанные колонки
+// закреплены; календарь начинается сразу за ними. На узком экране реже нужные колонки скрыты, чтобы календарь
+// показал пять недель; «Колонки» возвращают любую, порядок сохраняется.
 const COLUMNS: Column[] = [
-  { key: "comment", label: "Комментарий", name: "Комментарий", width: 128, left: true },
   { key: "status", label: "Статус", name: "Статус", width: 104, left: true },
-  { key: "ready", label: "Готов", name: "% Готов", width: 62, hint: "выпуск против количества задания, по норме" },
-  { key: "in_plan", label: "План", name: "В плане", width: 38, flag: true, fold: 3, hint: "на проект назначены операции" },
-  { key: "project", label: "№", name: "№ Проекта", width: 80, left: true },
-  { key: "customer", label: "Заказчик", name: "Наименование организации", width: 150, left: true },
-  { key: "customer_supplied", label: "Дав.", name: "Есть давал", width: 40, fold: 4, hint: "давальческие комплектующие: НЕТ, ДА или Ч/Т — частично" },
-  { key: "kit_checked", label: "Пров.", name: "Пров компл", width: 38, flag: true, fold: 6, hint: "комплектация проверена" },
-  { key: "kit_present", label: "Компл", name: "Компл есть", width: 44, flag: true, hint: "все комплектующие на складе" },
-  { key: "zkp", label: "ЗКП", name: "ЗКП", width: 38, flag: true, fold: 2, hint: "авто: на проект есть заявки" },
-  { key: "kit_arrival", label: "Приход", name: "Дата прихода компл.", width: 50, hint: "когда придут комплектующие" },
-  { key: "tc_ready", label: "ТК", name: "Тех кар", width: 36, flag: true, hint: "на каждую КБ выдана ТК" },
-  { key: "test_sb", label: "С/Б", name: "Тест С/Б", width: 38, flag: true, fold: 5 },
-  { key: "kit_picked", label: "Набр.", name: "Компл набр", width: 40, flag: true, hint: "каждая КБ набрана" },
-  { key: "days_left", label: "Дн.", name: "Ост дн", width: 38, fold: 1, hint: "дней до дедлайна" },
+  { key: "ready", label: "Готов", name: "Готовность, %", width: 56, hint: "выпуск против количества задания, по норме" },
+  { key: "in_plan", label: "План", name: "В плане", width: 38, flag: true, fold: 4, hint: "на проект назначены операции" },
+  { key: "project", label: "№", name: "№ проекта", width: 80, left: true },
+  { key: "customer", label: "Заказчик", name: "Заказчик", width: 140, left: true },
+  { key: "customer_supplied", label: "Дав.", name: "Давальческое", width: 40, fold: 5, hint: "давальческие комплектующие: НЕТ, ДА или Ч/Т — частично" },
+  { key: "kit_checked", label: "Пров.", name: "Комплект проверен", width: 38, flag: true, fold: 7 },
+  { key: "kit_present", label: "Компл", name: "Комплект на складе", width: 44, flag: true, hint: "все комплектующие на складе" },
+  { key: "zkp", label: "ЗКП", name: "ЗКП", width: 38, flag: true, fold: 3, hint: "авто: на проект есть заявки" },
+  { key: "kit_arrival", label: "Приход", name: "Приход комплектующих", width: 50, hint: "когда придут комплектующие" },
+  { key: "tc_ready", label: "ТК", name: "Техкарта выдана", width: 36, flag: true, hint: "на каждую КБ выдана ТК" },
+  { key: "test_sb", label: "С/Б", name: "Тест С/Б", width: 38, flag: true, fold: 6 },
+  { key: "kit_picked", label: "Набр.", name: "Комплект набран", width: 40, flag: true, hint: "каждая КБ набрана" },
+  { key: "days_left", label: "Дн.", name: "Дней до дедлайна", width: 38, fold: 2 },
   { key: "deadline", label: "Дедлайн", name: "Дедлайн", width: 58 },
+  { key: "comment", label: "Комментарий", name: "Комментарий", width: 160, left: true, fold: 1 },
 ];
 const FOLD_ORDER = COLUMNS.filter((column) => column.fold).sort((a, b) => a.fold! - b.fold!);
-/** Сколько дней календаря должно быть видно рядом с закреплёнными колонками без прокрутки. */
-export const MIN_VISIBLE_DAYS = 15;
+/** Сколько дней календаря должно быть видно рядом с закреплёнными колонками без прокрутки (пять недель). */
+export const MIN_VISIBLE_DAYS = 35;
+/** То же в масштабе «Недели». */
+export const MIN_VISIBLE_WEEKS = 8;
 const COLUMNS_KEY = "erp-zg-columns";
+const SCALE_KEY = "erp-zg-scale";
 
-/** Ширина колонки: на планшете отметки шире — под палец. */
-function columnWidth(column: Column, coarse: boolean) {
+/** Ширина колонки: «Статус» — по самому длинному слову; на планшете отметки шире — под палец. */
+function columnWidth(column: Column, coarse: boolean, statusWidth = column.width) {
+  if (column.key === "status") return statusWidth;
   return coarse && column.flag ? Math.max(column.width, 42) : column.width;
 }
 
-/** Какие колонки скрыть по умолчанию, чтобы при ширине листа `available` календарь показал `MIN_VISIBLE_DAYS` дней. */
-export function autoHiddenColumns(available: number, dayWidth: number, coarse = false): ColumnKey[] {
+/** Какие колонки скрыть по умолчанию, чтобы при ширине листа `available` календарь показал `minVisible` колонок. */
+export function autoHiddenColumns(available: number, dayWidth: number, coarse = false, statusWidth = 104, minVisible = MIN_VISIBLE_DAYS): ColumnKey[] {
   if (available <= 0 || dayWidth <= 0) return [];
-  let frozenWidth = COLUMNS.reduce((sum, column) => sum + columnWidth(column, coarse), 0);
+  let frozenWidth = COLUMNS.reduce((sum, column) => sum + columnWidth(column, coarse, statusWidth), 0);
   const hidden: ColumnKey[] = [];
   for (const column of FOLD_ORDER) {
-    if (frozenWidth + MIN_VISIBLE_DAYS * dayWidth <= available) break;
+    if (frozenWidth + minVisible * dayWidth <= available) break;
     hidden.push(column.key);
-    frozenWidth -= columnWidth(column, coarse);
+    frozenWidth -= columnWidth(column, coarse, statusWidth);
   }
   return hidden;
 }
 
-function readChosen(): ColumnKey[] | null {
+function readStored<T>(key: string, parse: (value: unknown) => T | null): T | null {
   try {
-    const saved = JSON.parse(window.localStorage.getItem(COLUMNS_KEY) ?? "null") as unknown;
-    return Array.isArray(saved) ? saved.filter((key): key is ColumnKey => COLUMNS.some((column) => column.key === key)) : null;
+    return parse(JSON.parse(window.localStorage.getItem(key) ?? "null") as unknown);
   } catch {
     return null;
   }
 }
 
-function writeChosen(hidden: ColumnKey[] | null) {
+function writeStored(key: string, value: unknown) {
   try {
-    if (hidden) window.localStorage.setItem(COLUMNS_KEY, JSON.stringify(hidden));
-    else window.localStorage.removeItem(COLUMNS_KEY);
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, JSON.stringify(value));
   } catch { /* хранилище недоступно — выбор живёт до перезагрузки */ }
 }
+
+const readChosen = () => readStored<ColumnKey[]>(COLUMNS_KEY, (saved) => Array.isArray(saved)
+  ? saved.filter((key): key is ColumnKey => COLUMNS.some((column) => column.key === key)) : null);
+const readScale = () => readStored<SheetScale>(SCALE_KEY, (saved) => saved === "week" ? "week" : null) ?? "day";
 
 function isCoarse() {
   try {
@@ -201,28 +284,30 @@ function isCoarse() {
   }
 }
 
-/** Подсказка к шапке: полное название колонки листа и, где нужно, что она значит. */
+/** Подсказка к шапке: полное название колонки и, где нужно, что она значит. */
 export function columnTitle(column: Pick<Column, "name" | "hint">) {
   return column.hint ? `${column.name} — ${column.hint}` : column.name;
 }
 
-/** Показанные колонки и их отступы слева для закрепления. */
-interface Layout { columns: Column[]; lefts: number[]; width: number; hidden: Set<ColumnKey> }
+/** Показанные колонки, их ширины и отступы слева для закрепления. */
+interface Layout { columns: Column[]; widths: number[]; lefts: number[]; width: number; hidden: Set<ColumnKey> }
 
-function sheetLayout(hidden: ColumnKey[], coarse: boolean): Layout {
+function sheetLayout(hidden: ColumnKey[], coarse: boolean, statusWidth: number): Layout {
   const columns = COLUMNS.filter((column) => !hidden.includes(column.key));
   const lefts: number[] = [];
+  const widths: number[] = [];
   let width = 0;
   for (const column of columns) {
     lefts.push(width);
-    width += columnWidth(column, coarse);
+    widths.push(columnWidth(column, coarse, statusWidth));
+    width += widths[widths.length - 1];
   }
-  return { columns, lefts, width, hidden: new Set(hidden) };
+  return { columns, widths, lefts, width, hidden: new Set(hidden) };
 }
 
 type Editing = { project: string; field: string; top: number; left: number };
 
-export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, suppliedValues, arrivalValues, canEdit, busy, onMark, onDeadline, onOpenProject, onOpenJournal }: {
+export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, suppliedValues, arrivalValues, canEdit, busy, onMark, onDeadline, onOpenProject, onOpenJournal, hasCard }: {
   rows: ProductionPlanRow[];
   from: string;
   to: string;
@@ -237,20 +322,26 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
   onDeadline: (project: string, deadline: string) => Promise<void>;
   onOpenProject: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
+  /** Есть ли у проекта карточка в «Проектах» (подсказка к №); по умолчанию — есть КБ. */
+  hasCard?: (row: ProductionPlanRow) => boolean;
 }) {
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [choosing, setChoosing] = useState(false);
   const [chosen, setChosen] = useState<ColumnKey[] | null>(readChosen);
+  const [scale, setScale] = useState<SheetScale>(readScale);
   const [space, setSpace] = useState({ available: 0, day: 0 });
   const [coarse] = useState(isCoarse);
   const wrapRef = useRef<HTMLDivElement>(null);
   const days = useMemo(() => sheetDays(from, to, holidays), [from, to, holidays]);
-  const months = useMemo(() => sheetMonths(days), [days]);
+  const weeks = useMemo(() => sheetWeeks(days), [days]);
+  const months = useMemo(() => sheetMonths(scale === "week" ? weeks : days), [scale, weeks, days]);
   const groups = useMemo(() => groupSheetRows(rows, query), [rows, query]);
-  const hidden = chosen ?? autoHiddenColumns(space.available, space.day, coarse);
-  const layout = useMemo(() => sheetLayout(hidden, coarse), [hidden.join(","), coarse]); // eslint-disable-line react-hooks/exhaustive-deps
+  const statusWidth = useMemo(() => statusColumnWidth(rows), [rows]);
+  const hidden = chosen ?? autoHiddenColumns(space.available, space.day, coarse, statusWidth, scale === "week" ? MIN_VISIBLE_WEEKS : MIN_VISIBLE_DAYS);
+  const layout = useMemo(() => sheetLayout(hidden, coarse, statusWidth), [hidden.join(","), coarse, statusWidth]); // eslint-disable-line react-hooks/exhaustive-deps
+  const units = scale === "week" ? weeks.length : days.length;
 
   // Ширина листа решает, какие колонки скрыть по умолчанию; меряем до отрисовки, чтобы не мигало.
   useLayoutEffect(() => {
@@ -265,14 +356,17 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
     const observer = new ResizeObserver(measure);
     observer.observe(wrap);
     return () => observer.disconnect();
-  }, []);
+  }, [scale]);
 
-  // При открытии календарь стоит на сегодня: оно третьим днём справа от закреплённых колонок.
+  // При открытии календарь стоит на сегодня: оно третьей колонкой справа от закреплённых (неделя — второй).
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
-    const day = wrap?.querySelector<HTMLElement>("th.zg-day-head")?.getBoundingClientRect().width ?? 0;
-    if (wrap) wrap.scrollLeft = todayScrollLeft(days, today, day);
-  }, [from, to, today]); // eslint-disable-line react-hooks/exhaustive-deps
+    const width = wrap?.querySelector<HTMLElement>("th.zg-day-head")?.getBoundingClientRect().width ?? 0;
+    if (!wrap) return;
+    wrap.scrollLeft = scale === "week"
+      ? todayScrollLeft(weeks.map((week) => ({ iso: week.days.some((day) => day.iso === today) ? today : week.iso })), today, width, 1)
+      : todayScrollLeft(days, today, width);
+  }, [from, to, today, scale]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!editing) return;
@@ -297,24 +391,37 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
 
   function choose(next: ColumnKey[] | null) {
     setChosen(next);
-    writeChosen(next);
+    writeStored(COLUMNS_KEY, next);
+  }
+
+  function pickScale(next: SheetScale) {
+    setScale(next);
+    writeStored(SCALE_KEY, next === "week" ? next : null);
   }
 
   const visible = SHEET_GROUPS.filter(([group]) => group !== "closed" || showClosed);
   const shown = visible.reduce((count, [group]) => count + groups[group].length, 0);
   const row = editing ? rows.find((item) => item.project === editing.project) : undefined;
-  const span = layout.columns.length + days.length;
+  const span = layout.columns.length + units;
+  const cardOf = hasCard ?? ((item: ProductionPlanRow) => item.kits.length > 0);
 
   return <div className="zg">
     <div className="zg-toolbar">
-      <input aria-label="Поиск проекта" placeholder="№ проекта или заказчик" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <input aria-label="Поиск проекта" placeholder="№ проекта или заказчик…" value={query} onChange={(event) => setQuery(event.target.value)} />
       {groups.closed.length > 0 && <label className="zg-toggle"><input type="checkbox" checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} />Закрытые проекты · {groups.closed.length}</label>}
-      <span className="zg-legend" aria-label="Обозначения">
-        <span title="Плановые работы по проекту"><i className="zg-key-bar" />работы</span>
-        <span title="Количество запуска в штуках"><i className="zg-key-qty">12</i>запуск, шт</span>
-        <span title="День прихода комплектующих"><i className="zg-key-arrival" />приход</span>
-        <span title="Дедлайн проекта"><i className="zg-key-deadline" />дедлайн</span>
-        <span title="Значение поставлено вручную поверх расчёта ERP"><i className="zg-key-manual" />вручную</span>
+      <div className="zg-scale" role="group" aria-label="Масштаб календаря">
+        <button type="button" className={scale === "day" ? "on" : undefined} aria-pressed={scale === "day"} onClick={() => pickScale("day")}>Дни</button>
+        <button type="button" className={scale === "week" ? "on" : undefined} aria-pressed={scale === "week"} onClick={() => pickScale("week")}>Недели</button>
+      </div>
+      <span className="zg-legend" role="list" aria-label="Обозначения">
+        <span role="listitem" title="Плановые работы по проекту; цвет полосы — цвет проекта, как полоска у №"><i className="zg-key-bar" />работы, цвет — проект</span>
+        <span role="listitem" title="Количество запуска в штуках — на первом рабочем дне полосы"><i className="zg-key-qty">12</i>запуск, шт</span>
+        <span role="listitem" title="День прихода комплектующих"><i className="zg-key-arrival" />приход</span>
+        <span role="listitem" title="Дедлайн проекта — красная черта в конце дня"><i className="zg-key-deadline" />дедлайн</span>
+        {scale === "day" && <span role="listitem" title="Выходной или праздник цеха"><i className="zg-key-off" />выходной</span>}
+        <span role="listitem" title={scale === "day" ? "Сегодняшний день" : "Текущая неделя"}><i className="zg-key-today" />{scale === "day" ? "сегодня" : "эта неделя"}</span>
+        <span role="listitem" title="Значение поставлено вручную поверх расчёта ERP"><i className="zg-key-manual" />вручную</span>
+        {layout.hidden.has("comment") && <span role="listitem" title="У проекта есть комментарий — текст в подсказке к №"><i className="zg-key-note" />комментарий</span>}
       </span>
       <button type="button" className={`secondary small zg-columns${layout.hidden.size ? " active" : ""}`} aria-expanded={choosing} onClick={() => setChoosing((current) => !current)}
         title={layout.hidden.size ? `Скрыто: ${COLUMNS.filter((column) => layout.hidden.has(column.key)).map((column) => column.name).join(", ")}` : undefined}>
@@ -330,11 +437,13 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
       <button type="button" className="link-button" disabled={!chosen} onClick={() => choose(null)}>По ширине экрана</button>
     </div>}
     <div ref={wrapRef} className={`zg-wrap${shown ? "" : " zg-wrap-empty"}`}>
-      <table className="zg-table" aria-label="Загрузка цеха по проектам"
-        style={{ width: `calc(${layout.width}px + ${days.length} * var(--zg-day))`, "--zg-frozen": `${layout.width}px` } as CSSProperties}>
+      <table className={`zg-table${scale === "week" ? " zg-weeks" : ""}`} aria-label="Загрузка цеха по проектам"
+        style={{ width: `calc(${layout.width}px + ${units} * var(${scale === "week" ? "--zg-week" : "--zg-day"}))`, "--zg-frozen": `${layout.width}px` } as CSSProperties}>
         <colgroup>
-          {layout.columns.map((column) => <col key={column.key} style={{ width: columnWidth(column, coarse) }} />)}
-          {days.map((day) => <col key={day.iso} className="zg-day-col" />)}
+          {layout.columns.map((column, index) => <col key={column.key} style={{ width: layout.widths[index] }} />)}
+          {scale === "week"
+            ? weeks.map((week) => <col key={week.iso} className="zg-week-col" />)
+            : days.map((day) => <col key={day.iso} className="zg-day-col" />)}
         </colgroup>
         <thead>
           <tr className="zg-head-months">
@@ -343,14 +452,21 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
             {months.map((month, index) => <th key={month.key} colSpan={month.span} className={`zg-month-head${index ? " zg-month" : ""}`}><span>{month.label}</span></th>)}
           </tr>
           <tr className="zg-head-days">
-            {days.map((day) => <th key={day.iso} className={dayClass(day, today, "zg-day-head")}
-              title={`${day.weekday} ${formatDate(day.iso)}${day.iso === today ? " · сегодня" : ""}`}><b>{day.day}</b><span>{day.weekday}</span></th>)}
+            {scale === "week"
+              ? weeks.map((week, index) => {
+                const current = week.days.some((day) => day.iso === today);
+                return <th key={week.iso} className={["zg-day-head zg-week-head", current && "zg-today", weekMonthStart(weeks, index) && "zg-month"].filter(Boolean).join(" ")}
+                  title={`Неделя ${formatDate(week.from)} – ${formatDate(week.to)}${current ? " · текущая" : ""}`}>
+                  <b>{formatDayMonth(week.from)}</b><span>–{formatDayMonth(week.to)}</span></th>;
+              })
+              : days.map((day) => <th key={day.iso} className={dayClass(day, today, "zg-day-head")}
+                title={`${day.weekday} ${formatDate(day.iso)}${day.iso === today ? " · сегодня" : day.off ? " · выходной" : ""}`}><b>{day.day}</b><span>{day.weekday}</span></th>)}
           </tr>
         </thead>
         <tbody>
           {visible.map(([group, label]) => groups[group].length > 0 && <SheetGroupRows key={group} group={group} label={label} rows={groups[group]}
-            layout={layout} days={days} today={today} canEdit={canEdit} busy={busy} suppliedValues={suppliedValues}
-            open={open} mark={mark} onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} />)}
+            layout={layout} days={days} weeks={scale === "week" ? weeks : null} units={units} today={today} canEdit={canEdit} busy={busy} suppliedValues={suppliedValues}
+            open={open} mark={mark} onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} hasCard={cardOf} />)}
           {!shown && <tr className="zg-empty-row"><td colSpan={span} className="zg-empty">
             <span className="zg-empty-text">{query ? "Под этот поиск проектов нет." : "Проектов в плане нет — заведите проект в «Проектах»."}</span>
           </td></tr>}
@@ -368,6 +484,11 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
   </div>;
 }
 
+/** Неделя открывает новый месяц строки месяцев (месяц недели — по её первому дню в листе). */
+function weekMonthStart(weeks: SheetWeek[], index: number) {
+  return index > 0 && weeks[index - 1].iso.slice(0, 7) !== weeks[index].iso.slice(0, 7);
+}
+
 function frozen(layout: Layout, index: number, extra = ""): { className: string; style: CSSProperties } {
   const classes = ["zg-freeze", extra];
   if (index === layout.columns.length - 1) classes.push("zg-edge");
@@ -378,12 +499,14 @@ function dayClass(day: SheetDay, today: string, base: string) {
   return [base, day.off && "zg-off", day.iso === today && "zg-today", day.monthStart && "zg-month"].filter(Boolean).join(" ");
 }
 
-function SheetGroupRows({ group, label, rows, layout, days, today, canEdit, busy, suppliedValues, open, mark, onOpenProject, onOpenJournal }: {
+function SheetGroupRows({ group, label, rows, layout, days, weeks, units, today, canEdit, busy, suppliedValues, open, mark, onOpenProject, onOpenJournal, hasCard }: {
   group: SheetGroup;
   label: string;
   rows: ProductionPlanRow[];
   layout: Layout;
   days: SheetDay[];
+  weeks: SheetWeek[] | null;
+  units: number;
   today: string;
   canEdit: boolean;
   busy: boolean;
@@ -392,15 +515,16 @@ function SheetGroupRows({ group, label, rows, layout, days, today, canEdit, busy
   mark: (project: string, field: string, value: string, text?: string) => Promise<void>;
   onOpenProject: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
+  hasCard: (row: ProductionPlanRow) => boolean;
 }) {
   return <>
-    <tr className={`zg-group zg-group-${group}`}><td colSpan={layout.columns.length + days.length}><span className="zg-group-label">{label} · {rows.length}</span></td></tr>
+    <tr className={`zg-group zg-group-${group}`}><td colSpan={layout.columns.length + units}><span className="zg-group-label">{label} · {rows.length}</span></td></tr>
     {rows.map((row) => <tr key={row.project} className={`zg-row zg-row-${group}`} data-project={row.project}
       style={{ "--zg-color": `var(--zg-c${projectColor(row.project)})` } as CSSProperties}>
       {layout.columns.map((column, index) => <SheetCellView key={column.key} column={column} index={index} layout={layout} row={row}
         canEdit={canEdit} busy={busy} suppliedValues={suppliedValues} open={open} mark={mark}
-        onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} />)}
-      <CalendarCells row={row} days={days} today={today} canEdit={canEdit} open={open} />
+        onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} hasCard={hasCard} />)}
+      {weeks ? <WeekCells row={row} weeks={weeks} today={today} /> : <CalendarCells row={row} days={days} today={today} canEdit={canEdit} open={open} />}
     </tr>)}
   </>;
 }
@@ -422,7 +546,7 @@ function arrivalTone(value: string, late: boolean) {
   return "";
 }
 
-function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValues, open, mark, onOpenProject, onOpenJournal }: {
+function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValues, open, mark, onOpenProject, onOpenJournal, hasCard }: {
   column: Column;
   index: number;
   layout: Layout;
@@ -434,6 +558,7 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   mark: (project: string, field: string, value: string, text?: string) => Promise<void>;
   onOpenProject: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
+  hasCard: (row: ProductionPlanRow) => boolean;
 }) {
   const key = column.key;
   const cell = key in (row.sheet ?? {}) ? row.sheet?.[key as ProductionPlanSheetField] : undefined;
@@ -441,11 +566,27 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   const editable = canEdit ? "zg-edit" : "";
   const td = (content: ReactNode, extra = "", props: Record<string, unknown> = {}) => {
     const base = frozen(layout, index, [`zg-col-${key}`, manual, extra].filter(Boolean).join(" "));
-    return <td {...base} {...props}>{content}</td>;
+    // Правимая ячейка доступна с клавиатуры: Tab — к ней, Enter или пробел — правка.
+    const onClick = props.onClick as ((event: MouseEvent<HTMLElement>) => void) | undefined;
+    const keys = canEdit && onClick ? {
+      tabIndex: 0,
+      onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onClick({ currentTarget: event.currentTarget } as MouseEvent<HTMLElement>);
+      },
+    } : {};
+    return <td {...base} {...props} {...keys}>{content}</td>;
   };
+  const dash = <span className="zg-empty-mark">—</span>;
 
   if (key === "project") {
-    return td(<button className="zg-project" title={row.kits.length ? "Открыть карточку проекта" : "Открыть журнал проекта"} onClick={() => onOpenProject(row)}>{row.project}</button>);
+    // «Комментарий» скрыт — он виден отметкой у номера, текст — в подсказке.
+    const note = layout.hidden.has("comment") ? row.sheet?.comment?.value ?? "" : "";
+    const action = hasCard(row) ? "Открыть карточку проекта" : "Карточки проекта нет — открыть журнал проекта";
+    return td(<button className="zg-project" title={note ? `${action}\nКомментарий: ${note}` : action} onClick={() => onOpenProject(row)}>
+      {row.project}{note && <i className="zg-note-mark" aria-hidden />}
+    </button>, note ? "zg-has-note" : "");
   }
   if (key === "customer") {
     return td(<button className="zg-link" title={row.customer ? `${row.customer} — журнал проекта` : "Журнал проекта"} onClick={() => onOpenJournal(row)}>{row.customer || "—"}</button>);
@@ -456,7 +597,7 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   if (key === "deadline") {
     // Колонка «Дн.» скрыта — светофор дедлайна переезжает в «Дедлайн».
     const tone = layout.hidden.has("days_left") ? `zg-days ${daysTone(row.days_left)}` : "";
-    return td(row.deadline ? dayMonth(row.deadline) : "", `zg-center ${tone} ${editable}`,
+    return td(row.deadline ? formatDayMonth(row.deadline) : dash, `zg-center ${tone} ${editable}`,
       { title: row.deadline ? `Дедлайн ${formatDate(row.deadline)}${row.days_left !== null ? ` · дней до дедлайна: ${row.days_left}` : ""}` : "Без дедлайна", onClick: (event: MouseEvent<HTMLElement>) => open(event, row.project, "deadline") });
   }
   const value = cell?.value ?? "";
@@ -484,16 +625,18 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   }
   const click = { onClick: (event: MouseEvent<HTMLElement>) => open(event, row.project, key) };
   if (key === "status") {
-    const [first, ...rest] = statusList(value);
+    // Главный статус — целым словом (ПП-1); остальные — «+N», полный список словами ERP — в подсказке.
+    const [first, ...rest] = orderStatuses(value);
+    const all = orderStatuses(value).map(statusLabel).join(", ");
     return td(<span className="zg-chips">
-      {first && <span className={`zg-chip t-${STATUS_TONES[first] ?? "erp"}`}>{first}</span>}
-      {rest.length > 0 && <span className="zg-more">+{rest.length}</span>}
+      {first ? <StatusChip status={first} title={all} /> : <span className="zg-empty-mark">—</span>}
+      {rest.length > 0 && <span className="zg-more" title={all} aria-label={`ещё ${rest.length}: ${rest.map(statusLabel).join(", ")}`}>+{rest.length}</span>}
     </span>,
-    editable, { title: [value, manualTitle(cell), row.blocker ? `${row.blocker.type}: ${row.blocker.text}` : ""].filter(Boolean).join(" — ") || undefined, ...click });
+    editable, { title: [all, manualTitle(cell, (auto) => statusList(auto).map(statusLabel).join(", ")), row.blocker ? `${row.blocker.type}: ${row.blocker.text}` : ""].filter(Boolean).join(" — ") || undefined, ...click });
   }
   if (key === "ready") {
     const percent = Math.max(0, Math.min(100, Number(value) || 0));
-    return td(value === "" ? "" : <span className={`zg-ready${percent >= 100 ? " full" : percent === 0 ? " zero" : ""}`}>
+    return td(value === "" ? dash : <span className={`zg-ready${percent >= 100 ? " full" : percent === 0 ? " zero" : ""}`}>
       <b>{value}%</b><i style={{ "--zg-ready": `${percent}%` } as CSSProperties} />
     </span>, editable, {
       title: manualTitle(cell, (auto) => auto && `${auto}%`) ?? "Выпуск против количества задания, по норме", ...click,
@@ -502,7 +645,7 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   if (key === "kit_arrival") {
     const date = /^\d{4}-\d{2}-\d{2}$/.test(value);
     const late = date && row.deadline !== null && value > row.deadline;
-    return td(date ? dayMonth(value) : value, `zg-center ${arrivalTone(value, late)} ${editable}`, {
+    return td(date ? formatDayMonth(value) : value || dash, `zg-center ${arrivalTone(value, late)} ${editable}`, {
       title: manualTitle(cell, (auto) => /^\d{4}-\d{2}-\d{2}$/.test(auto) ? formatDate(auto) : auto)
         ?? (late ? `Приход ${formatDate(value)} — позже дедлайна` : date ? `Приход комплектующих ${formatDate(value)}` : columnTitle(column)), ...click,
     });
@@ -520,6 +663,7 @@ function CalendarCells({ row, days, today, canEdit, open }: {
 }) {
   const work = new Set(row.calendar?.work ?? []);
   const starts = row.calendar?.starts ?? {};
+  const labels = startLabels(days, work, starts);
   const notes = row.calendar?.notes ?? {};
   const arrival = row.sheet?.kit_arrival?.value ?? "";
   return <>{days.map((day, index) => {
@@ -534,14 +678,70 @@ function CalendarCells({ row, days, today, canEdit, open }: {
     if (arrival === day.iso) classes.push("zg-arrival");
     if (canEdit) classes.push("zg-edit");
     const titles = [
-      `${row.project} · ${day.weekday} ${formatDate(day.iso)}`,
+      `${row.project} · ${day.weekday} ${formatDate(day.iso)}${day.off ? " · выходной" : ""}`,
       busy && "плановые работы", starts[day.iso] && `запуск ${starts[day.iso]} шт`,
       row.deadline === day.iso && "дедлайн", arrival === day.iso && "приход комплектующих", notes[day.iso],
     ].filter(Boolean);
-    const text = notes[day.iso] ?? (starts[day.iso] ? String(starts[day.iso]) : "");
+    const note = notes[day.iso];
+    const quantity = !note && labels[day.iso] ? String(labels[day.iso]) : "";
     return <td key={day.iso} className={classes.join(" ")} title={titles.join(" · ")}
       onClick={(event) => open(event, row.project, `day:${day.iso}`)}>
-      {busy && <i className="zg-bar" />}{text && <span className="zg-day-text">{text}</span>}
+      {busy && <i className="zg-bar" />}
+      {note && <span className="zg-day-text">{note}</span>}
+      {quantity && <span className="zg-qty">{quantity}</span>}
+    </td>;
+  })}</>;
+}
+
+/** Полоса и метки недели в долях её семи дней: работы с первого по последний рабочий день, дедлайн — в конце дня. */
+export function weekMarks(week: SheetWeek, row: Pick<ProductionPlanRow, "deadline" | "calendar" | "sheet">) {
+  const work = new Set(row.calendar?.work ?? []);
+  const busy = week.days.filter((day) => work.has(day.iso)).map((day) => weekIndex(day.iso));
+  const starts = row.calendar?.starts ?? {};
+  const quantity = week.days.reduce((sum, day) => sum + (starts[day.iso] ?? 0), 0);
+  const notes = week.days.filter((day) => row.calendar?.notes[day.iso]).map((day) => `${formatDayMonth(day.iso)}: ${row.calendar!.notes[day.iso]}`);
+  const arrival = row.sheet?.kit_arrival?.value ?? "";
+  const inWeek = (iso: string | null) => Boolean(iso && week.days.some((day) => day.iso === iso));
+  return {
+    bar: busy.length ? { from: Math.min(...busy) / 7, to: (Math.max(...busy) + 1) / 7 } : null,
+    quantity, notes,
+    deadline: inWeek(row.deadline) ? (weekIndex(row.deadline!) + 1) / 7 : null,
+    arrival: inWeek(arrival) ? weekIndex(arrival) / 7 : null,
+  };
+}
+
+function WeekCells({ row, weeks, today }: { row: ProductionPlanRow; weeks: SheetWeek[]; today: string }) {
+  const work = new Set(row.calendar?.work ?? []);
+  const shift = (iso: string, by: number) => { const day = parseDay(iso); return isoDay(new Date(day.getFullYear(), day.getMonth(), day.getDate() + by)); };
+  return <>{weeks.map((week, index) => {
+    const marks = weekMarks(week, row);
+    const current = week.days.some((day) => day.iso === today);
+    const firstBusy = week.days.find((day) => work.has(day.iso));
+    const lastBusy = [...week.days].reverse().find((day) => work.has(day.iso));
+    const classes = ["zg-day zg-week", current && "zg-today", weekMonthStart(weeks, index) && "zg-month"];
+    if (marks.bar) {
+      classes.push("zg-work");
+      if (!work.has(shift(firstBusy!.iso, -1))) classes.push("zg-work-start");
+      if (!work.has(shift(lastBusy!.iso, 1))) classes.push("zg-work-end");
+    }
+    const titles = [
+      `${row.project} · неделя ${formatDayMonth(week.from)}–${formatDayMonth(week.to)}`,
+      marks.bar && `плановые работы ${formatDayMonth(firstBusy!.iso)}–${formatDayMonth(lastBusy!.iso)}`,
+      marks.quantity > 0 && `запуск ${marks.quantity} шт`,
+      marks.deadline !== null && `дедлайн ${formatDate(row.deadline)}`,
+      marks.arrival !== null && `приход комплектующих ${formatDate(row.sheet?.kit_arrival?.value)}`,
+      ...marks.notes,
+    ].filter(Boolean);
+    const style = {
+      ...(marks.bar ? { "--zg-from": `${marks.bar.from * 100}%`, "--zg-to": `${(1 - marks.bar.to) * 100}%` } : {}),
+      ...(marks.deadline !== null ? { "--zg-deadline-at": `${marks.deadline * 100}%` } : {}),
+      ...(marks.arrival !== null ? { "--zg-arrival-at": `${marks.arrival * 100}%` } : {}),
+    } as CSSProperties;
+    return <td key={week.iso} className={classes.filter(Boolean).join(" ")} title={titles.join(" · ")} style={style}>
+      {marks.bar && <i className="zg-bar" />}
+      {marks.deadline !== null && <i className="zg-week-deadline" />}
+      {marks.arrival !== null && <i className="zg-week-arrival" />}
+      {marks.quantity > 0 && <span className="zg-qty">{marks.quantity}</span>}
     </td>;
   })}</>;
 }
@@ -564,8 +764,9 @@ function SheetEditor({ row, field, busy, shopStatuses, arrivalValues, mark, onDe
     return cell?.value ?? "";
   });
   const [picked, setPicked] = useState(() => statusList(cell?.value ?? ""));
+  const autoShown = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDate(value) : field === "status" ? statusList(value).map(statusLabel).join(", ") : value;
   const auto = cell?.manual ? <button className="secondary small" disabled={busy} onClick={() => void mark(row.project, field, "авто")}>
-    Вернуть расчёт ERP{cell.auto ? `: ${/^\d{4}-\d{2}-\d{2}$/.test(cell.auto) ? formatDate(cell.auto) : cell.auto}${field === "ready" ? "%" : ""}` : ""}
+    Вернуть расчёт ERP{cell.auto ? `: ${autoShown(cell.auto)}${field === "ready" ? "%" : ""}` : ""}
   </button> : null;
   const head = (title: string) => <div className="zg-pop-head"><strong>{title}</strong><span>{row.project}</span><button className="link-button" aria-label="Закрыть" onClick={close}>✕</button></div>;
 
@@ -590,8 +791,9 @@ function SheetEditor({ row, field, busy, shopStatuses, arrivalValues, mark, onDe
   }
   if (field === "status") {
     return <>{head("Статус")}
-      <div className="zg-status-pick">{shopStatuses.map((status) => <label key={status} className={`zg-chip t-${STATUS_TONES[status] ?? "erp"}${picked.includes(status) ? " on" : ""}`}>
-        <input type="checkbox" checked={picked.includes(status)} onChange={(event) => setPicked((current) => event.target.checked ? [...current, status] : current.filter((item) => item !== status))} />{status}
+      <div className="zg-status-pick">{shopStatuses.map((status) => <label key={status} data-status={status} className={`zg-pick${picked.includes(status) ? " on" : ""}`}>
+        <input type="checkbox" checked={picked.includes(status)} onChange={(event) => setPicked((current) => event.target.checked ? [...current, status] : current.filter((item) => item !== status))} />
+        <StatusChip status={status} />
       </label>)}</div>
       <div className="zg-pop-acts">
         <button className="primary small" disabled={busy || !picked.length} onClick={() => void mark(row.project, field, picked.filter((item) => shopStatuses.includes(item)).join(", "))}>Поставить статус</button>
@@ -610,14 +812,14 @@ function SheetEditor({ row, field, busy, shopStatuses, arrivalValues, mark, onDe
     return <>{head("Дата прихода комплектующих")}
       <div className="zg-pop-row">
         <input type="date" aria-label="Дата прихода" value={text} onChange={(event) => setText(event.target.value)} autoFocus />
-        <button className="primary small" disabled={busy || !text} onClick={() => void mark(row.project, field, text)}>{text ? `Поставить ${formatDate(text).slice(0, 5)}` : "Поставить дату"}</button>
+        <button className="primary small" disabled={busy || !text} onClick={() => void mark(row.project, field, text)}>{text ? `Поставить ${formatDayMonth(text)}` : "Поставить дату"}</button>
       </div>
       <div className="zg-pop-acts">{arrivalValues.map((value) => <button key={value} className="secondary small" disabled={busy} onClick={() => void mark(row.project, field, value)}>{value}</button>)}{auto}</div>
     </>;
   }
   // comment
   return <>{head("Комментарий")}
-    <textarea aria-label="Комментарий" value={text} autoFocus maxLength={2000} onChange={(event) => setText(event.target.value)}
+    <AutoTextarea aria-label="Комментарий" value={text} autoFocus maxLength={2000} maxRows={8} onChange={setText}
       onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void mark(row.project, field, "", text.trim()); } }} />
     <div className="zg-pop-acts">
       <button className="primary small" disabled={busy || text.trim() === (cell?.value ?? "")} onClick={() => void mark(row.project, field, "", text.trim())}>Записать</button>

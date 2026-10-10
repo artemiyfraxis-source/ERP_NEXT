@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import type { Principal } from "./api";
@@ -109,7 +109,7 @@ it("edits a technology row with the old value and hides editing for non-admins",
 
   const { unmount } = render(<ReferencesPage principal={admin} />);
   fireEvent.click(await screen.findByRole("button", { name: "Терминалы" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Править" }));
+  fireEvent.click((await screen.findAllByText("МГТФ"))[0]); // строка целиком открывает правку
   fireEvent.change(screen.getByLabelText("Поле Сечение"), { target: { value: "0,5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
 
@@ -255,7 +255,7 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   expect(screen.queryByText("9")).toBeNull();
   expect(screen.getAllByText("нет у кабеля")).toHaveLength(3);
   expect(screen.getByRole("columnheader", { name: "D1 кабеля" })).toBeInTheDocument();
-  fireEvent.click(screen.getAllByRole("button", { name: "Править" })[0]);
+  fireEvent.click(screen.getAllByRole("row")[1]);
   expect(screen.getByLabelText("Поле L1")).toBeInTheDocument();
   expect(screen.queryByLabelText("Поле D1")).toBeNull();
 });
@@ -279,7 +279,8 @@ it("shows БД.ОБ as cards by type with every column and the БД.ОП operati
   expect(await screen.findByText("ОБ.015")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Все · 2" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Инструмент · 1" })).toBeInTheDocument();
-  expect(await screen.findByText(/в 1 опер\./)).toBeInTheDocument();
+  // «Операций» — число операций БД.ОП, что ссылаются на единицу.
+  await waitFor(() => expect(within(screen.getByText("ОБ.015").closest("tr") as HTMLElement).getAllByRole("cell").map((cell) => cell.textContent)).toContain("1"));
 
   fireEvent.click(screen.getByText("ОБ.015"));
   expect(screen.getByText("900 000,00")).toBeInTheDocument();
@@ -307,4 +308,53 @@ it("matches a wire article to AWG, ГОСТ section and Ø by cable type, as the
   expect(screen.getByText("AWG", { selector: ".wire-result small" }).nextSibling).toHaveTextContent("24");
   fireEvent.change(screen.getByLabelText("Артикул провода"), { target: { value: "ПуГВ 1,5" } });
   expect(screen.getByText(/Марка не распознана/)).toBeInTheDocument();
+});
+
+it("БД-1: terminals show Russian headers and «гнездо/штырь» instead of the sheet's English words", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({
+      metadata: null,
+      columns: ["Product Name", "Series", "Тип\n контакта", "Артикул\n контакта (REEL)", "Усилие обрыва контакта, N", "Максисмальная сила тока, А", "Ссылка на DATASHEET на сайте производителя"],
+      records: [
+        { id: "t1", tab: "ter", display_text: "DS1070", source_sheet: "БД.ТЕР", fields: { "Product Name": "DS1070", "Series": "I-DS1070", "Тип\n контакта": "Female", "Артикул\n контакта (REEL)": "T-DS1070-SC600", "Усилие обрыва контакта, N": "30", "Максисмальная сила тока, А": "3", "Ссылка на DATASHEET на сайте производителя": "https://example.test/ds1070-datasheet-with-a-very-long-address.pdf" } },
+        { id: "t2", tab: "ter", display_text: "DS1073", source_sheet: "БД.ТЕР", fields: { "Product Name": "DS1073", "Series": "I-DS1073", "Тип\n контакта": "Male (Pin)", "Артикул\n контакта (REEL)": "T-DS1073-PC800", "Усилие обрыва контакта, N": "31", "Максисмальная сила тока, А": "3", "Ссылка на DATASHEET на сайте производителя": "" } },
+      ],
+    });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ReferencesPage principal={admin} initialTab="ter" />);
+  expect(await screen.findByText("T-DS1070-SC600")).toBeInTheDocument();
+  const headers = screen.getAllByRole("columnheader").map((header) => header.textContent?.trim());
+  for (const russian of ["Наименование", "Серия", "Тип контакта", "Артикул контакта (катушка)", "Усилие обрыва контакта, Н", "Максимальная сила тока, А"]) expect(headers).toContain(russian);
+  expect(headers.join("|")).not.toMatch(/Product|Series|REEL|DATASHEET|, N/);
+  // Female/Male → гнездо/штырь (значение в форме правки остаётся как на листе).
+  expect(screen.getByText("гнездо")).toBeInTheDocument();
+  expect(screen.getByText("штырь")).toBeInTheDocument();
+  expect(screen.queryByText("Female")).toBeNull();
+  // Ссылка на даташит по умолчанию скрыта — строка остаётся одной строкой, колонка включается в «Колонки».
+  expect(headers.join("|")).not.toMatch(/Даташит/);
+});
+
+it("БД-5: equipment shows «ЦАР» whatever case the sheet wrote and lists units as table rows", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "e1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: { "Тип": "Инструмент", "Инв. номер": "ОБ.048", "Наменование": "Дифманометр", "Расположение": "Цар", "Для базы": "DT-8920" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  const row = (await screen.findByText("ОБ.048")).closest("tr") as HTMLElement;
+  expect(within(row).getByText("ЦАР")).toBeInTheDocument();
+  expect(screen.queryByText("Цар")).toBeNull();
+  fireEvent.click(row);
+  expect(screen.getByText("Строка БД.ОБ")).toBeInTheDocument();
+  expect(screen.getByText("ЦАР", { selector: "dd" })).toBeInTheDocument();
 });

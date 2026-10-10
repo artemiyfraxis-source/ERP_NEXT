@@ -8,6 +8,7 @@ import { ConnectorGallery } from "./ConnectorGallery";
 import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { operationCardCount } from "./TechcardsPage";
+import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
   failureText,
   referencesApi,
@@ -84,13 +85,17 @@ const TAB_STORAGE = "erp-db-tab";
 const FIELD_TITLES: Record<string, string> = {
   baseValue: "Для базы", obType: "Тип",
   opNumber: "Номер", opName: "Название", tOp: "Время операции, с", tPrep: "Время подготовки, с", tMachine: "Время машины, с/оп; с/м",
-  terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Product Name", connType: "Тип разъёма",
+  terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Наименование", connType: "Тип разъёма",
   terType: "Тип контакта", artISL: "Артикул ISL", artSAG: "Артикул SAG", terArticle: "Артикул контакта", terLPlus: "L+",
   terLMinus: "L−", terStep: "Шаг", terApplicator: "Аппликатор", terStrip: "Длина зачистки, мм",
-  terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, N", terPullForceMax: "Усилие обрыва до, N",
+  terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, Н", terPullForceMax: "Усилие обрыва до, Н",
   coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
 };
-const fieldTitle = (field: string) => FIELD_TITLES[field] ?? field;
+// Заголовки листа, которых нет в карте: без переносов строк, русские слова вместо английских (referenceLabels.ts).
+const fieldTitle = (field: string) => FIELD_TITLES[field] ?? headerLabel(field);
+// Столбцы БД.ТЕР, нужные редко (ссылка, источник, материал, диаметры изоляции, пневма): в «Колонках», по умолчанию скрыты —
+// остальные (артикулы, шаг, обжим) укладываются в ширину ноутбука (аудит БД-3).
+const TER_RARE = new Set(["пневма автомат", "отр", "диаметр изоляции от, мм", "диаметр изоляции до, мм", "материал контакта", "ссылка на datasheet на сайте производителя", "источник высоты обжима"]);
 // БД.КОАКС (owner 29.09.2026): Ø belong to the cable (СПР.КАБ · коаксиал), the connector row keeps only lengths;
 // D1–D3 come from СПР.КАБ by «Провод», as the sheet's D1 formula does. Same key as the generator's coaxCableDiaLookup_.
 const CABLE_DIAMETERS = ["D1", "D2", "D3"];
@@ -130,6 +135,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [bases, setBases] = useState<BasesResult>({ bases: [] });
   const [cables, setCables] = useState<CablesResult | null>(null);
   const [awgRecords, setAwgRecords] = useState<TechOperationRecord[] | null>(null);
+  // Вкладка, чьи записи уже пришли: таблица строится по готовым колонкам (иначе «скрыты по умолчанию» не сработает).
+  const [techReady, setTechReady] = useState("");
   const [opCount, setOpCount] = useState<number | null>(null);
   const [connectorCount, setConnectorCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -166,6 +173,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     } catch (reason) {
       setTech({ metadata: null, records: [] });
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить базу техопераций");
+    } finally {
+      setTechReady(next);
     }
   }
 
@@ -281,22 +290,23 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
             ? <span className="muted" title={`У кабеля «${record.fields["Провод"] ?? record.fields.coaxWire ?? ""}» нет D1–D3 — задайте их во вкладке «Коаксиальные кабели»`}>нет у кабеля</span>
             : <span className="muted" title="У разъёма не указан кабель («Провод»)">—</span>,
       };
+      const shown = (record: TechOperationRecord) => valueLabel(field, record.fields[field] ?? "");
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
       const long = values.some((value) => value.length > 40);
       return {
-        key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
-        // Long text (datasheet links, sources) is cut to three lines so one cell does not stretch the row; full text on hover.
-        render: long ? (record) => <span className="db-clamp" title={record.fields[field] ?? ""}>{record.fields[field] ?? ""}</span> : undefined,
-        wrap: long,
+        key: field, title: fieldTitle(field), value: shown,
+        // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
+        render: long ? (record) => <span className="db-clip" title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
+        hidden: techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU")),
         numeric: values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };
     }),
     { key: "__source", title: "Источник", value: (record) => record.source_sheet || "", hidden: true },
-    ...(canEdit ? [{
-      key: "__edit", title: "", value: () => "",
-      render: (record: TechOperationRecord) => <button className="secondary small" onClick={() => setEditing({ id: record.id, values: editValues(record) })}>Править</button>,
-    }] : []),
   ];
+  function startEdit(record: TechOperationRecord) {
+    setEditing({ id: record.id, values: editValues(record) });
+    window.scrollTo?.({ top: 0, behavior: "smooth" });
+  }
   const current = groups.flatMap((group) => group.tabs).find((def) => def.id === tab);
   const editingRecord = editing?.id ? tech.records.find((record) => record.id === editing.id) : null;
 
@@ -346,9 +356,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         records={tech.records}
         operations={obOps}
         canEdit={canEdit}
-        onEdit={(record) => { setEditing({ id: record.id, values: editValues(record) }); window.scrollTo?.({ top: 0, behavior: "smooth" }); }}
+        onEdit={startEdit}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
-      /> : <DataTable
+      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}
@@ -357,6 +367,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         storageKey={`db:${techTab}`}
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
+        // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел).
+        onRowClick={canEdit ? startEdit : undefined}
+        rowTitle={canEdit ? (record) => `Править: ${record.display_text}` : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
       />}
       {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}

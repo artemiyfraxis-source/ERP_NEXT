@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TechcardsPage } from "./TechcardsPage";
 import type { Principal, ProjectTechcard } from "./api";
@@ -39,7 +39,7 @@ function json(body: unknown, status = 200) {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
 
 it("opens only the linked techcard from the project card, without a creation form", async () => {
   window.history.replaceState({}, "", `/?section=techcards&card=${card.id}`);
@@ -129,7 +129,7 @@ it("shows the imported operation library and opens a structured template", async
   render(<TechcardsPage principal={engineer} />);
   fireEvent.click(await screen.findByText("CUT_WIRE_auto"));
   expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
-  expect(screen.getByText(/Снимок SUPPLYMAP df683f87/)).toBeInTheDocument();
+  expect(screen.queryByText(/Снимок SUPPLYMAP/)).toBeNull(); // БД-4: служебной строки нет
 });
 
 it("shows connector housing pin layout on an installation operation", async () => {
@@ -389,8 +389,10 @@ it("groups the library by category chips with counts, catalog meta and step-text
   expect(await screen.findByRole("button", { name: "Все · 2" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Резка · 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Пайка и лужение · 1" })).toBeInTheDocument();
-  expect(screen.getByText(/2 шаг\. · 1 контр\. · 1 оснастки · 3,50 с/)).toBeInTheDocument();
-  expect(screen.getByText("правлена 28.09")).toBeInTheDocument();
+  // БД-2: операции — строки таблицы с колонками «Шагов», «Контролей», «Оснастки», «Время, с».
+  const row = screen.getByText("CUT_WIRE_auto").closest("tr") as HTMLElement;
+  expect(within(row).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(expect.arrayContaining(["2", "1", "3,50", "28.09"]));
+  expect(screen.getByRole("columnheader", { name: /Контролей/ })).toBeInTheDocument();
   expect(screen.getByText("нет норм")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Поиск: Операции"), { target: { value: "флюсом" } });
@@ -542,8 +544,8 @@ it("merges БД.ОП into the operation cards: op-only codes get a card and ever
   render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "view" } }} view="templates" />);
   expect(await screen.findByText("LASER_MARK")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Все · 3" })).toBeInTheDocument();
-  expect(screen.getByText("EW-05F · Погонный")).toBeInTheDocument();
-  expect(screen.getByText("нет шаблона ТК")).toBeInTheDocument();
+  expect(screen.getByText("EW-05F")).toBeInTheDocument();
+  expect(within(screen.getByText("LASER_MARK").closest("tr") as HTMLElement).getByText("нет шаблона")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Поиск: Операции"), { target: { value: "лазер" } });
   expect(screen.queryByText("CUT_WIRE_auto")).not.toBeInTheDocument();
@@ -552,4 +554,29 @@ it("merges БД.ОП into the operation cards: op-only codes get a card and ever
   expect(screen.getByText("Программа")).toBeInTheDocument();
   expect(screen.getByText("60 с")).toBeInTheDocument();
   expect(paths.some((path) => path.includes("tab=op"))).toBe(true);
+});
+
+it("ЭТК-3/ЭТК-6: an issued techcard shows a status chip and keeps the generator folded until «Пересобрать»", async () => {
+  const issued: ProjectTechcard = { ...card, status: "Выдана", revision: 1, issued_at: "2026-10-10T10:00:00+03:00", document: {
+    operations: [{ position: 1, code: "10", connector: "A", card: { name: "Сборка", steps: [{ number: "1", kind: "Операция", text: "Собрать" }] } }], warnings: [],
+  } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/projects") return json({ items: [issued] });
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
+    if (path.endsWith("/revisions")) return json({ items: [] });
+    if (path.includes("/kitsets/")) return json({ detail: "нет набора" }, 404);
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<TechcardsPage principal={engineer} view="projects" />);
+  const list = await screen.findByRole("region", { name: "Техкарты проектов" });
+  expect(list.querySelector(".status-chip")?.textContent).toBe("Выдана");
+  await screen.findByText("Собрать");
+  expect(screen.queryByText("Свернуть генератор")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /Пересобрать/ }));
+  expect(await screen.findByText("Свернуть генератор")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Свернуть генератор" }));
+  expect(screen.queryByText("Свернуть генератор")).toBeNull();
 });

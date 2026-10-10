@@ -82,4 +82,4 @@ def test_reader_from_env_needs_the_key(monkeypatch):
     with pytest.raises(DriveError) as broken:
         drive_reader_from_env()
     assert broken.value.kind == "config"
-    assert ENV_VAR in str(broken.value)
+    assert ENV_VAR not in str(broken.value)

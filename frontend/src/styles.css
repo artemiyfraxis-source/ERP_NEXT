@@ -186,8 +186,7 @@ button.primary.danger:hover:not(:disabled) { background: color-mix(in srgb, var(
 @media (pointer: coarse) { .primary, .secondary { min-height: var(--control-h); } }
 
 /* RQ-IMPORT-UI: the three ways to create a request (SUPPLYMAP openCreate), and the Excel/calc panels. */
-.mode-tabs { display: flex; gap: 8px; padding: 0 20px 14px; flex-wrap: wrap; }
-.mode-tabs .active { border-color: var(--primary); color: var(--primary-foreground); background: var(--primary); }
+.mode-tabs { margin: 0 20px 14px; }
 .import-panel { padding: 0 20px 18px; display: grid; gap: 12px; }
 .import-panel .form-grid { padding: 0; }
 .rc-tsv { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
@@ -473,6 +472,7 @@ table.ship-lines td:first-child { width: 1%; }
 .db-tab-count { border-radius: 999px; padding: 0 7px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; font-weight: 400; }
 .db-tab.active .db-tab-count { color: var(--primary); }
 .db-clamp { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.db-clip { display: block; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-cell-input { width: 100%; min-width: 160px; }
 .db-dirty { color: var(--muted-foreground); font-size: 12px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
@@ -794,13 +794,18 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-row-title { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; }
 .plan-customer { color: var(--muted-foreground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .plan-tags { display: flex; gap: 4px; flex-wrap: wrap; margin: 3px 0 2px; }
-.plan-tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); white-space: nowrap; }
+.plan-tag { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); white-space: nowrap; }
 .plan-tag.stage { background: color-mix(in srgb, var(--primary) 12%, white); color: #00766a; }
 .plan-tag.blocker { background: #c62828; color: #fff; }
 .plan-tag.late { background: #fdecea; color: #c62828; }
 .plan-tag.soon { background: #fff4d6; color: #8a5a00; }
 .plan-tag.ok { background: #e6f4ea; color: #1e7e34; }
 .plan-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Проект без карточки в «Проектах»: честная строка и переход (аудит 10.10, ПП-5). */
+.plan-no-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; }
+.plan-link-button { display: inline-flex; align-items: center; text-decoration: none; }
+.plan-link-button:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.plan-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 
 .gantt-nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
 .gantt-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
@@ -829,7 +834,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .gantt-row.dim { opacity: .55; }
 .production-plan-gantt .gantt-row { min-height: 64px; }
 @media (max-width: 640px) { .gantt-label { flex-basis: 230px; width: 230px; } }
-.plan-blocker { padding: 8px 10px; border-radius: 8px; background: #fff0f0; color: #9e1b1b; font-size: 12px; font-weight: 700; }
+.plan-blocker { padding: 8px 10px; border-radius: 8px; background: var(--chip-danger-bg); color: var(--chip-danger-fg); font-size: 13px; font-weight: 600; }
+.plan-blocker[data-tone="warning"] { background: var(--chip-warning-bg); color: var(--chip-warning-fg); }
+.plan-blocker[data-tone="neutral"], .plan-blocker[data-tone="info"] { background: var(--chip-neutral-bg); color: var(--chip-neutral-fg); }
 .production-plan-details { padding: 20px; display: grid; gap: 18px; }
 .production-plan-details h2, .production-plan-details h3, .production-plan-details p { margin: 0; }
 .production-plan-details section { display: grid; gap: 7px; padding-top: 14px; border-top: 1px solid var(--border); }
@@ -838,11 +845,11 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-kit-stages span { font-size: 12px; color: var(--muted-foreground); }
 .plan-kit-mark label { display: grid; gap: 3px; font-size: 11px; color: var(--muted-foreground); }
 .plan-kit-mark select, .plan-kit-mark textarea { min-width: 0; font-size: 12px; }
-.plan-kit-mark textarea { min-height: 54px; resize: vertical; }
+.plan-kit-mark textarea.auto-textarea { min-height: 0; }
 .plan-note-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
 .plan-note-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--muted-foreground); }
 .plan-note-text { grid-column: 1 / -1; }
-.plan-note-text textarea { min-height: 72px; resize: vertical; }
+.plan-note-text textarea.auto-textarea { min-height: 0; }
 .plan-journal article { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .plan-journal article > div { display: flex; justify-content: space-between; gap: 12px; }
 .plan-journal time, .plan-journal small { color: var(--muted-foreground); font-size: 12px; }
@@ -2126,7 +2133,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .iss-tile .t-in { font-size: 13px; }
 .iss-tile .t-warn { color: #b45309; font-size: 12.5px; }
 .iss-chip-wrap { display: inline-flex; align-items: center; gap: 3px; }
-.iss-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
 .fulfillment-open { display: grid; gap: 10px; justify-items: start; }
 .fulfillment-open > .fulfillment-card { justify-self: stretch; }
 
@@ -2168,8 +2174,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* «Производственный план»: проект без карточки открывает журнал сбоку поверх списка, а не под ним. */
 .plan-drawer { position: fixed; inset: 0; z-index: 45; }
 .plan-drawer-scrim { position: absolute; inset: 0; background: rgba(0, 26, 24, .25); }
-.plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; background: var(--background, #f6f8f8); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
+.plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; overscroll-behavior: contain; background: var(--background, #f6f8f8); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
 .plan-details-close { position: absolute; right: 18px; top: 18px; z-index: 1; }
+.plan-drawer-body .plan-detail-head { padding-right: 96px; }
 .psm-note { font-size: 12px; color: var(--muted-foreground); }
 
 /* Экран мастера: неделя монтажников — часы по дням, клик по дню ставит выбранную операцию. */
@@ -2200,7 +2207,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-cell.absent { background: repeating-linear-gradient(135deg, #fee4e2 0 4px, #fff 4px 8px); color: #b42318; font-size: 11px; }
 .mb-cell.today { box-shadow: inset 0 0 0 1px var(--primary); }
 .mb-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 8px; font-size: 11px; color: var(--muted-foreground); }
-.mb-legend .mb-cell { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 18px; font-size: 10px; }
+.mb-legend .mb-cell { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 18px; font-size: 11px; }
 .mb-chip { display: inline-flex; align-items: center; gap: 2px; }
 .mb-chip-x { all: unset; cursor: pointer; padding: 0 3px; color: var(--muted-foreground); font-size: 13px; line-height: 1; border-radius: 4px; }
 .mb-chip-x:hover { color: #b42318; background: #fee4e2; }
@@ -2559,8 +2566,9 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
   --zg-month-h: 18px;
   --zg-days-h: 30px;
   --zg-font: 12px;
-  --zg-font-sm: 10.5px;
-  --zg-font-xs: 10px;
+  --zg-font-sm: 11px;
+  --zg-font-xs: 11px;
+  --zg-week: 46px;
   --zg-head-font: 11px;
   --zg-today-bg: color-mix(in srgb, var(--primary) 9%, transparent);
   --zg-today-head: color-mix(in srgb, var(--primary) 68%, black);
@@ -2579,7 +2587,10 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
   --zg-ok-bg: #e6f4ea;
   --zg-ok: #1e7e34;
   --zg-arrival: #1565c0;
+  --zg-note: #6b7689;
 }
+/* 16" и уже: день — 16 px, чтобы рядом с колонками листа календарь показал пять недель (аудит 10.10, ПП-2). */
+@media (max-width: 1700px) { :root { --zg-day: 16px; } }
 .zg-panel .plan-section-head { display: flex; align-items: baseline; gap: 12px; }
 .zg-span { color: var(--muted-foreground); font-size: var(--zg-font); }
 .zg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 8px 0 6px; }
@@ -2589,12 +2600,19 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-legend { display: inline-flex; flex-wrap: nowrap; gap: 10px; margin-left: auto; font-size: var(--zg-font-sm); color: var(--muted-foreground); white-space: nowrap; }
 .zg-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 .zg-legend i { display: inline-block; font-style: normal; }
-.zg-key-bar { width: 16px; height: 8px; border-radius: 3px; background: var(--zg-c0); }
-.zg-key-qty { min-width: 16px; height: 12px; padding: 0 2px; border-radius: 3px; background: var(--zg-c0); color: var(--primary-foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 12px; text-align: center; }
+.zg-key-bar { width: 18px; height: 8px; border-radius: 3px; background: linear-gradient(90deg, var(--zg-c0) 0 33%, var(--zg-c2) 33% 66%, var(--zg-c3) 66%); }
+.zg-key-qty { min-width: 16px; height: 14px; padding: 0 3px; border-radius: 3px; background: var(--card); box-shadow: 0 0 0 1px var(--zg-c0); color: var(--foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 14px; text-align: center; }
+.zg-key-off { width: 10px; height: 12px; border-radius: 2px; background: var(--zg-off-head); }
+.zg-key-today { width: 10px; height: 12px; border-radius: 2px; border: 1px solid var(--primary); background: var(--zg-today-bg); }
+.zg-key-note { width: 6px; height: 6px; border-radius: 50%; background: var(--zg-note); }
 .zg-key-arrival { width: 6px; height: 6px; border-radius: 50%; background: var(--zg-arrival); }
-.zg-key-deadline { width: 2px; height: 12px; background: var(--zg-late); }
+.zg-key-deadline { width: 3px; height: 12px; background: var(--zg-late); }
 .zg-key-manual { width: 0; height: 0; border-top: 6px solid var(--primary); border-left: 6px solid transparent; }
 .zg-toolbar .zg-columns { padding: 4px 10px; font-size: var(--zg-font); }
+.zg-scale { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--seg-bg); }
+.zg-scale button { min-height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--seg-fg); font-size: var(--zg-font); font-weight: 600; }
+.zg-scale button.on { background: var(--card); color: var(--zg-today-head); box-shadow: 0 1px 2px rgba(0, 26, 24, .12); }
+.zg-scale button:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
 .zg-toolbar .zg-columns.active { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); color: var(--zg-today-head); }
 .zg-chooser { align-items: center; margin: 0 0 6px; padding: 6px 12px; border-radius: 8px; gap: 6px 14px; }
 .zg-chooser .check-inline { font-size: var(--zg-font); }
@@ -2621,7 +2639,9 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-month-head span { position: sticky; left: calc(var(--zg-frozen, 0px) + 1px); display: inline-block; padding: 0 6px; line-height: calc(var(--zg-month-h) - 1px); }
 .zg-table thead th.zg-day-head { padding: 0; border-right-color: var(--zg-grid); line-height: 1.1; }
 .zg-day-head b { display: block; font-size: var(--zg-head-font); font-weight: 600; font-variant-numeric: tabular-nums; }
-.zg-day-head span { display: block; color: var(--muted-foreground); font-size: 9.5px; font-weight: 400; }
+.zg-day-head span { display: block; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 400; }
+.zg-week-col { width: var(--zg-week); }
+.zg-table thead th.zg-week-head b { font-size: var(--zg-head-font); }
 .zg-table thead th.zg-day-head.zg-off { background: var(--zg-off-head); color: var(--muted-foreground); }
 .zg-table thead th.zg-day-head.zg-today { background: var(--zg-today-head); color: var(--primary-foreground); }
 .zg-table thead th.zg-day-head.zg-today span { color: var(--primary-foreground); opacity: .85; }
@@ -2638,6 +2658,7 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-group-hold .zg-group-label { color: #5f6368; }
 .zg-edit { cursor: pointer; }
 .zg-edit:hover { outline: 1px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
+.zg-edit:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .zg-manual::after { content: ""; position: absolute; top: 0; right: 0; border-top: 7px solid var(--primary); border-left: 7px solid transparent; }
 .zg-center { text-align: center; }
 .zg-table td.zg-center { padding: 0 2px; }
@@ -2648,23 +2669,15 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-table td.zg-col-project { padding: 0; background: color-mix(in srgb, var(--zg-color) 18%, white); }
 .zg-project { width: 100%; height: 100%; min-height: 0; border: 0; background: none; padding: 0 4px 0 9px; color: var(--foreground); font-size: var(--zg-font); font-weight: 700; text-align: left; box-shadow: inset 4px 0 0 var(--zg-color); }
 .zg-project:hover { text-decoration: underline; }
+.zg-project { position: relative; }
+.zg-note-mark { position: absolute; top: 50%; right: 5px; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--zg-note); }
 
-/* Статус: один цветной чип и «+N», полный список — в подсказке. */
-.zg-chips { display: flex; align-items: center; gap: 3px; overflow: hidden; }
-.zg-chips .zg-chip { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.zg-more { flex: none; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 600; }
-.zg-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border-radius: 4px; font-size: var(--zg-font-sm); font-weight: 700; line-height: 17px; white-space: nowrap; background: var(--accent); color: var(--muted-foreground); }
-.zg-chip.t-hold { background: #e3e6ea; color: #3a4250; }
-.zg-chip.t-stop { background: #c62828; color: #fff; }
-.zg-chip.t-pause { background: #fde2c8; color: #8a4500; }
-.zg-chip.t-check { background: #ece4fb; color: #5b3aa6; }
-.zg-chip.t-launch { background: #dbe9fb; color: #1d4f91; }
-.zg-chip.t-work { background: #d9f2e3; color: #15703a; }
-.zg-chip.t-wait { background: #fff2c2; color: #7a5800; }
-.zg-chip.t-qc { background: #d8f1ef; color: #00766a; }
-.zg-chip.t-ship { background: #e0f0fb; color: #1a5f8a; }
-.zg-chip.t-ready { background: #2e7d32; color: #fff; }
-.zg-chip.t-shipped { background: #eceff1; color: #546e7a; }
+/* Статус: главный статус — общим чипом и целым словом (ширина колонки — по самому длинному слову), «+N» —
+   остальные, полный список — в подсказке (аудит 10.10, ПП-1, ПП-3). */
+.zg-chips { display: flex; align-items: center; gap: 4px; }
+.zg-col-status .status-chip { flex: none; max-width: none; overflow: visible; }
+.zg-more { flex: none; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.zg-empty-mark { color: var(--muted-foreground); }
 
 /* Готовность: тонкая полоса и число справа. */
 .zg-ready { display: flex; align-items: center; gap: 4px; }
@@ -2706,14 +2719,24 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .zg-work-start > .zg-bar { left: 2px; border-radius: 4px 0 0 4px; }
 .zg-work-end > .zg-bar { right: 2px; border-radius: 0 4px 4px 0; }
 .zg-work-start.zg-work-end > .zg-bar { border-radius: 4px; }
-.zg-day-text { position: relative; z-index: 1; padding: 0 2px; }
+.zg-day-text { position: relative; z-index: 1; padding: 0 2px; font-size: var(--zg-font-xs); }
 .zg-work > .zg-day-text { color: var(--primary-foreground); }
-.zg-work-start > .zg-day-text { position: absolute; top: 0; bottom: 0; left: 4px; display: flex; align-items: center; }
+.zg-work.zg-off > .zg-day-text { color: var(--foreground); }
+/* Количество запуска — плашкой с обводкой цветом проекта: читается на полосе, на выходном и за краем полосы (ПП-4). */
+.zg-qty { position: absolute; top: 50%; left: 1px; z-index: 1; padding: 0 3px; border-radius: 3px; background: var(--card); box-shadow: 0 0 0 1px var(--zg-color); color: var(--foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 14px; font-variant-numeric: tabular-nums; transform: translateY(-50%); pointer-events: none; }
 /* Сегодня: колонка календаря с рамкой и лёгкой заливкой, шапка — цветом бренда. */
 .zg-table td.zg-today { border-left: 1px solid var(--primary); border-right-color: var(--primary); background-image: linear-gradient(var(--zg-today-bg), var(--zg-today-bg)); }
 .zg-table thead th.zg-today { border-left: 1px solid var(--primary); border-right-color: var(--primary); }
 .zg-deadline::before { content: ""; position: absolute; top: 0; bottom: 0; right: -1px; width: 3px; background: var(--zg-late); z-index: 1; }
 .zg-arrival::after { content: ""; position: absolute; left: 2px; bottom: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--zg-arrival); box-shadow: 0 0 0 1.5px #fff; z-index: 1; }
+/* Масштаб «Недели»: полоса — с первого по последний рабочий день недели, дедлайн и приход — на своём дне. */
+.zg-week > .zg-bar { left: 0; right: -1px; }
+.zg-week.zg-work-start > .zg-bar { left: calc(var(--zg-from, 0%) + 1px); border-radius: 4px 0 0 4px; }
+.zg-week.zg-work-end > .zg-bar { right: min(calc(var(--zg-to, 0%) + 1px), calc(100% - var(--zg-from, 0%) - 9px)); border-radius: 0 4px 4px 0; }
+.zg-week.zg-work-start.zg-work-end > .zg-bar { border-radius: 4px; }
+.zg-week-deadline { position: absolute; top: 0; bottom: 0; left: calc(var(--zg-deadline-at) - 2px); z-index: 1; width: 3px; background: var(--zg-late); }
+.zg-week-arrival { position: absolute; bottom: 2px; left: calc(var(--zg-arrival-at) + 1px); z-index: 1; width: 7px; height: 7px; border-radius: 50%; background: var(--zg-arrival); box-shadow: 0 0 0 1.5px #fff; }
+.zg-week > .zg-qty { left: 2px; }
 .zg-table td.zg-empty { height: calc(var(--zg-row) + 8px); padding: 0; color: var(--muted-foreground); text-align: left; overflow: visible; border-bottom: 0; }
 .zg-empty-text { position: sticky; left: 0; display: inline-block; padding: 0 12px; line-height: calc(var(--zg-row) + 8px); }
 
@@ -2723,16 +2746,16 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .zg-pop-head span { color: var(--muted-foreground); font-size: 12px; }
 .zg-pop-head .link-button { margin-left: auto; }
 .zg-pop input:not([type="checkbox"]), .zg-pop textarea { width: 100%; height: 30px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
-.zg-pop textarea { height: 72px; resize: vertical; }
+.zg-pop textarea.auto-textarea { min-height: 36px; resize: none; }
 .zg-pop-row { display: flex; gap: 6px; }
 .zg-pop-row input { flex: 1; }
 .zg-pop-acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .zg-status-pick { display: flex; flex-wrap: wrap; gap: 5px; }
-.zg-status-pick .zg-chip { cursor: pointer; padding: 3px 7px; opacity: .55; }
-.zg-status-pick .zg-chip.on { opacity: 1; box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 35%, transparent); }
-.zg-status-pick input { width: 12px; height: 12px; margin: 0; }
+.zg-pick { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 2px; border-radius: 999px; cursor: pointer; opacity: .6; }
+.zg-pick.on { opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 35%, transparent); }
+.zg-status-pick input { width: 14px; height: 14px; margin: 0; }
 @media (pointer: coarse) {
-  :root { --zg-row: 40px; --zg-day: 30px; --zg-days-h: 34px; }
+  :root { --zg-row: 40px; --zg-day: 26px; --zg-week: 52px; --zg-days-h: 34px; }
   .zg-table .zg-project, .zg-table .zg-link { min-height: 0; }
   .zg-bar { top: 9px; bottom: 9px; }
   .zg-toolbar > input { height: 40px; }
@@ -2940,18 +2963,24 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 @media (pointer: coarse) { .view-strip button { min-height: 40px; } }
 /* Производственный план → Загрузка по людям: сетка «часы/смена» на языке «Монтажников». */
 .pl-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
-.pl-period { font-size: 14px; }
+.pl-period { font-size: 13px; color: var(--muted-foreground); }
+.pl-period b { color: var(--foreground); font-size: 14px; font-weight: 600; }
 .pl-only { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; min-height: 30px; cursor: pointer; white-space: nowrap; }
 .pl-only input { width: auto; margin: 0; }
 .pl-table tbody th { padding: 2px 6px; }
 .pl-table thead th:first-child { width: 220px; }
+.pl-table thead th { font-size: 12px; }
+.pl-table thead th b { display: block; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pl-table thead th.off { background: var(--zg-off-head); border-radius: 4px; }
+.pl-table thead th.today { background: var(--zg-today-head); border-radius: 4px; color: var(--primary-foreground); }
+.pl-table thead th.today span { color: var(--primary-foreground); }
 .pl-table tr.pl-free th b { font-weight: 500; color: var(--muted-foreground); }
 .pl-table tr.pl-free th small { color: #98a2b3; }
 .pl-table .mb-cell { font-size: 12px; }
 .pl-table .mb-cell.absent { font-size: 11px; white-space: nowrap; overflow: hidden; }
 .pl-table .mb-cell.free { background: #f8f9fb; }
-.pl-legend { font-size: 12px; }
-.pl-legend .mb-cell { width: auto; min-width: 26px; height: 20px; padding: 0 4px; font-size: 12px; }
+.pl-legend { font-size: 12px; cursor: help; }
+.pl-legend .mb-cell { width: auto; min-width: 26px; height: 20px; margin-left: 6px; padding: 0 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .pl-legend .mb-cell.late { font-weight: 700; }
 .pl-table .mb-cell > button { position: relative; }
 .mb-cell.late { box-shadow: inset 0 0 0 2px var(--tone-danger); }
@@ -3240,3 +3269,16 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .tr-none { color: var(--muted-foreground); font-size: 12px; }
 @media (pointer: coarse) { .proj-status-btn .status-chip { min-height: 32px; } .kit-more .more-menu-list button { min-height: 40px; } }
 .kit-supply-count dd.muted { color: var(--muted-foreground); font-weight: 400; }
+
+/* Б6 (аудит 10.10): «Техкарты проектов» и «База данных». */
+.tc-gen-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.data-table td .tr-code { color: var(--muted-foreground); font-size: 12px; }
+.data-table td .tr-edited { font-size: 12px; }
+
+/* Снабжение (аудит дизайна 10.10, Б5): пустое состояние с действием, таблица без второй рамки, шапка сетки заявки. */
+.procurement-empty { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 14px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted-foreground); font-size: 13px; }
+.panel.procurement-flat > .data-table .table-wrap { border: 0; border-radius: 0; }
+.rg-col-quality_document { width: 120px; }
+.rg-hint, .procurement-auto-note { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
+.procurement-stages { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.panel.procurement-flat > .procurement-empty { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 14px 16px; }
