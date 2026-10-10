@@ -1,0 +1,49 @@
+/* Распиновка в генераторе ТК: чип «не проверена», панель контактов разъёма, схема соединений, вопрос перед «Создать». */
+:root {
+  --pin-free-bg: #eef1f3;
+  --pin-free-fg: #7d8794;
+  --pin-ok-bg: #e3f5e8;
+}
+
+.pin-chip { display: inline-flex; align-items: center; border: 1px solid var(--warn-border); border-radius: 999px; padding: 0 8px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; font-weight: 600; line-height: 20px; white-space: nowrap; }
+.pin-chip.is-ok { border-color: transparent; background: var(--pin-ok-bg); color: var(--tone-ok); }
+.tcgen .ep-head .pin-chip { flex: none; }
+
+.tcgen .pin-panel { display: grid; gap: 8px; border: 1px solid var(--warn-border); border-radius: 8px; padding: 8px 12px 12px; background: var(--warn-soft); }
+.tcgen .pin-panel.is-ok { border-color: var(--border); padding-bottom: 8px; background: transparent; }
+.tcgen .pin-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 28px; }
+.tcgen .pin-panel-title { color: var(--foreground); font-size: 12.5px; font-weight: 600; }
+.tcgen .pin-panel-head > :last-child { margin-left: auto; }
+.tcgen .pin-done { color: var(--tone-ok); font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tcgen .pin-state { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tcgen .pin-panel .ep-pin input { background: var(--card); font-variant-numeric: tabular-nums; }
+.tcgen .pin-panel .ep-pin input.is-bad { border-color: var(--tone-danger); background: var(--sheet-invalid-bg); }
+
+.tcgen .pin-diagram { margin: 4px 0 8px; padding: 8px 0 0; border-top: 1px solid var(--border); }
+.tcgen .pin-diagram svg { display: block; height: auto; overflow: visible; }
+.tcgen .pin-diagram figcaption { margin-top: 4px; font-size: 12px; }
+.pin-diagram text { fill: var(--foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pin-diagram .pin-head { font-size: 12.5px; font-weight: 600; }
+.pin-diagram .pin-head-key { fill: var(--primary); }
+.pin-diagram .pin-label { fill: var(--foreground); font-size: 11.5px; }
+.pin-diagram .pin-cell rect { fill: var(--pin-free-bg); stroke: var(--border); stroke-width: 1; }
+.pin-diagram .pin-cell text { fill: var(--pin-free-fg); font-size: 11.5px; }
+.pin-diagram .pin-cell.is-used rect { fill: var(--card); stroke: var(--foreground); }
+.pin-diagram .pin-cell.is-used text { fill: var(--foreground); font-weight: 600; }
+.pin-diagram .pin-cell.is-dup rect { fill: var(--sheet-invalid-bg); stroke: var(--tone-danger); stroke-width: 2; }
+.pin-diagram .pin-cell.is-dup text { fill: var(--tone-danger); font-weight: 700; }
+.pin-diagram .pin-cell .pin-label { font-weight: 400; fill: var(--foreground); }
+.pin-diagram .pin-cell.is-dup .pin-label { fill: var(--tone-danger); }
+.pin-diagram .pin-wire { cursor: help; }
+.pin-diagram .pin-wire:hover .pin-line { stroke-width: 4.5; }
+.pin-diagram .pin-stub-end { fill: var(--card); stroke: var(--muted-foreground); stroke-width: 1.5; }
+
+.pin-ask { width: min(620px, 100%); }
+.pin-ask > p { margin: 0; font-size: 13px; }
+.pin-ask-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.pin-ask-list li { display: grid; grid-template-columns: auto minmax(0, max-content) minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.pin-ask-list li:last-child { border-bottom: 1px solid var(--border); }
+.pin-ask .ep-badge { min-width: 30px; border-radius: 6px; padding: 1px 7px; background: color-mix(in srgb, var(--primary) 12%, transparent); color: var(--primary); font-size: 12.5px; text-align: center; }
+.pin-ask-conn { font-weight: 600; white-space: nowrap; }
+.pin-ask-sum { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { .pin-ask-list button, .tcgen .pin-panel-head button { min-height: 40px; } }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import {
   failureText, productionApi, shippingApi, type FinishedGood, type FinishedGoodsReadyBox, type Principal, type ProjectAddressee,
   type Shipment,
@@ -537,7 +538,7 @@ function ShipmentHead({ shipment, busy, mutate }: { shipment: Shipment; busy: st
     {HEAD_FIELDS.map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={inherited(key) ? "" : "пусто — из карточки проекта"} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
     <label><span>Условия доставки{mark("terms")}</span><select aria-label={`Условия доставки ${shipment.number}`} disabled={Boolean(busy)} value={draft.terms} onChange={(event) => setDraft({ ...draft, terms: event.target.value })} onBlur={() => save("terms")}><option value="">из карточки проекта</option><option>САМОВЫВОЗ</option><option>ДОСТАВКА ТК</option></select></label>
     <label>Срок отгрузки<input type="date" aria-label={`Дедлайн ${shipment.number}`} disabled={Boolean(busy)} value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} onBlur={() => save("deadline")} /></label>
-    <label className="ship-span2">Комментарий<input aria-label={`Комментарий ${shipment.number}`} disabled={Boolean(busy)} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} onBlur={() => save("note")} /></label>
+    <label className="ship-span2">Комментарий<AutoTextarea aria-label={`Комментарий ${shipment.number}`} disabled={Boolean(busy)} value={draft.note} onChange={(note) => setDraft({ ...draft, note })} onBlur={() => save("note")} /></label>
   </div>;
 }
 

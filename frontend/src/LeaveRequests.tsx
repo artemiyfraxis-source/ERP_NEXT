@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
   failureText,
@@ -241,7 +242,7 @@ function LeaveDetail({ item, onDone, onEdit }: {
     </ol>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {(actions.sign || actions.decide || actions.withdraw || actions.edit) && <div className="lv-actions">
-      {actions.decide && <label className="lv-reason">Комментарий к решению<input value={comment} maxLength={1000} placeholder="Причина обязательна при отказе" onChange={(event) => setComment(event.target.value)} /></label>}
+      {actions.decide && <label className="lv-reason">Комментарий к решению<AutoTextarea value={comment} maxLength={1000} placeholder="Причина обязательна при отказе" onChange={setComment} /></label>}
       {needsSecret && <SecretField value={secret} onChange={setSecret} />}
       {actions.sign && <button className="primary small" disabled={busy || !secret} onClick={() => void run(
         () => leaveApi.sign(item.id, item.version, secret),

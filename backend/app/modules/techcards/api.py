@@ -66,6 +66,7 @@ from .harness.rules import to_decimal
 from .connector_housings import attach_housings, connector_catalog, housing_of
 from .connector_series import connector_series, find_in_series
 from .assembly_schema import generator_to_assembly
+from .scheme_corrections import list_scheme_corrections
 from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
 from .etk_builder import attach_route
 from .etk_parts import attach_parts
@@ -110,6 +111,9 @@ class AutoBuildTechcardPayload(VersionPayload):
     config: dict[str, Any]
     # «Ручная сборка» opened from an agent's draft: the build finalises it (final config + revision, corpus example).
     draft_id: UUID | None = None
+    # «Поправить вручную»: the generator («Типовая») config the manual one came from. The server rebuilds the automatic
+    # scheme from it to log the master's corrections (techcards.scheme_corrected); it is never taken as the scheme.
+    generator_origin: dict[str, Any] | None = None
 
 
 class EditOperationPayload(VersionPayload):
@@ -616,6 +620,7 @@ def auto_build_project_etk(
         actor=principal.actor,
         now=now,
         technology_source=technology_source,
+        generator_origin=payload.generator_origin,
     ), uow_factory()))
     if payload.draft_id is not None:
         # The config as the master built it (before the reference norms are filled in) — the pair to the draft.
@@ -623,6 +628,18 @@ def auto_build_project_etk(
             payload.draft_id, payload.config, card.revision, principal.actor, now, uow_factory,
         ))
     return _card_result(card, identify)
+
+
+@router.get("/techcards/scheme-corrections", dependencies=[Depends(tcgen_principal)])
+def scheme_corrections(
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    since: date | None = None,
+    project: str = "",
+) -> dict:
+    """Журнал правок «Схемы полуфабрикатов» (techcards.scheme_corrected), новые сверху; токен `tcgen` читает."""
+    with uow_factory() as uow:
+        items = list_scheme_corrections(uow.session, since=since, project=project.strip())
+    return {"items": items}
 
 
 def _draft_run(operation):

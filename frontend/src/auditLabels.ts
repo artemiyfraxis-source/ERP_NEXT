@@ -148,6 +148,7 @@ const EVENT_NAMES: Record<string, string> = {
   "techcards.project_created": "Открыт генератор ТК",
   "techcards.project_auto_built": "ТК собрана генератором",
   "techcards.project_rebuilt": "ТК пересобрана",
+  "techcards.scheme_corrected": "Схема ТК исправлена",
   "techcards.project_imported": "ТК перенесена",
   "techcards.project_issued": "ЭТК выдана",
   "techcards.project_draft_discarded": "Черновик ТК удалён",

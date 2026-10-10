@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
 import { PerUnit, RouteDiagram, numberRange } from "./RouteDiagram";
-import { blockTitle, routeTotals, type RouteBlock, type RouteEdge } from "./routeLogic";
+import { blockCodes, routeTotals, type RouteBlock, type RouteEdge, type RouteOp } from "./routeLogic";
 import {
   addBlock,
   addCustomOp,
@@ -19,7 +20,10 @@ import {
   inputCandidates,
   kdChangeText,
   manualRoute,
+  manualShortTitle,
+  moveBlock,
   moveOp,
+  moveOpToBlock,
   nameBlockAfter,
   opMinutes,
   opTitle,
@@ -141,9 +145,11 @@ function normLabel(minutes: number) {
 
 /** Операция ручной сборки: название, норма, параметры, результат; у своей — ход операции, контроль, оснастка;
     комплектующие из состава КБ. ↑/↓ — внутри блока. */
-export function ManualOpCard({ op, position, first, last, partQty, components, onChange, open: openProp, onToggle }: {
+export function ManualOpCard({ op, position, first, last, partQty, components, onChange, open: openProp, onToggle, moveTargets = [] }: {
   op: ManualOp; position: number; first: boolean; last: boolean; partQty: number; components: Comp[]; onChange: Change;
   open?: boolean; onToggle?: () => void;
+  /** Другие блоки схемы — «Перенести в блок…». */
+  moveTargets?: Array<{ key: string; title: string }>;
 }) {
   const [openOwn, setOpenOwn] = useState(false);
   const open = openProp ?? openOwn;
@@ -174,6 +180,11 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
       </div>
       <div className="manual-op-tools">
         {!open && <button type="button" className="manual-op-norm" aria-label={`Норма: ${title}`} title="Открыть" onClick={toggle}>{normLabel(minutes)}</button>}
+        {moveTargets.length > 0 && <select className="manual-op-move" aria-label={`Перенести в блок: ${title}`} title="Перенести операцию в другой блок" value=""
+          onChange={(event) => { const key = event.target.value; if (key) onChange((current) => moveOpToBlock(current, op.seq, key)); }}>
+          <option value="">Перенести в блок…</option>
+          {moveTargets.map((target) => <option key={target.key} value={target.key}>{target.title}</option>)}
+        </select>}
         <button type="button" className="secondary small" aria-label={`Выше: ${title}`} title="Выше в блоке" disabled={first} onClick={() => onChange((current) => moveOp(current, op.seq, -1))}>↑</button>
         <button type="button" className="secondary small" aria-label={`Ниже: ${title}`} title="Ниже в блоке" disabled={last} onClick={() => onChange((current) => moveOp(current, op.seq, 1))}>↓</button>
         <button type="button" className="btn-remove" aria-label={`Удалить операцию ${position}: ${title}`} title="Удалить" onClick={() => onChange((current) => removeOp(current, op.seq))}>×</button>
@@ -188,7 +199,7 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
       {!op.gen && <>
       <Field label="Параметры" className="wide"><input aria-label={`Параметры: ${title}`} value={op.params} placeholder="напр. L = 300 мм, зачистка 5 мм" onChange={(event) => set({ params: event.target.value })} /></Field>
       <Field label="Результат — полуфабрикат" className="result"><input aria-label={`Результат: ${title}`} value={op.result} placeholder={`Полуфабрикат после «${title}»`} onChange={(event) => set({ result: event.target.value })} /></Field>
-      <Field label="Примечание" className="wide"><input aria-label={`Примечание: ${title}`} value={op.note} onChange={(event) => set({ note: event.target.value })} /></Field>
+      <Field label="Примечание" className="wide"><AutoTextarea aria-label={`Примечание: ${title}`} value={op.note} onChange={(note) => set({ note })} /></Field>
       </>}
     </div>
     {op.kind === "custom" && !op.gen && <div className="manual-text">
@@ -226,12 +237,16 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const [problem, setProblem] = useState("");
   const [nameOnPick, setNameOnPick] = useState(false);
   const [opened, setOpened] = useState<Set<number>>(new Set());
+  // Панель блока — по выбору блока; «Готово», × или Esc её закрывают, схема остаётся. Пустая сборка открывается с ней.
+  const [paneOpen, setPaneOpen] = useState(() => !state.ops.length);
   const panel = useRef<HTMLDivElement>(null);
   const seen = useRef(state.selected);
   const { route, ops: routeOps } = useMemo(() => manualRoute(state, partQty), [state, partQty]);
   const totals = useMemo(() => routeTotals(route, routeOps, partQty), [route, routeOps, partQty]);
   const ordered = useMemo(() => orderedOps(state), [state]);
-  const title = (block: RouteBlock) => blockTitle(block, routeOps, finalName);
+  // Длинное название блока от генератора — коротко по операциям, целиком — в подсказке.
+  const named = (block: RouteBlock, ops: RouteOp[] = routeOps) => manualShortTitle(block, ops, finalName);
+  const title = (block: RouteBlock) => named(block).title;
   const byKey = new Map(route.blocks.map((block) => [block.key, block]));
   const block = byKey.get(state.selected) ?? route.blocks.find((item) => item.final)!;
   const own = state.blocks.find((item) => item.key === block.key)!;
@@ -245,17 +260,35 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
     return { kind: blockKind(state, item.key), quantity: meta?.quantity, checked: meta?.checked };
   };
 
-  const select = (key: string) => { onChange((current) => selectBlock(current, key)); setProblem(""); setAdded(""); setNameOnPick(false); };
-  // Выбрали блок (на схеме или в «Итоге») — панель блока подъезжает в видимую часть.
+  const select = (key: string) => { onChange((current) => selectBlock(current, key)); setProblem(""); setAdded(""); setNameOnPick(false); setPaneOpen(true); };
+  // Выбрали блок (на схеме или в «Итоге») — панель блока открывается и подъезжает в видимую часть.
   useEffect(() => {
     if (seen.current === block.key) return;
     seen.current = block.key;
+    setPaneOpen(true);
     panel.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   }, [block.key]);
+  const order = blockOrder(state);
+  const move = (key: string, dir: -1 | 1) => {
+    const result = moveBlock(state, key, dir, (item) => { const found = byKey.get(item); return found ? title(found) : item; });
+    setProblem(result.problem ? `Так нельзя: ${result.problem}` : "");
+    if (!result.problem) onChange(() => result.state);
+  };
+  // Клавиатура на схеме: ↑/↓ — соседний блок, Alt+↑/↓ — сдвинуть выбранный блок, Esc — закрыть панель блока.
+  const onKey = (event: KeyboardEvent<HTMLElement>) => {
+    const field = (event.target as HTMLElement).closest?.("input, textarea, select, [role='dialog']");
+    if (event.key === "Escape" && paneOpen && !(event.target as HTMLElement).closest?.("[role='dialog']")) { event.preventDefault(); setPaneOpen(false); return; }
+    if (field || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+    const dir = event.key === "ArrowUp" ? -1 : 1;
+    event.preventDefault();
+    if (event.altKey) { move(block.key, dir); return; }
+    const next = order[order.indexOf(block.key) + dir];
+    if (next) select(next);
+  };
   const toggleOp = (seq: number) => setOpened((current) => { const next = new Set(current); if (!next.delete(seq)) next.add(seq); return next; });
   const addInputTo = (to: string) => {
     onChange((current) => addInputBlock(current, to));
-    setProblem(""); setAdded(""); setPicking(true); setNameOnPick(true);
+    setProblem(""); setAdded(""); setPicking(true); setNameOnPick(true); setPaneOpen(true);
   };
   const connect = (from: string, to: string) => {
     if (state.edges.some((edge) => edge.from === from && edge.to === to)) return;
@@ -280,27 +313,42 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const inputs = state.edges.filter((edge) => edge.to === block.key);
   const candidates = inputCandidates(state, block.key);
   const blockOps = own.ops.map((seq) => bySeq.get(seq)).filter((op): op is ManualOp => !!op);
+  const moveTargets = order.filter((key) => key !== block.key).map((key) => ({ key, title: title(byKey.get(key)!) }));
 
-  return <section className="gsec full manual-assembly" aria-label="Схема сборки">
+  return <section className="gsec full manual-assembly" aria-label="Схема сборки" onKeyDown={onKey}>
     <div className="gsec-head manual-hdr">
       <h3>Схема сборки</h3>
       <span className="gsec-meta">{pluralBlocks(route.blocks.length)} · {ordered.length} оп.{ordered.length > 0 && <> · {formatMinutes(total)} мин на партию {partQty} шт.</>}</span>
       <span className="manual-add">
         {kd && <KdButton kd={kd} />}
         <button type="button" className="secondary small" title={`Новый полуфабрикат — вход блока «${blockName}»`}
-          onClick={() => { onChange((current) => addBlock(current)); setProblem(""); setAdded(""); setNameOnPick(false); }}>+ Блок</button>
+          onClick={() => { onChange((current) => addBlock(current)); setProblem(""); setAdded(""); setNameOnPick(false); setPaneOpen(true); }}>+ Блок</button>
       </span>
     </div>
     {kd?.proposal && <KdProposalBar proposal={kd.proposal} />}
-    <RouteDiagram route={route} title={title} numbers={(item) => numberRange(item.ops)} totals={totals} selected={block.key} marks={mark}
+    <div className={paneOpen ? "manual-body has-pane" : "manual-body"}>
+    <div className="manual-diagram">
+    <p className="route-link-hint manual-keys">↑ ↓ — порядок блоков · + — новый вход · → — соединить с другим блоком · клавиши: ↑/↓ — блок, Alt+↑/↓ — сдвинуть, Esc — закрыть панель</p>
+    <RouteDiagram route={route} title={title} hint={(item) => named(item).full} codes={(item) => blockCodes(item, routeOps)} numbers={(item) => numberRange(item.ops)} totals={totals}
+      selected={paneOpen ? block.key : ""} marks={mark} onMove={move} sequence={order} product={finalName.trim()}
       onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
       onAddInput={addInputTo} onConnect={connect} onEdgeEdit={() => setProblem("")}
       onEdgeQuantity={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
       onEdgeRemove={(edge) => edgeEdit((current) => removeInput(current, edge.from, edge.to, finalName))} />
     {error && <div className="error-banner" role="alert">{error}</div>}
     {problem && <div className="warning-inline" role="alert">{problem}</div>}
+    </div>
 
-    <div className="manual-block" ref={panel} role="region" aria-label={`Блок «${blockName}»`}>
+    {paneOpen && <div className="manual-block" ref={panel} role="region" aria-label={`Блок «${blockName}»`}>
+      <div className="manual-block-bar">
+        <strong title={named(block).full}>Блок «{blockName}»</strong>
+        <span className="manual-block-order" role="group" aria-label="Порядок блока">
+          <button type="button" className="secondary small" disabled={order.indexOf(block.key) <= 0} onClick={() => move(block.key, -1)}>↑ Выше</button>
+          <button type="button" className="secondary small" disabled={order.indexOf(block.key) >= order.length - 1} onClick={() => move(block.key, 1)}>↓ Ниже</button>
+        </span>
+        <button type="button" className="primary small" onClick={() => setPaneOpen(false)}>Готово</button>
+        <button type="button" className="btn-remove" title="Закрыть панель блока (Esc)" aria-label="Закрыть панель блока" onClick={() => setPaneOpen(false)}>×</button>
+      </div>
       <div className="manual-block-head">
         <Field label={block.final ? "Название блока · итог — изделие" : "Название блока"} className="manual-block-name">
           <input aria-label="Название блока" value={own.name} placeholder={title({ ...block, name: "" })}
@@ -366,8 +414,9 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
           : "Выберите блок и добавьте операцию из библиотеки или свою."}</div>}
         {blockOps.map((op, index) => <ManualOpCard key={op.seq} op={op} position={position.get(op.seq) ?? index + 1} first={index === 0} last={index === blockOps.length - 1}
           partQty={partQty} components={components} onChange={onChange}
-          open={opened.has(op.seq)} onToggle={() => toggleOp(op.seq)} />)}
+          open={opened.has(op.seq)} onToggle={() => toggleOp(op.seq)} moveTargets={moveTargets} />)}
       </div>
+    </div>}
     </div>
   </section>;
 }
@@ -380,6 +429,7 @@ export function ManualSummary({ state, partQty, finalName, onSelect }: { state: 
   const bySeq = new Map(state.ops.map((op) => [op.seq, op]));
   const byKey = new Map(route.blocks.map((block) => [block.key, block]));
   const total = ordered.reduce((sum, op) => sum + opMinutes(op, partQty), 0);
+  const named = (block: RouteBlock) => manualShortTitle(block, ops, finalName);
   if (!ordered.length) return <div className="gempty">Добавьте блок и операции в него — здесь появится порядок операций.</div>;
   return <div className="manual-summary" role="group" aria-label="Порядок операций">
     {blockOrder(state).map((key) => {
@@ -387,8 +437,8 @@ export function ManualSummary({ state, partQty, finalName, onSelect }: { state: 
       const shown = byKey.get(key)!;
       return <div className="manual-summary-block" key={key}>
         <div className={state.selected === key ? "manual-summary-name is-selected" : "manual-summary-name"}>
-          {onSelect ? <button type="button" className="manual-summary-pick" aria-pressed={state.selected === key} title="Показать блок на схеме" onClick={() => onSelect(key)}>{blockTitle(shown, ops, finalName)}</button>
-            : blockTitle(shown, ops, finalName)}{block.final && <span className="route-block-tag">итог</span>}</div>
+          {onSelect ? <button type="button" className="manual-summary-pick" aria-pressed={state.selected === key} title={`${named(shown).full} — показать блок на схеме`} onClick={() => onSelect(key)}>{named(shown).title}</button>
+            : <span title={named(shown).full}>{named(shown).title}</span>}{block.final && <span className="route-block-tag">итог</span>}</div>
         {block.ops.length ? <ol>{block.ops.map((seq) => {
           const op = bySeq.get(seq);
           if (!op) return null;

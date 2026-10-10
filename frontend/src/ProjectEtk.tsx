@@ -623,11 +623,11 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
   }, [card.project, card.item_index]);
 
   /** true — техкарта собрана (в том числе черновиком), false — нет; от этого зависит, завершён ли черновик с чертежа. */
-  async function build(config: Record<string, unknown>, draftId?: string): Promise<boolean> {
+  async function build(config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>): Promise<boolean> {
     if (busy) return false;
     setBusy(true); setError(""); setNotice("");
     try {
-      let updated = await techcardsApi.autoBuild(card.id, card.version, config, draftId);
+      let updated = await techcardsApi.autoBuild(card.id, card.version, config, draftId, generatorOrigin);
       const rebuilt = updated.status === "Выдана";
       if (!rebuilt && canIssue) {
         try { updated = await techcardsApi.issue(updated.id, updated.version); }
@@ -672,7 +672,7 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
 
   return <div className="gen-pane">
     <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} builtId={builtId} onBuiltChange={onBuiltChange}
-      onConfig={(config) => { generatedConfig.current = config; }}
+      userId={principal.user.id} onConfig={(config) => { generatedConfig.current = config; }}
       /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
       more={!hasFullAccess(principal) ? undefined : <div className="build-config">
         <label>JSON-конфигурация генератора (для эксперта)<textarea aria-label="Конфигурация автоматической сборки" rows={12} value={configText} onChange={(event) => setConfigText(event.target.value)} /></label>

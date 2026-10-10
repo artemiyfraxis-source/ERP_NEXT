@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
 import { runBatch, type BatchRefs } from "./tcGenBatch";
+import { pressBuild } from "./test/pressBuild";
 
 const card: ProjectTechcard = {
   id: "40000000-0000-0000-0000-000000000001", version: 1, project: "P-100", item_index: "КБ1", product_name: "Жгут XHP 150мм",
@@ -56,7 +57,7 @@ it("gives the same config as opening the generator and pressing «Создать
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kit} />);
   expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
 
   const [batch] = runBatch({ refs, items: [{ key: "1", bom: kit }] }).items;

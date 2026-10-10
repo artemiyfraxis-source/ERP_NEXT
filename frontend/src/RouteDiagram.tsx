@@ -1,16 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { formatMinutes } from "./etkRoute";
-import { formatPerUnit, parsePositive, routeChain, routeLayout, type BlockTotals, type Route, type RouteBlock, type RouteEdge } from "./routeLogic";
+import { blockSequence, formatPerUnit, parsePositive, routeChain, routeLayout, type BlockTotals, type Route, type RouteBlock, type RouteEdge } from "./routeLogic";
 
 /* Рисунок схемы полуфабрикатов — общий у «Схемы полуфабрикатов» типовых вкладок и «Схемы сборки» ручной. Цепочка и
    ветвистая схема рисуются сверху вниз, итог внизу; между блоками «N шт» на стрелке. */
 
-/** Штук полуфабриката на одну штуку следующего блока — число больше нуля; «1» не выделяется. */
-export function PerUnit({ value, label, unit, onChange }: { value: number; label: string; unit: string; onChange: (value: number) => void }) {
+/** Штук полуфабриката на одну штуку следующего блока — число больше нуля; «1» не выделяется. `lead` — слово перед числом
+    («берёт 2 шт»). */
+export function PerUnit({ value, label, unit, lead, onChange }: { value: number; label: string; unit: string; lead?: string; onChange: (value: number) => void }) {
   const [text, setText] = useState(formatPerUnit(value));
   useEffect(() => { if (parsePositive(text) !== value) setText(formatPerUnit(value)); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
   const bad = text.trim() !== "" && parsePositive(text) === null;
   return <span className={value === 1 && !bad ? "route-per-chip is-one" : "route-per-chip"} title={label}>
+    {lead && <small className="route-per-lead" aria-hidden>{lead}</small>}
     <input className={bad ? "route-per f-empty" : "route-per"} inputMode="decimal" aria-label={label} value={text}
       onChange={(event) => {
         setText(event.target.value);
@@ -37,11 +39,16 @@ function KindTag({ final, mark }: { final: boolean; mark?: BlockMark }) {
   return kind ? <span className={`order-chip ${kind.tone} route-block-kind`} title={kind.title}>{kind.text}</span> : null;
 }
 
-/** Блок: номера его операций, название (до двух строк, целиком — в подсказке), «N оп. · M мин/шт».
-    Блок без операций — одна компактная строка: название и «нет операций». */
-export function BlockBox({ block, title, numbers, totals, inputs = [], selected, linking, mark, onSelect }: {
+/** Блок: номера его операций, коды карт БД.ОП (моноширинно, первой строкой), название (до двух строк, целиком — в
+    подсказке), «итог: изделие» у итогового, «N оп. · M мин/шт». Блок без операций — одна компактная строка. */
+export function BlockBox({ block, title, numbers, totals, inputs = [], selected, linking, mark, codes = "", codeNote = "", product = "", hint = "", onSelect }: {
   block: RouteBlock; title: string; numbers: string; totals?: BlockTotals; /** Названия блоков-входов: «входы: Блок 5, Блок 7»; нет входов — строки нет. */ inputs?: string[];
-  selected: boolean; linking?: boolean; mark?: BlockMark; onSelect: () => void;
+  selected: boolean; linking?: boolean; mark?: BlockMark;
+  /** Коды карт операций блока («CUT_WIRE+2crimp · INS_terminal_2.50»); пусто — строки нет. */ codes?: string;
+  /** Карта не та, что просило правило: «вместо CUT_WIRE+2crimp — нет карты». */ codeNote?: string;
+  /** Изделие — строкой «итог: …» у итогового блока. */ product?: string;
+  /** Подсказка на блоке, когда название сокращено, — полное название. */ hint?: string;
+  onSelect: () => void;
 }) {
   const empty = block.ops.length === 0;
   const classes = ["route-block", block.final ? "is-final" : "", selected ? "is-selected" : "", linking ? "is-linking" : "", empty ? "is-empty" : ""].filter(Boolean).join(" ");
@@ -51,18 +58,21 @@ export function BlockBox({ block, title, numbers, totals, inputs = [], selected,
   // «Проверено мастером» — короткая галочка, чтобы не вытеснять норму блока из строки.
   const checked = mark?.checked ? <span className="order-chip tone-ok route-block-checked" title="Проверено мастером" aria-label="проверено мастером">✓</span> : null;
   if (empty) {
-    return <button type="button" className={classes} aria-pressed={selected} title={title} onClick={onSelect}>
+    return <button type="button" className={classes} aria-pressed={selected} title={hint || title} onClick={onSelect}>
       <span className="route-block-name">{title}</span>
       <span className="route-block-meta"><span className="tone-warn">нет операций</span><KindTag final={block.final} mark={mark} />{checked}</span>
     </button>;
   }
-  return <button type="button" className={classes} aria-pressed={selected} title={title} onClick={onSelect}>
+  return <button type="button" className={classes} aria-pressed={selected} title={hint || title} onClick={onSelect}>
     <span className="route-block-side">
       <span className="route-block-no" aria-hidden={!numbers}>{numbers || "—"}</span>
       <KindTag final={block.final} mark={mark} />
     </span>
     <span className="route-block-body">
+      {codes && <span className="route-block-code">{codes}</span>}
       <span className="route-block-name">{title}</span>
+      {codeNote && <span className="route-block-meta route-block-note">{codeNote}</span>}
+      {block.final && product && <span className="route-block-meta route-block-product">итог: {product}</span>}
       <span className="route-block-meta">{checked}{checked && " "}{meta}</span>
       {from && <span className="route-block-meta route-block-from" aria-hidden>{from}</span>}
     </span>
@@ -107,7 +117,7 @@ function EdgePill({ edge, label, onEdit, onQuantity, onRemove }: {
 
 /* Размеры рисунка: карточка 68 px (84 со строкой входов); пустой блок — строка 38 px (на планшете 44, чтобы влезли кнопки 40 px); между строками
    56 px (на планшете 72) — в нём «N шт» и ход стрелки. */
-const CARD = 68, CARD_IN = 84; // карточка по содержимому: со строкой «входы: …» выше на одну строку
+const CARD = 68, CARD_IN = 84, LINE_EXTRA = 16; // карточка по содержимому: каждая строка (входы, коды, пометка, итог) — ещё 16 px
 
 export type DiagramSizes = { line: number; gap: number };
 export const sizesFor = (coarse: boolean): DiagramSizes => (coarse ? { line: 44, gap: 72 } : { line: 38, gap: 56 });
@@ -115,8 +125,20 @@ const isCoarse = () => typeof window !== "undefined" && typeof window.matchMedia
 
 /** Схема целиком: блоки и стрелки с числом штук. Блок выбирается кликом. Необязательные крючки нужны ручной сборке:
     «+» на блоке, «→» (соединить два блока двумя нажатиями), окно «N шт» на стрелке. Без них рисунок работает как раньше. */
-export function RouteDiagram({ route, title, numbers, totals, selected, onSelect, onPerUnit, edgeLabel, onAddInput, onConnect, onEdgeEdit, onEdgeQuantity, onEdgeRemove, marks }: {
+export function RouteDiagram({ route, title, numbers, totals, selected, onSelect, onPerUnit, edgeLabel, onAddInput, onConnect, onEdgeEdit, onEdgeQuantity, onEdgeRemove, marks, codes, product = "", onMove, perLead = "", sequence: order, hint: fullTitle }: {
   route: Route;
+  /** Коды карт операций блока и пометка о замене карты — у схемы генератора. */
+  codes?: (block: RouteBlock) => { codes: string; note: string };
+  /** Изделие — строкой «итог: …» у итогового блока (тогда сам блок назван своей операцией). */
+  product?: string;
+  /** «Выше» / «Ниже» на блоке: операции блока раньше / позже в ЭТК. */
+  onMove?: (key: string, dir: -1 | 1) => void;
+  /** Слово перед числом на стрелке («берёт 2 шт»); без него — «2 шт на 1». */
+  perLead?: string;
+  /** Порядок блоков для «Выше/Ниже» (у ручной сборки — порядок схемы); по умолчанию — по первой операции. */
+  sequence?: string[];
+  /** Полное название блока — подсказкой, когда `title` его сокращает. */
+  hint?: (block: RouteBlock) => string;
   /** Пометки блока (вид, штуки, «проверено мастером») — у ручной сборки; без них блок рисуется как раньше. */
   marks?: (block: RouteBlock) => BlockMark | undefined;
   title: (block: RouteBlock) => string;
@@ -154,22 +176,30 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
     onSelect(key);
   };
   const inputsOf = (item: RouteBlock) => route.edges.filter((edge) => edge.to === item.key && byKey.has(edge.from)).map((edge) => title(byKey.get(edge.from)!));
+  const sequence = onMove ? order ?? blockSequence(route).map((block) => block.key) : [];
   const node = (item: RouteBlock) => {
     const name = title(item);
-    const tools = !!(onAddInput || onConnect);
-    return <div className={[tools ? "route-node has-tools" : "route-node", item.ops.length === 0 ? "is-empty-node" : ""].filter(Boolean).join(" ")}>
+    const tools = !!(onAddInput || onConnect || onMove);
+    const many = [onAddInput, onConnect, onMove, onMove].filter(Boolean).length > 2;
+    const coded = codes?.(item);
+    const at = sequence.indexOf(item.key);
+    return <div className={[tools ? "route-node has-tools" : "route-node", many ? "has-many-tools" : "", item.ops.length === 0 ? "is-empty-node" : ""].filter(Boolean).join(" ")}>
       <BlockBox block={item} title={name} numbers={numbers(item)} totals={totals.get(item.key)} inputs={inputsOf(item)} selected={selected === item.key}
-        linking={linking === item.key} mark={marks?.(item)} onSelect={() => pick(item.key)} />
+        linking={linking === item.key} mark={marks?.(item)} codes={coded?.codes} codeNote={coded?.note} product={product} hint={fullTitle?.(item)} onSelect={() => pick(item.key)} />
       {tools && <span className="route-tools">
-        {onAddInput && <button type="button" className="route-tool" aria-label={`Добавить вход в блок «${name}»`} title="Добавить вход" onClick={() => onAddInput(item.key)}>+</button>}
+        {onMove && <>
+          <button type="button" className="route-tool" aria-label={`Выше: блок «${name}»`} title="Выше — раньше в ЭТК" disabled={at <= 0} onClick={() => onMove(item.key, -1)}>↑</button>
+          <button type="button" className="route-tool" aria-label={`Ниже: блок «${name}»`} title="Ниже — позже в ЭТК" disabled={at < 0 || at >= sequence.length - 1} onClick={() => onMove(item.key, 1)}>↓</button>
+        </>}
+        {onAddInput && <button type="button" className="route-tool" aria-label={`Добавить вход в блок «${name}»`} title="Добавить вход — новый блок, который идёт в этот" onClick={() => onAddInput(item.key)}>+</button>}
         {onConnect && <button type="button" className={linking === item.key ? "route-tool is-on" : "route-tool"} aria-pressed={linking === item.key}
-          aria-label={`Соединить блок «${name}» с другим блоком`} title="Соединить с другим блоком" onClick={() => setLinking(linking === item.key ? null : item.key)}>→</button>}
+          aria-label={`Соединить блок «${name}» с другим блоком`} title="Соединить — этот блок идёт в другой: нажмите и выберите блок" onClick={() => setLinking(linking === item.key ? null : item.key)}>→</button>}
       </span>}
     </div>;
   };
   const pill = (edge: RouteEdge, unit: string) => (onEdgeEdit
     ? <EdgePill key={`${edge.from}>${edge.to}`} edge={edge} label={edgeLabel(edge)} onEdit={onEdgeEdit} onQuantity={onEdgeQuantity ?? onPerUnit} onRemove={onEdgeRemove} />
-    : <PerUnit key={`${edge.from}>${edge.to}`} value={edge.per_unit} label={edgeLabel(edge)} unit={unit} onChange={(value) => onPerUnit(edge, value)} />);
+    : <PerUnit key={`${edge.from}>${edge.to}`} value={edge.per_unit} label={edgeLabel(edge)} unit={unit} lead={perLead || undefined} onChange={(value) => onPerUnit(edge, value)} />);
   const hint = linking ? <p className="route-link-hint" role="status">Нажмите блок, куда идёт «{title(byKey.get(linking)!)}». Esc — отмена.</p> : null;
 
   if (chain || route.blocks.length === 1) {
@@ -180,7 +210,7 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
         {keys.map((key, index) => {
           const edge = route.edges.find((candidate) => candidate.to === key);
           return <li key={key}>
-            {index > 0 && <span className="route-flow-link"><span className="route-flow-arrow" aria-hidden>↓</span>{edge && pill(edge, "шт на 1")}</span>}
+            {index > 0 && <span className="route-flow-link"><span className="route-flow-arrow" aria-hidden>↓</span>{edge && pill(edge, perLead ? "шт" : "шт на 1")}</span>}
             {node(byKey.get(key)!)}
           </li>;
         })}
@@ -195,7 +225,13 @@ export function RouteDiagram({ route, title, numbers, totals, selected, onSelect
   const compact = (item: RouteBlock) => item.ops.length === 0;
   const rowHeight = Array.from({ length: layout.layers }, () => LINE);
   const hasInputs = new Set(route.edges.map((edge) => edge.to));
-  const tall = (item: RouteBlock) => (compact(item) ? LINE : hasInputs.has(item.key) ? CARD_IN : CARD);
+  const extra = (item: RouteBlock) => {
+    const coded = codes?.(item);
+    return [coded?.codes, coded?.note, item.final && product].filter(Boolean).length * LINE_EXTRA;
+  };
+  // Четыре кнопки (↑ ↓ + →) стоят квадратом 2×2 — карточка не ниже него.
+  const toolsMin = (onAddInput || onConnect) && onMove ? (coarse ? 92 : 64) : 0;
+  const tall = (item: RouteBlock) => (compact(item) ? LINE : Math.max(toolsMin, (hasInputs.has(item.key) ? CARD_IN : CARD) + extra(item)));
   route.blocks.forEach((item) => { const at = layout.cells.get(item.key)!.layer; rowHeight[at] = Math.max(rowHeight[at], tall(item)); });
   const rowTop: number[] = [];
   rowHeight.reduce((top, height, index) => { rowTop[index] = top; return top + height + GAP; }, 0);

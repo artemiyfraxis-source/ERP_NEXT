@@ -97,8 +97,14 @@ it("«Поправить вручную» opens the typical assembly in the manu
   const sent = request.body!.config as { ops: Array<{ type: string; label?: string }> };
   expect(sent.ops.map((op) => [op.type, op.label])).toEqual([["cutWire", "Резка — МГТФ 0,12"], ["prsTerm", "Опрессовка терминалов А1"], ["prsTerm", "Опрессовка терминалов В1"]]);
 
-  // Блок схемы и обе операции; название — русское, не тип; параметры — серой строкой, без полей.
-  expect(screen.getByRole("region", { name: "Блок «Жгут XHP 150мм»" })).toBeInTheDocument();
+  // Собранная сборка открывается схемой, без панели блока; нажатый блок её открывает.
+  expect(screen.queryByRole("region", { name: /^Блок «/ })).not.toBeInTheDocument();
+  // Итоговый блок — его операции первыми, изделие — строкой «итог: …», полное название — в подсказке.
+  expect(screen.getByTitle("Жгут XHP 150мм").querySelector(".route-block-name")).toHaveTextContent("Резка с разделкой · опрессовка терминалов");
+  expect(screen.getByTitle("Жгут XHP 150мм")).toHaveTextContent("итог: Жгут XHP 150мм");
+  fireEvent.click(screen.getByTitle("Жгут XHP 150мм"));
+  // Блок схемы и обе операции; итог назван своими операциями (изделие — строкой «итог: …»), не типами.
+  expect(screen.getByRole("region", { name: "Блок «Резка с разделкой · опрессовка терминалов»" })).toBeInTheDocument();
   const first = screen.getByLabelText("Операция 1: Резка с разделкой");
   expect(within(first).getByLabelText("Название операции 1").tagName).toBe("B");
   expect(first).toHaveTextContent("1 пров. · L 160 мм · зачистка А 5, Б 5 мм");
@@ -113,9 +119,13 @@ it("«Поправить вручную» opens the typical assembly in the manu
   fireEvent.click(screen.getByRole("button", { name: "Удалить операцию 2: Опрессовка терминалов" }));
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
-  const [config, draftId] = onBuild.mock.calls[0];
+  const [config, draftId, origin] = onBuild.mock.calls[0];
   expect(draftId).toBeUndefined();
   expect(config).toMatchObject({ mode: "manual", wires: [{ art: "МГТФ 0,12", length: 160 }], twist: { enabled: false } });
+  // С ручной сборкой уходит типовая, из которой она сделана (generator_origin): та же форма, что у типовой сборки.
+  expect(origin).not.toHaveProperty("mode");
+  expect(origin).toMatchObject({ assemblyName: "Жгут XHP 150мм", wires: [{ art: "МГТФ 0,12", length: 150 }] });
+  expect(origin.ops.map((op: { type: string; templateId: string }) => [op.type, op.templateId])).toEqual([["cutWire", "cut"], ["prsTerm", "prsA"], ["prsTerm", "prsA"]]);
   expect(config.ops).toHaveLength(1);
   expect(config.ops[0]).toMatchObject({
     type: "cutWireStrip", seq: 1, templateId: "cut", tPrep: "120", tOp: "4", label: "Резка с разделкой",
@@ -150,7 +160,7 @@ it("lists the drafts of the position, opens one into the manual assembly and bui
 
   fireEvent.click(within(section).getByRole("button", { name: /^Открыть черновик от 05\.10\.2026 10:30/ }));
   expect(await screen.findByLabelText("Название операции 2")).toHaveValue("Пайка по чертежу");
-  expect(screen.getByRole("region", { name: "Блок «Жгут XHP 150мм»" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Блок «Пайка по чертежу»" })).toBeInTheDocument();
   expect(blockNames()).toContain("Заготовка");
   expect(within(section).getByRole("button", { name: /^Открыть черновик от 05\.10\.2026 10:30/ })).toHaveTextContent("Открыт");
 
@@ -203,7 +213,7 @@ it("says what to do when the position has no drafts", async () => {
   mockApi([]);
   mount();
   await openManual();
-  expect(await screen.findByText("Черновиков по этой позиции нет — пришлите чертёж Claude.")).toBeInTheDocument();
+  expect(await screen.findByText("Черновиков по этой позиции нет. Загрузите чертёж (можно несколько PDF — их сошьют в один) и попросите Claude набрать по нему схему: черновик появится здесь.")).toBeInTheDocument();
 });
 
 it("uploads a drawing of the position into its КД", async () => {
@@ -211,7 +221,7 @@ it("uploads a drawing of the position into its КД", async () => {
     ? json({ id: "doc9", name: "KB1.pdf", url: "/api/techcards/kitsets/P-100/documents/doc9" }, 201) : undefined));
   mount();
   await openManual();
-  await screen.findByText("Черновиков по этой позиции нет — пришлите чертёж Claude.");
+  await screen.findByText("Черновиков по этой позиции нет. Загрузите чертёж (можно несколько PDF — их сошьют в один) и попросите Claude набрать по нему схему: черновик появится здесь.");
   fireEvent.change(screen.getByLabelText("Файл чертежа"), { target: { files: [new File(["%PDF-1.4"], "KB1.pdf", { type: "application/pdf" })] } });
   expect(await screen.findByText("Чертёж «KB1.pdf» загружен в КД позиции")).toBeInTheDocument();
   const upload = calls.find((call) => call.path === "/api/techcards/assembly/drawings")!;

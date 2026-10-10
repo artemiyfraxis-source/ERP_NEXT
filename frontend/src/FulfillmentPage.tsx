@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import {
   ApiError,
   fulfillmentApi,
@@ -12,6 +13,7 @@ import {
 import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
+import { StatusChip } from "./StatusChip";
 import { BulkLotsPanel, bindPosition, bulkApi, isOffBook, type BulkPosition } from "./FulfillmentBulkLots";
 
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
@@ -97,18 +99,6 @@ function day(value?: string | null) {
   return match ? `${match[3]}.${match[2]}.${match[1]}` : value ?? "";
 }
 
-// issChip_: the colour of a stage — grey waits, green went through, red is closed.
-const STAGE_COLORS: Record<string, string> = {
-  "Новая": "#6b7280",
-  "Недоукомплектован": "#b45309",
-  "Укомплектован": "#1d4ed8",
-  "Готов к выдаче": "#0f766e",
-  "КБ Выдана": "#15803d",
-  "КБ Возвращена": "#7c3aed",
-  "Готово": "#15803d",
-  "Отменена": "#b91c1c",
-};
-
 // The screen opens as tiles (SUPPLYMAP issRender); «Таблицей» is remembered per browser, and a blocked storage keeps tiles.
 const VIEW_KEY = "erp.fulfillment.view";
 
@@ -163,7 +153,7 @@ function createdDay(value?: string | null) {
 
 function StageChips({ counts }: { counts: Map<string, number> }) {
   return <div className="kit-chips">{[...counts].map(([status, count]) => <span key={status} className="iss-chip-wrap">
-    <span className="iss-chip" style={{ background: STAGE_COLORS[status] ?? "#6b7280" }}>{status}</span>
+    <StatusChip status={status} />
     {count > 1 && <small className="t-sub">×{count}</small>}
   </span>)}</div>;
 }
@@ -331,7 +321,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
     },
     { key: "purpose", title: "Назначение", value: (request) => request.purpose, wrap: true },
     { key: "requester", title: "Заявитель", value: (request) => request.requester },
-    { key: "status", title: "Статус", value: (request) => request.status, filter: true, render: (request) => <span className="status">{request.status}</span> },
+    { key: "status", title: "Статус", value: (request) => request.status, filter: true, render: (request) => <StatusChip status={request.status} /> },
     { key: "deadline", title: "Дедлайн", value: (request) => request.deadline ?? "", render: (request) => day(request.deadline) || "—" },
     { key: "count", title: "Позиций", numeric: true, value: (request) => (request.lines ?? []).length },
     { key: "waiting", title: "Ждут ГРН", numeric: true, value: (request) => openLines(request).length },
@@ -579,7 +569,7 @@ function IssueChooser({ project, requests, busy, onCancel, onIssue }: {
           <td className="check"><input type="checkbox" aria-label={`Выдать ${kbOf(request)}`} disabled={!can || busy} checked={can && picked.has(request.id)} onChange={() => toggle(request.id)} /></td>
           <td><strong>{kbOf(request)}</strong></td>
           <td>{request.number}</td>
-          <td><span className="iss-chip" style={{ background: STAGE_COLORS[request.status] ?? "#6b7280" }}>{request.status}</span></td>
+          <td><StatusChip status={request.status} /></td>
           <td className="num">{request.lines.length}</td>
           <td>{request.at_picked ? `${stamp(request.at_picked)}${request.handout_location ? ` · ${request.handout_location}` : ""}` : can ? `сейчас · ${request.handout_place || DEFAULT_HANDOUT_PLACE}` : "—"}</td>
           <td>{can ? "" : notIssuable(request)}</td>
@@ -647,7 +637,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
 
   return (
     <article className="panel fulfillment-card">
-      <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><span className="status">{request.status}</span></div>
+      <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><StatusChip status={request.status} /></div>
       {meta.length > 0 && <dl className="fulfillment-meta">{meta.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
       <p className="fulfillment-progress">Набрано {request.lines.length - waiting.length} из {request.lines.length} поз.{waiting.length > 0 && !closed ? ` · ждут ГРН: ${waiting.length}` : ""}</p>
       {request.shortfall && <details className="fulfillment-short"><summary>Недобор по составу</summary><div>{request.shortfall}</div></details>}
@@ -714,7 +704,7 @@ function ExtraIssueForm({ request, busy, mutate, onClose }: {
         <td className="num"><input aria-label={`Довыдать ${line.name || line.article}`} inputMode="decimal" value={quantities[line.id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))} /> {line.unit}</td>
       </tr>)}
     </tbody></table></div>
-    <label>Причина<input aria-label="Причина довыдачи" maxLength={200} value={reason} placeholder="брак при опрессовке, не хватило провода…" onChange={(event) => setReason(event.target.value)} /></label>
+    <label>Причина<AutoTextarea aria-label="Причина довыдачи" maxLength={200} value={reason} placeholder="брак при опрессовке, не хватило провода…" onChange={setReason} /></label>
     <div className="fulfillment-actions">
       <button className="primary" disabled={busy || !ready} onClick={submit}>{chosen.length ? `Создать довыдачу (${chosen.length} поз.)` : "Создать довыдачу"}</button>
       <button className="secondary" onClick={onClose}>Отмена</button>

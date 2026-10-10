@@ -3076,10 +3076,11 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, document }),
     }),
-  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string) =>
+  /** generatorOrigin — типовая сборка, из которой «Поправить вручную» сделало ручную (`generator_origin`, та же форма). */
+  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build`, {
       method: "POST",
-      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}) }),
+      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}), ...(generatorOrigin ? { generator_origin: generatorOrigin } : {}) }),
     }),
   issue: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {
@@ -3855,6 +3856,11 @@ export const assemblyApi = {
   uploadDrawing: (project: string, itemIndex: string, fileName: string, contentBase64: string) =>
     api<{ id: string; name: string; url: string | null }>("/api/techcards/assembly/drawings", {
       method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, content_base64: contentBase64 }),
+    }),
+  /** Несколько PDF в заданном порядке — один файл КД позиции; сервер читает все части и сохраняет всё или ничего. */
+  uploadMergedDrawing: (project: string, itemIndex: string, fileName: string, files: { file_name: string; content_base64: string }[]) =>
+    api<{ id: string; name: string; url: string | null; pages: { file_name: string; pages: number }[] }>("/api/techcards/assembly/drawings/merge", {
+      method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, files }),
     }),
 };
 
