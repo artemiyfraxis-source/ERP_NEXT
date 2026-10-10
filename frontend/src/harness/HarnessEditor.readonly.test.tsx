@@ -72,8 +72,8 @@ describe("редактор жгута в режиме просмотра", () =>
     const { save } = await openReadOnly();
     const toolbar = screen.getByRole("complementary", { name: "Инструменты редактора" });
     fireEvent.click(within(toolbar).getByRole("tab", { name: "Вид" }));
-    fireEvent.click(within(toolbar).getByRole("button", { name: "Увеличить масштаб" }));
-    expect(screen.getByLabelText(/Поле схемы Э4\. Масштаб 120 процентов/)).toBeTruthy();
+    fireEvent.click(await within(toolbar).findByRole("button", { name: "Увеличить масштаб" }));
+    expect(await screen.findByLabelText(/Поле схемы Э4\. Масштаб 120 процентов/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Чертёж" }));
     await waitFor(() => expect(screen.getByRole("tab", { name: "Чертёж" }).getAttribute("aria-selected")).toBe("true"));
     expect(screen.queryByText("Редактор не смог отобразить последнее изменение.")).toBeNull();
