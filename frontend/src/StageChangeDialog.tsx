@@ -43,12 +43,6 @@ export function StageChangeDialog({ project, kb = "", current, value, loadPrevie
   }, []);
   useEffect(() => { void load(); }, [load, project, kb, value]);
 
-  useEffect(() => {
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    document.addEventListener("keydown", escape);
-    return () => document.removeEventListener("keydown", escape);
-  }, [onClose]);
-
   const needReason = Boolean(preview?.reason_required);
   const blocked = !preview || Boolean(preview.error) || preview.direction === "none" || (needReason && !reason.trim());
 
@@ -66,7 +60,7 @@ export function StageChangeDialog({ project, kb = "", current, value, loadPrevie
   const warnings = preview ? [...new Set([...preview.warnings, ...preview.kbs.flatMap((item) => item.warnings)])] : [];
   const title = `${current || "—"} → ${stageValueLabel(value)}`;
 
-  return createPortal(<div className="dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+  return createPortal(<div className="dialog-overlay" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <form className="move-dialog stage-dialog panel" role="dialog" aria-modal="true" aria-label="Смена этапа"
       onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       <h2>Смена этапа · {project}{kb ? ` · ${kb}` : ""}</h2>

@@ -3037,7 +3037,7 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .stage-dialog-kbs { width: 100%; border-collapse: collapse; font-size: 13px; }
 .stage-dialog-kbs th, .stage-dialog-kbs td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
 .stage-dialog-kbs thead th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
-.stage-dialog-kbs tbody th { font-weight: 600; white-space: nowrap; }
+.stage-dialog-kbs tbody th { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; white-space: nowrap; color: var(--foreground); }
 .stage-dialog-kbs .stage-keep td { color: var(--muted-foreground); }
 .stage-skipped { color: #a15c00; margin-right: 8px; }
 .stage-dialog-warn ul { margin: 0; padding-left: 18px; }

@@ -69,7 +69,7 @@ describe("StageChangeDialog", () => {
     const { apply, onClose } = open(preview());
     await screen.findByRole("button", { name: "Сменить этап" });
     fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(apply).not.toHaveBeenCalled();
   });
