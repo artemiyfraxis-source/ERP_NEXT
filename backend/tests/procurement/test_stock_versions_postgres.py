@@ -13,6 +13,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.fulfillment import application as fulfillment_application
 from app.modules.fulfillment.infrastructure import FulfillmentLineRow
@@ -216,8 +217,9 @@ def test_two_connections_kit_reserve_against_procurement_cover_on_one_lot(env, m
     if hold is not None:
         assert procurement.status_code == (200 if hold == "procurement first" else 422), procurement.text
     if procurement.status_code == 200:
-        # The kit wrote over a lot it read before the cover: refused (StockVersionConflict, 409 in the API).
-        assert isinstance(kitting, StockVersionConflict), kitting
+        # The kit wrote over a lot it read before the cover: refused (409 in the API). In a free race the stale write is
+        # caught either by add() (StockVersionConflict) or by the ORM's version-guarded UPDATE at flush (StaleDataError).
+        assert isinstance(kitting, StaleDataError), kitting
         assert stored.reserved == Decimal("80")
         (only,) = after["covers"]
         assert (only["lot_id"], only["quantity"]) == (lot.id, Decimal("80"))
