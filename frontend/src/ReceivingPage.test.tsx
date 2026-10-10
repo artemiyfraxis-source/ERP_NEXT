@@ -463,6 +463,18 @@ const accepted = (lines: ReceivingLine[]) => json({
   lines: lines.map((item, index) => ({ ...item, status: "Принято", grn: `CSM-0${index + 1}`, version: item.version + 1 })),
 });
 
+it("Пр-2: the open queues carry their counts on the chips, the status column is a status chip", async () => {
+  const quarantine = { ...line, id: "20000000-0000-0000-0000-000000000003", legacy_id: "SM-20260921-03", status: "Карантин" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lines: [line, quarantine], next_cursor: null }));
+  render(<ReceivingPage />);
+  await screen.findByText("SM-20260921-03");
+  expect(await screen.findByRole("button", { name: "В пути · 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Карантин · 1" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Ожидание · 0" })).toBeInTheDocument();
+  expect(document.querySelector(".status-chip[data-tone=\"warning\"]")).not.toBeNull();
+  expect(document.querySelector("td .status")).toBeNull();
+});
+
 it("groups «Ожидаются» by supplier with orders, positions and the expected date", async () => {
   mockDelivery(() => accepted([]));
   render(<ReceivingPage />);
@@ -479,7 +491,7 @@ it("a delivery with only the УПД requisites sends the lines without quantitie
   await screen.findByRole("region", { name: "Ожидаются" });
   fireEvent.click(screen.getAllByRole("button", { name: "Принять поставку" })[0]);
   fireEvent.change(await screen.findByLabelText("УПД №"), { target: { value: "УПД-5" } });
-  fireEvent.change(screen.getByLabelText("от"), { target: { value: "2026-10-05" } });
+  fireEvent.change(screen.getByLabelText("Дата УПД"), { target: { value: "2026-10-05" } });
   fireEvent.change(screen.getByLabelText("Место для всех"), { target: { value: "1F4" } });
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (2 поз.)" }));
 

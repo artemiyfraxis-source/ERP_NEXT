@@ -261,6 +261,21 @@ describe("ShippingPage", () => {
     expect(await screen.findByText("Отгружено и закрыто: ОТГ-20260922-01")).toBeInTheDocument();
   });
 
+  it("О-2: the shipment status is a shared status chip; cancelling is a danger button that asks first", async () => {
+    stub([shipment]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<ShippingPage principal={principal} />);
+    await screen.findByText("591К.3", { selector: "strong" });
+    tab(/^Отправки/);
+    fireEvent.click(await screen.findByText("ОТГ-20260922-01"));
+    expect(document.querySelector(".status-chip[data-tone=\"info\"]")).not.toBeNull();
+    const cancel = screen.getByRole("button", { name: "Отменить заявку" });
+    expect(cancel).toHaveClass("danger");
+    fireEvent.click(cancel);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(writes()).toHaveLength(0);
+  });
+
   it("shows an open shipment inside its project and ships it from there", async () => {
     stub([shipment], [{ ...good, remaining: "0", shipped: "6" }]);
     render(<ShippingPage principal={principal} />);

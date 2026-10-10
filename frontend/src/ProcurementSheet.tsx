@@ -3,6 +3,8 @@ import { DataTable, matchesWords } from "./DataTable";
 import { failureText, procurementApi, type ProcurementLine } from "./api";
 import type { LineEditing } from "./ProcurementCellEdit";
 import { buildSheetColumns } from "./ProcurementSheetColumns";
+import { StatusChip } from "./StatusChip";
+import { statusLabel } from "./statusTone";
 
 /* Лист закупки целиком и обзор «По поставщикам» — то, что в SUPPLYMAP давали вид purchase
    (portalViewDefs_) и portalPurchaseBySupplier. Лист открыт на чтение; правятся только «Комментарий» и
@@ -71,8 +73,8 @@ export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } 
   }
 
   return (
-    <section className="panel table-panel procurement-sheet">
-      <div className="panel-heading"><h2>Весь лист закупки</h2><span>Все статусы и закупщики · в своих строках правятся «Комментарий», DATASHEET и «Ожид. дата»</span></div>
+    <section className="panel table-panel procurement-sheet procurement-flat">
+      <div className="panel-heading"><h2>Весь лист закупки</h2><span>Все статусы и закупщики · в своих строках правятся «Комментарий», даташит и «Ожид. дата»</span></div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <DataTable
         label="Лист закупки"
@@ -180,7 +182,7 @@ export function ProcurementBySupplier() {
               <button type="button" className="tile" key={group.name} title="Показать позиции поставщика" onClick={() => setSupplier(group.name)}>
                 <div className="tile-body">
                   <span className="t-h">{group.name}</span>
-                  <span className="t-in">{order.filter((status) => group.statuses.get(status)).map((status) => <span className="chip" key={status}>{status} · {group.statuses.get(status)} </span>)}</span>
+                  <span className="t-in">{order.filter((status) => group.statuses.get(status)).map((status) => <StatusChip key={status} status={status}>{statusLabel(status)} · {group.statuses.get(status)}</StatusChip>)}</span>
                   <span className="t-sub">{group.orders.size ? `заказов: ${group.orders.size}` : "заказ не сформирован"}</span>
                 </div>
                 <span className="tile-count">поз.: {group.lines.length}</span>

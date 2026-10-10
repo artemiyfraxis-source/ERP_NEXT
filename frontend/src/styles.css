@@ -186,8 +186,7 @@ button.primary.danger:hover:not(:disabled) { background: color-mix(in srgb, var(
 @media (pointer: coarse) { .primary, .secondary { min-height: var(--control-h); } }
 
 /* RQ-IMPORT-UI: the three ways to create a request (SUPPLYMAP openCreate), and the Excel/calc panels. */
-.mode-tabs { display: flex; gap: 8px; padding: 0 20px 14px; flex-wrap: wrap; }
-.mode-tabs .active { border-color: var(--primary); color: var(--primary-foreground); background: var(--primary); }
+.mode-tabs { margin: 0 20px 14px; }
 .import-panel { padding: 0 20px 18px; display: grid; gap: 12px; }
 .import-panel .form-grid { padding: 0; }
 .rc-tsv { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
@@ -473,6 +472,7 @@ table.ship-lines td:first-child { width: 1%; }
 .db-tab-count { border-radius: 999px; padding: 0 7px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; font-weight: 400; }
 .db-tab.active .db-tab-count { color: var(--primary); }
 .db-clamp { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.db-clip { display: block; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-cell-input { width: 100%; min-width: 160px; }
 .db-dirty { color: var(--muted-foreground); font-size: 12px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
@@ -2127,7 +2127,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .iss-tile .t-in { font-size: 13px; }
 .iss-tile .t-warn { color: #b45309; font-size: 12.5px; }
 .iss-chip-wrap { display: inline-flex; align-items: center; gap: 3px; }
-.iss-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
 .fulfillment-open { display: grid; gap: 10px; justify-items: start; }
 .fulfillment-open > .fulfillment-card { justify-self: stretch; }
 
@@ -3244,3 +3243,16 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .production-box > .status-chip { justify-self: start; }
 .execution-actions .defect-text { flex: 1 1 280px; min-width: 240px; }
 .start-work .defect-text { flex: 1 1 280px; min-width: 240px; }
+
+/* Б6 (аудит 10.10): «Техкарты проектов» и «База данных». */
+.tc-gen-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.data-table td .tr-code { color: var(--muted-foreground); font-size: 12px; }
+.data-table td .tr-edited { font-size: 12px; }
+
+/* Снабжение (аудит дизайна 10.10, Б5): пустое состояние с действием, таблица без второй рамки, шапка сетки заявки. */
+.procurement-empty { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 14px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted-foreground); font-size: 13px; }
+.panel.procurement-flat > .data-table .table-wrap { border: 0; border-radius: 0; }
+.rg-col-quality_document { width: 120px; }
+.rg-hint, .procurement-auto-note { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
+.procurement-stages { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.panel.procurement-flat > .procurement-empty { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 14px 16px; }

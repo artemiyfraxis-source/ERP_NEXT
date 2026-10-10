@@ -1,6 +1,7 @@
 import type { DataColumn } from "./DataTable";
 import type { ProcurementLine } from "./api";
 import { formatDay } from "./format";
+import { StatusChip } from "./StatusChip";
 import { DatasheetCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { lineFilesColumn } from "./ProcurementLineDocuments";
 import { waitsForGrn } from "./ProcurementStockPicker";
@@ -10,7 +11,7 @@ import { waitsForGrn } from "./ProcurementStockPicker";
    документ качества → цены (расчёт, факт) → валюта → счёт и оплата → сроки → комментарий.
    Видны ключевые (на 16" вместе с «Комментарием» без прокрутки вбок), остальные включаются в «Колонках». System ID (колонка «ID») стоит первым, а не последним, как в листе:
    таблица широкая, первая колонка залипает слева и именно по ней строку узнают.
-   DATASHEET правится в своих строках закупщика, как «Комментарий»; «Файлы разрешения» и «Док. качества» — ссылки на
+   Даташит правится в своих строках закупщика, как «Комментарий»; «Файлы разрешения» и «Док. качества» — ссылки на
    файлы, приложенные в карточке строки («Документы…»). */
 
 const MINUS = "−";
@@ -78,7 +79,7 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     // «Готово · без ГРН»: закрыто «Есть на складе, без ГРН», партия ещё не привязана (как в «Моих позициях»).
     text("status", "Статус", (line) => line.status, {
       filter: true, hint: "СТАТУС ЗАПРОСА",
-      render: (line) => (waitsForGrn(line) ? <>{line.status}<small className="tone-info">без ГРН</small></> : line.status),
+      render: (line) => (waitsForGrn(line) ? <><StatusChip status={line.status} /><small className="tone-info">без ГРН</small></> : <StatusChip status={line.status} />),
     }),
     text("revision", "Ревизия", (line) => line.revision, { hidden: true }),
     day("request_date", "Дата запроса", (line) => line.request_date, { hidden: true }),
@@ -102,7 +103,7 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("manufacturer", "Изготовитель", (line) => line.manufacturer, { hidden: true }),
     text("country", "Страна", (line) => line.country, { hidden: true }),
     link("link", "Ссылка", (line) => line.link, "открыть"),
-    text("datasheet", "DATASHEET", (line) => line.datasheet, {
+    text("datasheet", "Даташит", (line) => line.datasheet, {
       hidden: true, wrap: true,
       render: (line) => <DatasheetCell line={line} editing={edit?.editing} canEdit={own(line)} disabled={edit?.disabled} />,
     }),
