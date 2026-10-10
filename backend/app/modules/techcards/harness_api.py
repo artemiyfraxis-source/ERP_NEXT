@@ -733,7 +733,7 @@ def export_harness(
         quantity=assembly.run if assembly else 1, harness_id=str(document.id),
         created=document.uploaded_at, updated=document.uploaded_at,
     )
-    return file_response(archive, "application/zip", f"{item_id(kitset.project, index)}.techmap-project.zip")
+    return file_response(archive, f"{item_id(kitset.project, index)}.techmap-project.zip")
 
 
 @router.post("/{project}/harness/{index}/import")

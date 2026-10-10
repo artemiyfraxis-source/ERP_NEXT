@@ -707,7 +707,7 @@ def operation_etk_sketch(
     if found is None:
         raise HTTPException(status_code=404, detail="Эскиз не найден")
     sketch, content = found
-    return file_response(content, sketch.content_type, sketch.file_name)
+    return file_response(content, sketch.file_name)
 
 
 def _input_limit(uow, session: WorkSession) -> str | None:
