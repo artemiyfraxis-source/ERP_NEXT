@@ -11,7 +11,7 @@ from alembic import command
 from alembic.config import Config
 
 BEFORE = "0088_api_tokens_assembly_drafts"
-AFTER = "0089_harness_one_linked_drawing"
+AFTER = "0090_harness_one_linked_drawing"
 INDEX = "ux_techcard_kitset_documents_linked_harness"
 LINKED = "application/vnd.fraxis.harness+json"
 UNLINKED = "application/vnd.fraxis.harness-unlinked+json"

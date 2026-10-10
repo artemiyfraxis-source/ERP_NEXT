@@ -4,8 +4,12 @@
 FROM node:22-slim AS web
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# Lockfile-only layer: cached while package*.json is unchanged. The npm cache mount (BuildKit) survives failed builds,
+# and fetch retries ride out a flaky network (a one-off `npm ci` exit 146 on the server, 06.10).
+RUN --mount=type=cache,target=/root/.npm     npm config set fetch-retries 5 && npm config set fetch-retry-mintimeout 20000 && npm config set fetch-retry-maxtimeout 120000     && npm ci --no-audit --no-fund
 COPY frontend/ ./
+# Cap the V8 heap so the tsc/vite build stays predictable on a small host instead of being OOM-killed.
+ENV NODE_OPTIONS=--max-old-space-size=6144
 RUN npm run build && npm run build:tcgen
 
 FROM python:3.12-slim
