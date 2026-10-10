@@ -358,7 +358,7 @@ def test_native_production_plan_combines_project_snapshot_techcard_task_and_jour
     assert row["stage_manual"] is False
     assert row["kits"] == [{
         "item_index": "КБ1", "status": "В работе", "manual": False,
-        "tc": True, "kit": False,
+        "tc": True, "kit": False, "skipped": [],
         "review": {
             "value": "не проверена", "text": "ТК выдана", "who": "генератор",
             "occurred_at": "2026-09-22T09:00:00",

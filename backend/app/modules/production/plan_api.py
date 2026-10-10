@@ -196,7 +196,7 @@ def production_plan(
             "stage_manual": row.stage.manual,
             "kits": [{
                 "item_index": item.item_index, "status": item.status, "manual": item.manual,
-                "tc": item.tc, "kit": item.kit,
+                "tc": item.tc, "kit": item.kit, "skipped": list(item.skipped),
                 "review": None if item.review is None else {
                     "value": item.review.value, "text": item.review.text,
                     "who": item.review.who,
