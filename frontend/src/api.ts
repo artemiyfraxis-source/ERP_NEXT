@@ -2942,10 +2942,15 @@ export interface HarnessDrawing {
   warnings: string[];
 }
 
-/** Версия чертежа в «Истории версий»: как появилась — сохранение, загрузка из TECHMAP-GRAPHER, восстановление
- *  (`restored_from` — из какой), начальная (чертёж до истории). */
+/** Строка «Истории версий»: чертёж на версию `revision`; автосохранения одного сотрудника в пределах 10 минут —
+ *  одна строка (`first_revision`…`revision`, `started_at`…`saved_at`). Как появилась — сохранение, загрузка из
+ *  TECHMAP-GRAPHER, восстановление (`restored_from` — из какой), начальная (чертёж до истории); `closed` — закреплена
+ *  кнопкой «Сохранить версию». */
 export interface HarnessRevision {
   revision: number;
+  first_revision: number;
+  started_at: string;
+  closed: boolean;
   saved_at: string;
   saved_by: string;
   size: number;
@@ -3200,6 +3205,9 @@ export const kitsetsApi = {
    *  хранить, — 422 со списком причин (`ApiError.detail.errors`). */
   saveHarness: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
     api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+  /** «Сохранить версию»: текущая версия остаётся в истории отдельной строкой; `revision` — версия на экране (иначе 409). */
+  checkpointHarness: (project: string, index: string, revision: number | null) =>
+    api<{ revision: number | null; row: HarnessRevision | null }>(`${harnessPath(project, index)}/checkpoint`, { method: "POST", body: JSON.stringify({ revision }) }),
   /** «История версий» чертежа, новые сверху. */
   harnessRevisions: (project: string, index: string) => api<HarnessRevisions>(`${harnessPath(project, index)}/revisions`),
   /** Восстановить версию: она становится чертежом новой версией; `current` — версия на экране (иначе 409). */

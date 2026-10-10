@@ -2,10 +2,13 @@
 
 The drawing itself is the КД register row of its position (`kitset_infrastructure.KitDocumentRow`, current bytes);
 each save appends one revision here with the same bytes. The database holds the rules: a revision belongs to an
-existing КД row (FK, RESTRICT — a drawing with history is never deleted), its number is positive and unique per
-drawing (two saves made on the same revision cannot both land — the second gets HarnessWriteConflict → 409), the hash is a
-full sha256, a restore names an earlier revision. Rows are never updated or deleted — the repository has no such
-method."""
+existing КД row (FK, RESTRICT — a drawing with history is never deleted), its numbers are positive and unique per
+drawing (two saves made on the same revision cannot both land — the second gets HarnessWriteConflict → 409), the hash
+is a full sha256, a restore names an earlier row.
+
+The history is thinned (`harness.application.save`): an autosave folded into its author's open «saved» row rewrites
+that row's bytes, `revision` and `saved_at` — only that row, only from the revision it holds (`fold`); every other row
+never changes again. Nothing is deleted."""
 
 from __future__ import annotations
 
@@ -13,7 +16,8 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint, Uuid, func, select,
+    Boolean, CheckConstraint, DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint, Uuid, false, func,
+    select, update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -30,12 +34,15 @@ class HarnessRevisionRow(Base):
     __tablename__ = "techcard_harness_revisions"
     __table_args__ = (
         UniqueConstraint("document_id", "revision", name="uq_techcard_harness_revisions_document_revision"),
+        UniqueConstraint("document_id", "first_revision", name="uq_techcard_harness_revisions_document_first"),
         CheckConstraint("revision > 0", name="ck_techcard_harness_revisions_revision_positive"),
+        CheckConstraint("first_revision > 0 AND first_revision <= revision",
+                        name="ck_techcard_harness_revisions_first_revision"),
         CheckConstraint("size >= 0", name="ck_techcard_harness_revisions_size"),
         CheckConstraint("length(content_sha256) = 64", name="ck_techcard_harness_revisions_sha256"),
         CheckConstraint(f"kind IN ({_KINDS})", name="ck_techcard_harness_revisions_kind"),
         CheckConstraint(
-            "restored_from IS NULL OR (kind = 'restored' AND restored_from > 0 AND restored_from < revision)",
+            "restored_from IS NULL OR (kind = 'restored' AND restored_from > 0 AND restored_from < first_revision)",
             name="ck_techcard_harness_revisions_restored_from",
         ),
     )
@@ -53,7 +60,12 @@ class HarnessRevisionRow(Base):
     size: Mapped[int] = mapped_column(Integer, nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     restored_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The revision this row began at and when; `revision` / `saved_at` — the last save folded into it.
+    first_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    # «Сохранить версию»: no later save folds into a closed row.
+    closed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     saved_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     saved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -61,6 +73,7 @@ def _revision(row: HarnessRevisionRow) -> HarnessRevision:
     return HarnessRevision(
         document_id=row.document_id, revision=row.revision, content_sha256=row.content_sha256, size=row.size,
         saved_by=row.saved_by, saved_at=row.saved_at, kind=row.kind, restored_from=row.restored_from,
+        first_revision=row.first_revision, started_at=row.started_at, closed=row.closed,
     )
 
 
@@ -96,7 +109,7 @@ class SqlAlchemyHarnessRevisionRepository:
         return None if row is None else (_revision(row), row.content)
 
     def append(self, document_id: UUID, revision: int, content: bytes, *, kind: str, saved_by: str,
-               saved_at: datetime, restored_from: int | None = None) -> HarnessRevision:
+               saved_at: datetime, restored_from: int | None = None, closed: bool = False) -> HarnessRevision:
         """Writes at once, so a revision number taken by a concurrent save — or a position linked by a concurrent first
         save (migration 0089) — fails here as HarnessWriteConflict. A КД row added in this transaction goes first (no
         ORM relationship orders the two inserts)."""
@@ -107,7 +120,7 @@ class SqlAlchemyHarnessRevisionRepository:
         row = HarnessRevisionRow(
             id=uuid4(), document_id=document_id, revision=revision, content=content,
             content_sha256=content_sha256(content), size=len(content), kind=kind, restored_from=restored_from,
-            saved_by=saved_by, saved_at=saved_at,
+            first_revision=revision, closed=closed, saved_by=saved_by, started_at=saved_at, saved_at=saved_at,
         )
         self.session.add(row)
         try:
@@ -115,3 +128,30 @@ class SqlAlchemyHarnessRevisionRepository:
         except IntegrityError as error:
             raise HarnessWriteConflict(str(error.orig)) from error
         return _revision(row)
+
+    def fold(self, document_id: UUID, held: int, revision: int, content: bytes, *, saved_at: datetime) -> bool:
+        """An autosave into the open «saved» row holding revision `held`: its bytes, number and time move on. False —
+        the row moved on or was closed meanwhile (a concurrent save): the caller reports a conflict."""
+        try:
+            result = self.session.execute(
+                update(HarnessRevisionRow)
+                .where(HarnessRevisionRow.document_id == document_id, HarnessRevisionRow.revision == held,
+                       HarnessRevisionRow.kind == "saved", HarnessRevisionRow.closed.is_(False))
+                .values(revision=revision, content=content, content_sha256=content_sha256(content), size=len(content),
+                        saved_at=saved_at)
+                .execution_options(synchronize_session=False)
+            )
+        except IntegrityError as error:
+            raise HarnessWriteConflict(str(error.orig)) from error
+        return bool(result.rowcount)
+
+    def close(self, document_id: UUID, revision: int) -> bool:
+        """«Сохранить версию»: the row holding `revision` takes no more autosaves. False — no such open row."""
+        result = self.session.execute(
+            update(HarnessRevisionRow)
+            .where(HarnessRevisionRow.document_id == document_id, HarnessRevisionRow.revision == revision,
+                   HarnessRevisionRow.closed.is_(False))
+            .values(closed=True)
+            .execution_options(synchronize_session=False)
+        )
+        return bool(result.rowcount)

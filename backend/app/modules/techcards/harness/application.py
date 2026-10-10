@@ -25,7 +25,7 @@ from ..kitsets import KitDocument, Kitset, document_json, document_kind, item_id
 from .schema import (
     COMPONENT_GRAPH_KEYS, HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE, Expected, HarnessError, HarnessRevision,
     HarnessWriteConflict,
-    carry_component_graph, check_version, decode, encode, normalized,
+    carry_component_graph, check_version, content_sha256, decode, encode, normalized,
 )
 from .snapshot import parse_design
 from .validate import ReferenceBook, reference_pins, validate_design
@@ -154,8 +154,11 @@ def _stored_design(drawing: Drawing | None) -> dict[str, Any] | None:
 
 
 def _write(uow: TechcardsUnitOfWork, kitset: Kitset, index: str, drawing: Drawing | None, content: bytes, *,
-           actor: Actor, now: datetime, kind: str, restored_from: int | None = None) -> Drawing:
-    """The bytes into the КД row and the next revision into the history (same transaction)."""
+           actor: Actor, now: datetime, kind: str, restored_from: int | None = None,
+           checkpoint: bool = False) -> Drawing:
+    """The bytes into the КД row and the next revision (n+1) into the history (same transaction). An autosave of the
+    author of the open «saved» row within FOLD_WINDOW of its start folds into that row; anything else — a new row
+    (a checkpoint's row is closed at once: no autosave folds into it)."""
     product = item_id(kitset.project, index)
     file_name = f"{product} — {TITLE}"
     if drawing is None:
@@ -178,8 +181,16 @@ def _write(uow: TechcardsUnitOfWork, kitset: Kitset, index: str, drawing: Drawin
             raise HarnessConflict(JUST_SAVED)
         document = replace(stored, file_name=file_name, content_type=HARNESS_CONTENT_TYPE, size=len(content),
                            uploaded_at=now, uploaded_by=actor.name)
-    latest = uow.harness_revisions.append(document.id, number, content, kind=kind, saved_by=actor.name,
-                                          saved_at=now, restored_from=restored_from)
+    held = drawing.latest if drawing is not None else None
+    if (kind == "saved" and not checkpoint and held is not None and held.revision == drawing.revision
+            and held.takes_autosave(actor.name, now)):
+        if not uow.harness_revisions.fold(document.id, held.revision, number, content, saved_at=now):
+            raise HarnessConflict(JUST_SAVED)
+        latest = replace(held, revision=number, content_sha256=content_sha256(content), size=len(content),
+                         saved_at=now)
+    else:
+        latest = uow.harness_revisions.append(document.id, number, content, kind=kind, saved_by=actor.name,
+                                              saved_at=now, restored_from=restored_from, closed=checkpoint)
     return Drawing(document, content, number, latest)
 
 
@@ -189,7 +200,7 @@ def _audit(uow: TechcardsUnitOfWork, actor: Actor, now: datetime, event: str, de
 
 
 def save(factory: Factory, project: str, index: str, design: Mapping[str, Any], expected: Expected, *,
-         actor: Actor, now: datetime, references: ReferencesLoader, kind: str = "saved",
+         actor: Actor, now: datetime, references: ReferencesLoader, kind: str = "saved", checkpoint: bool = False,
          event: str = "techcards.kitset_harness_saved") -> Saved:
     """A save from the editor (`kind="saved"`) or an import of a TECHMAP-GRAPHER export (`kind="imported"`, unknown
     references only warn — the author's catalog is not ours)."""
@@ -209,7 +220,8 @@ def save(factory: Factory, project: str, index: str, design: Mapping[str, Any], 
                 document, content = kept, encode(kept)
         warnings += _references(document, stored, references, strict=kind == "saved")
         try:
-            written = _write(uow, kitset, index, drawing, content, actor=actor, now=now, kind=kind)
+            written = _write(uow, kitset, index, drawing, content, actor=actor, now=now, kind=kind,
+                             checkpoint=checkpoint)
             _audit(uow, actor, now, event, {
                 "project": kitset.project, "item_index": index, "file": written.document.file_name,
                 "size": str(len(content)), "revision": written.revision,
@@ -220,6 +232,30 @@ def save(factory: Factory, project: str, index: str, design: Mapping[str, Any], 
             # revision number (UNIQUE(document_id, revision)).
             raise HarnessConflict(BUSY.format(index=index) if drawing is None else JUST_SAVED) from error
     return Saved(written, list(dict.fromkeys(warnings)), drawing is None)
+
+
+def checkpoint(factory: Factory, project: str, index: str, expected: Expected, *, actor: Actor,
+               now: datetime) -> HarnessRevision | None:
+    """«Сохранить версию»: the history row holding the current revision is closed — the next save starts a new row,
+    this one stays as it is. The revision on screen, if given, must be the current one (unsaved edits on screen are
+    not in it). None — nothing to close (no history yet, or the row is already final)."""
+    with factory() as uow:
+        kitset, index = position(uow, project, index)
+        drawing = current(uow, kitset.project, index)
+        if drawing is None:
+            raise HarnessNotFound(f"У сборки {index} нет чертежа жгута")
+        if expected.given and not expected.matches(drawing.revision, drawing.content):
+            raise _stale(drawing)
+        held = drawing.latest
+        if held is None or held.revision != drawing.revision or held.closed:
+            return held
+        if not uow.harness_revisions.close(drawing.document.id, held.revision):
+            raise HarnessConflict(JUST_SAVED)
+        _audit(uow, actor, now, "techcards.kitset_harness_checkpoint", {
+            "project": kitset.project, "item_index": index, "revision": held.revision,
+        })
+        uow.commit()
+    return replace(held, closed=True)
 
 
 def product_of(factory: Factory, project: str, index: str) -> str:
@@ -359,5 +395,9 @@ def view(drawing: Drawing | None, warnings: list[str] | None = None) -> dict[str
 
 
 def revision_json(item: HarnessRevision) -> dict[str, Any]:
-    return {"revision": item.revision, "saved_at": item.saved_at.isoformat(), "saved_by": item.saved_by,
-            "size": item.size, "kind": item.kind, "restored_from": item.restored_from}
+    """A history row: the drawing as of `revision`, saved by `saved_by` from `started_at` (`first_revision`) to
+    `saved_at`; `closed` — «Сохранить версию» fixed it."""
+    return {"revision": item.revision, "first_revision": item.first_revision or item.revision,
+            "started_at": (item.started_at or item.saved_at).isoformat(), "saved_at": item.saved_at.isoformat(),
+            "saved_by": item.saved_by, "size": item.size, "kind": item.kind, "restored_from": item.restored_from,
+            "closed": item.closed}

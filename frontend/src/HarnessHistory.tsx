@@ -8,7 +8,19 @@ export function revisionOrigin(item: HarnessRevision): string {
   if (item.kind === "restored") return item.restored_from ? `Восстановлена из версии ${item.restored_from}` : "Восстановлена";
   if (item.kind === "imported") return "Загружена из TECHMAP-GRAPHER";
   if (item.kind === "initial") return "Начальная (до истории)";
-  return "Сохранение";
+  const saves = item.revision - item.first_revision + 1;
+  const text = saves > 1 ? `Автосохранения (${saves})` : "Сохранение";
+  return item.closed ? `${text}, закреплена` : text;
+}
+
+/** Когда шла строка: «10.10.2026 14:00–14:09» (один день), иначе обе даты; одно сохранение — одно время. */
+export function revisionSpan(item: HarnessRevision): string {
+  const start = formatDate(item.started_at);
+  const end = formatDate(item.saved_at);
+  if (start === end) return end;
+  const [startDay] = start.split(" ");
+  const [endDay, endTime] = end.split(" ");
+  return startDay === endDay && endTime ? `${start}–${endTime}` : `${start} – ${end}`;
 }
 
 function size(bytes: number): string {
@@ -53,7 +65,7 @@ export function HarnessHistory({ project, index, canEdit, onClose, onRestored }:
   const columns: DataColumn<HarnessRevision>[] = [
     { key: "revision", title: "Версия", numeric: true, value: (item) => item.revision,
       render: (item) => <strong>{item.revision}{history?.current === item.revision ? <span className="tone-ok harness-history-current">текущая</span> : null}</strong> },
-    { key: "saved_at", title: "Когда", value: (item) => formatDate(item.saved_at) },
+    { key: "saved_at", title: "Когда", value: revisionSpan },
     { key: "saved_by", title: "Кто", value: (item) => item.saved_by },
     { key: "origin", title: "Как появилась", value: revisionOrigin },
     { key: "size", title: "Размер", numeric: true, value: (item) => size(item.size) },

@@ -32,6 +32,8 @@ export interface ServerHarnessClient {
 export interface ServerHarnessDesignApi extends HarnessDesignApi {
   /** Сервер ответил 409: дальше сохранения не уходят, пока чертёж не перечитан. */
   readonly conflicted: boolean;
+  /** Номер версии чертежа на сервере, с которым адаптер сохраняет (null — чертежа ещё нет). */
+  readonly serverRevision: number | null;
   /** Размещения библиотечных компонентов этого же чертежа (общая с сохранением версия). */
   componentPlacements(templates: ComponentTemplateApi): ComponentPlacementApi;
 }
@@ -103,6 +105,7 @@ export function createServerHarnessDesignApi(
 
   const api: ServerHarnessDesignApi = {
     get conflicted() { return conflicted; },
+    get serverRevision() { return stored; },
     async get(projectId, harnessId) {
       const drawing = await client.harness(projectId, harnessId);
       conflicted = false;

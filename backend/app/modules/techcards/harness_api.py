@@ -4,7 +4,8 @@ THIRD_PARTY_NOTICES.md). Routes only: the rules live in `harness/` — the docum
 «Ручная сборка» from the drawing (`assembly`), its documents — connection table, cut list, specification
 (`documents`) — and the `.techmap-project.zip` exchange (`exchange`).
 
-The concurrency token is the integer `revision` of the drawing (each save appends one, migration 0090). For one
+The concurrency token is the integer `revision` of the drawing (each save is n+1, migration 0090; the history keeps
+thinned rows — autosaves of one person within 10 minutes share a row, see harness.application). For one
 release a write also takes the old `version` (the hash of the stored bytes, or the revision as text — what this
 release hands out under that name), so a browser tab opened before the update still saves."""
 
@@ -73,6 +74,13 @@ class SavePayload(BaseModel):
     revision: int | None = Field(default=None, ge=0)
     # Deprecated, one release: the token before revisions.
     version: str | None = Field(default=None, max_length=64)
+    # «Сохранить версию»: this save is a history row of its own that no later autosave folds into.
+    checkpoint: bool = False
+
+
+class CheckpointPayload(BaseModel):
+    # The revision on screen; None — fix whatever is stored.
+    revision: int | None = Field(default=None, ge=0)
 
 
 class DerivePayload(BaseModel):
@@ -135,8 +143,24 @@ def save_harness(
     with _refusals():
         return _saved(harness.save(
             factory, project, index, payload.design, Expected.of(payload.revision, payload.version),
-            actor=principal.actor, now=now, references=references,
+            actor=principal.actor, now=now, references=references, checkpoint=payload.checkpoint,
         ))
+
+
+@router.post("/{project}/harness/{index}/checkpoint")
+def checkpoint_harness(
+    project: str, index: str,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    payload: CheckpointPayload | None = None,
+) -> dict:
+    """«Сохранить версию»: текущая версия остаётся в истории как есть — следующие автосохранения начнут новую строку.
+    Версия с экрана, если передана, должна быть текущей."""
+    expected = Expected(revision=payload.revision) if payload is not None else Expected()
+    with _refusals():
+        held = harness.checkpoint(factory, project, index, expected, actor=principal.actor, now=now)
+    return {"revision": held.revision if held else None, "row": harness.revision_json(held) if held else None}
 
 
 @router.post("/{project}/harness/{index}/derive")

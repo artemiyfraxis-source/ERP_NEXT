@@ -36,12 +36,14 @@ describe("HarnessPage", () => {
       if (url.endsWith("/harness/КБ1") && method === "PUT") return putStatus === 409
         ? json({ detail: "Чертёж жгута только что сохранили — обновите страницу" }, 409) : json({ ...drawing(2), created: false });
       if (url.endsWith("/harness/КБ1/import")) return json({ ...drawing(3), created: false });
-      if (url.endsWith("/harness/КБ1/revisions")) return json({ document_id: "h1", current: 3, total: 3, revisions: [
-        { revision: 3, saved_at: "2026-10-10T14:30:00+03:00", saved_by: "Мастер", size: 2048, kind: "restored", restored_from: 1 },
-        { revision: 2, saved_at: "2026-10-10T12:00:00+03:00", saved_by: "Технолог", size: 3 * 1024 * 1024, kind: "imported", restored_from: null },
-        { revision: 1, saved_at: "2026-10-09T09:15:00+03:00", saved_by: "Технолог", size: 900, kind: "initial", restored_from: null },
+      if (url.endsWith("/harness/КБ1/revisions")) return json({ document_id: "h1", current: 9, total: 4, revisions: [
+        { revision: 9, first_revision: 4, started_at: "2026-10-10T14:00:00", saved_at: "2026-10-10T14:09:00", closed: true, saved_by: "Мастер", size: 2048, kind: "saved", restored_from: null },
+        { revision: 3, first_revision: 3, started_at: "2026-10-10T13:30:00", saved_at: "2026-10-10T13:30:00", closed: false, saved_by: "Мастер", size: 2048, kind: "restored", restored_from: 1 },
+        { revision: 2, first_revision: 2, started_at: "2026-10-10T12:00:00", saved_at: "2026-10-10T12:00:00", closed: false, saved_by: "Технолог", size: 3 * 1024 * 1024, kind: "imported", restored_from: null },
+        { revision: 1, first_revision: 1, started_at: "2026-10-09T09:15:00", saved_at: "2026-10-09T09:15:00", closed: false, saved_by: "Технолог", size: 900, kind: "initial", restored_from: null },
       ] });
-      if (url.endsWith("/harness/КБ1/revisions/2/restore")) return json(drawing(4));
+      if (url.endsWith("/harness/КБ1/revisions/2/restore")) return json(drawing(10));
+      if (url.endsWith("/harness/КБ1/checkpoint")) return json({ revision: 1, row: null });
       return json({});
     }));
   });
@@ -103,6 +105,9 @@ describe("HarnessPage", () => {
     expect(screen.getByText("Загружена из TECHMAP-GRAPHER")).toBeTruthy();
     expect(screen.getByText("Начальная (до истории)")).toBeTruthy();
     expect(screen.getByText("3,0 МБ")).toBeTruthy();
+    // Автосохранения одного сотрудника за 10 минут — одна строка с промежутком времени.
+    expect(screen.getByText("Автосохранения (6), закреплена")).toBeTruthy();
+    expect(screen.getByText("10.10.2026 14:00–14:09")).toBeTruthy();
     expect(screen.getByText("текущая")).toBeTruthy();
     expect(dialog.textContent).not.toMatch(/2026-10|restored|imported/);
     const restore = screen.getByRole("button", { name: "Выберите версию" }) as HTMLButtonElement;
@@ -110,8 +115,25 @@ describe("HarnessPage", () => {
     fireEvent.click(screen.getByText("Загружена из TECHMAP-GRAPHER").closest("tr")!);
     fireEvent.click(screen.getByRole("button", { name: "Восстановить версию 2" }));
     await waitFor(() => expect(calls.some((call) => call.url.endsWith("/revisions/2/restore"))).toBe(true));
-    expect(calls.find((call) => call.url.endsWith("/revisions/2/restore"))!.body).toEqual({ revision: 3 });
-    expect(await screen.findByText("Восстановлена версия 2 — теперь это версия 4.")).toBeTruthy();
+    expect(calls.find((call) => call.url.endsWith("/revisions/2/restore"))!.body).toEqual({ revision: 9 });
+    expect(await screen.findByText("Восстановлена версия 2 — теперь это версия 10.")).toBeTruthy();
+  });
+
+  it("«Сохранить версию» закрепляет текущую версию в истории с номером последнего сохранения", async () => {
+    render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
+    fireEvent.click(await screen.findByRole("button", { name: "Правка" }));
+    await waitFor(() => expect(calls.some((call) => call.method === "PUT")).toBe(true));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Сохранено"));
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить версию" }));
+    expect(await screen.findByText("Версия 1 сохранена в истории.")).toBeTruthy();
+    // Номер — тот, что адаптер получил с последним сохранением (сервер ответил версией 2).
+    expect(calls.find((call) => call.url.endsWith("/checkpoint"))!.body).toEqual({ revision: 2 });
+  });
+
+  it("в просмотре «Сохранить версию» нет", async () => {
+    render(<HarnessPage project="708К.4" index="КБ1" canEdit={false} />);
+    await screen.findByTestId("editor");
+    expect(screen.queryByRole("button", { name: "Сохранить версию" })).toBeNull();
   });
 
   it("без права правки история видна, восстановить нельзя", async () => {

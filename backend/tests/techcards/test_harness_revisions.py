@@ -142,7 +142,7 @@ def test_a_drawing_that_must_not_be_stored_is_refused_with_every_reason(harness_
 
 def test_restore_saves_an_earlier_revision_as_a_new_one(harness_api):
     client, factory, clock = harness_api
-    client.put(f"{BASE}/КБ1", json={"design": _design()})
+    client.put(f"{BASE}/КБ1", json={"design": _design(), "checkpoint": True})  # «Сохранить версию» — its own row
     client.put(f"{BASE}/КБ1", json={"design": _edited(333), "revision": 1})
     clock["now"] = NOW + timedelta(hours=1)
     restored = client.post(f"{BASE}/КБ1/revisions/1/restore", json={"revision": 2})
@@ -238,7 +238,8 @@ def test_saves_hold_with_foreign_keys_enforced_as_in_postgres():
         uow.commit()
     actor = Actor(id=UUID(int=1), name="Технолог", department="Производство")
     for expected, number in ((Expected(), 1), (Expected(revision=1), 2)):
-        saved = application.save(factory, PROJECT, "КБ1", _design(), expected, actor=actor, now=NOW, references=None)
+        saved = application.save(factory, PROJECT, "КБ1", _design(), expected, actor=actor,
+                                 now=NOW + timedelta(minutes=11 * number), references=None)
         assert saved.drawing.revision == number
     restored = application.restore_revision(factory, PROJECT, "КБ1", 1, Expected(revision=2), actor=actor, now=NOW,
                                             references=None)
@@ -246,8 +247,11 @@ def test_saves_hold_with_foreign_keys_enforced_as_in_postgres():
     engine.dispose()
 
 
-def test_a_save_racing_another_save_on_the_same_revision_is_a_conflict(harness_api, monkeypatch):
-    """Both read revision 1; the other one committed revision 2 between this one's check and its write."""
+@pytest.mark.parametrize("racer", ["Технолог", "Мастер"])
+def test_a_save_racing_another_save_on_the_same_revision_is_a_conflict(harness_api, monkeypatch, racer):
+    """Both read revision 1; the other one committed revision 2 between this one's check and its write. The same
+    person's autosave would fold into the row the other save already moved on; another person's would append
+    revision 2 that is taken — either way the database refuses it."""
     client, factory, _clock = harness_api
     client.put(f"{BASE}/КБ1", json={"design": _design()})
     import app.modules.techcards.harness.application as harness_module
@@ -265,10 +269,95 @@ def test_a_save_racing_another_save_on_the_same_revision_is_a_conflict(harness_a
     monkeypatch.setattr(harness_module, "current", current_before_the_other_save)
     # The КД row's own guard (uploaded_at) let through as well: the revision number is the rule that holds.
     monkeypatch.setattr(SqlAlchemyKitsetRepository, "replace_content", lambda self, *args, **kwargs: 1)
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit"}, name=racer)
     raced = client.put(f"{BASE}/КБ1", json={"design": _edited(999), "revision": 1})
     assert raced.status_code == 409, raced.text
     assert raced.json()["detail"] == "Чертёж жгута только что сохранили — обновите страницу и повторите правку"
-    assert [item[0] for item in _revisions(factory)] == [1, 2]
+    assert [item[0] for item in _revisions(factory)] == [2]  # the other save folded into the first row
+    assert client.get(f"{BASE}/КБ1/revisions/2").json()["design"]["wires"][0]["lengthMm"] == 111
+
+
+# ── Thinned history: autosaves of one person within 10 minutes share a row ─────────────────────────────────────
+
+
+def _rows_of(client):
+    return [(item["first_revision"], item["revision"], item["saved_by"], item["kind"], item["closed"])
+            for item in client.get(f"{BASE}/КБ1/revisions").json()["revisions"]]
+
+
+def test_rapid_autosaves_of_one_person_fold_into_one_row_the_revision_still_grows(harness_api):
+    client, factory, clock = harness_api
+    revision = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()["revision"]
+    for step in range(1, 6):
+        clock["now"] = NOW + timedelta(seconds=step)
+        saved = client.put(f"{BASE}/КБ1", json={"design": _edited(300 + step), "revision": revision})
+        assert saved.status_code == 200, saved.text
+        revision = saved.json()["revision"]
+    assert revision == 6
+    assert _rows_of(client) == [(1, 6, "Технолог", "saved", False)]
+    history = client.get(f"{BASE}/КБ1/revisions").json()
+    assert (history["current"], history["total"]) == (6, 1)
+    row = history["revisions"][0]
+    assert row["started_at"].startswith("2026-10-06T10:00:00") and row["saved_at"].startswith("2026-10-06T10:00:05")
+    assert client.get(f"{BASE}/КБ1/revisions/6").json()["design"]["wires"][0]["lengthMm"] == 305
+    assert client.get(f"{BASE}/КБ1/revisions/3").status_code == 404  # folded away
+    with factory() as uow:
+        [stored] = uow.session.scalars(select(HarnessRevisionRow)).all()
+        assert stored.content_sha256 == hashlib.sha256(stored.content).hexdigest() and stored.size == len(stored.content)
+    # A stale autosave is still a conflict.
+    assert client.put(f"{BASE}/КБ1", json={"design": _edited(1), "revision": 5}).status_code == 409
+
+
+def test_another_person_ten_minutes_or_a_checkpoint_start_a_new_row(harness_api):
+    client, _factory, clock = harness_api
+    revision = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()["revision"]
+
+    def save(length, minutes, name="Технолог", **extra):
+        nonlocal revision
+        clock["now"] = NOW + timedelta(minutes=minutes)
+        app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit"}, name=name)
+        response = client.put(f"{BASE}/КБ1", json={"design": _edited(length), "revision": revision, **extra})
+        assert response.status_code == 200, response.text
+        revision = response.json()["revision"]
+
+    save(301, 2, name="Мастер")              # another person — a new row
+    save(302, 3, name="Мастер")              # folds
+    save(303, 13, name="Мастер")             # more than 10 minutes since that row began — a new row
+    save(304, 14, name="Мастер", checkpoint=True)  # «Сохранить версию» with the save — its own closed row
+    save(305, 15, name="Мастер")             # after a checkpoint — a new row
+    save(306, 16, name="Мастер")             # folds
+    assert _rows_of(client) == [
+        (6, 7, "Мастер", "saved", False), (5, 5, "Мастер", "saved", True), (4, 4, "Мастер", "saved", False),
+        (2, 3, "Мастер", "saved", False), (1, 1, "Технолог", "saved", False),
+    ]
+
+    # «Сохранить версию» without a save: the current row is fixed, the next autosave starts a new one.
+    stale = client.post(f"{BASE}/КБ1/checkpoint", json={"revision": 6})
+    assert stale.status_code == 409
+    fixed = client.post(f"{BASE}/КБ1/checkpoint", json={"revision": 7})
+    assert fixed.status_code == 200, fixed.text
+    assert fixed.json()["row"] == {**fixed.json()["row"], "revision": 7, "closed": True}
+    assert client.post(f"{BASE}/КБ1/checkpoint", json={"revision": 7}).json()["row"]["closed"] is True  # idempotent
+    save(307, 17, name="Мастер")
+    assert _rows_of(client)[:2] == [(8, 8, "Мастер", "saved", False), (6, 7, "Мастер", "saved", True)]
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "view"})
+    assert client.post(f"{BASE}/КБ1/checkpoint", json={"revision": 8}).status_code == 403
+
+
+def test_imported_restored_and_initial_rows_never_take_autosaves(harness_api):
+    client, _factory, clock = harness_api
+    client.put(f"{BASE}/КБ1", json={"design": _design(), "checkpoint": True})
+    imported = client.post(f"{BASE}/КБ1/import", json={"file_name": "x.json", "revision": 1, "content_b64": _b64(
+        {"harnesses": [{"designation": "КБ1", "design": {"schemaVersion": 1, "content": _edited(310)}}]})})
+    assert imported.json()["revision"] == 2
+    clock["now"] = NOW + timedelta(seconds=5)
+    assert client.put(f"{BASE}/КБ1", json={"design": _edited(311), "revision": 2}).json()["revision"] == 3
+    restored = client.post(f"{BASE}/КБ1/revisions/1/restore", json={"revision": 3}).json()
+    assert restored["revision"] == 4
+    clock["now"] = NOW + timedelta(seconds=9)
+    assert client.put(f"{BASE}/КБ1", json={"design": _edited(312), "revision": 4}).json()["revision"] == 5
+    assert [(row[0], row[1], row[3]) for row in _rows_of(client)] == [
+        (5, 5, "saved"), (4, 4, "restored"), (3, 3, "saved"), (2, 2, "imported"), (1, 1, "saved")]
 
 
 # ── References to the ERP books ────────────────────────────────────────────────────────────────────────────────

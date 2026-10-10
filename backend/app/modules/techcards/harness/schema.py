@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 import hashlib
 import json
@@ -46,9 +46,15 @@ class HarnessWriteConflict(RuntimeError):
     drawing of a position is already taken)."""
 
 
+# Autosaves of one person within this time from the start of their open «saved» history row fold into it.
+FOLD_WINDOW = timedelta(minutes=10)
+
+
 @dataclass(frozen=True)
 class HarnessRevision:
-    """One saved state of a drawing. Append-only: never changed after it is written."""
+    """One row of a drawing's history: the drawing as of `revision`, saved by one person from `started_at`
+    (revision `first_revision`) to `saved_at`. Autosaves of that person within FOLD_WINDOW fold into the open row of
+    kind «saved»; a closed row («Сохранить версию») and rows of other kinds never change again."""
     document_id: Any
     revision: int
     content_sha256: str
@@ -57,6 +63,18 @@ class HarnessRevision:
     saved_at: datetime
     kind: str
     restored_from: int | None = None
+    first_revision: int = 0
+    started_at: datetime | None = None
+    closed: bool = False
+
+    def takes_autosave(self, saved_by: str, now: datetime) -> bool:
+        """An autosave of `saved_by` at `now` folds into this row instead of starting a new one."""
+        if self.kind != "saved" or self.closed or self.saved_by != saved_by or self.started_at is None:
+            return False
+        started, moment = self.started_at, now
+        if (started.tzinfo is None) != (moment.tzinfo is None):  # SQLite hands times back without the zone
+            started, moment = started.replace(tzinfo=None), moment.replace(tzinfo=None)
+        return timedelta(0) <= moment - started <= FOLD_WINDOW
 
 
 def plain(value: Any) -> Any:

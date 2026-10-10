@@ -67,7 +67,17 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
     } catch (reason) { setNote(""); setError(failureText(reason, "Чертёж не загружен")); }
   }
 
-  const heading = `${index}${title ? ` ${title}` : ""}`;
+  // «Сохранить версию»: автосохранения одного сотрудника за 10 минут — одна строка истории; кнопка закрепляет текущую.
+  async function checkpoint() {
+    if (!api) return;
+    setError("");
+    try {
+      const fixed = await kitsetsApi.checkpointHarness(project, index, api.serverRevision);
+      setNote(fixed.revision ? `Версия ${fixed.revision} сохранена в истории.` : "Чертёж ещё не сохранён — сохранять в историю нечего.");
+    } catch (reason) { setNote(""); setError(failureText(reason, "Версия не сохранена")); }
+  }
+
+  const heading =`${index}${title ? ` ${title}` : ""}`;
   return <section className="harness-page" aria-label={`Чертёж жгута ${heading}`}>
     <header className="harness-page-head">
       <button className="secondary small" onClick={onBack}>← Назад</button>
@@ -79,6 +89,8 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
       {state === "conflict" && <button className="primary small" onClick={() => setGeneration((value) => value + 1)}>Обновить чертёж</button>}
       <span className="harness-page-actions">
         {note && <span className="muted">{note}</span>}
+        {canEdit && <button className="secondary small" disabled={!api || state !== "saved"} onClick={() => void checkpoint()}
+          title="Текущая сохранённая версия останется в истории отдельной строкой">Сохранить версию</button>}
         <button className="secondary small" onClick={() => setHistoryOpen(true)}>История версий</button>
         <a className="secondary small button-link" href={kitsetsApi.harnessExportUrl(project, index)} download>Скачать для TECHMAP-GRAPHER</a>
         {canEdit && <button className="secondary small" onClick={() => fileRef.current?.click()}>Загрузить .techmap-project.zip</button>}

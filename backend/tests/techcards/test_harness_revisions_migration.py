@@ -54,8 +54,8 @@ def test_every_drawing_gets_its_bytes_as_revision_one_and_nothing_else_changes(t
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT * FROM techcard_kitset_documents ORDER BY id").fetchall() == before
         rows = connection.execute(
-            "SELECT document_id, revision, content, content_sha256, size, kind, restored_from, saved_by, saved_at"
-            " FROM techcard_harness_revisions ORDER BY document_id").fetchall()
+            "SELECT document_id, revision, content, content_sha256, size, kind, restored_from, saved_by, saved_at,"
+            " first_revision, started_at, closed FROM techcard_harness_revisions ORDER BY document_id").fetchall()
         drawing_count = connection.execute(
             "SELECT count(*) FROM techcard_kitset_documents WHERE content_type IN (?, ?) AND content IS NOT NULL",
             (LINKED, UNLINKED)).fetchone()[0]
@@ -68,7 +68,8 @@ def test_every_drawing_gets_its_bytes_as_revision_one_and_nothing_else_changes(t
         number = UUID(hex=document_id).int
         assert content == drawings[number] and size == len(content)
         assert sha == hashlib.sha256(content).hexdigest()
-    assert rows[0][8].startswith("2026-10-03 10:00:00")
+    assert rows[0][8].startswith("2026-10-03 10:00:00") and rows[0][10] == rows[0][8]
+    assert {(row[9], row[11]) for row in rows} == {(1, 0)}
     output = capsys.readouterr().out
     assert "строк КД 4, начальных версий записано 3" in output and str(UUID(int=5)) in output
 
@@ -79,12 +80,13 @@ def test_the_table_holds_its_rules(tmp_path, monkeypatch):
     command.upgrade(_config(database_path), AFTER)
     sha = "a" * 64
 
-    def add(connection, revision, *, document=1, kind="saved", restored_from=None, digest=sha):
+    def add(connection, revision, *, document=1, kind="saved", restored_from=None, digest=sha, first=None):
         connection.execute(
             "INSERT INTO techcard_harness_revisions (id, document_id, revision, content, content_sha256, size, kind,"
-            " restored_from, saved_by, saved_at) VALUES (?, ?, ?, x'7b7d', ?, 2, ?, ?, 'Технолог',"
-            " '2026-10-10 10:00:00')",
-            (UUID(int=1000 + revision + 100 * document).hex, _id(document), revision, digest, kind, restored_from),
+            " restored_from, first_revision, saved_by, started_at, saved_at) VALUES (?, ?, ?, x'7b7d', ?, 2, ?, ?, ?,"
+            " 'Технолог', '2026-10-10 10:00:00', '2026-10-10 10:00:00')",
+            (UUID(int=1000 + revision + 100 * document).hex, _id(document), revision, digest, kind, restored_from,
+             revision if first is None else first),
         )
 
     with sqlite3.connect(database_path) as connection:
@@ -100,6 +102,9 @@ def test_the_table_holds_its_rules(tmp_path, monkeypatch):
             dict(revision=3, kind="restored", restored_from=3),  # restored from itself
             dict(revision=3, digest="abc"),                     # not a sha256
             dict(revision=1, document=9),                       # no such КД row
+            dict(revision=5, first=6),                          # a row cannot begin after its last revision
+            dict(revision=5, first=2),                          # revision 2 already began a row
+            dict(revision=3, kind="restored", restored_from=2, first=2),  # restored from a later row
         ):
             with pytest.raises(sqlite3.IntegrityError):
                 add(connection, **bad)
