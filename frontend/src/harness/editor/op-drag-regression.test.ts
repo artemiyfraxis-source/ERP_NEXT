@@ -76,11 +76,11 @@ describe("OP shared exit drag regression", () => {
     const source = physicalFixture();
     const op = createJoiningPipe(source, [["S1"], ["S2"]], "op");
     let current: HarnessDesignDocument = { ...source, physicalTopology: { ...source.physicalTopology!, joiningPipes: [op] } };
-    const baseline = physicalTopologyScene(current).find(o => o.id === "S1")!.pipe!.handles.length;
     for (let index = 0; index < 5; index++) {
       current = applyEditorCommand(current, { type: "move-connector", connectorId: "B", view: "drawing", position: { x: 690 + 17 * index, y: 540 + 13 * index }, physicalDragMode: index % 2 ? "adjacent" : "carry" });
       expect(current.physicalTopology!.segments.find(s => s.id === "S1")!.path.points).toEqual([]);
-      expect(physicalTopologyScene(current).find(o => o.id === "S1")!.pipe!.handles.length).toBe(baseline);
+      const scenePipe = physicalTopologyScene(current).find(o => o.id === "S1")!.pipe!;
+      expect(scenePipe.authoredHandleIndices?.some(value => value >= 1)).toBe(true);
     }
   });
 

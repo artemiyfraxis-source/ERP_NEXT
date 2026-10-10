@@ -1,7 +1,7 @@
 import type { EditorPoint, EditorSceneObject } from "./editor-types";
 import { buildDrawingBom, type DrawingDocuments } from "./drawing-documents";
 import { buildDrawingObjectIndices } from "./drawing-object-indices";
-import type { HarnessDesignDocument, Point } from "./model";
+import { defaultLayerIds, type HarnessDesignDocument, type Point } from "./model";
 import { projectComponentTemplateView, type ComponentTemplateViewInstance, type ResolveComponentTemplateAssetUrl } from "./component-template-view-renderer";
 
 const indexId = (objectId: string) => `object-index:${objectId}`;
@@ -30,6 +30,79 @@ function defaultIndexPosition(object: EditorSceneObject): EditorPoint | null {
     !longest || points.length > longest.length ? points : longest, undefined) ?? object.points ?? [];
   const middle = pathMidpoint(path);
   return middle ? { x: middle.x + 8, y: middle.y - 7 } : null;
+}
+
+function indexAnchor(object: EditorSceneObject): EditorPoint | null {
+  const path = object.paths?.reduce<readonly EditorPoint[] | undefined>((longest, points) =>
+    !longest || points.length > longest.length ? points : longest, undefined) ?? object.points ?? [];
+  return pathMidpoint(path) ?? (object.kind === "connector"
+    ? { x: object.x + object.width / 2, y: object.y + object.height / 2 }
+    : null);
+}
+
+/**
+ * A material index keeps a short leader near the normal of its represented
+ * path. The user may choose the side, but cannot turn it into an arbitrary
+ * diagonal that loses the visual association with the material.
+ */
+function leaderAnchorAndNormal(object: EditorSceneObject, label: EditorPoint): { anchor: EditorPoint; normal: EditorPoint } | null {
+  if (object.kind === "connector") {
+    const center = { x: object.x + object.width / 2, y: object.y + object.height / 2 };
+    const direction = { x: label.x - center.x, y: label.y - center.y };
+    if (Math.abs(direction.x) >= Math.abs(direction.y)) {
+      const normal = { x: direction.x >= 0 ? 1 : -1, y: 0 };
+      return { anchor: { x: center.x + normal.x * object.width / 2, y: center.y }, normal };
+    }
+    const normal = { x: 0, y: direction.y >= 0 ? 1 : -1 };
+    return { anchor: { x: center.x, y: center.y + normal.y * object.height / 2 }, normal };
+  }
+  const path = object.paths?.reduce<readonly EditorPoint[] | undefined>((longest, points) =>
+    !longest || points.length > longest.length ? points : longest, undefined) ?? object.points ?? [];
+  if (path.length < 2) {
+    const anchor = indexAnchor(object);
+    return anchor ? { anchor, normal: { x: 0, y: -1 } } : null;
+  }
+  let best: { anchor: EditorPoint; dx: number; dy: number; distance: number } | null = null;
+  for (let index = 1; index < path.length; index += 1) {
+    const start = path[index - 1]!, end = path[index]!;
+    const dx = end.x - start.x, dy = end.y - start.y, lengthSquared = dx * dx + dy * dy;
+    if (!lengthSquared) continue;
+    const t = Math.max(0, Math.min(1, ((label.x - start.x) * dx + (label.y - start.y) * dy) / lengthSquared));
+    const anchor = { x: start.x + dx * t, y: start.y + dy * t };
+    const distance = Math.hypot(label.x - anchor.x, label.y - anchor.y);
+    if (!best || distance < best.distance) best = { anchor, dx, dy, distance };
+  }
+  if (!best) return null;
+  const length = Math.hypot(best.dx, best.dy);
+  const left = { x: -best.dy / length, y: best.dx / length };
+  const right = { x: -left.x, y: -left.y };
+  const toLabel = { x: label.x - best.anchor.x, y: label.y - best.anchor.y };
+  const normal = left.x * toLabel.x + left.y * toLabel.y >= 0 ? left : right;
+  return { anchor: best.anchor, normal };
+}
+
+function constrainedIndexPosition(object: EditorSceneObject, requested: EditorPoint): { position: EditorPoint; leader: { anchor: EditorPoint; normal: EditorPoint } | null } {
+  const leader = leaderAnchorAndNormal(object, requested);
+  if (!leader) return { position: requested, leader: null };
+  const distance = Math.hypot(requested.x - leader.anchor.x, requested.y - leader.anchor.y);
+  const desired = distance ? { x: (requested.x - leader.anchor.x) / distance, y: (requested.y - leader.anchor.y) / distance } : leader.normal;
+  const angle = Math.acos(Math.max(-1, Math.min(1, desired.x * leader.normal.x + desired.y * leader.normal.y)));
+  if (angle <= Math.PI / 18) return { position: requested, leader };
+  const sign = leader.normal.x * desired.y - leader.normal.y * desired.x >= 0 ? 1 : -1;
+  const c = Math.cos(Math.PI / 18), s = Math.sin(Math.PI / 18) * sign;
+  const direction = { x: leader.normal.x * c - leader.normal.y * s, y: leader.normal.x * s + leader.normal.y * c };
+  return { position: { x: leader.anchor.x + direction.x * distance, y: leader.anchor.y + direction.y * distance }, leader };
+}
+
+/** Library pictures can extend beyond a connector's legacy scene rectangle.
+ * Persist their visual bounds on the index so its leader follows the picture,
+ * not that obsolete rectangle, during both drawing and dragging. */
+function connectorIndexOwner(object: EditorSceneObject, metadata?: Readonly<Record<string, string>>): EditorSceneObject {
+  if (object.kind !== "connector" || !metadata) return object;
+  const x = Number(metadata.indexOwnerMinX), y = Number(metadata.indexOwnerMinY);
+  const maxX = Number(metadata.indexOwnerMaxX), maxY = Number(metadata.indexOwnerMaxY);
+  if (![x, y, maxX, maxY].every(Number.isFinite) || maxX <= x || maxY <= y) return object;
+  return { ...object, x, y, width: maxX - x, height: maxY - y };
 }
 
 function bomIndexes(document: HarnessDesignDocument): Map<string, string> {
@@ -74,11 +147,13 @@ export function drawingObjectIndexScene(
     const label = byBom.get(object.id) ?? generated.get(object.id) ?? (object.kind === "connector" ? object.label : undefined);
     if (!label) return [];
     const offset = persisted[object.id] ?? { x: 0, y: 0 };
-    const x = position.x + offset.x, y = position.y + offset.y;
+    const requested = { x: position.x + offset.x, y: position.y + offset.y };
+    const constrained = constrainedIndexPosition(object, requested);
+    const x = constrained.position.x, y = constrained.position.y, leader = constrained.leader;
     const width = Math.max(16, label.length * 8 * scale + 8 * scale), height = 20 * scale;
     return [{
       id: indexId(object.id),
-      layerId: object.layerId,
+      layerId: defaultLayerIds.materialIndexes,
       kind: "object-index" as const,
       label,
       x,
@@ -86,7 +161,8 @@ export function drawingObjectIndexScene(
       width,
       height,
       color: "#17384b",
-      metadata: { indexObjectId: object.id, indexBaseX: String(position.x), indexBaseY: String(position.y), indexScale: String(scale) },
+      ...(leader ? { points: [leader.anchor, constrained.position] } : {}),
+      metadata: { indexObjectId: object.id, indexBaseX: String(position.x), indexBaseY: String(position.y), indexScale: String(scale), ...(leader ? { indexAnchorX: String(leader.anchor.x), indexAnchorY: String(leader.anchor.y) } : {}) },
     }];
   });
 }
@@ -109,7 +185,21 @@ export function alignDrawingConnectorIndexes(
     if (!projection) return object;
     const base = { x: projection.bounds.maxX + 6, y: projection.bounds.minY + 12 };
     const offset = document.drawingDocuments?.indexOffsets?.[owner.id] ?? { x: 0, y: 0 };
-    return { ...object, x: base.x + offset.x, y: base.y + offset.y, metadata: { ...object.metadata, indexBaseX: String(base.x), indexBaseY: String(base.y) } };
+    const requested = { x: base.x + offset.x, y: base.y + offset.y };
+    const ownerForIndex = {
+      ...owner,
+      x: projection.bounds.minX,
+      y: projection.bounds.minY,
+      width: projection.bounds.maxX - projection.bounds.minX,
+      height: projection.bounds.maxY - projection.bounds.minY,
+    };
+    const constrained = constrainedIndexPosition(ownerForIndex, requested);
+    return { ...object, x: constrained.position.x, y: constrained.position.y, metadata: {
+      ...object.metadata, indexBaseX: String(base.x), indexBaseY: String(base.y),
+      indexOwnerMinX: String(projection.bounds.minX), indexOwnerMinY: String(projection.bounds.minY),
+      indexOwnerMaxX: String(projection.bounds.maxX), indexOwnerMaxY: String(projection.bounds.maxY),
+      ...(constrained.leader ? { indexAnchorX: String(constrained.leader.anchor.x), indexAnchorY: String(constrained.leader.anchor.y) } : {}),
+    }, ...(constrained.leader ? { points: [constrained.leader.anchor, constrained.position] } : {}) };
   });
 }
 
@@ -124,7 +214,11 @@ export function moveDrawingIndex(
   const objectId = label?.metadata?.indexObjectId;
   const baseX = Number(label?.metadata?.indexBaseX), baseY = Number(label?.metadata?.indexBaseY);
   if (!objectId || !Number.isFinite(baseX) || !Number.isFinite(baseY)) return null;
+  const owner = currentScene.find(object => object.id === objectId && object.kind !== "object-index");
+  const desired = owner
+    ? constrainedIndexPosition(connectorIndexOwner(owner, label?.metadata), { x: point.x, y: point.y }).position
+    : point;
   const docs = document.drawingDocuments ?? { tables: [], leaders: [], bomOrder: [] };
-  const offset: EditorPoint = { x: point.x - baseX, y: point.y - baseY };
+  const offset: EditorPoint = { x: desired.x - baseX, y: desired.y - baseY };
   return { ...docs, indexOffsets: { ...docs.indexOffsets, [objectId]: offset } };
 }

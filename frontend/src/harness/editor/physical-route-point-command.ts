@@ -37,10 +37,23 @@ export function resolvePhysicalRoutePointCommand(
     }
     const authoredIndex=pipe.authoredHandleIndices?.[index];
     if(authoredIndex===-1)return null;
-    const points=physicalEditablePoints(document,segment),at=authoredIndex??index+1;
+    // The displayed handle may be a generated corner of a newly created P in
+    // an OP.  Resolve it against the complete automatic source route so the
+    // first edit materializes that exact corner instead of treating the grip
+    // as a fixed OP station.
+    const points=physicalEditablePoints(document,segment,true),at=authoredIndex??index+1;
     if(at<=0||at>=points.length-1)return null;
+    // A grip is painted on the rounded display route, while the model retains
+    // the sharp authored vertex. Preserve the pointer delta from that display
+    // grip so the first drag neither jumps nor writes display coordinates into
+    // the physical route. Bundled members use the same rule via their own
+    // projection helper.
+    const displayOrigin=pipe.handles[index] ?? points[at]!;
     const initial=unprojectPipeBundleEdit(document,id,points[at]!,target);
-    return {type:"edit-physical-bend",segmentId:id,index:at-1,position:initial,mode,insert:false,displayPosition:target};
+    const position=initial===target
+      ? {x:points[at]!.x+target.x-displayOrigin.x,y:points[at]!.y+target.y-displayOrigin.y}
+      : initial;
+    return {type:"edit-physical-bend",segmentId:id,index:at-1,position,mode,insert:false,displayPosition:target};
   }
   const transition=pipe.joiningTransitionMidpoints?.find(handle=>handle.index===index);
   if(transition){
