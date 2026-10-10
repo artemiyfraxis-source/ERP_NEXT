@@ -3,9 +3,11 @@ import {
   AUTH_REQUIRED_EVENT,
   ApiError,
   accessLevelLabel,
+  failureText,
   identityApi,
   type Principal,
 } from "./api";
+import { DraftProvider, DraftStore } from "./formDrafts";
 import {
   accessLevelOf,
   canAct,
@@ -20,7 +22,7 @@ import {
   type NavItem,
   type Section,
 } from "./navigation";
-import { LoginPage } from "./LoginPage";
+import { LoginPage, SessionExpiredDialog } from "./LoginPage";
 import { UpdateFailure } from "./UpdateBanner";
 import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
@@ -66,16 +68,29 @@ export function App() {
   const [shellError, setShellError] = useState("");
   // On a tablet the sidebar is a drawer behind «☰»; any navigation closes it.
   const [navOpen, setNavOpen] = useState(false);
+  // The first «who am I» failed without a 401 (no network, deadline): the error and «Повторить», not the login form.
+  const [bootError, setBootError] = useState("");
+  // A background 401 (bell poll, any page) while signed in: the page stays mounted under the sign-in dialog.
+  const [expired, setExpired] = useState(false);
+  const principalRef = useRef<Principal | null>(null);
+  principalRef.current = principal;
+  // Unsent forms per user (F07); lives as long as the tab, never in browser storage.
+  const drafts = useRef(new DraftStore()).current;
 
-  useEffect(() => {
+  function loadPrincipal() {
+    setLoading(true);
+    setBootError("");
     identityApi
       .me()
       .then(setPrincipal)
       .catch((error) => {
-        if (!(error instanceof ApiError) || error.status !== 401) console.error(error);
+        if (error instanceof ApiError && error.status === 401) return;
+        setBootError(failureText(error, "ERP не ответила"));
       })
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(loadPrincipal, []);
 
   useEffect(() => {
     const listener = () => setPlace(placeFromUrl());
@@ -84,7 +99,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const requireLogin = () => setPrincipal(null);
+    const requireLogin = () => {
+      if (principalRef.current) setExpired(true);
+    };
     window.addEventListener(AUTH_REQUIRED_EVENT, requireLogin);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
   }, []);
@@ -145,12 +162,18 @@ export function App() {
 
   async function signOut() {
     setShellError("");
+    const leaving = principal;
+    const signedOut = () => {
+      if (leaving) drafts.clearUser(leaving.user.id);
+      setExpired(false);
+      setPrincipal(null);
+    };
     try {
       await identityApi.logout();
-      setPrincipal(null);
+      signedOut();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        setPrincipal(null);
+        signedOut();
         return;
       }
       setShellError(
@@ -161,8 +184,22 @@ export function App() {
     }
   }
 
+  // Signed in again over the kept page. The same user goes on where they were; someone else gets a fresh shell
+  // (the `key` below), and the first user's unsent forms stay keyed to them, out of the newcomer's sight.
+  function signInAgain(next: Principal) {
+    setExpired(false);
+    setPrincipal(next);
+  }
+
   if (loading) return <div className="screen-center muted">Загружаем ERP…</div>;
+  if (!principal && bootError) {
+    return <div className="screen-center boot-error">
+      <div className="error-banner" role="alert">{bootError}</div>
+      <button className="primary" onClick={loadPrincipal}>Повторить</button>
+    </div>;
+  }
   if (!principal) return <LoginPage onLogin={setPrincipal} />;
+  const relogin = expired && <SessionExpiredDialog onLogin={signInAgain} />;
   // A section or block the principal cannot open falls back to the home screen.
   const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
@@ -170,14 +207,20 @@ export function App() {
   // The level's name under the user (the backend adds «· режим» while the admin mode is on).
   // Чертёж жгута — на весь экран, без меню: редактору нужна вся площадь.
   if (place.harness && visibleNav.some(({ id }) => id === "projects")) {
-    return <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
-      <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
-    </Suspense>;
+    return <>
+      <div key={principal.user.id} className="harness-host" inert={expired}>
+        <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
+          <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
+        </Suspense>
+      </div>
+      {relogin}
+    </>;
   }
   const levelName = principal.role_label || (accessLevelOf(principal) ? accessLevelLabel(accessLevelOf(principal)) : "");
 
   return (
-    <div className={navOpen ? "app-shell shell nav-open" : "app-shell shell"}>
+    <DraftProvider store={drafts} userId={principal.user.id}>
+    <div key={principal.user.id} className={navOpen ? "app-shell shell nav-open" : "app-shell shell"} inert={expired}>
       <div className="topbar">
         <button className="nav-toggle" aria-label="Меню" aria-expanded={navOpen} onClick={() => setNavOpen((open) => !open)}>☰</button>
         <strong className="wordmark">FRAXIS</strong>
@@ -259,6 +302,8 @@ export function App() {
         {activeSection === "access" && <AccessPage />}
       </main>
     </div>
+    {relogin}
+    </DraftProvider>
   );
 }
 

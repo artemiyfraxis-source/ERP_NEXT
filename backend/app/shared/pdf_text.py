@@ -8,6 +8,11 @@ supplier portals have one. A scan or a photo has none — the caller gets an emp
 Deliberately small: indirect objects and object streams, Flate streams, fonts with a ToUnicode CMap (the
 Identity-H fonts of Cyrillic PDFs) and single-byte fonts read as cp1251. Text is joined in content-stream
 order, one output line per baseline. Encrypted or damaged files give ''.
+
+Reading is budgeted (audit F05, 10.10): a 20 MB upload of compressed zeros must not unpack into gigabytes. Each Flate
+stream unpacks to at most STREAM_LIMIT bytes, a document to DOCUMENT_LIMIT in all, at most OBJECT_LIMIT objects and
+CMAP_LIMIT ToUnicode codes are read. Going over raises `PdfLimitExceeded` — «превышен лимит обработки», which the
+caller tells apart from '' («нет текстового слоя»).
 """
 
 from __future__ import annotations
@@ -22,41 +27,83 @@ _HEX = re.compile(rb"<([0-9A-Fa-f\s]*)>")
 _DELIMITERS = b"()<>[]{}/%"
 _WHITESPACE = b" \t\r\n\f\x00"
 MAX_TEXT = 200_000
+STREAM_LIMIT = 4 * 1024 * 1024  # one unpacked Flate stream; a real invoice page is tens of KB
+DOCUMENT_LIMIT = 16 * 1024 * 1024  # all unpacked streams of one file together
+OBJECT_LIMIT = 50_000  # indirect objects, those inside object streams included
+CMAP_LIMIT = 200_000  # ToUnicode codes over all fonts of the file
+
+
+class PdfLimitExceeded(ValueError):
+    """The file needs more unpacking than the budget allows — «превышен лимит обработки», not «нет текста»."""
+
+
+class _Budget:
+    __slots__ = ("left", "codes")
+
+    def __init__(self) -> None:
+        self.left = DOCUMENT_LIMIT
+        self.codes = CMAP_LIMIT
+
+    def inflate(self, raw: bytes) -> bytes:
+        limit = min(STREAM_LIMIT, self.left)
+        out = zlib.decompressobj().decompress(raw, limit + 1)  # max_length: never unpacks past the budget
+        if len(out) > limit:
+            raise PdfLimitExceeded("PDF unpacks beyond the processing limit")
+        self.left -= len(out)
+        return out
+
+    def spend_codes(self, count: int) -> None:
+        self.codes -= count
+        if self.codes < 0:
+            raise PdfLimitExceeded("PDF fonts map more codes than the processing limit")
 
 
 def pdf_text(data: bytes) -> str:
-    """The text of every page, or '' when the file is not a readable PDF with a text layer."""
+    """The text of every page, or '' when the file is not a readable PDF with a text layer.
+
+    Raises `PdfLimitExceeded` when reading would go over the unpacking budget."""
     if not data.startswith(b"%PDF") and b"%PDF" not in data[:1024]:
         return ""
     if b"/Encrypt" in data:
         return ""
     try:
-        return _extract(data)[:MAX_TEXT]
+        return _extract(data, _Budget())[:MAX_TEXT]
+    except PdfLimitExceeded:
+        raise
     except Exception:  # noqa: BLE001 — a damaged file is a file without text, not an error for the buyer
         return ""
 
 
-def _extract(data: bytes) -> str:
-    objects = _objects(data)
-    fonts = _fonts(objects)
+def _extract(data: bytes, budget: _Budget) -> str:
+    objects = _objects(data, budget)
+    fonts = _fonts(objects, budget)
     pages = [body for body in objects.values() if re.search(rb"/Type\s*/Page(?![a-zA-Z])", _head(body))]
     lines: list[str] = []
+    size = 0
     for page in pages:
         names = _font_names(page, objects) or fonts["*"]
         for ref in _content_refs(page):
-            stream = _stream(objects.get(ref, b""))
+            stream = _stream(objects.get(ref, b""), budget)
             if stream:
+                start = len(lines)
                 _show(stream, names, fonts, lines)
+                size += sum(len(part) for part in lines[start:])
+        if size > MAX_TEXT:
+            break  # the rest would be cut off anyway
     return "\n".join(line.strip() for line in "".join(lines).split("\n") if line.strip())
 
 
-def _objects(data: bytes) -> dict[int, bytes]:
-    objects = {int(match.group(1)): match.group(3) for match in _OBJECT.finditer(data)}
+def _objects(data: bytes, budget: _Budget) -> dict[int, bytes]:
+    objects: dict[int, bytes] = {}
+    for match in _OBJECT.finditer(data):
+        objects[int(match.group(1))] = match.group(3)
+        if len(objects) > OBJECT_LIMIT:
+            raise PdfLimitExceeded("PDF has more objects than the processing limit")
     for body in list(objects.values()):
         head = _head(body)
         if not re.search(rb"/Type\s*/ObjStm", head):
             continue
-        content = _stream(body)
+        content = _stream(body, budget)
         count = int(_number(head, b"N") or 0)
         first = int(_number(head, b"First") or 0)
         numbers = content[:first].split()
@@ -64,6 +111,8 @@ def _objects(data: bytes) -> dict[int, bytes]:
         for index, (number, offset) in enumerate(pairs):
             end = pairs[index + 1][1] if index + 1 < len(pairs) else len(content) - first
             objects.setdefault(number, content[first + offset:first + end])
+        if len(objects) > OBJECT_LIMIT:
+            raise PdfLimitExceeded("PDF has more objects than the processing limit")
     return objects
 
 
@@ -77,7 +126,7 @@ def _number(head: bytes, key: bytes) -> bytes | None:
     return match.group(1) if match else None
 
 
-def _stream(body: bytes) -> bytes:
+def _stream(body: bytes, budget: _Budget) -> bytes:
     start = body.find(b"stream")
     end = body.rfind(b"endstream")
     if start < 0 or end < start:
@@ -89,13 +138,13 @@ def _stream(body: bytes) -> bytes:
         raw = raw[1:]
     head = body[:start]
     if b"/FlateDecode" in head or b"/Fl " in head or b"/Fl]" in head:
-        return zlib.decompressobj().decompress(raw)
+        return budget.inflate(raw)
     if b"/Filter" in head:
         return b""  # images and exotic filters carry no text we can read
     return raw
 
 
-def _fonts(objects: dict[int, bytes]) -> dict:
+def _fonts(objects: dict[int, bytes], budget: _Budget) -> dict:
     """Font object → (code width, code → text); '*' is the name → font map of the whole file."""
     fonts: dict = {"*": {}}
     for number, body in objects.items():
@@ -104,7 +153,7 @@ def _fonts(objects: dict[int, bytes]) -> dict:
             continue
         cmap_ref = re.search(rb"/ToUnicode\s+(\d+)\s+\d+\s+R", head)
         if cmap_ref:
-            fonts[number] = _cmap(_stream(objects.get(int(cmap_ref.group(1)), b"")))
+            fonts[number] = _cmap(_stream(objects.get(int(cmap_ref.group(1)), b""), budget), budget)
         elif re.search(rb"/Subtype\s*/Type0", head):
             fonts[number] = (2, {})
         else:
@@ -133,7 +182,7 @@ def _content_refs(page: bytes) -> list[int]:
     return [int(ref) for ref in _REF.findall(match.group(1))] if match else []
 
 
-def _cmap(stream: bytes) -> tuple[int, dict[int, str]]:
+def _cmap(stream: bytes, budget: _Budget) -> tuple[int, dict[int, str]]:
     width = 2
     space = re.search(rb"begincodespacerange\s*<([0-9A-Fa-f]+)>", stream)
     if space:
@@ -146,6 +195,7 @@ def _cmap(stream: bytes) -> tuple[int, dict[int, str]]:
     for block in re.findall(rb"beginbfrange(.*?)endbfrange", stream, re.S):
         for low, high, target in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(<[0-9A-Fa-f]+>|\[[^\]]*\])", block):
             start, stop = _int(low), _int(high)
+            budget.spend_codes(min(max(stop - start, 0), 0xFFFF) + 1)
             if target.startswith(b"["):
                 for offset, item in enumerate(_HEX.findall(target)):
                     table[start + offset] = _utf16(item)

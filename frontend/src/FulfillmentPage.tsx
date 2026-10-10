@@ -48,7 +48,8 @@ export function projectOf(request: Pick<FulfillmentRequest, "purpose" | "project
 
 /** issKb_: the КБ of a request inside its project (second part of НАЗНАЧЕНИЕ), otherwise its number. */
 function kbOf(request: FulfillmentRequest) {
-  return String(request.purpose ?? "").split(" · ")[1] || request.number;
+  const kb = String(request.purpose ?? "").split(" · ")[1] || request.number;
+  return request.kind === "extra" ? `${kb} · довыдача ${request.number}` : kb;
 }
 
 /** «Набрано» of a line: what the lot holds for it, or what was issued (SUPPLYMAP КОЛ-ВО stays after issue). */
@@ -124,6 +125,29 @@ function saveView(view: "tiles" | "table") {
     window.localStorage.setItem(VIEW_KEY, view);
   } catch {
     // Private window or blocked site data: the choice lives until the page is reloaded.
+  }
+}
+
+// «Выдача со списанием» opens on what is to be handed out or taken back (owner, 10.10.2026), not on «Все»; the chips
+// there pick several stages at once, and the choice is remembered per browser like the view.
+export const GIVE_DEFAULT_STAGES = ["Укомплектован", "КБ Возвращена"];
+const GIVE_STAGES_KEY = "erp.fulfillment.give.stages";
+
+function savedGiveStages(): string[] {
+  try {
+    const raw = window.localStorage.getItem(GIVE_STAGES_KEY);
+    const parsed: unknown = raw === null ? null : JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string") ? parsed : GIVE_DEFAULT_STAGES;
+  } catch {
+    return GIVE_DEFAULT_STAGES;
+  }
+}
+
+function saveGiveStages(stages: string[]) {
+  try {
+    window.localStorage.setItem(GIVE_STAGES_KEY, JSON.stringify(stages));
+  } catch {
+    // Blocked storage: the choice lives until the page is reloaded.
   }
 }
 
@@ -210,7 +234,17 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   const [project, setProject] = useState<string | null>(null);
   const [view, setView] = useState(savedView);
   const [query, setQuery] = useState("");
-  const [stage, setStage] = useState("");
+  // The chosen stage chips; empty — «Все». The handout screen picks several, the others one.
+  const [picked, setPicked] = useState<string[]>(() => (mode === "give" ? savedGiveStages() : []));
+  const multi = mode === "give";
+  function choose(next: string[]) {
+    setPicked(next);
+    if (multi) saveGiveStages(next);
+  }
+  function toggle(item: string) {
+    if (!multi) return choose(picked.length === 1 && picked[0] === item ? [] : [item]);
+    choose(picked.includes(item) ? picked.filter((value) => value !== item) : [...picked, item]);
+  }
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [fromCalc, setFromCalc] = useState(false);
@@ -304,6 +338,8 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   ];
 
   const projectRequests = project ? requests.filter((request) => projectOf(request) === project && inScreenIgnoringStage(request)) : [];
+  // Прод 719К.2: отменённая КБ пропадала из карточки проекта без следа — в активной карточке она остаётся серой плашкой.
+  const projectCancelled = project && !archive ? requests.filter((request) => projectOf(request) === project && request.status === "Отменена") : [];
   function inScreenIgnoringStage(request: FulfillmentRequest) {
     // portalIssueProject reads active or archive requests, not one stage.
     return archive ? ARCHIVE.includes(request.status) : !ARCHIVE.includes(request.status);
@@ -317,13 +353,13 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   // issFilterRender_: the chips count what the search left, not what the chip itself narrows to.
   const chipStages = presets.map((item) => item.label);
   const found = shown.filter((request) => issMatch(request, query));
-  const tiled = stage ? found.filter((request) => request.status === stage) : found;
+  const tiled = picked.length ? found.filter((request) => picked.includes(request.status)) : found;
   const opened = openId ? requests.find((request) => request.id === openId) : undefined;
   const emptyText = archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта.";
   const readyToggle = screen && screen.hidden.length > 0 && !archive && <label className="check-inline"><input type="checkbox" checked={showReady} onChange={(event) => {
     setShowReady(event.target.checked);
     // A chip pointing at the stage that was just hidden would show an empty screen.
-    if (!event.target.checked && screen.hidden.includes(stage)) setStage("");
+    if (!event.target.checked && picked.some((item) => screen.hidden.includes(item))) choose(picked.filter((item) => !screen.hidden.includes(item)));
   }} /> показать «{screen.hidden[0]}»</label>;
 
   return (
@@ -331,7 +367,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
       <header className="page-head">
         <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>
         <div className="page-actions">
-        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setStage(""); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
+        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setPicked([]); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
         {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => { setCreating((value) => !value); setFromCalc(false); }}>+ Заявка</button>}
         {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>Заявка по расчёту</button>}
         <button className="secondary small" onClick={() => switchView(view === "tiles" ? "table" : "tiles")}>{view === "tiles" ? "Таблицей" : "Плитками"}</button>
@@ -341,7 +377,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
       {notice && <div className="success-banner" role="status">{notice}</div>}
       {fromCalc && <CalcRequestForm onClose={() => setFromCalc(false)} onCreated={async () => { setFromCalc(false); await reload(); }} />}
       {creating && <CreateRequestForm lots={lots} onClose={() => setCreating(false)} onCreated={async () => { setCreating(false); await reload(); }} />}
-      {project && <ProjectPanel project={project} requests={projectRequests} onClose={() => setProject(null)} busyId={busy} {...cardProps} />}
+      {project && <ProjectPanel project={project} requests={projectRequests} cancelled={projectCancelled} onClose={() => setProject(null)} busyId={busy} {...cardProps} />}
       {!project && view === "tiles" && (opened
         ? <div className="fulfillment-open">
           <button className="secondary small" onClick={() => setOpenId(null)}>← К заявкам</button>
@@ -353,12 +389,12 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
             {readyToggle}
           </div>
           <div className="calendar-chips" role="group" aria-label="Стадии">
-            <button type="button" className={`calendar-chip${stage ? "" : " active"}`} aria-pressed={!stage} onClick={() => setStage("")}>Все · {found.length}</button>
-            {chipStages.map((item) => <button type="button" key={item} className={`calendar-chip${stage === item ? " active" : ""}`} aria-pressed={stage === item} onClick={() => setStage(stage === item ? "" : item)}>{item} · {found.filter((request) => request.status === item).length}</button>)}
+            <button type="button" className={`calendar-chip${picked.length ? "" : " active"}`} aria-pressed={!picked.length} onClick={() => choose([])}>Все · {found.length}</button>
+            {chipStages.map((item) => <button type="button" key={item} className={`calendar-chip${picked.includes(item) ? " active" : ""}`} aria-pressed={picked.includes(item)} onClick={() => toggle(item)}>{item} · {found.filter((request) => request.status === item).length}</button>)}
           </div>
           {tiled.length
             ? <RequestTiles requests={tiled} openProject={setProject} openRequest={setOpenId} />
-            : <div className="empty">{!loaded ? "Загружаю…" : query ? "Ничего не нашлось." : stage ? `На стадии «${stage}» заявок нет.` : emptyText}</div>}
+            : <div className="empty">{!loaded ? "Загружаю…" : query ? "Ничего не нашлось." : picked.length ? `На ${picked.length > 1 ? "стадиях" : "стадии"} ${picked.map((item) => `«${item}»`).join(", ")} заявок нет.` : emptyText}</div>}
         </>)}
       {!project && view === "table" && <DataTable
         rows={shown}
@@ -393,9 +429,10 @@ type CardProps = {
 
 /* portalIssueProject: requests are created one per КБ; the project card glues them on reading — «Весь заказ» (every
    position across the КБ, picked / needed per КБ) and a tab per КБ with the ordinary request card. */
-function ProjectPanel({ project, requests, onClose, busyId, ...cardProps }: CardProps & {
+function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...cardProps }: CardProps & {
   project: string;
   requests: FulfillmentRequest[];
+  cancelled?: FulfillmentRequest[];
   onClose: () => void;
   busyId: string;
 }) {
@@ -440,10 +477,14 @@ function ProjectPanel({ project, requests, onClose, busyId, ...cardProps }: Card
   // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
   const [choosing, setChoosing] = useState(false);
   const canIssue = cardProps.canHandout && cardProps.showGive && requests.some(issuable);
+  // A КБ sent again after its cancel shows only its live request; one cancelled request per КБ is enough of a trace.
+  const liveKbs = new Set(requests.map((request) => kbOf(request)));
+  const gone = [...new Map(cancelled.filter((request) => !liveKbs.has(kbOf(request))).map((request) => [kbOf(request), request])).values()]
+    .sort((a, b) => kbOf(a).localeCompare(kbOf(b), "ru", { numeric: true }));
 
   return <div className="panel fulfillment-project">
     <div className="procurement-title">
-      <div><strong>Проект {project}</strong><small>КБ: {requests.length} · набрано {done} из {positions.length} поз. по заказу</small></div>
+      <div><strong>Проект {project}</strong><small>КБ: {requests.length}{gone.length ? ` · отменено: ${gone.length}` : ""} · набрано {done} из {positions.length} поз. по заказу</small></div>
       <div className="fulfillment-head-actions">
         {canIssue && <button className="primary small" aria-expanded={choosing} disabled={Boolean(busyId)} onClick={() => setChoosing((value) => !value)}>Выдать…</button>}
         <button className="secondary small" onClick={onClose}>← К заявкам</button>
@@ -468,6 +509,9 @@ function ProjectPanel({ project, requests, onClose, busyId, ...cardProps }: Card
           {kbOf(request)}{waiting ? ` · ждут ${waiting}` : " ✓"}
         </button>;
       })}
+      {gone.map((request) => <span key={request.id} className="calendar-chip chip-cancelled" title={`Заявка ${request.number} отменена — КБ можно отправить на комплектацию заново из карточки проекта`}>
+        {kbOf(request)} · отменена · {request.number}
+      </span>)}
     </div>
     {current
       ? <FulfillmentCard key={`${current.id}:${current.version}`} request={current} busy={busyId === current.id} {...cardProps} />
@@ -561,6 +605,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
 }) {
   const [returnLocation, setReturnLocation] = useState(request.return_location ?? "");
   const [sending, setSending] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [printError, setPrintError] = useState("");
   const closed = ["КБ Выдана", "КБ Возвращена", "Готово", "Отменена"].includes(request.status);
   const hasIssuedLines = request.lines.some((line) => Number(line.issued) > 0);
@@ -617,16 +662,80 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
         </>}
         {canHandout && showGive && issuable(request) && <button className="primary" disabled={busy} onClick={() => move("КБ Выдана", `${request.status === "Укомплектован" ? `Комплект уйдёт на выдачу (место: ${offered}) и сразу будет выдан. ` : ""}Количество спишется со склада (резерв → списано), заявка станет выданной. Отменить это можно только возвратом.`, () => fulfillmentApi.issueBatch([{ id: request.id, version: request.version }]))}>Выдать комплект</button>}
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
-        {canEdit && !closed && <button className="link-button danger-link" disabled={busy} onClick={() => move("Отменена", "Резерв освободится, заявка уйдёт в архив.", () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
+        {canEdit && request.status === "Готов к выдаче" && <button className="secondary" disabled={busy} title="Снять комплект с выдачи — это не возврат материала из цеха" onClick={() => move(returnTarget(request), `Комплект снимут с выдачи${request.handout_location ? ` (${request.handout_location})` : ""} и вернут в комплектацию. Это не возврат материала («КБ Возвращена»): со склада ничего не списано и ничего не двигается, резерв остаётся на партиях. Отменить заявку можно будет после этого.`, () => fulfillmentApi.returnToKitting(request.id, request.version))}>Вернуть в комплектацию</button>}
+        {canEdit && request.kind !== "extra" && ["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) && !adding && <button className="secondary" disabled={busy} onClick={() => setAdding(true)}>Довыдать</button>}
+        {canEdit && !closed && request.status !== "Готов к выдаче" && <button className="link-button danger-link" disabled={busy} onClick={() => move("Отменена", cancelHint(request), () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
         <button className="secondary small" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
         {hasIssuedLines && <button className="secondary small" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
         {isAdmin && <button className="link-button danger-link" disabled={busy} onClick={remove}>Удалить заявку</button>}
       </div>
       {sending && <HandoutPlaceForm request={request} places={places} offered={offered} busy={busy} mutate={mutate} onCancel={() => setSending(false)} />}
+      {adding && <ExtraIssueForm request={request} busy={busy} mutate={mutate} onClose={() => setAdding(false)} />}
       {printError && <div className="error-banner" role="alert">{printError}</div>}
       {canHandout && showGive && request.status === "КБ Возвращена" && <ReturnForm request={request} busy={busy} mutate={mutate} />}
     </article>
   );
+}
+
+/* «Довыдать» (owner, 10.10.2026): the kit went out exactly to the need; what the shop lacks is handed out on top as a
+   «Довыдача» request — the positions of the kit with the quantity to add and the reason. It waits for lots as a new one. */
+function ExtraIssueForm({ request, busy, mutate, onClose }: {
+  request: FulfillmentRequest;
+  busy: boolean;
+  mutate: Mutate;
+  onClose: () => void;
+}) {
+  const positions = [...new Map(request.lines.map((line) => [`${line.article}|${line.name}|${line.unit}`, line])).values()];
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [reason, setReason] = useState("");
+  const key = useRef(crypto.randomUUID());
+  const chosen = positions
+    .map((line) => ({ line, quantity: String(quantities[line.id] ?? "").replace(",", ".").trim() }))
+    .filter((item) => Number(item.quantity) > 0);
+  const ready = Boolean(reason.trim()) && chosen.length > 0;
+  function submit() {
+    if (!ready) return;
+    void mutate(request.id, async () => {
+      const result = await fulfillmentApi.extra(request.id, {
+        reason: reason.trim(),
+        lines: chosen.map(({ line, quantity }) => ({ article: line.article, name: line.name, unit: line.unit, quantity })),
+      }, key.current);
+      key.current = crypto.randomUUID();
+      onClose();
+      return { message: `Довыдача ${result.request.number} создана: ${chosen.length} поз. — привяжите ГРН и выдайте.` };
+    });
+  }
+  return <div className="return-form extra-issue" role="group" aria-label={`Довыдать по ${request.number}`}>
+    <h3>Довыдать по {request.number}</h3>
+    <div className="table-wrap"><table className="grid wide"><thead><tr><th>Позиция</th><th className="num">По комплекту</th><th className="num">Довыдать</th></tr></thead><tbody>
+      {positions.map((line) => <tr key={line.id}>
+        <td className="text"><strong>{line.article || "—"}</strong><small>{line.name}</small></td>
+        <td className="num">{line.requirement} {line.unit}</td>
+        <td className="num"><input aria-label={`Довыдать ${line.name || line.article}`} inputMode="decimal" value={quantities[line.id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [line.id]: event.target.value }))} /> {line.unit}</td>
+      </tr>)}
+    </tbody></table></div>
+    <label>Причина<input aria-label="Причина довыдачи" maxLength={200} value={reason} placeholder="брак при опрессовке, не хватило провода…" onChange={(event) => setReason(event.target.value)} /></label>
+    <div className="fulfillment-actions">
+      <button className="primary" disabled={busy || !ready} onClick={submit}>{chosen.length ? `Создать довыдачу (${chosen.length} поз.)` : "Создать довыдачу"}</button>
+      <button className="secondary" onClick={onClose}>Отмена</button>
+    </div>
+  </div>;
+}
+
+/* «Вернуть в комплектацию»: a kit whose lines are all closed goes back «Укомплектован», otherwise «Недоукомплектован». */
+function returnTarget(request: FulfillmentRequest) {
+  return openLines(request).length ? "Недоукомплектован" : "Укомплектован";
+}
+
+/* What «Отменить заявку» gives back: every lot reserve of the kit, named, so nobody cancels a picked kit blind. */
+export function cancelHint(request: FulfillmentRequest) {
+  const held = request.lines.filter((line) => line.lot && Number(line.reserved) > 0);
+  const kb = projectOf(request) ? ` ${kbOf(request)} проекта ${projectOf(request)}` : "";
+  const lot = (line: FulfillmentLine) => `${line.lot!.grn}${line.lot!.package ? ` · ${line.lot!.package}` : ""}`;
+  const rows = held.slice(0, 12).map((line) => `· ${line.name || line.article} — ${line.reserved} ${line.unit} (${lot(line)})`);
+  if (held.length > 12) rows.push(`… и ещё ${held.length - 12}`);
+  const released = held.length ? [`Освободится резерв ${held.length} поз.:`, ...rows].join("\n") : "Резерва на партиях у заявки нет.";
+  return `${released}\n\nЗаявка${kb} уйдёт в архив «Отменена»; КБ можно будет отправить на комплектацию заново.`;
 }
 
 /* «Отправить на выдачу» offers this place when the server sends none (same default as the backend). */
