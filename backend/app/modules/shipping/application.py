@@ -11,6 +11,7 @@ from typing import Protocol, Sequence
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from app.shared.events import AuditEvent
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.shared.notifications import (
     PROJECT_MANAGER_AUDIENCE,
@@ -641,7 +642,7 @@ def _attach_upd(
     ) if part) + extension
     stored = StoredFile(
         id=uuid4(), shipment_id=shipment.id, file_name=name,
-        content_type=str(content_type or "").strip() or "application/octet-stream",
+        content_type=stored_content_type(content),
         size=len(content), uploaded_by=actor.name, uploaded_at=now,
     )
     updated = shipment.attach_upd(upd_file_url(stored.id))

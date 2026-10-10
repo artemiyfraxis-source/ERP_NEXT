@@ -63,9 +63,15 @@ async function expand(number: string) {
   fireEvent.click((await screen.findAllByText(number))[0]);
 }
 
+/* «Выдача со списанием» opens on «Укомплектован» + «КБ Возвращена»; «Все» shows every stage of the screen. */
+async function showAll() {
+  fireEvent.click(await screen.findByRole("button", { name: /^Все · / }));
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.removeItem("erp.fulfillment.view");
+  window.localStorage.removeItem("erp.fulfillment.give.stages");
 });
 
 it("opens the lot search already filtered by the position name and binds the picked lot", async () => {
@@ -164,6 +170,7 @@ it("lets a technical lead with edit on handout hand a kit out", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<FulfillmentPage principal={director} mode="give" />);
+  await showAll();
   await expand("FRX-ISS-26-0001");
   fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
   await waitFor(() => expect(posts).toEqual(["/api/issues/issue-batch"]));
@@ -458,6 +465,7 @@ it("closes an issued request without return on the handout screen", async () => 
 
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<FulfillmentPage principal={principal} mode="give" />);
+  await showAll();
   await expand("FRX-ISS-26-0001");
   // issMove_: every stage move asks first; «Отмена» in the dialog leaves the request as it is.
   fireEvent.click(await screen.findByRole("button", { name: "Готово" }));
@@ -481,6 +489,7 @@ it("warns that handing the kit out writes the stock off before it does", async (
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<FulfillmentPage principal={principal} mode="give" />);
+  await showAll();
   await expand("FRX-ISS-26-0001");
   fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
 

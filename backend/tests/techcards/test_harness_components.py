@@ -91,6 +91,8 @@ def test_library_lists_the_newest_revision_serves_a_revision_and_its_picture(har
     asset = full["assets"][0]["assetId"]
     image = client.get(f"{LIBRARY}/{template.template_id}/versions/1/assets/{asset}")
     assert image.status_code == 200 and image.content == picture and image.headers["content-type"] == "image/png"
+    # the shared serving policy (audit F04)
+    assert image.headers["x-content-type-options"] == "nosniff" and "sandbox" in image.headers["content-security-policy"]
     assert client.get(f"{LIBRARY}/{template.template_id}/versions/1/assets/{uuid4()}").status_code == 404
     assert client.get(f"{LIBRARY}/{template.template_id}/versions/2").status_code == 404
 

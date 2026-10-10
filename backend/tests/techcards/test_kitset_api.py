@@ -17,6 +17,7 @@ from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
 from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from app.modules.techcards import kitsets
 from app.modules.warehouse.domain import StockLot
 from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
@@ -72,6 +73,46 @@ def kitset_api():
 
 
 CALC = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit#gid=0"
+
+
+@pytest.fixture()
+def scrap_allowance_on(monkeypatch):
+    """Tests written with the «% брака» allowance on (switched off for now — «выдаём вровень», owner 10.10.2026)."""
+    monkeypatch.setattr(kitsets, "SCRAP_APPLIED", True)
+
+
+def test_the_kit_goes_out_exactly_to_the_need_without_the_scrap_allowance(kitset_api):
+    """«Выдаём вровень» (owner 10.10.2026): «% брака» 5 of the wire stays on the card, «На партию» and the issued need
+    are расход × тираж; a shortage goes out later as «Довыдача»."""
+    client, _lot = kitset_api
+    _load(client)
+    wire = client.get("/api/techcards/kitsets/708К.4").json()["assemblies"][0]["components"][0]
+    assert (wire["unit"], wire["scrap"], wire["batch"]) == ("м", "5", "15")
+
+    issued = client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"})
+    assert issued.status_code == 200, issued.text
+    with app.state.fulfillment_uow_factory() as uow:
+        kb1 = next(request for request in uow.fulfillment.list(limit=10) if "КБ1" in request.purpose)
+    assert sum(line.requirement for line in kb1.lines if line.name == "UL1007 22AWG") == Decimal("15")
+
+
+def test_a_second_send_creates_nothing_and_the_state_lists_the_sent_kb(kitset_api):
+    client, _lot = kitset_api
+    _load(client)
+    assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
+
+    again = client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"})
+
+    assert again.status_code == 409
+    assert again.json()["detail"] == (
+        "Все КБ проекта 708К.4 уже отправлены: КБ1 (REQ.26.0000001), КБ2 (REQ.26.0000002)."
+    )
+    state = client.get("/api/techcards/kitsets/708К.4/issue").json()
+    assert [(row["index"], row["request"]["no"], row["request"]["status"]) for row in state["assemblies"]] == [
+        ("КБ1", "REQ.26.0000001", "Новая"), ("КБ2", "REQ.26.0000002", "Новая"),
+    ]
+    with app.state.fulfillment_uow_factory() as uow:
+        assert len(uow.fulfillment.list(limit=10)) == 2
 
 
 def _load(client, **extra):
@@ -136,7 +177,7 @@ def test_spec_edits_survive_refresh_and_issue_reserves_picked_lot(kitset_api):
     assert sum(line.requirement for line in kb1.lines if line.name == "Корпус Molex") == Decimal("20")
 
 
-def test_piece_lines_default_to_no_scrap_and_batch_in_whole_pieces_up_to_the_issue(kitset_api):
+def test_piece_lines_default_to_no_scrap_and_batch_in_whole_pieces_up_to_the_issue(kitset_api, scrap_allowance_on):
     """Василий, 04.10: «округлять шт, половинки быть не может. Пока даём без брака»."""
     client, _lot = kitset_api
     _load(client)
@@ -566,7 +607,7 @@ def _supply(client):
     return {line["art"]: line for line in lines}
 
 
-def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cover(kitset_api):
+def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cover(kitset_api, scrap_allowance_on):
     client, _lot = kitset_api  # 15 шт of 43025-0400 lie free on the shelf
     app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "newrequest": "edit"})
     assert _load(client, deadline="2026-10-20").status_code == 200
@@ -613,7 +654,7 @@ def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cove
     }
 
 
-def test_order_missing_picked_lines_deadline_and_rights(kitset_api):
+def test_order_missing_picked_lines_deadline_and_rights(kitset_api, scrap_allowance_on):
     client, _lot = kitset_api
     assert _load(client).status_code == 200  # no deadline on the project
     refused = client.post("/api/techcards/kitsets/708К.4/order-missing", json={})

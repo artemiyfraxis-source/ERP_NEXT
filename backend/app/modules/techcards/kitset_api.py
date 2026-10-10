@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.fulfillment.application import ConcurrentFulfillmentUpdate, free_for_project, project_reserve_by_lot
-from app.modules.fulfillment.domain import FulfillmentValidationError
+from app.modules.fulfillment.domain import DuplicateKitRequest, FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import ValidationError as RequestValidationError, unit_for_type
@@ -111,6 +111,8 @@ def _run(operation):
     except KitsetNotFound as error:
         # «Не найдена» — не сбой: плитка висела на открытом экране после сноса. gone → клиент вернётся к списку.
         raise HTTPException(status_code=404, detail={"message": str(error), "gone": True}) from error
+    except DuplicateKitRequest as error:  # every КБ already has its kit request
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except (
         KitsetValidationError, TechcardValidationError, ProductionValidationError, FulfillmentValidationError,
         WarehouseValidationError,
@@ -493,6 +495,20 @@ class IssuePayload(BaseModel):
     deadline: date | None = None
 
 
+@router.get("/{project}/issue")
+def issue_state(
+    project: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """Before «Отправить на комплектацию»: per КБ — its live kit request (number, status) or none."""
+    factory = fulfillment_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    return {"project": kitset.project, "assemblies": flow.kitset_issue_state(kitset, factory)}
+
+
 @router.post("/{project}/issue")
 def issue(
     project: str,
@@ -510,7 +526,8 @@ def issue(
     # The kits took the КБ's ГРН reserves over; what a kit did not take goes back to the lot, never held twice.
     reserve_error = reserve_flow.resync_project(kitset.project, principal.actor, now, techcards_factory(request), factory)
     return {
-        "created": result.created, "skipped": result.skipped, "message": result.message, "reserve_error": reserve_error,
+        "created": result.created, "skipped": result.skipped, "already": result.already, "message": result.message,
+        "reserve_error": reserve_error,
     }
 
 
@@ -657,7 +674,7 @@ def document(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл КД не найден")
     meta, content = found
-    return file_response(content, meta.content_type or "application/octet-stream", meta.file_name)
+    return file_response(content, meta.file_name)
 
 
 @router.delete("/{project}/documents/{document_id}")

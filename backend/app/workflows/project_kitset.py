@@ -28,9 +28,13 @@ from app.modules.fulfillment.application import (
     create_fulfillment,
     delete_fulfillment,
     free_for_project,
+    kit_key,
+    kit_requests_by_kb,
     project_reserve_by_lot,
 )
-from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError
+from app.modules.fulfillment.domain import (
+    DuplicateKitRequest, FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError,
+)
 from app.modules.procurement.application import (
     ConcurrentProcurementUpdate,
     RemoveRequestLinesCommand,
@@ -120,6 +124,7 @@ from app.modules.techcards.kitsets import (
 )
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 from app.shared.events import AuditEvent
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.workflows.production_plan import kit_stage_facts
 
@@ -941,6 +946,8 @@ def _supply_key(value: object) -> str:
 class IssueFromKitsetResult:
     created: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # КБ that already have a live request (any status but «Отменена»): {"index", "no", "status"} — not sent again.
+    already: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def message(self) -> str:
@@ -948,9 +955,33 @@ class IssueFromKitsetResult:
         return (
             f"Заявок создано: {len(self.created)}"
             + (f", из них ждут поставки: {waiting}" if waiting else "")
+            + (f"; уже отправлены: {_sent_list(self.already)}" if self.already else "")
             + (f"; пропущено сборок без состава: {len(self.skipped)}" if self.skipped else "")
             + "."
         )
+
+
+def _sent_list(already: list[dict[str, str]]) -> str:
+    return ", ".join(f"{item['index']} ({item['no']})" for item in already)
+
+
+def kitset_issue_state(
+    kitset: Kitset, fulfillment_uow: Callable[[], FulfillmentUnitOfWork],
+) -> list[dict[str, Any]]:
+    """What «Отправить на комплектацию» would do, per assembly: its live kit request (number and status) if the КБ
+    was sent already and not cancelled, whether it has composition to send."""
+    with fulfillment_uow() as uow:
+        live = kit_requests_by_kb(uow, kitset.project)
+    rows = []
+    for assembly in kitset.assemblies:
+        key = kit_key(f"{kitset.project} · {assembly.index}")
+        request = live.get(key[1]) if key is not None else None
+        rows.append({
+            "index": assembly.index, "name": assembly.name, "has_items": bool(assembly.components),
+            "request": {"id": str(request.id), "no": request.number, "status": request.status.value}
+            if request is not None else None,
+        })
+    return rows
 
 
 def issue_from_kitset(
@@ -965,6 +996,9 @@ def issue_from_kitset(
         raise KitsetValidationError(f"В наборе «{kitset.project}» нет ни одной сборки с составом.")
     lots: dict[tuple[str, str], Any] = {}
     with fulfillment_uow() as uow:
+        # One live request per КБ (prod 180К.11: a second press doubled КБ1 and its reserve): a КБ sent already and
+        # not cancelled is skipped and named; the database's partial UNIQUE stops a press racing this one.
+        live = kit_requests_by_kb(uow, kitset.project)
         for assembly in kitset.assemblies:
             for component in assembly.components:
                 lot = component.lot
@@ -980,10 +1014,19 @@ def issue_from_kitset(
                 if stock is not None and free_for_project(stock, project_reserve_by_lot(uow, [stock], kitset.project)) > 0:
                     lots[(lot.grn, lot.package)] = stock
     result = IssueFromKitsetResult()
+    tasks = []
     for task in issue_tasks(kitset, set(lots)):
-        if not task.items:
+        key = kit_key(task.purpose)
+        sent = live.get(key[1]) if key is not None else None
+        if sent is not None:
+            result.already.append({"index": task.index, "no": sent.number, "status": sent.status.value})
+        elif not task.items:
             result.skipped.append(task.index)
-            continue
+        else:
+            tasks.append(task)
+    if not tasks and result.already:
+        raise DuplicateKitRequest(f"Все КБ проекта {kitset.project} уже отправлены: {_sent_list(result.already)}.")
+    for task in tasks:
         lines = []
         bindings = []
         for item in task.items:
@@ -1399,7 +1442,7 @@ def attach_document(
         document = KitDocument(
             id=uuid4(), project=kitset.project, item_index=index,
             file_name=f"{item_id(kitset.project, index)} — {str(file_name or '').strip() or 'КД'}",
-            content_type=str(content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(content),
             size=len(content), uploaded_at=now, uploaded_by=actor.name,
         )
         uow.kitsets.add_document(document, content)
@@ -1440,6 +1483,6 @@ __all__ = [
     "LoadKitsetCommand", "LoadKitsetResult", "KitsetFacts", "IssueFromKitsetResult", "PLAN_KINDS",
     "ChangeProjectStatusCommand", "change_project_status",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
-    "assembly_calc_ops", "generator_bom", "issue_from_kitset", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
+    "assembly_calc_ops", "generator_bom", "issue_from_kitset", "kitset_issue_state", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows", "ProjectTails", "TailEntry", "TAIL_JOURNAL", "TAIL_SECTIONS", "purge_project_tails", "request_matches_project", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
 ]

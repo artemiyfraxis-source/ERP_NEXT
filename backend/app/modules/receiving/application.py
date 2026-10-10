@@ -10,6 +10,7 @@ from typing import Iterable, Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent, OutboxMessage
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.shared.notifications import (
     SUPPLY_AUDIENCE,
@@ -809,7 +810,7 @@ def attach_receiving_file(command: AttachReceivingFileCommand, uow: ReceivingFil
             receiving_line_id=line.id,
             kind=command.kind,
             file_name=name,
-            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(command.content),
             size=len(command.content),
             uploaded_by=command.actor.name,
             uploaded_at=command.now,

@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
+from app.shared.file_types import sniffed_type
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
     TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
@@ -761,7 +762,7 @@ def operation_sketch(
     if found is None:
         raise HTTPException(status_code=404, detail="Эскиз не найден")
     sketch, content = found
-    return file_response(content, sketch.content_type, sketch.file_name)
+    return file_response(content, sketch.file_name)
 
 
 @router.put("/techcards/projects/{card_id}/sketches/{operation_key:path}")
@@ -782,6 +783,10 @@ def put_operation_sketch(
         raise HTTPException(status_code=422, detail="Картинка пустая")
     if len(content) > MAX_SKETCH_BYTES:
         raise HTTPException(status_code=422, detail="Картинка эскиза больше 10 МБ")
+    # The bytes decide, not the declared type: a page or an SVG named «.png» is not a sketch (audit F04).
+    content_type = sniffed_type(content) or ""
+    if content_type not in SKETCH_TYPES:
+        raise HTTPException(status_code=422, detail="Файл не похож на картинку PNG, JPG, WEBP или GIF")
     with uow_factory() as uow:
         card = _card_or_404(uow, card_id)
         if operation_key not in _operation_keys(card):

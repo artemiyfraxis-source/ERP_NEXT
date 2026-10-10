@@ -9,6 +9,7 @@ import {
   type KitsetCard,
   type KitsetComponent,
   type KitsetDeleteResult,
+  type KitsetIssueAssembly,
   type KitsetLoadResult,
   type KitsetLot,
   type KitsetReserve,
@@ -22,6 +23,7 @@ import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { formatDate } from "./format";
 import { openHarness } from "./harnessNav";
+import { useLatestSearch } from "./useLatestSearch";
 import { ProjectStatus } from "./ProjectStatus";
 import { ProjectTrack } from "./ProjectTrack";
 import { supplyApi, type SupplyLine } from "./supplyApi";
@@ -81,14 +83,18 @@ export function readFileBase64(file: File): Promise<string> {
   });
 }
 
-/** Mirror of the server `batch_quantity`: расход × тираж × (1 + брак/100), до сотых; штучное — затем вверх до
- *  целого (половинки штуки не бывает, Василий 04.10), метры остаются до сотых — «На партию» при вводе. */
+/** «Выдаём вровень» (владелец, 10.10.2026): запас на брак пока не добавляется — как `SCRAP_APPLIED` на сервере. */
+export const KIT_SCRAP_APPLIED = false;
+
+/** Mirror of the server `KitComponent.batch`: расход × тираж (× (1 + брак/100), когда запас включён), до сотых;
+ *  штучное — затем вверх до целого (половинки штуки не бывает, Василий 04.10), метры до сотых — «На партию» при вводе. */
 export function kitBatch(per: string, run: string, scrap: string, unit: string) {
   const num = (value: string) => {
     const parsed = parseFloat(String(value ?? "").replace(/\s/g, "").replace(",", "."));
     return Number.isFinite(parsed) ? parsed : 0;
   };
-  const batch = Math.round(num(per) * num(run) * (1 + num(scrap) / 100) * 100) / 100;
+  const allowance = KIT_SCRAP_APPLIED ? num(scrap) / 100 : 0;
+  const batch = Math.round(num(per) * num(run) * (1 + allowance) * 100) / 100;
   return unit === "шт" ? Math.ceil(batch) : batch;
 }
 
@@ -812,7 +818,7 @@ function SpecTab({ card, canEdit, setNote, setWarning, reload }: {
   ];
 
   return <div className="kit-pane">
-    <p className="page-sub">«ГРН склада» резервируется сразу при выборе; без ГРН позиция ждёт поставки. Правки сохраняются сами.</p>
+    <p className="page-sub">«ГРН склада» резервируется сразу при выборе; без ГРН позиция ждёт поставки. Правки сохраняются сами.{KIT_SCRAP_APPLIED ? "" : " Выдаём вровень: «% брака» пока не добавляется к «На партию», нехватку довыдают."}</p>
     {canEdit
       ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
       : <p className="page-sub">Раздел открыт на просмотр — править и отправлять нельзя.</p>}
@@ -848,16 +854,13 @@ function LotPicker({ project, component, batch, current, close, pick }: {
   project: string; component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => Promise<string>;
 }) {
   const [query, setQuery] = useState(component.name || component.art);
-  const [lots, setLots] = useState<KitsetStockLot[] | null>(null);
-  const [error, setError] = useState("");
+  const [pickError, setError] = useState("");
   const [stamp, setStamp] = useState(0);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      kitsetsApi.lots(query, project).then((result) => setLots(result.lots)).catch((reason) => setError(message(reason, "Склад не ответил")));
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [query, project, stamp]);
+  // Only the answer to the current query/project is shown; «Выбрать» waits while the list belongs to an older one.
+  const found = useLatestSearch(() => kitsetsApi.lots(query, project).then((result) => result.lots), [query, project, stamp], { fallback: "Склад не ответил" });
+  const lots = found.data;
+  const error = pickError || found.error;
   /* Отказ сохранения (партия изменилась): окно остаётся, текст отказа сверху, список ГРН перечитывается. */
   async function choose(lot: KitsetLot | null) {
     if (busy) return;
@@ -875,10 +878,11 @@ function LotPicker({ project, component, batch, current, close, pick }: {
       <tbody>{(lots || []).map((lot) => <tr key={lot.lot_id} className={current?.grn === lot.grn && (current?.package || "") === lot.package ? "selected" : ""}>
         <td>{lot.warehouse}</td><td>{lot.grn}</td><td>{lot.package}</td><td>{lot.name}</td><td>{lot.storage_location}</td>
         <td className="num">{lot.available} {lot.unit}{lot.reserved && <div className="muted">из них резерв проекта {lot.reserved} {lot.unit}</div>}</td>
-        <td><button className="secondary small" disabled={busy} onClick={() => void choose({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package, version: lot.version })}>Выбрать</button></td>
+        <td><button className="secondary small" disabled={busy || found.loading} onClick={() => void choose({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package, version: lot.version })}>Выбрать</button></td>
       </tr>)}</tbody>
     </table></div>
-    {lots && !lots.length && <div className="empty">Ничего не нашлось — сотри слова и ищи по своим.</div>}
+    {found.loading && <div className="empty" role="status">Ищу…</div>}
+    {lots && !found.loading && !lots.length && <div className="empty">Ничего не нашлось — сотри слова и ищи по своим.</div>}
     <div className="page-actions">
       {current && <button className="secondary" disabled={busy} onClick={() => void choose(null)}>Снять привязку</button>}
       <button className="secondary" onClick={close}>Закрыть</button>
@@ -886,10 +890,23 @@ function LotPicker({ project, component, batch, current, close, pick }: {
   </div>;
 }
 
+/* «Отправить на комплектацию» уходит по одной заявке на КБ; КБ с живой заявкой (не «Отменена») второй раз не уходит
+   (прод 180К.11, 10.10.2026: двойное нажатие задвоило КБ1 и её резерв) — окно показывает их с номером заявки. */
 function IssueDialog({ project, close, done }: { project: string; close: () => void; done: (text: string, reserveError: string) => void }) {
   const [deadline, setDeadline] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [kbs, setKbs] = useState<KitsetIssueAssembly[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    kitsetsApi.issueState(project)
+      .then((result) => { if (live && Array.isArray(result.assemblies)) setKbs(result.assemblies); })
+      .catch(() => undefined);  // без списка окно работает как раньше: повтор КБ отклонит сервер
+    return () => { live = false; };
+  }, [project]);
+  const sent = (kbs ?? []).filter((item) => item.request);
+  const toSend = (kbs ?? []).filter((item) => !item.request && item.has_items);
+  const nothingLeft = sent.length > 0 && !toSend.length;
   async function submit() {
     if (busy) return;
     if (!deadline) { setError("Укажи дедлайн."); return; }
@@ -904,10 +921,20 @@ function IssueDialog({ project, close, done }: { project: string; close: () => v
   return <div className="panel kit-modal" role="dialog" aria-label="Отправить на комплектацию">
     <h3>Отправить на комплектацию</h3>
     <p className="page-sub">По заявке на каждую КБ проекта {project}. Позиции с ГРН встают в резерв, остальные ждут поставки.</p>
-    <label>Дедлайн<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+    {kbs && kbs.length > 0 && <ul className="issue-kbs" aria-label="КБ проекта">
+      {kbs.map((item) => <li key={item.index} className={item.request || !item.has_items ? "muted" : undefined} aria-disabled={Boolean(item.request) || !item.has_items}>
+        <strong>{item.index}</strong> <span>{item.name}</span>
+        <span className={item.request ? "issue-kb-state" : item.has_items ? "issue-kb-state tone-ok" : "issue-kb-state"}>
+          {item.request ? `уже отправлена: ${item.request.no} · ${item.request.status}` : item.has_items ? "уйдёт" : "нет состава"}
+        </span>
+      </li>)}
+    </ul>}
+    {nothingLeft
+      ? <div className="warning-inline">Все КБ уже отправлены: {sent.map((item) => `${item.index} (${item.request!.no})`).join(", ")}. Чтобы отправить КБ заново, отмените её заявку в «Комплектации».</div>
+      : <label>Дедлайн<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="page-actions">
-      <button className="primary" disabled={busy} onClick={() => void submit()}>Отправить</button>
+      <button className="primary" disabled={busy || nothingLeft} onClick={() => void submit()}>{toSend.length && sent.length ? `Отправить ${toSend.map((item) => item.index).join(", ")}` : "Отправить"}</button>
       <button className="secondary" onClick={close}>Отмена</button>
     </div>
   </div>;
