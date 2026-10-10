@@ -196,7 +196,7 @@ def test_procurement_line_without_initiator_user_is_marked_and_skipped(sessions)
         ).all() == []
 
 
-def _shipment(sessions, manager=MANAGER):
+def _shipment(sessions, manager=MANAGER, upd_url=""):
     uow = lambda: SqlAlchemyShippingUnitOfWork(sessions)
     good = register_good(RegisterGoodCommand(
         project="316К", item_index="КБ1", customer="АО Заказчик", article="A-1", name="Жгут",
@@ -209,7 +209,7 @@ def _shipment(sessions, manager=MANAGER):
     return create_shipment(CreateShipmentCommand(
         customer="АО Заказчик", receiver="Склад заказчика", shipping_point="Москва", contact="",
         phone="", terms=DeliveryTerms.CARRIER, carrier="СДЭК", deadline=None,
-        upd_type=UpdType.PAPER, upd_number="", upd_date=None, upd_url="", note="",
+        upd_type=UpdType.PAPER, upd_number="", upd_date=None, upd_url=upd_url, note="",
         lines=(RequestedGood(good_id=good.id, quantity=Decimal("4")),), actor=manager, now=NOW,
     ), uow())
 
@@ -246,3 +246,17 @@ def test_track_without_a_manager_user_goes_to_every_project_manager(sessions):
     _documents(sessions, shipment, track_number="TRK-2")
     title = f"Трек по отправке {shipment.number}"
     assert _deliver(sessions) == {"petrova": [title], "pm2": [title]}
+
+
+def test_upd_given_with_the_new_shipment_reaches_storekeepers_once(sessions):
+    shipment = _shipment(sessions, upd_url="https://files.test/upd-new.pdf")
+    _documents(sessions, shipment, track_number="TRK-3")  # the same УПД link stays: no second УПД notice
+
+    inbox = _deliver(sessions)
+    assert inbox["store"] == [f"УПД к отправке {shipment.number}"]
+    assert inbox["petrova"] == [f"Трек по отправке {shipment.number}"]
+
+
+def test_shipment_without_upd_tells_nobody_at_creation(sessions):
+    _shipment(sessions)
+    assert _deliver(sessions) == {}

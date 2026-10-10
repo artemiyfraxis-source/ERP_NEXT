@@ -447,6 +447,7 @@ table.ship-lines td:first-child { width: 1%; }
 .notifications-page .row-actions { display: inline-flex; gap: 14px; opacity: .5; transition: opacity .12s; }
 .notifications-page tr:hover .row-actions, .notifications-page tr:focus-within .row-actions, .notifications-page tr.open .row-actions { opacity: 1; }
 .notifications-page .row-actions .link-button { padding: 0; }
+@media (max-width: 1600px) { .notifications-page .data-table .cell-wrap { max-width: min(520px, 40vw); } .notifications-page .row-actions { flex-direction: column; gap: 2px; } }
 @media (hover: none) { .notifications-page .row-actions { opacity: 1; } }
 @media (pointer: coarse) { .notifications-page .row-actions .link-button { min-height: 40px; } }
 .operations-metrics { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; margin: 18px 0; }

@@ -403,6 +403,8 @@ def _create_shipment(
         manager_id=command.actor.id, inherited=_unset_fields(command), id=shipment_id,
     )
     uow.shipments.add(shipment)
+    if shipment.upd_url:
+        _notify_upd(shipment, command.now, uow)
     _remember_addressees(shipment, command, uow)
     _audit(shipment.id, "shipping.created", command.actor, command.now, {
         "number": shipment.number, "inherited": sorted(address.inherited), **(details or {}),
@@ -573,22 +575,29 @@ def _notify_documents(before: Shipment, after: Shipment, now: datetime, uow: Uni
             user_ids=(after.manager_id,),
             audiences=() if after.manager_id else (PROJECT_MANAGER_AUDIENCE,),
         ))
-    # Shipment.gs:888 `shipUpdAttach_`: storekeepers print the УПД, so a newly attached file goes to them.
     if after.upd_url and after.upd_url != before.upd_url:
-        items = ", ".join(f"{line.item_index} × {line.requested.normalize():f}" for line in after.lines)
-        publish_notification(uow.outbox, notification_requested(
-            key=f"shipping:{after.id}:upd:v{after.version}",
-            now=now,
-            title=f"УПД к отправке {after.number}",
-            body=(
-                f"Менеджер приложил УПД{f' № {after.upd_number}' if after.upd_number else ''} к отправке "
-                f"{after.number}{of_project} ({items}).\nФайл: {after.upd_url}"
-                "\n\nОткрыть: портал → Отгрузка → карточка проекта."
-            ),
-            kind="ship",
-            reference=after.number,
-            audiences=(STOREKEEPER_AUDIENCE,),
-        ))
+        _notify_upd(after, now, uow)
+
+
+def _notify_upd(shipment: Shipment, now: datetime, uow: UnitOfWork) -> None:
+    """Shipment.gs:888 `shipUpdAttach_`: storekeepers print the УПД, so a newly attached file goes to them — also
+    a УПД link given already in the new shipment (OP-1: before, nobody heard of that file)."""
+    project = shipment.lines[0].project if shipment.lines else ""
+    of_project = f" проекта {project}" if project else ""
+    items = ", ".join(f"{line.item_index} × {line.requested.normalize():f}" for line in shipment.lines)
+    publish_notification(uow.outbox, notification_requested(
+        key=f"shipping:{shipment.id}:upd:v{shipment.version}",
+        now=now,
+        title=f"УПД к отправке {shipment.number}",
+        body=(
+            f"Менеджер приложил УПД{f' № {shipment.upd_number}' if shipment.upd_number else ''} к отправке "
+            f"{shipment.number}{of_project} ({items}).\nФайл: {shipment.upd_url}"
+            "\n\nОткрыть: портал → Отгрузка → карточка проекта."
+        ),
+        kind="ship",
+        reference=shipment.number,
+        audiences=(STOREKEEPER_AUDIENCE,),
+    ))
 
 
 @dataclass(frozen=True)
