@@ -88,7 +88,9 @@ def test_excel_download(client):
     client.put(f"{BASE}/КБ1", json={"design": _document(), "version": None})
     response = client.get(f"{BASE}/КБ1/documents", params={"kind": "connections", "format": "xlsx"})
     assert response.status_code == 200
-    assert response.headers["content-type"].startswith("application/vnd.ms-excel")
+    # every non-viewable file is a plain download (audit F04); Excel opens it by the .xls name
+    assert response.headers["content-type"] == "application/octet-stream"
+    assert response.headers["content-disposition"].startswith("attachment;")
     assert "%D0%A2%D0%B0%D0%B1%D0%BB%D0%B8%D1%86%D0%B0" in response.headers["content-disposition"]  # «Таблица»
     text = response.content[2:].decode("utf-16-le")
     assert text.splitlines()[0].startswith("Индекс (Wn)\tМарка") and len(text.splitlines()) == 4

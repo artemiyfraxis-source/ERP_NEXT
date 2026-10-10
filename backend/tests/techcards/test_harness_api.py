@@ -121,7 +121,7 @@ def test_first_save_creates_one_harness_kd_row_and_get_returns_it_with_a_version
     assert parse_design(read["design"])[0] == parse_design(fx.design())[0]
     # The plain КД download hands the same JSON.
     downloaded = client.get(f"/api/techcards/kitsets/{PROJECT}/documents/{rows[0].id}")
-    assert downloaded.headers["content-type"].startswith(HARNESS_CONTENT_TYPE)
+    assert downloaded.headers["content-type"] == "application/octet-stream"  # JSON is a download, never a page
     assert json.loads(downloaded.content) == read["design"]
 
 
@@ -349,7 +349,8 @@ def test_export_and_import_round_trip_through_techmap_project_zip(harness_api):
     saved = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
     exported = client.get(f"{BASE}/КБ1/export")
     assert exported.status_code == 200, exported.text
-    assert exported.headers["content-type"] == "application/zip"
+    assert exported.headers["content-type"] == "application/octet-stream"  # a download, as every non-viewable file
+    assert exported.headers["content-disposition"].startswith("attachment;")
     assert "708%D0%9A.4%D0%9A%D0%911.techmap-project.zip" in exported.headers["content-disposition"]
     with ZipFile(BytesIO(exported.content)) as archive:
         assert archive.namelist() == ["project/snapshot.json"]

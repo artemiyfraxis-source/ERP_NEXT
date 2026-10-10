@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from xml.etree import ElementTree
 
-from app.shared.pdf_text import pdf_text
+from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 from .invoice_file import normalize_invoice_text, parse_invoice_text
 from .kp import KpFileError, _csv_grid, _xlsx_grid
@@ -37,6 +37,7 @@ UNREADABLE = "Текст из файла не читается (скан или 
 NO_TABLE = "Не нашёл в файле таблицу «Наименование | Кол-во | Цена | Сумма» — цены впишите вручную."
 XLS = "Старый формат .xls не читается — сохраните файл как .xlsx или PDF."
 UNKNOWN_FORMAT = "Формат файла не читается — нужен PDF с текстом, .xlsx, .csv или .docx."
+TOO_HEAVY = "Файл слишком тяжёлый для распознавания (превышен лимит обработки) — цены впишите вручную."
 
 
 @dataclass(frozen=True)
@@ -124,7 +125,10 @@ def read_supplier_document(file_name: str, content: bytes, kind: str = "invoice"
     if content[:4] == b"\xd0\xcf\x11\xe0" or suffix == "xls":
         return SupplierDocument(hint=XLS)
     if content.startswith(b"%PDF") or b"%PDF" in content[:1024]:
-        text = pdf_text(content)
+        try:
+            text = pdf_text(content)
+        except PdfLimitExceeded:
+            return SupplierDocument(hint=TOO_HEAVY)
         if not text.strip():
             return SupplierDocument(hint=UNREADABLE)
         return parse_document_text(text, kind)

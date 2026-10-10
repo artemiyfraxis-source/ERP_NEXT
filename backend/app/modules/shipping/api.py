@@ -608,4 +608,4 @@ def download_file(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл не найден")
     meta, content = found
-    return file_response(content, meta.content_type, meta.file_name)
+    return file_response(content, meta.file_name)
