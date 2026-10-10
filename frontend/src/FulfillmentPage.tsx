@@ -278,6 +278,18 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
 
   useEffect(() => { void reload(); }, []);
 
+  // «Выдача» must not open on empty stages while requests wait (audit В-1): once, after the first load, when the chosen
+  // stages hold nothing, pick the stages that do — «Готов к выдаче» first. Not saved: a later visit decides again.
+  const giveSettled = useRef(false);
+  useEffect(() => {
+    if (!loaded || !multi || giveSettled.current) return;
+    giveSettled.current = true;
+    const stagesIn = MODES.give.stages;
+    const have = stagesIn.filter((stage) => requests.some((request) => request.status === stage));
+    if (!have.length || picked.some((stage) => have.includes(stage))) return;
+    setPicked([...have].sort((a, b) => Number(b === "Готов к выдаче") - Number(a === "Готов к выдаче")));
+  }, [loaded, multi, requests, picked]);
+
   const mutate: Mutate = async (requestId, operation) => {
     if (busy) return;
     setBusy(requestId);
@@ -319,7 +331,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         ? <button type="button" className="link-button table-link" onClick={(event) => { event.stopPropagation(); setProject(projectOf(request)); }}>{projectOf(request)}</button>
         : "—",
     },
-    { key: "purpose", title: "Назначение", value: (request) => request.purpose, wrap: true },
+    { key: "purpose", title: "Назначение", value: (request) => request.purpose, wrap: true, grow: true },
     { key: "requester", title: "Заявитель", value: (request) => request.requester },
     { key: "status", title: "Статус", value: (request) => request.status, filter: true, render: (request) => <StatusChip status={request.status} /> },
     { key: "deadline", title: "Дедлайн", value: (request) => request.deadline ?? "", render: (request) => day(request.deadline) || "—" },
@@ -375,7 +387,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         </div>
         : <>
           <div className="filters table-toolbar">
-            <div className="table-search"><input className="search" type="search" aria-label={`Поиск: ${screen?.title ?? "Заявки на выдачу"}`} placeholder="поиск: 708К.4 КБ1 …" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+            <div className="table-search"><input className="search" type="search" aria-label={`Поиск: ${screen?.title ?? "Заявки на выдачу"}`} placeholder="Поиск: проект, КБ, заявка, заявитель…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
             {readyToggle}
           </div>
           <div className="calendar-chips" role="group" aria-label="Стадии">
@@ -654,10 +666,10 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
         {canEdit && request.status === "Готов к выдаче" && <button className="secondary" disabled={busy} title="Снять комплект с выдачи — это не возврат материала из цеха" onClick={() => move(returnTarget(request), `Комплект снимут с выдачи${request.handout_location ? ` (${request.handout_location})` : ""} и вернут в комплектацию. Это не возврат материала («КБ Возвращена»): со склада ничего не списано и ничего не двигается, резерв остаётся на партиях. Отменить заявку можно будет после этого.`, () => fulfillmentApi.returnToKitting(request.id, request.version))}>Вернуть в комплектацию</button>}
         {canEdit && request.kind !== "extra" && ["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) && !adding && <button className="secondary" disabled={busy} onClick={() => setAdding(true)}>Довыдать</button>}
-        {canEdit && !closed && request.status !== "Готов к выдаче" && <button className="link-button danger-link" disabled={busy} onClick={() => move("Отменена", cancelHint(request), () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
+        {canEdit && !closed && request.status !== "Готов к выдаче" && <button className="danger" disabled={busy} onClick={() => move("Отменена", cancelHint(request), () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
         <button className="secondary small" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
         {hasIssuedLines && <button className="secondary small" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
-        {isAdmin && <button className="link-button danger-link" disabled={busy} onClick={remove}>Удалить заявку</button>}
+        {isAdmin && <button className="danger" disabled={busy} onClick={remove}>Удалить заявку</button>}
       </div>
       {sending && <HandoutPlaceForm request={request} places={places} offered={offered} busy={busy} mutate={mutate} onCancel={() => setSending(false)} />}
       {adding && <ExtraIssueForm request={request} busy={busy} mutate={mutate} onClose={() => setAdding(false)} />}
@@ -792,8 +804,8 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
   return <>
     <tr>
       <td className="text"><strong>{line.article || "—"}</strong><small>{line.name}</small></td>
-      <td className="num">{line.requirement} {line.unit}</td><td className="num">{line.reserved}</td><td className="num">{line.issued}</td>
-      <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : off ? <span className="status">есть, не заведено</span> : "Ждём поставки"}</td>
+      <td className="num">{line.requirement} {line.unit}</td><td className="num">{line.reserved} {line.unit}</td><td className="num">{line.issued} {line.unit}</td>
+      <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : off ? <StatusChip tone="neutral">есть, не заведено</StatusChip> : "Ждём поставки"}</td>
       <td>{line.lot ? line.lot.storage_location || "без места" : "—"}</td>
       <td>{canEdit && Number(line.issued) <= 0 && (line.lot
         ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.unbind(request.id, line.id, request.version))}>Снять резерв</button>
@@ -801,7 +813,7 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
           ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, false))}>Снять отметку</button>
           : <>
             <button className="secondary small" disabled={busy} aria-expanded={picking} onClick={() => setPicking((value) => !value)}>Выбрать ГРН</button>{" "}
-            <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, true))}>Есть, не заведено</button>
+            <button className="secondary small" disabled={busy} title="Деталь физически есть, но ещё не заведена на склад: строка закроется без списания" onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, true))}>Есть, не заведено</button>
           </>)}</td>
     </tr>
     {picking && !line.lot && <tr className="detail"><td colSpan={7}>

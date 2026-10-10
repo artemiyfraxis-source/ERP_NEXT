@@ -863,3 +863,37 @@ it("gives no issue action without the handout right or on the picking screen", a
   expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();
 });
+
+it("opens «Выдача» on the stages that hold requests, «Готов к выдаче» first, when the saved ones are empty (В-1)", async () => {
+  issueFetch(order([{ status: "Готов к выдаче", handout_location: "1B3" }, { status: "КБ Выдана", project: "40К.1", purpose: "40К.1 · КБ1 · Жгут" }]), []);
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  const ready = await screen.findByRole("button", { name: "Готов к выдаче · 1" });
+  await waitFor(() => expect(ready).toHaveAttribute("aria-pressed", "true"));
+  expect(screen.getByRole("button", { name: "КБ Выдана · 1" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Укомплектован · 0" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByText(/заявок нет/)).not.toBeInTheDocument();
+});
+
+it("keeps the default «Выдача» stages when they hold requests", async () => {
+  issueFetch(order([{ status: "Укомплектован" }, { status: "Готов к выдаче" }]), []);
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  const kitted = await screen.findByRole("button", { name: "Укомплектован · 1" });
+  await waitFor(() => expect(kitted).toHaveAttribute("aria-pressed", "true"));
+  expect(screen.getByRole("button", { name: "Готов к выдаче · 1" })).toHaveAttribute("aria-pressed", "false");
+});
+
+it("draws «Отменить заявку» as a danger button and asks before cancelling (К-2)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [request], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  await expand(request.number);
+  const cancel = await screen.findByRole("button", { name: "Отменить заявку" });
+  expect(cancel).toHaveClass("danger");
+  fireEvent.click(cancel);
+  expect(confirm).toHaveBeenCalledTimes(1);
+});

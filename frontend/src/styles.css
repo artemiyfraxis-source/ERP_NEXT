@@ -2124,7 +2124,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .iss-tile .t-in { font-size: 13px; }
 .iss-tile .t-warn { color: #b45309; font-size: 12.5px; }
 .iss-chip-wrap { display: inline-flex; align-items: center; gap: 3px; }
-.iss-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; color: #fff; font-size: 12px; font-weight: 600; }
 .fulfillment-open { display: grid; gap: 10px; justify-items: start; }
 .fulfillment-open > .fulfillment-card { justify-self: stretch; }
 
