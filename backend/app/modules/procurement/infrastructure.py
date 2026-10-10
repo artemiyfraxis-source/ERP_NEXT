@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -144,6 +145,8 @@ class ProcurementLineRow(Base):
     # КОММЕНТАРИЙ (the buyer's note) and ФАКТ. ДАТА (latest inspection of the line's deliveries, set by the tick).
     note: Mapped[str | None] = mapped_column(Text)
     actual_arrival: Mapped[Any | None] = mapped_column(Date)
+    # DATASHEET: a link or text the buyer keeps on the line.
+    datasheet: Mapped[str | None] = mapped_column(Text)
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -227,6 +230,7 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         stock_covered=line.stock_covered,
         note=line.note,
         actual_arrival=line.actual_arrival,
+        datasheet=line.datasheet,
     )
 
 
@@ -315,6 +319,7 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         stock_covered=row.stock_covered if row.stock_covered is not None else Decimal("0"),
         note=row.note,
         actual_arrival=row.actual_arrival,
+        datasheet=row.datasheet,
     )
 
 
@@ -730,12 +735,15 @@ class SqlAlchemyProcurementRepository:
 
 
 class ProcurementFileRow(Base):
-    """Invoice file (`uploadInvoice` kept it in the Drive folder «Счета/<год>/<месяц>/<поставщик>»)."""
+    """A file of a procurement line: invoices and КП (`uploadInvoice` kept them in the Drive folder «Счета»), and
+    since 0089 the line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files (`kind`)."""
 
     __tablename__ = "procurement_files"
+    __table_args__ = (CheckConstraint("kind IN ('other', 'permit', 'quality')", name="ck_procurement_files_kind"),)
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="other", server_default="other")
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -744,24 +752,45 @@ class ProcurementFileRow(Base):
     uploaded_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+def _stored_file(row) -> StoredInvoiceFile:
+    return StoredInvoiceFile(
+        id=row.id, line_id=row.line_id, file_name=row.file_name, content_type=row.content_type,
+        size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at, kind=row.kind,
+    )
+
+
 class SqlAlchemyInvoiceFileRepository:
     def __init__(self, session: Session):
         self.session = session
 
     def add(self, stored: StoredInvoiceFile, content: bytes) -> None:
         self.session.add(ProcurementFileRow(
-            id=stored.id, line_id=stored.line_id, file_name=stored.file_name, content_type=stored.content_type,
-            size=stored.size, content=content, uploaded_by=stored.uploaded_by, uploaded_at=stored.uploaded_at,
+            id=stored.id, line_id=stored.line_id, kind=stored.kind, file_name=stored.file_name,
+            content_type=stored.content_type, size=stored.size, content=content, uploaded_by=stored.uploaded_by,
+            uploaded_at=stored.uploaded_at,
         ))
 
     def get(self, file_id: UUID) -> tuple[StoredInvoiceFile, bytes] | None:
         row = self.session.get(ProcurementFileRow, file_id)
         if row is None:
             return None
-        return StoredInvoiceFile(
-            id=row.id, line_id=row.line_id, file_name=row.file_name, content_type=row.content_type,
-            size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at,
-        ), row.content
+        return _stored_file(row), row.content
+
+    def of_lines(self, line_ids: Sequence[UUID], kinds: Sequence[str]) -> list[StoredInvoiceFile]:
+        """The files of these kinds on these lines, by kind and then oldest first, without their content — one query
+        per list."""
+        if not line_ids or not kinds:
+            return []
+        rows = self.session.execute(
+            select(
+                ProcurementFileRow.id, ProcurementFileRow.line_id, ProcurementFileRow.kind,
+                ProcurementFileRow.file_name, ProcurementFileRow.content_type, ProcurementFileRow.size,
+                ProcurementFileRow.uploaded_by, ProcurementFileRow.uploaded_at,
+            )
+            .where(ProcurementFileRow.line_id.in_(tuple(line_ids)), ProcurementFileRow.kind.in_(tuple(kinds)))
+            .order_by(ProcurementFileRow.kind, ProcurementFileRow.uploaded_at, ProcurementFileRow.id)
+        )
+        return [_stored_file(row) for row in rows]
 
 
 class ProcurementStockCoverRow(Base):

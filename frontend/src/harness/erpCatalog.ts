@@ -2,16 +2,17 @@
 // TECHMAP-GRAPHER, которые читают пикеры редактора (терминалы, провода, кабели, коаксиал, защита, разъёмы).
 // Образцовый каталог TECHMAP-GRAPHER не используется: источник данных — только наши базы. Всё, на что ссылается
 // документ и чего нет в справочниках, помечается «нет в справочнике» (данные для экрана; создание записи — позже).
-// Модуль грузится вместе с редактором (index.ts → loadErpHarnessCatalog), в основной чанк не попадает.
-import { api } from "../api";
-import { createInMemoryComponentTemplateCatalog } from "./component-library/component-template-api";
-import { createInMemoryCoveringMaterialApi } from "./editor/covering-assets";
+// Модуль грузится вместе с редактором (index.ts → loadHarnessCatalog), в основной чанк не попадает.
+import { harnessApi } from "../api";
+import type { CoveringMaterialApi, GlobalMaterial } from "./editor/covering-assets";
+import type { CoveringKind } from "./editor/physical-coverings";
+import { libraryTemplates } from "./library/library";
 import type { HarnessEditorCatalogApi } from "./editor/HarnessDesignEditor";
 import type { HarnessDesignDocument } from "./editor/model";
 import { resolveTerminalRecord } from "./editor/terminal-details";
 import { normalizeWireChoice, normalizeWireSectionChoice, wireDatabaseOption } from "./editor/wire-database";
 import {
-  createInMemoryReferenceCatalog,
+  snapshotReferenceCatalog,
   ReferenceCatalogApiError,
   type ReferenceCatalogAdapter,
   type ReferenceCatalogRecord,
@@ -71,8 +72,7 @@ export function parseErpHarnessCatalog(value: unknown): ErpHarnessCatalog {
 
 export type ErpCatalogLoader = () => Promise<ErpHarnessCatalog>;
 
-export const fetchErpHarnessCatalog: ErpCatalogLoader = async () =>
-  parseErpHarnessCatalog(await api<unknown>(ERP_HARNESS_CATALOG_PATH));
+export const fetchErpHarnessCatalog: ErpCatalogLoader = async () => parseErpHarnessCatalog(await harnessApi.catalog());
 
 export interface ErpReferenceCatalog extends ReferenceCatalogAdapter {
   /** The loaded catalog (fetched once; a failed load is retried on the next call). */
@@ -86,7 +86,7 @@ export function createErpReferenceCatalog(load: ErpCatalogLoader = fetchErpHarne
   const loaded = () => {
     pending ??= load().then((catalog) => ({
       catalog,
-      adapter: createInMemoryReferenceCatalog(catalog.snapshots.filter((snapshot) => snapshot.records.length > 0)),
+      adapter: snapshotReferenceCatalog(catalog.snapshots.filter((snapshot) => snapshot.records.length > 0)),
     }));
     pending.catch(() => { pending = null; });
     return pending;
@@ -102,13 +102,61 @@ export function createErpReferenceCatalog(load: ErpCatalogLoader = fetchErpHarne
   };
 }
 
-/** `catalogOverride` of the editor: reference books from the ERP. The component library and covering textures
- * have no ERP storage yet, so they stay empty. */
+/** The editor's catalog: reference books, the component library and the covering materials — all from the ERP. */
 export function createErpHarnessEditorCatalog(load: ErpCatalogLoader = fetchErpHarnessCatalog): HarnessEditorCatalogApi {
+  const references = createErpReferenceCatalog(load);
+  return { templates: libraryTemplates(), references, materials: erpCoveringMaterials(references) };
+}
+
+// ── Covering materials: БД.МАТ ───────────────────────────────────────────────────────────────────────────────────
+
+const COVERING_KINDS: readonly CoveringKind[] = ["heat-shrink", "nylon", "braid", "metal-braid", "tape", "band"];
+/** How a covering of each kind is drawn: a hatch of the ERP set (hatching.ts), a line and a tint. Drawing data
+ *  (stored in the document), not screen colours. */
+const KIND_STYLE: Record<CoveringKind, { hatchCode: string; angle: number; scale: number; line: string; tint: string }> = {
+  "heat-shrink": { hatchCode: "Ш1", angle: 45, scale: 1, line: "#3d4a5c", tint: "#3d4a5c" },
+  nylon: { hatchCode: "Ш4", angle: 0, scale: 1, line: "#3d4a5c", tint: "#3d4a5c" },
+  braid: { hatchCode: "Ш3", angle: 45, scale: 1, line: "#3d4a5c", tint: "#3d4a5c" },
+  "metal-braid": { hatchCode: "Ш5", angle: 0, scale: 1, line: "#3d4a5c", tint: "#3d4a5c" },
+  tape: { hatchCode: "Ш6", angle: 45, scale: 1, line: "#3d4a5c", tint: "#3d4a5c" },
+  band: { hatchCode: "Ш7", angle: 0, scale: 1, line: "#3d4a5c", tint: "#3d4a5c" },
+};
+/** «Цвет» of БД.МАТ → the covering's fill. */
+const COVER_COLORS: readonly (readonly [RegExp, string])[] = [
+  [/чёрн|черн/i, "#2b2f33"], [/красн/i, "#b84a3c"], [/син/i, "#3d6aa8"], [/бел/i, "#eef1f2"], [/жёлт|желт/i, "#d8b23a"],
+  [/зел/i, "#4f8a4b"], [/прозр/i, "#d9e6ec"], [/сер/i, "#8a949b"],
+];
+
+/** Covering materials of the editor from БД.МАТ (the protective coverings of the ERP catalog): one per record with a
+ *  covering kind, drawn with the ERP hatching set. A new covering of a kind takes the first material of that kind by
+ *  name. Textures are not stored in the ERP: materials are hatches only. */
+export function erpCoveringMaterials(references: ErpReferenceCatalog): CoveringMaterialApi {
   return {
-    templates: createInMemoryComponentTemplateCatalog(),
-    references: createErpReferenceCatalog(load),
-    materials: createInMemoryCoveringMaterialApi(),
+    async listMaterials() {
+      const catalog = await references.catalog();
+      const records = catalog.snapshots.find((snapshot) => snapshot.sourceId === erpCatalogSources.database)?.records ?? [];
+      return records
+        .filter((record) => record.entityType === "protective-covering" &&
+          COVERING_KINDS.includes(record.payload.coveringKind as CoveringKind))
+        .sort((a, b) => a.sourceKey.localeCompare(b.sourceKey, "ru"))
+        .map((record): GlobalMaterial => {
+          const kind = record.payload.coveringKind as CoveringKind;
+          const style = KIND_STYLE[kind];
+          const color = COVER_COLORS.find(([pattern]) => pattern.test(String(record.payload.color ?? "")))?.[1];
+          return {
+            materialId: record.recordId, name: record.sourceKey, lineColor: style.line, lineWidth: 1,
+            textureAngle: style.angle, textureScale: style.scale, tint: style.tint, hatchCode: style.hatchCode,
+            hatchLineWidth: 1, coveringKind: kind, updatedUtc: catalog.capturedUtc, revision: 1,
+            ...(color ? { backgroundColor: color } : {}),
+          };
+        });
+    },
+    async pinTexture() {
+      throw new Error("Текстуры материалов в ERP не хранятся — материалы БД.МАТ рисуются штриховкой.");
+    },
+    async listTextures() {
+      return [];
+    },
   };
 }
 

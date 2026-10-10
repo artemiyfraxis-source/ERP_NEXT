@@ -3,11 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createConnector, createWire } from "./commands";
 import { createEmptyHarnessDesign, type HarnessDesignDocument } from "./model";
 import { buildHarnessSelectionIndex, resolveHarnessSelection } from "./harness-selection";
-import { buildLiveCutList } from "./live-cut-list";
 import { selectedEditorDeletionCommands } from "./HarnessDesignEditor";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { HarnessCutListTable } from "../HarnessCutListPanel";
 
 function fixture(): HarnessDesignDocument {
   const connectors = ["A", "B", "C"].map(id => createConnector(id, id, 2, {x: 0, y: 0}));
@@ -48,10 +44,7 @@ describe("cross-view selection", () => {
     const index = buildHarnessSelectionIndex(model);
     expect(resolveHarnessSelection(index, ["K"]).wireIds).toEqual(["W1", "W2"]);
     expect(resolveHarnessSelection(index, ["W1"]).rowIds).toContain("K");
-    const list = buildLiveCutList(model,"P","H",3);
-    expect(list.items.map(row => row.wireId)).toEqual(["W3", "K"]);
-    expect(list.items[1]).toMatchObject({cutLengthMm:106,pieces:3,totalMetres:.318});
-    expect(buildLiveCutList({...doc,wires:[{...doc.wires[0]!,lengthMm:null}]},"P","H",1).items[0]).toMatchObject({cutLengthMm:null,totalMetres:null,warnings:["material-missing","length-missing"]});
+    // The cut rows themselves are the server's (backend tests/techcards/test_harness_documents.py).
   });
   it("indexes 300 conductors without confusing housing contacts or input order", () => {
     const base=fixture();
@@ -68,12 +61,5 @@ describe("cross-view selection", () => {
     const index=buildHarnessSelectionIndex({...doc,screens:[screen],wires:[...doc.wires,drain]});
     expect(resolveHarnessSelection(index,["shield"],true).wireIds).not.toContain("W1");
     expect(resolveHarnessSelection(index,["W1"],true).wireIds).toEqual(["W1"]);
-  });
-  it("renders a keyboard-accessible reveal action and related row independently of editing", () => {
-    const list=buildLiveCutList(fixture(),"P","H",2);
-    const html=renderToStaticMarkup(createElement(HarnessCutListTable,{cutList:list,onReveal:()=>{},highlightedIds:["W1"]}));
-    expect(html).toContain('aria-selected="true"');
-    expect(html).toContain('aria-label="Показать на чертеже W1"');
-    expect(html).toContain('type="button"');
   });
 });

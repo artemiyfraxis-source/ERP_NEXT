@@ -1,17 +1,14 @@
-import { drawingTableColumnWidths } from "./drawing-table-column-widths";
 import {validateCoveringLibrary,type CoveringLibrary} from "./covering-library";
 import { drawingObjectPerimeter, type DrawingPerimeters } from "./drawing-object-perimeter";
 import {initialLinearLeader} from "./drawing-leader-placement";
 import { drawingLocalPoint, drawingPointToLocal } from "./drawing-scale";
 import { moveDrawingDimension, validateDrawingDimensions, type DrawingDimension, type DimensionMode } from "./drawing-dimensions";
 import type { EditorSceneObject } from "./editor-types";
-import { findWireEndpoint, calculateWireCutLength, type HarnessDesignDocument, type Point, type WireEndpoint } from "./model";
+import { defaultLayerIds, findWireEndpoint, calculateWireCutLength, type HarnessDesignDocument, type Point, type WireEndpoint } from "./model";
 import { coveringPaths, coveringMeasuredLength } from "./physical-coverings";
 import { physicalNodePoint } from "./physical-ports";
 import { physicalSegmentPoints } from "./physical-geometry";
 import { movePositionLeaderOnRails, movePositionRail } from "./position-rail";
-import { connectionTableColumnLabels, getConnectionTableSettings, type ConnectionTableColumnId } from "./connection-table-settings";
-import { builtInWireColors, resolveWireColorHex } from "./wire-reference-catalog";
 import { snapDrawingTranslation, type DrawingOutline, type DrawingSnaps } from "../component-library/drawing-geometry";
 import { buildDrawingObjectIndices } from "./drawing-object-indices";
 import { terminalArticleLabel } from "./terminal-article-label";
@@ -235,62 +232,6 @@ export function connectionEndLabel(document: HarnessDesignDocument, end: WireEnd
   return `${connector}:${contact?.number ?? "Контакт"}`;
 }
 
-/** Operator-facing endpoint label for the connection table, including the
- * selected connector article while retaining the positional designation. */
-export function connectionTableEndLabel(document: HarnessDesignDocument, end: WireEndpoint): string {
-  if (end.junctionId || end.screenId) return connectionEndLabel(document, end);
-  const connector = document.connectors.find(item => item.id === end.connectorId);
-  const contact = connector?.contacts.find(item => item.id === end.contactId);
-  const article = connector?.partNumber?.trim();
-  const designation = connector ? `${connector.designation}${article ? ` (${article})` : ""}` : "Соединитель";
-  return `${designation}:${contact?.number ?? "Контакт"}`;
-}
-
-export function connectionWireColor(document: HarnessDesignDocument, wire: HarnessDesignDocument["wires"][number]): { readonly label: string; readonly hex: string } {
-  const contacts = [wire.from, wire.to].flatMap(end => {
-    if (!("connectorId" in end)) return [];
-    const connector = document.connectors.find(item => item.id === end.connectorId);
-    return connector?.contacts.filter(contact => contact.id === end.contactId) ?? [];
-  });
-  const primary = contacts.find(contact => contact.color.trim())?.color.trim() ?? wire.color;
-  const secondary = contacts.find(contact => contact.secondaryColor?.trim())?.secondaryColor?.trim();
-  const name = (value: string) => builtInWireColors.find(color => color.hex.toLocaleLowerCase() === value.toLocaleLowerCase())?.name ?? value;
-  return { label: [name(primary), secondary ? name(secondary) : ""].filter(Boolean).join(" / ") || "—", hex: resolveWireColorHex(primary, builtInWireColors, wire.color || "#D9E2E7") };
-}
-
-function connectionTableValue(document: HarnessDesignDocument, wire: HarnessDesignDocument["wires"][number], id: ConnectionTableColumnId, index: number): string {
-  if (id === "index") return `W${index + 1}`;
-  if (id === "mark") return connectionWireMark(document, wire) || "—";
-  if (id === "section") return connectionWireSection(document, wire) || "—";
-  if (id === "marking") return wire.circuit || "—";
-  if (id === "from") return connectionTableEndLabel(document, wire.from);
-  if (id === "to") return connectionTableEndLabel(document, wire.to);
-  if (id === "color") return connectionWireColor(document, wire).label;
-  if (id === "length") return wire.lengthMm === null ? "—" : String(wire.lengthMm);
-  return document.physicalTopology?.routes.find(route => route.wireId === wire.id)?.steps.length ? "Задан" : "Не задан";
-}
-
-export function connectionTableColumns(): readonly { readonly id: ConnectionTableColumnId; readonly label: string }[] {
-  return getConnectionTableSettings().columns.filter(column => column.visible).map(column => ({ id: column.id, label: connectionTableColumnLabels[column.id] }));
-}
-
-export function connectionWireMark(document: HarnessDesignDocument, wire: HarnessDesignDocument["wires"][number]): string {
-  const contacts = [wire.from, wire.to].flatMap(end => {
-    if (!("connectorId" in end)) return [];
-    const connector = document.connectors.find(item => item.id === end.connectorId);
-    return connector?.contacts.filter(contact => contact.id === end.contactId) ?? [];
-  });
-  return contacts.find(contact => contact.wire.trim())?.wire.trim() ?? wire.materialBinding?.sourceKey ?? "";
-}
-
-export function connectionWireSection(document: HarnessDesignDocument, wire: HarnessDesignDocument["wires"][number]): string {
-  const contacts = [wire.from, wire.to].flatMap(end => {
-    if (!("connectorId" in end)) return [];
-    const connector = document.connectors.find(item => item.id === end.connectorId);
-    return connector?.contacts.filter(contact => contact.id === end.contactId) ?? [];
-  });
-  return contacts.find(contact => contact.wireSection?.trim())?.wireSection?.trim() ?? "";
-}
 export function drawingObjectOrigin(document:HarnessDesignDocument,id:string):Point|null {
   const extra=document.drawingDocuments?.specificationItems?.find(i=>i.id===id);if(extra)return extra.position ?? null;
   const connector=document.connectors.find(c=>c.id===id);if(connector)return connector.positions.drawing;
@@ -347,14 +288,8 @@ export function validateDrawingDocuments(value:unknown,document:HarnessDesignDoc
 
 export function drawingDocumentScene(document:HarnessDesignDocument,quantity=1,perimeters?:DrawingPerimeters,view:"drawing"|"e4"="drawing"):EditorSceneObject[] {
   const d=document.drawingDocuments;if(!d)return [];
+  // The tables are windows over the field with the server's rows (DrawingTableWindows), not scene objects.
   const rows=buildDrawingBom(document,quantity);
-  const tables:EditorSceneObject[]=d.tables.filter(t=>t.kind!=="cut" && !t.dock).map(t=>{
-    const connectionColumns = connectionTableColumns();
-    const headers=t.kind==="bom"?["Поз.","Индекс","Обозначение","Наименование","Кол-во","Примечание"]:connectionColumns.map(column => column.label);
-    const values=t.kind==="bom"?rows.map(r=>[String(r.position),r.index,r.designation,r.name,`${r.amount ?? "—"} ${r.unit}`,r.note]):document.wires.map((w,index)=>connectionColumns.map(column => connectionTableValue(document,w,column.id,index)));
-    const widths=t.kind==="bom"?drawingTableColumnWidths(headers,values):connectionColumns.map(column => column.id === "from" || column.id === "to" ? 180 : column.id === "color" ? 100 : column.id === "marking" ? 120 : 100);
-    return {id:t.id,kind:"drawing-table",layerId:"dimensions",label:t.kind==="bom"?`Спецификация · ${quantity} жгут(а)`:"Таблица соединений",x:t.position.x,y:t.position.y,width:widths.reduce((a,b)=>a+b,0),height:52+values.length*32,color:"#365568",metadata:{rowObjectIds:JSON.stringify(t.kind==="bom"?rows.map(r=>r.objectIds):document.wires.map(w=>[w.id])),headers:JSON.stringify(headers),rows:JSON.stringify(values),widths:JSON.stringify(widths)}};
-  });
   const scale=d.leaderScale??1,radius=12*scale,anchorRadius=4*scale;
   const leaders:EditorSceneObject[]=d.leaders.filter(l=>!l.hidden).flatMap(l=>{
     const origin=drawingObjectOrigin(document,l.objectId),row=rows.find(r=>r.key===l.rowKey&&r.objectIds.includes(l.objectId));
@@ -362,8 +297,8 @@ export function drawingDocumentScene(document:HarnessDesignDocument,quantity=1,p
     const offset=l.anchorLocal&&connector?drawingLocalPoint(l.anchorLocal,connector.drawingPlacements):l.anchorOffset;
     const target=origin?{x:origin.x+offset.x,y:origin.y+offset.y}:l.circle;
     const anchor=drawingObjectPerimeter(document,l.objectId,target,perimeters)??l.circle;
-    return [{id:l.id,kind:"position-leader",layerId:"dimensions",label:origin&&row?String(row.position):"?",x:l.circle.x-radius,y:l.circle.y-radius,width:radius*2,height:radius*2,color:origin&&row?"#365568":"#c23535",points:[anchor,l.circle]},
-      {id:`${l.id}:anchor`,kind:"leader-anchor",layerId:"dimensions",label:"",x:anchor.x-anchorRadius,y:anchor.y-anchorRadius,width:anchorRadius*2,height:anchorRadius*2,color:origin&&row?"#365568":"#c23535"}];
+    return [{id:l.id,kind:"position-leader",layerId:defaultLayerIds.materialIndexes,label:origin&&row?String(row.position):"?",x:l.circle.x-radius,y:l.circle.y-radius,width:radius*2,height:radius*2,color:origin&&row?"#365568":"#c23535",points:[anchor,l.circle]},
+      {id:`${l.id}:anchor`,kind:"leader-anchor",layerId:defaultLayerIds.materialIndexes,label:"",x:anchor.x-anchorRadius,y:anchor.y-anchorRadius,width:anchorRadius*2,height:anchorRadius*2,color:origin&&row?"#365568":"#c23535"}];
   });
   const rails:EditorSceneObject[]=(d.rails??[]).flatMap(rail=>[
     {id:rail.id,kind:"position-rail",layerId:"dimensions",label:"Линия позиций",x:Math.min(rail.start.x,rail.end.x),y:Math.min(rail.start.y,rail.end.y),width:Math.abs(rail.end.x-rail.start.x),height:Math.abs(rail.end.y-rail.start.y),color:"#587084",points:[rail.start,rail.end]},
@@ -371,7 +306,7 @@ export function drawingDocumentScene(document:HarnessDesignDocument,quantity=1,p
   ]);
   const graphics:EditorSceneObject[]=(d.graphics??[]).filter(g=>g.view===view).map(g=>{const points=g.points,minX=Math.min(...points.map(p=>p.x)),minY=Math.min(...points.map(p=>p.y)),maxX=Math.max(...points.map(p=>p.x)),maxY=Math.max(...points.map(p=>p.y));return {id:g.id,kind:(`graphic-${g.kind.replace("closedContour","closed-contour")}`) as EditorSceneObject["kind"],layerId:g.view==="drawing"?"dimensions":"connectors",label:g.text??g.kind,x:minX,y:minY,width:Math.max(1,maxX-minX),height:Math.max(1,maxY-minY),color:g.color??"#253b4a",points,metadata:{graphicKind:g.kind,graphicView:g.view,graphicText:g.text??"",graphicAngle:String(g.angle??0),graphicFontFamily:g.fontFamily??"Arial",graphicFontSize:String(g.fontSize??16),graphicWidth:String(g.width??2)}};});
   if(view==="e4")return graphics;
-  return [...graphics,...tables,...rails,...leaders,...(d.specificationItems??[]).filter(i=>i.position).map(i=>({id:i.id,kind:"specification-item" as const,layerId:"dimensions",label:i.designation || i.name,x:i.position!.x,y:i.position!.y,width:110,height:38,color:"#416579"}))];
+  return [...graphics,...rails,...leaders,...(d.specificationItems??[]).filter(i=>i.position).map(i=>({id:i.id,kind:"specification-item" as const,layerId:"dimensions",label:i.designation || i.name,x:i.position!.x,y:i.position!.y,width:110,height:38,color:"#416579"}))];
 }
 export function moveDrawingAnnotation(document:HarnessDesignDocument,id:string,point:Point,perimeters?:DrawingPerimeters,snaps?:DrawingSnaps):DrawingDocuments|null {
   const d=document.drawingDocuments;if(!d)return null;

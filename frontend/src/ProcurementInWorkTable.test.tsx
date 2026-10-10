@@ -280,11 +280,11 @@ it("keeps every row action visible on the row (no «⋯» menu), without approva
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   const actions = within(screen.getByRole("group", { name: "Действия SM-1" }));
   expect(actions.getAllByRole("button").map((item) => item.textContent)).toEqual([
-    "Со склада", "Прослеж.…", "Есть на складе, без ГРН", "Отменить строку",
+    "Со склада", "Документы…", "Есть на складе, без ГРН", "Отменить строку",
   ]);
   // Полное название — в имени и подсказке кнопки: колонка действий узкая.
-  expect(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" })).toHaveAttribute("title", "Прослеживаемость, раздробить…");
-  fireEvent.click(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" }));
+  expect(actions.getByRole("button", { name: "Документы, прослеживаемость…" })).toHaveAttribute("title", "Документы, прослеживаемость…");
+  fireEvent.click(actions.getByRole("button", { name: "Документы, прослеживаемость…" }));
   expect(screen.getByText("детали")).toBeInTheDocument();
 });
 

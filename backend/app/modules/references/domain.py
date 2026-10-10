@@ -18,14 +18,14 @@ class ReferenceKind(str, Enum):
     SUPPLIER = "supplier"
     COUNTRY = "country"
     GOST_AWG = "gost_awg"
-    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / other). Kept beside the maps, not on
-    # the record, so a mirror reload neither drops the move nor freezes the row's other cells.
+    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / multi / other). Kept beside the
+    # maps, not on the record, so a mirror reload neither drops the move nor freezes the row's other cells.
     CABLE_KIND = "cable_kind"
 
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
 MAP_KINDS = (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_AWG)
-CABLE_KIND_VALUES = ("coax", "wire", "other")
+CABLE_KIND_VALUES = ("coax", "wire", "multi", "other")
 
 
 class TechOperationTab(str, Enum):
@@ -162,7 +162,7 @@ class ReferenceEntry:
         if kind == ReferenceKind.GOST_AWG:
             clean_value = _awg_value(clean_value)
         if kind == ReferenceKind.CABLE_KIND and clean_value not in CABLE_KIND_VALUES:
-            raise ReferenceValidationError("Вкладка кабеля: коаксиальные, монтажные или прочие")
+            raise ReferenceValidationError("Вкладка кабеля: коаксиальные, монтажные, многожильные или прочие")
         normalized = _KEY_NORMALIZERS[kind](clean_key)
         return cls(uuid4(), kind, clean_key, normalized, clean_value, position)
 

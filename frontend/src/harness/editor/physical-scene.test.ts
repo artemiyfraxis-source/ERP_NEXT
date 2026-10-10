@@ -38,10 +38,11 @@ it("keeps physical connection points on a dedicated top layer and distinguishes 
 });
 it("migrates legacy view layers with a visible connection-point layer",()=>{
  const doc=physicalFixture();
- const legacy={...doc,views:{...doc.views,e4:{...doc.views.e4,layers:doc.views.e4.layers.filter(layer=>layer.id!==defaultLayerIds.connectionPoints)},drawing:{...doc.views.drawing,layers:doc.views.drawing.layers.filter(layer=>layer.id!==defaultLayerIds.connectionPoints)}}};
+ const legacy={...doc,views:{...doc.views,e4:{...doc.views.e4,layers:doc.views.e4.layers.filter(layer=>layer.id!==defaultLayerIds.connectionPoints&&layer.id!==defaultLayerIds.materialIndexes)},drawing:{...doc.views.drawing,layers:doc.views.drawing.layers.filter(layer=>layer.id!==defaultLayerIds.connectionPoints&&layer.id!==defaultLayerIds.materialIndexes)}}};
  const parsed=parseHarnessDesignDocument(legacy);
  expect(parsed.views.e4.layers.find(layer=>layer.id===defaultLayerIds.connectionPoints)).toMatchObject({visible:true,locked:false});
  expect(parsed.views.drawing.layers.find(layer=>layer.id===defaultLayerIds.connectionPoints)).toMatchObject({visible:true,locked:false});
+ expect(parsed.views.drawing.layers.find(layer=>layer.id===defaultLayerIds.materialIndexes)).toMatchObject({visible:true,locked:false});
  const highOrder={...legacy,views:{...legacy.views,drawing:{...legacy.views.drawing,layers:legacy.views.drawing.layers.map((layer,i)=>({...layer,order:10000-i}))}}};
  const migrated=parseHarnessDesignDocument(highOrder);
  expect(()=>parseHarnessDesignDocument(JSON.parse(JSON.stringify(migrated)))).not.toThrow();

@@ -5,7 +5,8 @@ import { EquipmentCards } from "./EquipmentCards";
 import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
-import { CableTable } from "./CableTables";
+import { CableTable, kindSelect } from "./CableTables";
+import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { operationCardCount } from "./TechcardsPage";
 import {
   failureText,
@@ -27,8 +28,8 @@ import {
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
 type MapTab = "suppliers" | "countries";
-type CableTab = "cab_coax" | "cab_wire" | "cab_other";
-export type DbTab = "templates" | "connectors" | TechOperationTab | MapTab | CableTab;
+type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_other";
+export type DbTab = "templates" | "connectors" | "gauges" | TechOperationTab | MapTab | CableTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
@@ -46,15 +47,17 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "coax", label: "Коаксиальные разъёмы", base: "coax" },
     { id: "ter", label: "Терминалы", base: "ter" },
   ] },
-  // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки». БД.ПРОВ and the coax D1·D2·D3 table
-  // (СПР.КАБ) are joined by the server (references/cables.py). The AWG table (СПР.КАБ · AWG) is the монтажные wires'
-  // own reference — Ø of insulation per mark and «ГОСТ → AWG», as SUPPLYMAP gostAwgMap_ derives it — so it sits right
-  // after them as a chip of its own: its rows are AWG sizes, not wires, and it keeps its own count and Excel.
+  // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»; 10.10.2026: сечения — отдельной
+  // таблицей, у монтажных жила из неё, многожильные — в отдельную вкладку. БД.ПРОВ, the coax D1·D2·D3 table and the coax
+  // cards are joined by the server (references/cables.py, cable_structure.py). «Сечения AWG ↔ мм²» is the size table
+  // the монтажные wires reference; «Ø изоляции по маркам» is the СПР.КАБ AWG sheet the ETK generator reads.
   { title: "Кабели и провода", tabs: [
     { id: "cab_coax", label: "Коаксиальные кабели" },
     { id: "cab_wire", label: "Монтажные провода" },
-    { id: "kab_awg", label: "AWG ↔ сечение ↔ Ø" },
+    { id: "gauges", label: "Сечения AWG ↔ мм²" },
+    { id: "cab_multi", label: "Многожильные кабели" },
     { id: "cab_other", label: "Прочие кабели" },
+    { id: "kab_awg", label: "Ø изоляции по маркам" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
   { title: "Материалы", tabs: [
@@ -65,7 +68,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "countries", label: "Изготовитель → страна" },
   ] },
 ];
-const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_other: "other" };
+const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_other: "other" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
 // D1 · D2 · D3» → коаксиальные кабели.
 const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax" };
@@ -133,7 +136,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
-  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" ? tab : null;
+  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" ? tab : null;
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
@@ -175,7 +178,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     try {
       setCables(await referencesApi.cables());
     } catch (reason) {
-      setCables({ columns: [], counts: { coax: 0, wire: 0, other: 0 }, rows: [] });
+      setCables({ columns: [], counts: { coax: 0, wire: 0, multi: 0, other: 0 }, rows: [], gauges: [] });
       setError(failureText(reason, "Не удалось загрузить кабели и провода"));
     }
   }
@@ -206,7 +209,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     setEditing(null);
     setNotice("");
     if (techTab) void loadTech(techTab);
-    if (cableKind && cables === null) void loadCables();
+    if ((cableKind || tab === "gauges") && cables === null) void loadCables();
     if (cableKind === "wire" && awgRecords === null) {
       referencesApi.techOperations("kab_awg", "", 5000).then((result) => setAwgRecords(result.records)).catch(() => setAwgRecords([]));
     }
@@ -217,6 +220,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     if (def.id === "templates") return opCount;
     if (def.id === "connectors") return connectorCount;
     if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
+    if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
     if (def.id === tab && techTab) return tech.records.length;
     return bases.tabs?.[def.id as TechOperationTab] ?? bases.bases.find((base) => base.id === def.base)?.count ?? null;
   }
@@ -358,16 +362,28 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}
     </>}
 
-    {cableKind && (cables === null
-      ? <div className="empty">Загрузка…</div>
-      : <CableTable
-        kind={cableKind}
-        data={cables}
-        awgRecords={awgRecords ?? []}
-        canEdit={principal.permissions.erpref === "edit"}
-        onSaved={cablesSaved}
-        onError={(message) => { setNotice(""); setError(message); }}
-      />)}
+    {(cableKind || tab === "gauges") && cables === null && <div className="empty">Загрузка…</div>}
+    {tab === "gauges" && cables !== null && <GaugeTable
+      gauges={cables.gauges ?? []}
+      canEdit={principal.permissions.erpref === "edit"}
+      onSaved={cablesSaved}
+      onError={(message) => { setNotice(""); setError(message); }}
+    />}
+    {cableKind === "wire" && cables !== null && <HookupWireTable
+      data={cables}
+      canEdit={principal.permissions.erpref === "edit"}
+      onSaved={cablesSaved}
+      onError={(message) => { setNotice(""); setError(message); }}
+      kindSelect={kindSelect}
+    />}
+    {cableKind && cableKind !== "wire" && cables !== null && <CableTable
+      kind={cableKind}
+      data={cables}
+      awgRecords={awgRecords ?? []}
+      canEdit={principal.permissions.erpref === "edit"}
+      onSaved={cablesSaved}
+      onError={(message) => { setNotice(""); setError(message); }}
+    />}
   </section>;
 }
 

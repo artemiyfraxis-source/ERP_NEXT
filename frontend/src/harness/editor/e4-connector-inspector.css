@@ -29,7 +29,7 @@
 .harness-root .e4ci-table-section td input:not([type="checkbox"]) { min-width: 0; height: 30px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--card); color: var(--foreground); font: 500 10px Arial, sans-serif; }
 .harness-root .e4ci-identity input:focus,
 .harness-root .e4ci-add-field input:focus,
-.harness-root .e4ci-table-section td input:focus { border-color: var(--muted-foreground); outline: 2px solid rgb(48 144 184 / 12%); }
+.harness-root .e4ci-table-section td input:focus { border-color: var(--muted-foreground); outline: 2px solid color-mix(in srgb, var(--primary) 12%, transparent); }
 .harness-root .e4ci-identity-help { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; color: var(--ui-muted); font-size: 10px; }
 .harness-root .e4ci-refresh-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
 .harness-root .e4ci-refresh-row .ui-control { flex: 1; }
@@ -95,7 +95,7 @@
   background: var(--card);
   color: var(--foreground);
   font: 500 10px/1.2 Inter, Arial, sans-serif;
-  box-shadow: 0 3px 13px rgb(16 76 102 / 16%);
+  box-shadow: 0 3px 13px color-mix(in srgb, var(--foreground) 16%, transparent);
 }
 .harness-root .e4-connector-canvas-editor.is-readonly { cursor: grab; touch-action: none; user-select: none; }
 .harness-root .e4-connector-canvas-editor.is-readonly:active { cursor: grabbing; }
@@ -104,7 +104,7 @@
 .harness-root .e4cce-title:active { cursor: grabbing; }
 .harness-root .e4cce-title strong { max-width: 42%; overflow: hidden; color: var(--foreground); font-size: 12px; font-weight: 850; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .harness-root .e4cce-title input { min-width: 0; width: 42%; height: 20px; padding: 1px 5px; border: 1px solid var(--muted-foreground); border-radius: 3px; outline: 0; background: var(--card); color: var(--foreground); font: 800 11px Inter, Arial, sans-serif; text-align: center; user-select: text; }
-.harness-root .e4cce-title input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgb(22 133 178 / 14%); }
+.harness-root .e4cce-title input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 14%, transparent); }
 .harness-root .e4cce-title-add { position: absolute; left: 4px; top: 2px; max-width: 27%; height: 20px; padding: 0 4px; overflow: hidden; border: 0; border-radius: 3px; background: transparent; color: var(--primary); font-size: 8px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .harness-root .e4cce-title-add:hover:not(:disabled) { background: var(--border); }
 .harness-root .e4cce-table-scroll { overflow: visible; }
@@ -121,7 +121,7 @@
 .harness-root .e4cce-wire-picker { position: relative; width: 100%; height: 23px; }
 .harness-root .e4-connector-canvas-editor .e4cce-wire-picker > input { box-sizing: border-box; width: 100%; height: 23px; min-height: 0; padding: 2px 5px; border: 1px solid transparent; border-radius: 0; outline: 0; background: transparent; color: var(--foreground); font: 500 10px Inter, Arial, sans-serif; text-align: center; }
 .harness-root .e4cce-wire-picker > input:focus { z-index: 1; border-color: var(--primary); background: var(--card); box-shadow: inset 0 0 0 1px var(--primary); }
-.harness-root .e4cce-wire-suggestions { width: 230px; max-height: 152px; overflow-y: auto; border: 1px solid var(--muted-foreground); border-radius: 5px; background: var(--card); box-shadow: 0 8px 22px rgb(24 64 82 / 22%); }
+.harness-root .e4cce-wire-suggestions { width: 230px; max-height: 152px; overflow-y: auto; border: 1px solid var(--muted-foreground); border-radius: 5px; background: var(--card); box-shadow: 0 8px 22px color-mix(in srgb, var(--foreground) 22%, transparent); }
 .harness-root .e4cce-wire-suggestions:empty { display: none; }
 .harness-root .e4cce-wire-suggestions small { display: block; padding: 3px 7px; color: var(--muted-foreground); font-size: 10px; white-space: normal; overflow-wrap: anywhere; }
 .harness-root .e4cce-wire-suggestions button { width: 100%; min-height: 27px; padding: 5px 7px; display: block; border: 0; border-bottom: 1px solid var(--border); background: var(--card); color: var(--foreground); font: 500 10px Inter, Arial, sans-serif; text-align: left; white-space: nowrap; cursor: pointer; }
@@ -134,13 +134,13 @@
 .harness-root .e4-connector-canvas-editor td.e4cce-number > input { padding-right: 5px; }
 .harness-root .e4cce-readonly-value { display: block; width: 100%; height: 23px; padding: 4px 5px; overflow: hidden; color: var(--foreground); text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .harness-root .e4cce-color-readonly { width: 100%; height: 23px; padding: 3px 4px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; justify-content: center; gap: 4px; overflow: hidden; }
-.harness-root .e4cce-color-swatch { display: block; width: 24px; height: 13px; flex: 0 0 auto; border: 1px solid var(--muted-foreground); border-radius: 2px; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 35%); }
+.harness-root .e4cce-color-swatch { display: block; width: 24px; height: 13px; flex: 0 0 auto; border: 1px solid var(--muted-foreground); border-radius: 2px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card) 35%, transparent); }
 .harness-root .e4cce-color-readonly span,
 .harness-root .e4cce-color-summary span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .harness-root .e4cce-color-editor { position: relative; height: 23px; }
 .harness-root .e4-connector-canvas-editor .e4cce-color-summary { box-sizing: border-box; width: 100%; height: 23px; min-height: 0; padding: 3px 4px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; justify-content: center; gap: 4px; overflow: hidden; border: 1px solid transparent; border-radius: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
 .harness-root .e4cce-color-editor.is-open .e4cce-color-summary { border-color: var(--primary); background: var(--panel-soft); }
-.harness-root .e4cce-color-popover { width: 230px; padding: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; border: 1px solid var(--muted-foreground); border-radius: 6px; background: var(--card); box-shadow: 0 8px 22px rgb(24 64 82 / 22%); }
+.harness-root .e4cce-color-popover { width: 230px; padding: 8px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; border: 1px solid var(--muted-foreground); border-radius: 6px; background: var(--card); box-shadow: 0 8px 22px color-mix(in srgb, var(--foreground) 22%, transparent); }
 .harness-root .e4-connector-canvas-editor .e4cce-color-popover { box-sizing: border-box; width: 230px; white-space: normal; }
 .harness-root .e4-connector-canvas-editor .e4cce-color-popover label { height: auto; min-height: 0; margin: 0; padding: 0; display: grid; }
 .harness-root .e4-connector-canvas-editor .e4cce-color-popover select { box-sizing: border-box; height: 30px; min-height: 30px; padding: 3px 24px 3px 6px; line-height: normal; font-size: 11px; }

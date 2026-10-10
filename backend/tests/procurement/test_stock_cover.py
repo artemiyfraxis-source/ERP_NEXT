@@ -7,7 +7,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -785,3 +785,36 @@ def test_a_done_line_without_grn_stays_in_mine_past_30_days_until_it_is_bound(en
 
     assert bind(client, late[lotless_line["id"]], covered["cover"]["id"], lot).status_code == 200
     assert mine(client) == {}
+
+
+# --- «Весь лист» and «По поставщикам» carry «без ГРН» too (follow-up of #241) ---------------------------------
+
+def test_whole_sheet_and_by_supplier_carry_without_grn_with_one_lookup_per_list(env):
+    client, sessions = env
+    done = line_in_work(client, sessions)
+    part = line_in_work(client, sessions, suffix=2)
+    plain = line_in_work(client, sessions, suffix=3)
+    assert cover_without_lot(client, done, "124").status_code == 200
+    assert cover_without_lot(client, part, "50").status_code == 200
+
+    engine = sessions.kw["bind"]
+    statements: list[str] = []
+    listener = lambda conn, cursor, statement, *args: statements.append(statement)
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        sheet = {line["id"]: line for line in client.get("/api/procurement/lines").json()["lines"]}
+        sheet_queries = list(statements)
+        statements.clear()
+        overview = {line["id"]: line for line in client.get("/api/procurement/by-supplier").json()["lines"]}
+        overview_queries = list(statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+
+    assert (sheet[done["id"]]["status"], sheet[done["id"]]["stock_without_grn"]) == ("Готово", "124")
+    assert (sheet[part["id"]]["stock_without_grn"], sheet[plain["id"]]["stock_without_grn"]) == ("50", "0")
+    # «По поставщикам» shows open lines only: the part still to buy keeps its «без ГРН», «Готово» is not there
+    assert done["id"] not in overview
+    assert (overview[part["id"]]["stock_without_grn"], overview[plain["id"]]["stock_without_grn"]) == ("50", "0")
+    for queries in (sheet_queries, overview_queries):
+        assert sum("procurement_stock_covers" in sql for sql in queries) == 1
+        assert sum("FROM procurement_files" in sql for sql in queries) == 1

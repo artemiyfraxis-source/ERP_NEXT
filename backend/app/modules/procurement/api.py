@@ -101,10 +101,19 @@ from .application import (
     release_stock_cover,
     stock_candidates,
     without_grn_quantities,
+    SetDatasheetCommand,
+    StoredInvoiceFile,
+    UploadLineDocumentCommand,
+    invoice_file_url,
+    line_documents,
+    set_procurement_datasheet,
+    upload_line_document,
 )
 from .domain import (
     ACTUAL_UNITS,
     BY_SUPPLIER_STAGES,
+    DATASHEET_MAX_LENGTH,
+    LINE_DOCUMENT_KINDS,
     NOTE_MAX_LENGTH,
     STATUS_ORDER,
     ProcurementStatus,
@@ -333,6 +342,20 @@ class NoteInput(VersionInput):
     note: str = Field(default="", max_length=NOTE_MAX_LENGTH * 2)
 
 
+class DatasheetInput(VersionInput):
+    # Coarse transport bound; the domain checks the trimmed text against DATASHEET_MAX_LENGTH in Russian.
+    datasheet: str = Field(default="", max_length=DATASHEET_MAX_LENGTH * 2)
+
+
+class LineDocumentInput(BaseModel):
+    """РАЗРЕШЕНИЕ (`permit`) or ДОК. КАЧЕСТВА (`quality`) file of the line."""
+
+    kind: str = Field(min_length=1, max_length=16)
+    file_name: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(default="", max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
+
+
 class ExpectedArrivalInput(VersionInput):
     expected_arrival: date
 
@@ -519,11 +542,24 @@ def _decimal_result(value: Decimal | None) -> str | None:
     return format(value.normalize(), "f") if value is not None else None
 
 
+def _file_result(stored: StoredInvoiceFile) -> dict:
+    return {
+        "id": str(stored.id), "kind": stored.kind, "file_name": stored.file_name, "url": invoice_file_url(stored.id),
+        "uploaded_by": stored.uploaded_by, "uploaded_at": stored.uploaded_at.isoformat(),
+    }
+
+
 def _line_result(
     line: ProcurementLine, purposes: Mapping[UUID, str] | None = None, *, without_grn: Decimal | None = None,
+    documents: Sequence[StoredInvoiceFile] | None = None,
 ) -> dict:
-    """The line for the screens. `without_grn` — only where the caller looked up the covers («Мои позиции»)."""
-    extra = {} if without_grn is None else {"stock_without_grn": _decimal_result(without_grn)}
+    """The line for the screens. `without_grn` and `documents` — only where the caller looked them up (the lists:
+    «Мои позиции», «Весь лист», «По поставщикам»); a command's answer leaves them out and the screen keeps its own."""
+    extra: dict = {} if without_grn is None else {"stock_without_grn": _decimal_result(without_grn)}
+    if documents is not None:
+        # «Файлы разрешения» / «Док. качества» of the sheet: the line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files.
+        extra["permit_files"] = [_file_result(item) for item in documents if item.kind == "permit"]
+        extra["quality_files"] = [_file_result(item) for item in documents if item.kind == "quality"]
     return {
         "purpose": (purposes or {}).get(line.source_request_id),
         "id": str(line.id),
@@ -567,6 +603,8 @@ def _line_result(
         "actual_arrival": line.actual_arrival.isoformat() if line.actual_arrival else None,
         # КОММЕНТАРИЙ: the buyer's free note.
         "note": line.note,
+        # DATASHEET: a link or a text, edited like КОММЕНТАРИЙ.
+        "datasheet": line.datasheet,
         "invoice_url": line.invoice_url,
         "paid_at": line.paid_at.isoformat() if line.paid_at else None,
         "currency": line.money.currency,
@@ -625,13 +663,39 @@ def _retry_transaction(operation):
 def _page_result(
     lines: list[ProcurementLine], limit: int, purposes_of=None,
     without_grn: Callable[[list[ProcurementLine]], dict] | None = None,
+    documents: Callable[[list[ProcurementLine]], dict] | None = None,
 ) -> dict:
     page = lines[:limit]
+    return {
+        "lines": _lines_result(page, purposes_of, without_grn, documents),
+        "next_cursor": str(page[-1].id) if len(lines) > limit else None,
+    }
+
+
+def _lines_result(
+    page: list[ProcurementLine], purposes_of=None,
+    without_grn: Callable[[list[ProcurementLine]], dict] | None = None,
+    documents: Callable[[list[ProcurementLine]], dict] | None = None,
+) -> list[dict]:
+    """A list of lines with what the list looks up in one query each: ЦЕЛЬ, «без ГРН», the РАЗРЕШЕНИЕ / ДОК.
+    КАЧЕСТВА files. A lookup left out leaves its keys out of the lines."""
     purposes = purposes_of(page) if purposes_of else None
     lotless = without_grn(page) if without_grn is not None else {}
+    files = documents(page) if documents is not None else None
+    return [
+        _line_result(
+            line, purposes, without_grn=lotless.get(line.id),
+            documents=None if files is None else files.get(line.id, []),
+        )
+        for line in page
+    ]
+
+
+def _list_lookups(uow_factory: Callable[[], UnitOfWork]) -> dict:
+    """«без ГРН» covers and the РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА files of a list — the same for every list view."""
     return {
-        "lines": [_line_result(line, purposes, without_grn=lotless.get(line.id)) for line in page],
-        "next_cursor": str(page[-1].id) if len(lines) > limit else None,
+        "without_grn": lambda page: without_grn_quantities(page, uow_factory()),
+        "documents": lambda page: line_documents([line.id for line in page], uow_factory()),
     }
 
 
@@ -676,8 +740,9 @@ def my_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    # «Готово · без ГРН»: the screen offers «Привязать ГРН» on the lines that still have a cover without a lot.
-    return _page_result(lines, limit, purposes_of, lambda page: without_grn_quantities(page, uow_factory()))
+    # «Готово · без ГРН»: the screen offers «Привязать ГРН» on the lines that still have a cover without a lot;
+    # the line card lists the РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА files.
+    return _page_result(lines, limit, purposes_of, **_list_lookups(uow_factory))
 
 
 @router.get("/in-work")
@@ -728,7 +793,7 @@ def all_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return {**_page_result(lines, limit, purposes_of), "buyers": buyers}
+    return {**_page_result(lines, limit, purposes_of, **_list_lookups(uow_factory)), "buyers": buyers}
 
 
 @router.get("/by-supplier")
@@ -739,7 +804,7 @@ def lines_by_supplier(
     """`portalPurchaseBySupplier`: every buyer's open lines for the per-supplier overview."""
     lines = procurement_by_supplier(uow_factory())
     return {
-        "lines": [_line_result(line) for line in lines],
+        "lines": _lines_result(lines, **_list_lookups(uow_factory)),
         "stages": [status.value for status in BY_SUPPLIER_STAGES],
     }
 
@@ -1291,6 +1356,63 @@ def note(
             uow_factory(),
         )
     )
+
+
+@router.patch("/{line_id}/datasheet")
+def datasheet(
+    line_id: UUID,
+    payload: DatasheetInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """DATASHEET: a link or a text, by the line's buyer from «В работе» on; not on «Новый»/«Отменено»."""
+    return _transition(
+        lambda: set_procurement_datasheet(
+            SetDatasheetCommand(
+                line_id=line_id, expected_version=payload.version, datasheet=payload.datasheet,
+                actor=principal.actor, now=now,
+            ),
+            uow_factory(),
+        )
+    )
+
+
+@router.get("/{line_id}/files")
+def line_files(
+    line_id: UUID,
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """The line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files with their kind, oldest first (invoices and КП are not listed)."""
+    found = line_documents([line_id], uow_factory()).get(line_id, [])
+    return {"files": [_file_result(item) for item in found]}
+
+
+@router.post("/{line_id}/files")
+def upload_line_file(
+    line_id: UUID,
+    payload: LineDocumentInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """A РАЗРЕШЕНИЕ or ДОК. КАЧЕСТВА file to the line; a quality document also sets ДОК. КАЧЕСТВА «Да». Answers with
+    the stored file and the line with all its files."""
+    if payload.kind not in LINE_DOCUMENT_KINDS:
+        raise HTTPException(status_code=422, detail="Вид файла: разрешение или документ качества")
+    content = decode_upload(payload.content_base64, "Файл повреждён")
+    line, stored = _command_errors(
+        lambda: upload_line_document(
+            UploadLineDocumentCommand(
+                line_id=line_id, kind=payload.kind, file_name=payload.file_name, content_type=payload.content_type,
+                content=content, actor=principal.actor, now=now,
+            ),
+            uow_factory(),
+        )
+    )
+    files = line_documents([line.id], uow_factory()).get(line.id, [])
+    return {"file": _file_result(stored), "line": _line_result(line, documents=files)}
 
 
 @router.patch("/{line_id}/expected-arrival")

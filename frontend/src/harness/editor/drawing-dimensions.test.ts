@@ -6,7 +6,7 @@ import { dimensionGeometry,dimensionRouteKey,dimensionWirePoints,segmentDimensio
 import { applyEditorCommand } from "./commands";
 import { createEditorHistory,executeEditorCommand,undoEditorCommand } from "./history";
 import { calculateWireCutLength,parseHarnessDesignDocument } from "./model";
-import { emptyDrawingDocuments } from "./drawing-documents";
+import { buildDrawingBom, emptyDrawingDocuments } from "./drawing-documents";
 const fixture=()=>{const d=physicalFixture();return {...d,physicalTopology:undefined,wires:d.wires.map(w=>({...w,drawingRoute:[{x:300,y:100},{x:300,y:300}]}))};};
 describe("bound dimensions",()=>{
  it("keeps aligned offsets parallel and vertical/horizontal projections axis aligned",()=>{
@@ -87,6 +87,16 @@ it("auxiliary wire dimensions allow manual manufacturing lengths",()=>{
  const d=fixture(),wire=d.wires[0]!,dimension={id:"aux",wireId:wire.id,from:0,to:3,pointCount:4,routeKey:dimensionRouteKey(d,wire),mode:"aligned" as const,offset:40,lengthMm:999,auxiliary:true};
  const measured=applyEditorCommand(d,{type:"set-drawing-documents",documents:{...emptyDrawingDocuments(),dimensions:[dimension]}});
  expect(applyEditorCommand(measured,{type:"update-wire",wireId:wire.id,lengthMm:42}).wires[0]!.lengthMm).toBe(42);
+});
+it("uses a changed drawing dimension as the material consumption length",()=>{
+ const source=fixture(),wire=source.wires[0]!,binding={sourceId:"source",snapshotId:"00000000-0000-4000-8000-000000000001",snapshotSha256:"a".repeat(64),recordId:"b".repeat(64),entityType:"wire" as const,sourceKey:"MAT",displayName:"Провод"};
+ const document={...source,wires:source.wires.map(item=>item.id===wire.id?{...item,materialBinding:binding}:item)};
+ const dimension={id:"length",wireId:wire.id,from:0,to:3,pointCount:4,routeKey:dimensionRouteKey(document,wire),mode:"aligned" as const,offset:40,lengthMm:1234};
+ const measured=applyEditorCommand(document,{type:"set-drawing-documents",documents:{...emptyDrawingDocuments(),dimensions:[dimension]}});
+ expect(measured.wires[0]!.lengthMm).toBe(1234);
+ const material=buildDrawingBom(measured).find(row=>row.objectIds.includes(wire.id))!;
+ expect(material.amount).toBe(1.234);
+ expect(material.unit).toBe("м");
 });
 it("combines legacy partial lengths when their common bend is removed and undo restores both",()=>{
  const d=physicalFixture();let docs=setPipeIntervalLength(d,"S0",0,1,100);docs=setPipeIntervalLength({...d,drawingDocuments:docs},"S0",1,2,200);

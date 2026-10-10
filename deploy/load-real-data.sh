@@ -40,6 +40,7 @@ case "${1:-}" in
     cli python -m app.modules.references.load_mirror --source /opt/supplymap
     cli python -m app.modules.techcards.seed_library
     cli python -m app.modules.references.erp_corrections
+    cli python -m app.modules.references.load_cables
     ;;
   projects)
     shift

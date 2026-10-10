@@ -499,8 +499,10 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               <div className="mb-task-head">
                 <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>
                 <span><b>{itemId(item)}</b> × {item.quantity}{item.name ? ` · ${item.name}` : ""}</span>
-                {item.handed_to
-                  ? <><span className="mb-handed">Отдано в {item.handed_to}</span>{canEdit && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, "")}>Вернуть на распределение</button>}</>
+                {item.status === "Выполнено"
+                  ? <><span className="status status-done">Выполнено</span>{item.handed_to && <small>{item.handed_to}: сдано {item.delivered ?? item.quantity} из {item.quantity}</small>}</>
+                  : item.handed_to
+                  ? <><span className="mb-handed">Отдано в {item.handed_to}</span>{item.delivered ? <small>сдано {item.delivered} из {item.quantity}</small> : null}{canEdit && !item.delivered && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, "")}>Вернуть на распределение</button>}{canEdit && <button className="secondary small" onClick={() => openTask(item.id)}>Отметить сдачу</button>}</>
                   : <><small>назначено {item.assigned} из {item.operations.length}</small>{canEdit && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, HANDOVER_SITE)}>Отдать в {HANDOVER_SITE}</button>}</>}
               </div>
               <table className="mb-ops">

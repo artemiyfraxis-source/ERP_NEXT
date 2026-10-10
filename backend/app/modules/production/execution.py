@@ -208,6 +208,8 @@ def _task_operation(task_id: UUID, operation_id: UUID, actor: Actor, uow: Execut
     task = uow.production.get(task_id)
     if task is None:
         raise KeyError(f"Production task not found: {task_id}")
+    if task.status is ProductionStatus.DONE:
+        raise ProductionValidationError(f"Задание {task.number} выполнено — работа по нему закрыта")
     if task.status is not ProductionStatus.RUNNING:
         raise ProductionValidationError("Отменённое задание выполнять нельзя")
     operation = task.operation(operation_id)

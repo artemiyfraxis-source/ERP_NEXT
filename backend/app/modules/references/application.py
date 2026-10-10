@@ -12,6 +12,10 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
+from .cable_structure import (
+    MARK_FIELD, MIRRORED_FIELDS, CoaxCard, HookupWire, WireGauge, cards_from_seed, gauge_gost_awg, hookup_from_parse,
+    parse_hookup, refreshed_hookup, section_key, validate_gauges, written_back_fields,
+)
 from .cables import DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, diameter_index
 from .domain import EDITABLE_TABS, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
 from .technology import TECH_SNAPSHOT_SCHEMA_VERSION, schema_display_text, schema_keys, sync_schema_fields
@@ -35,9 +39,22 @@ class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
 
 
+class CableStructureRepository(Protocol):
+    def gauges(self) -> list[WireGauge]: ...
+    def save_gauge(self, gauge: WireGauge) -> None: ...
+    def delete_gauge(self, gauge_id: UUID) -> None: ...
+    def gauge_usage(self) -> dict[UUID, int]: ...
+    def hookups(self) -> list[HookupWire]: ...
+    def hookup(self, mark_key: str) -> HookupWire | None: ...
+    def save_hookup(self, wire: HookupWire, now: datetime) -> None: ...
+    def cards(self) -> list[CoaxCard]: ...
+    def replace_cards(self, cards: Sequence[CoaxCard], now: datetime) -> dict[str, int]: ...
+
+
 class UnitOfWork(Protocol):
     references: ReferenceRepository
     tech_operations: TechOperationRepository
+    cable_structure: CableStructureRepository
     audit: AppendOnlyRepository
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
@@ -231,6 +248,8 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
         updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
         updated = replace(updated, normalized_search=_search_text(updated))
         uow.tech_operations.save(updated)
+        if record.tab == TechOperationTab.WIRE and edited & {MARK_FIELD, *MIRRORED_FIELDS}:
+            _follow_wire_edit(uow, record, updated, edited, command.now)
         _audit("references.tech_record_edited", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
             "fields": [edit.field for edit in command.edits],
@@ -268,13 +287,212 @@ def cable_overrides(entries: Sequence[ReferenceEntry]) -> dict[str, CableKind]:
 
 
 def list_cables(uow: UnitOfWork) -> list[CableRow]:
-    """Every БД.ПРОВ row with its list, and the D-table cables without a БД.ПРОВ row, sorted by the cable key so a
-    family («RG58», «RG-58 A/U», «RG-58 C/U») stands together."""
+    """Every БД.ПРОВ row with its list, the D-table cables without a БД.ПРОВ row and the coax cards without either,
+    sorted by the cable key so a family («RG58», «RG-58 A/U», «RG-58 C/U») stands together."""
+    return cable_catalog(uow).rows
+
+
+@dataclass(frozen=True)
+class CableCatalog:
+    rows: list[CableRow]
+    gauges: list[WireGauge]
+    hookups: dict[str, HookupWire]  # by mark key
+    usage: dict[UUID, int]  # gauge id → hook-up wires on it
+
+
+def cable_catalog(uow: UnitOfWork) -> CableCatalog:
     with uow:
         wires = uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000)
         diameters = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)
         overrides = cable_overrides(uow.references.list())
-    return sorted(cable_rows(wires, diameters, overrides), key=lambda row: (row.key, row.cable))
+        cards = {card.name_key: card for card in uow.cable_structure.cards()}
+        gauges = uow.cable_structure.gauges()
+        hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
+        usage = uow.cable_structure.gauge_usage()
+    rows = sorted(cable_rows(wires, diameters, overrides, cards), key=lambda row: (row.key, row.cable))
+    return CableCatalog(rows, gauges, hookups, usage)
+
+
+# --- «Сечения AWG ↔ мм²» ---
+
+@dataclass(frozen=True)
+class SaveGaugeCommand:
+    gauge_id: UUID | None  # None — a new size row
+    awg: str
+    section_mm2: str
+    conductor_d_mm: str
+    strands: str
+    actor: Actor
+    now: datetime
+
+
+def _sync_gost_awg(uow: UnitOfWork, before: WireGauge | None, after: WireGauge | None) -> None:
+    """Keeps the workshop ГОСТ section → AWG map (`gost_awg`, read by `gost_awg_map` and the ETK build) in step with
+    the size table: the entry of the old section goes if it was this row's, the new section gets this row's AWG."""
+    entries = list(uow.references.list())
+    drop: set[str] = set()
+    if before is not None and before.awg_number is not None:
+        key = section_key(before.section_mm2)
+        drop |= {key} if any(entry.kind == ReferenceKind.GOST_AWG and entry.normalized_key == key and entry.value == str(before.awg_number) for entry in entries) else set()
+    fresh = gauge_gost_awg([after]) if after is not None else {}
+    drop |= set(fresh)
+    kept = [entry for entry in entries if not (entry.kind == ReferenceKind.GOST_AWG and entry.normalized_key in drop)]
+    if fresh:
+        position = max((entry.position for entry in kept if entry.kind == ReferenceKind.GOST_AWG), default=-1) + 1
+        kept += [ReferenceEntry.create(ReferenceKind.GOST_AWG, key.replace(".", ","), str(awg), position)
+                 for key, awg in fresh.items()]
+    if [(entry.kind, entry.normalized_key, entry.value) for entry in kept] != [(entry.kind, entry.normalized_key, entry.value) for entry in entries]:
+        validate_entries(tuple(kept))
+        uow.references.replace(tuple(kept))
+
+
+def save_gauge(command: SaveGaugeCommand, uow: UnitOfWork) -> WireGauge:
+    with uow:
+        gauges = uow.cable_structure.gauges()
+        before = next((gauge for gauge in gauges if gauge.id == command.gauge_id), None)
+        if command.gauge_id is not None and before is None:
+            raise LookupError("Сечение не найдено — откройте таблицу заново")
+        gauge = WireGauge.create(
+            id=command.gauge_id, awg=command.awg, section_mm2=command.section_mm2,
+            conductor_d_mm=command.conductor_d_mm, strands=command.strands,
+            position=before.position if before else max((item.position for item in gauges), default=-1) + 1,
+        )
+        validate_gauges([item for item in gauges if item.id != gauge.id] + [gauge])
+        uow.cable_structure.save_gauge(gauge)
+        _sync_gost_awg(uow, before, gauge)
+        _audit("references.wire_gauge_saved", command.actor, command.now, {
+            "gauge_id": str(gauge.id), "awg": gauge.awg, "section_mm2": section_key(gauge.section_mm2),
+            "created": before is None,
+        }, uow)
+        uow.commit()
+    return gauge
+
+
+def delete_gauge(gauge_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> None:
+    """A size row no hook-up wire uses (the FK refuses the rest, this says it in words first)."""
+    with uow:
+        gauge = next((item for item in uow.cable_structure.gauges() if item.id == gauge_id), None)
+        if gauge is None:
+            raise LookupError("Сечение не найдено — откройте таблицу заново")
+        used = uow.cable_structure.gauge_usage().get(gauge_id, 0)
+        if used:
+            raise ReferenceValidationError(f"На этом сечении {used} монтажных проводов — сначала смените им сечение")
+        uow.cable_structure.delete_gauge(gauge_id)
+        _sync_gost_awg(uow, gauge, None)
+        _audit("references.wire_gauge_deleted", actor, now, {"gauge_id": str(gauge_id), "awg": gauge.awg}, uow)
+        uow.commit()
+
+
+# --- «Монтажные провода» ---
+
+@dataclass(frozen=True)
+class SaveHookupCommand:
+    record_id: UUID  # the БД.ПРОВ row
+    series: str
+    gauge_id: UUID
+    insulation: str
+    outer_d_mm: str
+    voltage_v: str
+    temp_min_c: str
+    temp_max_c: str
+    old: HookupWire | None  # what the screen showed (None — not structured yet); stale otherwise
+    actor: Actor
+    now: datetime
+
+
+def _same_hookup(left: HookupWire | None, right: HookupWire | None) -> bool:
+    fields = ("series", "gauge_id", "insulation", "outer_d_mm", "voltage_v", "temp_min_c", "temp_max_c")
+    if left is None or right is None:
+        return left is None and right is None
+    return all(getattr(left, name) == getattr(right, name) for name in fields)
+
+
+def save_hookup(command: SaveHookupCommand, uow: UnitOfWork) -> tuple[HookupWire, TechOperationRecord]:
+    """The structure of a hook-up wire: series, its conductor (a size row), insulation, outer Ø, voltage and
+    temperature. The БД.ПРОВ row is written in step (only the cells whose meaning changed), so the warehouse, the
+    harness catalogue and the ETK generator read the same values."""
+    with uow:
+        record = uow.tech_operations.get(command.record_id)
+        if record is None or record.tab != TechOperationTab.WIRE:
+            raise LookupError("Провод не найден в БД.ПРОВ")
+        mark = cable_mark(record)
+        current = uow.cable_structure.hookup(normalized_cable_key(mark))
+        if not _same_hookup(current, command.old):
+            raise StaleRecordError("Провод уже поменяли — откройте его заново")
+        gauges = uow.cable_structure.gauges()
+        gauge = next((item for item in gauges if item.id == command.gauge_id), None)
+        if gauge is None:
+            raise ReferenceValidationError("Выберите сечение из таблицы сечений")
+        wire = HookupWire.create(
+            id=current.id if current else None, mark=mark, series=command.series, gauge_id=gauge.id,
+            insulation=command.insulation, outer_d_mm=command.outer_d_mm, voltage_v=command.voltage_v,
+            temp_min_c=command.temp_min_c, temp_max_c=command.temp_max_c,
+        )
+        uow.cable_structure.save_hookup(wire, command.now)
+        changes = written_back_fields(record.fields, wire, gauge, gauges)
+        if changes:
+            fields = {**record.fields, **changes}
+            record = replace(record, fields=fields, edited_in_erp=True)
+            record = replace(record, normalized_search=_search_text(record))
+            uow.tech_operations.save(record)
+        _audit("references.hookup_wire_saved", command.actor, command.now, {
+            "record_id": str(record.id), "mark": mark, "gauge_id": str(gauge.id), "created": current is None,
+            "fields_written": sorted(changes),
+        }, uow)
+        uow.commit()
+    return wire, record
+
+
+def _follow_wire_edit(uow: UnitOfWork, before: TechOperationRecord, after: TechOperationRecord, edited: set[str],
+                      now: datetime) -> None:
+    """A БД.ПРОВ edit of a structured wire's mirrored cells (or its mark) moves the structure with it."""
+    wire = uow.cable_structure.hookup(normalized_cable_key(cable_mark(before))) if cable_mark(before) else None
+    if wire is None:
+        return
+    mark = cable_mark(after)
+    if not normalized_cable_key(mark):
+        raise ReferenceValidationError("Марка провода обязательна")
+    uow.cable_structure.save_hookup(refreshed_hookup(wire, mark, after.fields, edited, uow.cable_structure.gauges()), now)
+
+
+def structure_hookups(actor: Actor, now: datetime, uow_factory, *, dry_run: bool = False) -> dict[str, object]:
+    """Idempotent: every монтажный БД.ПРОВ wire without a structure gets one when its size is in the table (the same
+    rule the 0089 migration applied); a structured wire is never touched. Returns the counts and the marks left for
+    the owner with the reason."""
+    catalog = cable_catalog(uow_factory())
+    created: list[HookupWire] = []
+    left: list[str] = []
+    for row in catalog.rows:
+        if row.kind != CableKind.WIRE or row.record is None or row.key in catalog.hookups:
+            continue
+        parsed = parse_hookup(row.cable, row.record.fields, catalog.gauges)
+        wire = hookup_from_parse(row.cable, parsed)
+        if wire is None or wire.mark_key in {item.mark_key for item in created}:
+            left.append(f"{row.cable}: {parsed.problem or 'повтор марки'}")
+            continue
+        created.append(wire)
+    uow = uow_factory()
+    with uow:
+        for wire in created:
+            uow.cable_structure.save_hookup(wire, now)
+        _audit("references.hookup_wires_structured", actor, now, {"created": len(created), "left": len(left), "dry_run": dry_run}, uow)
+        if not dry_run:
+            uow.commit()
+    return {"created": len(created), "structured_before": len(catalog.hookups), "left": left}
+
+
+# --- «Коаксиальные кабели»: the seed file ---
+
+def import_coax_cards(document, actor: Actor, now: datetime, uow: UnitOfWork, *, dry_run: bool = False) -> dict[str, int]:
+    """Idempotent load of the coax card file: cards matched by name key are rewritten from it, new ones added, ones
+    the file no longer names removed. Run again with a corrected file — no migration needed."""
+    cards = cards_from_seed(document)
+    with uow:
+        result = uow.cable_structure.replace_cards(cards, now)
+        _audit("references.coax_cards_imported", actor, now, {**result, "cards": len(cards), "dry_run": dry_run}, uow)
+        if not dry_run:
+            uow.commit()
+    return {**result, "cards": len(cards)}
 
 
 @dataclass(frozen=True)

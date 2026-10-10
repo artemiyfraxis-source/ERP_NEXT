@@ -81,7 +81,13 @@ export function physicalWireDisplay(document:HarnessDesignDocument,wireId:string
  const from=first.reverse?a.at(-1)!:a[0]!,to=last.reverse?b[0]!:b.at(-1)!;
  const wireExitPath=(document:HarnessDesignDocument,segmentId:string,nodeSide:"from"|"to",wireId:string,contactId:string,contact:Point):Point[]|null=>{
   const route=coveringRoute(document,segmentId);if(!route)return null;
-  const spans=(document.physicalTopology?.coverings??[]).filter(c=>coveringKind(c)==="heat-shrink").flatMap(c=>c.spans.filter(s=>s.segmentId===segmentId).map(s=>resolvedCoveringSpan(document,s)));
+  // A protective sleeve may extend beyond a pipe end.  Every enclosing sleeve
+  // (not tape or a bandage) needs the same visible conductor exit as a heat
+  // shrink: otherwise a nylon/braid sleeve moves past the conductor while the
+  // pipe itself still reaches the connector.
+  const spans=(document.physicalTopology?.coverings??[])
+    .filter(c=>["heat-shrink","nylon","braid","metal-braid"].includes(coveringKind(c)))
+    .flatMap(c=>c.spans.filter(s=>s.segmentId===segmentId).map(s=>resolvedCoveringSpan(document,s)));
   const edge=nodeSide==="from"?Math.max(route.min,Math.min(0,...spans.filter(s=>s.from<0&&s.to>=0).map(s=>s.from))):Math.min(route.max,Math.max(1,...spans.filter(s=>s.to>1&&s.from<=1).map(s=>s.to)));
   if(nodeSide==="from"?edge===0:edge===1)return null;const a=Math.min(nodeSide==="from"?0:1,edge),b=Math.max(nodeSide==="from"?0:1,edge);
   const path=trimPolyline(route.points,(route.before+a*route.length)/route.total,(route.before+b*route.length)/route.total),offset=segmentWireLanes(document,segmentId).find(l=>l.id===wireId)?.offset??0,lane=offsetPolyline(path,path.map(()=>offset));
