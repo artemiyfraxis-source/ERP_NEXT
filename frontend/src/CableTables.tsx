@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { matchWire, parseWireTable, shownWireValue } from "./WireLookup";
+import { CABLE_KIND_LABELS, CoaxCardView, num, spanText } from "./CableStructure";
 import {
   failureText,
   referencesApi,
@@ -15,10 +16,18 @@ import {
    a БД.ПРОВ row with the parameters, a coax cable joined with the D1·D2·D3 the ETK generator uses for its name. The
    list a row is in comes from the server (references/cables.py); the user moves a row from its editor. */
 
-export const CABLE_KIND_LABELS: Record<CableKind, string> = {
-  coax: "Коаксиальные кабели", wire: "Монтажные провода", other: "Прочие кабели",
-};
-const KINDS: CableKind[] = ["coax", "wire", "other"];
+export { CABLE_KIND_LABELS };
+const KINDS: CableKind[] = ["coax", "wire", "multi", "other"];
+
+/** «Вкладка» of a БД.ПРОВ row: the list it is in, and why (rule or a manual move). */
+export function kindSelect(row: CableRow, value: CableKind, onChange: (kind: CableKind) => void): ReactNode {
+  return <label className="cable-kind"><small>Вкладка</small>
+    <select aria-label="Вкладка" value={value} onChange={(event) => onChange(event.target.value as CableKind)}>
+      {KINDS.map((item) => <option key={item} value={item}>{CABLE_KIND_LABELS[item]}{item === row.auto_kind && row.manual ? " (по правилу)" : ""}</option>)}
+    </select>
+    <span className="muted">{row.manual ? `перенесён вручную; по правилу — ${CABLE_KIND_LABELS[row.auto_kind].toLowerCase()}` : `по правилу: ${row.reason}`}</span>
+  </label>;
+}
 const DIAMETERS = ["D1", "D2", "D3"] as const;
 type Diameter = (typeof DIAMETERS)[number];
 // СПР.КАБ coax table: D1 — центральная жила, D2 — по диэлектрику, D3 — по оплётке (not the jacket).
@@ -29,14 +38,18 @@ const TYPE = "Тип провода";
 const SHOWN: Record<CableKind, string[]> = {
   coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт / производитель"],
   wire: [TYPE, "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Изоляция", "Цвета", "Темп. от, °C", "Темп. до, °C", "Напряжение, В"],
+  multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт / производитель"],
   other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В", "Стандарт / производитель"],
 };
 // A new row starts in the list it was added from.
 const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   coax: { [TYPE]: "коаксиальный", "Число жил": "1" },
   wire: { [TYPE]: "монтажный", "Число жил": "1" },
+  multi: { [TYPE]: "многожильный" },
   other: {},
 };
+const cardState = (row: CableRow) => !row.card ? "нет карточки"
+  : `${row.card.verified ? "проверено" : "не проверено"}${row.card_exact ? "" : ` · как у ${row.card.name}`}`;
 const NUMBER = /^-?\d[\d\s]*([.,]\d+)?$/;
 const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
 const diaText = (dia: CableDiameters) => DIAMETERS.map((name) => dia[name] || "—").join(" · ");
@@ -91,6 +104,14 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
         ? row.dia[name] || <span className="muted">—</span>
         : <span className="tone-warn" title={`Нет D1–D3 — генератор возьмёт диаметры из записи разъёма${row.dia_hint ? `; похожий кабель: ${row.dia_hint.cable}` : ""}`}>—</span>,
     })) : []),
+    ...(kind === "coax" ? [
+      { key: "__span", title: "Диапазон VNA", value: (row: CableRow) => row.card ? spanText(row.card) : "" },
+      { key: "__fc", title: "Частота среза, ГГц", numeric: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) },
+      {
+        key: "__card", title: "Карточка", value: cardState,
+        render: (row: CableRow) => <span className={!row.card ? "muted" : row.card.verified ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
+      },
+    ] : []),
     ...(kind === "wire" ? [{
       key: "__wire_dia", title: "Ø по таблице AWG, мм", numeric: true,
       value: (row: CableRow) => wireDia(row).value,
@@ -105,10 +126,13 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
 
-  const detail = (row: CableRow) => canEdit
-    ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
-      row={row} kind={kind} data={data} onSaved={onSaved} onError={onError} />
-    : <CableCard row={row} columns={data.columns} />;
+  const detail = (row: CableRow) => <>
+    {row.card && <CoaxCardView card={row.card} exact={Boolean(row.card_exact)} />}
+    {canEdit
+      ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
+        row={row} kind={kind} data={data} onSaved={onSaved} onError={onError} />
+      : <CableCard row={row} columns={data.columns} />}
+  </>;
 
   return <>
     {adding && <div className="panel db-edit">
@@ -124,9 +148,10 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
       storageKey={`db:cables:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
-      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }] : kind === "wire" ? [{ label: "Нет в таблице AWG", test: (row) => !wireDia(row).value }] : undefined}
+      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
+        : kind === "wire" ? [{ label: "Нет в таблице AWG", test: (row) => !wireDia(row).value }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
-      toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
+      toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />
   </>;
 }
@@ -205,7 +230,7 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
       {hint && <button type="button" className="secondary small" onClick={() => setDraft({ ...draft, dia: { D1: hint.D1, D2: hint.D2, D3: hint.D3 } })}>
         Как у {hint.cable}: {diaText(hint)}
       </button>}
-      {diaOnly && <span className="muted">Кабеля нет в базе проводов, есть только его диаметры.</span>}
+      {diaOnly && <span className="muted">{row?.dia ? "Кабеля нет в базе проводов, есть только его диаметры." : "Кабеля нет в базе проводов, есть только его карточка."}</span>}
     </div>}
     {!diaOnly && <div className="cable-form">
       {Object.keys(draft.fields).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name}</small>
@@ -213,12 +238,7 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
       </label>)}
     </div>}
     <div className="form-actions cable-actions">
-      {row?.record && <label className="cable-kind"><small>Вкладка</small>
-        <select aria-label="Вкладка" value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value as CableKind })}>
-          {KINDS.map((item) => <option key={item} value={item}>{CABLE_KIND_LABELS[item]}{item === row.auto_kind && row.manual ? " (по правилу)" : ""}</option>)}
-        </select>
-        <span className="muted">{row.manual ? `перенесён вручную; по правилу — ${CABLE_KIND_LABELS[row.auto_kind].toLowerCase()}` : `по правилу: ${row.reason}`}</span>
-      </label>}
+      {row?.record && kindSelect(row, draft.kind, (next) => setDraft({ ...draft, kind: next }))}
       <button type="button" className="primary" disabled={busy || (!row && !Object.values(draft.fields).some((value) => value.trim()))} onClick={() => void save()}>
         {row ? "Сохранить" : "Добавить запись"}
       </button>

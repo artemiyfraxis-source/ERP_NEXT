@@ -300,7 +300,7 @@ def refreshed_hookup(wire: HookupWire, mark: str, fields: Mapping[str, str], edi
         by_section = next((gauge for gauge in gauges if gauge.section_mm2 == section), None)
         if by_section is not None:
             values["gauge_id"] = by_section.id
-    elif edited & {SECTION_FIELD, AWG_FIELD, MARK_FIELD} and parsed.gauge is not None:
+    elif edited & {SECTION_FIELD, AWG_FIELD} and parsed.gauge is not None:  # a renamed mark keeps its size row
         values["gauge_id"] = parsed.gauge.id
     if OUTER_FIELD in edited:
         values["outer_d_mm"] = parsed.outer_d_mm

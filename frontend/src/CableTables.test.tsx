@@ -25,15 +25,41 @@ const ROWS: CableRow[] = [
   { id: "dia:d-58", kind: "coax", auto_kind: "coax", reason: "есть в таблице D1 · D2 · D3", manual: false, cable: "RG58",
     record: null, dia: dia("d-58", "RG58", "1", "2,95", "3,5"), dia_hint: null },
   { id: "w-ul", kind: "wire", auto_kind: "wire", reason: "одна жила", manual: false, cable: "UL1061 22AWG",
-    record: wire("w-ul", { "Марка": "UL1061 22AWG", "Тип провода": "монтажный", "Сечение, мм2": "0,33", "AWG": "22", "Число жил": "1", "Наружный диаметр, мм": "1,3" }),
-    dia: null, dia_hint: null },
+    record: wire("w-ul", { "Марка": "UL1061 22AWG", "Тип провода": "монтажный", "Сечение, мм2": "0,33", "AWG": "22", "Число жил": "1", "Наружный диаметр, мм": "1,3", "Цвета": "чёрный" }),
+    dia: null, dia_hint: null,
+    hookup: { series: "UL1061", gauge_id: "g22", insulation: "ПВХ", outer_d_mm: 1.3, voltage_v: 300, temp_min_c: -10, temp_max_c: 80 } },
   { id: "w-pvam", kind: "wire", auto_kind: "wire", reason: "одна жила", manual: false, cable: "ПВАМ 0,50",
     record: wire("w-pvam", { "Марка": "ПВАМ 0,50", "Тип провода": "силовой", "Сечение, мм2": "0,5", "Число жил": "1" }),
-    dia: null, dia_hint: null },
-  { id: "w-ksp", kind: "other", auto_kind: "other", reason: "жил: 4", manual: false, cable: "КСПВГ 4x0,20",
+    dia: null, dia_hint: null, hookup: null, hookup_problem: "",
+    hookup_suggestion: { series: "ПВАМ", gauge_id: "g20", insulation: "", outer_d_mm: null, voltage_v: 48, temp_min_c: null, temp_max_c: null } },
+  { id: "w-agr", kind: "wire", auto_kind: "wire", reason: "тип «силиконовый»", manual: false, cable: "AGR2 Core 0,3",
+    record: wire("w-agr", { "Марка": "AGR2 Core 0,3", "Тип провода": "силиконовый", "Сечение, мм2": "0,3" }),
+    dia: null, dia_hint: null, hookup: null, hookup_problem: "сечения 0,3 мм² нет в таблице сечений",
+    hookup_suggestion: { series: "AGR2 Core", gauge_id: "", insulation: "", outer_d_mm: null, voltage_v: null, temp_min_c: null, temp_max_c: null } },
+  { id: "w-ksp", kind: "multi", auto_kind: "multi", reason: "жил: 4", manual: false, cable: "КСПВГ 4x0,20",
     record: wire("w-ksp", { "Марка": "КСПВГ 4x0,20", "Тип провода": "многожильный", "Число жил": "4", "Наружный диаметр, мм": "3,6" }),
     dia: null, dia_hint: null },
+  { id: "w-hv", kind: "other", auto_kind: "other", reason: "тип не указан", manual: false, cable: "Проволока",
+    record: wire("w-hv", { "Марка": "Проволока" }), dia: null, dia_hint: null },
 ];
+const GAUGES = [
+  { id: "g22", awg: "22", section_mm2: 0.35, conductor_d_mm: 0.64, strands: "", label: "22 AWG · 0,35 мм²", wires: 1 },
+  { id: "g20", awg: "20", section_mm2: 0.5, conductor_d_mm: 0.81, strands: "", label: "20 AWG · 0,5 мм²", wires: 0 },
+  { id: "g07", awg: "", section_mm2: 0.07, conductor_d_mm: null, strands: "", label: "0,07 мм²", wires: 0 },
+];
+ROWS[0].card = {
+  id: "c-316", name: "RG-316", family: "Гибкий тонкий", verified: false, confidence: "не проверено", changes: [], sources: [],
+  layers: [{ layer: "core", label: "Жила", material: "SCCS", diameter_mm: 0.51 }],
+  connectors: [{ family: "SMA", max_ghz: 3, max_note: "", span_to_ghz: null }, { family: "BNC", max_ghz: 2, max_note: "2–3 ГГц", span_to_ghz: 2 }],
+  markers: [{ freq_mhz: 433, peak: false, vswr_max: 1.1, note: "" }, { freq_mhz: 2450, peak: false, vswr_max: 1.22, note: "" }, { freq_mhz: null, peak: true, vswr_max: null, note: "" }],
+  attenuation: [
+    { freq_mhz: 433, kind: "nominal", value: 0.62, unit: "dB/m", ref_length_m: 1, temp_c: 20, loss_db_m: 0.62, derived: false, interpolated: false, source: "" },
+    { freq_mhz: 2450, kind: "nominal", value: 50.3, unit: "dB/100ft", ref_length_m: 30.48, temp_c: 20, loss_db_m: 1.6503, derived: true, interpolated: false, source: "https://example.test/rg316.pdf" },
+  ],
+  span_from_mhz: 10, span_to_ghz: 3, span_note: "до 6 ГГц при длине менее 30 см", fc_ghz: 9, notes: "Одинарный экран выше 3 ГГц излучает.",
+  params: { impedance_ohm: 50 },
+};
+ROWS[0].card_exact = true;
 const AWG = [
   { id: "a1", tab: "kab_awg", display_text: "22", source_sheet: "", fields: { AWG: "22", "ГОСТ": "0,35", "Ø жилы": "0,64", "МГТФ": "1,2", "UL1061": "1,35", "ПВАМ": "—" } },
   { id: "a2", tab: "kab_awg", display_text: "20", source_sheet: "", fields: { AWG: "20", "ГОСТ": "0,5", "Ø жилы": "0,81", "МГТФ": "1,35", "UL1061": "1,6", "ПВАМ": "2" } },
@@ -53,9 +79,11 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
     if (path === "/api/references/maps") return json({ suppliers: [{ key: "склад", value: "Склад" }], countries: [], gost_awg: [], can_edit: { suppliers: true, gost_awg: true } });
     if (path === "/api/references/bases") return json({
       bases: [], tabs: { ob: 192, ter: 528, coax: 181, kab_awg: 22, mat: 115, kab_coax: 30, prov: 139 },
-      cables: { coax: 47, wire: 52, other: 56 },
+      cables: { coax: 47, wire: 52, multi: 9, other: 56 }, gauges: 24,
     });
-    if (path === "/api/references/cables") return json({ columns: COLUMNS, counts: { coax: 3, wire: 2, other: 1 }, rows });
+    if (path === "/api/references/cables") return json({ columns: [...COLUMNS, "Цвета"], counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows, gauges: GAUGES });
+    if (path.endsWith("/hookup")) return json({ hookup: rows[4].hookup_suggestion, record: rows[4].record });
+    if (path.startsWith("/api/references/wire-gauges")) return json(GAUGES[0]);
     if (path === "/api/references/cables/diameters") return json(dia("d-new", "x", "", "", ""));
     if (path.startsWith("/api/references/cables/")) return json(rows[0]);
     if (path.startsWith("/api/references/tech-operations/") && method === "PATCH") return json(rows[0].record);
@@ -89,7 +117,7 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
   expect(groups).toEqual([
     { title: "Техкарты", tabs: ["Операции", "Оборудование"] },
     { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы"] },
-    { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "AWG ↔ сечение ↔ Ø", "Прочие кабели"] },
+    { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Сечения AWG ↔ мм²", "Многожильные кабели", "Прочие кабели", "Ø изоляции по маркам"] },
     { title: "Материалы", tabs: ["Материалы"] },
     { title: "Соответствия", tabs: ["Домен → поставщик", "Изготовитель → страна"] },
   ]);
@@ -97,7 +125,8 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
   const expected: Array<[string, string]> = [
     ["Операции", "3"], // CUT_WIRE_auto (A/B — one card), STRIP_WIRE, SDR_PCB from БД.ОП
     ["Оборудование", "192"], ["Разъёмы", "2"], ["Коаксиальные разъёмы", "181"], ["Терминалы", "528"],
-    ["Коаксиальные кабели", "47"], ["Монтажные провода", "52"], ["AWG ↔ сечение ↔ Ø", "22"], ["Прочие кабели", "56"],
+    ["Коаксиальные кабели", "47"], ["Монтажные провода", "52"], ["Сечения AWG ↔ мм²", "24"], ["Многожильные кабели", "9"],
+    ["Прочие кабели", "56"], ["Ø изоляции по маркам", "22"],
     ["Домен → поставщик", "1"], ["Изготовитель → страна", "0"],
   ];
   for (const [name, n] of expected) await waitFor(() => expect(chip(name).querySelector(".db-tab-count")).toHaveTextContent(new RegExp(`^${n}$`)));
@@ -127,23 +156,71 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(screen.queryByText("UL1061 22AWG")).toBeNull();
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
 
+  expect(screen.getByRole("columnheader", { name: "Диапазон VNA" })).toBeInTheDocument();
+  expect(screen.getAllByText("10 МГц – 3 ГГц").length).toBeGreaterThan(0);
+
+  // hook-up wires: the conductor comes from the size table; an unparsed wire says so
   fireEvent.click(screen.getByRole("button", { name: /^Монтажные провода/ }));
   expect(await screen.findByText("UL1061 22AWG")).toBeInTheDocument();
   expect(screen.queryByText("RG316")).toBeNull();
-  // Ø by the AWG table, matched like the ETK generator: UL1061 + 22 AWG → 1,35; ПВАМ 0,5 → ГОСТ row 0,5 → 2
-  expect(screen.getByRole("columnheader", { name: "Ø по таблице AWG, мм" })).toBeInTheDocument();
-  const diaCell = (cable: string) => {
+  const cell = (cable: string, header: string) => {
     const row = screen.getByText(cable).closest("tr") as HTMLElement;
-    const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent?.includes("Ø по таблице AWG"));
+    const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === header);
     return row.querySelectorAll("td")[index];
   };
-  await waitFor(() => expect(diaCell("UL1061 22AWG")).toHaveTextContent(/^1,35$/));
-  expect(diaCell("ПВАМ 0,50")).toHaveTextContent(/^2$/);
+  expect(cell("UL1061 22AWG", "Серия")).toHaveTextContent(/^UL1061$/);
+  expect(cell("UL1061 22AWG", "Сечение, мм²")).toHaveTextContent(/^0,35$/); // the size row, not the БД.ПРОВ 0,33
+  expect(cell("UL1061 22AWG", "Ø жилы, мм")).toHaveTextContent(/^0,64$/);
+  expect(cell("UL1061 22AWG", "Температура, °C")).toHaveTextContent("−10 … +80");
+  expect(cell("AGR2 Core 0,3", "Серия")).toHaveTextContent("не разобран");
+  expect(screen.getByRole("button", { name: /Не разобраны · 2/ })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
+  expect(await screen.findByText("КСПВГ 4x0,20")).toBeInTheDocument();
+  expect(screen.getByText("Разобрать позже")).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Число жил" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /^Прочие кабели/ }));
-  expect(await screen.findByText("КСПВГ 4x0,20")).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Число жил" })).toBeInTheDocument();
-  expect(screen.queryByText("UL1061 22AWG")).toBeNull();
+  expect(await screen.findByText("Проволока")).toBeInTheDocument();
+  expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
+});
+
+it("opens a coax card a tester reads at the VNA: markers, connectors, construction", async () => {
+  mockApi();
+  render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+  fireEvent.click(await screen.findByText("RG316"));
+  const card = screen.getByRole("region", { name: "Карточка кабеля RG-316" });
+  expect(within(card).getByText("не проверено")).toBeInTheDocument();
+  const markers = within(card).getByRole("table", { name: "Маркеры VNA" });
+  expect(within(markers).getByText("КСВН — норма приёмки (предложено)")).toBeInTheDocument();
+  const rows = within(markers).getAllByRole("row").slice(1).map((row) => row.textContent);
+  expect(rows).toEqual(["433 МГц1,10,62", "2,45 ГГц1,221,65 расч.", "Peak — максимум по диапазону——"]);
+  const connectors = within(card).getByRole("table", { name: "Разъёмы" });
+  expect(within(connectors).getByText("до 2 ГГц")).toBeInTheDocument(); // BNC narrows the span
+  expect(within(card).getByRole("table", { name: "Затухание по источнику" })).toHaveTextContent("dB/100ft");
+  expect(within(card).getByText("Волновое сопротивление")).toBeInTheDocument();
+});
+
+it("structures a hook-up wire from its БД.ПРОВ suggestion and edits a size row", async () => {
+  const calls = mockApi();
+  render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
+  fireEvent.click(await screen.findByText("ПВАМ 0,50"));
+  expect(screen.getByLabelText("Жила — сечение из таблицы")).toHaveValue("g20");
+  fireEvent.change(screen.getByLabelText("Ø наружный, мм"), { target: { value: "1,6" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(calls.find((call) => call.path === "/api/references/cables/w-pvam/hookup")?.body).toEqual({
+    series: "ПВАМ", gauge_id: "g20", insulation: "", outer_d_mm: "1,6", voltage_v: "48", temp_min_c: "", temp_max_c: "", old: null,
+  }));
+  expect(calls.some((call) => call.method === "PATCH")).toBe(false); // the mirrored cells are written by the server
+
+  fireEvent.click(screen.getByRole("button", { name: /^Сечения AWG/ }));
+  fireEvent.click(await screen.findByText("только ГОСТ"));
+  fireEvent.change(screen.getByLabelText("Ø жилы, мм"), { target: { value: "0,3" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить сечение" }));
+  await waitFor(() => expect(calls.find((call) => call.path === "/api/references/wire-gauges/g07")).toMatchObject({
+    method: "PUT", body: { awg: "", section_mm2: "0,07", conductor_d_mm: "0,3", strands: "" },
+  }));
+  expect(screen.queryByRole("button", { name: "Удалить сечение" })).toBeInTheDocument(); // no wire on 0,07
 });
 
 it("edits D1–D3 right in the coax tab and copies them from the cable's family", async () => {
