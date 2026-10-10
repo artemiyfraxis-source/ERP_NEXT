@@ -3023,3 +3023,30 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .jp-cancelled td:last-child { text-decoration: none; }
 .jp-empty { display: block; margin-top: 8px; color: var(--muted-foreground); }
 @media (max-width: 1100px) { .jp-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .jp-controls select { min-width: 0; } }@media (pointer: coarse) { .jp-person { min-height: 40px; padding: 4px 14px; } .jp-controls input, .jp-controls select { min-height: 40px; } }
+
+/* «Документы», «Компетенции», «Рабочее время» в «Моей карточке» (фаза 3). */
+.ec-tabs .seg-tabs { flex-wrap: wrap; }
+.lv-block h2 .ed-add { margin-left: auto; }
+.lv-block td a, .lv-detail a { color: var(--primary); font-weight: 600; text-decoration: none; }
+.lv-block td a:hover, .lv-detail a:hover { text-decoration: underline; }
+.ed-form { padding: 0 16px 12px; display: grid; gap: 8px; }
+.ed-form .form-actions { padding: 0; justify-content: flex-start; }
+.ed-archived td { color: var(--muted-foreground); }
+.ed-detail .ed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.ed-upload { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.ed-confirm { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.ed-versions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.ed-versions label { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.ed-versions select { width: auto; }
+.ed-sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 32px; }
+@media (max-width: 1100px) { .ed-sheet { grid-template-columns: 1fr; } }
+.wt-picker { display: flex; align-items: center; gap: 8px; }
+.wt-picker input[type="month"] { width: auto; }
+.wt-label { min-width: 8em; font-size: 14px; text-transform: capitalize; }
+.wt-nodata { padding: 12px 16px; margin: 0; }
+.wt-balance .wt-source { flex-basis: 100%; margin: 0; }
+.wt-state { font-weight: 600; }
+.wt-state.tone-danger { color: #b42318; }
+.wt-state.tone-ok { color: #15803d; }
+tr.wt-future td { color: var(--muted-foreground); opacity: .7; }
+tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--card)); }
