@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   employeeCardApi,
   failureText,
+  leaveApi,
   type EmployeeCard,
   type EmployeeCardAbsence,
   type EmployeeCardSkill,
@@ -9,10 +10,12 @@ import {
 } from "./api";
 import { formatDate, formatDay } from "./format";
 import { hasFullAccess } from "./navigation";
+import { LeaveRequests } from "./LeaveRequests";
 
 /** «Личная карточка» сотрудника (концепт владельца, 04.10): одна страница про человека из данных всех модулей, только
  *  чтение. Вкладка «Обзор» — карточки в порядке концепта: Основные данные · Подчинённость · Проекты · Отпуска · Рабочее
- *  время · Компетенции · Мои заявки на покупку · Задачи. Нет данных — «нет данных», а не ноль. */
+ *  время · Компетенции · Мои заявки на покупку · Задачи. Нет данных — «нет данных», а не ноль. Своя карточка — ещё вкладка
+ *  «Отпуска и заявления» (заявления, входящие на согласование, журнал кадров) со счётчиком ждущих решения. */
 
 const NO_DATA = "нет данных";
 const SKILLS_SHOWN = 8;
@@ -37,6 +40,9 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
   const own = !userId || userId === principal.user.id;
   const [card, setCard] = useState<EmployeeCard | null>(null);
   const [error, setError] = useState("");
+  // `?section=card&tab=leave` opens the leave tab at once (a link from a notification or a bookmark).
+  const [tab, setTab] = useState<"overview" | "leave">(() => (new URLSearchParams(window.location.search).get("tab") === "leave" ? "leave" : "overview"));
+  const [waiting, setWaiting] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -47,6 +53,13 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
       .catch((reason) => { if (live) setError(failureText(reason, "Карточка не загружена")); });
     return () => { live = false; };
   }, [own, userId]);
+
+  useEffect(() => {
+    if (!own) return;
+    let live = true;
+    leaveApi.waiting().then((result) => { if (live) setWaiting(result.count); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [own]);
 
   // «Сотрудники» — только superadmin / admin (backend staffdir_principal): правка карточки и чужие карточки.
   const canEdit = Boolean(openStaffEdit) && hasFullAccess(principal);
@@ -83,12 +96,15 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
     </header>
     <div className="ec-tabs">
       <div className="seg-tabs" role="tablist" aria-label="Разделы карточки">
-        <button role="tab" aria-selected="true" className="on">Обзор</button>
+        <button role="tab" aria-selected={tab === "overview"} className={tab === "overview" ? "on" : undefined} onClick={() => setTab("overview")}>Обзор</button>
+        {own && <button role="tab" aria-selected={tab === "leave"} className={tab === "leave" ? "on" : undefined} onClick={() => setTab("leave")}>
+          Отпуска и заявления{waiting > 0 && <span className="ec-tab-count" aria-label={`ждут решения: ${waiting}`}>{waiting}</span>}
+        </button>}
       </div>
       <span className="ec-asof">Сведения на {formatDate(card.as_of)}</span>
     </div>
 
-    <div className="ec-grid">
+    {tab === "leave" && own ? <LeaveRequests onWaiting={setWaiting} /> : <div className="ec-grid">
       <Card title="Основные данные">
         <dl className="ec-facts">
           {personnel && <Fact label="Табельный номер" value={personnel.tab_number} />}
@@ -184,7 +200,7 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
             {card.tasks.count > card.tasks.items.length && <p className="ec-note">Показаны первые {card.tasks.items.length} из {card.tasks.count}</p>}
           </>}
       </Card>
-    </div>
+    </div>}
   </section>;
 }
 

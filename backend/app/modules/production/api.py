@@ -1271,12 +1271,17 @@ def calendar(
         holidays = uow.calendar.holidays()
         absences = uow.calendar.absences()
         shift = uow.calendar.shift()
+        # A leave-request absence may belong to anyone (office staff too), not only to the operators the screen lists.
+        names = {operator.id: operator.name for operator in uow.operators.list()}
     return {
         "holidays": [day.isoformat() for day in sorted(holidays)],
         "shift": _shift_result(shift),
         "absences": [{
             "id": str(item.id), "operator_id": str(item.operator_id),
             "from_date": item.from_date.isoformat(), "to_date": item.to_date.isoformat(), "kind": item.kind,
+            # Set — the absence of a registered leave request: shown, never edited or saved by the calendar screen.
+            "leave_request_id": str(item.leave_request_id) if item.leave_request_id else None,
+            "operator_name": names.get(item.operator_id),
         } for item in absences],
     }
 

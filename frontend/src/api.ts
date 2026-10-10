@@ -810,6 +810,10 @@ export interface ProductionAbsence {
   from_date: string;
   to_date: string;
   kind: string;
+  /** Отсутствие по зарегистрированному заявлению: календарь его показывает, но не правит и не сохраняет. */
+  leave_request_id?: string | null;
+  /** ФИО из справочника сотрудников (у заявления — любой сотрудник, не только монтажник). */
+  operator_name?: string | null;
 }
 
 export interface ProductionShift {
@@ -2399,7 +2403,7 @@ export const productionApi = {
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
     method: "PUT",
-    body: JSON.stringify({ holidays, shift, absences: absences.map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
+    body: JSON.stringify({ holidays, shift, absences: absences.filter((item) => !item.leave_request_id).map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
   }),
   skills: () => api<{ skills: ProductionSkill[]; operation_codes?: Array<{ code: string; name: string }> }>("/api/production/skills"),
   launchable: () => api<{ items: ProductionLaunchable[] }>("/api/production/launchable"),
@@ -2856,6 +2860,78 @@ export const employeeCardApi = {
   me: () => api<EmployeeCard>("/api/employee-card/me"),
   /** Чужая — только с доступом к разделу «Сотрудники» (403 без него, 404 — нет такого сотрудника). */
   byId: (id: string) => api<EmployeeCard>(`/api/employee-card/${encodeURIComponent(id)}`),
+};
+
+/**
+ * Заявления на отпуск и отгул («Моя карточка» → «Отпуска и заявления»): Сотрудник → Руководитель → Кадры, каждый шаг —
+ * подпись PIN или паролем. `version` — версия строки: шаг с чужой версией сервер отклоняет (409).
+ */
+export type LeaveKind = "vacation" | "day_off";
+export type LeaveStatus = "draft" | "signed" | "approved" | "registered" | "rejected" | "withdrawn";
+export type LeaveSignatureView = {
+  step: string;
+  step_label: string;
+  decision: string;
+  decision_label: string;
+  signer_name: string;
+  signed_at: string;
+  method_label: string;
+  content_version: number;
+  content_sha256: string;
+  comment: string;
+};
+export type LeaveRequestView = {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  kind: LeaveKind;
+  kind_label: string;
+  from_date: string;
+  to_date: string;
+  days: number;
+  comment: string;
+  status: LeaveStatus;
+  status_label: string;
+  /** Кто решает сейчас: ФИО руководителя (и замещающего) или «Кадры»; null — решений не ждёт. */
+  waiting_for: string | null;
+  content_version: number;
+  content_sha256: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  signatures: LeaveSignatureView[];
+  actions: { edit: boolean; sign: boolean; decide: boolean; withdraw: boolean };
+};
+export type LeaveBalance = { year: number; norm: number; registered: number; pending: number; left: number };
+export type LeaveOverview = {
+  today: string;
+  balance: LeaveBalance;
+  own: LeaveRequestView[];
+  /** Ждут решения этого человека (руководитель, замещающий, «Кадры»). */
+  inbox: LeaveRequestView[];
+  /** Журнал кадров (все, кроме черновиков); null — без доступа «Кадры». */
+  journal: LeaveRequestView[] | null;
+  hr: boolean;
+};
+export type LeaveDraft = { kind: LeaveKind; from_date: string; to_date: string; comment: string };
+
+export const leaveApi = {
+  overview: () => api<LeaveOverview>("/api/leave-requests"),
+  waiting: () => api<{ count: number }>("/api/leave-requests/waiting"),
+  create: (draft: LeaveDraft) =>
+    api<LeaveRequestView>("/api/leave-requests", { method: "POST", body: JSON.stringify(draft) }),
+  update: (id: string, version: number, draft: LeaveDraft) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...draft, version }) }),
+  sign: (id: string, version: number, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/sign`, { method: "POST", body: JSON.stringify({ version, secret }) }),
+  decide: (id: string, version: number, approve: boolean, comment: string, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/decision`, {
+      method: "POST", body: JSON.stringify({ version, approve, comment, secret }),
+    }),
+  withdraw: (id: string, version: number, secret: string, comment: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/withdraw`, {
+      method: "POST", body: JSON.stringify({ version, secret, comment }),
+    }),
 };
 
 /** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */

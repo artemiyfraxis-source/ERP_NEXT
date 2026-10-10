@@ -469,6 +469,9 @@ LEVEL_SECTION_LABELS: dict[str, str] = {
     "shipping": "Отгрузка",
     "shipping_goods": "Отгрузка — склад",
     "operations": "Системный журнал",
+    # «Кадры» (cabinet plan, phase 2): a section key, not a role — edit registers leave requests (identity/leave.py)
+    # and substitutes for a missing manager. Closed for every level until granted in «Доступы».
+    "hr": "Кадры",
 }
 # The plan's default matrix: a level nobody holds yet (and a fresh database) starts from it. A level with people gets
 # its row from what they could really do (level_migration). «Оформить заявку» and «Мои заявки» stay open to everyone,

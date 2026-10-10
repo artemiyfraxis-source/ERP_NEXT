@@ -266,6 +266,30 @@ it("lays the shop calendar out in two blocks and lists what is saved with a way 
   expect(payload?.shift.weekdays).toEqual([1, 2, 3, 4, 5]);
 });
 
+it("shows a registered leave request in the calendar without a way to remove it and never saves it back", async () => {
+  let payload: { absences: unknown[] } | undefined;
+  const leave = {
+    id: "78000000-0000-0000-0000-000000000002", operator_id: "10000000-0000-0000-0000-000000000002",
+    from_date: "2026-10-12", to_date: "2026-10-25", kind: "Отпуск", leave_request_id: "79000000-0000-0000-0000-000000000001",
+  };
+  masterFetch((path, init) => {
+    if (path === "/api/production/calendar" && init?.method === "PUT") {
+      payload = JSON.parse(String(init.body));
+      return new Response(null, { status: 204 });
+    }
+    return path === "/api/production/calendar" ? json({ holidays: [], absences: [leave], shift: null }) : null;
+  });
+  render(<ProductionPage principal={principal} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Календарь цеха" }));
+
+  const offDays = await screen.findByRole("region", { name: "Нерабочие дни и отсутствия" });
+  const row = await within(offDays).findByRole("row", { name: /Отпуск.*по заявлению/ });
+  expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить календарь" }));
+  await waitFor(() => expect(payload).toBeDefined());
+  expect(payload?.absences).toEqual([]);
+});
+
 it("starts the first operation from an issued GRN and package", async () => {
   let payload: unknown;
   const operatorPrincipal: Principal = {
