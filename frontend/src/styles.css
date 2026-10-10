@@ -1452,6 +1452,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .drafts .draft-pair { display: flex; flex-wrap: wrap; gap: 4px 32px; margin: 0; }
 .tcgen .drafts .draft-pair dt { color: var(--muted-foreground); font-size: 11.5px; }
 .tcgen .drafts .draft-pair dd { margin: 0; font-weight: 600; }
+.tcgen .drafts.is-drop { outline: 2px dashed var(--primary); outline-offset: -2px; }
+.tcgen .drafts .draft-stage { display: grid; gap: 8px; padding: 8px 0; max-width: 720px; }
+.tcgen .drafts .draft-stage-list { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 8px; }
+.tcgen .drafts .draft-stage-list li { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 2px 8px; }
+.tcgen .drafts .draft-stage-list li:nth-child(even) { background: var(--accent); }
+.tcgen .drafts .draft-stage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .drafts .draft-stage-size { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.tcgen .drafts .draft-stage-tools { display: flex; gap: 4px; }
+.tcgen .drafts .draft-stage-tools .small { min-width: 30px; padding: 2px 8px; }
+.tcgen .drafts .draft-stage-foot { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.tcgen .drafts .draft-stage-foot .gfield { flex: 1; min-width: 240px; }
 .tcgen .drafts .draft-built, .draft-strip { display: grid; gap: 6px; padding: 8px 0; }
 .draft-strip { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .draft-strip .draft-lesson { display: grid; gap: 6px; max-width: 720px; }
