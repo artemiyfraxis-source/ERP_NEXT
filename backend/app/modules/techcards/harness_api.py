@@ -226,7 +226,7 @@ def export_harness(
             harness_id=str(found.document.id), created=found.document.uploaded_at, updated=found.document.uploaded_at,
             components=harness.placements(factory, kitset.project, index),
         )
-    return file_response(archive, "application/zip", f"{product}.techmap-project.zip")
+    return file_response(archive, f"{product}.techmap-project.zip")
 
 
 @router.post("/{project}/harness/{index}/import")
@@ -349,8 +349,7 @@ def harness_documents_saved(
     if format != "xlsx":
         return harness_documents.documents(kind, content, quantity)
     title, headers, rows = harness_documents.table(kind, content, quantity)
-    return file_response(harness_documents.excel_text(headers, rows), "application/vnd.ms-excel",
-                         f"{product} — {title}.xls")
+    return file_response(harness_documents.excel_text(headers, rows), f"{product} — {title}.xls")
 
 
 @router.post("/{project}/harness/{index}/documents")

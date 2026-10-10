@@ -9,7 +9,7 @@ import json
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
-from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker, validates
 
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.fulfillment.domain import FulfillmentStatus
@@ -95,8 +95,16 @@ class ProductionTaskRow(Base):
     flow_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="mixed", server_default="mixed")
     transfer_batch: Mapped[int | None] = mapped_column(Integer, nullable=True)
     early_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # № проекта для сравнения (`normalize_project_number`, миграция project_keys): трек проекта читает по индексу.
+    # Ставится сам при записи `project`; NULL — строка вставлена мимо ORM, такие читаются и сверяются в Python.
+    project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+    @validates("project")
+    def _keep_project_key(self, _name: str, value: str) -> str:
+        self.project_key = normalize_project_number(value)
+        return value
 
 
 class ProductionTaskTeamRow(Base):
@@ -550,6 +558,26 @@ class SqlAlchemyProductionRepository:
             ))
         rows = self.session.scalars(
             statement.order_by(ProductionTaskRow.created_at.desc(), ProductionTaskRow.id.desc()).limit(limit)
+        )
+        return [self._domain(row) for row in rows]
+
+    def for_project(self, project: str) -> list[ProductionTask]:
+        """Все задания одного проекта (точно по `normalize_project_number`, по индексу ключа), старые первыми."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        rows = self.session.scalars(
+            select(ProductionTaskRow)
+            .where(or_(ProductionTaskRow.project_key == key, ProductionTaskRow.project_key.is_(None)))
+            .order_by(ProductionTaskRow.created_at, ProductionTaskRow.id)
+        )
+        return [self._domain(row) for row in rows if normalize_project_number(row.project) == key]
+
+    def with_status(self, status: ProductionStatus) -> list[ProductionTask]:
+        """Все задания в статусе (по индексу статуса), старые первыми — без общего лимита ленты."""
+        rows = self.session.scalars(
+            select(ProductionTaskRow).where(ProductionTaskRow.status == status.value)
+            .order_by(ProductionTaskRow.created_at, ProductionTaskRow.id)
         )
         return [self._domain(row) for row in rows]
 

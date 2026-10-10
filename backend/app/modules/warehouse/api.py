@@ -48,6 +48,7 @@ from .application import (
     lot_destinations,
     return_writeoff,
     warehouse_lots,
+    warehouse_totals,
     write_off,
 )
 from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseValidationError
@@ -361,6 +362,35 @@ def lots(
         "total": total,
         "truncated": max(0, total - len(page)),
         "next_cursor": str(page[-1].id) if len(lots) > limit else None,
+    }
+
+
+def _totals(item) -> dict:
+    return {
+        "balance": _number(item.balance),
+        "reserved": _number(item.reserved),
+        "available": _number(item.available),
+        "lots": item.lots,
+        "units": sorted(item.units),
+    }
+
+
+@router.get("/totals")
+def totals(
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+    group: Annotated[str, Query(pattern="^(type|place|name|series|grn)?$")] = "",
+    q: Annotated[str, Query(max_length=255)] = "",
+    zero: bool = False,
+    warehouse: Annotated[str | None, Query(pattern="^(ЦАР|ЖУК)$")] = None,
+) -> dict:
+    """Sums per group and per article inside a group over ALL lots of the filter (q/zero/warehouse as in the list):
+    balance, reserve, available, lot count. The grouped table shows them whatever number of lots it has loaded."""
+    groups, articles = warehouse_totals(uow_factory(), group=group, query=q, warehouse=warehouse, include_zero=zero)
+    return {
+        "group": group,
+        "groups": [{"group": key, "articles": len(item.articles), **_totals(item)} for key, item in groups.items()],
+        "articles": [{"group": key[0], "article": key[1], **_totals(item)} for key, item in articles.items()],
     }
 
 

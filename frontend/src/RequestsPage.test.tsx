@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestsPage } from "./RequestsPage";
 import type { Principal, RequestRow, RequestSchema } from "./api";
@@ -75,7 +75,8 @@ describe("RequestsPage", () => {
       target: { value: "Разъём" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("network disconnected");
+    // A broken connection on a write is an unknown result, not a failure: the same key is kept for the repeat.
+    expect(await screen.findByRole("alert")).toHaveTextContent("Результат неизвестен");
 
     fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
     expect(await screen.findByText("Создана заявка REQ-1")).toBeInTheDocument();
@@ -90,6 +91,33 @@ describe("RequestsPage", () => {
     expect(secondHeaders.get("Idempotency-Key")).toBe(
       firstHeaders.get("Idempotency-Key"),
     );
+  });
+
+  it("ends a hung read of «Мои заявки» with the message and a working «Повторить» (U01)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let answer = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.startsWith("/api/requests/mine")) {
+        return answer ? json({ requests: [row], total: 1 }) : new Promise<Response>(() => undefined);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    try {
+      render(<RequestsPage principal={principal} view="mine" />);
+      expect(await screen.findByText("Загружаю…")).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(await screen.findByRole("alert")).toHaveTextContent("ERP не ответила за 20 с");
+      expect(screen.queryByText("Загружаю…")).not.toBeInTheDocument();
+      const retry = screen.getByRole("button", { name: "Повторить" });
+      expect(retry).toBeEnabled();
+      answer = true;
+      fireEvent.click(retry);
+      expect(await screen.findByText("REQ-1")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("hands a new request to procurement", async () => {

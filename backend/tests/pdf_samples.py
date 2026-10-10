@@ -65,3 +65,16 @@ def cp1251_pdf(lines: list[str]) -> bytes:
         b"<< /Type /Font /Subtype /TrueType /BaseFont /Arial /Encoding /WinAnsiEncoding >>",
         b"<< /Font << /F1 5 0 R >> >>",
     ])
+
+
+def flate_bomb_pdf(unpacked: int = 64 * 1024 * 1024) -> bytes:
+    """A page whose ~64 KB Flate content stream unpacks to `unpacked` bytes of spaces (audit F05 fixture)."""
+    packer = zlib.compressobj(9)
+    chunk = b" " * (1024 * 1024)
+    data = b"".join(packer.compress(chunk) for _ in range(unpacked // len(chunk))) + packer.flush()
+    return _pdf([
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+        b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(data) + data + b"\nendstream",
+    ])

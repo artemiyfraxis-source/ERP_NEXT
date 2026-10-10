@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 import logging
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
+from app.shared.clock import as_utc
 from app.shared.events import AuditEvent, OutboxMessage
 from app.shared.identity import Actor
 from app.shared.notifications import LEGACY_ROLE_AUDIENCES
 
+from .background import BackgroundHealth, Heartbeat, PendingTopic, assess
 from .domain import Notification, NotificationValidationError, ProjectTask, normalize_recipient
 
 logger = logging.getLogger(__name__)
@@ -92,6 +95,79 @@ def close_project_task(command: CloseProjectTaskCommand, uow: ProjectTasksUnitOf
         ))
         uow.commit()
         return closed
+
+
+class BackgroundReadModel(Protocol):
+    def heartbeats(self) -> Mapping[str, Heartbeat]: ...
+    def pending_topics(self) -> Sequence[PendingTopic]: ...
+    def outbox_health(self) -> dict: ...
+
+
+class DeadLetterStore(Protocol):
+    def dead_letter_for_update(self, message_id: UUID) -> dict | None: ...
+    def requeue_dead_letter(self, message_id: UUID, now: datetime) -> None: ...
+
+
+class OperationsUnitOfWork(Protocol):
+    operations: BackgroundReadModel
+    audit: AppendOnlyRepository
+    def __enter__(self): ...
+    def __exit__(self, exc_type, exc, traceback): ...
+    def commit(self) -> None: ...
+
+
+def background_health(now: datetime, uow: OperationsUnitOfWork) -> tuple[BackgroundHealth, dict]:
+    """Audit U08: the worker's verdict (heartbeats + the age of the queue) and the outbox counters, one read."""
+    with uow:
+        heartbeats = uow.operations.heartbeats()
+        pending = uow.operations.pending_topics()
+        counts = uow.operations.outbox_health()
+    return assess(heartbeats, pending, as_utc(now)), counts
+
+
+class DeadLetterNotFound(LookupError):
+    pass
+
+
+class DeadLetterRetryRefused(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class RetryDeadLetterCommand:
+    message_id: UUID
+    actor: Actor
+    now: datetime
+
+
+class RetryUnitOfWork(Protocol):
+    operations: DeadLetterStore
+    audit: AppendOnlyRepository
+    def __enter__(self): ...
+    def __exit__(self, exc_type, exc, traceback): ...
+    def commit(self) -> None: ...
+
+
+def retry_dead_letter(command: RetryDeadLetterCommand, uow: RetryUnitOfWork) -> bool:
+    """Put a dead-lettered outbox message back into the queue, unchanged (audit U08: «повторить» is a command, never a
+    payload edit in the database). Idempotent: a message that is already back in the queue is left alone and nothing is
+    journalled — a double click, or two administrators at once, retry it once. Returns True when it was requeued."""
+    with uow:
+        state = uow.operations.dead_letter_for_update(command.message_id)
+        if state is None:
+            raise DeadLetterNotFound("Фоновое задание не найдено.")
+        if state["published"]:
+            raise DeadLetterRetryRefused("Задание уже выполнено — повторять нечего.")
+        if not state["dead"]:
+            return False
+        uow.operations.requeue_dead_letter(command.message_id, command.now)
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=command.message_id, event_type="operations.outbox_retried",
+            actor=command.actor, occurred_at=command.now,
+            details={"topic": state["topic"], "attempts": str(state["attempts"]), "error": state["error"][:300]},
+        ))
+        uow.commit()
+        return True
 
 
 @dataclass(frozen=True)

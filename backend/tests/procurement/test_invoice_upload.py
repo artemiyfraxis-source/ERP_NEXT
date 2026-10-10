@@ -111,7 +111,7 @@ def test_upload_refuses_foreign_line_unknown_line_empty_damaged_or_too_large_fil
     awaiting_invoice(client, line)
     monkeypatch.setattr(application, "INVOICE_FILE_LIMIT", 4)
 
-    assert fresh.status_code == 422 and fresh.json()["detail"] == "Закупщик может изменять только свои строки"
+    assert fresh.status_code == 403 and fresh.json()["detail"] == "Закупщик может изменять только свои строки"
     assert _upload(client, "00000000-0000-0000-0000-000000000000", content=b"1").status_code == 404
     assert _upload(client, line.id, content=b"12345").json()["detail"] == "Файл счёта больше 20 МБ"
     damaged = client.post("/api/procurement/invoice-files", json={

@@ -160,7 +160,8 @@ def _prepare(
         )
     start, end = _period(command)
     now = command.now
-    stored = [item for item in uow.production.list(limit=10_000) if item.status is ProductionStatus.RUNNING]
+    # Все запущенные, по индексу статуса: первые 10 000 заданий ленты теряли запущенные за границей (U06).
+    stored = list(uow.production.with_status(ProductionStatus.RUNNING))
     tasks = {item.id: localize(item, now) for item in stored}
     selected = set(command.task_ids) if command.task_ids is not None else None
     warnings: list[str] = []

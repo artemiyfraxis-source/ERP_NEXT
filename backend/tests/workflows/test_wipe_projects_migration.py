@@ -71,6 +71,11 @@ def database(tmp_path, monkeypatch):
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
         Base.metadata.tables["fulfillment_kit_reserves"].create(connection)
+        # 0089: the project / КБ / kind of a request and the year's number counter.
+        connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN project_key VARCHAR(128)"))
+        connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN item_index VARCHAR(64)"))
+        connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'main'"))
+        Base.metadata.tables["fulfillment_request_counters"].create(connection)
         # The picked ГРН is reserved at once (T1): the kit request then looks for the project's «Со склада» covers.
         Base.metadata.tables["procurement_stock_covers"].create(connection)
         # План задания (Цель 2, миграция после 0088): колонки задания, команда и сдачи площадки.
@@ -79,6 +84,14 @@ def database(tmp_path, monkeypatch):
             connection.execute(text(f"ALTER TABLE production_tasks ADD COLUMN {column}"))
         Base.metadata.tables["production_task_team"].create(connection)
         Base.metadata.tables["production_task_deliveries"].create(connection)
+        # Ключ № проекта (миграция project_keys, U06): трек и «Снабжение» читают проект по нему.
+        for table, column in (
+            ("production_tasks", "project_key"), ("finished_goods", "project_key"), ("shipment_lines", "project_key"),
+            ("techcard_projects", "project_key"), ("procurement_lines", "project_key"), ("requests", "project_key"),
+            ("requests", "purpose_project_key"), ("requests", "designation_project_key"),
+            ("receiving_lines", "purpose_project_key"), ("receiving_lines", "goal_project_key"),
+        ):
+            connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR(255)"))
     sessions =sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
     app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)

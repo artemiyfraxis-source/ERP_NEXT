@@ -7,18 +7,27 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, false, func, select,
+    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, Uuid, false, func,
+    select, text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.infrastructure import SqlAlchemyStockCoverRepository
 from app.modules.production.domain import ProductionStatus
-from app.modules.production.plan import normalize_project_number, project_from_purpose
+from app.shared.project_number import digit_stem, normalize_project_number, project_from_purpose
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository, SqlAlchemyWriteOffJournal
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
-from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, KitReserve, LotSnapshot, kb_of
+from .application import kit_key, next_request_number, request_sequence
+from .domain import (
+    FulfillmentKind, FulfillmentLine, FulfillmentRequest, FulfillmentStatus, KitReserve, LotSnapshot, kb_of,
+)
+
+# The partial UNIQUE of migration 0089: one live (not «Отменена») MAIN request per project + КБ; «Довыдача» is free.
+LIVE_KIT_WHERE = (
+    "kind = 'main' AND status <> 'Отменена' AND project_key IS NOT NULL AND item_index IS NOT NULL"
+)
 
 
 class FulfillmentRequestRow(Base):
@@ -26,6 +35,12 @@ class FulfillmentRequestRow(Base):
     __table_args__ = (
         Index("ix_fulfillment_status_created_id", "status", "created_at", "id"),
         Index("ix_fulfillment_created_id", "created_at", "id"),
+        CheckConstraint("kind IN ('main', 'extra')", name="ck_fulfillment_requests_kind"),
+        # One live request per КБ of a project (migration 0089): a second «Отправить на комплектацию» can't double it.
+        Index(
+            "uq_fulfillment_requests_live_kit", "project_key", "item_index", unique=True,
+            postgresql_where=text(LIVE_KIT_WHERE), sqlite_where=text(LIVE_KIT_WHERE),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -37,6 +52,10 @@ class FulfillmentRequestRow(Base):
     requester: Mapped[str] = mapped_column(String(255), nullable=False)
     requester_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
     purpose: Mapped[str] = mapped_column(String(512), nullable=False)
+    # The project and КБ of a kit request, normalized (`kit_key` of НАЗНАЧЕНИЕ); NULL for a request without them.
+    project_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    item_index: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="main", server_default="main")
     deadline: Mapped[date | None] = mapped_column(Date(), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     handout_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -50,6 +69,16 @@ class FulfillmentRequestRow(Base):
     at_closed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class FulfillmentRequestCounterRow(Base):
+    """The last request number given out in a year: numbers only grow from it, a deleted one is never reused."""
+
+    __tablename__ = "fulfillment_request_counters"
+    __table_args__ = (CheckConstraint("last_number >= 0", name="ck_fulfillment_request_counters_last_number"),)
+
+    year: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    last_number: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class FulfillmentLineRow(Base):
@@ -227,6 +256,7 @@ class SqlAlchemyFulfillmentRepository:
             at_issued=row.at_issued,
             at_returned=row.at_returned,
             at_closed=row.at_closed,
+            kind=FulfillmentKind(row.kind or FulfillmentKind.MAIN.value),
         )
 
     def get(self, request_id: UUID) -> FulfillmentRequest | None:
@@ -248,6 +278,32 @@ class SqlAlchemyFulfillmentRepository:
                 FulfillmentRequestRow.number.like(f"{prefix}%")
             )
         ))
+
+    def next_number(self, year: int) -> str:
+        """The year's counter row, locked for the transaction: above the last number ever given out and above every
+        existing one, so a deleted request's number never comes back (migration 0089)."""
+        counter = self.session.scalar(
+            select(FulfillmentRequestCounterRow).where(FulfillmentRequestCounterRow.year == year).with_for_update()
+        )
+        number = next_request_number(year, self.numbers(year), counter.last_number if counter is not None else 0)
+        if counter is None:
+            self.session.add(FulfillmentRequestCounterRow(year=year, last_number=request_sequence(number)))
+        else:
+            counter.last_number = request_sequence(number)
+        self.session.flush()
+        return number
+
+    def live_kit_request(self, project_key: str, item_index: str) -> FulfillmentRequest | None:
+        """The request of this КБ of the project in any status but «Отменена» (at most one: the partial UNIQUE)."""
+        row = self.session.scalar(
+            select(FulfillmentRequestRow).where(
+                FulfillmentRequestRow.project_key == project_key,
+                FulfillmentRequestRow.item_index == item_index,
+                FulfillmentRequestRow.kind == FulfillmentKind.MAIN.value,
+                FulfillmentRequestRow.status != FulfillmentStatus.CANCELLED.value,
+            ).order_by(FulfillmentRequestRow.created_at, FulfillmentRequestRow.number).limit(1)
+        )
+        return self._domain(row) if row is not None else None
 
     def reserved_on_lot(self, lot_id: UUID) -> Decimal:
         """What kitting holds in reserve on one warehouse lot — kit lines plus techcard reserves (the warehouse row
@@ -297,6 +353,22 @@ class SqlAlchemyFulfillmentRepository:
         rows = self.session.scalars(statement.order_by(*order).limit(limit))
         return [self._domain(row) for row in rows]
 
+    def for_project(self, project: str) -> list[FulfillmentRequest]:
+        """Запросы одного проекта (проект НАЗНАЧЕНИЯ точно по ключу), в порядке `list()`, без общего лимита.
+        Колонки ключа здесь нет (её заводит ветка «одна заявка на КБ», #254): база отбирает НАЗНАЧЕНИЯ с цифрами
+        номера (`digit_stem`), точное сравнение — после; цифры ключа стоят в тексте подряд, так что ничего не теряется."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        statement = select(FulfillmentRequestRow)
+        stem = digit_stem(key)
+        if stem:
+            statement = statement.where(FulfillmentRequestRow.purpose.contains(stem, autoescape=True))
+        rows = self.session.scalars(
+            statement.order_by(FulfillmentRequestRow.created_at, FulfillmentRequestRow.number)
+        )
+        return [self._domain(row) for row in rows if project_from_purpose(row.purpose) == key]
+
     def add(self, request: FulfillmentRequest) -> None:
         row = self.session.get(FulfillmentRequestRow, request.id)
         if row is None:
@@ -310,6 +382,9 @@ class SqlAlchemyFulfillmentRepository:
         row.requester = request.requester
         row.requester_id = request.requester_id
         row.purpose = request.purpose
+        kit = kit_key(request.purpose)
+        row.project_key, row.item_index = kit if kit is not None else (None, None)
+        row.kind = request.kind.value
         row.deadline = request.deadline
         row.status = request.status.value
         row.handout_location = request.handout_location

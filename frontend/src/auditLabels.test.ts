@@ -38,6 +38,19 @@ it("names the automatic fill after «Взять в работу» and its fields
   expect(auditDetails({ legacy_id: "SM-20261004-01", fields: ["supplier", "site_name", "manufacturer", "country"] })).toBe(
     "поля: поставщик, наименование (сайт), изготовитель, страна",
   );
+  // Audit U09: where the fill came from, and a site read without a certificate check.
+  expect(auditDetails({ fields: ["site_name"], source: "www.chipdip.ru", tls: "не проверен" })).toBe(
+    "поля: наименование (сайт) · сайт: www.chipdip.ru · сертификат: не проверен",
+  );
+});
+
+it("names the background retry and the login lock release in Russian", () => {
+  expect(auditEventName("operations.outbox_retried")).toBe("Фоновое задание запущено повторно");
+  expect(auditDetails({ topic: "warehouse.received", attempts: "5", error: "invalid payload" })).toBe(
+    "задание: Приход на склад · попыток: 5 · ошибка: invalid payload",
+  );
+  expect(auditEventName("identity.login_lock_released")).toBe("Блокировка входа снята");
+  expect(auditEventName("procurement.autofill_requested")).toBe("Автозаполнение строки закупки");
 });
 
 it("names the access-level events and the level and flag details in Russian", () => {

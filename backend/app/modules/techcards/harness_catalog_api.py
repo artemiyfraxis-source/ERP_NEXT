@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab
 from app.shared.http_auth import projects_view_principal
+from app.shared.stored_files import file_response
 
 from .api import optional_references_uow_factory, techcards_uow_factory
 from .harness import application as harness
@@ -98,4 +99,7 @@ def harness_component_image(
 ) -> Response:
     """Рисунок версии шаблона (PNG): версии неизменны, поэтому кэшируется надолго."""
     image = _found(lambda: harness.library_image(factory, template_id, revision, str(asset_id)))
-    return Response(image, media_type="image/png", headers={"Cache-Control": "private, max-age=31536000, immutable"})
+    # The shared serving policy (audit F04): a real PNG opens inline, any other bytes are a download.
+    response = file_response(image, f"{asset_id}.png")
+    response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return response
