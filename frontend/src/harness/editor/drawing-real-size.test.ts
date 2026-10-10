@@ -86,9 +86,14 @@ describe("«Реальные размеры, мм» — connectors at template s
     const off = withTemplates({ enabled: false, scaleDenominator: 4 });
     expect(realSizeView(off)).toBe(off);
     const on = withTemplates({ enabled: true, scaleDenominator: 4 }), view = realSizeView(on);
+    // No measured template units → 1 unit = 1 mm, and both library connectors count as «без размеров».
     expect(view.connectors.map(c => drawingScale(c.drawingPlacements))).toEqual([.25, .25, 1]);
     expect(on.connectors.map(c => drawingScale(c.drawingPlacements))).toEqual([1, 1.5, 1]);
-    expect(connectorsWithoutRealSize(on)).toBe(1);
+    expect(connectorsWithoutRealSize(on)).toBe(3);
+    // A drawing measured at 10 units per mm is shown at 1/(N × 10).
+    const measured = new Map([["A", 10]]);
+    expect(realSizeView(on, measured).connectors.map(c => drawingScale(c.drawingPlacements))).toEqual([.025, .25, 1]);
+    expect(connectorsWithoutRealSize(on, measured)).toBe(2);
   });
 
   it("an edit made in real size stores the drawing's own scales back", () => {
@@ -105,6 +110,9 @@ describe("«Реальные размеры, мм» — connectors at template s
     expect(drawingScale(moved.connectors[1]!.drawingPlacements)).toBe(1.5);
     expect(moved.connectors.every(c => c.positions.drawing.x === 1)).toBe(true);
     expect(applyInRealSizeView(stored, document => document)).toBe(stored);
+    const measured = applyInRealSizeView(stored, document => ({ ...document, connectors: document.connectors.map(c => ({ ...c, designation: `${c.designation}*` })) }), new Map([["A", 10], ["B", 13.6]]));
+    expect(measured.connectors.map(c => drawingScale(c.drawingPlacements))).toEqual([1, 1.5, 1]);
+    expect(measured.connectors[0]).not.toHaveProperty("drawingPlacements");
   });
 });
 

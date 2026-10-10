@@ -13,6 +13,7 @@ import { DrawingDimensionsPanel } from "./DrawingDimensionsPanel";
 import { drawingDimensionScene, dimensionRouteKey, toggleDrawingDimensions } from "./drawing-dimensions";
 import { projectComponentTemplateView } from "./component-template-view-renderer";
 import { materializePlacementRows } from "./component-template-placement";
+import { templateUnitsPerMmByConnector } from "./connector-pitch";
 import { DrawingTableWindows } from "./DrawingTableWindows";
 import type { HarnessDocumentsSource } from "../panels/documents-source";
 import { applyInRealSizeView, CONTACT_SIDE_VIEW_PLACEMENT_ID, connectorsWithoutRealSize, drawingLocalDirection, drawingLocalDirectionVector, drawingLocalPoint, drawingScale, DRAWING_VIEW_PLACEMENT_ID, realSizeConnectorScale, realSizeView } from "./drawing-scale";
@@ -51,7 +52,7 @@ import {
   type ProjectComponentSnapshotResource,
 } from "./component-placement-api";
 import type { ComponentTemplateApi } from "../component-library/component-template-api";
-import type { ReferenceCatalogAdapter } from "../reference-catalog";
+import type { ReferenceCatalogAdapter, ReferenceCatalogRecord } from "../reference-catalog";
 import type { CoveringMaterialApi } from "./covering-assets";
 import { isTemplateContentV3, isTemplateContentV4, isTemplateContentV5 } from "../component-library/template-content";
 import {
@@ -1000,9 +1001,33 @@ export function HarnessDesignEditor({
 
   useEffect(() => setActiveWireStripEnd("from"), [selectedObjectId]);
 
-  const componentTemplateViewInstances = useMemo(() => history
-    ? buildComponentTemplateViewInstances(realSizeView(history.present), componentSnapshotsByPlacement) : [],
+  // «Реальные размеры, мм»: the pitch of each connector family from the ERP base of connectors measures how many
+  // template units its library drawing has per mm.
+  const [connectorFamilies, setConnectorFamilies] = useState<readonly ReferenceCatalogRecord[]>([]);
+  const realSizeOn = !!history && drawingRealSizeScale(history.present) !== null;
+  useEffect(() => {
+    if (!realSizeOn || connectorFamilies.length) return;
+    let alive = true;
+    void catalogApi.references.getActive("technology-connectors").then(snapshot => {
+      if (alive && snapshot) setConnectorFamilies(snapshot.records.filter(record => record.entityType === "connector-family" || record.entityType === "connector-alias"));
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [catalogApi.references, realSizeOn, connectorFamilies.length]);
+  const storedTemplateViewInstances = useMemo(() => history
+    ? buildComponentTemplateViewInstances(history.present, componentSnapshotsByPlacement) : [],
     [history?.present, componentSnapshotsByPlacement]);
+  const templateUnits = useMemo(() => realSizeOn && history
+    ? templateUnitsPerMmByConnector(history.present, storedTemplateViewInstances, connectorFamilies) : new Map<string, number>(),
+    [realSizeOn, history?.present, storedTemplateViewInstances, connectorFamilies]);
+  const templateUnitsRef = useRef(templateUnits);
+  templateUnitsRef.current = templateUnits;
+  // The field shows connectors at their real size: the same instances with the view's drawing placements.
+  const componentTemplateViewInstances = useMemo(() => {
+    if (!history || !realSizeOn) return storedTemplateViewInstances;
+    const shown = realSizeView(history.present, templateUnits);
+    return storedTemplateViewInstances.map(instance => ({ ...instance,
+      drawingPlacements: shown.connectors.find(connector => connector.id === instance.objectId)?.drawingPlacements }));
+  }, [history?.present, realSizeOn, storedTemplateViewInstances, templateUnits]);
   const drawingPerimeters=useMemo(()=>buildDrawingPerimeters(componentTemplateViewInstances),[componentTemplateViewInstances]);
 
   const [selectedPipeInterval,setSelectedPipeInterval]=useState<{id:string;from:number;to:number}|null>(null);
@@ -1022,7 +1047,7 @@ export function HarnessDesignEditor({
   const previewResult = useMemo(() => {
     if (!history) return { document: null, error: null };
     // «Реальные размеры, мм»: previews are made on the view the field shows (connectors at 1/N).
-    const present = realSizeView(history.present);
+    const present = realSizeView(history.present, templateUnits);
     if(freeEndPreviews.length){
       try{return {document:freeEndPreviews.reduce((document, preview)=>applyEditorCommand(document,{type:"set-wire-drawing-endpoint",...preview}),present),error:null};}
       catch(error){return {document:present,error:error instanceof Error?error.message:"Не удалось переместить конец провода."};}
@@ -1099,7 +1124,7 @@ export function HarnessDesignEditor({
         error: error instanceof Error ? error.message : "Трассировка невозможна.",
       };
     }
-  }, [history, movePreview, view, pipePreview, freeEndPreviews, drawingPerimeters, componentTemplateViewInstances, resolveComponentTemplateAssetUrl, coveringPreview, thicknessPreview, pipeOpacityPreview, leaderScalePreview, indexScalePreview, dimensionScalePreview, minimumOverlapPreview, opCoveringEdgePreview, bendRadiusPreview, coveringRatioPreview, pairPitchPreview]);
+  }, [history, templateUnits, movePreview, view, pipePreview, freeEndPreviews, drawingPerimeters, componentTemplateViewInstances, resolveComponentTemplateAssetUrl, coveringPreview, thicknessPreview, pipeOpacityPreview, leaderScalePreview, indexScalePreview, dimensionScalePreview, minimumOverlapPreview, opCoveringEdgePreview, bendRadiusPreview, coveringRatioPreview, pairPitchPreview]);
 
   const routingIssues = useMemo(() => view === "e4" && history
     ? e4RoutingIssues(history.present) : [], [history?.present, view]);
@@ -1140,7 +1165,7 @@ export function HarnessDesignEditor({
       // per-connector scales come back untouched.
       let next = realSize ? (present => present === current.present ? current
         : { past: [...current.past, current.present].slice(-100), present, future: [] })(
-          applyInRealSizeView(current.present, document => applyEditorCommand(document, command)))
+          applyInRealSizeView(current.present, document => applyEditorCommand(document, command), templateUnitsRef.current))
         : executeEditorCommand(current, command);
       // Component/article replacement and E4 edits can change the contact text
       // without creating a new wire. Reconcile the connected conductor on every
@@ -1287,7 +1312,7 @@ export function HarnessDesignEditor({
   const componentGraphIntegrityMessage = componentGraphMessage || (hasComponentGraphIntegrityMismatch
     ? "Закреплённые контактные данные компонента не совпадают со снимком проекта. Используется резервное отображение."
     : "");
-  const sourceDocument=previewResult.document??realSizeView(history.present);
+  const sourceDocument=previewResult.document??realSizeView(history.present,templateUnits);
   const drawingDocument=view!=="drawing"?sourceDocument:{...sourceDocument,connectors:sourceDocument.connectors.map(connector=>{
     const instance=componentTemplateViewInstances.find(i=>i.objectId===connector.id),binding=connector.libraryBinding;
     if(!instance||binding?.mode!=="template")return connector;
@@ -1909,7 +1934,7 @@ export function HarnessDesignEditor({
         onSaveRequest={() => void flushSave()}
         onDrawingScale={drawingRealSizeScale(history.present)===null?(connectorId,drawingId,scale)=>run({type:"set-drawing-placement",connectorId,drawingId,scale}):undefined}
         viewControls={<RealSizeControl value={history.present.drawingDocuments?.realSize} disabled={readOnly} onChange={realSize=>run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),realSize}})}/>}
-        realSize={(n=>n===null?null:{denominator:n,wiresWithoutDiameter:wiresWithoutDiameter(history.present),connectorsWithoutSize:connectorsWithoutRealSize(history.present)})(drawingRealSizeScale(history.present))}
+        realSize={(n=>n===null?null:{denominator:n,wiresWithoutDiameter:wiresWithoutDiameter(history.present),connectorsWithoutSize:connectorsWithoutRealSize(history.present,templateUnits)})(drawingRealSizeScale(history.present))}
         onDrawingMove={(connectorId,drawingId,offset)=>run({type:"set-drawing-placement",connectorId,drawingId,offset})}
         propertyInspector={selectedObjectId && history.present.drawingDocuments?.graphics?.some(g=>g.id===selectedObjectId) ? <DrawingObjectProperties document={history.present} objectId={selectedObjectId} selectedIds={selectedObjectIds} onCommand={run} instances={componentTemplateViewInstances} wireMaterialOptions={wireLookup.databaseOptions} onSelect={id=>{setSelectedObjectId(id);setSelectedObjectIds([id]);}}/> : selectedObjectId && (history.present.drawingDocuments?.specificationItems?.some(i=>i.id===selectedObjectId) || history.present.drawingDocuments?.dimensions?.some(d=>d.id===selectedObjectId) || history.present.drawingDocuments?.tables.some(t=>t.id===selectedObjectId) || history.present.drawingDocuments?.leaders.some(l=>l.id===selectedObjectId||`${l.id}:anchor`===selectedObjectId) || history.present.drawingDocuments?.rails?.some(r=>selectedObjectId===r.id||selectedObjectId===`${r.id}:start`||selectedObjectId===`${r.id}:end`) || history.present.physicalTopology?.coverings?.some(c=>c.id===selectedObjectId) || history.present.physicalTopology?.nodes.some(n=>n.id===selectedObjectId) || history.present.physicalTopology?.segments.some(s=>s.id===selectedObjectId) || history.present.physicalTopology?.joiningPipes?.some(p=>p.id===selectedObjectId)) ? <></> : selectedConnector ? (<>
           {view==="e4" && (()=>{

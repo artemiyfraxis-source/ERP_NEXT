@@ -166,6 +166,9 @@ def test_connector_families_with_patterns_and_aliases(catalog):
     families = {r["payload"]["familyId"]: r["payload"] for r in records if r["entityType"] == "connector-family"}
     xh = families["jst-xh"]
     assert xh["pattern"] == r"^XHP-(\d+)" and xh["pitchMm"] == 2.5 and xh["contactCount"] == 4
+    # The drawing's «Реальные размеры, мм» measures the library's JST SH drawings against this pitch.
+    sh = families["jst-sh"]
+    assert sh["pitchMm"] == 1.0 and re.search(sh["pattern"], "SHR-04V-S", re.I)
     aliases = {r["sourceKey"]: r["payload"] for r in records if r["entityType"] == "connector-alias"}
     assert aliases["LP-12"]["replacement"] == "LP-12-C02PE"
     assert aliases[r"^BL2018P-0*(\d+)"]["replacement"] == "SMP-0$1V-BC"

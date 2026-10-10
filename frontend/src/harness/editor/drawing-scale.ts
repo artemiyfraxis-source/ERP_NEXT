@@ -41,45 +41,52 @@ export function drawingPointToLocal(point:{x:number;y:number},placements:readonl
  return {x:(point.x*Math.cos(a)-point.y*Math.sin(a))/scale,y:(point.x*Math.sin(a)+point.y*Math.cos(a))/scale};
 }
 
-/** «Реальные размеры, мм» at М 1:N: a library connector's drawing is shown at
- * its template size (1 template unit = 1 mm), i.e. at scale 1/N, whatever
- * per-connector scale the drawing stores. This is a view of the document —
- * the stored scales are never rewritten (see `withStoredDrawingScales`). */
-export function realSizeConnectorScale(document:HarnessDesignDocument):number|null {
+/** Template units per mm of each library connector's drawing, by connector id
+ * (see `templateUnitsPerMm`). A connector missing here is drawn at 1 unit = 1 mm. */
+export type TemplateUnitsPerMm=ReadonlyMap<string,number>;
+const noUnits:TemplateUnitsPerMm=new Map();
+/** «Реальные размеры, мм» at М 1:N: the drawing scale of a library connector
+ * shown at its real size, 1/(N × template units per mm), whatever per-connector
+ * scale the drawing stores. This is a view of the document — the stored scales
+ * are never rewritten (see `withStoredDrawingScales`). Null when the mode is off. */
+export function realSizeConnectorScale(document:HarnessDesignDocument,unitsPerMm=1):number|null {
  const realSize=document.drawingDocuments?.realSize;
- return realSize?.enabled?1/realSize.scaleDenominator:null;
+ return realSize?.enabled?1/(realSize.scaleDenominator*unitsPerMm):null;
 }
 const hasRealSizeDrawing=(connector:ConnectorInstance)=>connector.libraryBinding?.mode==="template";
-/** Connectors drawn without a real size (no library template) in real-size mode. */
-export function connectorsWithoutRealSize(document:HarnessDesignDocument):number {
- return document.connectors.filter(connector=>!hasRealSizeDrawing(connector)).length;
+/** Connectors drawn without a real size: no library drawing, or no pitch / too few contacts to measure it. */
+export function connectorsWithoutRealSize(document:HarnessDesignDocument,units:TemplateUnitsPerMm=noUnits):number {
+ return document.connectors.filter(connector=>!hasRealSizeDrawing(connector)||!units.has(connector.id)).length;
 }
 const defaultPlacement=(id:string):ConnectorDrawingPlacement=>({drawingId:id,visible:true,offset:{x:0,y:0}});
-export function realSizeView(document:HarnessDesignDocument):HarnessDesignDocument {
- const scale=realSizeConnectorScale(document);
- if(scale===null||!document.connectors.some(hasRealSizeDrawing))return document;
- return {...document,connectors:document.connectors.map(connector=>{
+export function realSizeView(document:HarnessDesignDocument,units:TemplateUnitsPerMm=noUnits):HarnessDesignDocument {
+ if(realSizeConnectorScale(document)===null||!document.connectors.some(hasRealSizeDrawing))return document;
+ let changed=false;
+ const connectors=document.connectors.map(connector=>{
   if(!hasRealSizeDrawing(connector))return connector;
+  const scale=realSizeConnectorScale(document,units.get(connector.id))!;
   const placements=connector.drawingPlacements??[],previous=placements.find(p=>p.drawingId===DRAWING_VIEW_PLACEMENT_ID);
   if(previous?.scale===scale)return connector;
+  changed=true;
   const next={...(previous??defaultPlacement(DRAWING_VIEW_PLACEMENT_ID)),scale};
   return {...connector,drawingPlacements:previous?placements.map(p=>p===previous?next:p):[...placements,next]};
- })};
+ });
+ return changed?{...document,connectors}:document;
 }
 /** Brings an edit made on `realSizeView(stored)` back to the stored scales: a
  * connector the edit did not touch is the stored one; a placement still at the
  * real-size scale gets its stored scale back (or loses the placement the view
  * had to add); a scale the edit set itself is kept. */
-export function withStoredDrawingScales(edited:HarnessDesignDocument,stored:HarnessDesignDocument,view=realSizeView(stored)):HarnessDesignDocument {
- const scale=realSizeConnectorScale(stored);
- if(scale===null||view===stored)return edited;
+export function withStoredDrawingScales(edited:HarnessDesignDocument,stored:HarnessDesignDocument,view:HarnessDesignDocument):HarnessDesignDocument {
+ if(view===stored)return edited;
  const viewed=new Map(view.connectors.map(c=>[c.id,c])),originals=new Map(stored.connectors.map(c=>[c.id,c]));
  let changed=false;
  const connectors=edited.connectors.map(connector=>{
-  const original=originals.get(connector.id);
-  if(!original||!hasRealSizeDrawing(original))return connector;
+  const original=originals.get(connector.id),shown=viewed.get(connector.id);
+  if(!original||!shown||shown===original)return connector;
   changed=true;
-  if(connector===viewed.get(connector.id))return original;
+  if(connector===shown)return original;
+  const scale=drawingScale(shown.drawingPlacements);
   const placements=connector.drawingPlacements??[],placement=placements.find(p=>p.drawingId===DRAWING_VIEW_PLACEMENT_ID);
   if(!placement||placement.scale!==scale)return connector;
   const before=original.drawingPlacements?.find(p=>p.drawingId===DRAWING_VIEW_PLACEMENT_ID);
@@ -93,8 +100,8 @@ export function withStoredDrawingScales(edited:HarnessDesignDocument,stored:Harn
  return changed?{...edited,connectors}:edited;
 }
 /** Runs an edit on the real-size view of the drawing and stores the result with the stored scales. */
-export function applyInRealSizeView(stored:HarnessDesignDocument,apply:(document:HarnessDesignDocument)=>HarnessDesignDocument):HarnessDesignDocument {
- const view=realSizeView(stored);
+export function applyInRealSizeView(stored:HarnessDesignDocument,apply:(document:HarnessDesignDocument)=>HarnessDesignDocument,units:TemplateUnitsPerMm=noUnits):HarnessDesignDocument {
+ const view=realSizeView(stored,units);
  if(view===stored)return apply(stored);
  const edited=apply(view);
  return edited===view?stored:withStoredDrawingScales(edited,stored,view);
