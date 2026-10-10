@@ -11,7 +11,7 @@ request thread, because it goes to supplier sites (a take of 50 lines must not s
      (`apply_autofill`), and only if the line still has the version the take queued.
 
 Network is behind the `PageInfoFetcher` port: tests substitute it, production uses `HttpPageInfoFetcher`, which is
-the kitset-name fetcher (same httpx client: browser User-Agent, timeouts, 2 MB cap, no internal addresses) plus the
+the kitset-name fetcher (same httpx client: browser User-Agent, timeouts, 2 MB cap, no internal addresses, certificates checked) plus the
 brand extraction. A tick never raises: a broken message is logged and retried with the outbox backoff.
 """
 
@@ -40,12 +40,10 @@ from app.modules.procurement.domain import is_web_link
 from app.modules.procurement.infrastructure import SqlAlchemyProcurementUnitOfWork
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
 from app.modules.techcards.kitset_names import (
-    MAX_BODY_BYTES,
     HttpPageFetcher,
     decode_entities,
-    page_text,
+    fetch_page,
     page_title,
-    strip_tracking_params,
 )
 from app.shared.clock import moscow_now
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
@@ -129,19 +127,12 @@ class HttpPageInfoFetcher(HttpPageFetcher):
     User-Agent, size cap and the refusal of internal addresses are the kitset-name fetcher's."""
 
     def info(self, url: str) -> PageInfo:
-        try:
-            with self._client.stream("GET", strip_tracking_params(url)) as response:
-                if response.status_code >= 400:
-                    return PageInfo()
-                body = bytearray()
-                for chunk in response.iter_bytes():
-                    body.extend(chunk)
-                    if len(body) >= MAX_BODY_BYTES:
-                        break
-                text = page_text(bytes(body), response.headers.get("content-type", ""))
-            return PageInfo(title=page_title(text), brand=page_brand(text))
-        except Exception:  # noqa: BLE001 — any network error = «сайт ничего не отдал»
+        page = fetch_page(self._client, url)
+        if page is None:
             return PageInfo()
+        return PageInfo(
+            title=page_title(page.text), brand=page_brand(page.text), source=page.host, tls_checked=page.tls_checked,
+        )
 
 
 _default_pages: HttpPageInfoFetcher | None = None
@@ -181,7 +172,10 @@ def _fill(
         except Exception:  # noqa: BLE001 — the map is a hint
             logging.warning("procurement autofill: country map failed for %s", request.legacy_id, exc_info=True)
     return apply_autofill(
-        ApplyAutofillCommand(request=request, site_name=info.title, manufacturer=info.brand, country=country, now=now),
+        ApplyAutofillCommand(
+            request=request, site_name=info.title, manufacturer=info.brand, country=country, now=now,
+            source=info.source if (info.title or info.brand) else "", tls_checked=info.tls_checked,
+        ),
         uow_factory(),
     )
 

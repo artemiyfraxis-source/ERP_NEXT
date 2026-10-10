@@ -183,13 +183,15 @@ def test_pin_attempts_share_the_id4_account_limit(pin_api):
     assert client.post("/api/auth/login", json={"login": "buyer", "password": "buyer-password"}).status_code == 429
 
 
-def test_pin_attempts_count_toward_the_global_limit(pin_api):
-    client = TestClient(app)
+def test_pin_attempts_count_toward_the_address_limit_not_a_lock_of_everyone(pin_api):
+    """Audit U09: 30 wrong PINs from one address close that address; an employee at another address still signs in."""
+    attacker = TestClient(app, client=("203.0.113.7", 50000))
     for index in range(30):
-        _pin(client, f"nobody{index}@example.test", "000000")
-    blocked = _pin(client, BUYER_ID, "123456")
+        _pin(attacker, f"nobody{index}@example.test", "000000")
+    blocked = _pin(attacker, BUYER_ID, "123456")
     assert blocked.status_code == 429
-    assert "Вход временно закрыт" in blocked.json()["detail"]
+    assert blocked.json()["detail"] == "Слишком много неудачных попыток с этого устройства. Подождите 10 минут."
+    assert _pin(TestClient(app, client=("192.168.1.20", 50000)), BUYER_ID, "123456").status_code == 200
 
 
 # ── «Узнать PIN» при первом входе (portalRevealPin_) ────────────────────────────────────────────────

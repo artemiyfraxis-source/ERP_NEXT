@@ -887,15 +887,20 @@ def _supplier_map(suppliers: SupplierDirectory) -> dict[str, str]:
 
 
 def _autofilled_event(
-    line: ProcurementLine, fields: Sequence[str], actor: Actor, now: datetime
+    line: ProcurementLine, fields: Sequence[str], actor: Actor, now: datetime, *, source: str = "", tls_checked: bool = True,
 ) -> AuditEvent:
+    details: dict = {"legacy_id": line.legacy_id, "fields": list(fields)}
+    if source:  # where the values came from (audit U09): the site after redirects, and a certificate not checked
+        details["source"] = source
+    if not tls_checked:
+        details["tls"] = "не проверен"
     return AuditEvent(
         id=uuid4(),
         aggregate_id=line.id,
         event_type="procurement.autofilled",
         actor=actor,
         occurred_at=now,
-        details={"legacy_id": line.legacy_id, "fields": list(fields)},  # type: ignore[dict-item]
+        details=details,
     )
 
 
@@ -905,6 +910,10 @@ class PageInfo:
 
     title: str = ""
     brand: str = ""
+    # Where the page really came from (the host after redirects) and whether its certificate was checked — a site in
+    # the ERP_TLS_UNVERIFIED_HOSTS exception list is read without the check, and the journal says so.
+    source: str = ""
+    tls_checked: bool = True
 
 
 class PageInfoFetcher(Protocol):
@@ -934,6 +943,8 @@ class ApplyAutofillCommand:
     manufacturer: str
     country: str
     now: datetime
+    source: str = ""
+    tls_checked: bool = True
 
 
 def next_autofill_request(now: datetime, uow: DispatchUnitOfWork) -> AutofillRequest | None:
@@ -995,7 +1006,9 @@ def apply_autofill(command: ApplyAutofillCommand, uow: DispatchUnitOfWork) -> tu
             )
             if written:
                 uow.procurement.add(filled)
-                uow.audit.add(_autofilled_event(filled, written, SYSTEM_ACTOR, command.now))
+                uow.audit.add(_autofilled_event(
+                    filled, written, SYSTEM_ACTOR, command.now, source=command.source, tls_checked=command.tls_checked,
+                ))
         uow.outbox.mark_published(request.message_id, command.now)
         uow.commit()
         return written

@@ -217,6 +217,21 @@ def test_tick_fills_only_empty_fields_from_the_page(db, directory):
     assert tick(db, pages, directory) == 0 and pages.calls == [CHIPDIP]  # сделано — повторно сайт не трогают
 
 
+def test_the_journal_names_the_site_a_fill_came_from_and_an_unchecked_certificate(db, directory):
+    """Audit U09: the origin of an autofill is visible — the host after redirects, and «не проверен» for a site in
+    the ERP_TLS_UNVERIFIED_HOSTS exception list."""
+    line = new_line(db)
+    take(db, line, directory=directory)
+    pages = FakePages({CHIPDIP: PageInfo(title="Разъём SMA", brand="", source="www.chipdip.ru", tls_checked=False)})
+
+    assert tick(db, pages, directory) == 1
+
+    (system,) = events(db, "procurement.autofilled")[-1:]
+    assert system.details == {
+        "legacy_id": line.legacy_id, "fields": ["site_name"], "source": "www.chipdip.ru", "tls": "не проверен",
+    }
+
+
 def test_a_line_handed_off_with_its_buyer_is_on_the_desk_and_filled_in_the_background(db, directory):
     """Owner, 05.10: «В закупку» puts the line «В работе» for whoever pressed it — supplier by the link at transfer,
     facts prefilled, the page fill queued in the same transaction and worked off for «Готов к запросу» too."""
@@ -471,7 +486,7 @@ def test_http_fetcher_gives_title_and_brand_from_one_request(monkeypatch):
 
     info = HttpPageInfoFetcher(_client(handler)).info("https://shop.example/p?id=5&utm_source=ya")
 
-    assert info == PageInfo(title="Разъём SMA", brand="Amphenol")
+    assert info == PageInfo(title="Разъём SMA", brand="Amphenol", source="shop.example")
     assert calls == ["https://shop.example/p?id=5"]  # трекинг срезан, запрос один
 
 
@@ -479,7 +494,7 @@ def test_http_fetcher_reads_a_windows_1251_page(monkeypatch):
     _public_dns(monkeypatch)
     body = '<meta charset="windows-1251"><title>Клемма ВК-1</title><meta name="brand" content="Элитан">'.encode("cp1251")
     info = HttpPageInfoFetcher(_client(lambda request: httpx.Response(200, content=body))).info("https://shop.example/")
-    assert info == PageInfo(title="Клемма ВК-1", brand="Элитан")
+    assert info == PageInfo(title="Клемма ВК-1", brand="Элитан", source="shop.example")
 
 
 def test_http_fetcher_returns_an_empty_answer_on_errors_and_internal_hosts(monkeypatch):

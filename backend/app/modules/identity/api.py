@@ -32,6 +32,7 @@ from .application import (
     login_with_pin,
     logout,
     deactivate_user,
+    release_login_locks,
     revoke_api_token,
     role_label,
     toggle_admin_mode,
@@ -649,6 +650,25 @@ def save_user_access_route(
     except _STAFF_ERRORS as error:
         raise _staff_errors(error) from error
     return {"user_id": str(user_id), "access": _modes(access)}
+
+
+# ── Блокировки входа: the administrator's emergency path (audit U09) ─────────────────────────────────
+
+
+class LoginLockReleaseInput(BaseModel):
+    login: str | None = Field(default=None, min_length=1, max_length=255)  # none — every lock
+
+
+@router.post("/login-locks/release")
+def release_login_locks_route(
+    payload: LoginLockReleaseInput,
+    principal: Annotated[Principal, Depends(access_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """Lift the login lock of one account, or every login lock, before its 10 minutes end. Journalled."""
+    released = release_login_locks(principal.actor, now, uow_factory(), login=payload.login)
+    return {"released": released}
 
 
 # ── Токены API: administrator only; the secret is in the create answer once and nowhere else ──────────
