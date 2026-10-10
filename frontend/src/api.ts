@@ -2940,6 +2940,47 @@ export interface HarnessDrawing {
   warnings: string[];
 }
 
+/** Документы чертежа жгута, построенные сервером из самого чертежа (techcards/harness/documents.py): ничего не хранится. */
+export type HarnessDocumentKind = "connections" | "cut" | "bom";
+
+/** Строка «Таблицы соединений» — один провод; пустое значение — «—». */
+export interface HarnessConnectionRow {
+  wire_id: string; index: string; mark: string; section: string; marking: string;
+  from: string; to: string; color: string; color_hex: string; length_mm: number | null; route: string;
+}
+
+export interface HarnessStripStep { index: number; diameter_mm: number | null; length_mm: number; step_mm: number }
+export interface HarnessCutEnd { label: string; profile: string | null; steps: HarnessStripStep[] }
+
+/** Заготовка «Карты резки»: провод вне кабеля, кабель или оболочка; длины — мм, метраж — м на все жгуты. */
+export interface HarnessCutItem {
+  id: string; kind: "wire" | "cable" | "covering"; title: string; material: string | null; material_key: string | null;
+  length_mm: number | null; correction_a_mm: number; correction_b_mm: number; rounding_step_mm: number;
+  cut_mm: number | null; unrounded_mm: number | null; pieces: number; total_m: number | null;
+  status: "ready" | "incomplete"; warnings: ("material-missing" | "length-missing")[];
+}
+
+/** Лист резки и разделки одной заготовки (провода или кабеля). */
+export interface HarnessCutSheet {
+  object_id: string; member_wire_ids: string[]; kind: "wire" | "cable"; title: string; material: string | null;
+  a: HarnessCutEnd; b: HarnessCutEnd;
+  sheath: { a_mm: number | null; b_mm: number | null; total_mm: number | null; complete: boolean } | null;
+  conductors: { id: string; a: HarnessCutEnd; b: HarnessCutEnd }[];
+  warnings: string[];
+}
+
+/** Строка «Спецификации»; `key` — тот же ключ, по которому на чертеже стоят позиции, порядок и правки текста. */
+export interface HarnessBomRow {
+  key: string; position: number; index: string; designation: string; name: string; amount: number | null;
+  unit: string; note: string; object_ids: string[];
+}
+
+export interface HarnessDocuments {
+  connections: { kind: "connections"; rows: HarnessConnectionRow[] };
+  cut: { kind: "cut"; quantity: number; items: HarnessCutItem[]; sheets: HarnessCutSheet[]; status: "ready" | "incomplete" };
+  bom: { kind: "bom"; quantity: number; rows: HarnessBomRow[] };
+}
+
 /** «Ручная сборка» из чертежа: build_config (операции с `origin` = `harness:<объект>:<код>`, блоки по маршруту КД) —
  *  экран сливает её со схемой мастера через `rederive`. Ничего не сохраняется. */
 export interface HarnessDerived {
@@ -3142,6 +3183,16 @@ export const kitsetsApi = {
   deriveHarness: (project: string, index: string, design?: Record<string, unknown>) =>
     api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
   harnessExportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
+  /** Документ чертежа: по чертежу из редактора (`design`, ещё не сохранённому) или по сохранённому. */
+  harnessDocuments: <K extends HarnessDocumentKind>(project: string, index: string, kind: K, quantity = 1, design?: Record<string, unknown>) => {
+    const path = `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}`;
+    return design
+      ? api<HarnessDocuments[K]>(path, { method: "POST", body: JSON.stringify({ design }) })
+      : api<HarnessDocuments[K]>(path);
+  },
+  /** Документ сохранённого чертежа файлом для Excel. */
+  harnessDocumentsExcelUrl: (project: string, index: string, kind: HarnessDocumentKind, quantity = 1) =>
+    `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}&format=xlsx`,
   /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
   unlinkHarness: (project: string, index: string, version: string | null = null) =>
     api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ version }) }),

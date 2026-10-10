@@ -32,11 +32,11 @@ from decimal import Decimal
 import hashlib
 from io import BytesIO
 import json
-from typing import Annotated, Any, Mapping
+from typing import Annotated, Any, Literal, Mapping
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -47,7 +47,7 @@ from app.shared.stored_files import decode_upload, file_response
 from app.workflows.project_kitset import MAX_DOCUMENT_BYTES
 
 from .domain.route import RouteError, RouteOp, parse_route
-from .harness import HarnessDesign, dump_design, parse_design, wire_ops
+from .harness import HarnessDesign, documents as harness_documents, dump_design, parse_design, wire_ops
 from .harness.derive import ROUTE_MODE_LABELS, ImpliedOp, wire_color, wire_material
 from .harness.snapshot import SCHEMA_VERSION
 from .kitset_api import (
@@ -833,3 +833,56 @@ def restore_harness(
         return _view(found)
     except HarnessError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+# ── Documents of the drawing: connection table, cut list, specification (harness/documents.py) ─────────────────────
+
+DocumentKind = Literal["connections", "cut", "bom"]
+Harnesses = Annotated[int, Query(ge=1, le=100_000, description="На сколько жгутов считать расход")]
+
+
+def _documents_of(kind: str, content: Mapping[str, Any], quantity: int, excel: bool, file_prefix: str) -> Any:
+    if not excel:
+        return harness_documents.documents(kind, content, quantity)
+    title, headers, rows = harness_documents.table(kind, content, quantity)
+    return file_response(harness_documents.excel_text(headers, rows), "application/vnd.ms-excel",
+                         f"{file_prefix} — {title}.xls")
+
+
+@router.get("/{project}/harness/{index}/documents")
+def harness_documents_saved(
+    project: str, index: str, request: Request, kind: DocumentKind,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    quantity: Harnesses = 1, format: Literal["json", "xlsx"] = "json",
+) -> Any:
+    """Документ сохранённого чертежа: «Таблица соединений», «Карта резки» или «Спецификация» на `quantity` жгутов;
+    `format=xlsx` — файл для Excel (как «Excel» таблиц ERP). Считается каждый раз, ничего не хранится."""
+    with techcards_factory(request)() as uow:
+        kitset, index = _position(uow, project, index)
+        found = _current(uow, kitset.project, index)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"У сборки {index} нет чертежа жгута")
+    try:
+        content = decode(found[1])
+    except HarnessError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return _documents_of(kind, content, quantity, format == "xlsx", item_id(kitset.project, index))
+
+
+@router.post("/{project}/harness/{index}/documents")
+def harness_documents_live(
+    project: str, index: str, payload: DerivePayload, request: Request, kind: DocumentKind,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    quantity: Harnesses = 1,
+) -> dict:
+    """Тот же документ по чертежу из редактора (ещё не сохранённому) — окна редактора видят правку сразу, не дожидаясь
+    автосохранения. Без чертежа в запросе — сохранённый. Ничего не сохраняется."""
+    if payload.design is None:
+        return harness_documents_saved(project, index, request, kind, _principal, quantity)
+    with techcards_factory(request)() as uow:
+        _position(uow, project, index)
+    try:
+        content, _warnings = normalized(payload.design)
+    except HarnessError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return harness_documents.documents(kind, content, quantity)
