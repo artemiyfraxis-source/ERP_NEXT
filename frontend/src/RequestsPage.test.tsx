@@ -258,7 +258,7 @@ describe("RequestsPage", () => {
     window.addEventListener("popstate", popped);
 
     render(<RequestsPage principal={{ ...principal, permissions: { ...principal.permissions, newrequest: "edit" } }} view="mine" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Оформить заявку" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Оформить первую заявку" }));
 
     expect(new URL(window.location.href).searchParams.get("section")).toBe("newrequest");
     expect(popped).toHaveBeenCalled();

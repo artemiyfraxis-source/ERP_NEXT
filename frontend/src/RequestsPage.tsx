@@ -849,7 +849,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
           {view === "mine" && !mineLoading && mineTotal === 0 && !serverQuery ? (
             <div className="procurement-empty">
               <span>Ваших заявок пока нет.</span>
-              {canEdit && <button type="button" className="primary small" onClick={openCreate}>Оформить заявку</button>}
+              {canEdit && <button type="button" className="primary small" onClick={openCreate}>Оформить первую заявку</button>}
             </div>
           ) : view === "mine" ? (
             <DataTable
