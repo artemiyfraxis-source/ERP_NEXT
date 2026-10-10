@@ -222,6 +222,23 @@ def save(factory: Factory, project: str, index: str, design: Mapping[str, Any], 
     return Saved(written, list(dict.fromkeys(warnings)), drawing is None)
 
 
+def product_of(factory: Factory, project: str, index: str) -> str:
+    """The full product id of the position (HarnessNotFound when there is no such position)."""
+    with factory() as uow:
+        kitset, index = position(uow, project, index)
+    return item_id(kitset.project, index)
+
+
+def saved_design(factory: Factory, project: str, index: str) -> tuple[str, dict[str, Any]]:
+    """The full product id of the position and its saved drawing (HarnessNotFound when it has none)."""
+    with factory() as uow:
+        kitset, index = position(uow, project, index)
+        drawing = current(uow, kitset.project, index)
+    if drawing is None:
+        raise HarnessNotFound(f"У сборки {index} нет чертежа жгута")
+    return item_id(kitset.project, index), decode(drawing.content)
+
+
 def history(factory: Factory, project: str, index: str, *, limit: int = HISTORY_LIMIT) -> tuple[Drawing, list[HarnessRevision], int]:
     """The linked drawing, its revisions newest first (at most `limit`) and how many there are."""
     with factory() as uow:

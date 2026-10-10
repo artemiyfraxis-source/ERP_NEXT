@@ -424,9 +424,6 @@
 .harness-root .he-relations-actions label { display: inline-flex; align-items: center; gap: 4px; }
 .harness-root .he-relations-actions input { width: 14px; height: 14px; margin: 0; }
 .harness-root .he-relations summary { cursor: pointer; padding-block: 6px; font-weight: 600; }
-.harness-root .he-relations .cut-list-scroll { max-height: 260px; overflow: auto; }
-.harness-root .cut-list-table tr.is-related { background: var(--warn-soft); box-shadow: inset 3px 0 var(--tone-warn); }
-.harness-root .he-relations .cut-list-table { font-size: 10px; }
 .harness-root .he-relations small { color: var(--ui-muted); }
 
 .harness-root .he-physical-fields { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:5px 0; }
@@ -435,18 +432,7 @@
 .harness-root .he-physical-list { max-height:150px; overflow:auto; }
 .harness-root .he-physical-list button { font-size:11px; }
 
-.harness-root .he-document-table {overflow:auto;max-height:240px;margin:6px 0;}
-.harness-root .he-document-table table {border-collapse:collapse;font-size:11px;min-width:600px;}
-.harness-root .he-document-table td,
-.harness-root .he-document-table th {padding:4px;border:1px solid var(--border);text-align:left;}
-.harness-root .he-document-table input {width:90px;}
 
-.harness-root .he-cut-backdrop {position:fixed;inset:0;z-index:1000;background:color-mix(in srgb, var(--foreground) 35%, transparent);display:flex;align-items:center;justify-content:center;padding:24px;}
-.harness-root .he-cut-dialog {background:var(--card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 45px color-mix(in srgb, var(--foreground) 27%, transparent);width:min(950px,95vw);max-height:92vh;overflow:auto;padding:18px;color:var(--foreground);}
-.harness-root .he-cut-dialog>.ui-section-heading {position:sticky;top:-18px;background:white;padding:8px 0;z-index:1;}
-.harness-root .he-cut-dialog>.ui-section-heading>button:last-child {margin-left:auto;}
-.harness-root .he-cut-dialog p,
-.harness-root .he-cut-dialog li {font-size:12px;}
 .harness-root .he-cut-svg {display:block;width:100%;min-width:500px;border:1px solid var(--border);margin:12px 0;background:var(--panel-soft);}
 .harness-root .he-cut-svg text {font:12px Arial;fill:var(--foreground);}
 .harness-root .he-cut-end-tables {display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:12px;}
@@ -456,7 +442,7 @@
 .harness-root .he-cut-fields {display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;}
 .harness-root .he-cut-fields label {font-size:11px;display:grid;gap:3px;}
 .harness-root .he-cut-fields input {width:140px;}
-@media(max-width:700px) {.harness-root .he-cut-backdrop {padding:8px}.harness-root .he-cut-end-tables {grid-template-columns:1fr}.harness-root .he-cut-dialog {padding:10px}}
+@media(max-width:700px) {.harness-root .he-cut-end-tables {grid-template-columns:1fr}}
 
 .harness-root .he-table-window {position:absolute;z-index:8;box-sizing:border-box;width:760px;max-width:calc(100% - 16px);height:380px;max-height:calc(100% - 16px);min-width:280px;min-height:160px;overflow:hidden;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 24px color-mix(in srgb, var(--foreground) 14%, transparent);font-size:12px;}
 .harness-root .he-table-window-resize {position:absolute;right:0;bottom:0;width:20px;height:20px;min-height:0;padding:2px;border:0;border-radius:3px;background:var(--sheet-selected);color:var(--muted-foreground);cursor:nwse-resize;touch-action:none;}
@@ -467,7 +453,6 @@
 .harness-root .he-table-window>header {display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--sheet-selected);cursor:move;touch-action:none;}
 .harness-root .he-table-window>header strong {flex:1;}
 .harness-root .he-table-window-body {flex:1;min-height:0;overflow:auto;padding:8px;}
-.harness-root .he-table-window .he-document-table {max-height:none;overflow:auto;}
 .harness-root .he-table-window table {width:100%;border-collapse:collapse;}
 .harness-root .he-table-window td,
 .harness-root .he-table-window th {padding:6px;border-bottom:1px solid var(--border);}
@@ -488,19 +473,6 @@
 .harness-root .he-table-window-body .he-relations-actions {margin:3px 0;}
 
 /* M4-67 reference tables: compact S1 visual language with explicit selection. */
-.harness-root .he-document-table { border:1px solid var(--border); border-radius:6px; background:var(--card); box-shadow:0 2px 8px rgb(39 75 91 / 8%); }
-.harness-root .he-document-table table { min-width:100%; border-collapse:separate; border-spacing:0; font-size:10px; color:var(--foreground); }
-.harness-root .he-document-table th { position:sticky; top:0; z-index:1; padding:6px 7px; border-right:1px solid var(--border); border-bottom:1px solid var(--muted-foreground); background:var(--sheet-selected); color:var(--muted-foreground); text-align:center; font-weight:800; white-space:nowrap; }
-.harness-root .he-document-table td { height:28px; padding:3px 6px; border-right:1px solid var(--border); border-bottom:1px solid var(--border); vertical-align:middle; white-space:nowrap; }
-.harness-root .he-document-table tbody tr:nth-child(even) { background:var(--panel-soft); }
-.harness-root .he-document-table tbody tr:hover { background:var(--sheet-selected); }
-.harness-root .he-document-table tbody tr.is-related { background:var(--border); box-shadow:inset 3px 0 var(--primary); }
-.harness-root .he-document-table td:first-child { font-weight:750; }
-.harness-root .he-connection-color-cell { font-weight:800; text-shadow:0 1px 1px rgb(0 0 0 / 12%); }
-.harness-root .he-document-table input,
-.harness-root .he-document-table select { height:24px; min-width:62px; padding:2px 5px; border:1px solid transparent; border-radius:3px; background:transparent; color:inherit; font-size:10px; }
-.harness-root .he-document-table input:focus,
-.harness-root .he-document-table select:focus { border-color:var(--muted-foreground); outline:2px solid var(--border); background:var(--card); }
 .harness-root .he-wire-row { display:inline-flex; align-items:center; gap:5px; min-width:54px; padding:2px 4px; border:0; border-radius:3px; background:transparent; color:var(--primary); font:700 10px Inter,Arial,sans-serif; cursor:pointer; }
 .harness-root .he-wire-row:hover { background:var(--sheet-selected); }
 .harness-root .he-wire-row i { width:9px; height:9px; display:inline-block; border:1px solid var(--muted-foreground); border-radius:50%; }
@@ -529,16 +501,6 @@
 .harness-root .he-right-panel { grid-row:1 / 4; }
 .harness-root .he-catalog { grid-row:3; }
 
-.harness-root .he-document-tools { display:flex; align-items:center; gap:12px; margin:0 0 8px; flex-wrap:wrap; }
-.harness-root .he-document-tools>input { flex:1; width:240px; max-width:none; min-width:120px; }
-.harness-root .he-document-tools>label { display:flex; gap:5px; align-items:center; white-space:nowrap; font-size:11px; }
-.harness-root .he-document-tools input[type="checkbox"] { width:14px; height:14px; min-width:0; min-height:0; margin:0; }
-.harness-root .he-document-table thead tr:nth-child(2) th { top:27px; }
-.harness-root .he-table-window .he-document-table td { padding:2px 6px; vertical-align:middle; }
-.harness-root .he-table-window .he-document-table th { padding:5px 7px; }
-.harness-root .he-table-window .he-document-table input { height:24px; min-height:24px; }
-.harness-root .he-table-window .he-document-table input[aria-label^="Наименование"] { width:180px; }
-.harness-root .he-table-window .he-document-table input[aria-label^="Примечание"] { width:170px; }
 
 .harness-root .he-table-window>header { background:var(--panel-soft); color:var(--foreground); border-bottom:1px solid var(--border); }
 .harness-root .he-table-window>header strong { color:var(--foreground); }
@@ -577,30 +539,13 @@
 .harness-root .he-relations[aria-label="Физические ветви"] .he-pipe-create { grid-template-columns:minmax(0,1fr); }
 .harness-root .he-relations[aria-label="Физические ветви"] .he-physical-fields select { max-width:none; padding:2px 6px; line-height:normal; }
 .harness-root .he-pipe-create .ui-control { justify-self:start; }
-.harness-root .he-table-window-document { display:flex; overflow:hidden; }
-.harness-root .he-table-window-document>.he-relations { flex:1; min-width:0; min-height:0; display:flex; }
-.harness-root .he-table-window-document .he-document-content { flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; }
-.harness-root .he-table-window .he-document-table { flex:1; min-height:0; overflow:auto; }
-.harness-root .he-document-table table { table-layout:auto; border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; }
-.harness-root .he-document-table thead { position:sticky; top:0; z-index:2; }
-.harness-root .he-document-table th,
-.harness-root .he-document-table thead tr:nth-child(2) th { position:static; }
-.harness-root .he-document-table th,
-.harness-root .he-document-table td { box-sizing:border-box; line-height:18px; }
-.harness-root .he-table-window .he-document-table input { box-sizing:border-box; width:110px; min-width:70px; max-width:none; }
 .harness-root .he-connection-wire-picker { position:relative; display:inline-flex; align-items:center; min-width:0; }
 .harness-root .he-connection-wire-picker > input { box-sizing:border-box; min-width:8ch; max-width:18ch; }
 .harness-root .he-table-window .he-connection-wire-picker > input { width:auto; min-width:8ch; }
-.harness-root .he-table-window .he-document-table td:nth-child(2) { min-width:64px; }
-.harness-root .he-table-window .he-document-table input[aria-label^="Цепь"] { min-width:8ch; }
-.harness-root .he-table-window .he-document-table input[aria-label^="Длина"] { min-width:7ch; }
 
-.harness-root .he-table-window-document .he-document-content>.ui-section-heading { display:none; }
 
 .harness-root .he-position-toggle { display:inline-flex; align-items:center; justify-content:center; width:24px; min-height:24px; padding:2px; margin-left:3px; vertical-align:middle; }
 .harness-root .he-position-toggle[aria-pressed="false"] { color:var(--muted-foreground); }
-.harness-root .he-table-window .he-document-table input[aria-label^="Наименование"] { width:220px; }
-.harness-root .he-table-window .he-document-table input[aria-label^="Индекс"] { width:100px; }
 .harness-root .he-thickness-control {display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;}
 .harness-root .he-thickness-control label {display:flex;align-items:center;gap:6px;}
 .harness-root .he-object-popover {position:fixed;inset:auto;margin:0;width:350px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;padding:10px;border:1px solid var(--muted-foreground);border-radius:8px;background:var(--card);color:var(--foreground);box-shadow:0 8px 28px color-mix(in srgb, var(--foreground) 20%, transparent);font:12px Arial,sans-serif;}
@@ -772,25 +717,6 @@
 }
 
 /* Connection/BOM tables use the cell as the sizing grid; controls fill their cell. */
-.harness-root .he-document-table tbody tr.is-related { background: inherit; box-shadow: none; }
-.harness-root .he-connections-table table { table-layout: fixed; width: 100%; min-width: 920px; }
-.harness-root .he-connections-table th,
-.harness-root .he-connections-table td { overflow: hidden; text-overflow: ellipsis; }
-.harness-root .he-connections-table [data-column="index"] { width: 9%; }
-.harness-root .he-connections-table [data-column="mark"] { width: 11%; }
-.harness-root .he-connections-table [data-column="section"] { width: 9%; }
-.harness-root .he-connections-table [data-column="marking"] { width: 12%; }
-.harness-root .he-connections-table [data-column="from"],
-.harness-root .he-connections-table [data-column="to"] { width: 15%; }
-.harness-root .he-connections-table [data-column="color"] { width: 10%; }
-.harness-root .he-connections-table [data-column="length"] { width: 9%; }
-.harness-root .he-connections-table [data-column="route"] { width: 10%; }
-.harness-root .he-connections-table input,
-.harness-root .he-connections-table select,
-.harness-root .he-connections-table .he-connection-wire-picker,
-.harness-root .he-connections-table .he-connection-wire-picker > input { box-sizing: border-box; width: 100% !important; min-width: 0; max-width: none; }
-.harness-root .he-document-table table[aria-label="Спецификация"] { table-layout: fixed; width: 100%; min-width: 720px; }
-.harness-root .he-document-table table[aria-label="Спецификация"] input { box-sizing: border-box; width: 100% !important; min-width: 0; max-width: none; }
 .harness-root .he-connection-wire-suggestions { max-height: 240px !important; overflow-y: scroll !important; scrollbar-gutter: stable; }
 .harness-root .he-connection-suggestion-count { display: block; padding: 5px 8px; border-bottom: 1px solid var(--border); background: var(--panel-soft); color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
 

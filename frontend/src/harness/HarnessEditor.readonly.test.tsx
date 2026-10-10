@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { CANVAS_EDIT_PROPS, readOnlyCanvasProps, type CanvasViewportProps } from "./editor/CanvasViewport";
 import { physicalFixture } from "./editor/physical-topology-fixture";
 import { HarnessEditorLazy, loadHarnessAdapters } from "./index";
+import type { HarnessDocumentsSource } from "./panels/documents-source";
 
 beforeAll(() => {
   // jsdom has neither ResizeObserver nor a 2D canvas; the editor draws nothing here, only the DOM is checked.
@@ -12,6 +13,15 @@ beforeAll(() => {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1600 }); // panels open as on a monitor
 });
 
+// Строки документов чертежа строит сервер; здесь — его ответ на чертёж-фикстуру.
+const documentsSource = {
+  load: vi.fn((kind: string) => Promise.resolve(kind === "connections"
+    ? { kind, rows: [{ wire_id: "W1", index: "W1", mark: "—", section: "—", marking: "—", from: "A (A):1", to: "B (B):1", color: "#334155", color_hex: "#334155", length_mm: 100, route: "Задан" }] }
+    : kind === "bom" ? { kind, quantity: 1, rows: [{ key: '["free","A"]', position: 1, index: "A", designation: "A", name: "2 конт. — Соединитель", amount: 1, unit: "шт.", note: "", object_ids: ["A"] }] }
+    : { kind, quantity: 1, items: [], sheets: [], status: "ready" })),
+  download: vi.fn(),
+} as unknown as HarnessDocumentsSource;
+
 async function openReadOnly() {
   const { createInMemoryHarnessDesignApi } = await loadHarnessAdapters();
   const api = createInMemoryHarnessDesignApi();
@@ -19,7 +29,7 @@ async function openReadOnly() {
   const stored = api.exportSnapshot("p-1", "h-1");
   const save = vi.spyOn(api, "save");
   const view = render(<Suspense fallback={<div>Загрузка редактора…</div>}>
-    <HarnessEditorLazy projectId="p-1" harnessId="h-1" harnessDesignation="КБ1" initialView="e4" apiOverride={api} readOnly />
+    <HarnessEditorLazy projectId="p-1" harnessId="h-1" harnessDesignation="КБ1" initialView="e4" apiOverride={api} documentsSource={documentsSource} readOnly />
   </Suspense>);
   await waitFor(() => expect(view.container.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 10_000 });
   return { api, stored, save, ...view };
@@ -83,11 +93,12 @@ describe("документы чертежа в режиме просмотра",
 
     fireEvent.click(connections);
     const window = await screen.findByRole("region", { name: "Таблица соединений на поле" });
-    expect(within(window).getByRole("table", { name: "Таблица соединений" })).toBeTruthy();
-    expect(within(window).getByText("W1")).toBeTruthy();
-    // Поля таблицы только для чтения, «Скачать» и окно — работают.
-    expect((within(window).getByLabelText("Длина W1") as HTMLInputElement).readOnly).toBe(true);
-    expect((within(window).getByRole("button", { name: "Скачать" }) as HTMLButtonElement).disabled).toBe(false);
+    const table = await within(window).findByRole("region", { name: "Таблица соединений" });
+    expect(within(table).getByText("W1")).toBeTruthy();
+    // Полей правки в таблице нет; «Скачать» (файл сохранённого чертежа) и окно — работают.
+    expect(within(table).queryByLabelText("Длина W1")).toBeNull();
+    fireEvent.click(within(window).getByRole("button", { name: "Скачать" }));
+    expect(documentsSource.download).toHaveBeenCalledWith("connections", 1);
     fireEvent.change(within(window).getByLabelText("Закрепить: Таблица соединений"), { target: { value: "right" } });
     expect((within(window).getByLabelText("Закрепить: Таблица соединений") as HTMLSelectElement).value).toBe("right");
 

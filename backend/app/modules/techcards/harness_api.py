@@ -1,7 +1,8 @@
 """HTTP of the harness drawing of a position (TECHMAP-GRAPHER embedded with the author's permission, see
 THIRD_PARTY_NOTICES.md). Routes only: the rules live in `harness/` — the document (`schema`), what may be stored
-(`validate`), the use cases with the revision history (`application`; tables in `harness_infrastructure`), «Ручная сборка» from the drawing
-(`assembly`) and the `.techmap-project.zip` exchange (`exchange`).
+(`validate`), the use cases with the revision history (`application`; tables in `harness_infrastructure`),
+«Ручная сборка» from the drawing (`assembly`), its documents — connection table, cut list, specification
+(`documents`) — and the `.techmap-project.zip` exchange (`exchange`).
 
 The concurrency token is the integer `revision` of the drawing (each save appends one, migration 0090). For one
 release a write also takes the old `version` (the hash of the stored bytes, or the revision as text — what this
@@ -12,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -25,7 +26,7 @@ from app.shared.http_auth import Principal, projects_edit_principal, projects_vi
 from app.shared.stored_files import decode_upload, file_response
 
 from .api import optional_references_uow_factory, techcards_uow_factory
-from .harness import application as harness
+from .harness import application as harness, documents as harness_documents
 from .harness.assembly import assembly_from_harness
 from .harness.exchange import design_from_export, export_zip
 from .harness.schema import Expected, HarnessError, decode, normalized
@@ -287,3 +288,45 @@ def restore_harness_revision(
         return _saved(harness.restore_revision(
             factory, project, index, number, expected, actor=principal.actor, now=now, references=references,
         ), created=False)
+
+
+# ── Documents of the drawing: connection table, cut list, specification (harness/documents.py) ─────────────────────
+
+DocumentKind = Literal["connections", "cut", "bom"]
+Harnesses = Annotated[int, Query(ge=1, le=100_000, description="На сколько жгутов считать расход")]
+
+
+@router.get("/{project}/harness/{index}/documents")
+def harness_documents_saved(
+    project: str, index: str, kind: DocumentKind,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    quantity: Harnesses = 1, format: Literal["json", "xlsx"] = "json",
+) -> Any:
+    """Документ сохранённого чертежа: «Таблица соединений», «Карта резки» или «Спецификация» на `quantity` жгутов;
+    `format=xlsx` — файл для Excel (как «Excel» таблиц ERP). Считается каждый раз, ничего не хранится."""
+    with _refusals():
+        product, content = harness.saved_design(factory, project, index)
+    if format != "xlsx":
+        return harness_documents.documents(kind, content, quantity)
+    title, headers, rows = harness_documents.table(kind, content, quantity)
+    return file_response(harness_documents.excel_text(headers, rows), "application/vnd.ms-excel",
+                         f"{product} — {title}.xls")
+
+
+@router.post("/{project}/harness/{index}/documents")
+def harness_documents_live(
+    project: str, index: str, payload: DerivePayload, kind: DocumentKind,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    quantity: Harnesses = 1,
+) -> dict:
+    """Тот же документ по чертежу из редактора (ещё не сохранённому) — окна редактора видят правку сразу, не дожидаясь
+    автосохранения. Без чертежа в запросе — сохранённый. Ничего не сохраняется."""
+    with _refusals():
+        if payload.design is None:
+            content = harness.saved_design(factory, project, index)[1]
+        else:
+            harness.product_of(factory, project, index)
+            content = normalized(payload.design)[0]
+    return harness_documents.documents(kind, content, quantity)
