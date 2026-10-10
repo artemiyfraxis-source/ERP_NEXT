@@ -1638,6 +1638,30 @@ export interface AuditItem {
   details: Record<string, unknown>;
 }
 
+export type BackgroundStatus = "ok" | "warn" | "red";
+
+/** Группа фоновых работ воркера (аудит U08): последний успех, время прогона, сбои подряд. */
+export interface BackgroundGroup {
+  key: string;
+  label: string;
+  status: BackgroundStatus;
+  success_at: string | null;
+  failure_at: string | null;
+  error: string | null;
+  duration_ms: number;
+  failures: number;
+  max_silence_seconds: number;
+}
+
+/** Тема очереди с ожидающими сообщениями: сколько и сколько ждёт самое старое. */
+export interface BackgroundTopic {
+  topic: string;
+  count: number;
+  oldest_at: string;
+  age_seconds: number;
+  status: BackgroundStatus;
+}
+
 export interface OutboxHealth {
   total: number;
   published: number;
@@ -1650,6 +1674,14 @@ export interface OutboxHealth {
     error: string;
     dead: boolean;
   }>;
+  ok?: boolean;
+  groups?: BackgroundGroup[];
+  topics?: BackgroundTopic[];
+  oldest_pending_seconds?: number | null;
+  /** «Повторить» остановленное задание — только администратору. */
+  can_retry?: boolean;
+  /** Сайты поставщиков, которые читаются без проверки сертификата (ERP_TLS_UNVERIFIED_HOSTS). */
+  tls_exceptions?: string[];
 }
 
 export class ApiError extends Error {
@@ -2971,6 +3003,9 @@ export const operationsApi = {
     return api<{ events: AuditItem[] }>(`/api/operations/audit${params.size ? `?${params}` : ""}`);
   },
   outbox: () => api<OutboxHealth>("/api/operations/outbox"),
+  /** Вернуть остановленное задание в очередь как есть (журналируется; повторный вызов ничего не меняет). */
+  retryOutbox: (id: string) =>
+    api<{ id: string; requeued: boolean }>(`/api/operations/outbox/${encodeURIComponent(id)}/retry`, { method: "POST" }),
 };
 
 /** Задача модулю по проекту: её ставит арбитр ERP по событию модуля (ARCH-TRACK-3). */

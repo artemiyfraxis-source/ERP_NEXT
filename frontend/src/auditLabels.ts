@@ -193,6 +193,12 @@ const EVENT_NAMES: Record<string, string> = {
   "identity.user_access_saved": "Исключения доступа сохранены",
   "identity.admin_mode_on": "Режим администратора включён",
   "identity.admin_mode_off": "Режим администратора выключен",
+  "identity.login_lock_released": "Блокировка входа снята",
+  // Темы очереди фоновых заданий (их показывают «Ошибки фоновых заданий» и «Фоновые процессы»).
+  "procurement.autofill_requested": "Автозаполнение строки закупки",
+  "notification.requested": "Уведомление",
+  "arbiter.trigger": "Задача модулю по проекту",
+  "operations.outbox_retried": "Фоновое задание запущено повторно",
 };
 
 const DETAIL_LABELS: Record<string, string> = {
@@ -213,6 +219,7 @@ const DETAIL_LABELS: Record<string, string> = {
   level: "уровень", access_level: "уровень доступа", shop_worker: "монтажник", site_master: "мастер площадки",
   login: "логин", role: "прежняя роль", changes: "изменения", exceptions: "исключения", levels: "уровни", people: "люди",
   note: "примечание",
+  source: "сайт", tls: "сертификат", topic: "задание", attempts: "попыток", error: "ошибка", released: "снято",
 };
 
 /* Уровни доступа по ключу: `level` и `access_level` в деталях событий хранят ключ, а не подпись. */
@@ -269,7 +276,8 @@ export function auditDetails(details: Record<string, unknown>): string {
     .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key))
     .map(([key, value]) => [
       DETAIL_LABELS[key] ?? key.replace(/_/g, " "),
-      LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value) : shown(value),
+      LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value)
+        : key === "topic" && typeof value === "string" ? auditEventName(value) : shown(value),
     ] as const)
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`);
