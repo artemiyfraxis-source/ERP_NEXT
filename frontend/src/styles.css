@@ -473,6 +473,7 @@ table.ship-lines td:first-child { width: 1%; }
 .db-tab-count { border-radius: 999px; padding: 0 7px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; font-weight: 400; }
 .db-tab.active .db-tab-count { color: var(--primary); }
 .db-clamp { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.db-clip { display: block; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-cell-input { width: 100%; min-width: 160px; }
 .db-dirty { color: var(--muted-foreground); font-size: 12px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
@@ -3187,3 +3188,8 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .wt-state.tone-ok { color: #15803d; }
 tr.wt-future td { color: var(--muted-foreground); opacity: .7; }
 tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--card)); }
+
+/* Б6 (аудит 10.10): «Техкарты проектов» и «База данных». */
+.tc-gen-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.data-table td .tr-code { color: var(--muted-foreground); font-size: 12px; }
+.data-table td .tr-edited { font-size: 12px; }
