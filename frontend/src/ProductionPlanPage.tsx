@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import {
+  kitsetsApi,
   productionApi,
   productionPlanApi,
   type Principal,
@@ -12,31 +14,33 @@ import {
 } from "./api";
 import { canAct } from "./navigation";
 import { PeopleLoadGrid } from "./PeopleLoad";
-import { PlanLoadSheet, markText, type SheetMark } from "./PlanLoadSheet";
+import { EMPTY, formatDate, formatDayMonth, formatMoment } from "./format";
+import { PlanLoadSheet, markText, periodWords, type SheetMark } from "./PlanLoadSheet";
+import { StatusChip } from "./StatusChip";
+import { deadlineTone, statusTone } from "./statusTone";
 
 const emptyPlan: ProductionPlanResult = { blockers: [], stages: [], review_values: [], rows: [] };
+const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
-function shortDate(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(`${value}T00:00:00`));
-}
-
-function moment(value: string | null) {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
-
-function dayMonth(value: string) {
-  return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit" }).format(new Date(value.length === 10 ? `${value}T00:00:00` : value));
-}
+const shortDate = (value: string | null) => formatDate(value) || EMPTY;
+const moment = (value: string | null) => formatMoment(value) || EMPTY;
 
 // planDaysTag_
 function daysTag(row: ProductionPlanRow) {
-  if (row.days_left === null || !row.deadline) return <span className="plan-tag">без дедлайна</span>;
+  if (row.days_left === null || !row.deadline) return <StatusChip tone="neutral">без дедлайна</StatusChip>;
   const days = row.days_left;
-  const tone = days < 0 ? "late" : days <= 3 ? "soon" : "ok";
-  const text = days < 0 ? `просрочен ${-days} дн` : days === 0 ? "дедлайн сегодня" : `${days} дн до ${dayMonth(row.deadline)}`;
-  return <span className={`plan-tag ${tone}`} title={`Дедлайн ${shortDate(row.deadline)}`}>{text}</span>;
+  const text = days < 0 ? `просрочен ${-days} дн` : days === 0 ? "дедлайн сегодня" : `${days} дн до ${formatDayMonth(row.deadline)}`;
+  return <StatusChip tone={deadlineTone(days)} title={`Дедлайн ${shortDate(row.deadline)}`}>{text}</StatusChip>;
+}
+
+const projectKey = (project: string) => project.trim().toUpperCase();
+
+/** «Проекты» без открытой карточки: тот же адрес раздела, что у ссылок меню (App слушает popstate). */
+function openProjectsList() {
+  const url = new URL(window.location.href);
+  url.search = "?section=projects";
+  window.history.pushState({}, "", url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 export function ProductionPlanPage({ principal, openProjectCard }: {
@@ -56,7 +60,10 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Проекты с карточкой в «Проектах»: № открывает карточку только у них (ПП-5); список не пришёл — по наличию КБ.
+  const [cards, setCards] = useState<Set<string> | null>(null);
   const canEdit = canAct(principal, "production");
+  const hasCard = (row: ProductionPlanRow) => cards ? cards.has(projectKey(row.project)) : row.kits.length > 0;
 
   async function reload() {
     setError("");
@@ -79,7 +86,12 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     Promise.all([productionApi.list(), productionApi.operators()])
       .then(([taskResult, operatorResult]) => { setTasks(taskResult.tasks ?? []); setOperators(operatorResult.operators ?? []); })
       .catch((reason) => setLoadError(reason instanceof Error ? reason.message : "Задания не загружены"));
-  }, []);
+    if (openProjectCard) {
+      kitsetsApi.list()
+        .then((result) => setCards(Array.isArray(result.items) ? new Set(result.items.map((item) => projectKey(item.project))) : null))
+        .catch(() => setCards(null));
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sheetSpan = useMemo(() => {
     // Календарь листа: сегодня −7 … +60 дней; сервер присылает границы, без них считаем сами.
@@ -116,8 +128,9 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   }
 
   function openRow(row: ProductionPlanRow) {
-    // № проекта открывает его карточку (владелец 29.09: панель снизу неудобна); проект без карточки — журнал сбоку.
-    if (openProjectCard && row.kits.length) openProjectCard(row.project);
+    // № проекта открывает его карточку (владелец 29.09: панель снизу неудобна); проект без карточки — журнал сбоку
+    // со строкой «карточки нет» вместо ложного «Карточка уже удалена».
+    if (openProjectCard && hasCard(row)) openProjectCard(row.project);
     else setSelectedProject(row.project);
   }
 
@@ -130,20 +143,22 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     {error && <div className="error-banner" role="alert">{error}</div>}
 
     <section className="panel plan-projects zg-panel" aria-label="Загрузка цеха">
-      <div className="plan-section-head"><h2>Загрузка цеха</h2><span className="zg-span">{shortDate(sheetSpan.from)} – {shortDate(sheetSpan.to)}</span></div>
+      <div className="plan-section-head"><h2>Загрузка цеха</h2>
+        <span className="zg-span" title={`Период листа ${shortDate(sheetSpan.from)} – ${shortDate(sheetSpan.to)}`}><b>{periodWords(sheetSpan.from, sheetSpan.to)}</b> · сегодня {WEEKDAYS[new Date(`${sheetSpan.today}T00:00:00`).getDay()]} {formatDayMonth(sheetSpan.today)}</span></div>
       {!loaded ? <div className="empty">Загрузка…</div>
         : <PlanLoadSheet rows={data.rows} from={sheetSpan.from} to={sheetSpan.to} today={sheetSpan.today} holidays={holidays}
           shopStatuses={data.shop_statuses ?? []} suppliedValues={data.supplied_values ?? ["НЕТ", "ДА", "Ч/Т"]}
           arrivalValues={data.arrival_values ?? ["Склад", "Ждем", "???"]} canEdit={canEdit} busy={busy}
           onMark={addMark}
           onDeadline={(project, deadline) => addEvent({ project, kind: "deadline", blocker: "", text: "", deadline })}
-          onOpenProject={openRow} onOpenJournal={(row) => setSelectedProject(row.project)} />}
+          onOpenProject={openRow} onOpenJournal={(row) => setSelectedProject(row.project)} hasCard={hasCard} />}
       {selected && <div className="plan-drawer" role="dialog" aria-label={`Проект ${selected.project}`}>
         <div className="plan-drawer-scrim" onClick={() => setSelectedProject("")} />
         <div className="plan-drawer-body">
         <button className="link-button plan-details-close" onClick={() => setSelectedProject("")}>✕ Закрыть</button>
         <PlanDetails row={selected} blockers={data.blockers} stages={data.stages} reviewValues={data.review_values} canEdit={canEdit} busy={busy} addEvent={addEvent}
-          openProjectCard={openProjectCard && selected.kits.length ? () => openProjectCard(selected.project) : undefined} />
+          openProjectCard={openProjectCard && hasCard(selected) ? () => openProjectCard(selected.project) : undefined}
+          noCard={Boolean(openProjectCard) && !hasCard(selected)} />
         </div>
       </div>}
     </section>
@@ -159,9 +174,11 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   </section>;
 }
 
-function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEvent, openProjectCard }: {
+function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEvent, openProjectCard, noCard = false }: {
   row: ProductionPlanRow;
   openProjectCard?: () => void;
+  /** У проекта нет карточки в «Проектах» — честная строка и переход к ним. */
+  noCard?: boolean;
   blockers: string[];
   stages: string[];
   reviewValues: string[];
@@ -184,10 +201,18 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
 
   const valid = kind === "unblock" || (kind === "deadline" ? Boolean(deadline) : Boolean(text.trim()) && (kind !== "block" || Boolean(blocker)));
   return <aside className="panel production-plan-details">
-    <div className="plan-detail-head"><div><span className="eyebrow">Проект</span><h2>{row.project}</h2></div><span className="status">{row.stage}</span></div>
-    <div className="plan-tags">{row.blocker && <span className="plan-tag blocker">{row.blocker.type}</span>}{daysTag(row)}</div>
-    {openProjectCard && <div className="plan-acts"><button className="secondary" onClick={openProjectCard}>Карточка проекта</button></div>}
-    {row.blocker && <p className="plan-blocker">⛔ {row.blocker.type} с {moment(row.blocker.since)} · {row.blocker.text} — {row.blocker.who}</p>}
+    <div className="plan-detail-head"><div><span className="eyebrow">Проект</span><h2>{row.project}</h2></div><StatusChip status={row.stage} /></div>
+    <div className="plan-tags">{row.blocker && <StatusChip status={row.blocker.type} />}{daysTag(row)}</div>
+    {openProjectCard && <div className="plan-acts"><button className="secondary" onClick={openProjectCard}>Открыть карточку проекта</button></div>}
+    {noCard && <div className="warning-inline plan-no-card" role="note">
+      <span>Карточки проекта {row.project} в «Проектах» нет — создайте её из расчёта.</span>
+      <a className="secondary small plan-link-button" href="?section=projects" onClick={(event) => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
+        event.preventDefault();
+        openProjectsList();
+      }}>Открыть «Проекты»</a>
+    </div>}
+    {row.blocker && <p className="plan-blocker" data-tone={statusTone(row.blocker.type)}><b>{row.blocker.type}</b> с {moment(row.blocker.since)} · {row.blocker.text} — {row.blocker.who}</p>}
     <section><h3>Проект</h3><p>Заказчик: {row.customer || "—"} · дедлайн {shortDate(row.deadline)} · заведён {shortDate(row.opened_on)}</p></section>
     <div className="plan-kit-stages">{row.kits.map((item) => <KitMarkEditor
       key={item.item_index} project={row.project} item={item} stages={stages}
@@ -211,7 +236,7 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
       <label>Запись<select value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}><option value="note">Комментарий</option><option value="block">Блокер</option>{row.blocker && <option value="unblock">Снять блокер</option>}<option value="deadline">Дедлайн</option></select></label>
       {kind === "block" && <label>Вид<select value={blocker} onChange={(event) => setBlocker(event.target.value)}>{blockers.map((item) => <option key={item}>{item}</option>)}</select></label>}
       {kind === "deadline" && <label>Дата<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
-      {kind !== "unblock" && <label className="plan-note-text">Комментарий<textarea value={text} onChange={(event) => setText(event.target.value)} /></label>}
+      {kind !== "unblock" && <label className="plan-note-text">Комментарий<AutoTextarea value={text} multiline maxRows={8} onChange={setText} /></label>}
       <button className="primary" disabled={busy || !valid} onClick={() => void submit()}>Записать</button>
     </div></section>}
     <section className="plan-journal"><h3>История</h3>{row.events.map((event) => <article key={event.id}><div><strong>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}</strong><time>{moment(event.occurred_at)}</time></div><p>{event.field ? markText(event) : event.text || "Без комментария"}</p><small>{event.who}</small></article>)}{!row.events.length && <div className="empty">Записей пока нет.</div>}</section>
@@ -255,7 +280,7 @@ function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, add
         }}>
         {reviewValues.map((value) => <option key={value}>{value}</option>)}
       </select></label>
-      {review === "с погрешностями" && <label>Погрешности<textarea aria-label={`Погрешности ${item.item_index}`} value={reviewText} onChange={(event) => setReviewText(event.target.value)} /></label>}
+      {review === "с погрешностями" && <label>Погрешности<AutoTextarea aria-label={`Погрешности ${item.item_index}`} value={reviewText} multiline onChange={setReviewText} /></label>}
       {review === "с погрешностями" && <button className="secondary small" disabled={busy || !reviewText.trim()} onClick={() => void addEvent(payload("tcReview", review, reviewText))}>Сохранить проверку</button>}
     </> : <>
       <span>{item.status}{item.manual ? " · вручную" : ""}</span>

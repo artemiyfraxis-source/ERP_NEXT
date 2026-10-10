@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ProductionAbsence, ProductionOperator, ProductionShift, ProductionTask } from "./api";
-import { PeopleLoadGrid, absenceLabel, dayPart } from "./PeopleLoad";
+import { LoadLegend, PeopleLoadGrid, absenceLabel, dayPart, loadLevel, loadThresholdsText, shiftCapacity } from "./PeopleLoad";
 
 const shift: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:00", breaks: [], effective_hours: "7" };
 const busy = { id: "o1", name: "Иванов Иван", site: "ЦАР" } as unknown as ProductionOperator;
@@ -45,4 +45,35 @@ it("dayPart режет окно сменой дня", () => {
   expect(new Date(second.start).getHours()).toBe(9);
   expect(second.resumed).toBe("пн");
   expect(second.continues).toBe("");
+});
+
+it("цвет загрузки — по доле реальной смены: частично < 85 %, занята 85–105 %, перегруз > 105 % (ПП-9)", () => {
+  expect(loadLevel(0, 8)).toBe("free");
+  expect(loadLevel(5.6, 8)).toBe("low");
+  expect(loadLevel(6.7, 8)).toBe("low");
+  expect(loadLevel(6.8, 8)).toBe("full");
+  expect(loadLevel(8.4, 8)).toBe("full");
+  expect(loadLevel(8.5, 8)).toBe("over");
+  expect(loadLevel(5.6, 7)).toBe("low");
+  expect(loadLevel(6, 7)).toBe("full");
+  expect(shiftCapacity({ effective_hours: "8" })).toBe(8);
+  expect(shiftCapacity({ effective_hours: "" })).toBe(7);
+  expect(shiftCapacity(undefined)).toBe(7);
+});
+
+it("легенда — примеры из реальной смены и пороги словами", () => {
+  const { container } = render(<LoadLegend capacity={8} />);
+  const cells = Array.from(container.querySelectorAll(".mb-cell")).map((item) => item.textContent);
+  expect(cells.slice(1, 4)).toEqual(["4/8", "8/8", "10/8"]);
+  expect(container.firstElementChild?.getAttribute("title")).toBe(loadThresholdsText(8));
+  expect(loadThresholdsText(8)).toBe("Смена 8 ч. Частично — меньше 6,8 ч (85 % смены); смена занята — 6,8–8,4 ч (85–105 %); перегруз — больше 8,4 ч");
+});
+
+it("5,6 ч из 8-часовой смены — «частично», а не «смена занята»", () => {
+  const long: ProductionShift = { ...shift, finish: "18:00", effective_hours: "8" };
+  render(<PeopleLoadGrid operators={[busy]} tasks={[task]} absences={[]} holidays={[]} shift={long} week={0} onWeekChange={() => {}} />);
+  const cell = screen.getByLabelText("Загрузка Иванов Иван 06.10").closest("td")!;
+  expect(cell.textContent).toMatch(/\/8$/);
+  expect(cell.className).toContain("low");
+  expect(screen.getByText("8/8").className).toContain("full");
 });
