@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0099_worker_heartbeats"
-down_revision: str | None = "0096_cable_structure"
+down_revision: str | None = "0098_project_keys"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
