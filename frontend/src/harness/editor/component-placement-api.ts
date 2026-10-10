@@ -2,9 +2,7 @@ import {
   parseComponentTemplateContent,
   type ComponentTemplateContent,
 } from "../component-library/template-content";
-import type { ComponentTemplateApi } from "../component-library/component-template-api";
-import { HarnessDesignApiError, type InMemoryHarnessDesignApi } from "./design-api";
-import type { ConnectorInstance } from "./model";
+import type { ConnectorInstance, HarnessDesignDocument } from "./model";
 import { validateConnectorLibraryMetadata } from "./model";
 
 /** Derive the request from the same immutable binding that produced the preview. */
@@ -89,81 +87,14 @@ export interface ProjectComponentPlacementGraph {
 
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Project-owned placements of library components: each placement pins an immutable template snapshot. */
+/** Placements of library components on a drawing: each placed connector pins template + revision (ERP: the
+ *  connector's `libraryBinding`; the library is `harness_component_templates`). */
 export interface ComponentPlacementApi {
   list(projectId: string, harnessId: string): Promise<ProjectComponentPlacementGraph>;
   assetContentUrl(projectId: string, harnessId: string, snapshotId: string, assetId: string): string;
-  /** Atomically pins the snapshot and adds the connector to the design (revision + 1). Idempotent by commandId. */
-  place(projectId: string, harnessId: string, body: PlaceComponentRequest): Promise<ComponentPlacementResult>;
-}
-
-/**
- * In-memory counterpart of the placement endpoint. It writes the connector into the in-memory design
- * store under the same revision check a server would apply, so the editor's confirmation path
- * (place → get → compare revision) runs unchanged.
- */
-export function createInMemoryComponentPlacementApi(
-  design: InMemoryHarnessDesignApi,
-  templates: ComponentTemplateApi,
-  now: () => string = () => new Date().toISOString(),
-): ComponentPlacementApi {
-  const placements = new Map<string, ProjectComponentPlacementResource[]>();
-  const snapshots = new Map<string, ProjectComponentSnapshotResource>();
-  const commands = new Map<string, ComponentPlacementResult>();
-  const key = (projectId: string, harnessId: string) => `${projectId}\u0000${harnessId}`;
-  return {
-    async list(projectId, harnessId) {
-      const items = placements.get(key(projectId, harnessId)) ?? [];
-      const used = [...new Set(items.map((item) => item.snapshotId))];
-      return Object.freeze({
-        placements: Object.freeze([...items]),
-        snapshots: Object.freeze(used.map((id) => snapshots.get(id)!)),
-      });
-    },
-    assetContentUrl(_projectId, _harnessId, snapshotId, assetId) {
-      const snapshot = snapshots.get(snapshotId);
-      return snapshot ? templates.assetContentUrl(snapshot.sourceTemplateId, snapshot.sourceVersion, assetId) : "";
-    },
-    async place(projectId, harnessId, body) {
-      const done = commands.get(body.commandId);
-      if (done) return done;
-      const binding = body.instance.libraryBinding;
-      if (binding?.mode !== "template" || binding.templateId !== body.sourceTemplateId ||
-          binding.templateVersion !== body.sourceVersion) {
-        throw new HarnessDesignApiError("Размещение не совпадает с привязкой компонента.", "placement_invalid", null);
-      }
-      const template = await templates.getVersion(body.sourceTemplateId, body.sourceVersion);
-      if (template.versionSha256 !== binding.versionSha256) {
-        throw new HarnessDesignApiError("Версия библиотечного компонента изменилась.", "placement_invalid", null);
-      }
-      const saved = design.mutate(projectId, harnessId, body.expectedRevision, (content) => {
-        if (content.connectors.some((connector) => connector.id === body.placementId)) {
-          throw new HarnessDesignApiError("Компонент уже размещён в жгуте.", "placement_duplicate", null);
-        }
-        return { ...content, connectors: [...content.connectors, body.instance] };
-      });
-      const timestamp = now();
-      const snapshot: ProjectComponentSnapshotResource = Object.freeze({
-        snapshotId: crypto.randomUUID(), projectId,
-        sourceTemplateId: template.templateId, sourceVersion: template.version, sourceVersionSha256: template.versionSha256,
-        code: template.code, name: template.name, articleBindings: template.articleBindings, assets: template.assets,
-        schemaVersion: template.content.schemaVersion, content: template.content,
-        createdUtc: timestamp, updatedUtc: timestamp,
-      });
-      snapshots.set(snapshot.snapshotId, snapshot);
-      const list = placements.get(key(projectId, harnessId)) ?? [];
-      list.push(Object.freeze({
-        placementId: body.placementId, harnessId, snapshotId: snapshot.snapshotId,
-        sourceId: body.sourceId, entityType: body.entityType, articleKey: body.articleKey,
-        instance: Object.freeze({ ...body.instance }) as Readonly<Record<string, unknown>>,
-        createdUtc: timestamp, updatedUtc: timestamp,
-      }));
-      placements.set(key(projectId, harnessId), list);
-      const result = { commandId: body.commandId, resultingRevision: saved.revision, snapshotId: snapshot.snapshotId };
-      commands.set(body.commandId, result);
-      return result;
-    },
-  };
+  /** Stores `document` — the drawing with the placed connector — as the next revision after `body.expectedRevision`,
+   *  once the pinned revision is checked against the library. Idempotent by commandId. */
+  place(projectId: string, harnessId: string, body: PlaceComponentRequest, document: HarnessDesignDocument): Promise<ComponentPlacementResult>;
 }
 
 export function parseComponentPlacementGraph(

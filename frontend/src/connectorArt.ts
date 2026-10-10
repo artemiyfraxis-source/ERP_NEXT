@@ -9,7 +9,7 @@ export type ConnectorHousing = {
   art?: string; family?: string; title?: string; pitch?: number | null; rows: number; cols: number; n?: number;
   kind?: string; color: string; latch?: string; cavity?: string; labels?: string[] | null; male?: boolean | null;
   grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null; conf?: string; note?: string;
-  body?: HousingBody | null; src?: string;
+  body?: HousingBody | null; src?: string; model?: string;
 };
 
 /** Корпус по чертежу производителя (connector_housings.py `body`), мм: ширина B = (колонок−1)·шаг + extra (+ выступы
@@ -21,10 +21,10 @@ export type HousingBody = {
   win?: [number, number] | number[]; lock_w?: number; lock_inset?: number; lock_h?: number;
 };
 
-type Pt = [number, number];
-type Box = { w: number; h: number; body: string };
+export type Pt = [number, number];
+export type Box = { w: number; h: number; body: string };
 
-const EDGE = "#17272b";
+export const EDGE = "#17272b";
 const WIRE_COLORS: Array<[RegExp, string]> = [
   [/желт/i, "#f2c200"], [/зел[её]н/i, "#2e9e4f"], [/черн/i, "#222"], [/красн/i, "#d7322d"], [/бел/i, "#f4f4f4"],
   [/син/i, "#2463c7"], [/голуб/i, "#5bb4e5"], [/оранж/i, "#f08a1c"], [/коричн/i, "#7a4a24"], [/сер/i, "#8d9297"], [/фиолет/i, "#7b4bb3"],
@@ -43,7 +43,7 @@ function esc(value: unknown): string {
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 }
 
-const f = (n: number) => String(Math.round(n * 100) / 100);
+export const f = (n: number) => String(Math.round(n * 100) / 100);
 
 function rgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
@@ -58,12 +58,12 @@ export function shade(hex: string, k: number): string {
   return `#${[r, g, b].map((c) => Math.max(0, Math.min(255, mix(c))).toString(16).padStart(2, "0")).join("")}`;
 }
 
-function isDark(hex: string): boolean {
+export function isDark(hex: string): boolean {
   const [r, g, b] = rgb(hex);
   return r * 0.3 + g * 0.59 + b * 0.11 < 110;
 }
 
-function poly(points: Pt[], fill: string, stroke = EDGE, width = 0.8, extra = ""): string {
+export function poly(points: Pt[], fill: string, stroke = EDGE, width = 0.8, extra = ""): string {
   return `<polygon points="${points.map(([x, y]) => `${f(x)},${f(y)}`).join(" ")}" fill="${fill}" stroke="${stroke}" stroke-width="${width}" stroke-linejoin="round"${extra}/>`;
 }
 
@@ -126,7 +126,7 @@ function circlePts(cx: number, cy: number, r: number, n = 36): Pt[] {
 }
 
 /** Призма: торец `front` вытянут назад на (ox, oy); видимые боковые грани светлее сверху и темнее справа. */
-function prism(front: Pt[], ox: number, oy: number, color: string, width = 0.8): string {
+export function prism(front: Pt[], ox: number, oy: number, color: string, width = 0.8): string {
   const cx = front.reduce((s, p) => s + p[0], 0) / front.length, cy = front.reduce((s, p) => s + p[1], 0) / front.length;
   const faces: Array<{ pts: Pt[]; light: number; z: number }> = [];
   front.forEach((a, i) => {
@@ -141,12 +141,12 @@ function prism(front: Pt[], ox: number, oy: number, color: string, width = 0.8):
   return faces.sort((p, q) => p.z - q.z).map((face) => poly(face.pts, shade(color, face.light), EDGE, width)).join("");
 }
 
-function gradient(id: string, color: string): string {
+export function gradient(id: string, color: string): string {
   return `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${shade(color, 0.22)}"/>` +
     `<stop offset="1" stop-color="${shade(color, -0.12)}"/></linearGradient></defs>`;
 }
 
-function gradId(color: string): string {
+export function gradId(color: string): string {
   return `cgr${color.replace(/[^0-9a-f]/gi, "")}`;
 }
 
@@ -328,18 +328,18 @@ export function connectorFaceUnits(hs: ConnectorHousing): number {
   return Math.max(hs.cols + (hs.kind === "dsub" ? 1 : 0), 1) / (hs.kind === "dsub" ? 2 : 1);
 }
 
-function bodyWidth(hs: ConnectorHousing, b: HousingBody, pitch: number): number {
+export function bodyWidth(hs: ConnectorHousing, b: HousingBody, pitch: number): number {
   return (hs.cols - 1) * pitch + b.extra + 2 * (b.ears || 0);
 }
 
 /** Центры окон по x (мм от левого края корпуса) в порядке колонок сетки. */
-function bodyColumns(hs: ConnectorHousing, b: HousingBody, pitch: number): number[] {
+export function bodyColumns(hs: ConnectorHousing, b: HousingBody, pitch: number): number[] {
   const x0 = (b.ears || 0) + b.extra / 2;
   return Array.from({ length: hs.cols }, (_, c) => x0 + c * pitch);
 }
 
 /** Ширина защёлки на верхней грани (мм): своя ширина или корпус без отступов lock_inset; 0 — защёлки нет. */
-function lockWidth(b: HousingBody, W: number): number {
+export function lockWidth(b: HousingBody, W: number): number {
   if (!b.lock_h) return 0;
   return b.lock_w ? Math.min(b.lock_w, W) : Math.max(1.5, W - 2 * (b.lock_inset || 0));
 }

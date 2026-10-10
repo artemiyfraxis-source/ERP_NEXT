@@ -1,27 +1,30 @@
-import { routeCutReadiness } from "./cut-readiness";
-import { CutDiagramPanel } from "./CutDiagramPanel";
-import type { EditorCommand } from "./commands";
-import { useMemo, useState } from "react";
-import { HarnessCutListTable } from "../HarnessCutListPanel";
+import { useState } from "react";
 import { InfoHint } from "../InfoHint";
 import type { HarnessDesignDocument } from "./model";
-import { buildLiveCutList } from "./live-cut-list";
 import type { resolveHarnessSelection } from "./harness-selection";
+import { CutItemsTable } from "../panels/CutListPanel";
+import { useHarnessDocument } from "../panels/documents-source";
 
-export function HarnessRelationsPanel({ document, projectId, harnessId, quantity, related, wholeNet, onWholeNet, onReveal, onClear, unsaved, hiddenCount, revision, onCommand, onOpenCut, showCut = false, sourceFingerprint }: {
-  sourceFingerprint?: string;
-  showCut?: boolean;
-  onOpenCut?:()=>void;revision:number; onCommand:(command:EditorCommand)=>boolean;
-  document: HarnessDesignDocument; projectId: string; harnessId: string; quantity: number;
-  related: ReturnType<typeof resolveHarnessSelection>; wholeNet: boolean; onWholeNet: (value: boolean) => void;
-  onReveal: (id?: string) => void; onClear: () => void; unsaved: boolean; hiddenCount: number;
+/** The cut list of the side panel: asked from the server only while it is open. */
+function RelatedCutList({ document, quantity, related, onlyRelated, onReveal }: {
+  document: HarnessDesignDocument; quantity: number; related: readonly string[]; onlyRelated: boolean; onReveal: (id?: string) => void;
 }) {
-  const cutReady=routeCutReadiness(document,sourceFingerprint,unsaved);
+  const { data, error } = useHarnessDocument("cut", document, quantity);
+  if (!data) return error ? <div className="error-banner" role="alert">{error}</div> : <div className="empty">Загрузка…</div>;
+  const items = onlyRelated ? data.items.filter(item => related.includes(item.id)) : data.items;
+  return <CutItemsTable items={items} activeId={related.find(id => items.some(item => item.id === id))} onSelect={item => onReveal(item.id)} />;
+}
+
+export function HarnessRelationsPanel({ document, quantity, related, wholeNet, onWholeNet, onReveal, onClear, hiddenCount, onOpenCut, showCut = false }: {
+  showCut?: boolean; onOpenCut?: () => void;
+  document: HarnessDesignDocument; quantity: number;
+  related: ReturnType<typeof resolveHarnessSelection>; wholeNet: boolean; onWholeNet: (value: boolean) => void;
+  onReveal: (id?: string) => void; onClear: () => void; hiddenCount: number;
+}) {
   const [onlyRelated, setOnlyRelated] = useState(false);
-  const list = useMemo(() => buildLiveCutList(document, projectId, harnessId, quantity), [document, projectId, harnessId, quantity]);
-  const displayed = onlyRelated ? { ...list, items: list.items.filter(item => related.rowIds.includes(item.wireId)) } : list;
+  const [cutOpen, setCutOpen] = useState(false);
   return <section className="he-relations" aria-label="Связанные провода">
-    <header className="ui-section-heading"><strong>Провода · {related.wireIds.length}</strong><InfoHint>Подсветка показывает связи и не расширяет набор объектов для удаления или перемещения. «Вся цепь» проходит через электрические узлы, сохраняя независимость контактов разъёма. Карта рассчитана по текущему документу.</InfoHint></header>
+    <header className="ui-section-heading"><strong>Провода · {related.wireIds.length}</strong><InfoHint>Подсветка показывает связи и не расширяет набор объектов для удаления или перемещения. «Вся цепь» проходит через электрические узлы, сохраняя независимость контактов разъёма. Заготовки для резки считает сервер по текущему чертежу.</InfoHint></header>
     <div className="he-relations-actions">
       <label><input type="checkbox" checked={wholeNet} onChange={e => onWholeNet(e.target.checked)} />Вся цепь</label>
       <button type="button" className="ui-control" disabled={!related.wireIds.length} onClick={() => onReveal()}>На чертеже</button>
@@ -29,12 +32,10 @@ export function HarnessRelationsPanel({ document, projectId, harnessId, quantity
     </div>
     {hiddenCount > 0 && <small role="status">На скрытых слоях: {hiddenCount}</small>}
     {related.unresolvedIds.length > 0 && <small role="status">Объект отсутствует в текущем документе.</small>}
-    {showCut && !cutReady.ready && <p role="status">{cutReady.message}</p>}
-    {showCut && cutReady.ready && <>{onOpenCut?<button type="button" className="ui-control" onClick={onOpenCut}>Схема резки / разделки</button>:<CutDiagramPanel sourceFingerprint={sourceFingerprint} document={document} quantity={quantity} revision={revision} unsaved={unsaved} relatedIds={related.rowIds} onReveal={onReveal} onCommand={onCommand}/>}
-    <details><summary>Карта резки · {list.items.length}</summary>
-      <div className="he-relations-actions"><label><input type="checkbox" checked={onlyRelated} onChange={e => setOnlyRelated(e.target.checked)} />Только связанные</label></div>
-      <small role="status">{unsaved ? `Текущий документ · не сохранён · база r${revision}` : `Сохранённая ревизия r${revision}`}</small>
-      <HarnessCutListTable cutList={displayed} onReveal={onReveal} highlightedIds={related.rowIds} />
-    </details></>}
+    {showCut && <>{onOpenCut && <button type="button" className="ui-control" onClick={onOpenCut}>Схема резки / разделки</button>}
+      <details open={cutOpen} onToggle={e => setCutOpen(e.currentTarget.open)}><summary>Карта резки</summary>
+        <div className="he-relations-actions"><label><input type="checkbox" checked={onlyRelated} onChange={e => setOnlyRelated(e.target.checked)} />Только связанные</label></div>
+        {cutOpen && <RelatedCutList document={document} quantity={quantity} related={related.rowIds} onlyRelated={onlyRelated} onReveal={onReveal} />}
+      </details></>}
   </section>;
 }

@@ -3,11 +3,12 @@ import { notificationKind } from "./notificationLabels";
 
 describe("notificationKind", () => {
   it("names every kind the backend producers send in Russian", () => {
-    const labels = ["digest", "disposal", "error", "nonconformity", "quarantine", "ready", "ship", "security", "leave", "status", "info"]
+    const labels = ["digest", "disposal", "error", "nonconformity", "quarantine", "ready", "ship", "security", "leave", "status", "info",
+      "arrival", "production"]
       .map((type) => notificationKind(type).label);
     expect(labels).toEqual([
       "Сводка", "Утилизация", "Ошибка", "Несоответствие", "Карантин", "Готово к выдаче",
-      "Отгрузка", "Безопасность", "Отпуск и отгул", "Статус заявки", "Сообщение",
+      "Отгрузка", "Безопасность", "Отпуск и отгул", "Статус заявки", "Сообщение", "Приход под проект", "Цех",
     ]);
     for (const label of labels) expect(label).not.toMatch(/[A-Za-z]/);
   });

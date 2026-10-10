@@ -3,7 +3,7 @@ import type { PhysicalCovering } from "./physical-coverings";
 
 /** Persisted topology only. Generated routing vertices never enter this model. */
 export type PhysicalDirection = "left" | "right" | "up" | "down";
-export interface PhysicalNode { readonly id: string; readonly position: Point; readonly connectorId?: string; readonly wireIds?: readonly string[]; readonly direction?: PhysicalDirection; readonly contactDirections?: Readonly<Record<string, PhysicalDirection>> }
+export interface PhysicalNode { readonly id: string; readonly position: Point; readonly connectorId?: string; readonly wireIds?: readonly string[]; /** Wires that may pass this connector exit as a physical transit point. */ readonly transitWireIds?: readonly string[]; readonly direction?: PhysicalDirection; readonly contactDirections?: Readonly<Record<string, PhysicalDirection>> }
 /** Routed paths return to automatic routing when their last authored point is removed.
  * Polylines retain their authored shape even with no internal points (split fragments). */
 export type PhysicalPath =

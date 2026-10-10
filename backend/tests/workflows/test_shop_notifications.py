@@ -166,3 +166,27 @@ def test_person_on_two_next_operations_gets_one_notice(shop):
         session.commit()
     run(shop)
     assert [item[0] for item in notices(shop)].count(str(shop.ids.next_a)) == 1
+
+
+def test_start_notice_names_the_operation_not_its_code(shop, monkeypatch):
+    add_box(shop, "Подтверждена")
+    with shop.sessions() as session:
+        row = session.get(ProductionOperationRow, shop.ids.assemble)
+        row.code, row.stage = "INS_terminal_1.00", "INS_terminal_1.00"
+        session.commit()
+    monkeypatch.setattr("app.workflows.arbiter._route_names", lambda _session: {"INS_terminal_1.00": "Монтаж терминалов"})
+    event(shop, "production.box_confirmed", {"number": "000123-4"})
+    run(shop)
+    bodies = [body for _, body, _ in notices(shop)]
+    assert bodies and all("INS_terminal" not in body and "ПЗ-0412 Монтаж терминалов —" in body for body in bodies)
+
+
+def test_start_notice_strips_code_prefix_without_route(shop):
+    add_box(shop, "Подтверждена")
+    with shop.sessions() as session:
+        session.get(ProductionOperationRow, shop.ids.assemble).stage = "INS_terminal_1.00 | Монтаж терминалов"
+        session.commit()
+    event(shop, "production.box_confirmed", {"number": "000123-4"})
+    run(shop)
+    bodies = [body for _, body, _ in notices(shop)]
+    assert bodies and all("INS_terminal" not in body and "ПЗ-0412 Монтаж терминалов —" in body for body in bodies)

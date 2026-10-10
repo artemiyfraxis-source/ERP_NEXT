@@ -8,7 +8,7 @@ from decimal import Decimal
 import json
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker
 
 from app.modules.identity.infrastructure import IdentityUserRow
@@ -18,7 +18,7 @@ from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinis
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .application import Absence, Operator
-from .domain import DEFAULT_SHIFT, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
+from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import PlanEvent, PlanProjectSnapshot, normalize_project_number
 from .genealogy import (
     BoxConsumptionSnapshot,
@@ -57,7 +57,20 @@ from .traceability import (
 
 class ProductionTaskRow(Base):
     __tablename__ = "production_tasks"
-    __table_args__ = (Index("ix_production_status_created_id", "status", "created_at", "id"),)
+    __table_args__ = (
+        Index("ix_production_status_created_id", "status", "created_at", "id"),
+        # Цель 2 (миграция 0089): план задания — ограничениями базы, не только кодом.
+        CheckConstraint("flow_mode IN ('sequential', 'parallel', 'mixed')", name="ck_production_tasks_flow_mode"),
+        CheckConstraint(
+            "transfer_batch IS NULL OR (transfer_batch >= 1 AND transfer_batch <= quantity)",
+            name="ck_production_tasks_transfer_batch",
+        ),
+        CheckConstraint(
+            "early_quantity IS NULL OR (early_quantity >= 1 AND early_quantity < quantity)",
+            name="ck_production_tasks_early_quantity",
+        ),
+        CheckConstraint("techcard_revision IS NULL OR techcard_revision >= 1", name="ck_production_tasks_techcard_revision"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
@@ -74,8 +87,50 @@ class ProductionTaskRow(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     launched_by: Mapped[str] = mapped_column(String(255), nullable=False)
     handed_to: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    # План задания (Цель 2): техкарта и ревизия норм (NULL — задание до 0089), режим передачи, передаточная партия
+    # (NULL — вся партия), «первые k раньше» (NULL — нет). Без FK на техкарту: задание хранит происхождение и
+    # после удаления карты вместе с проектом.
+    techcard_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    techcard_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    flow_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="mixed", server_default="mixed")
+    transfer_batch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    early_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class ProductionTaskTeamRow(Base):
+    """Команда задания: люди из справочника сотрудников по id, в порядке выбора."""
+    __tablename__ = "production_task_team"
+    __table_args__ = (
+        UniqueConstraint("task_id", "position", name="ux_production_task_team_position"),
+        CheckConstraint("position >= 0", name="ck_production_task_team_position"),
+    )
+
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), primary_key=True)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), primary_key=True, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ProductionTaskDeliveryRow(Base):
+    """«Сдано N шт» площадки без нормирования (ЖУК). Отмена — отметка, строка остаётся."""
+    __tablename__ = "production_task_deliveries"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_production_task_deliveries_quantity"),
+        CheckConstraint(
+            "(cancelled_at IS NULL AND cancelled_by IS NULL) OR (cancelled_at IS NOT NULL AND cancelled_by IS NOT NULL)",
+            name="ck_production_task_deliveries_cancel",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    site: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    delivered_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class ProductionOperationRow(Base):
@@ -450,6 +505,10 @@ class SqlAlchemyProductionRepository:
             inputs.setdefault(item.operation_id, []).append(
                 OperationInput(item.input_operation_id, item.per_unit, item.transfer_batch)
             )
+        team = tuple(self.session.scalars(
+            select(ProductionTaskTeamRow.operator_id).where(ProductionTaskTeamRow.task_id == row.id)
+            .order_by(ProductionTaskTeamRow.position)
+        ))
         return ProductionTask(
             id=row.id, number=row.number, source_idempotency_key=row.source_idempotency_key,
             source_fingerprint=row.source_fingerprint, version=row.version, created_at=row.created_at,
@@ -466,6 +525,9 @@ class SqlAlchemyProductionRepository:
                 stage_key=operation.stage_key,
                 inputs=tuple(inputs.get(operation.id, ())),
             ) for operation in operation_rows),
+            techcard_id=row.techcard_id, techcard_revision=row.techcard_revision,
+            flow_mode=FlowMode(row.flow_mode or FlowMode.MIXED.value),
+            transfer_batch=row.transfer_batch, early_quantity=row.early_quantity, team=team,
         )
 
     def get(self, task_id: UUID) -> ProductionTask | None:
@@ -553,7 +615,23 @@ class SqlAlchemyProductionRepository:
         row.status = task.status.value
         row.launched_by = task.launched_by
         row.handed_to = task.handed_to
+        row.techcard_id = task.techcard_id
+        row.techcard_revision = task.techcard_revision
+        row.flow_mode = task.flow_mode.value
+        row.transfer_batch = task.transfer_batch
+        row.early_quantity = task.early_quantity
         self.session.flush()
+        stored_team = tuple(self.session.scalars(
+            select(ProductionTaskTeamRow.operator_id).where(ProductionTaskTeamRow.task_id == task.id)
+            .order_by(ProductionTaskTeamRow.position)
+        ))
+        if stored_team != task.team:
+            self.session.execute(delete(ProductionTaskTeamRow).where(ProductionTaskTeamRow.task_id == task.id))
+            self.session.flush()
+            self.session.add_all(
+                ProductionTaskTeamRow(task_id=task.id, operator_id=operator_id, position=position)
+                for position, operator_id in enumerate(task.team)
+            )
         existing = {item.id: item for item in self.session.scalars(select(ProductionOperationRow).where(ProductionOperationRow.task_id == task.id))}
         # Рёбра графа переписываются целиком, и только когда граф изменился (назначения его не трогают).
         edge = ProductionOperationInputRow
@@ -609,7 +687,7 @@ class SqlAlchemyProductionRepository:
             return set()
         found: set[UUID] = set()
         for column in (ProductionBoxRow.task_id, ProductionWorkSessionRow.task_id,
-                       ProductionOutputRow.task_id, ProductionDefectRow.task_id):
+                       ProductionOutputRow.task_id, ProductionDefectRow.task_id, ProductionTaskDeliveryRow.task_id):
             found.update(self.session.scalars(select(column).where(column.in_(ids)).distinct()))
         share = ProductionOperationOperatorRow
         found.update(self.session.scalars(
@@ -626,8 +704,55 @@ class SqlAlchemyProductionRepository:
         self.session.execute(delete(ProductionOperationInputRow).where(ProductionOperationInputRow.operation_id.in_(operations)))
         self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id.in_(operations)))
         self.session.execute(delete(ProductionSerialRow).where(ProductionSerialRow.task_id == task_id))
+        self.session.execute(delete(ProductionTaskTeamRow).where(ProductionTaskTeamRow.task_id == task_id))
         self.session.execute(delete(ProductionOperationRow).where(ProductionOperationRow.task_id == task_id))
         self.session.execute(delete(ProductionTaskRow).where(ProductionTaskRow.id == task_id))
+
+
+class SqlAlchemyDeliveryRepository:
+    """«Сдано N шт» площадки (ЖУК) по заданиям."""
+
+    def __init__(self, session: Session): self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionTaskDeliveryRow) -> TaskDelivery:
+        return TaskDelivery(
+            id=row.id, task_id=row.task_id, site=row.site, quantity=row.quantity,
+            delivered_at=row.delivered_at, delivered_by=row.delivered_by,
+            cancelled_at=row.cancelled_at, cancelled_by=row.cancelled_by,
+        )
+
+    def for_task(self, task_id: UUID) -> list[TaskDelivery]:
+        rows = self.session.scalars(
+            select(ProductionTaskDeliveryRow).where(ProductionTaskDeliveryRow.task_id == task_id)
+            .order_by(ProductionTaskDeliveryRow.delivered_at, ProductionTaskDeliveryRow.id)
+        )
+        return [self._domain(row) for row in rows]
+
+    def totals(self, task_ids) -> dict[UUID, int]:
+        """Сдано (без отменённых) по заданиям — одним запросом для списка заданий."""
+        ids = list(task_ids)
+        if not ids:
+            return {}
+        rows = self.session.execute(
+            select(ProductionTaskDeliveryRow.task_id, func.sum(ProductionTaskDeliveryRow.quantity))
+            .where(ProductionTaskDeliveryRow.task_id.in_(ids), ProductionTaskDeliveryRow.cancelled_at.is_(None))
+            .group_by(ProductionTaskDeliveryRow.task_id)
+        )
+        return {task_id: int(total or 0) for task_id, total in rows}
+
+    def save(self, delivery: TaskDelivery) -> None:
+        row = self.session.get(ProductionTaskDeliveryRow, delivery.id)
+        if row is None:
+            row = ProductionTaskDeliveryRow(id=delivery.id)
+            self.session.add(row)
+        row.task_id = delivery.task_id
+        row.site = delivery.site
+        row.quantity = delivery.quantity
+        row.delivered_at = delivery.delivered_at
+        row.delivered_by = delivery.delivered_by
+        row.cancelled_at = delivery.cancelled_at
+        row.cancelled_by = delivery.cancelled_by
 
 
 class SqlAlchemyOperatorRepository:
@@ -1396,6 +1521,7 @@ class SqlAlchemyProductionUnitOfWork:
         self.defects = SqlAlchemyDefectRepository(self.session)
         self.instruments = SqlAlchemyInstrumentRepository(self.session)
         self.serials = SqlAlchemySerialRepository(self.session)
+        self.deliveries = SqlAlchemyDeliveryRepository(self.session)
         self.qc = SqlAlchemyQcRepository(self.session)
         self.genealogy = SqlAlchemyGenealogyRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)

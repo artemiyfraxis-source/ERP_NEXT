@@ -40,9 +40,10 @@ function buildRouteGraph(document: HarnessDesignDocument, topology: PhysicalTopo
   return graph;
 }
 
-/** A connector is a terminal, never an intermediate physical junction. */
-function shortestRoute(graph: RouteGraph, sources: readonly string[], targets: ReadonlySet<string>,
-  terminals: ReadonlySet<string>): PhysicalStep[] | undefined {
+/** An unrelated connector is a terminal unless this wire is explicitly
+ * admitted as a physical transit. That keeps the physical graph independent
+ * from electrical connectivity while allowing an authored pass-through at X4. */
+function shortestRoute(graph: RouteGraph, sources: readonly string[], targets: ReadonlySet<string>): PhysicalStep[] | undefined {
   const distance = new Map(sources.map(id => [id, 0]));
   const previous = new Map<string, { node: string; step: PhysicalStep }>();
   const queue = new Set(sources);
@@ -59,7 +60,6 @@ function shortestRoute(graph: RouteGraph, sources: readonly string[], targets: R
       }
       return steps;
     }
-    if (terminals.has(id) && !sources.includes(id)) continue;
     for (const edge of graph.get(id) ?? []) {
       const cost = distance.get(id)! + edge.cost;
       if (cost < (distance.get(edge.node) ?? Infinity) - 1e-8) {
@@ -89,13 +89,19 @@ export function routePhysicalWires(document: HarnessDesignDocument, topology: Ph
   const routes = topology.routes.filter(route => !route.automatic && exitsAcceptRoute(topology, route));
   const pinned = new Set(routes.map(route => route.wireId));
   const graph = buildRouteGraph(document, topology);
-  const terminals = new Set(topology.nodes.filter(node => node.connectorId).map(node => node.id));
   for (const wire of document.wires) {
     if (pinned.has(wire.id) || !wire.from.connectorId || !wire.to.connectorId) continue;
     const eligible = (connectorId: string) => topology.nodes
       .filter(node => node.connectorId === connectorId && (!node.wireIds || node.wireIds.includes(wire.id)))
       .map(node => node.id);
-    const steps = shortestRoute(graph, eligible(wire.from.connectorId), new Set(eligible(wire.to.connectorId)), terminals);
+    const allowedTransit=new Set(topology.nodes.filter(node=>node.transitWireIds?.includes(wire.id)).map(node=>node.id));
+    const terminalGraph=new Map([...graph].map(([node,edges])=>[
+      node,
+      node!==undefined&&topology.nodes.some(candidate=>candidate.id===node&&candidate.connectorId)&&
+        !allowedTransit.has(node)&&!eligible(wire.from.connectorId).includes(node)&&!eligible(wire.to.connectorId).includes(node)
+        ? [] : edges,
+    ] as const));
+    const steps = shortestRoute(terminalGraph, eligible(wire.from.connectorId), new Set(eligible(wire.to.connectorId)));
     if (steps?.length) routes.push({ wireId: wire.id, steps, automatic: true });
   }
   return { ...topology, routes };

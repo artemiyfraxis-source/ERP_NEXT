@@ -116,6 +116,12 @@ def staff():
         adm.ok("POST", "/api/auth/staff", "staff", json=dict(
             login=login, email=f"{login.replace('.', '_')}@fraxis-demo.ru", name=name, department=dept,
             role=role, site=site, password=PW))
+    # Роль qc -> уровень «Бригадир», у которого «ОТК» только на просмотр (после уровней доступа 0086): правку ОТК
+    # даём личным исключением, иначе приборы и приёмка ОТК в демо отвечают 403.
+    access = adm.ok("GET", "/api/auth/access")
+    qc_user = next((u for u in (access or {}).get("users", []) if u["login"] == "lebedeva.qc"), None)
+    if qc_user:
+        adm.ok("PUT", f"/api/auth/access/users/{qc_user['id']}", json={"access": {"quality": "edit"}})
     for login, *_ in people:
         S[login] = Client(login, PW)
 

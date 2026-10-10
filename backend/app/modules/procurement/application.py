@@ -23,6 +23,7 @@ from .invoice_file import (
 from .domain import (
     AUTOFILL_TOPIC,
     FACTS_EDITABLE,
+    LINE_DOCUMENT_KINDS,
     _PAID_STATUSES,
     KpEntry,
     MoneyEntry,
@@ -155,11 +156,14 @@ class StoredInvoiceFile:
     size: int
     uploaded_by: str
     uploaded_at: datetime
+    # «other» — invoices, КП, order documents; «permit» / «quality» — РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА of the line.
+    kind: str = "other"
 
 
 class InvoiceFileRepository(Protocol):
     def add(self, stored: StoredInvoiceFile, content: bytes) -> None: ...
     def get(self, file_id: UUID) -> tuple[StoredInvoiceFile, bytes] | None: ...
+    def of_lines(self, line_ids: Sequence[UUID], kinds: Sequence[str]) -> list[StoredInvoiceFile]: ...
 
 
 class UnitOfWork(Protocol):
@@ -1341,6 +1345,106 @@ def set_procurement_note(command: SetNoteCommand, uow: UnitOfWork) -> Procuremen
         if result != current:
             uow.commit()
         return result
+
+
+@dataclass(frozen=True)
+class SetDatasheetCommand:
+    line_id: UUID
+    expected_version: int
+    datasheet: str | None
+    actor: Actor
+    now: datetime
+
+
+def set_procurement_datasheet(command: SetDatasheetCommand, uow: UnitOfWork) -> ProcurementLine:
+    """DATASHEET of one line: a link or a text, edited like КОММЕНТАРИЙ."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.set_datasheet(command.datasheet, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.datasheet_saved",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={"datasheet": updated.datasheet or ""},
+        )
+        if result != current:
+            uow.commit()
+        return result
+
+
+@dataclass(frozen=True)
+class UploadLineDocumentCommand:
+    """A РАЗРЕШЕНИЕ (`permit`) or ДОК. КАЧЕСТВА (`quality`) file chosen in the line card."""
+
+    line_id: UUID
+    kind: str
+    file_name: str
+    content_type: str
+    content: bytes
+    actor: Actor
+    now: datetime
+
+
+def upload_line_document(command: UploadLineDocumentCommand, uow: UnitOfWork) -> tuple[ProcurementLine, StoredInvoiceFile]:
+    """Store the file under its kind with the line, in one transaction. A quality document sets ДОК. КАЧЕСТВА «Да»
+    on the line (`attach_document`) — no version is asked: adding a file never overwrites what the buyer typed."""
+    if command.kind not in LINE_DOCUMENT_KINDS:
+        raise ProcurementValidationError("Вид файла: разрешение или документ качества")
+    if not command.content:
+        raise ProcurementValidationError("Файл не передан")
+    if len(command.content) > INVOICE_FILE_LIMIT:
+        raise ProcurementValidationError("Файл больше 20 МБ")
+    with uow:
+        current = uow.procurement.get(command.line_id)
+        if current is None:
+            raise KeyError("Строка закупки не найдена")
+        updated = current.attach_document(command.kind, command.actor)
+        stored = StoredInvoiceFile(
+            id=uuid4(),
+            line_id=current.id,
+            file_name=str(command.file_name or "").strip()[:512] or "файл",
+            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            size=len(command.content),
+            uploaded_by=command.actor.name,
+            uploaded_at=command.now,
+            kind=command.kind,
+        )
+        uow.files.add(stored, command.content)
+        if updated != current:
+            uow.procurement.add(updated)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=current.id,
+                event_type="procurement.document_file_uploaded",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={
+                    "legacy_id": current.legacy_id,
+                    "file_id": str(stored.id),
+                    "kind": command.kind,
+                    "name": stored.file_name,
+                    "quality_document": updated.quality_document,
+                },
+            )
+        )
+        uow.commit()
+    return updated, stored
+
+
+def line_documents(line_ids: Sequence[UUID], uow: UnitOfWork) -> dict[UUID, list[StoredInvoiceFile]]:
+    """РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files of a list of lines — one query for the whole list."""
+    if not line_ids:
+        return {}
+    with uow:
+        found = uow.files.of_lines(list(line_ids), tuple(LINE_DOCUMENT_KINDS))
+    result: dict[UUID, list[StoredInvoiceFile]] = {}
+    for stored in found:
+        result.setdefault(stored.line_id, []).append(stored)
+    return result
 
 
 def set_procurement_actual_arrival(command: SetActualArrivalCommand, uow: UnitOfWork) -> ProcurementLine:
