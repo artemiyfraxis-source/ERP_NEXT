@@ -31,8 +31,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0089_fulfillment_kit_request_unique"
-down_revision: str | None = "0088_api_tokens_assembly_drafts"
+revision: str = "0097_fulfillment_kit_request_unique"
+down_revision: str | None = "0096_cable_structure"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

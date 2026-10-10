@@ -8,7 +8,7 @@ from alembic import command
 from alembic.config import Config
 
 BEFORE = "0088_api_tokens_assembly_drafts"
-AFTER = "0089_fulfillment_kit_request_unique"
+AFTER = "0097_fulfillment_kit_request_unique"
 
 
 def _config(database_path: Path) -> Config:
