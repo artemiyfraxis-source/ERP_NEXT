@@ -2849,7 +2849,11 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .harness-page .button-link { display: inline-flex; align-items: center; text-decoration: none; }
 .harness-save { font-size: 13px; font-weight: 600; }
 .harness-page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; }
+.harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+/* Редактор сам по себе во весь экран (100dvh); здесь под шапкой страницы — ровно оставшаяся высота, иначе низ поля
+   (масштаб «100% · Ctrl + колесо», окна таблиц снизу) уходит за край экрана на высоту шапки. */
+.harness-page-body > .harness-root > .he-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.harness-page-body > .harness-root > .he-host > .harness-editor { flex: 1; height: auto; min-height: 0; }
 
 /* ── Обход на 16" ноутбуке (1536×864): всё меню и профиль без прокрутки меню; действия строки сотрудника в одну строку ── */
 @media (hover: hover) and (pointer: fine) and (min-width: 901px) and (max-height: 960px) {

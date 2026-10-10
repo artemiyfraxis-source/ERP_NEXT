@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 from zipfile import ZipFile
 
 import pytest
@@ -534,6 +534,72 @@ def test_unlink_and_restore_refusals(harness_api):
     app.dependency_overrides[authenticated_principal] = _principal({"projects": "view"})
     assert client.post(f"{BASE}/КБ1/unlink", json={}).status_code == 403
     assert client.post(f"{BASE}/КБ1/restore", json={"document_id": str(old_id)}).status_code == 403
+
+
+# ── One linked drawing per position — a database rule (migration 0089) ─────────────────────────────────────────
+
+
+def _linked(factory, index="КБ1"):
+    return [row for row in _rows(factory, index) if row.content_type == HARNESS_CONTENT_TYPE]
+
+
+def test_restore_racing_another_restore_is_a_conflict_not_a_second_drawing(harness_api, monkeypatch):
+    client, factory, clock = harness_api
+    first = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
+    client.post(f"{BASE}/КБ1/unlink", json={})
+    clock["now"] = NOW + timedelta(minutes=5)
+    second = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
+    client.post(f"{BASE}/КБ1/unlink", json={})
+    assert client.post(f"{BASE}/КБ1/restore", json={"document_id": second["document"]["id"]}).status_code == 200
+
+    # The other «Вернуть» checked the position before this one committed: its check saw no linked drawing.
+    import app.modules.techcards.harness_api as harness_module
+    monkeypatch.setattr(harness_module, "_current", lambda uow, project, index: None)
+    raced = client.post(f"{BASE}/КБ1/restore", json={"document_id": first["document"]["id"]})
+    assert raced.status_code == 409, raced.text
+    assert raced.json()["detail"] == (
+        "У сборки КБ1 уже есть чертёж жгута — его только что привязали или создали; обновите страницу"
+    )
+    assert [str(row.id) for row in _linked(factory)] == [second["document"]["id"]]
+    assert document_kind(next(row for row in _rows(factory) if str(row.id) == first["document"]["id"])) == (
+        "harness_unlinked"
+    )
+    assert _harness_events(factory).count("techcards.kitset_harness_restored") == 1
+
+
+def test_first_save_racing_another_first_save_is_a_conflict(harness_api, monkeypatch):
+    client, factory, _clock = harness_api
+    saved = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
+    import app.modules.techcards.harness_api as harness_module
+    monkeypatch.setattr(harness_module, "_current", lambda uow, project, index: None)
+    raced = client.put(f"{BASE}/КБ1", json={"design": _design(), "version": None})
+    assert raced.status_code == 409, raced.text
+    assert "уже есть чертёж жгута" in raced.json()["detail"]
+    assert [str(row.id) for row in _linked(factory)] == [saved["document"]["id"]]
+
+
+def test_the_database_refuses_a_second_linked_drawing_but_not_unlinked_ones(harness_api):
+    from sqlalchemy.exc import IntegrityError
+    from app.modules.techcards.kitset_api import HARNESS_UNLINKED_CONTENT_TYPE
+
+    _client, factory, _clock = harness_api
+
+    def add(index, content_type, minutes):
+        with factory() as uow:
+            uow.kitsets.add_document(KitDocument(
+                id=uuid4(), project=PROJECT, item_index=index, file_name="Чертёж", content_type=content_type,
+                size=2, uploaded_at=NOW + timedelta(minutes=minutes), uploaded_by="Технолог",
+            ), b"{}")
+            uow.commit()
+
+    add("КБ1", HARNESS_CONTENT_TYPE, 0)
+    add("КБ1", HARNESS_UNLINKED_CONTENT_TYPE, 1)
+    add("КБ1", HARNESS_UNLINKED_CONTENT_TYPE, 2)
+    add("КБ2", HARNESS_CONTENT_TYPE, 3)
+    add("КБ1", "application/pdf", 4)
+    with pytest.raises(IntegrityError):
+        add("КБ1", HARNESS_CONTENT_TYPE, 5)
+    assert len(_rows(factory, "КБ1")) == 4 and len(_linked(factory)) == 1
 
 
 # ── Library component placements live in the drawing ────────────────────────────────────────────────────────────

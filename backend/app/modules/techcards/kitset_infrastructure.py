@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, select, update
+from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, select, text, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
@@ -51,6 +51,15 @@ class KitDocumentRow(Base):
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+# At most one LINKED harness drawing per position (migration 0089): two «Вернуть» or two first saves at once — the
+# second one hits this index instead of leaving the position with two drawings.
+_LINKED_HARNESS = text("content_type = 'application/vnd.fraxis.harness+json'")
+Index(
+    "ux_techcard_kitset_documents_linked_harness", KitDocumentRow.project, func.upper(KitDocumentRow.item_index),
+    unique=True, sqlite_where=_LINKED_HARNESS, postgresql_where=_LINKED_HARNESS,
+)
 
 
 def _component_json(component: KitComponent) -> dict[str, Any]:
