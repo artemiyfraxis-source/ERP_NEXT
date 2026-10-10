@@ -723,6 +723,63 @@ export interface ProductionTask {
   planned_finish: string | null;
   assigned: number;
   operations: ProductionOperation[];
+  /** План задания (Цель 2): техкарта и ревизия норм, режим передачи, партия, «первые k раньше», команда. */
+  techcard_id?: string | null;
+  techcard_revision?: number | null;
+  flow_mode?: ProductionFlowMode;
+  transfer_batch?: number | null;
+  early_quantity?: number | null;
+  team?: string[];
+  /** «Сдано N шт» площадки без отменённых; null — не считалось в этом ответе. */
+  delivered?: number | null;
+}
+
+export type ProductionFlowMode = "sequential" | "parallel" | "mixed";
+
+export interface ProductionDelivery {
+  id: string;
+  site: string;
+  quantity: number;
+  delivered_at: string;
+  delivered_by: string;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+}
+
+export interface ProductionFlowStep {
+  operation_id: string;
+  position: number;
+  stage: string;
+  code: string;
+  people: string;
+  operator_ids: string[];
+  start: string;
+  first_out: string;
+  finish: string;
+  wait_seconds: number;
+}
+
+export interface ProductionFlow {
+  task: ProductionTask;
+  modes: { value: ProductionFlowMode; name: string }[];
+  thresholds: { notice: string; limit: string };
+  plan: {
+    anchor: string;
+    transfer_batch: number;
+    first_ready: string;
+    first_quantity: number;
+    finish: string;
+    baseline_finish: string;
+    baseline_early_ready: string | null;
+    delay_percent: string | null;
+    level: "" | "ok" | "notice" | "limit";
+    work_seconds: number;
+    warnings: string[];
+    steps: ProductionFlowStep[];
+  };
+  deliveries: ProductionDelivery[];
+  delivered: number;
+  norms: { techcard_id: string | null; revision: number | null; current_revision: number | null; outdated: boolean };
 }
 
 export interface ProductionPlanEvent {
@@ -2505,7 +2562,31 @@ export const productionApi = {
       method: "POST",
       body: JSON.stringify({ version, site }),
     }),
-  schedule: (taskId: string, version: number, replan: boolean, maxCrew: number) =>
+  /** «План задания»: расчёт по этапам в датах смены, сдачи площадки, свежесть норм ЭТК. */
+  flow: (taskId: string) => api<ProductionFlow>(`/api/production/tasks/${taskId}/flow`),
+  updateFlow: (taskId: string, version: number, settings: { flow_mode: ProductionFlowMode; transfer_batch: number | null; early_quantity: number | null; team: string[] }) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/flow`, {
+      method: "PUT", body: JSON.stringify({ version, ...settings }),
+    }),
+  refreshNorms: (taskId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/norms/refresh`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Сдано N шт»; quantity null — весь остаток. */
+  deliver: (taskId: string, version: number, quantity: number | null) =>
+    api<{ task: ProductionTask; delivery: ProductionDelivery }>(`/api/production/tasks/${taskId}/deliveries`, {
+      method: "POST", body: JSON.stringify({ version, quantity }),
+    }),
+  cancelDelivery: (taskId: string, deliveryId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/deliveries/${deliveryId}/cancel`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Выполнено» (done) / «Вернуть в работу». */
+  setDone: (taskId: string, version: number, done: boolean) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/status`, {
+      method: "POST", body: JSON.stringify({ version, done }),
+    }),
+  schedule:(taskId: string, version: number, replan: boolean, maxCrew: number) =>
     api<{ variants: ProductionScheduleVariant[] }>(`/api/production/tasks/${taskId}/schedule`, {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew }),
     }),

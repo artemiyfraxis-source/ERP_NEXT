@@ -192,7 +192,8 @@ def kit_stage_facts(
                 if request.status in started:
                     facts["work"].add(key)
     for task in tasks:
-        if task.status is ProductionStatus.RUNNING:
+        # Выполненное задание тоже значит «работа шла» (Цель 2: статус «Выполнено»).
+        if task.status in (ProductionStatus.RUNNING, ProductionStatus.DONE):
             facts["work"].add(kit_stage_key(task.project, task.item))
     for good in goods:
         key = kit_stage_key(good.project, good.item_index)

@@ -2894,3 +2894,37 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .staff-page .row-action-cell .link-button { padding: 0; font-size: 12.5px; }
 @media (pointer: coarse) { .staff-page .row-action-cell .link-button { min-height: 40px; } }
 .staff-page td.text > strong, .staff-page td.text small { white-space: nowrap; }
+
+/* Цель 2: «План задания» и «Сдача ЖУК» в карточке задания (JobPlan.tsx). */
+.status.status-done { color: var(--tone-ok); background: color-mix(in srgb, var(--tone-ok) 14%, transparent); }
+.status.status-cancelled { color: var(--muted-foreground); background: var(--accent); }
+.job-plan { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.jp-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.jp-head h2 { margin: 0; font-size: 16px; }
+.jp-head small { color: var(--muted-foreground); }
+.jp-norms { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.jp-controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 10px; }
+.jp-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.jp-controls select { min-width: 300px; }
+.jp-controls input { width: 120px; }
+.jp-error { color: var(--tone-danger); font-size: 12px; margin-top: 6px; }
+.jp-team { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
+.jp-label { font-size: 12px; color: var(--muted-foreground); margin-right: 4px; }
+.jp-person { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; white-space: nowrap; font-size: 13px; color: var(--foreground); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.jp-person.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.jp-person input { margin: 0; width: auto; min-height: 0; flex: none; }
+.jp-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.jp-summary > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--accent); }
+.jp-summary span { font-size: 12px; color: var(--muted-foreground); }
+.jp-summary b { font-size: 15px; }
+.jp-summary small { font-size: 11px; color: var(--muted-foreground); }
+.jp-summary .jp-late b { color: var(--tone-danger); }
+.jp-warnings { margin: 10px 0 0; padding: 8px 12px 8px 26px; border-radius: 8px; color: var(--tone-warn); background: var(--warn-soft); font-size: 12px; }
+.jp-warnings.limit { color: var(--tone-danger); background: var(--sheet-invalid-bg); }
+.jp-steps tbody tr { cursor: default; }
+.jp-steps td small { color: var(--muted-foreground); }
+.jp-code { display: block; font-size: 11px; }
+.jp-cancelled td { color: var(--muted-foreground); text-decoration: line-through; }
+.jp-cancelled td:last-child { text-decoration: none; }
+.jp-empty { display: block; margin-top: 8px; color: var(--muted-foreground); }
+@media (max-width: 1100px) { .jp-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .jp-controls select { min-width: 0; } }@media (pointer: coarse) { .jp-person { min-height: 40px; padding: 4px 14px; } .jp-controls input, .jp-controls select { min-height: 40px; } }
