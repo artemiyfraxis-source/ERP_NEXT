@@ -403,6 +403,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("GET", "/api/techcards/assembly/corpus", "assembly"),
         ("GET", "/api/techcards/assembly/drafts", "assembly"),
         ("GET", "/api/techcards/assembly/drafts/{draft_id}", "assembly"),
+        ("GET", "/api/techcards/scheme-corrections", "tcgen"),
         ("POST", "/api/route/coax", "tcgen"),
         ("POST", "/api/route/harness", "tcgen"),
         ("POST", "/api/techcards/assembly/drafts", "assembly"),

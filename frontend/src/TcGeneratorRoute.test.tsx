@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
+import { pressBuild } from "./test/pressBuild";
 
 /* Схема полуфабрикатов в генераторе (ARCH-TRACK-1): XH-жгут — цепочка «резка → опрессовка А → опрессовка В». */
 const card: ProjectTechcard = {
@@ -50,7 +51,7 @@ const mount = (props: Partial<Parameters<typeof TcGenerator>[0]> = {}) => {
 };
 const build = async (name: "Создать" | "Пересобрать" = "Создать") => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name }));
+  pressBuild(name);
 };
 
 const builtCard = (route?: unknown, types = ["cutWire", "prsTerm", "prsTerm"]): ProjectTechcard => ({
@@ -94,7 +95,7 @@ it("keeps a linear scheme collapsed, opens it on demand and sends the hand-edite
   // «Сбросить к автоматической» — в сборку схема не уходит, сервер выведет её сам.
   fireEvent.click(screen.getByRole("button", { name: "Сбросить к автоматической" }));
   expect(screen.getByText("автоматическая")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalledTimes(2));
   expect(onBuild.mock.calls[1][0]).not.toHaveProperty("route");
 });
