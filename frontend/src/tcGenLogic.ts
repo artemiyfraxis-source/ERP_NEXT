@@ -597,10 +597,11 @@ export function makeGen(D: GenData, S: GenState) {
     return S.crimpCutManual ? S.crimpCut : batchWires_() > crimpCutMinWires_();
   }
   /** Выбранная сторона обжима при резке: "A" / "B", "AB" — обе (станок с двумя аппликаторами; только когда обе стороны
-   *  можно обжать на автомате), "" — обжимать нечего. Без выбора — первая доступная сторона, как раньше. */
+   *  можно обжать на автомате), "" — обжимать нечего. Без выбора — обе стороны, если автомат может обжать обе
+   *  (владелец 10.10.2026: два контакта по спецификации — обжим с двух сторон), иначе единственная доступная. */
   function crimpCutSideSelected_(): Side | typeof CRIMP_BOTH_ | "" {
     const sides = crimpCutSides_();
-    if (S.crimpCutSide === CRIMP_BOTH_ && sides.length === 2) return CRIMP_BOTH_;
+    if ((S.crimpCutSide === CRIMP_BOTH_ || !S.crimpCutSide) && sides.length === 2) return CRIMP_BOTH_;
     return (sides.includes(S.crimpCutSide as Side) ? S.crimpCutSide : sides[0] || "") as Side | "";
   }
   /** Стороны, которые обжимает автомат резки в этой схеме: [], [A], [B] или [A, B]. */
