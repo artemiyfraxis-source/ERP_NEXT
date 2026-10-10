@@ -62,6 +62,8 @@ import {
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { MarkTable, markTotal } from "./GenMarkTable";
+import { PinoutAsk, PinoutChip, PinoutDiagram, PinoutEditor } from "./PinoutDiagram";
+import { confirmPinout, pinoutEnds, pinoutRecord, restorePinout } from "./pinoutCheck";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
@@ -168,6 +170,17 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [terEdits, setTerEdits] = useState<Record<string, Record<string, string>>>({});
   const [terNorms, setTerNorms] = useState<Record<string, TerminalResolution | null>>({});
   const [coaxAdd, setCoaxAdd] = useState<Record<string, Record<string, string>>>({});
+  // Распиновка: раскрытые после проверки панели разъёмов и вопрос «не проверена» перед «Создать».
+  const [pinOpen, setPinOpen] = useState<Record<string, boolean>>({});
+  const [pinAsk, setPinAsk] = useState(false);
+  const [pinFocus, setPinFocus] = useState("");
+  useEffect(() => {
+    if (!pinFocus) return;
+    const panel = document.getElementById(`pinout-${pinFocus}`);
+    panel?.scrollIntoView?.({ block: "center" });
+    panel?.querySelector("input")?.focus({ preventScroll: true });
+    setPinFocus("");
+  }, [pinFocus]);
 
   useEffect(() => { void loadRefs().then(setRefs); }, []);
 
@@ -241,7 +254,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // Метки по КД собранной карты возвращаются в форму: следующая сборка их не теряет.
     const markRows = markRowsFromConfig(card.document?.build_config);
     const seeded = markRows.length ? { ...initState(D), mark: true, markRows } : initState(D);
-    setS(restored ? switchGenTab(seeded, "manual") : seeded);
+    // Распиновка и её проверка — из прошлой сборки (build_config.pinout), если разъёмы и провода те же.
+    setS(restored ? switchGenTab(seeded, "manual") : restorePinout(D, seeded, card.document?.build_config));
     setStatus({ text: "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
@@ -398,6 +412,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const active = gen.activeWires_();
   const compLabel = (id: string) => { const c = gen.getCompById(id); return c ? c.art || c.name : "?"; };
   const links = gen.connections_();
+  const pinEnds = pinoutEnds(gen, S);
+  const pinOpenEnds = pinEnds.filter((end) => !end.checked);
   const cut = gen.cutLengthInfo();
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
@@ -518,7 +534,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       setStatus({ text: "Сборка отменена — техкарта осталась ручной сборкой.", error: true });
       return null;
     }
-    return routeOverride ? { ...cfg, route: routePayload(routeOverride) } : cfg;
+    const pinout = pinoutRecord(gen, S);
+    const withPinout = pinout ? { ...cfg, pinout } : cfg;
+    return routeOverride ? { ...withPinout, route: routePayload(routeOverride) } : withPinout;
   }
 
   /** «Поправить вручную»: текущая типовая сборка уходит на сервер как есть и возвращается блоками с операциями. */
@@ -547,7 +565,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     setStatus({ text: "", error: false });
   }
 
-  async function generate() {
+  /** pinoutSeen — «Создать всё равно» в вопросе о непроверенной распиновке. */
+  async function generate(pinoutSeen = false) {
+    if (!manualTab && !pinoutSeen && pinOpenEnds.length) { setPinAsk(true); return; }
+    setPinAsk(false);
     const payload = manualTab ? manualPayload() : typicalPayload();
     if (!payload) return;
     const fromDraft = manualTab ? draftId : "";
@@ -611,12 +632,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const picks = norm ? norm.by_section.filter((item) => item.found && item.applicator) : [];
     const pickApplicator = picks.length && picks.every((item) => item.applicator === picks[0].applicator) ? picks[0].applicator : "";
     const allRouted = active.every((w) => routed.has(w.idx));
-    const pinned = active.some((w) => routed.has(w.idx) && ep.pins?.[w.idx]);
+    const pinEnd = pinEnds.find((end) => end.id === ep.id);
     return <div className="ep-card" key={ep.id}>
       <div className="ep-head">
         <b className="ep-badge">{name}</b>
         <span className="ep-title">{conn ? conn.art || conn.name : "разъём не выбран"}</span>
         <span className="ep-kind">{crimp ? "обжим" : "пайка"}{ep.methodAuto ? " · авто" : ""}</span>
+        {pinEnd && !pinEnd.checked && <PinoutChip ends={[pinEnd]} />}
         <button type="button" className="btn-remove" title="Удалить разъём" aria-label={`Удалить разъём ${name}`}
           onClick={() => update((current) => ({ ...current, endpoints: current.endpoints.filter((e) => e.id !== ep.id) }))}>×</button>
       </div>
@@ -660,19 +682,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       {showRouting && (single
         ? <details className="ep-more" open={!allRouted}><summary>Провода в этот разъём — {allRouted ? "все" : "не все: остальные — свободные концы"}</summary><div className="chip-row">{chips}</div></details>
         : <div className="gfield"><span className="gfield-label">Провода в этот разъём</span><div className="chip-row">{chips}</div></div>)}
-      {active.length > 0 && <details className="ep-more" open={pinned}>
-        <summary>Распиновка — контакты разъёма{pinned ? " ✓" : ""}</summary>
-        <div className="ep-pins">{active.filter((w) => routed.has(w.idx)).map((w) => <label className="ep-pin" key={w.idx}>
-          <span>{compLabel(w.compId)}{w.qty > 1 ? ` ×${w.qty}` : ""}</span>
-          <input value={ep.pins?.[w.idx] || ""} placeholder={w.qty > 1 ? `1, 3 или 1-${w.qty}` : "конт."} onChange={(event) => {
-            const value = event.target.value.trim();
-            const pins = { ...(ep.pins || {}) };
-            if (value) pins[w.idx] = value; else delete pins[w.idx];
-            set({ pins });
-          }} />
-        </label>)}</div>
-        {ep.side === "B" && S.endpoints.some((e) => e.side === "A") && <small className="muted">Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2…</small>}
-      </details>}
+      {pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
+        onConfirm={() => { setS((current) => confirmPinout(D, current, ep.id)); setPinOpen((current) => ({ ...current, [ep.id]: false })); }}
+        onPins={(wireIdx, value) => {
+          const pins = { ...(ep.pins || {}) };
+          if (value) pins[wireIdx] = value; else delete pins[wireIdx];
+          set({ pins });
+        }}
+        hint={ep.side === "B" && S.endpoints.some((e) => e.side === "A") ? "Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2…" : undefined} />}
     </div>;
   }
 
@@ -943,8 +960,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     })()}
     {sideSection("A")}
     {sideSection("B")}
-    {(links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
-      <div className="gsec-head"><h3>Соединения по распиновке</h3></div>
+    {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
+      <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} /></div>
+      <PinoutDiagram ends={pinEnds} links={links.list} />
       {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
         <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
       {links.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
@@ -989,6 +1007,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
 
     {status.text && status.error && <div className="error-banner gen-error" role="alert" ref={errorBanner}>{status.text}</div>}
+    {pinAsk && <PinoutAsk ends={pinOpenEnds} onCancel={() => setPinAsk(false)} onCreate={() => void generate(true)}
+      onCheck={(id) => { setPinAsk(false); setPinOpen((current) => ({ ...current, [id]: true })); setPinFocus(id); }} />}
 
     <div className="gen-layout">
       <div className="gen-main"><div className="gen-grid">
