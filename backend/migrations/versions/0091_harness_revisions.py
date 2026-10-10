@@ -29,8 +29,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0090_harness_revisions"
-down_revision: str | None = "0089_harness_one_linked_drawing"
+revision: str = "0091_harness_revisions"
+down_revision: str | None = "0090_harness_one_linked_drawing"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
