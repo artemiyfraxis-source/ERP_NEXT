@@ -23,6 +23,25 @@ from app.modules.techcards.kitsets import (
 )
 from app.workflows.project_kitset import generator_bom
 from tests.techcards.calc_sheets import calc_sheets, grid
+from app.modules.techcards import kitsets
+
+
+@pytest.fixture(autouse=True)
+def scrap_allowance_on(monkeypatch):
+    """These rules are written with the «% брака» allowance on; it is switched off for now («выдаём вровень», owner
+    10.10.2026) and the formula stays behind `SCRAP_APPLIED` — `test_kit_need_has_no_scrap_allowance_for_now` checks
+    the switched-off state."""
+    monkeypatch.setattr(kitsets, "SCRAP_APPLIED", True)
+
+
+def test_kit_need_has_no_scrap_allowance_for_now(monkeypatch):
+    monkeypatch.setattr(kitsets, "SCRAP_APPLIED", False)
+    wire = KitComponent(article="W", type="Провод", per_unit=Decimal("1.5"), scrap_pct=Decimal("5"))
+    piece = KitComponent(article="P", type="Разъём", per_unit=Decimal("0.333"), scrap_pct=Decimal("5"))
+    assert wire.scrap_pct == Decimal("5")  # the typed % is kept
+    assert wire.batch(Decimal("10")) == Decimal("15.00")  # 1,5 × 10, nothing on top
+    assert piece.batch(Decimal("3")) == Decimal("1")  # 0,999 → 1 шт
+    assert batch_quantity(Decimal("1.5"), Decimal("10"), Decimal("5"), "м") == Decimal("15.75")  # the formula itself
 
 
 def parse(sheets, title="708К.4 Расчет"):
