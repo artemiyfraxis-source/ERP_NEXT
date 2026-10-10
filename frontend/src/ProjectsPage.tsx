@@ -23,6 +23,7 @@ import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { formatDate } from "./format";
 import { openHarness } from "./harnessNav";
+import { useLatestSearch } from "./useLatestSearch";
 import { ProjectStatus } from "./ProjectStatus";
 import { ProjectTrack } from "./ProjectTrack";
 import { supplyApi, type SupplyLine } from "./supplyApi";
@@ -853,16 +854,13 @@ function LotPicker({ project, component, batch, current, close, pick }: {
   project: string; component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => Promise<string>;
 }) {
   const [query, setQuery] = useState(component.name || component.art);
-  const [lots, setLots] = useState<KitsetStockLot[] | null>(null);
-  const [error, setError] = useState("");
+  const [pickError, setError] = useState("");
   const [stamp, setStamp] = useState(0);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      kitsetsApi.lots(query, project).then((result) => setLots(result.lots)).catch((reason) => setError(message(reason, "Склад не ответил")));
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [query, project, stamp]);
+  // Only the answer to the current query/project is shown; «Выбрать» waits while the list belongs to an older one.
+  const found = useLatestSearch(() => kitsetsApi.lots(query, project).then((result) => result.lots), [query, project, stamp], { fallback: "Склад не ответил" });
+  const lots = found.data;
+  const error = pickError || found.error;
   /* Отказ сохранения (партия изменилась): окно остаётся, текст отказа сверху, список ГРН перечитывается. */
   async function choose(lot: KitsetLot | null) {
     if (busy) return;
@@ -880,10 +878,11 @@ function LotPicker({ project, component, batch, current, close, pick }: {
       <tbody>{(lots || []).map((lot) => <tr key={lot.lot_id} className={current?.grn === lot.grn && (current?.package || "") === lot.package ? "selected" : ""}>
         <td>{lot.warehouse}</td><td>{lot.grn}</td><td>{lot.package}</td><td>{lot.name}</td><td>{lot.storage_location}</td>
         <td className="num">{lot.available} {lot.unit}{lot.reserved && <div className="muted">из них резерв проекта {lot.reserved} {lot.unit}</div>}</td>
-        <td><button className="secondary small" disabled={busy} onClick={() => void choose({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package, version: lot.version })}>Выбрать</button></td>
+        <td><button className="secondary small" disabled={busy || found.loading} onClick={() => void choose({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package, version: lot.version })}>Выбрать</button></td>
       </tr>)}</tbody>
     </table></div>
-    {lots && !lots.length && <div className="empty">Ничего не нашлось — сотри слова и ищи по своим.</div>}
+    {found.loading && <div className="empty" role="status">Ищу…</div>}
+    {lots && !found.loading && !lots.length && <div className="empty">Ничего не нашлось — сотри слова и ищи по своим.</div>}
     <div className="page-actions">
       {current && <button className="secondary" disabled={busy} onClick={() => void choose(null)}>Снять привязку</button>}
       <button className="secondary" onClick={close}>Закрыть</button>
