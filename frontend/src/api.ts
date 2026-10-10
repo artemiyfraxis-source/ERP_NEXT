@@ -1684,46 +1684,131 @@ function cookie(name: string): string {
 
 /** «Failed to fetch» (TypeError): ERP не ответила — перезапуск при обновлении или сеть. */
 export const NO_CONNECTION = "Нет связи с ERP: сервер перезапускается или недоступен. Обнови страницу через минуту.";
+/** Срок ответа на чтение; дольше — чтение обрывается понятным текстом, кнопки снова доступны. */
+export const READ_DEADLINE_MS = 20_000;
+/** Срок ответа на запись. Его истечение — не отказ: запись могла пройти (см. UnknownResultError). */
+export const WRITE_DEADLINE_MS = 120_000;
+export const READ_TIMEOUT_TEXT = "ERP не ответила за 20 с — проверьте связь и нажмите «Повторить».";
+export const UNKNOWN_RESULT_TEXT = "Результат неизвестен: ответ ERP не дошёл. Проверьте, записалось ли, прежде чем повторять.";
+
+/** Чтение не уложилось в срок (READ_DEADLINE_MS): ничего не записано, повтор безопасен. */
+export class ApiTimeoutError extends Error {
+  constructor(message = READ_TIMEOUT_TEXT) {
+    super(message);
+    this.name = "ApiTimeoutError";
+  }
+}
+
+/** Запись ушла, а ответ не пришёл (сеть оборвалась или истёк срок): она могла выполниться. Не повторять вслепую —
+ *  сверить состояние или повторить с тем же ключом идемпотентности; резерв и оплату сами не повторяем. */
+export class UnknownResultError extends Error {
+  constructor(message = UNKNOWN_RESULT_TEXT) {
+    super(message);
+    this.name = "UnknownResultError";
+  }
+}
+
+/** Чтение отменено, потому что его заменило более новое (`latestRead`): ни ошибку, ни данные показывать не нужно. */
+export function isAborted(reason: unknown): boolean {
+  return reason instanceof DOMException && reason.name === "AbortError";
+}
+
+/** Отмена устаревших чтений: каждый вызов отменяет предыдущий сигнал и выдаёт новый (поиск, перезагрузка списка). */
+export function latestRead(): () => AbortSignal {
+  let current: AbortController | null = null;
+  return () => {
+    current?.abort();
+    current = new AbortController();
+    return current.signal;
+  };
+}
+
 export function failureText(reason: unknown, fallback: string) {
   if (reason instanceof TypeError) return NO_CONNECTION;
   return reason instanceof Error ? reason.message : fallback;
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
+/** `timeoutMs`: свой срок ответа (null — без срока); `safe`: POST, который ничего не меняет или безопасен к повтору
+ *  (предпросмотр, вход, выход) — его срок и обрыв сети считаются как у чтения. */
+export type ApiInit = RequestInit & { timeoutMs?: number | null; safe?: boolean };
+
+const READ_METHODS = ["GET", "HEAD", "OPTIONS", "TRACE"];
+
+export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
+  const { timeoutMs, safe, signal: outer, ...request } = init;
+  const headers = new Headers(request.headers);
   // FormData (a file upload) sets its own multipart boundary — the header is left to the browser.
-  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const method = (init.method ?? "GET").toUpperCase();
-  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+  if (request.body && !(request.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const method = (request.method ?? "GET").toUpperCase();
+  if (!READ_METHODS.includes(method)) {
     const csrf = cookie("__Host-erp_csrf") || cookie("erp_csrf");
     if (csrf) headers.set("X-CSRF-Token", csrf);
   }
-  const response = await fetch(path, { ...init, headers, credentials: "include" });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/pin-login") {
-      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+  const reading = safe ?? READ_METHODS.includes(method);
+  // A file upload has no deadline: a large scan over a slow link is not a hung request.
+  const deadline = timeoutMs !== undefined ? timeoutMs
+    : reading ? READ_DEADLINE_MS
+      : request.body instanceof FormData ? null : WRITE_DEADLINE_MS;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  // Settles only on the deadline or the caller's cancel; it races the request, so a fetch that ignores the signal ends too.
+  const stop = new Promise<never>((_, reject) => {
+    if (deadline) {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(reading ? new ApiTimeoutError() : new UnknownResultError());
+      }, deadline);
     }
-    throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
+    if (outer) {
+      onAbort = () => {
+        controller.abort();
+        reject(new DOMException("Запрос заменён более новым", "AbortError"));
+      };
+      if (outer.aborted) onAbort();
+      else outer.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  async function send(): Promise<T> {
+    const response = await fetch(path, { ...request, headers, credentials: "include", signal: controller.signal });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/pin-login") {
+        window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+      }
+      throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
+    }
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  try {
+    return await Promise.race([send(), stop]);
+  } catch (reason) {
+    // A write whose connection broke may still have been applied on the server: not a failure, an unknown result.
+    if (!reading && reason instanceof TypeError) throw new UnknownResultError();
+    throw reason;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (outer && onAbort) outer.removeEventListener("abort", onAbort);
+  }
 }
 
 export const identityApi = {
   me: () => api<Principal>("/api/auth/me"),
+  // Sign-in, sign-out and the admin switch carry the target state: repeating them is harmless (`safe`).
   login: (login: string, password: string) =>
     api<Principal>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ login, password }),
+      safe: true,
     }),
   loginStaff: () => api<{ staff: LoginStaff[] }>("/api/auth/login-staff"),
   /** An empty PIN asks for «узнать PIN» (first sign-in); the answer is then a PinReveal, not a session. */
   pinLogin: (who: string, pin: string) =>
-    api<Principal | PinReveal>("/api/auth/pin-login", { method: "POST", body: JSON.stringify({ who, pin }) }),
+    api<Principal | PinReveal>("/api/auth/pin-login", { method: "POST", body: JSON.stringify({ who, pin }), safe: true }),
   adminMode: (on: boolean) =>
-    api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }) }),
-  logout: () => api<void>("/api/auth/logout", { method: "POST" }),
+    api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }), safe: true }),
+  logout: () => api<void>("/api/auth/logout", { method: "POST", safe: true }),
   profile: () => api<OwnProfile>("/api/auth/profile"),
   changePassword: (current: string, next: string) =>
     api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
@@ -1901,13 +1986,14 @@ export const accessApi = {
 
 export const requestsApi = {
   schema: () => api<RequestSchema>("/api/requests/schema"),
-  list: (q = "") =>
-    api<{ requests: RequestRow[] }>(q ? `/api/requests?q=${encodeURIComponent(q)}` : "/api/requests"),
+  list: (q = "", signal?: AbortSignal) =>
+    api<{ requests: RequestRow[] }>(q ? `/api/requests?q=${encodeURIComponent(q)}` : "/api/requests", { signal }),
   /** RQ-MINE: server-side filter by the authenticated initiator, paginated (replaces the client-side
    *  name match over the latest 200 rows). */
-  mine: (limit: number, offset: number, q = "") =>
+  mine: (limit: number, offset: number, q = "", signal?: AbortSignal) =>
     api<MineRequestsResult>(
       `/api/requests/mine?limit=${limit}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+      { signal },
     ),
   create: (request: Record<string, unknown>, idempotencyKey: string) =>
     api<{ requests: RequestRow[] }>("/api/requests", {
@@ -1932,12 +2018,16 @@ export const requestsApi = {
     api<CalcImportPreview>("/api/requests/import/calc", {
       method: "POST",
       body: JSON.stringify({ url }),
+      // A preview writes nothing; reading a Google sheet may take longer than a plain read.
+      safe: true,
+      timeoutMs: 60_000,
     }),
   /** Fallback when the server has no Google key: the ЗКП range pasted as a grid. */
   importParse: (grid: Array<Array<string | null>>) =>
     api<CalcImportPreview>("/api/requests/import/parse", {
       method: "POST",
       body: JSON.stringify({ grid }),
+      safe: true,
     }),
   importCreate: (
     payload: {

@@ -23,6 +23,24 @@ export function LoginPage({ onLogin }: { onLogin: (principal: Principal) => void
   );
 }
 
+/** Фоновый 401 при открытой странице (аудит F07): вход поверх неё, страница с введёнными данными остаётся под
+ *  непрозрачной подложкой — следующему за ПК её не видно, пока он не войдёт; другой сотрудник получает свой экран. */
+export function SessionExpiredDialog({ onLogin }: { onLogin: (principal: Principal) => void }) {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <div className="login-wrap relogin-backdrop">
+      <div className="login-card" role="dialog" aria-modal="true" aria-labelledby="relogin-title">
+        <div className="logo-row"><strong className="wordmark">FRAXIS</strong><span className="div" /><span className="mod">ERP</span></div>
+        <h1 id="relogin-title">Сессия истекла</h1>
+        <p className="sub">Войдите снова — введённое на экране сохранится</p>
+        <PasswordForm busy={busy} setBusy={setBusy} error={error} setError={setError} onLogin={onLogin} />
+      </div>
+    </div>
+  );
+}
+
 type FormProps = {
   busy: boolean;
   setBusy: (busy: boolean) => void;

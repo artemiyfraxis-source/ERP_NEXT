@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestInput } from "./SuggestInput";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
+  UnknownResultError,
+  isAborted,
+  latestRead,
   requestsApi,
   type CalcImportPreview,
   type Principal,
@@ -9,6 +12,7 @@ import {
   type RequestSchema,
 } from "./api";
 import { canAct } from "./navigation";
+import { useFormDraft } from "./formDrafts";
 import { RequestGrid } from "./RequestGrid";
 import {
   GRID_LIMIT,
@@ -122,53 +126,108 @@ function readCalcPreset(): { url: string; project: string } | null {
   return { url: calc, project };
 }
 
+/** Неотправленная форма «Оформить заявку» (аудит F07): ручная пачка, вставка из Excel, предпросмотр расчёта и оба
+ *  ключа идемпотентности — повтор после восстановления с тем же ключом не создаст дубль. */
+interface RequestsDraft {
+  creationKey: string;
+  batchKey: string;
+  createMode: "manual" | "excel" | "calc";
+  common: Common;
+  positions: Draft[];
+  excelText: string;
+  calcUrl: string;
+  calcText: string;
+  calcWarnings: string[];
+  calcRows: Draft[];
+  calcPreview: CalcImportPreview | null;
+  calcPurpose: string;
+  calcPoint: string;
+  calcDeadline: string;
+}
+
+/** Сколько введено: непустые позиции ручной пачки плюс строки предпросмотра расчёта. */
+function draftCount(draft: Pick<RequestsDraft, "positions" | "calcRows" | "calcPreview">): number {
+  return draft.positions.filter((item) => !isBlankRow(item)).length
+    + (draft.calcPreview ? draft.calcRows.filter((item) => !isBlankRow(item)).length : 0);
+}
+
+/** Ответ на запись не дошёл: ключ тот же, повтор безопасен (сервер вернёт уже созданное, дубля не будет). */
+const UNKNOWN_CREATE = "Результат неизвестен: ответ ERP не дошёл. Проверьте «Мои заявки» или нажмите кнопку ещё раз — повтор не создаст дубль.";
+
 export function RequestsPage({ principal, view }: { principal: Principal; view?: "create" | "mine" }) {
-  const creationKey = useRef(crypto.randomUUID());
-  const batchKey = useRef(crypto.randomUUID());
+  const draft = useFormDraft<RequestsDraft>("requests:create");
+  const restored = view === "mine" ? undefined : draft.initial;
+  const creationKey = useRef(restored?.creationKey ?? crypto.randomUUID());
+  const batchKey = useRef(restored?.batchKey ?? crypto.randomUUID());
+  // A newer search or reload cancels the list read it replaces: a stale answer never overwrites a fresh one.
+  const listRead = useRef(latestRead()).current;
   const [schema, setSchema] = useState<RequestSchema | null>(null);
   const [rows, setRows] = useState<RequestRow[]>([]);
-  const [common, setCommon] = useState<Common>(emptyCommon);
-  const [positions, setPositions] = useState<Draft[]>(() => [emptyDraft()]);
+  const [common, setCommon] = useState<Common>(() => restored?.common ?? emptyCommon());
+  const [positions, setPositions] = useState<Draft[]>(() => restored?.positions ?? [emptyDraft()]);
   const [showErrors, setShowErrors] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [notice, setNotice] = useState(() => {
+    const count = restored ? draftCount(restored) : 0;
+    return count ? `Восстановлена неотправленная заявка: ${positionsWord(count)}` : "";
+  });
   const [busy, setBusy] = useState(false);
   const [serverQuery, setServerQuery] = useState("");
   const canEdit = principal.permissions.newrequest === "edit";
   const canHandoff = canAct(principal, "procurement");
 
-  const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">("manual");
+  const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">(restored?.createMode ?? "manual");
 
   const [mineRows, setMineRows] = useState<RequestRow[]>([]);
   const [mineTotal, setMineTotal] = useState(0);
   const [mineLoading, setMineLoading] = useState(false);
 
-  const [excelText, setExcelText] = useState("");
+  const [excelText, setExcelText] = useState(restored?.excelText ?? "");
   const [excelError, setExcelError] = useState("");
   const [templateNote, setTemplateNote] = useState("");
 
-  const [calcUrl, setCalcUrl] = useState("");
+  const [calcUrl, setCalcUrl] = useState(restored?.calcUrl ?? "");
   const [calcLoading, setCalcLoading] = useState(false);
-  const [calcText, setCalcText] = useState("");
-  const [calcWarnings, setCalcWarnings] = useState<string[]>([]);
-  const [calcRows, setCalcRows] = useState<Draft[]>([]);
+  const [calcText, setCalcText] = useState(restored?.calcText ?? "");
+  const [calcWarnings, setCalcWarnings] = useState<string[]>(restored?.calcWarnings ?? []);
+  const [calcRows, setCalcRows] = useState<Draft[]>(restored?.calcRows ?? []);
   const [calcShowErrors, setCalcShowErrors] = useState(false);
-  const [calcPreview, setCalcPreview] = useState<CalcImportPreview | null>(null);
-  const [calcPurpose, setCalcPurpose] = useState("");
-  const [calcPoint, setCalcPoint] = useState("");
-  const [calcDeadline, setCalcDeadline] = useState(dateAfter(7));
+  const [calcPreview, setCalcPreview] = useState<CalcImportPreview | null>(restored?.calcPreview ?? null);
+  const [calcPurpose, setCalcPurpose] = useState(restored?.calcPurpose ?? "");
+  const [calcPoint, setCalcPoint] = useState(restored?.calcPoint ?? "");
+  const [calcDeadline, setCalcDeadline] = useState(restored?.calcDeadline ?? dateAfter(7));
   const [calcError, setCalcError] = useState("");
+
+  // The form is kept in the shell's memory while it holds anything; once empty (sent, or never filled) the draft goes.
+  useEffect(() => {
+    if (view === "mine" || !canEdit) return;
+    const blank = !draftCount({ positions, calcRows, calcPreview }) && !excelText.trim() && !calcText.trim();
+    draft.save(blank ? null : {
+      creationKey: creationKey.current, batchKey: batchKey.current, createMode, common, positions, excelText,
+      calcUrl, calcText, calcWarnings, calcRows, calcPreview, calcPurpose, calcPoint, calcDeadline,
+    });
+  }, [view, canEdit, draft, createMode, common, positions, excelText, calcUrl, calcText, calcWarnings, calcRows, calcPreview, calcPurpose, calcPoint, calcDeadline]);
   // «Оформить заявку из расчёта» в карточке проекта: ссылка и № проекта приходят в адресе (?calc_url=&calc_project=).
   const calcPreset = useRef<ReturnType<typeof readCalcPreset> | undefined>(undefined);
   if (calcPreset.current === undefined) calcPreset.current = readCalcPreset();
 
   const projects = schema?.projects ?? [];
 
+  /** Resolves silently when a newer reload replaced this one. */
   async function reload(query = serverQuery) {
-    const [nextSchema, result] = await Promise.all([
-      requestsApi.schema(),
-      view === "create" ? Promise.resolve(null) : requestsApi.list(query),
-    ]);
+    let loaded;
+    try {
+      loaded = await Promise.all([
+        requestsApi.schema(),
+        view === "create" ? Promise.resolve(null) : requestsApi.list(query, listRead()),
+      ]);
+    } catch (reason) {
+      if (isAborted(reason)) return;
+      throw reason;
+    }
+    const [nextSchema, result] = loaded;
+    setLoadError("");
     setSchema(nextSchema);
     if (result) setRows(result.requests);
     const point = nextSchema.delivery_points[0] || "";
@@ -190,15 +249,19 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   async function loadMine(offset: number, query = serverQuery) {
     setMineLoading(true);
     try {
-      const result = await requestsApi.mine(MINE_PAGE_SIZE, offset, query);
+      const result = await requestsApi.mine(MINE_PAGE_SIZE, offset, query, listRead());
       setMineRows((current) => (offset === 0 ? result.requests : [...current, ...result.requests]));
       setMineTotal(result.total);
+      setLoadError("");
+      setMineLoading(false);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Ошибка загрузки");
-    } finally {
+      if (isAborted(reason)) return; // the newer read owns the loading flag
+      setLoadError(reason instanceof Error ? reason.message : "Ошибка загрузки");
       setMineLoading(false);
     }
   }
+
+  const loadFailed = (reason: unknown) => setLoadError(reason instanceof Error ? reason.message : "Ошибка загрузки");
 
   useEffect(() => {
     const preset = calcPreset.current;
@@ -214,7 +277,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       void loadMine(0);
       return;
     }
-    reload().catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
+    reload().catch(loadFailed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
@@ -222,7 +285,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     setServerQuery(query);
     setError("");
     if (view === "mine") void loadMine(0, query);
-    else reload(query).catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
+    else reload(query).catch(loadFailed);
   }
 
   /* rcBulkApply_: a common value goes into every position; rcCategoryRule follows the category. */
@@ -307,7 +370,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
         );
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось создать заявку");
+      // The key stays: a repeat after an unknown result returns what the server already created.
+      setError(reason instanceof UnknownResultError ? UNKNOWN_CREATE
+        : reason instanceof Error ? reason.message : "Не удалось создать заявку");
     } finally {
       setBusy(false);
     }
@@ -561,7 +626,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       setCreateMode("manual");
       await reload();
     } catch (reason) {
-      setCalcError(reason instanceof Error ? reason.message : "Не удалось создать заявки");
+      setCalcError(reason instanceof UnknownResultError ? UNKNOWN_CREATE
+        : reason instanceof Error ? reason.message : "Не удалось создать заявки");
     } finally {
       setBusy(false);
     }
@@ -634,6 +700,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
         <h1>{TITLES[view ?? "all"]}</h1>
         {view !== "create" && <span className="page-count">{shownCount}</span>}
       </header>
+      {loadError && <div className="error-banner" role="alert">{loadError} <button type="button" className="secondary small" onClick={() => searchServer(serverQuery)}>Повторить</button></div>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
       {/* «Заявки» и «Мои заявки» — только список; новая заявка оформляется в своём разделе «Оформить заявку». */}
