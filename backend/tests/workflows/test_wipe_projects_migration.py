@@ -78,7 +78,13 @@ def database(tmp_path, monkeypatch):
         Base.metadata.tables["fulfillment_request_counters"].create(connection)
         # The picked ГРН is reserved at once (T1): the kit request then looks for the project's «Со склада» covers.
         Base.metadata.tables["procurement_stock_covers"].create(connection)
-    sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+        # План задания (Цель 2, миграция после 0088): колонки задания, команда и сдачи площадки.
+        for column in ("techcard_id CHAR(32)", "techcard_revision INTEGER", "flow_mode VARCHAR(16) NOT NULL DEFAULT 'mixed'",
+                       "transfer_batch INTEGER", "early_quantity INTEGER"):
+            connection.execute(text(f"ALTER TABLE production_tasks ADD COLUMN {column}"))
+        Base.metadata.tables["production_task_team"].create(connection)
+        Base.metadata.tables["production_task_deliveries"].create(connection)
+    sessions =sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
     app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)
     app.state.fulfillment_uow_factory = lambda: SqlAlchemyFulfillmentUnitOfWork(sessions)

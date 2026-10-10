@@ -17,6 +17,7 @@ $env:ERP_NEW_USER_PASSWORD = 'Preview-2026!'; & $py -m app.identity_admin create
 & $py -m app.modules.references.load_mirror  # справочники из снимка backend\data\reference-mirror
 & $py -m app.modules.techcards.seed_library
 & $py -m app.modules.references.erp_corrections
+& $py -m app.modules.references.load_cables  # монтажные провода по таблице сечений + карточки коаксиалов
 $api = Start-Process $py -ArgumentList '-m','uvicorn','app.main:app','--host','127.0.0.1','--port',"$ApiPort" -WorkingDirectory $backend -PassThru
 for ($i = 0; $i -lt 60; $i++) { try { Invoke-RestMethod http://127.0.0.1:$ApiPort/api/health | Out-Null; break } catch { Start-Sleep 1 } }
 & $py (Join-Path $root 'scripts\demo\seed_demo.py')

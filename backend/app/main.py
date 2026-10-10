@@ -32,7 +32,7 @@ from .modules.techcards import assembly_api
 from .modules.techcards import harness_catalog_api
 from .modules.techcards import harness_api
 from .shared.http_auth import techcards_router_principal
-from .workflows import employee_card_api
+from .workflows import employee_card_api, leave_api
 
 app = FastAPI(
     title="Fraxis ERP Next",
@@ -76,6 +76,7 @@ app.include_router(shipping_api.router)
 app.include_router(references_api.router)
 app.include_router(operations_api.router)
 app.include_router(employee_card_api.router)
+app.include_router(leave_api.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)

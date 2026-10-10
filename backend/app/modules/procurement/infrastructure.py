@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -29,12 +30,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
 from app.shared.identity import Actor
 from app.shared.persistence import (
     Base,
     SqlAlchemyAuditRepository,
     SqlAlchemyOutboxRepository,
+    check_read_version,
+    note_written_version,
+    track_read_versions,
 )
 
 from .application import StatusNotificationDue, StoredInvoiceFile, SupplierOrder, SupplierOrderDocument
@@ -142,6 +145,8 @@ class ProcurementLineRow(Base):
     # КОММЕНТАРИЙ (the buyer's note) and ФАКТ. ДАТА (latest inspection of the line's deliveries, set by the tick).
     note: Mapped[str | None] = mapped_column(Text)
     actual_arrival: Mapped[Any | None] = mapped_column(Date)
+    # DATASHEET: a link or text the buyer keeps on the line.
+    datasheet: Mapped[str | None] = mapped_column(Text)
 
     __mapper_args__ = {
         "version_id_col": version,
@@ -225,6 +230,7 @@ def _line_row(line: ProcurementLine) -> ProcurementLineRow:
         stock_covered=line.stock_covered,
         note=line.note,
         actual_arrival=line.actual_arrival,
+        datasheet=line.datasheet,
     )
 
 
@@ -313,6 +319,7 @@ def _line_domain(row: ProcurementLineRow) -> ProcurementLine:
         stock_covered=row.stock_covered if row.stock_covered is not None else Decimal("0"),
         note=row.note,
         actual_arrival=row.actual_arrival,
+        datasheet=row.datasheet,
     )
 
 
@@ -672,9 +679,12 @@ class SqlAlchemyProcurementRepository:
         if stored is None:
             self.session.add(incoming)
             return
+        # Compare-and-swap against the version this transaction read (StockVersionConflict on a lost race).
+        check_read_version(self.session, stored, line.version)
         for column in ProcurementLineRow.__table__.columns:
             if column.name not in _SWEEP_OWNED:
                 setattr(stored, column.name, getattr(incoming, column.name))
+        note_written_version(self.session, stored)
 
     def delete(self, line_id: UUID, expected_version: int) -> bool:
         # Core DELETE guarded by the version: a concurrent edit wins and nothing is touched. Released «Со склада»
@@ -725,12 +735,15 @@ class SqlAlchemyProcurementRepository:
 
 
 class ProcurementFileRow(Base):
-    """Invoice file (`uploadInvoice` kept it in the Drive folder «Счета/<год>/<месяц>/<поставщик>»)."""
+    """A file of a procurement line: invoices and КП (`uploadInvoice` kept them in the Drive folder «Счета»), and
+    since 0089 the line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files (`kind`)."""
 
     __tablename__ = "procurement_files"
+    __table_args__ = (CheckConstraint("kind IN ('other', 'permit', 'quality')", name="ck_procurement_files_kind"),)
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     line_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="other", server_default="other")
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -739,24 +752,45 @@ class ProcurementFileRow(Base):
     uploaded_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+def _stored_file(row) -> StoredInvoiceFile:
+    return StoredInvoiceFile(
+        id=row.id, line_id=row.line_id, file_name=row.file_name, content_type=row.content_type,
+        size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at, kind=row.kind,
+    )
+
+
 class SqlAlchemyInvoiceFileRepository:
     def __init__(self, session: Session):
         self.session = session
 
     def add(self, stored: StoredInvoiceFile, content: bytes) -> None:
         self.session.add(ProcurementFileRow(
-            id=stored.id, line_id=stored.line_id, file_name=stored.file_name, content_type=stored.content_type,
-            size=stored.size, content=content, uploaded_by=stored.uploaded_by, uploaded_at=stored.uploaded_at,
+            id=stored.id, line_id=stored.line_id, kind=stored.kind, file_name=stored.file_name,
+            content_type=stored.content_type, size=stored.size, content=content, uploaded_by=stored.uploaded_by,
+            uploaded_at=stored.uploaded_at,
         ))
 
     def get(self, file_id: UUID) -> tuple[StoredInvoiceFile, bytes] | None:
         row = self.session.get(ProcurementFileRow, file_id)
         if row is None:
             return None
-        return StoredInvoiceFile(
-            id=row.id, line_id=row.line_id, file_name=row.file_name, content_type=row.content_type,
-            size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at,
-        ), row.content
+        return _stored_file(row), row.content
+
+    def of_lines(self, line_ids: Sequence[UUID], kinds: Sequence[str]) -> list[StoredInvoiceFile]:
+        """The files of these kinds on these lines, by kind and then oldest first, without their content — one query
+        per list."""
+        if not line_ids or not kinds:
+            return []
+        rows = self.session.execute(
+            select(
+                ProcurementFileRow.id, ProcurementFileRow.line_id, ProcurementFileRow.kind,
+                ProcurementFileRow.file_name, ProcurementFileRow.content_type, ProcurementFileRow.size,
+                ProcurementFileRow.uploaded_by, ProcurementFileRow.uploaded_at,
+            )
+            .where(ProcurementFileRow.line_id.in_(tuple(line_ids)), ProcurementFileRow.kind.in_(tuple(kinds)))
+            .order_by(ProcurementFileRow.kind, ProcurementFileRow.uploaded_at, ProcurementFileRow.id)
+        )
+        return [_stored_file(row) for row in rows]
 
 
 class ProcurementStockCoverRow(Base):
@@ -809,6 +843,10 @@ def _cover_domain(row: ProcurementStockCoverRow) -> StockCover:
         trimmed=row.trimmed, consumed=row.consumed, consumed_by=row.consumed_by, created_at=row.created_at,
         created_by=row.created_by, created_by_id=row.created_by_id, released_at=row.released_at,
     )
+
+
+track_read_versions(ProcurementLineRow)
+track_read_versions(ProcurementStockCoverRow)
 
 
 class SqlAlchemyStockCoverRepository:
@@ -871,9 +909,11 @@ class SqlAlchemyStockCoverRepository:
         if stored is None:
             self.session.add(incoming)
             return
+        check_read_version(self.session, stored, cover.version)
         for column in ProcurementStockCoverRow.__table__.columns:
             if column.name != "id":
                 setattr(stored, column.name, getattr(incoming, column.name))
+        note_written_version(self.session, stored)
 
 
 class SqlAlchemyProcurementUnitOfWork:
@@ -889,9 +929,9 @@ class SqlAlchemyProcurementUnitOfWork:
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         self.files = SqlAlchemyInvoiceFileRepository(self.session)
-        # «Со склада»: the cover and the lot's РЕЗЕРВ move in one transaction.
+        # «Со склада» covers stay owned by procurement; the warehouse reserve is
+        # supplied by the composite stock UoW in app.workflows.procurement_stock.
         self.stock_covers = SqlAlchemyStockCoverRepository(self.session)
-        self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

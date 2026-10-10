@@ -13,7 +13,17 @@
   «Со склада») over the lot РЕЗЕРВ, holders on a missing lot, duplicate lot keys (warehouse, ГРН, упаковка), the
   lot key constraint missing, rows whose foreign key points nowhere, foreign keys left NOT VALID (PostgreSQL);
 - the revision after is not the head of the migrations directory.
-New tables and new rows are fine. Works on PostgreSQL (production) and SQLite (tests); every check reads the real
+New tables and new rows are fine.
+
+    ERP_DATABASE_URL=… python -m app.db_integrity reconcile
+
+`reconcile` is a read-only report of the «Со склада» reserves (audit U05), exit 1 with one Russian line per finding:
+- a procurement line whose `stock_covered` differs from what its covers took — Σ (held + taken over by a kit) of
+  every cover, released ones included (a release takes the rest off both, a kit takeover off neither);
+- РЕЗЕРВ on a lot that the lot's own trail gives to a «Со склада» cover which does not hold it there, and that no
+  holder (kit line, techcard reserve, cover) holds either — a reserve without a holder.
+Manual and imported reserves have no cover in the trail, and covers without a lot hold none: neither is reported.
+It never changes data; fixing what it finds is a separate, owner-approved plan. Works on PostgreSQL (production) and SQLite (tests); every check reads the real
 schema first, so a snapshot can be taken at any revision.
 """
 
@@ -29,6 +39,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection, Engine
@@ -419,6 +430,136 @@ def _sum_label(key: str) -> str:
     return key
 
 
+# ── reconcile ───────────────────────────────────────────────────────────────────────────────────────────────
+
+LINES = "procurement_lines"
+COVERS = "procurement_stock_covers"
+AUDIT = "audit_events"
+# The lot's trail of «Со склада»: +reserved for a cover, −released by it, −taken over by a kit.
+_COVER_TRAIL = {
+    "warehouse.reserved_for_procurement": 1,
+    "warehouse.procurement_reserve_released": -1,
+    "warehouse.procurement_reserve_taken_by_kit": -1,
+}
+
+
+def reconcile(engine: Engine) -> dict[str, list[dict[str, Any]]]:
+    """Read-only reconciliation of «Со склада»: procurement lines against their covers, lot reserves against the
+    covers their trail names. → {"lines": [...], "lots": [...]}, both empty when everything adds up."""
+    with engine.connect() as connection:
+        schema = _Schema(connection)
+        return {"lines": _line_mismatches(connection, schema), "lots": _reserves_without_holder(connection, schema)}
+
+
+def _line_mismatches(connection: Connection, schema: _Schema) -> list[dict[str, Any]]:
+    if not schema.has(LINES, "id", "legacy_id", "stock_covered") or not schema.has(
+        COVERS, "line_id", "quantity", "consumed",
+    ):
+        return []
+    q = schema.q
+    took = (
+        f"COALESCE((SELECT sum(c.{q('quantity')} + c.{q('consumed')}) FROM {q(COVERS)} c"
+        f" WHERE c.{q('line_id')} = l.{q('id')}), 0)"
+    )
+    rows = connection.execute(text(
+        f"SELECT l.{q('id')}, l.{q('legacy_id')}, l.{q('stock_covered')}, {took} FROM {q(LINES)} l"
+        f" WHERE abs(l.{q('stock_covered')} - {took}) > {_EPS} ORDER BY l.{q('legacy_id')}"
+    )).all()
+    return [
+        {"line_id": _uuid_shown(line_id), "legacy_id": legacy_id, "stock_covered": _decimal(covered), "covers": _decimal(held)}
+        for line_id, legacy_id, covered, held in rows
+    ]
+
+
+def _reserves_without_holder(connection: Connection, schema: _Schema) -> list[dict[str, Any]]:
+    if not schema.has(LOTS, "id", "reserved", "warehouse", "grn", "package") or not schema.has(
+        COVERS, "id", "lot_id", "quantity",
+    ) or not schema.has(AUDIT, "aggregate_id", "event_type", "details"):
+        return []
+    q = schema.q
+    kinds = ", ".join(f"'{kind}'" for kind in _COVER_TRAIL)
+    trail: dict[tuple[str, str], Decimal] = {}
+    for lot_id, kind, details in connection.execute(text(
+        f"SELECT {q('aggregate_id')}, {q('event_type')}, {q('details')} FROM {q(AUDIT)}"
+        f" WHERE {q('event_type')} IN ({kinds})"
+    )):
+        details = json.loads(details) if isinstance(details, str) else (details or {})
+        cover_id, amount = str(details.get("cover_id") or ""), _amount(details.get("quantity"))
+        if cover_id and amount is not None:
+            key = (_uuid_text(lot_id), _uuid_text(cover_id))
+            trail[key] = trail.get(key, Decimal(0)) + _COVER_TRAIL[kind] * amount
+    held_by_cover = {
+        (_uuid_text(lot_id), _uuid_text(cover_id)): Decimal(str(quantity))
+        for cover_id, lot_id, quantity in connection.execute(text(
+            f"SELECT {q('id')}, {q('lot_id')}, {q('quantity')} FROM {q(COVERS)} WHERE {q('lot_id')} IS NOT NULL"
+        ))
+    }
+    unheld: dict[str, list[tuple[str, Decimal]]] = {}
+    for (lot_id, cover_id), net in trail.items():
+        missing = net - held_by_cover.get((lot_id, cover_id), Decimal(0))
+        if missing > Decimal(_EPS):
+            unheld.setdefault(lot_id, []).append((cover_id, missing))
+    if not unheld:
+        return []
+    holders = [(table, column) for table, column, _ in RESERVE_HOLDERS if schema.has(table, "lot_id", column)]
+    held = " + ".join(
+        f"COALESCE((SELECT sum(h.{q(column)}) FROM {q(table)} h WHERE h.{q('lot_id')} = l.{q('id')}), 0)"
+        for table, column in holders
+    )
+    found = []
+    for lot_id, warehouse, grn, package, reserved, holding in connection.execute(text(
+        f"SELECT l.{q('id')}, l.{q('warehouse')}, l.{q('grn')}, l.{q('package')}, l.{q('reserved')}, {held}"
+        f" FROM {q(LOTS)} l ORDER BY l.{q('warehouse')}, l.{q('grn')}, l.{q('package')}"
+    )):
+        attributed = unheld.get(_uuid_text(lot_id))
+        if not attributed:
+            continue
+        # Only what nobody holds now counts: a reserve already corrected by hand is not reported again.
+        free = Decimal(str(reserved)) - Decimal(str(holding))
+        amount = min(free, sum((missing for _, missing in attributed), Decimal(0)))
+        if amount > Decimal(_EPS):
+            found.append({
+                "lot_id": _uuid_shown(lot_id), "warehouse": warehouse, "grn": grn, "package": package,
+                "amount": _decimal(amount), "covers": sorted(_uuid_shown(cover) for cover, _ in attributed),
+            })
+    return found
+
+
+def _uuid_text(value: Any) -> str:
+    """A UUID as one comparable text: SQLite keeps 32 hex digits, PostgreSQL a uuid, audit details the dashed form."""
+    return str(value).replace("-", "").lower()
+
+
+def _uuid_shown(value: Any) -> str:
+    try:
+        return str(UUID(hex=_uuid_text(value)))
+    except ValueError:
+        return str(value)
+
+
+def _amount(value: Any) -> Decimal | None:
+    try:
+        return Decimal(str(value).replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def reconcile_lines(report: dict[str, list[dict[str, Any]]]) -> list[str]:
+    """The report in Russian, one line per finding."""
+    lines = [
+        f"Строка закупки {item['legacy_id']}: «Со склада» {item['stock_covered']}, а её покрытия держат и передали "
+        f"в комплектацию {item['covers']}."
+        for item in report.get("lines", [])
+    ]
+    for item in report.get("lots", []):
+        label = item["grn"] + (f"/{item['package']}" if item["package"] else "")
+        lines.append(
+            f"Партия {item['warehouse']} {label}: резерв {item['amount']} без держателя — журнал партии отдаёт его "
+            f"«Со склада» ({', '.join(item['covers'])}), а там его никто не держит."
+        )
+    return lines
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -443,7 +584,25 @@ def main(argv: list[str] | None = None) -> int:
     comp.add_argument("before")
     comp.add_argument("after")
     comp.add_argument("--migrations-dir", default=str(DEFAULT_MIGRATIONS_DIR))
+    reco = commands.add_parser("reconcile", help="read-only report of «Со склада» reserves; exit 1 on any finding")
+    reco.add_argument("--database-url", default=os.getenv("ERP_DATABASE_URL", ""))
     args = parser.parse_args(argv)
+
+    if args.command == "reconcile":
+        if not args.database_url:
+            print("Задайте ERP_DATABASE_URL (или --database-url).", file=sys.stderr)
+            return 2
+        engine = create_engine(args.database_url)
+        try:
+            findings = reconcile_lines(reconcile(engine))
+        finally:
+            engine.dispose()
+        for line in findings:
+            print(line)
+        if findings:
+            return 1
+        print("Резервы «Со склада» сходятся: строки закупки равны своим покрытиям, резервов без держателя нет.")
+        return 0
 
     if args.command == "snapshot":
         if not args.database_url:

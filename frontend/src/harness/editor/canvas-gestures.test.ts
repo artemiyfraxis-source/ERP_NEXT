@@ -158,6 +158,19 @@ it('opens the paired wire menu at its free endpoint despite a truncated painted 
  expect(select).not.toHaveBeenCalled();
 });
 
+it("selects a dimension before an overlapping pipe gesture",()=>{
+ const select=vi.fn(),move=vi.fn();
+ const pipe:EditorSceneObject={id:"P",kind:"physical-segment",layerId:"wires",label:"P",x:0,y:0,width:20,height:0,color:"#333",points:[{x:0,y:50},{x:200,y:50}],pipe:{controls:[{x:0,y:50},{x:200,y:50}],handles:[],midpoints:[],wireIds:[]}};
+ const dimension:EditorSceneObject={id:"D",kind:"dimension",layerId:"dimensions",label:"200 мм",x:100,y:43,width:0,height:0,color:"#333",points:[{x:0,y:50},{x:0,y:50},{x:200,y:50},{x:200,y:50}],metadata:{boundDimension:"true"}};
+ const props={view:"drawing" as const,tool:"select" as const,camera:{zoom:1,offsetX:0,offsetY:0},objects:[pipe,dimension],layers:[{id:"dimensions",label:"Размеры",visible:true,locked:false},{id:"wires",label:"Провода",visible:true,locked:false}],selectedObjectId:null,onObjectSelect:select,onObjectMove:move,onCatalogDrop:vi.fn(),onCameraChange:vi.fn()};
+ const render=()=>{hooks.index=0;return CanvasViewport(props);};
+ const canvas=(render().props as {children:ReactElement[]}).children.find(c=>c?.type==="canvas")!;
+ const target={style:{cursor:""},setPointerCapture:vi.fn(),hasPointerCapture:()=>true,releasePointerCapture:vi.fn()};
+ (canvas.props as any).onPointerDown({button:0,pointerId:1,clientX:100,clientY:50,currentTarget:target,preventDefault:vi.fn()});
+ expect(select).toHaveBeenCalledWith("D",undefined);
+ expect(target.setPointerCapture).toHaveBeenCalled();
+});
+
 it.each([false,true])('inserts a detached midpoint with independent anchors and Escape=%s rollback',cancel=>{
  const move=vi.fn(),preview=vi.fn();
  const points=[{x:20,y:50},{x:200,y:50}];

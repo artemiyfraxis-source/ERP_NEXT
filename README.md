@@ -549,6 +549,25 @@ PIN (список активных сотрудников без e-mail, как 
 гоняет их так же), весь backend через локальный `backend/.venv`, UI-тесты и production-сборку React. Переменная `ERP_PYTHON`
 позволяет CI явно указать Python.
 
+Проверки транзакций «Со склада» на PostgreSQL запускаются отдельно, на одноразовой локальной базе
+`erp_stock_test` (пользователь должен иметь право создавать схемы):
+
+```powershell
+cd backend
+$env:ERP_TEST_POSTGRES_URL = 'postgresql+psycopg://erp:erp@localhost:5432/erp_stock_test'
+.\.venv\Scripts\python.exe -m pytest tests/procurement/test_stock_cover_postgres.py tests/procurement/test_stock_versions_postgres.py -q
+Remove-Item Env:ERP_TEST_POSTGRES_URL
+```
+
+Без `ERP_TEST_POSTGRES_URL` эти тесты пропускаются; заданный ошибочный адрес или недоступная БД вызывают
+ошибку. Принимаются только loopback-адреса, имя БД `erp_stock_test` и URL без query-параметров;
+`ERP_DATABASE_URL` не используется как подключение для тестов; адреса партий проверяются на фиксированной
+раскладке склада. Каждый тест создаёт и затем удаляет только свою уникальную схему
+`erp_stock_<uuid>`. В CI эта группа обязательна в `migrations-pg` на PostgreSQL 16, отчёт —
+`db-snapshots/stock-pg.xml`. Проверяются откаты, конфликты версий и одновременные HTTP-команды покрытия,
+привязки и отмены. Это узкая проверка складского резерва на ORM-схеме; Alembic проверяется отдельными
+шагами того же job, другие модули и нагрузка здесь не проверяются.
+
 ## База данных
 
 ```powershell

@@ -17,6 +17,7 @@ from uuid import UUID
 from app.modules.requests.domain import unit_for_type
 
 from .etk_parts import kit_article
+from .harness.schema import HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE
 
 
 # Брак по умолчанию для метражных позиций (провод, кабель) — 5 %: столько же зашито в BOM ERP («БРАК, ДОЛЯ» = 0,05).
@@ -168,6 +169,27 @@ class KitDocument:
     def stored(self) -> bool:
         """The bytes are in ERP (downloadable); otherwise only the archived Drive link is left."""
         return self.size is not None
+
+
+DOCUMENT_KINDS = {HARNESS_CONTENT_TYPE: "harness", HARNESS_UNLINKED_CONTENT_TYPE: "harness_unlinked"}
+
+
+def document_kind(document: KitDocument) -> str:
+    """«harness» — the harness drawing edited in ERP; «harness_unlinked» — such a drawing unlinked from its position;
+    «file» — an attached file."""
+    return DOCUMENT_KINDS.get((document.content_type or "").split(";")[0].strip(), "file")
+
+
+def document_json(document: KitDocument) -> dict[str, Any]:
+    """A row of the «КД» register as `tcKdByAssembly_` hands it to the card. `stored` — the bytes are in ERP (the
+    card links the download); otherwise `url` is the archived Drive link of a row from before the move, read-only.
+    `kind` — «harness» for the harness drawing (opened in the drawing editor), «file» otherwise."""
+    return {
+        "id": str(document.id), "index": document.item_index, "name": document.file_name,
+        "size": document.size, "stored": document.stored, "url": document.url or None,
+        "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
+        "kind": document_kind(document),
+    }
 
 
 @dataclass(frozen=True)

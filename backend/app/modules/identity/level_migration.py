@@ -51,6 +51,10 @@ from .domain import (
 VIEW, EDIT, NONE = "view", "edit", "none"
 _RANK = {NONE: 0, VIEW: 1, EDIT: 2}
 _BY_RANK = {1: VIEW, 2: EDIT}
+# The level matrix sections the transfer (0086) knew. A section added later (`hr` «Кадры», 0089) starts closed for every
+# level below superadmin/admin and is granted in «Доступы»; the transfer and its frozen copy never see it.
+SECTIONS_AFTER_TRANSFER = ("hr",)
+TRANSFER_SECTIONS = tuple(section for section in LEVEL_SECTION_LABELS if section not in SECTIONS_AFTER_TRANSFER)
 
 # ── The old model, frozen ────────────────────────────────────────────────────────────────────────────
 
@@ -348,9 +352,9 @@ def passes_before(role: str, permissions: Mapping[str, str], gate: Gate) -> bool
 def usable(role: str, permissions: Mapping[str, str]) -> dict[str, str]:
     """What the person can effectively use today, per new section (step 2 of the module docstring)."""
     if role in OLD_FULL_ACCESS_ROLES:
-        return {section: EDIT for section in LEVEL_SECTION_LABELS}
+        return {section: EDIT for section in TRANSFER_SECTIONS}
     result: dict[str, str] = {}
-    for section in LEVEL_SECTION_LABELS:
+    for section in TRANSFER_SECTIONS:
         witness = WITNESSES.get(section)
         if witness is None:
             mode = permissions.get(section)
@@ -368,7 +372,7 @@ def usable(role: str, permissions: Mapping[str, str]) -> dict[str, str]:
 def _intersection(rows: Iterable[Mapping[str, str]]) -> dict[str, str]:
     rows = list(rows)
     result: dict[str, str] = {}
-    for section in LEVEL_SECTION_LABELS:
+    for section in TRANSFER_SECTIONS:
         lowest = min(_RANK[row.get(section, NONE)] for row in rows)
         if lowest:
             result[section] = _BY_RANK[lowest]
@@ -378,7 +382,7 @@ def _intersection(rows: Iterable[Mapping[str, str]]) -> dict[str, str]:
 def _difference(target: Mapping[str, str], row: Mapping[str, str]) -> dict[str, str]:
     return {
         section: target.get(section, NONE)
-        for section in LEVEL_SECTION_LABELS
+        for section in TRANSFER_SECTIONS
         if target.get(section, NONE) != row.get(section, NONE)
     }
 
@@ -406,7 +410,7 @@ def transfer(snapshot: Snapshot) -> Transfer:
     levels: dict[str, dict[str, str]] = {}
     for level in ACCESS_LEVELS:
         if level in FULL_ACCESS_LEVELS:
-            levels[level] = {section: EDIT for section in LEVEL_SECTION_LABELS}
+            levels[level] = {section: EDIT for section in TRANSFER_SECTIONS}
             continue
         members = [person for person in people if assignments[person.id].access_level == level]
         pool = [person for person in members if person.active] or members
@@ -414,7 +418,7 @@ def transfer(snapshot: Snapshot) -> Transfer:
             levels[level] = _intersection(usable_by_person[person.id] for person in pool)
         else:
             seed = LEVEL_SEED.get(level, {})
-            levels[level] = {section: seed[section].value for section in LEVEL_SECTION_LABELS if section in seed}
+            levels[level] = {section: seed[section].value for section in TRANSFER_SECTIONS if section in seed}
 
     exceptions_by_person = {
         person.id: (
@@ -432,7 +436,7 @@ def transfer(snapshot: Snapshot) -> Transfer:
 def new_permissions(level: str, level_row: Mapping[str, str], exceptions: Mapping[str, str]) -> dict[str, str]:
     """The new model: superadmin/admin edit everywhere; anyone else — the level row overlaid with the exceptions."""
     if level in FULL_ACCESS_LEVELS:
-        return {section: EDIT for section in LEVEL_SECTION_LABELS}
+        return {section: EDIT for section in TRANSFER_SECTIONS}
     return _overlay(level_row, exceptions)
 
 

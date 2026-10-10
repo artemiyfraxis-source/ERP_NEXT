@@ -207,7 +207,7 @@ export function ProcurementInWorkTable({
   onCloseBulk?: () => void;
   /** Больше не используется: поля правятся в ячейках. Оставлено для совместимости. */
   onFill?: () => void;
-  /** Прослеживаемость, раздробить — раскрываются под строкой. */
+  /** Документы, прослеживаемость, раздробить — раскрываются под строкой. */
   renderDetail: (line: ProcurementLine) => ReactNode;
 }) {
   const [collapsed, toggleCollapsed] = useCollapsed("inwork");
@@ -498,7 +498,7 @@ export function ProcurementInWorkTable({
                 const menuItems: { label: string; short?: string; disabled?: boolean; title?: string; run: () => void }[] = [
                   { label: "Со склада", run: () => stockToggle(line.id) },
                   ...(covered > 0 ? [{ label: "Снять «Со склада»", run: () => void releaseStock(line) }] : []),
-                  { label: "Прослеживаемость, раздробить…", short: "Прослеж.…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
+                  { label: "Документы, прослеживаемость…", short: "Документы…", run: () => { setStockFor(new Set()); setOpen(open === line.id ? null : line.id); } },
                   { label: "Есть на складе, без ГРН", run: () => { setOpen(null); setNoLotFor(noLotFor === line.id ? null : line.id); } },
                   { label: "Отменить строку", run: () => onCancel(line) },
                 ];

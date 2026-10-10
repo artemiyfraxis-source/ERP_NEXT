@@ -11,12 +11,15 @@ from uuid import UUID
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     String,
+    Text,
+    UniqueConstraint,
     Uuid,
     delete,
     false,
@@ -33,6 +36,7 @@ from app.shared.clock import as_utc
 
 from .application import ApiToken, IdentitySession, PinRecord
 from .domain import FULL_ACCESS_LEVELS, LEVEL_SEED, AccessMode, IdentityUser, normalize_login
+from .leave import LeaveConflict, LeaveKind, LeaveRequest, LeaveSignature, LeaveStatus, signature_order
 from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
 
@@ -206,6 +210,82 @@ class IdentityApiTokenRow(Base):
     revoked_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
+class IdentityLeaveRequestRow(Base):
+    """Заявление на отпуск / отгул (0089, identity/leave.py). `version` is the row version every change checks."""
+
+    __tablename__ = "identity_leave_requests"
+    __table_args__ = (
+        CheckConstraint("kind IN ('vacation', 'day_off')", name="ck_identity_leave_requests_kind"),
+        CheckConstraint(
+            "status IN ('draft', 'signed', 'approved', 'registered', 'rejected', 'withdrawn')",
+            name="ck_identity_leave_requests_status",
+        ),
+        CheckConstraint("to_date >= from_date", name="ck_identity_leave_requests_period"),
+        CheckConstraint("content_version >= 1", name="ck_identity_leave_requests_content_version"),
+        CheckConstraint("version >= 1", name="ck_identity_leave_requests_version"),
+        Index("ix_identity_leave_requests_employee_id", "employee_id"),
+        Index("ix_identity_leave_requests_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_identity_leave_requests_employee_id"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    from_date: Mapped[date] = mapped_column(Date, nullable=False)
+    to_date: Mapped[date] = mapped_column(Date, nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    content_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class IdentityLeaveSignatureRow(Base):
+    """A signature on a leave request step (0089): who, when, how (PIN / password typed again — never stored)."""
+
+    __tablename__ = "identity_leave_signatures"
+    __table_args__ = (
+        CheckConstraint("step IN ('employee', 'manager', 'hr', 'withdraw')", name="ck_identity_leave_signatures_step"),
+        CheckConstraint(
+            "decision IN ('signed', 'approved', 'rejected', 'registered', 'withdrawn')",
+            name="ck_identity_leave_signatures_decision",
+        ),
+        CheckConstraint("method IN ('pin', 'password')", name="ck_identity_leave_signatures_method"),
+        CheckConstraint("content_version >= 1", name="ck_identity_leave_signatures_content_version"),
+        UniqueConstraint(
+            "request_id", "step", "content_version", name="uq_identity_leave_signatures_request_step_version",
+        ),
+        Index("ix_identity_leave_signatures_signer_id", "signer_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_leave_requests.id", ondelete="CASCADE", name="fk_identity_leave_signatures_request_id"),
+        nullable=False,
+    )
+    step: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    signer_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_identity_leave_signatures_signer_id"),
+        nullable=False,
+    )
+    signer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    signed_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    content_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+
+
 class IdentityDepartmentRow(Base):
     """The department list of the «Сотрудники» screen (ID-8), in dropdown order. Empty until the first save:
     then the list is the departments people already have, as SUPPLYMAP staffDepts_ did."""
@@ -241,6 +321,8 @@ class IdentityLoginThrottleRow(Base):
     rate_limit_audited_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
+# Identity tables that are history all the same: a leave request and its signatures (0089, RESTRICT to the person).
+_IDENTITY_HISTORY_TABLES = frozenset({"identity_leave_requests", "identity_leave_signatures"})
 # Audit rows the employee leaves just by signing in; they stay in the log but do not make the employee «used».
 _OWN_SESSION_EVENTS = (
     "identity.login_succeeded", "identity.logout", "identity.own_password_changed", "identity.pin_revealed",
@@ -514,7 +596,7 @@ class SqlAlchemyIdentityRepository:
         settings (CASCADE: credentials, sessions, access, skills, absences) and their own sign-ins are not history."""
         total = 0
         for table in Base.metadata.sorted_tables:
-            if table.name.startswith("identity_"):
+            if table.name.startswith("identity_") and table.name not in _IDENTITY_HISTORY_TABLES:
                 continue
             for column in table.columns:
                 if _cascades_from_user(column) or not _points_at_person(column):
@@ -769,6 +851,91 @@ class SqlAlchemyIdentityRepository:
         )
 
 
+def _leave_domain(row: IdentityLeaveRequestRow, signatures: list[IdentityLeaveSignatureRow]) -> LeaveRequest:
+    return LeaveRequest(
+        id=row.id, employee_id=row.employee_id, kind=LeaveKind(row.kind), from_date=row.from_date,
+        to_date=row.to_date, comment=row.comment or "", status=LeaveStatus(row.status),
+        content_version=row.content_version, content_sha256=row.content_sha256, version=row.version,
+        created_at=as_utc(row.created_at), updated_at=as_utc(row.updated_at),
+        signatures=tuple(sorted((LeaveSignature(
+            id=item.id, request_id=item.request_id, step=item.step, decision=item.decision, signer_id=item.signer_id,
+            signer_name=item.signer_name, signed_at=as_utc(item.signed_at), method=item.method,
+            content_version=item.content_version, content_sha256=item.content_sha256, comment=item.comment or "",
+        ) for item in signatures), key=signature_order)),
+    )
+
+
+class SqlAlchemyLeaveRepository:
+    """Leave requests (identity/leave.py). `save` writes over the row only from the version the caller saw: the
+    mapper's version column makes a concurrent change fail the flush (StaleDataError → conflict)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _many(self, rows: list[IdentityLeaveRequestRow]) -> list[LeaveRequest]:
+        ids = [row.id for row in rows]
+        signatures: dict[UUID, list[IdentityLeaveSignatureRow]] = {}
+        if ids:
+            for item in self.session.scalars(
+                select(IdentityLeaveSignatureRow).where(IdentityLeaveSignatureRow.request_id.in_(ids))
+                .order_by(IdentityLeaveSignatureRow.signed_at, IdentityLeaveSignatureRow.id)
+            ):
+                signatures.setdefault(item.request_id, []).append(item)
+        return [_leave_domain(row, signatures.get(row.id, [])) for row in rows]
+
+    def get(self, request_id: UUID) -> LeaveRequest | None:
+        row = self.session.get(IdentityLeaveRequestRow, request_id, with_for_update=True)
+        return None if row is None else self._many([row])[0]
+
+    def for_employee(self, employee_id: UUID) -> list[LeaveRequest]:
+        rows = list(self.session.scalars(
+            select(IdentityLeaveRequestRow).where(IdentityLeaveRequestRow.employee_id == employee_id)
+            .order_by(IdentityLeaveRequestRow.from_date, IdentityLeaveRequestRow.id)
+        ))
+        return self._many(rows)
+
+    def with_status(self, statuses) -> list[LeaveRequest]:
+        values = sorted(LeaveStatus(status).value for status in statuses)
+        rows = list(self.session.scalars(
+            select(IdentityLeaveRequestRow).where(IdentityLeaveRequestRow.status.in_(values))
+            .order_by(IdentityLeaveRequestRow.from_date, IdentityLeaveRequestRow.id)
+        ))
+        return self._many(rows)
+
+    def add(self, request: LeaveRequest) -> None:
+        self.session.add(IdentityLeaveRequestRow(
+            id=request.id, employee_id=request.employee_id, kind=request.kind.value, from_date=request.from_date,
+            to_date=request.to_date, comment=request.comment, status=request.status.value,
+            content_version=request.content_version, content_sha256=request.content_sha256, version=request.version,
+            created_at=request.created_at, updated_at=request.updated_at,
+        ))
+        self.session.flush()
+
+    def save(self, request: LeaveRequest, expected_version: int) -> None:
+        row = self.session.get(IdentityLeaveRequestRow, request.id)
+        if row is None or row.version != expected_version or request.version != expected_version + 1:
+            raise LeaveConflict("Заявление уже изменилось — обновите страницу.")
+        row.kind = request.kind.value
+        row.from_date = request.from_date
+        row.to_date = request.to_date
+        row.comment = request.comment
+        row.status = request.status.value
+        row.content_version = request.content_version
+        row.content_sha256 = request.content_sha256
+        row.updated_at = request.updated_at
+        row.version = request.version
+        self.session.flush()
+
+    def add_signature(self, signature: LeaveSignature) -> None:
+        self.session.add(IdentityLeaveSignatureRow(
+            id=signature.id, request_id=signature.request_id, step=signature.step, decision=signature.decision,
+            signer_id=signature.signer_id, signer_name=signature.signer_name, signed_at=signature.signed_at,
+            method=signature.method, content_version=signature.content_version,
+            content_sha256=signature.content_sha256, comment=signature.comment,
+        ))
+        self.session.flush()
+
+
 class SqlAlchemyIdentityUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -781,6 +948,7 @@ class SqlAlchemyIdentityUnitOfWork:
         self.identity = SqlAlchemyIdentityRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
+        self.leave = SqlAlchemyLeaveRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

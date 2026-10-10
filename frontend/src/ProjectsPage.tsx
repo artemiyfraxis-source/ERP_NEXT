@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   failureText,
+  harnessApi,
   kitsetsApi,
   requestsApi,
   type KitsetAssembly,
@@ -548,12 +549,12 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   // Чертёж жгута не удаляется: «Отвязать» оставляет его в КД позиции отвязанным, «Вернуть» привязывает обратно.
   async function unlinkHarness(index: string) {
     if (!window.confirm(`Отвязать чертёж жгута от ${index}? Он останется в КД отвязанным — вернуть можно кнопкой «Вернуть».`)) return;
-    try { await kitsetsApi.unlinkHarness(card.project, index); setNote(`${index}: чертёж жгута отвязан.`); await reload(); }
+    try { await harnessApi.unlink(card.project, index); setNote(`${index}: чертёж жгута отвязан.`); await reload(); }
     catch (reason) { setError(message(reason, "Чертёж не отвязан")); }
   }
 
   async function restoreHarness(index: string, documentId: string) {
-    try { await kitsetsApi.restoreHarness(card.project, index, documentId); setNote(`${index}: чертёж жгута возвращён.`); await reload(); }
+    try { await harnessApi.relink(card.project, index, documentId); setNote(`${index}: чертёж жгута возвращён.`); await reload(); }
     catch (reason) { setError(message(reason, "Чертёж не возвращён")); }
   }
 

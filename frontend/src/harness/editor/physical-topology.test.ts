@@ -3,7 +3,10 @@ import { physicalFixture } from "./physical-topology-fixture";
 import { describe, expect, it } from "vitest";
 import { applyEditorCommand } from "./commands";
 import { connectorContactPosition, createEmptyHarnessDesign, createOrthogonalE4Route, wireEndpointE4Anchor, parseHarnessDesignDocument } from "./model";
-import { automaticPipeRoute, constrainedPolyline, physicalNodePoint, physicalNodeDirection, physicalNodeFacingDirection, physicalNodeContactDirection, physicalWireDisplayPaths, physicalSegmentPoints, physicalWirePoints, splitPhysicalSegment, removePhysicalSegment, connectPhysicalNodeToSegment, type PhysicalTopology } from "./physical-topology";
+import { automaticPipeRoute, constrainedPolyline, physicalNodePoint, physicalNodeDirection, physicalNodeFacingDirection, physicalNodeContactDirection, physicalWireDisplayPaths, physicalSegmentPoints, physicalWirePoints, splitPhysicalSegment, removePhysicalSegment, connectPhysicalNodeToSegment, branchPhysicalSegment, type PhysicalTopology } from "./physical-topology";
+import { createJoiningPipe } from "./physical-joining-pipes";
+import { physicalTopologyScene } from "./physical-scene";
+import { resolvePhysicalRoutePointCommand } from "./physical-route-point-command";
 import { buildHarnessSelectionIndex, resolveHarnessSelection } from "./harness-selection";
 import { createEditorHistory, executeEditorCommand, undoEditorCommand } from "./history";
 
@@ -200,6 +203,35 @@ it("makes a T at an interior click without losing reverse routes, protection spa
  expect(parseHarnessDesignDocument({...doc,physicalTopology:t}).physicalTopology).toEqual(t);
  expect(doc.wires).toBe(d.wires);
 });
+it("keeps a split OP member bend editable after creating a T branch",()=>{
+ const source=physicalFixture(),op=createJoiningPipe(source,[["S1"],["S2"]],"op"),withOp={...source,physicalTopology:{...source.physicalTopology!,joiningPipes:[op]}};
+ const segment=withOp.physicalTopology!.segments.find(item=>item.id==="S1")!,points=physicalSegmentPoints(withOp,segment);
+ const point={x:(points[0]!.x+points[1]!.x)/2,y:(points[0]!.y+points[1]!.y)/2};
+ const topology=branchPhysicalSegment(withOp,"S1",point,{junction:"T",continuation:"tail",tip:"tip",branch:"branch"}),branched={...withOp,physicalTopology:topology};
+ expect(topology.segments.filter(item=>item.from==="T"||item.to==="T")).toHaveLength(3);
+ const scene=physicalTopologyScene(branched),candidate=["S1","tail"].map(id=>scene.find(object=>object.id===id)!).find(object=>object.pipe!.authoredHandleIndices!.some(index=>index>=1))!;
+ const handle=candidate.pipe!.authoredHandleIndices!.findIndex(index=>index>=1),origin=candidate.pipe!.handles[handle]!;
+ const command=resolvePhysicalRoutePointCommand(branched,candidate.id,handle,{x:origin.x+25,y:origin.y-20},"adjacent");
+ expect(command).toMatchObject({type:"edit-physical-bend",segmentId:candidate.id});
+ const history=executeEditorCommand(createEditorHistory(branched),command!);
+ expect(history.present.physicalTopology!.segments.find(item=>item.id===candidate.id)!.path.points).not.toEqual(branched.physicalTopology!.segments.find(item=>item.id===candidate.id)!.path.points);
+ expect(history.present.physicalTopology!.routes).toEqual(branched.physicalTopology!.routes);
+ expect(parseHarnessDesignDocument(JSON.parse(JSON.stringify(history.present))).physicalTopology).toEqual(history.present.physicalTopology);
+ expect(undoEditorCommand(history).present).toBe(branched);
+});
+it("places an ordinary bend grip on the rounded painted route and preserves its drag delta",()=>{
+ const source=physicalFixture(),segment=source.physicalTopology!.segments.find(item=>item.id==="S0")!;
+ const document={...source,drawingDocuments:{...source.drawingDocuments!,bendRadius:24},physicalTopology:{...source.physicalTopology!,
+   segments:source.physicalTopology!.segments.map(item=>item.id===segment.id?{...item,path:{kind:"polyline" as const,points:[{x:220,y:80}]}}:item)}};
+ const scene=physicalTopologyScene(document).find(item=>item.id===segment.id)!;
+ const grip=scene.pipe!.handles[0]!;
+ const painted=scene.points!;
+ const nearest=Math.min(...painted.map(point=>Math.hypot(point.x-grip.x,point.y-grip.y)));
+ expect(nearest).toBeLessThan(1e-6);
+ const command=resolvePhysicalRoutePointCommand(document,segment.id,0,{x:grip.x+15,y:grip.y-8},"carry");
+ expect(command).toMatchObject({type:"edit-physical-bend",segmentId:segment.id,index:0});
+ expect((command as any).position).toEqual({x:235,y:72});
+});
 it("distributes wires to shortest channels, preserves pinned routes and supports separate exits for double crimp",async()=>{
  const {routePhysicalWires}=await import("./physical-topology");const base=physicalFixture();const d={...base,wires:base.wires.map(w=>w.id==="W2"?{...w,from:base.wires[0]!.from,e4Route:createOrthogonalE4Route(wireEndpointE4Anchor(base,base.wires[0]!.from)!,wireEndpointE4Anchor(base,w.to)!)}:w)};
  let t={...d.physicalTopology!,nodes:[...d.physicalTopology!.nodes,{id:"NA2",connectorId:"A",position:{x:160,y:70},wireIds:["W2"]}],segments:[...d.physicalTopology!.segments,{id:"direct",from:"NA2",to:"NC",path: { kind: "routed" as const, points: [] }}],routes:[]};
@@ -212,4 +244,21 @@ it("distributes wires to shortest channels, preserves pinned routes and supports
  expect(d.wires[0]!.from.contactId).toEqual(d.wires[1]!.from.contactId);
  const noExit={...t,nodes:t.nodes.map(n=>n.connectorId==="A"?{...n,wireIds:[]}:n)};
  expect(routePhysicalWires(d,noExit).routes.some(r=>r.wireId==="W1"||r.wireId==="W2")).toBe(false);
+});
+
+it("routes a wire through a physically connected intermediate connector",async()=>{
+ const {routePhysicalWires}=await import("./physical-topology");
+ const base=physicalFixture(),t={...base.physicalTopology!,nodes:[
+   {id:"from",connectorId:"A",position:{x:150,y:40},wireIds:["W1"]},
+   {id:"x4",connectorId:"C",position:{x:150,y:40},transitWireIds:["W1"]},
+   {id:"to",connectorId:"B",position:{x:150,y:40},wireIds:["W1"]},
+ ],segments:[
+   {id:"A-X4",from:"from",to:"x4",path:{kind:"polyline" as const,points:[]}},
+   {id:"X4-B",from:"x4",to:"to",path:{kind:"polyline" as const,points:[]}},
+ ],routes:[]};
+ const routed=routePhysicalWires(base,t);
+ expect(routed.routes.find(route=>route.wireId==="W1")?.steps).toEqual([
+   {segmentId:"A-X4",reverse:false},{segmentId:"X4-B",reverse:false},
+ ]);
+ expect(routed.routes.some(route=>route.wireId==="W2"||route.wireId==="W3")).toBe(false);
 });

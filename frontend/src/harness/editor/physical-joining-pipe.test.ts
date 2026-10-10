@@ -21,6 +21,7 @@ import {coveringRoute,standardCovering} from "./physical-coverings";
 import {drawingRouteCommands,drawingRouteHitPoints} from "./drawing-route-path";
 import {bendSnapAnchors,pipeBendSnapAnchors,physicalObjectRouteAnchors,joiningPipeEndpointSnapAnchors,snapBendPoint,snapPhysicalPoint} from "./physical-editing";
 import {unprojectPipeBundleEdit} from "./pipe-bundle-projection";
+import {resolvePhysicalRoutePointCommand} from "./physical-route-point-command";
 
 function fixture():HarnessDesignDocument {
  const d=createEmptyHarnessDesign();
@@ -30,6 +31,24 @@ function fixture():HarnessDesignDocument {
     {id:"p0",from:"a",to:"b",path:{kind:"polyline",points:[]}},
     {id:"p1",from:"c",to:"d",path:{kind:"polyline",points:[]}}],routes:[]}};
 }
+
+it("keeps automatically routed member corners editable after OP creation",()=>{
+ const d=fixture();
+ const topology={...d.physicalTopology!,nodes:d.physicalTopology!.nodes.map(node=>
+   node.id==="a"?{...node,direction:"right" as const}:node.id==="b"?{...node,position:{x:600,y:140},direction:"left" as const}:node.id==="c"?{...node,direction:"right" as const}:node.id==="d"?{...node,position:{x:600,y:240},direction:"left" as const}:node),
+   segments:d.physicalTopology!.segments.map(segment=>({...segment,path:{kind:"routed" as const,points:[]}}))};
+ const source={...d,physicalTopology:topology},op=createJoiningPipe(source,[["p0"],["p1"]],"op"),document={...source,physicalTopology:{...topology,joiningPipes:[op]}};
+ const before=physicalTopologyScene(document).find(object=>object.id==="p0")!,index=before.pipe!.authoredHandleIndices!.findIndex(value=>value>=1),authoredIndex=before.pipe!.authoredHandleIndices![index]!;
+ expect(index).toBeGreaterThanOrEqual(0);
+ expect(before.pipe!.controlledHandles).not.toContain(index);
+ const origin=before.pipe!.handles[index]!,command=resolvePhysicalRoutePointCommand(document,"p0",index,{x:origin.x+35,y:origin.y-25},"adjacent");
+ expect(command).toMatchObject({type:"edit-physical-bend",segmentId:"p0",index:0});
+ const moved=applyEditorCommand(document,command!);
+ expect(moved.physicalTopology!.segments.find(segment=>segment.id==="p0")!.path.points).not.toEqual([]);
+ const removed=applyEditorCommand(document,{type:"remove-physical-bend",segmentId:"p0",index:authoredIndex-1});
+ expect(removed.physicalTopology!.segments.find(segment=>segment.id==="p0")!.path.kind).toBe("polyline");
+ expect(parseHarnessDesignDocument(JSON.parse(JSON.stringify(removed))).physicalTopology).toEqual(removed.physicalTopology);
+});
 
 it("keeps an outer OP covering outside the inner covering along both member tails",()=>{
  const source=fixture(),op=createJoiningPipe(source,[["p0"],["p1"]],"op");
@@ -303,6 +322,17 @@ it("keeps boundary stations out of bend hit targets while preserving their geome
  const shifted=applyEditorCommand(base,{type:"update-joining-pipe-member-boundary",pipeId:"op",memberIndex:axis.memberIndex,boundary:axis.boundary,origin:axisPoint,position:{x:axisPoint.x+15,y:axisPoint.y-10}});
  expect(shifted.physicalTopology!.joiningPipes![0]!.start).toEqual({x:op.start.x+15,y:op.start.y-10});
  expect(parseHarnessDesignDocument(JSON.parse(JSON.stringify(moved))).physicalTopology!.joiningPipes![0]!.members[1]!.enterOuter).toEqual({x:outerPoint.x+20,y:outerPoint.y+30});
+});
+it("restores an edited exterior transition station when its numbered handle is removed",()=>{
+ const d=fixture(),op=createJoiningPipe(d,[["p0"],["p1"]],"op"),base={...d,physicalTopology:{...d.physicalTopology!,joiningPipes:[op]}};
+ const before=physicalTopologyScene(base).find(object=>object.id==="p1")!,outer=before.pipe!.joiningBoundaryHandles!.find(handle=>handle.boundary==="outerEnter")!;
+ const origin=before.pipe!.handles[outer.index]!,changed=applyEditorCommand(base,{type:"update-joining-pipe-member-boundary",pipeId:"op",memberIndex:outer.memberIndex,boundary:"outerEnter",origin,position:{x:origin.x+30,y:origin.y-20}});
+ const resolved=resolvePhysicalRoutePointCommand(base,"p1",outer.index,{x:origin.x+30,y:origin.y-20},"adjacent");
+ expect(resolved).toMatchObject({type:"update-joining-pipe-member-boundary",pipeId:"op",memberIndex:outer.memberIndex,boundary:"outerEnter"});
+ expect(changed.physicalTopology!.joiningPipes![0]!.members[outer.memberIndex]!.enterOuter).toEqual({x:origin.x+30,y:origin.y-20});
+ const restored=applyEditorCommand(changed,{type:"clear-joining-pipe-member-boundary",pipeId:"op",memberIndex:outer.memberIndex,boundary:"outerEnter"});
+ expect(restored.physicalTopology!.joiningPipes![0]!.members[outer.memberIndex]!.enterOuter).toBeUndefined();
+ expect(physicalTopologyScene(restored).find(object=>object.id==="p1")!.pipe!.handles[outer.index]).toEqual(origin);
 });
 it("keeps authored member bends attached when an OP endpoint moves",()=>{
  const d=fixture(),op=createJoiningPipe(d,[["p0"],["p1"]],"op"),withBend={...op,members:op.members.map((member,index)=>index===1?{...member,enterBend:{x:140,y:20},exitBend:{x:460,y:20}}:member)},base={...d,physicalTopology:{...d.physicalTopology!,joiningPipes:[withBend]}},scene=physicalTopologyScene(base).find(object=>object.id==="p1")!,axis=scene.pipe!.joiningBoundaryHandles!.find(handle=>handle.boundary==="axisEnter")!,origin=scene.pipe!.handles[axis.index]!;
