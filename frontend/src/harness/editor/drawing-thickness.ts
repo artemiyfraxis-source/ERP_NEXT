@@ -2,7 +2,11 @@ import type { HarnessDesignDocument, WireInstance } from "./model";
 import type { PhysicalSegment } from "./physical-topology-model";
 import { packPipeBundle } from "./pipe-bundle-packing";
 
-/** Catalogue diameters are millimetres; drawing widths are deliberately relative. */
+/** Catalogue diameters are millimetres. Drawing widths are relative to the
+ * thinnest catalogue wire unless the drawing is in «Реальные размеры, мм»:
+ * then 1 drawing unit is N mm (М 1:N) and every cross-section is drawn at its
+ * catalogue size. Harness lengths are never scaled — they stay the typed
+ * nominal dimensions, like a drawing marked «не в масштабе» for lengths. */
 export function catalogOuterDiameter(payload:Readonly<Record<string,unknown>>):number|undefined {
   const fields=Object.entries(payload).map(([key,value])=>[key.toLowerCase().replace(/[\s_,.()-]/g,""),value] as const);
   for(const names of [["внешнийдиаметр","наружныйдиаметр","outerdiametermm","outerdiameter","externaldiameter"],["диаметризоляции","диаметрпоизоляции","insulationdiameter","insulationdiametermm"]]) {
@@ -20,12 +24,29 @@ export function drawingReferenceDiameter(document:HarnessDesignDocument):number 
   const values=document.wires.map(w=>wireOuterDiameter(document,w)).filter((d):d is number=>!!d&&d>0);
   return values.length?Math.min(...values):1;
 }
-export const drawingPhysicalScale=(document:HarnessDesignDocument)=>document.drawingDocuments?.physicalScale??1;
+/** М 1:N when «Реальные размеры, мм» is on, otherwise null (today's relative look). */
+export function drawingRealSizeScale(document:HarnessDesignDocument):number|null {
+  const realSize=document.drawingDocuments?.realSize;
+  return realSize?.enabled?realSize.scaleDenominator:null;
+}
+/** Drawing units per millimetre of cross-section: the «Толщина» factor, or 1/N in real size. */
+export const drawingPhysicalScale=(document:HarnessDesignDocument)=>{const n=drawingRealSizeScale(document);return n===null?document.drawingDocuments?.physicalScale??1:1/n;};
 /** Global 1:x relationship used when adjacent protective layers grow. */
 export const coveringDiameterRatio=(document:HarnessDesignDocument)=>document.drawingDocuments?.coveringDiameterRatio??2;
 export function drawingWireWidth(document:HarnessDesignDocument,wire:WireInstance):number {
-  const reference=drawingReferenceDiameter(document);
+  const reference=drawingReferenceDiameter(document),n=drawingRealSizeScale(document);
+  // Real size: the catalogue diameter at М 1:N. A wire without one is drawn as
+  // the thinnest catalogue wire of the drawing (or 1 mm) and counted in the scale bar.
+  if(n!==null)return (wireOuterDiameter(document,wire)??reference)/n;
   return 2.5*drawingPhysicalScale(document)*(wireOuterDiameter(document,wire)??reference)/reference;
+}
+/** Wires drawn without a catalogue diameter in real size — the scale bar names their count. */
+export function wiresWithoutDiameter(document:HarnessDesignDocument):number {
+  return document.wires.filter(wire=>wireOuterDiameter(document,wire)===undefined).length;
+}
+/** A segment carrying a cable item is drawn at that cable's catalogue outer diameter in real size. */
+function segmentCableDiameter(document:HarnessDesignDocument,segment:PhysicalSegment):number|undefined {
+  return segment.specificationItemId?document.cables.find(cable=>cable.id===segment.specificationItemId)?.materialBinding?.outerDiameterMm:undefined;
 }
 export interface ProjectedWireStrip { readonly id:string; readonly offset:number; readonly width:number }
 export interface SegmentWireProjection {
@@ -42,7 +63,8 @@ export function segmentWireProjection(document:HarnessDesignDocument,segmentId:s
   const cached=sections.get(segmentId);if(cached)return cached;
   const mode=document.physicalTopology?.segments.find(s=>s.id===segmentId)?.mode??"flat";
   const members=(document.physicalTopology?.routes??[]).filter(r=>r.steps.some(s=>s.segmentId===segmentId)).map(r=>r.wireId).sort();
-  const gap=.25*drawingPhysicalScale(document),widths=members.map(id=>drawingWireWidth(document,document.wires.find(w=>w.id===id)!));
+  // Real wires touch inside a bundle; the relative look keeps a small lane gap.
+  const gap=drawingRealSizeScale(document)===null?.25*drawingPhysicalScale(document):0,widths=members.map(id=>drawingWireWidth(document,document.wires.find(w=>w.id===id)!));
   const total=widths.reduce((a,b)=>a+b,0)+Math.max(0,members.length-1)*gap;
   let x=-total/2;
   const flatLanes=members.map((id,i)=>{const width=widths[i]!,offset=x+width/2;x+=width+gap;return {id,width,offset};});
@@ -75,6 +97,7 @@ export function segmentWireLanes(document:HarnessDesignDocument,segmentId:string
 }
 export function drawingPipeWidth(document:HarnessDesignDocument,segment:PhysicalSegment):number {
   const scale=drawingPhysicalScale(document),section=segmentWireProjection(document,segment.id);
-  const bundle=section.diameter;
+  const bundle=section.diameter,n=drawingRealSizeScale(document);
+  if(n!==null){const cable=segmentCableDiameter(document,segment);return Math.max((segment.width??0)*scale,cable!==undefined?Math.max(cable/n,bundle):bundle);}
   return Math.max((segment.width??0)*scale,bundle+.5*scale);
 }

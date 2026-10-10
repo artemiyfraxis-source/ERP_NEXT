@@ -6,7 +6,7 @@ import { unprojectPipeBundlePoint, pipeBundleNodePoint } from "./pipe-bundle-pro
 import { resolvePhysicalRoutePointCommand } from "./physical-route-point-command";
 import { detachedWireBendInsertionIndex } from "./detached-wire-editing";
 import { coveringScene, moveCovering, type CoveringDragPart } from "./covering-layout";
-import { drawingWireWidth, drawingReferenceDiameter } from "./drawing-thickness";
+import { drawingWireWidth, drawingReferenceDiameter, drawingPhysicalScale, drawingRealSizeScale, wiresWithoutDiameter } from "./drawing-thickness";
 import { buildDrawingPerimeters, type DrawingPerimeters } from "./drawing-object-perimeter";
 import {SpecificationItemsPanel} from "./SpecificationItemsPanel";
 import { DrawingDimensionsPanel } from "./DrawingDimensionsPanel";
@@ -15,8 +15,8 @@ import { projectComponentTemplateView } from "./component-template-view-renderer
 import { materializePlacementRows } from "./component-template-placement";
 import { DrawingTableWindows } from "./DrawingTableWindows";
 import type { HarnessDocumentsSource } from "../panels/documents-source";
-import { CONTACT_SIDE_VIEW_PLACEMENT_ID, drawingLocalDirection, drawingLocalDirectionVector, drawingLocalPoint, drawingScale, DRAWING_VIEW_PLACEMENT_ID } from "./drawing-scale";
-import { DrawingScaleControl } from "./DrawingScaleControl";
+import { applyInRealSizeView, CONTACT_SIDE_VIEW_PLACEMENT_ID, connectorsWithoutRealSize, drawingLocalDirection, drawingLocalDirectionVector, drawingLocalPoint, drawingScale, DRAWING_VIEW_PLACEMENT_ID, realSizeConnectorScale, realSizeView } from "./drawing-scale";
+import { DrawingScaleControl, RealSizeControl } from "./DrawingScaleControl";
 import { DrawingDocumentsPanel } from "./DrawingDocumentsPanel";
 import { type DrawingDocuments, type DrawingTable, addDrawingPositions, createPositionRail, drawingDocumentScene, moveDrawingAnnotation, reconcileDrawingDocuments, setDrawingPositionsVisibility } from "./drawing-documents";
 import { alignDrawingConnectorIndexes, drawingObjectIndexScene, moveDrawingIndex } from "./drawing-indices";
@@ -530,7 +530,7 @@ export function designToScene(
     if (pair.some(wire => !wire || wire.metadata?.physicalRoute === "true")) continue;
     const twisted = freeTwistedPairPaths(group, pair.map(wire => ({
       id: wire!.id, points: wire!.points ?? [], width: Number(wire!.metadata?.drawingWidth ?? 2.5),
-    })), document.drawingDocuments?.physicalScale ?? 1, group.wireIds.every(id => document.wires.find(w => w.id === id)?.drawingEndpoints));
+    })), drawingPhysicalScale(document), group.wireIds.every(id => document.wires.find(w => w.id === id)?.drawingEndpoints));
     for (const wire of pair) {
       const display = twisted.get(wire!.id);
       if (!display) continue;
@@ -1001,7 +1001,7 @@ export function HarnessDesignEditor({
   useEffect(() => setActiveWireStripEnd("from"), [selectedObjectId]);
 
   const componentTemplateViewInstances = useMemo(() => history
-    ? buildComponentTemplateViewInstances(history.present, componentSnapshotsByPlacement) : [],
+    ? buildComponentTemplateViewInstances(realSizeView(history.present), componentSnapshotsByPlacement) : [],
     [history?.present, componentSnapshotsByPlacement]);
   const drawingPerimeters=useMemo(()=>buildDrawingPerimeters(componentTemplateViewInstances),[componentTemplateViewInstances]);
 
@@ -1021,60 +1021,62 @@ export function HarnessDesignEditor({
   const [freeEndPreviews,setFreeEndPreviews]=useState<readonly {wireId:string;end:"from"|"to";position:{x:number;y:number}}[]>([]);
   const previewResult = useMemo(() => {
     if (!history) return { document: null, error: null };
+    // «Реальные размеры, мм»: previews are made on the view the field shows (connectors at 1/N).
+    const present = realSizeView(history.present);
     if(freeEndPreviews.length){
-      try{return {document:freeEndPreviews.reduce((document, preview)=>applyEditorCommand(document,{type:"set-wire-drawing-endpoint",...preview}),history.present),error:null};}
-      catch(error){return {document:history.present,error:error instanceof Error?error.message:"Не удалось переместить конец провода."};}
+      try{return {document:freeEndPreviews.reduce((document, preview)=>applyEditorCommand(document,{type:"set-wire-drawing-endpoint",...preview}),present),error:null};}
+      catch(error){return {document:present,error:error instanceof Error?error.message:"Не удалось переместить конец провода."};}
     }
-    if(pairPitchPreview)return {document:{...history.present,diffPairs:history.present.diffPairs.map(pair=>pair.id===pairPitchPreview.id?{...pair,step:pairPitchPreview.step}:pair)},error:null};
-    if(bendRadiusPreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),bendRadius:bendRadiusPreview}},error:null};
-    if(leaderScalePreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),leaderScale:leaderScalePreview}},error:null};
-    if(indexScalePreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),indexScale:indexScalePreview}},error:null};
-    if(dimensionScalePreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),dimensionScale:dimensionScalePreview}},error:null};
-    if(minimumOverlapPreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),minimumCoveringOverlapPx:minimumOverlapPreview}},error:null};
-    if(opCoveringEdgePreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),opCoveringEdgePx:opCoveringEdgePreview}},error:null};
-    if(coveringRatioPreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),coveringDiameterRatio:coveringRatioPreview}},error:null};
-    if(coveringPreview&&history.present.physicalTopology)return {document:{...history.present,physicalTopology:{...history.present.physicalTopology,coverings:history.present.physicalTopology.coverings?.map(c=>c.id===coveringPreview.id?coveringPreview:c)}},error:null};
-    if(pipeOpacityPreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),pipeOpacity:1-pipeOpacityPreview/100}},error:null};
-    if(thicknessPreview!==null)return {document:{...history.present,drawingDocuments:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),physicalScale:thicknessPreview}},error:null};
+    if(pairPitchPreview)return {document:{...present,diffPairs:present.diffPairs.map(pair=>pair.id===pairPitchPreview.id?{...pair,step:pairPitchPreview.step}:pair)},error:null};
+    if(bendRadiusPreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),bendRadius:bendRadiusPreview}},error:null};
+    if(leaderScalePreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),leaderScale:leaderScalePreview}},error:null};
+    if(indexScalePreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),indexScale:indexScalePreview}},error:null};
+    if(dimensionScalePreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),dimensionScale:dimensionScalePreview}},error:null};
+    if(minimumOverlapPreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),minimumCoveringOverlapPx:minimumOverlapPreview}},error:null};
+    if(opCoveringEdgePreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),opCoveringEdgePx:opCoveringEdgePreview}},error:null};
+    if(coveringRatioPreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),coveringDiameterRatio:coveringRatioPreview}},error:null};
+    if(coveringPreview&&present.physicalTopology)return {document:{...present,physicalTopology:{...present.physicalTopology,coverings:present.physicalTopology.coverings?.map(c=>c.id===coveringPreview.id?coveringPreview:c)}},error:null};
+    if(pipeOpacityPreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),pipeOpacity:1-pipeOpacityPreview/100}},error:null};
+    if(thicknessPreview!==null)return {document:{...present,drawingDocuments:{...(present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),physicalScale:thicknessPreview}},error:null};
     if(pipePreview&&view==="e4"){
-      try{return {document:applyEditorCommand(history.present,{type:"edit-e4-bend",wireId:pipePreview.id,index:pipePreview.index,position:pipePreview.point,mode:pipePreview.mode??"carry",insert:pipePreview.insert}),error:null};}
-      catch(error){return {document:history.present,error:error instanceof Error?error.message:"Не удалось изменить перегиб Э4."};}
+      try{return {document:applyEditorCommand(present,{type:"edit-e4-bend",wireId:pipePreview.id,index:pipePreview.index,position:pipePreview.point,mode:pipePreview.mode??"carry",insert:pipePreview.insert}),error:null};}
+      catch(error){return {document:present,error:error instanceof Error?error.message:"Не удалось изменить перегиб Э4."};}
     }
-    if(pipePreview&&view==="drawing"&&history.present.wires.some(w=>w.id===pipePreview.id&&w.drawingEndpoints)){
-      try{return {document:applyEditorCommand(history.present,{type:"edit-detached-wire-bend",wireId:pipePreview.id,index:pipePreview.index,position:pipePreview.point,insert:pipePreview.insert}),error:null};}
-      catch(error){return {document:history.present,error:error instanceof Error?error.message:"Не удалось изменить перегиб."};}
+    if(pipePreview&&view==="drawing"&&present.wires.some(w=>w.id===pipePreview.id&&w.drawingEndpoints)){
+      try{return {document:applyEditorCommand(present,{type:"edit-detached-wire-bend",wireId:pipePreview.id,index:pipePreview.index,position:pipePreview.point,insert:pipePreview.insert}),error:null};}
+      catch(error){return {document:present,error:error instanceof Error?error.message:"Не удалось изменить перегиб."};}
     }
-    if(pipePreview&&history.present.physicalTopology) {
-      try{const command=resolvePhysicalRoutePointCommand(history.present,pipePreview.id,pipePreview.index,pipePreview.point,pipePreview.mode,pipePreview.insert);
-        return {document:command?applyEditorCommand(history.present,command):history.present,error:null};}
-      catch(error){return {document:history.present,error:error instanceof Error?error.message:"Не удалось изменить перегиб."};}
+    if(pipePreview&&present.physicalTopology) {
+      try{const command=resolvePhysicalRoutePointCommand(present,pipePreview.id,pipePreview.index,pipePreview.point,pipePreview.mode,pipePreview.insert);
+        return {document:command?applyEditorCommand(present,command):present,error:null};}
+      catch(error){return {document:present,error:error instanceof Error?error.message:"Не удалось изменить перегиб."};}
     }
-    if (!movePreview) return { document: history.present, error: null };
+    if (!movePreview) return { document: present, error: null };
     try {
       if(movePreview.objectId.startsWith("object-index:")){
-        const indexScene=alignDrawingConnectorIndexes(history.present,designToScene(history.present,"drawing"),componentTemplateViewInstances,resolveComponentTemplateAssetUrl);
-        const index=moveDrawingIndex(history.present,movePreview.objectId,movePreview.point,indexScene);
-        if(index)return {document:{...history.present,drawingDocuments:index},error:null};
+        const indexScene=alignDrawingConnectorIndexes(present,designToScene(present,"drawing"),componentTemplateViewInstances,resolveComponentTemplateAssetUrl);
+        const index=moveDrawingIndex(present,movePreview.objectId,movePreview.point,indexScene);
+        if(index)return {document:{...present,drawingDocuments:index},error:null};
       }
-      const annotation=moveDrawingAnnotation(history.present,movePreview.objectId,movePreview.point,drawingPerimeters);
-      if(annotation)return {document:{...history.present,drawingDocuments:annotation},error:null};
-      const topology = history.present.physicalTopology;
+      const annotation=moveDrawingAnnotation(present,movePreview.objectId,movePreview.point,drawingPerimeters);
+      if(annotation)return {document:{...present,drawingDocuments:annotation},error:null};
+      const topology = present.physicalTopology;
       const joiningPipe=topology?.joiningPipes?.find(pipe=>pipe.id===movePreview.objectId);
       if(joiningPipe){
-        return {document:applyEditorCommand(history.present,{type:"move-joining-pipe",pipeId:joiningPipe.id,delta:movePreview.point}),error:null};
+        return {document:applyEditorCommand(present,{type:"move-joining-pipe",pipeId:joiningPipe.id,delta:movePreview.point}),error:null};
       }
       const opEndpoint=joiningPipeEndpoint(topology,movePreview.objectId);
       if(opEndpoint){
-        return {document:applyEditorCommand(history.present,{type:"update-joining-pipe",pipeId:opEndpoint.pipe.id,[opEndpoint.side==="from"?"start":"end"]:{x:movePreview.point.x+5,y:movePreview.point.y+5}}),error:null};
+        return {document:applyEditorCommand(present,{type:"update-joining-pipe",pipeId:opEndpoint.pipe.id,[opEndpoint.side==="from"?"start":"end"]:{x:movePreview.point.x+5,y:movePreview.point.y+5}}),error:null};
       }
       const opExit=joiningPipeExit(topology,movePreview.objectId);
-      if(opExit)return {document:applyEditorCommand(history.present,{type:"update-joining-pipe-exit",pipeId:opExit.pipe.id,side:opExit.side,position:{x:movePreview.point.x+5,y:movePreview.point.y+5}}),error:null};
+      if(opExit)return {document:applyEditorCommand(present,{type:"update-joining-pipe-exit",pipeId:opExit.pipe.id,side:opExit.side,position:{x:movePreview.point.x+5,y:movePreview.point.y+5}}),error:null};
       const node = topology?.nodes.find(n => n.id === movePreview.objectId);
       if (node && topology) {
-        const original=physicalNodePoint(history.present,node),display=pipeBundleNodePoint(history.present,node.id,original);
-        return { document: applyEditorCommand(history.present, {type:"move-physical-node",nodeId:node.id,position:{x:movePreview.point.x+5+original.x-display.x,y:movePreview.point.y+5+original.y-display.y},mode:movePreview.mode??"carry"}), error:null };
+        const original=physicalNodePoint(present,node),display=pipeBundleNodePoint(present,node.id,original);
+        return { document: applyEditorCommand(present, {type:"move-physical-node",nodeId:node.id,position:{x:movePreview.point.x+5+original.x-display.x,y:movePreview.point.y+5+original.y-display.y},mode:movePreview.mode??"carry"}), error:null };
       }
-      return { document: applyEditorCommand(history.present, {
+      return { document: applyEditorCommand(present, {
         type: "move-connector",
         connectorId: movePreview.objectId,
         view,
@@ -1087,11 +1089,11 @@ export function HarnessDesignEditor({
       // intact and the normal command reports why it could not be placed.
       return {
         document: {
-          ...history.present,
-          connectors: history.present.connectors.map((connector) => connector.id === movePreview.objectId
+          ...present,
+          connectors: present.connectors.map((connector) => connector.id === movePreview.objectId
             ? { ...connector, positions: { ...connector.positions, [view]: movePreview.point } }
             : connector),
-          wires: history.present.wires.filter((wire) => ![wire.from, wire.to].some((endpoint) =>
+          wires: present.wires.filter((wire) => ![wire.from, wire.to].some((endpoint) =>
             !isJunctionEndpoint(endpoint) && !isScreenEndpoint(endpoint) && endpoint.connectorId === movePreview.objectId)),
         },
         error: error instanceof Error ? error.message : "Трассировка невозможна.",
@@ -1128,8 +1130,18 @@ export function HarnessDesignEditor({
       }).catch(error=>setMessage(error instanceof Error?error.message:"Не удалось закрепить материал.")).finally(()=>{preparingCovering.current=false});
       return false;
     }
+    const realSize=realSizeConnectorScale(current.present)!==null;
+    if(realSize&&!system&&command.type==="set-drawing-placement"&&command.drawingId===DRAWING_VIEW_PLACEMENT_ID&&command.scale!==undefined){
+      setMessage("В режиме «Реальные размеры, мм» размер соединителя задаёт масштаб чертежа.");
+      return false;
+    }
     try {
-      let next = executeEditorCommand(current, command);
+      // Real size: the command works on the view the field shows and the stored
+      // per-connector scales come back untouched.
+      let next = realSize ? (present => present === current.present ? current
+        : { past: [...current.past, current.present].slice(-100), present, future: [] })(
+          applyInRealSizeView(current.present, document => applyEditorCommand(document, command)))
+        : executeEditorCommand(current, command);
       // Component/article replacement and E4 edits can change the contact text
       // without creating a new wire. Reconcile the connected conductor on every
       // command while the active wire snapshot is available.
@@ -1275,7 +1287,7 @@ export function HarnessDesignEditor({
   const componentGraphIntegrityMessage = componentGraphMessage || (hasComponentGraphIntegrityMismatch
     ? "Закреплённые контактные данные компонента не совпадают со снимком проекта. Используется резервное отображение."
     : "");
-  const sourceDocument=previewResult.document??history.present;
+  const sourceDocument=previewResult.document??realSizeView(history.present);
   const drawingDocument=view!=="drawing"?sourceDocument:{...sourceDocument,connectors:sourceDocument.connectors.map(connector=>{
     const instance=componentTemplateViewInstances.find(i=>i.objectId===connector.id),binding=connector.libraryBinding;
     if(!instance||binding?.mode!=="template")return connector;
@@ -1830,7 +1842,7 @@ export function HarnessDesignEditor({
             <h3 id="he-controls-heading">Настройки чертежа</h3>
           {joiningPipeDraft&&history.present.physicalTopology&&<JoiningPipeEditor document={history.present} draft={joiningPipeDraft} onChange={setJoiningPipeDraft} onCancel={()=>setJoiningPipeDraft(null)} onSave={()=>{try{const topology=joiningPipeDraftTopology(history.present,joiningPipeDraft);if(run({type:'set-physical-topology',topology})){setSelectedObjectId(joiningPipeDraft.id);setSelectedObjectIds([joiningPipeDraft.id]);setJoiningPipeDraft(null);}}catch(error){setMessage(error instanceof Error?error.message:'Не удалось сохранить состав группы.');}}}/>}
           <DrawingRangeControl label="Прозрачность П/ОП" accessibleLabel="Прозрачность пайпов и объединяющих пайпов" min={0} max={100} step={1} digits={0} unit="%" value={pipeOpacityPreview??Math.round((1-(history.present.drawingDocuments?.pipeOpacity??.72))*100)} onPreview={setPipeOpacityPreview} onCommit={transparency=>{const pipeOpacity=1-transparency/100;if(pipeOpacity!==(history.present.drawingDocuments?.pipeOpacity??.72))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),pipeOpacity}});}} hint="Единая прозрачность всех пайпов и объединяющих пайпов на чертеже. Электрические связи и геометрия не меняются."/>
-          <DrawingRangeControl label="Толщина" accessibleLabel="Масштаб толщины проводов" min={.2} max={8} step={.05} value={thicknessPreview??history.present.drawingDocuments?.physicalScale??1} onPreview={setThicknessPreview} onCommit={physicalScale=>{if(physicalScale!==(history.present.drawingDocuments?.physicalScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),physicalScale}});}} hint={`Опорный диаметр: ${drawingReferenceDiameter(history.present)} мм. Отношения диаметров сохраняются.`}/>
+          {drawingRealSizeScale(history.present)===null&&<DrawingRangeControl label="Толщина" accessibleLabel="Масштаб толщины проводов" min={.2} max={8} step={.05} value={thicknessPreview??history.present.drawingDocuments?.physicalScale??1} onPreview={setThicknessPreview} onCommit={physicalScale=>{if(physicalScale!==(history.present.drawingDocuments?.physicalScale??1))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),physicalScale}});}} hint={`Опорный диаметр: ${drawingReferenceDiameter(history.present)} мм. Отношения диаметров сохраняются.`}/>}
           {history.present.diffPairs.map((pair,index)=><DrawingRangeControl key={pair.id} label={history.present.diffPairs.length===1?"Шаг витой пары":`Шаг пары ${index+1}`} accessibleLabel={`Шаг витой пары ${index+1}`} min={5} max={Math.max(150,Math.ceil(pair.step/50)*50)} step={1} digits={0} unit=" мм" value={pairPitchPreview?.id===pair.id?pairPitchPreview.step:pair.step} onPreview={step=>setPairPitchPreview(step===null?null:{id:pair.id,step})} onCommit={step=>{if(step!==pair.step)run({type:"update-diff-pair",groupId:pair.id,step});}} hint={`Провода ${pair.wireIds.map(id=>history.present.wires.find(wire=>wire.id===id)?.circuit||id).join(" и ")}. Шаг сохраняется в паре Э4; на чертеже учитывается масштаб толщины.`}/>)}
           <DrawingRangeControl label="Диаметры 1:" unit="" digits={1} accessibleLabel="Соотношение диаметров оболочек" min={1.1} max={4} step={.1} value={coveringRatioPreview??history.present.drawingDocuments?.coveringDiameterRatio??2} onPreview={setCoveringRatioPreview} onCommit={coveringDiameterRatio=>{if(coveringDiameterRatio!==(history.present.drawingDocuments?.coveringDiameterRatio??2))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),coveringDiameterRatio}});}} hint="Глобальное правило 1:x для соседних оболочек. При увеличении ширины переходы сохраняют форму; локальные ширины и материал не меняются."/>
           <DrawingRangeControl label="Радиус" accessibleLabel="Радиус изгибов чертежа" min={0} max={200} step={1} digits={0} unit="" value={bendRadiusPreview??drawingBendRadius(history.present)} onPreview={setBendRadiusPreview} onCommit={bendRadius=>{if(bendRadius!==drawingBendRadius(history.present))run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),bendRadius}});}} hint="Радиус в координатах чертежа: 0 — острый угол. На коротких плечах радиус автоматически уменьшается. Заданные длины проводов и точки перегиба сохраняются."/>
@@ -1895,7 +1907,9 @@ export function HarnessDesignEditor({
         resolveComponentTemplateAssetUrl={resolveComponentTemplateAssetUrl}
         saveState={saveState}
         onSaveRequest={() => void flushSave()}
-        onDrawingScale={(connectorId,drawingId,scale)=>run({type:"set-drawing-placement",connectorId,drawingId,scale})}
+        onDrawingScale={drawingRealSizeScale(history.present)===null?(connectorId,drawingId,scale)=>run({type:"set-drawing-placement",connectorId,drawingId,scale}):undefined}
+        viewControls={<RealSizeControl value={history.present.drawingDocuments?.realSize} disabled={readOnly} onChange={realSize=>run({type:"set-drawing-documents",documents:{...(history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]}),realSize}})}/>}
+        realSize={(n=>n===null?null:{denominator:n,wiresWithoutDiameter:wiresWithoutDiameter(history.present),connectorsWithoutSize:connectorsWithoutRealSize(history.present)})(drawingRealSizeScale(history.present))}
         onDrawingMove={(connectorId,drawingId,offset)=>run({type:"set-drawing-placement",connectorId,drawingId,offset})}
         propertyInspector={selectedObjectId && history.present.drawingDocuments?.graphics?.some(g=>g.id===selectedObjectId) ? <DrawingObjectProperties document={history.present} objectId={selectedObjectId} selectedIds={selectedObjectIds} onCommand={run} instances={componentTemplateViewInstances} wireMaterialOptions={wireLookup.databaseOptions} onSelect={id=>{setSelectedObjectId(id);setSelectedObjectIds([id]);}}/> : selectedObjectId && (history.present.drawingDocuments?.specificationItems?.some(i=>i.id===selectedObjectId) || history.present.drawingDocuments?.dimensions?.some(d=>d.id===selectedObjectId) || history.present.drawingDocuments?.tables.some(t=>t.id===selectedObjectId) || history.present.drawingDocuments?.leaders.some(l=>l.id===selectedObjectId||`${l.id}:anchor`===selectedObjectId) || history.present.drawingDocuments?.rails?.some(r=>selectedObjectId===r.id||selectedObjectId===`${r.id}:start`||selectedObjectId===`${r.id}:end`) || history.present.physicalTopology?.coverings?.some(c=>c.id===selectedObjectId) || history.present.physicalTopology?.nodes.some(n=>n.id===selectedObjectId) || history.present.physicalTopology?.segments.some(s=>s.id===selectedObjectId) || history.present.physicalTopology?.joiningPipes?.some(p=>p.id===selectedObjectId)) ? <></> : selectedConnector ? (<>
           {view==="e4" && (()=>{
