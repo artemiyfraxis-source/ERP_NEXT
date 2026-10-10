@@ -1314,6 +1314,44 @@ export interface ConnectorFamily {
   housing: import("./connectorArt").ConnectorHousing & { conf?: string; note?: string };
 }
 
+/** «База данных → Разъёмы» по сериям (backend techcards/connector_series.py). */
+export interface ConnectorSeriesHousing {
+  article: string;
+  n: number;
+  housing: ConnectorFamily["housing"];
+  headers: Array<{ title: string; article: string }>;
+}
+
+export interface ConnectorTerminal {
+  article: string; maker: string; product: string; series: string; kind: string;
+  awg_from: string; awg_to: string; mm2_from: string; mm2_to: string; strip: string; applicator: string; crimp_height: string;
+}
+
+export interface ConnectorSeries {
+  id: string;
+  title: string;
+  maker: string;
+  variants: Array<{ title: string; family: string; housings: ConnectorSeriesHousing[] }>;
+  range_checked: boolean;
+  range_src: string;
+  datasheet: string;
+  note: string;
+  terminals: ConnectorTerminal[];
+  wire: { awg_thin?: number; awg_thick?: number; mm2_min?: number; mm2_max?: number } | null;
+  housing_count: number;
+  counts: number[];
+  pitch: number | null;
+  color: string | null;
+  checked: boolean;
+  sample: ConnectorSeriesHousing | null;
+}
+
+export interface ConnectorSeriesMatch {
+  series: string | null;
+  article: string | null;
+  housing: ConnectorFamily["housing"];
+}
+
 export interface OperationRecordEdit {
   name: string;
   safety: string;
@@ -2702,8 +2740,10 @@ export const techcardsApi = {
   deleteSketch: (cardId: string, operationKey: string) =>
     api<{ deleted: number }>(`/api/techcards/projects/${cardId}/sketches/${encodeURIComponent(operationKey)}`, { method: "DELETE" }),
   /** База разъёмов: семейства корпусов с образцом артикула и раскладкой контактов. */
-  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null }>(
+  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null; series_count?: number }>(
     `/api/techcards/connector-families${article ? `?article=${encodeURIComponent(article)}` : ""}`),
+  connectorSeries: (article = "") => api<{ series: ConnectorSeries[]; match: ConnectorSeriesMatch | null }>(
+    `/api/techcards/connector-series${article ? `?article=${encodeURIComponent(article)}` : ""}`),
   discardDraft: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {
       method: "DELETE",
