@@ -116,7 +116,7 @@ function JobPlan({ task, flow, operators, canEdit, busy, mutate }: {
     </div>
     <div className="jp-summary">
       <div><span>Первые {plan.first_quantity} шт</span><b>{formatMoment(plan.first_ready)}</b>{plan.baseline_early_ready && <small>без отдельной партии — {formatMoment(plan.baseline_early_ready)}</small>}</div>
-      <div className={late ? "jp-late" : ""}><span>Всё готово</span><b>{formatMoment(plan.finish)}</b>{task.deadline && <small>срок {formatDay(task.deadline)}</small>}</div>
+      <div className={late ? "jp-late" : ""}><span>Всё готово</span><b>{formatMoment(plan.finish)}</b>{task.deadline && <small>срок задания {formatDay(task.deadline)}</small>}</div>
       <div><span>Передаточная партия</span><b>{plan.transfer_batch >= task.quantity ? `вся, ${task.quantity} шт` : `${plan.transfer_batch} шт`}</b></div>
       <div><span>Длительность</span><b>{hours(plan.work_seconds)}</b><small>чистых часов смены</small></div>
     </div>
