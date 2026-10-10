@@ -49,6 +49,7 @@ export interface GanttProps {
 }
 
 const DAY_NAMES = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
+const dayMonth = (day: Date) => `${String(day.getDate()).padStart(2, "0")}.${String(day.getMonth() + 1).padStart(2, "0")}`;
 const DAY_START_MIN = 540;
 const DAY_LENGTH_MIN = 510;
 
@@ -176,13 +177,14 @@ export function Gantt({
     if (!end) return null;
     const x = dayOffset(end, day0);
     if (x <= 0 || x > days) return null;
-    return <span className="gantt-mark" data-testid="gantt-deadline" title={`Дедлайн ${deadline}`} style={{ left: `calc(${pct(x)} - 2px)` }} />;
+    return <span className="gantt-mark" data-testid="gantt-deadline" title={`Дедлайн ${dayMonth(parseMoment(deadline)!)}`} style={{ left: `calc(${pct(x)} - 2px)` }} />;
   }
 
   return <div className="gantt">
     <div className="gantt-nav" role="group" aria-label="Неделя">
+      <span className="gantt-period">{dayMonth(scale[0])}–{dayMonth(scale[scale.length - 1])}</span>
       <button type="button" className="secondary small" onClick={() => setWeek(shown - 1)}>← неделя</button>
-      <button type="button" className="secondary small" onClick={() => setWeek(0)}>сегодня</button>
+      <button type="button" className="secondary small" onClick={() => setWeek(0)} disabled={shown === 0}>Сегодня</button>
       <button type="button" className="secondary small" onClick={() => setWeek(shown + 1)}>неделя →</button>
     </div>
     {rows.length ? <div className="gantt-wrap"><div className="gantt-grid">
@@ -190,7 +192,7 @@ export function Gantt({
         <div className="gantt-label">{labelHead}</div>
         <div className="gantt-track" style={{ minWidth: width }}>{background}{scale.map((day, index) => (
           <span key={index} className="gantt-day" style={{ left: pct(index), width: pct(1) }}>
-            {DAY_NAMES[day.getDay()]}<br />{String(day.getDate()).padStart(2, "0")}.{String(day.getMonth() + 1).padStart(2, "0")}
+            {DAY_NAMES[day.getDay()]}<br />{dayMonth(day)}
           </span>
         ))}</div>
       </div>

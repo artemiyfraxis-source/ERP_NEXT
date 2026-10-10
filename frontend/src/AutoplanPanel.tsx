@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, failureText, productionApi, type AutoplanPreview, type AutoplanProposal, type AutoplanRequest, type ProductionTask } from "./api";
 import { formatDay } from "./format";
+import { taskItemLabel } from "./productionGraph";
 
 const STALE_TEXT = "План изменился — обновите предложение";
 
@@ -178,7 +179,7 @@ export function AutoplanPanel({ tasks, close, onApplied }: {
         <div className="autoplan-task-list">
           {live.map((task) => <label key={task.id} className="autoplan-check">
             <input type="checkbox" checked={taskIds.includes(task.id)} onChange={() => toggleTask(task.id)} />
-            <span>{task.number} · {task.item}{task.name ? ` · ${task.name}` : ""}</span>
+            <span>{task.number} · {taskItemLabel(task)}{task.name ? ` · ${task.name}` : ""}</span>
           </label>)}
           {!live.length && <small>Запущенных заданий нет.</small>}
         </div>

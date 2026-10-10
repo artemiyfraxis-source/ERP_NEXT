@@ -3,6 +3,7 @@ import {
   ApiError,
   fulfillmentApi,
   productionApi,
+  productionPlanApi,
   type FulfillmentRequest,
   type Principal,
   type ProductionAbsence,
@@ -23,11 +24,13 @@ import {
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { EtkSheet } from "./ProjectEtk";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
-import { formatDay } from "./format";
-import { MasterBoard } from "./MasterBoard";
+import { formatDay, formatDayMonth, formatMoment } from "./format";
+import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
 import { JobPanel } from "./JobPlan";
-import { feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf } from "./productionGraph";
+import { AutoTextarea } from "./AutoTextarea";
+import { StatusChip } from "./StatusChip";
+import { deadlineChips, feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf, taskItemLabel, windowText } from "./productionGraph";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
   const [tasks, setTasks] = useState<ProductionTask[]>([]);
@@ -94,6 +97,14 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   }
 
   useEffect(() => { void reload(); }, [mine, viewAs]);
+  // Дедлайн проекта — из производственного плана (РП-1): у плитки и задания он подписан отдельно от срока задания.
+  const [projectDeadlines, setProjectDeadlines] = useState<ProjectDeadlines>({});
+  useEffect(() => {
+    if (mine || !canOverview) return;
+    productionPlanApi.load()
+      .then((result) => setProjectDeadlines(Object.fromEntries(result.rows.map((row) => [row.project.toLowerCase(), { deadline: row.deadline, days_left: row.days_left }]))))
+      .catch(() => setProjectDeadlines({}));
+  }, [mine, canOverview]);
   useEffect(() => {
     if (!mine || !canOverview) return;
     productionApi.operators().then((result) => { setStaff(result.operators); setStaffSite(result.viewer_site ?? ""); }).catch(() => undefined);
@@ -143,7 +154,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
     {showAutoplan && canEdit && <AutoplanPanel tasks={tasks} close={() => setShowAutoplan(false)} onApplied={(count) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций`); void reload(); }} />}
-    {showLaunch && canEdit && <LaunchForm tasks={tasks} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
+    {showLaunch && canEdit && <LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={readOnly ? viewedName : ""} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
@@ -151,6 +162,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
       task={selectedTask}
+      project={projectDeadlines[selectedTask.project.toLowerCase()]}
       initialOperationId={selectedOperationId}
       tasks={tasks}
       operators={ownSite(operators, viewerSite, selectedTask)}
@@ -165,7 +177,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     />}
     {!mine && !selectedTask && loaded && canOverview && <MasterBoard
       tasks={tasks} operators={operators} site={viewerSite} skills={skills} absences={absences}
-      shift={shift} holidays={holidays}
+      shift={shift} holidays={holidays} projectDeadlines={projectDeadlines}
       canEdit={canEdit} busy={busy} mutate={mutate}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
@@ -320,7 +332,7 @@ function SkillsForm({ operators, close }: {
     <label>Оператор<select aria-label="Оператор компетенций" value={operatorId} onChange={(event) => { setOperatorId(event.target.value); setSaved(""); }}>{operators.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}{operator.site ? ` · ${operator.site}` : ""}</option>)}</select></label>
     <div className="skills-grid">
       {codes.map(({ code, name }) => { const item = row(code); return <div key={code} className="skill-row">
-        <div><strong>{code}</strong><small>{name}</small></div>
+        <div><strong>{name || code}</strong>{name ? <small>{code}</small> : null}</div>
         <label>Допуск<select aria-label={`Допуск ${code}`} value={item ? (item.allowed ? "yes" : "no") : ""} onChange={(event) => update(code, event.target.value ? { allowed: event.target.value === "yes" } : null)}><option value="">—</option><option value="yes">допущен</option><option value="no">не допущен</option></select></label>
         <label>Звёзды<select aria-label={`Звёзды ${code}`} disabled={!item} value={item?.stars ?? 0} onChange={(event) => update(code, { stars: Number(event.target.value) })}>{[0, 1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label>Коэф.<input aria-label={`Коэффициент ${code}`} disabled={!item} type="number" min="0.1" max="100" step="0.1" value={item?.coefficient ?? "1"} onChange={(event) => update(code, { coefficient: event.target.value })} /></label>
@@ -332,8 +344,9 @@ function SkillsForm({ operators, close }: {
 }
 
 // Запуск задания (prodLaunchModal_): сборки с выданной техкартой по проектам, поиск, «тираж», «уже запущено».
-function LaunchForm({ tasks, busy, mutate, close }: {
+function LaunchForm({ tasks, projectDeadlines, busy, mutate, close }: {
   tasks: ProductionTask[];
+  projectDeadlines: ProjectDeadlines;
   busy: boolean;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
   close: () => void;
@@ -384,8 +397,11 @@ function LaunchForm({ tasks, busy, mutate, close }: {
     });
   }
 
+  // Задание встаёт в работу в момент запуска (API не принимает дату начала): дата запуска — сегодня, она на кнопке (РП-5).
+  const today = formatDayMonth(toLocalInput(new Date().toISOString()));
+  const projectDeadline = picked ? projectDeadlines[picked.project.toLowerCase()]?.deadline ?? null : null;
   return <div className="panel production-launch">
-    <div className="manual-stock-head"><div><h2>Запустить задание</h2><small>Выбери сборку — маршрут задания скопируется из её выданной техкарты.</small></div><button className="link-button" onClick={close}>Отмена</button></div>
+    <div className="manual-stock-head"><div><h2>Запустить задание</h2><small>{picked ? `Запуск сегодня, ${today}` : "Выберите сборку с выданной техкартой"}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!picked && <>
       {items.length > 0 && <input className="pl-search" aria-label="Поиск сборки" placeholder="Поиск: проект, КБ, заказчик, наименование" value={query} onChange={(event) => setQuery(event.target.value)} autoFocus />}
@@ -400,7 +416,7 @@ function LaunchForm({ tasks, busy, mutate, close }: {
           </button>;
         })}</div>
       </div>)}
-      {!loading && !items.length && <div className="empty">Нет сборок с выданной техкартой — сначала собери техкарту в карточке проекта.</div>}
+      {!loading && !items.length && <div className="empty">Нет сборок с выданной техкартой — сначала выдайте техкарту в карточке проекта.</div>}
       {items.length > 0 && !visible.length && <div className="empty">Ничего не найдено.</div>}
     </>}
     {picked && <>
@@ -409,10 +425,10 @@ function LaunchForm({ tasks, busy, mutate, close }: {
       {doneOf(picked).length > 0 && <div className="pl-warn">Уже запущено: {doneOf(picked).map((task) => `${task.number} × ${task.quantity}`).join(", ")}</div>}
       <div className="production-launch-grid">
         <label>Кол-во<input aria-label="Кол-во" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} autoFocus /></label>
-        <label>Дедлайн<input aria-label="Дедлайн" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+        <label>Срок задания<input aria-label="Срок задания" type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} />{projectDeadline && <small className="launch-hint">дедлайн проекта {formatDay(projectDeadline)}</small>}</label>
         <label>Выданный комплект<select aria-label="Выданный комплект" value={fulfillmentRequestId} onChange={(event) => setFulfillmentRequestId(event.target.value)}><option value="">Не связан</option>{issuedRequests.map((request) => <option key={request.id} value={request.id}>{request.number} · {request.purpose}</option>)}</select></label>
       </div>
-      <div className="form-actions"><button className="primary" disabled={busy || !/^\d+$/.test(quantity.trim()) || Number(quantity) <= 0} onClick={() => void submit()}>Запустить</button></div>
+      <div className="form-actions"><button className="primary" disabled={busy || !/^\d+$/.test(quantity.trim()) || Number(quantity) <= 0} onClick={() => void submit()}>Запустить сегодня, {today}</button></div>
     </>}
   </div>;
 }
@@ -422,11 +438,6 @@ function ownSite(operators: ProductionOperator[], site: string, task: Production
   if (!site) return operators;
   const assigned = new Set(task?.operations.flatMap((operation) => operation.operator_ids) ?? []);
   return operators.filter((operator) => operator.site === site || assigned.has(operator.id));
-}
-
-// tcKitItemId_: изделие задания в SUPPLYMAP — проект + индекс КБ в верхнем регистре.
-function itemId(task: { project: string; item: string }) {
-  return task.item.toUpperCase().startsWith(task.project.toUpperCase()) ? task.item : `${task.project}${task.item.toUpperCase()}`;
 }
 
 function parseDate(value: string | null | undefined) {
@@ -445,8 +456,9 @@ function factText(task: ProductionTask, operation: ProductionOperation) {
 }
 
 // Задание (prodRenderTask_): Гант операций с фактом, авторасчёт, отмена; клик по операции — карточка назначения.
-function TaskDetail({ task, initialOperationId = "", tasks, operators, skills, holidays, week, setWeek, canEdit, busy, mutate, back }: {
+function TaskDetail({ task, project, initialOperationId = "", tasks, operators, skills, holidays, week, setWeek, canEdit, busy, mutate, back }: {
   task: ProductionTask;
+  project?: ProjectDeadlines[string];
   initialOperationId?: string;
   tasks: ProductionTask[];
   operators: ProductionOperator[];
@@ -471,11 +483,11 @@ function TaskDetail({ task, initialOperationId = "", tasks, operators, skills, h
   const rows: GanttRow[] = task.operations.map((item) => ({
     key: item.id,
     onClick: edit ? () => setOperationId(item.id) : undefined,
-    label: <><b>{item.position}</b> {item.stage}{item.code ? <span className="pg-q"> {item.code}</span> : null}</>,
+    label: <><b>{item.position}</b> {item.stage}{item.code ? <small className="op-code">{item.code}</small> : null}</>,
     sublabel: <>{item.operator_ids.length ? item.operator_ids.map(nameOf).join(", ") : "не назначено"} · норма {hours(item.norm_seconds)}{feedsText(task, item) && <div>{feedsText(task, item)}</div>}<div>{factText(task, item)}{item.state ? ` · ${item.state}` : ""}</div></>,
     bars: [{
       start: item.planned_start, finish: item.planned_finish,
-      title: `${formatDate(item.planned_start)} – ${formatDate(item.planned_finish)}${feedsText(task, item) ? ` · ${feedsText(task, item)}` : ""}`,
+      title: `${windowText(item.planned_start, item.planned_finish)}${feedsText(task, item) ? ` · ${feedsText(task, item)}` : ""}`,
       text: item.operator_ids.map((id) => nameOf(id).split(" ")[0]).join(", "),
     }],
   }));
@@ -487,8 +499,9 @@ function TaskDetail({ task, initialOperationId = "", tasks, operators, skills, h
   return <div className="panel production-card">
     <button className="secondary small" onClick={back}>← Экран мастера</button>
     <div className="procurement-title">
-      <div><strong>{task.number} · {itemId(task)}{task.name ? ` · ${task.name}` : ""}</strong><small>{task.project} · кол-во {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · запущено {formatDate(task.created_at)}{task.handed_to ? ` · отдано в ${task.handed_to}` : ""}{edit && !task.handed_to ? " · нажми на операцию, чтобы назначить операторов" : ""}</small></div>
-      <span className={`status${done ? " status-done" : cancelled ? " status-cancelled" : ""}`}>{task.status}</span>
+      <div><strong>{task.number} · {taskItemLabel(task)}{task.name ? ` · ${task.name}` : ""}</strong><small>кол-во {task.quantity}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{project?.deadline ? ` · дедлайн проекта ${formatDay(project.deadline)}` : ""} · запущено {formatMoment(task.created_at)}{task.handed_to ? ` · отдано в ${task.handed_to}` : ""}{edit && !task.handed_to ? " · нажмите на операцию, чтобы назначить операторов" : ""}</small>
+        {!done && !cancelled && <div className="task-deadlines">{deadlineChips(project, task.deadline).map((chip) => <StatusChip key={chip.kind} tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>)}</div>}</div>
+      <StatusChip status={task.status} />
     </div>
     {canEdit && <div className="page-actions">
       {edit && !task.handed_to && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
@@ -571,10 +584,10 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
       .map((other) => ({
         start: other.planned_start, finish: other.planned_finish, tone: "busy",
         text: `${item.number} · ${other.position}`,
-        title: `${item.number} · этап ${other.position} ${other.stage}: ${formatDate(other.planned_start)} – ${formatDate(other.planned_finish)}${feedsText(item, other) ? ` · ${feedsText(item, other)}` : ""}`,
+        title: `${item.number} · этап ${other.position} ${other.stage}: ${formatMoment(other.planned_start)} – ${formatMoment(other.planned_finish)}${feedsText(item, other) ? ` · ${feedsText(item, other)}` : ""}`,
       })));
     if (selected.includes(operator.id) && preview?.start) {
-      bars.push({ start: preview.start, finish: preview.finish, tone: "new", text: "этот этап", title: `${formatDate(preview.start)} – ${formatDate(preview.finish)}` });
+      bars.push({ start: preview.start, finish: preview.finish, tone: "new", text: "этот этап", title: `${formatMoment(preview.start)} – ${formatMoment(preview.finish)}` });
     }
     rows.push({
       key: operator.id,
@@ -584,13 +597,13 @@ function AssignCard({ task, operation, tasks, operators, skills, holidays, week,
   }
 
   return <div className="panel assign-card">
-    <div className="manual-stock-head"><div><h2>{task.number} · этап {operation.position} · {operation.stage}</h2><small>{itemId(task)} × {task.quantity}{requiredNote(task, operation)}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""} · норма {hours(operation.norm_seconds)} на одного{operation.description ? ` · ${operation.description}` : ""}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
+    <div className="manual-stock-head"><div><h2>{task.number} · этап {operation.position} · {operation.stage}</h2><small>{taskItemLabel(task)} × {task.quantity}{requiredNote(task, operation)}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""} · норма {hours(operation.norm_seconds)} на одного{operation.description ? ` · ${operation.description}` : ""}</small></div><button className="link-button" onClick={close}>Отмена</button></div>
     <div className="pa-ctl"><label>Плановый старт<input aria-label={`Старт этапа ${operation.position}`} type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} /></label><small>пусто — первое свободное время выбранных операторов</small></div>
     <Gantt rows={rows} labelHead="Оператор" week={week} onWeekChange={setWeek} holidays={holidays} />
     <div className={`pa-plan${planError ? " err" : ""}`} role="status">
       {planError || (!selected.length
         ? `Операторы не выбраны${operation.operator_ids.length ? " — «Назначить» снимет назначение." : "."}`
-        : preview ? <><b>План:</b> {formatDate(preview.start)} → {formatDate(preview.finish)}{preview.warnings.length > 0 && <ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</> : "Считаю план…")}
+        : preview ? <><b>План:</b> {formatMoment(preview.start)} → {formatMoment(preview.finish)}{preview.warnings.length > 0 && <ul>{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}</> : "Считаю план…")}
     </div>
     <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void mutate(operation.id, async () => {
       const result = await productionApi.assign(task.id, operation.id, task.version, selected, start || null);
@@ -638,7 +651,7 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
   return <div className="schedule-planner">
     <button className="secondary small" onClick={() => setShow((value) => !value)}>Авторасчёт плана</button>
     {show && <div className="schedule-panel">
-      <small>{itemId(task)} × {task.quantity}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""} · {isNetwork(task) ? "этапы идут по схеме: операция начинает, как только все её входы отдали передаточную партию" : "этапы идут цепочкой: следующий начинает, как только предыдущий отдал передаточную партию"}. Операторы — из «Компетенции», по допуску и коэффициенту.</small>
+      <small>{taskItemLabel(task)} × {task.quantity}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""} · {isNetwork(task) ? "этапы идут по схеме: операция начинает, как только все её входы отдали передаточную партию" : "этапы идут цепочкой: следующий начинает, как только предыдущий отдал передаточную партию"}. Операторы — из «Компетенции», по допуску и коэффициенту.</small>
       <div className="schedule-controls">
         <label>Операторов на операцию, до<select aria-label={`Максимум операторов ${task.number}`} value={maxCrew} onChange={(event) => setMaxCrew(Number(event.target.value))}>{[1, 2, 3].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         <label><input type="checkbox" checked={replan} onChange={(event) => setReplan(event.target.checked)} />пересчитать и уже назначенные этапы</label>
@@ -649,7 +662,7 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
         {variants.map((item, index) => <tr key={item.transfer_batch} className={index === pick ? "on" : ""} onClick={() => setPick(index)}>
           <td>{index === pick ? "●" : "○"}</td>
           <td>{item.transfer_batch >= task.quantity ? `целиком, ${item.transfer_batch} шт` : `${item.transfer_batch} шт`}</td>
-          <td>{formatDate(item.first_ready)}</td><td>{formatDate(item.finish)}</td>
+          <td>{formatMoment(item.first_ready)}</td><td>{formatMoment(item.finish)}</td>
           <td>{(item.idle_seconds / 3600).toFixed(1).replace(".", ",")} ч</td>
         </tr>)}
       </tbody></table>}
@@ -657,7 +670,7 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
         {variant.operations.map((operation) => <tr key={operation.operation_id}>
           <td><b>{operation.position}</b> {stages.get(operation.position) ?? ""}{feeds.get(operation.operation_id) ? <span className="ap-man"> {feeds.get(operation.operation_id)}</span> : null}</td>
           <td>{operation.operator_ids.map((id) => names.get(id) ?? id).join(", ")}{operation.automatic ? "" : <span className="ap-man"> назначено раньше</span>}</td>
-          <td>{formatDate(operation.start)}</td><td>{formatDate(operation.finish)}</td>
+          <td>{formatMoment(operation.start)}</td><td>{formatMoment(operation.finish)}</td>
         </tr>)}
       </tbody></table>}
       {variant?.warnings.length ? <ul>{variant.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul> : null}
@@ -713,14 +726,14 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: 
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
-        <div className="mo-h"><b>{stage}</b>{running && <span className="mo-tag run">в работе</span>}{operation.code && <span className="pg-q"> {operation.code}</span>}<span className="mo-time">{startAt ? `${formatDate(plannedStart)} → ${formatDate(plannedFinish)}` : "время не назначено"}</span></div>
-        <div className="mo-s">{task.number} · этап {operation.position} · <b>{itemId(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>твои {share.quantity} шт</b></> : null}</div>
+        <div className="mo-h"><div className="mo-name"><b>{stage}</b>{running && <span className="mo-tag run">в работе</span>}{operation.code && <small className="op-code">{operation.code}</small>}</div><span className="mo-time">{startAt ? windowText(plannedStart, plannedFinish) : "время не назначено"}</span></div>
+        <div className="mo-s">{task.number} · этап {operation.position} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>ваши {share.quantity} шт</b></> : null}</div>
         {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
-        <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · дедлайн ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         {operation.readiness && operation.readiness.state !== "done" && <div className={`mo-ready ${operation.readiness.state === "ready" || operation.readiness.state === "assembly" ? "tone-ok" : "tone-warn"}`}>{operation.readiness.text}{operation.readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${operation.readiness.boxes.length}` : ""}</div>}
-        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatDate(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatDate(share.finished_at)}` : ""}</div>
+        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}</div>
         <div className="mo-act">
-          {!readOnly && !running && !done && <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдай начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>}
+          {!readOnly && !running && !done && <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдайте начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>}
           <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>ЭТК</button>
         </div>
         {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
@@ -788,7 +801,9 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   const [correcting, setCorrecting] = useState("");
   const [shown, setShown] = useState<{ number: string; fixed: boolean } | null>(null);
   const session = execution.session;
-  const task = session ? tasks.find((item) => item.id === session.task_id) : null;
+  // «Задания» приходят по одной операции на карточку: задание ищем вместе с операцией сессии, иначе этап не найдётся.
+  const task = session ? tasks.find((item) => item.id === session.task_id && item.operations.some((op) => op.id === session.operation_id))
+    ?? tasks.find((item) => item.id === session.task_id) : null;
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
   // «Годные» — остаток его доли, но не больше, чем есть во взятых входных коробках: не печатать то, что уже известно.
   const prefill = goodPrefill(operation?.remaining, session?.input_limit);
@@ -797,13 +812,13 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   }, [session?.id, operation?.id, prefill]); // eslint-disable-line react-hooks/exhaustive-deps
   return <>
     {session && <div className="panel execution-current">
-      <div className="manual-stock-head"><div><h2>Идёт работа</h2><small>{task?.number ?? session.task_id} · этап {operation?.position ?? "—"} {operation?.stage ?? ""} · с {formatDate(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}{session.status === "Пауза" ? " · на паузе" : ""}</small></div><span className="status">{session.status}</span></div>
+      <div className="manual-stock-head"><div><h2>Идёт работа{operation?.stage ? `: ${operation.stage}` : ""}</h2><small>{task?.number ?? "Задание"}{operation ? ` · этап ${operation.position}` : ""}{task ? ` · ${taskItemLabel(task)}` : ""} · с {formatMoment(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}</small></div><StatusChip status={session.status} /></div>
       {!readOnly && <div className="execution-actions">
         {session.status === "В работе" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "pause"))}>Пауза</button>}
         {session.status === "Пауза" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "resume"))}>Продолжить</button>}
         <label>Годные<input aria-label="Годные изделия" type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
         <label>Брак<input aria-label="Брак" type="number" min="0" step="any" value={defect} onChange={(event) => setDefect(event.target.value)} /></label>
-        {Number(defect) > 0 && <><label>Характер брака<input aria-label="Характер брака" value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label>Описание брака<textarea aria-label="Описание брака" value={defectDescription} onChange={(event) => setDefectDescription(event.target.value)} /></label></>}
+        {Number(defect) > 0 && <><label>Характер брака<input aria-label="Характер брака" value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label className="defect-text">Описание брака<AutoTextarea aria-label="Описание брака" multiline value={defectDescription} onChange={setDefectDescription} /></label></>}
         <button className="primary" disabled={busy || !good || (Number(defect) > 0 && (!defectCharacter.trim() || !defectDescription.trim()))} onClick={() => void mutate(session.id, async () => {
           const result = await productionApi.submitWork(session.id, good, defect || "0", defectCharacter, defectDescription);
           setShown({ number: result.box.number ?? "", fixed: false });
@@ -819,7 +834,7 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
         <strong>{box.number ?? "Номер после закрытия"}</strong>
         <span>{box.item} · этап {box.operation_position}</span>
         <span>{box.quantity} шт · доступно {box.available}</span>
-        <span className="status">{box.status}</span>
+        <StatusChip status={box.status} />
         {box.return_reason && <small className="danger-text">{box.return_reason}</small>}
         {!readOnly && box.status === "Возвращена" && <button className="secondary small" disabled={busy} onClick={() => setCorrecting(correcting === box.id ? "" : box.id)}>Исправить</button>}
         {!readOnly && box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} onDone={(number) => setShown({ number, fixed: true })} />}
@@ -831,7 +846,7 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
 
 // prodBoxShow_: номер новой коробки крупно — его переписывают на коробку от руки.
 function BoxNumberDialog({ number, fixed, close }: { number: string; fixed: boolean; close: () => void }) {
-  const title = fixed ? "Коробка исправлена" : "Напиши на коробке";
+  const title = fixed ? "Коробка исправлена" : "Напишите на коробке";
   return <div className="panel kit-modal box-dialog" role="dialog" aria-label={title}>
     <h3>{title}</h3>
     <p>{fixed ? "Коробка снова ждёт подтверждения мастера." : "Коробка закрыта и ждёт подтверждения мастера. Без номера её не возьмут дальше."}</p>
@@ -875,7 +890,7 @@ function BoxCorrection({ box, busy, mutate, onDone }: {
     </select></label>}
     <label>Годные<input aria-label={`Годные в коробке ${box.number}`} type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
     <label>Брак<input aria-label={`Брак в коробке ${box.number}`} type="number" min="0" step="any" value={defect} onChange={(event) => setDefect(event.target.value)} /></label>
-    {newDefect && <><label>Характер брака<input aria-label={`Характер брака в коробке ${box.number}`} value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label>Описание брака<textarea aria-label={`Описание брака в коробке ${box.number}`} value={defectDescription} onChange={(event) => setDefectDescription(event.target.value)} /></label></>}
+    {newDefect && <><label>Характер брака<input aria-label={`Характер брака в коробке ${box.number}`} value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label className="defect-text">Описание брака<AutoTextarea aria-label={`Описание брака в коробке ${box.number}`} multiline value={defectDescription} onChange={setDefectDescription} /></label></>}
     <button className="primary small" disabled={busy || invalid} onClick={() => void mutate(box.id, async () => {
       const result = await productionApi.correctBox(box.id, box.version, {
         output_id: outputId, good_quantity: good, defect_quantity: defect || "0",
@@ -919,12 +934,12 @@ function StartWorkForm({ task, operation, busy, mutate }: {
   const [manual, setManual] = useState(false);
   const wrongMaterial = materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0));
   const needBox = !first && !inputs.length;
-  const why = busy ? "Идёт сохранение" : needBox ? "Выбери коробку или введи её номер" : wrongMaterial ? "Количество больше доступного в партии" : "";
+  const why = busy ? "Идёт сохранение" : needBox ? "Выберите коробку или введите её номер" : wrongMaterial ? "Количество больше доступного в партии" : "";
   return <div className="start-work sw-col">
     {error && <small className="danger-text">{error}</small>}
     {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
     {!first && <>
-      <div className="sw-title">Из каких коробок берёшь детали <small>({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`})</small></div>
+      <div className="sw-title">Из каких коробок берёте детали <small>({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`})</small></div>
       {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
         onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
         <b>{chip.number}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
@@ -1009,9 +1024,4 @@ function duration(seconds: number) {
 function hours(seconds: number) {
   const value = (Number(seconds) || 0) / 3600;
   return `${(value < 10 ? value.toFixed(1) : String(Math.round(value))).replace(".", ",")} ч`;
-}
-
-function formatDate(value: string | null) {
-  if (!value) return "";
-  return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }

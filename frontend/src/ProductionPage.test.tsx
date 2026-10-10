@@ -110,7 +110,8 @@ it("launches a task only from an issued techcard picked in the launchable list",
   fireEvent.click(screen.getByRole("button", { name: /КБ1/ }));
   expect(screen.getByLabelText("Кол-во")).toHaveValue("25");
   fireEvent.change(screen.getByLabelText("Кол-во"), { target: { value: "12" } });
-  fireEvent.click(screen.getByRole("button", { name: "Запустить" }));
+  // Задание встаёт в работу сегодня — дата на кнопке (РП-5).
+  fireEvent.click(screen.getByRole("button", { name: /^Запустить сегодня, \d\d\.\d\d$/ }));
 
   await waitFor(() => expect(payload).toEqual({
     techcard_id: "80000000-0000-0000-0000-000000000001",
@@ -407,7 +408,7 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
   fireEvent.change(await screen.findByLabelText("Годные изделия"), { target: { value: "5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
 
-  const dialog = await screen.findByRole("dialog", { name: "Напиши на коробке" });
+  const dialog = await screen.findByRole("dialog", { name: "Напишите на коробке" });
   expect(dialog).toHaveTextContent("000007-5");
   expect(requests[0].body).toEqual({ inputs: ["000001-8", "000002-6"], materials: [] });
   fireEvent.click(screen.getByRole("button", { name: "Записал" }));
@@ -493,10 +494,11 @@ it("lets the master hand out operations of issued projects to installers and lau
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
   expect(screen.getByText("Обжим")).toBeInTheDocument();
   expect(screen.getByText("22.09 10:00–14:00")).toBeInTheDocument();
-  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч")).toHaveTextContent("0/7");
+  // Свободный день — пустая ячейка, как в «Загрузке по людям» плана (РП-4).
+  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч").textContent).toBe("");
   // Клик по дню — раскладка по часам: у Рыбкиной 10:00–14:00 занято, выбор часа ставит операцию ровно с него.
   fireEvent.click(screen.getByRole("button", { name: "День Рыбкина Ольга 22.09" }));
-  expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3.КБ1")).toBeInTheDocument();
+  expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3 · КБ1")).toBeInTheDocument();
   // Занятый час не принимает вторую операцию: на нём нет кнопки, свободные — есть. «Назначить на день» ставит после
   // работы этого дня (ничего не сдвигая) и показывает, до скольких: 10 шт × 60 с / 1,2 + 120 с на 8/7 → 12 мин.
   expect(screen.queryByRole("button", { name: "Назначить Рыбкина Ольга на 22.09 с 11:00" })).not.toBeInTheDocument();
@@ -520,7 +522,7 @@ it("lets the master hand out operations of issued projects to installers and lau
 
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");
-  fireEvent.click(await screen.findByRole("button", { name: "В работу" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Запустить сегодня" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: "/api/production/tasks",
     body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
@@ -587,7 +589,7 @@ it("shows on the task Gantt where the assembly takes its parts from, and how man
   expect(screen.queryByText(/из 10/)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /^2 Нарезка Б/ }));
-  expect(await screen.findByText(/591K.3.КБ1 × 10 · сдать 20 шт/)).toBeInTheDocument();
+  expect(await screen.findByText(/591K\.3 · КБ1 × 10 · сдать 20 шт/)).toBeInTheDocument();
 });
 
 it("keeps a chain task as it was: no «из этапов», the second stage reads «с этапа 1»", async () => {
@@ -933,11 +935,11 @@ it("keeps «Начать» disabled with a reason until a box is chosen, then le
   fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
   const go = await screen.findByRole("button", { name: "Начать работу" });
   expect(go).toBeDisabled();
-  expect(screen.getByText("Выбери коробку или введи её номер")).toBeInTheDocument();
+  expect(screen.getByText("Выберите коробку или введите её номер")).toBeInTheDocument();
   expect(screen.queryByLabelText("Номера коробок")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /000011-1/ }));
   expect(go).toBeEnabled();
-  expect(screen.queryByText("Выбери коробку или введи её номер")).not.toBeInTheDocument();
+  expect(screen.queryByText("Выберите коробку или введите её номер")).not.toBeInTheDocument();
 });
 
 it("limits the «Годные» prefill by the taken input boxes", async () => {
