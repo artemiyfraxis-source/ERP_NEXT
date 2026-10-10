@@ -16,6 +16,7 @@ const KINDS: Record<string, { label: string; tone: NotificationTone }> = {
   ship: { label: "Отгрузка", tone: "info" },
   security: { label: "Безопасность", tone: "danger" },
   leave: { label: "Отпуск и отгул", tone: "info" },
+  document: { label: "Документ к ознакомлению", tone: "info" },
   status: { label: "Статус заявки", tone: "neutral" },
   info: { label: "Сообщение", tone: "neutral" },
 };
