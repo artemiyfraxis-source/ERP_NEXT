@@ -5,7 +5,8 @@ import {type PhysicalContextAction,type PhysicalContextTarget} from "./physical-
 import type { DimensionMode } from "./drawing-dimensions";
 import type { DrawingGraphic } from "./drawing-documents";
 import type { DrawingSnaps } from "../component-library/drawing-geometry";
-import { useCallback, useEffect, useMemo, useState, type FocusEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from "react";
+import { RealSizeScaleBar, type RealSizeStatus } from "./DrawingScaleControl";
 import { MaterialObjectsPanel, materialObjectGroup } from "./MaterialObjectsPanel";
 import {
   CanvasViewport,
@@ -21,7 +22,7 @@ import type {
 } from "./component-template-view-renderer";
 import { CatalogDock } from "./CatalogDock";
 import type { WireDatabaseOption } from "./wire-database";
-import { fitEditorCameraToBounds, zoomEditorCameraAt, type EditorViewportSize } from "./editor-camera";
+import { fitEditorCameraToBounds, screenToWorld, zoomEditorCameraAt, type EditorViewportSize } from "./editor-camera";
 import { moveLayer, toggleLayerLock, toggleLayerVisibility, updateEditorObject } from "./editor-state";
 import type {
   EditorCamera,
@@ -160,6 +161,10 @@ export interface HarnessEditorWorkspaceProps {
   /** View mode: actions that only look at the drawing (open a table to read / download) — outside the disabled fieldset. */
   readonly viewActions?: ReactNode;
   readonly drawingWindows?: (camera:EditorCamera)=>ReactNode;
+  /** The drawing's «Вид» controls (real size switch and М 1:N). */
+  readonly viewControls?: ReactNode;
+  /** Set while the drawing is in «Реальные размеры, мм»: scale bar and cursor in mm on the field. */
+  readonly realSize?: RealSizeStatus | null;
   readonly revealRequest?: { readonly token: number; readonly objectIds: readonly string[] };
   readonly cables?: readonly CableInstance[];
   readonly saveState?: EditorSaveState;
@@ -401,6 +406,8 @@ export function HarnessEditorWorkspace({
   onClose,
   onRouteRequest,
   onSectionChange,
+  viewControls,
+  realSize,
 }: HarnessEditorWorkspaceProps) {
   const [localView, setLocalView] = useState<HarnessEditorView>("e4");
   const [tool, setTool] = useState<EditorTool>("select");
@@ -410,6 +417,25 @@ export function HarnessEditorWorkspace({
   const [localSelectedObjectIds, setLocalSelectedObjectIds] = useState<readonly string[]>(["W1"]);
   const [camera, setCamera] = useState(initialCamera);
   const [viewportSize, setViewportSize] = useState<EditorViewportSize>({ width: 860, height: 560 });
+  // «Реальные размеры, мм»: the cursor in drawing units, read off the field's canvas (CanvasViewport owns it).
+  const realSizeBarRef = useRef<HTMLDivElement>(null);
+  const cameraRef = useRef(camera);
+  cameraRef.current = camera;
+  const [realSizeCursor, setRealSizeCursor] = useState<{ x: number; y: number } | null>(null);
+  const showRealSize = !!realSize && (controlledView ?? localView) === "drawing";
+  useEffect(() => {
+    if (!showRealSize) { setRealSizeCursor(null); return; }
+    const canvas = realSizeBarRef.current?.parentElement?.querySelector<HTMLCanvasElement>("canvas.he-canvas");
+    if (!canvas) return;
+    const move = (event: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      setRealSizeCursor(screenToWorld(cameraRef.current, { x: event.clientX - rect.left, y: event.clientY - rect.top }));
+    };
+    const leave = () => setRealSizeCursor(null);
+    canvas.addEventListener("pointermove", move);
+    canvas.addEventListener("pointerleave", leave);
+    return () => { canvas.removeEventListener("pointermove", move); canvas.removeEventListener("pointerleave", leave); };
+  }, [showRealSize]);
   const [inspectorTab, setInspectorTab] = useState<"properties" | "layers">("properties");
   const [freeWireEndFocus, setFreeWireEndFocus] = useState<{ readonly wireId: string; readonly end: "from" | "to"; readonly requestId: number } | null>(null);
   const [catalogExpanded, setCatalogExpanded] = useState(true);
@@ -773,6 +799,7 @@ export function HarnessEditorWorkspace({
           onZoomOut={() => changeZoom(1 / 1.2)}
           onZoomChange={setZoom}
           onFitView={fitView}
+          viewControls={view === "drawing" ? viewControls : undefined}
         />
         <CanvasViewport
           readOnly={readOnly}
@@ -839,6 +866,7 @@ export function HarnessEditorWorkspace({
           inlineEditor={canvasEditor}
         />
         {drawingWindows && <div className="he-table-window-layer">{drawingWindows(camera)}</div>}
+        {showRealSize && realSize && <div ref={realSizeBarRef} className="he-real-size-anchor"><RealSizeScaleBar status={realSize} zoom={camera.zoom} cursor={realSizeCursor} /></div>}
         {(previewMessage || cableSheathWarning) && <div className="he-routing-preview-error" role="status">
           {previewMessage || cableSheathWarning}
         </div>}

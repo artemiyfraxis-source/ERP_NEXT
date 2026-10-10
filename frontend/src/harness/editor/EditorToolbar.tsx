@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { editorZoomPresets } from "./editor-camera";
 import { DrawingToolIcon, drawingToolLabels } from "../component-library/DrawingToolIcon";
 import type { EditorTool, HarnessEditorView } from "./editor-types";
@@ -69,6 +69,8 @@ export interface EditorToolbarProps {
   readonly onSnapsChange?: (snaps: { corners: boolean; contours: boolean; tangents: boolean }) => void;
   /** View mode: «Выбор» and «Перемещение поля» plus the zoom tab; nothing that draws or edits. */
   readonly readOnly?: boolean;
+  /** Extra controls of the «Вид» tab after the zoom group (the drawing's «Реальные размеры, мм»). */
+  readonly viewControls?: ReactNode;
 }
 
 export function EditorToolbar({
@@ -91,6 +93,7 @@ export function EditorToolbar({
   snaps,
   onSnapsChange,
   readOnly = false,
+  viewControls,
 }: EditorToolbarProps) {
   const zoomIsPreset = editorZoomPresets.some((preset) => Math.abs(preset - zoom) < 0.001);
   const visibleTools = tools.filter((tool) => tool.views.includes(view) && (!readOnly || tool.id === "select" || tool.id === "pan"));
@@ -146,6 +149,7 @@ export function EditorToolbar({
           <button className="he-tool" type="button" aria-label="Уменьшить масштаб" title="Уменьшить" onClick={onZoomOut}><span className="he-tool-symbol" aria-hidden="true">−</span><span className="he-tool-caption">Уменьшить</span></button>
           <button className="he-tool he-fit-tool" type="button" aria-label="Вписать в экран" title="Вписать в экран" onClick={onFitView}><span className="he-tool-symbol" aria-hidden="true">⌂</span><span className="he-tool-caption">Вписать</span></button>
         </div>
+        {viewControls}
       </div>;
     }
     return <div className="he-toolbar-panel" role="tabpanel" id="he-toolbar-panel-snap" aria-labelledby="he-toolbar-tab-snap">
