@@ -53,6 +53,8 @@ export type Endpoint = {
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
   label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
   pins?: Record<number, string>;
+  /** «Распиновка проверена»: подпись проверенной распиновки (pinoutCheck.ts); другая подпись — флаг снят. */
+  pinChecked?: string;
 };
 /** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
 export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };

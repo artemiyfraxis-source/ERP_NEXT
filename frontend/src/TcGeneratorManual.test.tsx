@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
+import { pressBuild } from "./test/pressBuild";
 
 /* «Ручная сборка» (владелец 04.10, схема первой — 05.10): кастомный провод, под который типовые генераторы не подходят. */
 const card: ProjectTechcard = {
@@ -256,7 +257,7 @@ it("opens a card built by hand on its tab with its blocks, keeps them across tab
   expect(screen.queryByLabelText("Название операции 1")).not.toBeInTheDocument();
   // Типовая вкладка по карте, собранной вручную, — только после подтверждения.
   const confirm = vi.spyOn(window, "confirm").mockImplementation((text) => !String(text).includes("ручной сборкой"));
-  fireEvent.click(screen.getByRole("button", { name: "Пересобрать" }));
+  pressBuild("Пересобрать");
   expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Техкарта КБ7 собрана ручной сборкой.\n\nСобрать по вкладке «Межплатная»?"));
   expect(screen.getByRole("alert")).toHaveTextContent("Сборка отменена — техкарта осталась ручной сборкой.");
   expect(onBuild).not.toHaveBeenCalled();
@@ -264,7 +265,7 @@ it("opens a card built by hand on its tab with its blocks, keeps them across tab
   fireEvent.click(await screen.findByText("Ручная сборка", { selector: "[role=tab]" }, { timeout: 10000 }));
   expect(screen.getByLabelText("Название операции 2")).toHaveValue("Пайка экрана");
   confirm.mockImplementation(() => true);
-  fireEvent.click(screen.getByRole("button", { name: "Пересобрать" }));
+  pressBuild("Пересобрать");
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0].ops.map((op: Record<string, unknown>) => op.seq)).toEqual([4, 7]);
   expect(onBuild.mock.calls[0][0].route).toEqual({ blocks: [{ key: "b1", name: "Провод с лепестком", ops: [1, 2], final: true }], edges: [] });
