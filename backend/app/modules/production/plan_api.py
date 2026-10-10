@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -20,6 +20,7 @@ from app.modules.shipping.application import UnitOfWork as ShippingUnitOfWork
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal
+from app.workflows import project_kitset as stage_flow
 from app.workflows.production_plan import build_production_plan
 
 from .application import UnitOfWork
@@ -34,11 +35,13 @@ from .plan import (
     TC_REVIEW_VALUES,
     PlanEvent,
     PlanProjectSnapshot,
+    normalize_project_number,
 )
 from .plan_sheet import calendar_span
 from .plan_application import (
     AddPlanEventCommand,
     ReplacePlanProjectsCommand,
+    StageChangeConflict,
     add_plan_event,
     replace_plan_projects,
 )
@@ -71,6 +74,8 @@ class PlanEventPayload(BaseModel):
     item_index: str = Field(default="", max_length=64)
     value: str = Field(default="", max_length=64)
     field: str = Field(default="", max_length=32)
+    # «Этап КБ» назад — причина обязательна (годится и `text`).
+    reason: str = Field(default="", max_length=2000)
 
 
 def _factory(request: Request, name: str, *, required: bool = False):
@@ -129,6 +134,7 @@ def _event_result(event: PlanEvent) -> dict[str, Any]:
         "kind": event.kind, "blocker": event.blocker, "text": event.text,
         "deadline": event.deadline.isoformat() if event.deadline else None,
         "item_index": event.item_index, "value": event.value, "field": event.field,
+        "from_value": event.from_value, "reason": event.reason,
     }
 
 
@@ -190,7 +196,7 @@ def production_plan(
             "stage_manual": row.stage.manual,
             "kits": [{
                 "item_index": item.item_index, "status": item.status, "manual": item.manual,
-                "tc": item.tc, "kit": item.kit,
+                "tc": item.tc, "kit": item.kit, "skipped": list(item.skipped),
                 "review": None if item.review is None else {
                     "value": item.review.value, "text": item.review.text,
                     "who": item.review.who,
@@ -255,14 +261,7 @@ def save_project_snapshot(
     return {"projects": len(projects)}
 
 
-@router.post("/events", status_code=201)
-def save_plan_event(
-    payload: PlanEventPayload,
-    principal: Annotated[Principal, Depends(production_edit_principal)],
-    now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_factory)],
-    techcards_uow_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_factory)],
-) -> dict:
+def _known_projects(uow_factory, techcards_uow_factory) -> list[str]:
     with uow_factory() as uow:
         known_projects = [item.project for item in uow.plan_projects.list()]
     if techcards_uow_factory is not None:
@@ -270,6 +269,69 @@ def save_plan_event(
             techcards_uow_factory,
             lambda uow: [item.project for item in uow.techcards.list()],
         ))
+    return known_projects
+
+
+def _stage_state(project: str, kb: str, uow_factory, techcards_uow_factory, fulfillment_uow_factory, shipping_uow_factory):
+    if normalize_project_number(project) not in {
+        normalize_project_number(item) for item in _known_projects(uow_factory, techcards_uow_factory)
+    }:
+        raise ProductionValidationError("Проект не найден в реестре.")
+    return stage_flow.load_project_stage_state(
+        project, production=uow_factory, techcards=techcards_uow_factory,
+        fulfillment=fulfillment_uow_factory, shipping=shipping_uow_factory, kb=kb,
+    )
+
+
+@router.get("/stage-preview")
+def stage_preview(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_factory)],
+    techcards_uow_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_factory)],
+    fulfillment_uow_factory: Annotated[Callable[[], FulfillmentUnitOfWork] | None, Depends(fulfillment_factory)],
+    shipping_uow_factory: Annotated[Callable[[], ShippingUnitOfWork] | None, Depends(shipping_factory)],
+    project: Annotated[str, Query(min_length=1, max_length=255)],
+    value: Annotated[str, Query(min_length=1, max_length=64)],
+    kb: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    """Предпросмотр ручной смены этапа с «Производственного плана» — тот же ответ, что у карточки проекта."""
+    try:
+        state = _stage_state(project, kb, uow_factory, techcards_uow_factory, fulfillment_uow_factory, shipping_uow_factory)
+        return stage_flow.preview_project_stage(state, value, kb)
+    except ProductionValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/events", status_code=201)
+def save_plan_event(
+    payload: PlanEventPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_factory)],
+    techcards_uow_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_factory)],
+    fulfillment_uow_factory: Annotated[Callable[[], FulfillmentUnitOfWork] | None, Depends(fulfillment_factory)],
+    shipping_uow_factory: Annotated[Callable[[], ShippingUnitOfWork] | None, Depends(shipping_factory)],
+) -> dict:
+    if payload.kind == "stage":
+        # Ручной этап — через единую смену этапа (история «было → стало», причина назад, одна транзакция).
+        try:
+            state = _stage_state(
+                payload.project, payload.item_index, uow_factory, techcards_uow_factory,
+                fulfillment_uow_factory, shipping_uow_factory,
+            )
+            change = stage_flow.change_project_stage(stage_flow.ChangeProjectStageCommand(
+                project=payload.project, value=payload.value, kb=payload.item_index,
+                reason=payload.reason or payload.text, actor=principal.actor, now=now,
+            ), state, uow_factory)
+        except StageChangeConflict as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except (ProductionValidationError, IntegrityError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return {
+            "event": _event_result(change.events[-1]) if change.events else None,
+            "events": [_event_result(event) for event in change.events], "change": change.payload(),
+        }
+    known_projects = _known_projects(uow_factory, techcards_uow_factory)
     try:
         event = add_plan_event(AddPlanEventCommand(
             project=payload.project, kind=payload.kind, blocker=payload.blocker,

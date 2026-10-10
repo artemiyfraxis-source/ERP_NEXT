@@ -8,6 +8,8 @@ import { canAct } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { openPrintSheets } from "./print";
 import { formatDate } from "./format";
+import { StatusChip as SharedChip } from "./StatusChip";
+import type { Tone } from "./statusTone";
 import { isoDay } from "./Gantt";
 
 /* Отгрузка: «К отгрузке» — что готово по заказчикам и проектам и одна кнопка «Отгрузить» с реквизитами
@@ -30,19 +32,15 @@ function overdue(shipment: Shipment) {
   return Boolean(shipment.deadline) && String(shipment.deadline) < today() && ACTIVE.includes(shipment.status);
 }
 
-const STATUS_TONE: Record<string, string> = {
-  // Серый — ждёт цех, бирюзовый — в работе склада, жёлтый — уехала, но не закрыта, зелёный — закрыта.
-  "Новая": "", "Собрана": "tone-work", "Упакована": "tone-work", "Отгружена": "tone-prep", "Закрыта": "tone-stock", "Отменена": "tone-done",
-};
 const STATUS_HINT: Record<string, string> = {
   "Новая": "ждёт сдачи цеха — ничего не набрано", "Собрана": "набрана, PL и DN не сформированы", "Упакована": "упакована, PL и DN готовы",
   "Отгружена": "уехала, не закрыта", "Закрыта": "уехала, документы на месте", "Отменена": "отменена, набранное вернулось на склад ГП",
 };
 function StatusChip({ status }: { status: string }) {
-  return <span className={`kit-status ${STATUS_TONE[status] ?? ""}`} title={STATUS_HINT[status]}>{status}</span>;
+  return <SharedChip status={status} title={STATUS_HINT[status]} />;
 }
 function Due({ day, late }: { day: string | null; late: boolean }) {
-  if (!day) return null;
+  if (!day) return <>—</>;
   return <span className={late ? "tone-danger" : undefined}>{formatDate(day)}{late && <small className="tone-danger">просрочена</small>}</span>;
 }
 
@@ -148,9 +146,9 @@ interface ProjectRow {
   waiting: number; waitingQty: number; stage: Stage;
 }
 type Stage = "ready" | "packed" | "noupd" | "prod" | "done";
-const STAGES: Record<Stage, [string, string]> = {
-  ready: ["Готово к отгрузке", "tone-stock"], packed: ["Упаковано — отгрузить", "tone-work"], noupd: ["Уехало без УПД", "tone-danger"],
-  prod: ["В производстве", "tone-prep"], done: ["Отгружено", "tone-done"],
+const STAGES: Record<Stage, [string, Tone]> = {
+  ready: ["Готово к отгрузке", "success"], packed: ["Упаковано — отгрузить", "info"], noupd: ["Отгружено без УПД", "warning"],
+  prod: ["В производстве", "info"], done: ["Отгружено", "neutral"],
 };
 const STAGE_ORDER: Stage[] = ["ready", "packed", "noupd", "prod", "done"];
 const isToShip = (row: ProjectRow) => row.ready > 0 || row.packed > 0;
@@ -193,7 +191,7 @@ function ReadyTab(context: Context & { rows: ProjectRow[] }) {
     { key: "project", title: "Проект", value: (row) => row.project, render: (row) => <strong>{row.project}</strong> },
     { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, hidden: true },
     { key: "stage", title: "Состояние", value: (row) => STAGES[row.stage][0], filter: true,
-      render: (row) => <span className={`kit-status ${STAGES[row.stage][1]}`}>{STAGES[row.stage][0]}</span> },
+      render: (row) => <SharedChip tone={STAGES[row.stage][1]}>{STAGES[row.stage][0]}</SharedChip> },
     { key: "kb", title: "КБ", value: (row) => row.lines.map((line) => line.good.item_index).join(", ") },
     { key: "ready", title: "Готово", value: (row) => row.ready, numeric: true, hint: "На складе ГП и ещё не в отправке",
       render: (row) => row.ready > 0 ? <strong className="tone-ok">{row.ready}</strong> : <span className="muted">0</span> },
@@ -205,12 +203,12 @@ function ReadyTab(context: Context & { rows: ProjectRow[] }) {
     { key: "due", title: "Срок", value: (row) => row.due ?? "", render: (row) => <Due day={row.due} late={row.late} /> },
     { key: "point", title: "Куда", value: (row) => row.point, wrap: true,
       render: (row) => row.point || <span className="tone-danger">адрес не указан</span> },
-    { key: "noUpd", title: "Без УПД", value: (row) => row.noUpd.join(", "),
-      render: (row) => row.noUpd.length ? <span className="tone-danger">{row.noUpd.join(", ")}</span> : "" },
+    { key: "noUpd", title: "Отправки без УПД", value: (row) => row.noUpd.join(", "),
+      render: (row) => row.noUpd.length ? <span className="tone-danger" title="Отправка уехала, а номер или файл УПД не внесён">{row.noUpd.join(", ")}</span> : "—" },
   ];
   return <DataTable label="К отгрузке" storageKey="shipping-ready" rows={rows} columns={columns} rowKey={(row) => row.project}
     groupBy={(row) => row.customer || "Заказчик не указан"} exportName="Отгрузка — проекты"
-    presets={[{ label: "К отгрузке", test: isToShip }, { label: "Уехало без УПД", test: (row) => row.noUpd.length > 0 },
+    presets={[{ label: "К отгрузке", test: isToShip }, { label: "Отгружено без УПД", test: (row) => row.noUpd.length > 0 },
       { label: "В производстве", test: (row) => row.stage === "prod" }, { label: "Отгружено", test: (row) => row.stage === "done" }]}
     defaultPreset="К отгрузке"
     emptyText={rows.length ? "Отгружать нечего: готовое уже в отправках или уехало. Остальные проекты — в «Все»." : "Готовой продукции пока нет — КБ встают сюда при заведении проекта."}
@@ -389,7 +387,7 @@ function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, busy
   return <>
     {creating && <CreateShipment goods={goods} busy={busy} mutate={mutate} onDone={() => setCreating(false)} />}
     <DataTable label="Отправки" storageKey="shipping-shipments-v2" rows={rows} columns={columns} rowKey={(row) => row.id}
-      presets={[{ label: "В работе", test: (row) => ACTIVE.includes(row.status) }, { label: "Просрочены", test: overdue }, { label: "Уехало без УПД", test: (row) => row.status === "Отгружена" && (!row.upd_number || !row.upd_url) }]}
+      presets={[{ label: "В работе", test: (row) => ACTIVE.includes(row.status) }, { label: "Просрочены", test: overdue }, { label: "Отгружено без УПД", test: (row) => row.status === "Отгружена" && (!row.upd_number || !row.upd_url) }]}
       toolbar={canManage && !creating ? <button type="button" className="secondary small" onClick={() => setCreating(true)}>+ Заявка на отгрузку</button> : undefined}
       rowClassName={(row) => row.status === "Отменена" ? "cancelled" : ""} exportName="Отправки"
       emptyText="Отправок нет. Они появляются на вкладке «К отгрузке» — кнопками «Отгрузить» и «Упаковать»."
@@ -484,7 +482,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
         <td><strong>{line.project} · {line.item_index}</strong></td><td className="ship-name">{line.name}</td>
         <td className="num">{canEdit && open ? <input className="ship-qty" aria-label={`Заказано ${line.item_index}`} type="number" min="0.01" step="any" value={requested[line.id] ?? line.requested} onChange={(event) => setRequested({ ...requested, [line.id]: event.target.value })} onBlur={() => saveRequested(line.id, line.requested)} /> : `${line.requested} ${line.unit}`}</td>
         <td className="num">{line.picked}</td><td className={num(line.shortage) > 0 ? "num tone-warn" : "num"}>{line.shortage}</td><td>{line.grn || ""}</td>
-        {canWarehouse && <td>{num(line.picked) > 0 && ["Новая", "Собрана"].includes(shipment.status) && <button type="button" className="link-button danger-link" disabled={disabled} onClick={() => void mutate(`unpick:${line.id}`, () => shippingApi.unpick(shipment.id, shipment.version, line.id), "Позиция возвращена на склад ГП")}>Вернуть</button>}</td>}
+        {canWarehouse && <td>{num(line.picked) > 0 && ["Новая", "Собрана"].includes(shipment.status) && <button type="button" className="danger small" disabled={disabled} onClick={() => void mutate(`unpick:${line.id}`, () => shippingApi.unpick(shipment.id, shipment.version, line.id), "Позиция возвращена на склад ГП")}>Вернуть</button>}</td>}
       </tr>)}</tbody>
     </table></div>
     {printError && <div className="error-banner" role="alert">{printError}</div>}
@@ -495,7 +493,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
       {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" onClick={() => void print("dn")}>Печать DN</button></>}
       {canEdit && got && (ACTIVE.includes(shipment.status) || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
       {canEdit && open && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
-      {canManage && ACTIVE.includes(shipment.status) && <span className="ship-actions-end"><button type="button" className="link-button danger-link" disabled={disabled} onClick={() => void action("cancel", "Заявка отменена, отбор возвращён на склад ГП")}>Отменить</button></span>}
+      {canManage && ACTIVE.includes(shipment.status) && <span className="ship-actions-end"><button type="button" className="danger small" disabled={disabled} onClick={() => { if (window.confirm(`Отменить заявку ${shipment.number}? Набранное вернётся на склад ГП.`)) void action("cancel", "Заявка отменена, отбор возвращён на склад ГП"); }}>Отменить заявку</button></span>}
     </div>
     {layout && <BoxesEditor shipment={shipment} busy={busy} mutate={mutate} onDone={() => setLayout(false)} />}
     {canManage && open && <div className="ship-docs">

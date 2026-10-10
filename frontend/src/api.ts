@@ -797,6 +797,8 @@ export interface ProductionPlanEvent {
   value: string;
   /** Колонка листа «ЗАГРУЗ» у записи «Отметка плана». */
   field?: string;
+  from_value?: string;
+  reason?: string;
 }
 
 /** Ячейка листа «ЗАГРУЗ»: показанное значение, вычисленное ERP и признак ручной отметки поверх него. */
@@ -2903,6 +2905,8 @@ export const productionApi = {
 
 export const productionPlanApi = {
   load: () => api<ProductionPlanResult>("/api/production/plan"),
+  stagePreview: (project: string, value: string, kb = "") =>
+    api<StagePreview>(`/api/production/plan/stage-preview?project=${encodeURIComponent(project)}&value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   addEvent: (payload: {
     project: string;
     kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark";
@@ -2912,6 +2916,7 @@ export const productionPlanApi = {
     item_index?: string;
     value?: string;
     field?: string;
+    reason?: string;
   }) => api<{ event: ProductionPlanEvent }>("/api/production/plan/events", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -3385,6 +3390,34 @@ export interface KitsetKbStage {
   tc: boolean;
   kit: boolean;
   review: { value: string; text: string; who: string } | null;
+  /** Этапы, которые ручная смена перескочила (в порядке лестницы) — «пропущен» в карточке. */
+  skipped?: string[];
+}
+
+/** Предпросмотр ручной смены этапа (GET …/status/preview и /api/production/plan/stage-preview). */
+export interface StagePreviewKb {
+  kb: string;
+  label: string;
+  from: string;
+  to: string;
+  skipped: string[];
+  change: boolean;
+  note: string;
+  warnings: string[];
+}
+
+export interface StagePreview {
+  project: string;
+  value: string;
+  kb: string;
+  direction: "forward" | "back" | "auto" | "none";
+  reason_required: boolean;
+  error: string;
+  message: string;
+  terminal: string;
+  blocker: string;
+  kbs: StagePreviewKb[];
+  warnings: string[];
 }
 
 export interface KitsetTile {
@@ -3580,10 +3613,13 @@ export interface KitsetJournalEvent {
   text: string;
   item_index: string;
   value: string;
+  /** Для смены этапа: что было и почему (назад — причина обязательна). */
+  from_value?: string;
+  reason?: string;
 }
 
 /** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
-export type ProjectStatusAction = { action: "status"; value: string; text?: string }
+export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string }
   | { action: "block"; value: string; text: string }
   | { action: "unblock"; text?: string };
 
@@ -3719,8 +3755,10 @@ export const kitsetsApi = {
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
     ),
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
-  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string }) =>
+  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string }) =>
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
+  stagePreview: (project: string, value: string, kb = "") =>
+    api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   setStatus: (project: string, payload: ProjectStatusAction) =>
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
   journal: (project: string, payload: { kind: "note" | "deadline"; text: string; deadline?: string | null }) =>

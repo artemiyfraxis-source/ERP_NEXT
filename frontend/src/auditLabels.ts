@@ -117,6 +117,7 @@ const EVENT_NAMES: Record<string, string> = {
   "production.instrument_registered": "Средство измерения добавлено",
   "production.calendar_replaced": "Календарь цеха сохранён",
   "production.skills_replaced": "Компетенции сохранены",
+  "production.stage_changed": "Смена этапа проекта",
   "production.plan_event_added": "Запись в журнале проекта",
   "production.plan_events_deleted": "Журнал проекта удалён",
   "production.plan_projects_replaced": "Проекты плана обновлены",

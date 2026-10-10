@@ -135,7 +135,8 @@ def test_calc_endpoint_without_the_key_explains_what_to_configure(write_api, mon
     response = client.post("/api/requests/import/calc", json={"url": URL})
 
     assert response.status_code == 503
-    assert ENV_VAR in response.json()["detail"]
+    assert "вставьте диапазон листа ЗКП вручную" in response.json()["detail"]
+    assert ENV_VAR not in response.json()["detail"]
 
 
 # ── Google adapter: JWT-bearer exchange + Sheets v4, over a mock transport ───────────────────────
@@ -285,4 +286,5 @@ def test_reader_reports_a_rejected_key(key_pem):
     with pytest.raises(CalcSheetError) as error:
         _reader(key_pem, handler).read_calc("1AbC")
     assert error.value.kind == "config"
-    assert ENV_VAR in str(error.value)
+    assert "вставьте диапазон листа ЗКП вручную" in str(error.value)
+    assert ENV_VAR not in str(error.value)

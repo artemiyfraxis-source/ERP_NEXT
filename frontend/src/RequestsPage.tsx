@@ -14,6 +14,7 @@ import {
 import { canAct } from "./navigation";
 import { useFormDraft } from "./formDrafts";
 import { RequestGrid } from "./RequestGrid";
+import { StatusChip } from "./StatusChip";
 import {
   GRID_LIMIT,
   parseExcelTsv,
@@ -641,6 +642,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       value: (row) => row.legacy_id,
       render: (row) => <><strong>{row.legacy_id}</strong><small>{row.designation}</small></>,
     },
+    { key: "stage", title: "Статус", value: (row) => row.stage, render: (row) => <span className="procurement-stages">{stageParts(row.stage).map((part, index) => <StatusChip key={`${part}-${index}`} status={part} />)}</span> },
     { key: "designation", title: "Назначение", value: (row) => row.designation, filter: true, hidden: true },
     { key: "created_at", title: "Дата запроса", value: (row) => formatDate(row.created_at), hidden: view === "mine" },
     { key: "initiator", title: "Инициатор", value: (row) => row.initiator, filter: true, hidden: view === "mine" },
@@ -655,12 +657,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "quality_document", title: "Док. качества", value: (row) => row.quality_document ?? "", hidden: true },
     { key: "procurement_deadline", title: "Дедлайн", value: (row) => formatDate(row.procurement_deadline), hidden: view === "mine" },
     { key: "planned_date", title: "План. дата", value: (row) => formatDate(row.planned_date), hidden: view === "mine" },
-    { key: "priority", title: "Приоритет", value: (row) => row.priority, filter: true },
+    { key: "priority", title: "Приоритет", value: (row) => row.priority, filter: true, hidden: view !== "mine" },
     { key: "link", title: "Ссылка", value: (row) => row.link ?? "", render: (row) => (row.link ? <a href={row.link} target="_blank" rel="noreferrer">ссылка</a> : ""), hidden: true },
     { key: "price_with_vat", title: "Цена с НДС", value: (row) => row.price_with_vat ?? "", numeric: true, hidden: true },
-    { key: "line_sum", title: "Сумма заявки", value: (row) => row.line_sum ?? "", numeric: true, hidden: view === "mine" },
+    { key: "line_sum", title: "Сумма заявки", value: (row) => row.line_sum ?? "", numeric: true, hidden: true },
     { key: "comment", title: "Комментарий", value: (row) => row.comment ?? "", wrap: true, hidden: true },
-    { key: "stage", title: "Статус", value: (row) => row.stage, render: (row) => <span className="status">{row.stage}</span> },
   ];
   const mineColumns: DataColumn<RequestRow>[] = [
     ...baseColumns,
@@ -692,6 +693,13 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     searchPlaceholder: view === "mine" ? "Поиск по моим заявкам — «Найти» ищет во всех" : "Поиск по заявкам — «Найти» ищет во всех",
   };
 
+  /** Переход в «Оформить заявку» без перезагрузки: приложение слушает popstate. */
+  function openCreate() {
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", "newrequest");
+    window.history.pushState({}, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
   const shownCount = view === "mine" ? mineTotal : rows.length;
 
   return (
@@ -707,11 +715,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       <div className={view === "create" ? "single-layout" : "list-layout"}>
         {view !== "create" ? null : canEdit ? (
           <div className="panel request-form">
-            <div className="panel-heading"><h2>Новая заявка</h2><span>Обязательные поля отмечены *; остальное заполнено по умолчанию</span></div>
-            <div className="mode-tabs">
-              <button type="button" className={createMode === "manual" ? "secondary small active" : "secondary small"} onClick={() => switchMode("manual")}>Вручную</button>
-              <button type="button" className={createMode === "excel" ? "secondary small active" : "secondary small"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
-              <button type="button" className={createMode === "calc" ? "secondary small active" : "secondary small"} onClick={() => switchMode("calc")}>Из расчёта</button>
+            <div className="panel-heading"><h2>Новая заявка</h2><span>* — обязательное поле</span></div>
+            <div className="seg-tabs mode-tabs" aria-label="Способ ввода">
+              <button type="button" className={createMode === "manual" ? "on" : undefined} aria-pressed={createMode === "manual"} onClick={() => switchMode("manual")}>Вручную</button>
+              <button type="button" className={createMode === "excel" ? "on" : undefined} aria-pressed={createMode === "excel"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
+              <button type="button" className={createMode === "calc" ? "on" : undefined} aria-pressed={createMode === "calc"} onClick={() => switchMode("calc")}>Из расчёта</button>
             </div>
 
             {createMode === "manual" && (
@@ -731,7 +739,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                     <label>Плановая дата<input type="date" value={common.planned_date} onChange={(e) => setCommonField("planned_date", e.target.value)} /></label>
                   </div>
                 </div>
-                <p className="rg-hint">Вставьте блок из Excel или Таблиц прямо в таблицу (Ctrl+V в любую ячейку) · Enter — вниз, Tab — вправо, на последней строке Enter добавляет строку · в одной заявке до {GRID_LIMIT} позиций</p>
+                <p className="rg-hint">Ctrl+V из Excel — в любую ячейку · Enter — вниз, Tab — вправо · до {GRID_LIMIT} позиций в заявке</p>
                 <RequestGrid
                   positions={positions}
                   schema={schema}
@@ -836,9 +844,14 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
             )}
           </div>
         ) : <div className="panel readonly-panel"><h2>Только просмотр</h2><p>У вас нет права создавать заявки.</p></div>}
-        {view !== "create" && <div className="panel table-panel">
+        {view !== "create" && <div className="panel table-panel procurement-flat">
           <div className="panel-heading"><h2>{view === "mine" ? "Мои позиции" : "Последние заявки"}</h2><span>{view === "mine" ? `Всего ${mineTotal}` : "До 200 строк"}</span></div>
-          {view === "mine" ? (
+          {view === "mine" && !mineLoading && mineTotal === 0 && !serverQuery ? (
+            <div className="procurement-empty">
+              <span>Ваших заявок пока нет.</span>
+              {canEdit && <button type="button" className="primary small" onClick={openCreate}>Оформить первую заявку</button>}
+            </div>
+          ) : view === "mine" ? (
             <DataTable
               rows={mineRows}
               columns={mineColumns}
@@ -861,7 +874,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               presets={[
                 { label: "Ждут переноса", test: (row) => row.status === "Новый" },
                 { label: "В работе", test: (row) => row.status === "В работе" && !stageClosed(row.stage) },
-                { label: "Ждут счет", test: (row) => stageParts(row.stage).includes("Жду счет") },
+                { label: "Ждут счёт", test: (row) => stageParts(row.stage).includes("Жду счет") },
                 { label: "Ждут оплаты", test: (row) => stageParts(row.stage).includes("В оплату") },
                 { label: "Выполнено", test: (row) => stageClosed(row.stage) && stageParts(row.stage).includes("Готово") },
                 { label: "Отменено", test: (row) => stageClosed(row.stage) && !stageParts(row.stage).includes("Готово") },

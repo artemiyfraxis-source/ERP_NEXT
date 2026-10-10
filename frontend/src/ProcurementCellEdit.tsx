@@ -2,7 +2,7 @@ import { useState, type KeyboardEvent } from "react";
 import { ApiError, failureText, procurementApi, type ProcurementLine } from "./api";
 import { formatDay } from "./format";
 
-/* Правка «Комментария», DATASHEET и дат строки закупки прямо в ячейке (SUPPLYMAP писал их в лист руками).
+/* Правка «Комментария», Даташит и дат строки закупки прямо в ячейке (SUPPLYMAP писал их в лист руками).
    Клик по ячейке открывает поле; Enter или уход из поля сохраняет строку по её версии, Esc отменяет.
    409 — строку уже изменили: ячейка говорит об этом, а страница перечитывает именно эту строку;
    422 — текст сервера. Права на строку (своя, подходящий статус) окончательно решает сервер:
@@ -156,14 +156,14 @@ export function NoteCell({ line, editing, canEdit = true, disabled }: { line: Pr
 
 const WEB_LINK = /^https?:\/\/\S+$/i;
 
-/** DATASHEET в покое: у ссылки — адрес сайта («example.com»), иначе текст как есть. */
+/** Даташит в покое: у ссылки — адрес сайта («example.com»), иначе текст как есть. */
 export function datasheetLabel(value: string | null | undefined): string {
   const text = String(value ?? "").trim();
   if (!WEB_LINK.test(text)) return text;
   try { return new URL(text).hostname.replace(/^www\./, ""); } catch { return text; }
 }
 
-/** DATASHEET строки: ссылка на описание позиции или текст. Правится там же и тем же, что комментарий. */
+/** Даташит строки: ссылка на описание позиции или текст. Правится там же и тем же, что комментарий. */
 export function DatasheetCell({ line, editing, canEdit = true, disabled }: { line: ProcurementLine; editing?: LineEditing; canEdit?: boolean; disabled?: boolean }) {
   const value = line.datasheet ?? "";
   const link = WEB_LINK.test(value.trim()) ? value.trim() : "";
@@ -174,7 +174,7 @@ export function DatasheetCell({ line, editing, canEdit = true, disabled }: { lin
   return (
     <>
       <EditableCell
-        line={line} field="datasheet" kind="text" label="DATASHEET" value={value} shown={datasheetLabel(value)}
+        line={line} field="datasheet" kind="text" label="Даташит" value={value} shown={datasheetLabel(value)}
         editing={editing} canEdit
       />
       {open}
