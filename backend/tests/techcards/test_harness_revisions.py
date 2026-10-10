@@ -236,6 +236,7 @@ def test_saves_hold_with_foreign_keys_enforced_as_in_postgres():
         uow.kitsets.save(Kitset(project=PROJECT, customer="", calc_source="", updated_at=NOW, updated_by="Технолог",
                                 created_at=NOW, assemblies=(KitAssembly(index="КБ1", name="", run=Decimal(1)),)))
         uow.commit()
+    fx.library(factory)
     actor = Actor(id=UUID(int=1), name="Технолог", department="Производство")
     for expected, number in ((Expected(), 1), (Expected(revision=1), 2)):
         saved = application.save(factory, PROJECT, "КБ1", _design(), expected, actor=actor,

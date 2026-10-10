@@ -6,8 +6,13 @@ A save:
 2. checks the revision it was made on against the stored one (HarnessConflict, 409 in the API);
 3. looks up in the ERP books only the references this write brings in (a book edited later never locks an existing
    drawing): an editor save is refused on an unknown one, an import or a restore only warns;
-4. writes the current bytes into the КД row and appends revision n+1 — both in one transaction; a concurrent save on
+4. moves the library templates a pre-0091 document still carries into the component library and stores the drawing
+   without them; a library connector the write brings in must pin a revision the library has (`components`) —
+   refused for an editor save, a warning for an import or a restore;
+5. writes the current bytes into the КД row and appends revision n+1 — both in one transaction; a concurrent save on
    the same revision hits UNIQUE(document_id, revision) and gets the conflict instead of a lost update.
+
+The component library (read, its pictures, the placements of a drawing) is at the end of this file.
 """
 
 from __future__ import annotations
@@ -16,16 +21,19 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Mapping, Protocol
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from ..kitsets import KitDocument, Kitset, document_json, document_kind, item_id
+from .components import (
+    MAX_REF, Candidate, ComponentError, ComponentTemplate, Pin, embedded_pins, embedded_templates, library_pins,
+    placement_graph, split_embedded,
+)
 from .schema import (
-    COMPONENT_GRAPH_KEYS, HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE, Expected, HarnessError, HarnessRevision,
-    HarnessWriteConflict,
-    carry_component_graph, check_version, content_sha256, decode, encode, normalized,
+    HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE, Expected, HarnessError, HarnessRevision,
+    HarnessWriteConflict, check_version, content_sha256, decode, encode, normalized,
 )
 from .snapshot import parse_design
 from .validate import ReferenceBook, reference_pins, validate_design
@@ -58,6 +66,7 @@ class HarnessInvalid(ValueError):
 class TechcardsUnitOfWork(Protocol):
     kitsets: Any
     harness_revisions: Any
+    harness_components: Any
     audit: Any
 
     def __enter__(self) -> "TechcardsUnitOfWork": ...
@@ -144,6 +153,62 @@ def _references(document: Mapping[str, Any], stored: Mapping[str, Any] | None, r
     return missing
 
 
+def absorb(repository: Any, candidate: Candidate, *, by: str, at: datetime,
+           image: bytes | None = None, image_sha256: str | None = None) -> ComponentTemplate:
+    """A template revision into the library, once: the same content already there is that row. The reference key is
+    the connector code; when another template holds it (or this number of it), the key names the template too."""
+    found = repository.by_content(candidate.content_sha256)
+    if found is not None:
+        return found
+    base = candidate.connector_ref
+    for ref in (base, f"{base} ({str(candidate.template_id)[:8]})", f"{base} ({candidate.version_sha256[:12]})"):
+        ref = ref[:MAX_REF]
+        if repository.ref_free(ref, candidate.template_id, candidate.revision):
+            break
+    else:
+        raise ComponentError(f"Шаблон «{candidate.code}» версии {candidate.revision} уже есть в библиотеке с другим "
+                             "содержимым")
+    return repository.add(ComponentTemplate(
+        id=uuid4(), template_id=candidate.template_id, connector_ref=ref, revision=candidate.revision,
+        version_sha256=candidate.version_sha256, content_sha256=candidate.content_sha256, code=candidate.code,
+        name=candidate.name, article_bindings=candidate.article_bindings, assets=candidate.assets,
+        model=candidate.model, created_by=by, created_at=at, image_sha256=image_sha256,
+    ), image)
+
+
+def _pinned(uow: TechcardsUnitOfWork) -> Callable[[Pin], ComponentTemplate | None]:
+    def resolve(pin: Pin) -> ComponentTemplate | None:
+        try:
+            template_id = UUID(pin[0])
+        except ValueError:
+            return None
+        return uow.harness_components.pinned(template_id, pin[1], pin[2]) if pin[1] > 0 else None
+    return resolve
+
+
+def _library(uow: TechcardsUnitOfWork, document: Mapping[str, Any], stored: Mapping[str, Any] | None, *,
+             actor: Actor, now: datetime, strict: bool) -> tuple[dict[str, Any], list[str]]:
+    """The document as stored: the templates it carries (a pre-0091 document, an import of the author's export)
+    moved into the library and dropped from it; the library connectors this write brings in must pin a revision the
+    library has (or one the drawing still carries) — refused when `strict`, otherwise warnings."""
+    document, embedded = split_embedded(document)
+    candidates, warnings = embedded_templates(embedded)
+    for candidate in candidates:
+        try:
+            absorb(uow.harness_components, candidate, by=actor.name, at=now)
+        except ComponentError as error:
+            warnings.append(str(error))
+    before = set(library_pins(stored or {}))
+    carried = embedded_pins(split_embedded(stored or {})[1])
+    resolve = _pinned(uow)
+    missing = [f"{where}: версии {pin[1]} его шаблона нет в библиотеке компонентов"
+               for pin, where in library_pins(document).items()
+               if pin not in before and pin not in carried and resolve(pin) is None]
+    if missing and strict:
+        raise HarnessInvalid(missing)
+    return document, warnings + missing
+
+
 def _stored_design(drawing: Drawing | None) -> dict[str, Any] | None:
     if drawing is None:
         return None
@@ -205,7 +270,6 @@ def save(factory: Factory, project: str, index: str, design: Mapping[str, Any], 
     """A save from the editor (`kind="saved"`) or an import of a TECHMAP-GRAPHER export (`kind="imported"`, unknown
     references only warn — the author's catalog is not ours)."""
     document, warnings = _checked(design, prefix="Чертёж не сохранён")
-    content = encode(document)
     with factory() as uow:
         kitset, index = position(uow, project, index)
         drawing = current(uow, kitset.project, index)
@@ -214,10 +278,9 @@ def save(factory: Factory, project: str, index: str, design: Mapping[str, Any], 
             raise HarnessConflict("Чертёж жгута отвязан от позиции или удалён, пока вы его правили — обновите страницу")
         if drawing is not None and not expected.matches(drawing.revision, drawing.content):
             raise _stale(drawing)
-        if stored is not None and any(key not in document for key in COMPONENT_GRAPH_KEYS):
-            kept = carry_component_graph(document, stored)
-            if kept != document:
-                document, content = kept, encode(kept)
+        document, moved = _library(uow, document, stored, actor=actor, now=now, strict=kind == "saved")
+        content = encode(document)
+        warnings += moved
         warnings += _references(document, stored, references, strict=kind == "saved")
         try:
             written = _write(uow, kitset, index, drawing, content, actor=actor, now=now, kind=kind,
@@ -317,8 +380,11 @@ def restore_revision(factory: Factory, project: str, index: str, number: int, ex
             raise HarnessInvalid([f"версия {number} — текущая"], prefix=prefix)
         design = decode(found[1])
         document, warnings = _checked(design, prefix=prefix)
+        stored = _stored_design(drawing)
+        document, moved = _library(uow, document, stored, actor=actor, now=now, strict=False)
         content = encode(document)
-        warnings += _references(document, _stored_design(drawing), references, strict=False)
+        warnings += moved
+        warnings += _references(document, stored, references, strict=False)
         try:
             written = _write(uow, kitset, index, drawing, content, actor=actor, now=now, kind="restored",
                              restored_from=number)
@@ -387,7 +453,7 @@ def view(drawing: Drawing | None, warnings: list[str] | None = None) -> dict[str
     tabs opened before the update)."""
     if drawing is None:
         return {"document": None, "design": None, "revision": None, "version": None, "warnings": warnings or []}
-    design = decode(drawing.content)
+    design = split_embedded(decode(drawing.content))[0]  # a pre-0091 copy of templates: the library serves them
     if warnings is None:
         warnings = parse_design(design)[1]
     return {"document": document_json(drawing.document), "design": design, "revision": drawing.revision,
@@ -401,3 +467,44 @@ def revision_json(item: HarnessRevision) -> dict[str, Any]:
             "started_at": (item.started_at or item.saved_at).isoformat(), "saved_at": item.saved_at.isoformat(),
             "saved_by": item.saved_by, "size": item.size, "kind": item.kind, "restored_from": item.restored_from,
             "closed": item.closed}
+
+
+# ── Component library (harness.components, migration 0091) ─────────────────────────────────────────────────────────
+
+
+def library(factory: Factory) -> list[ComponentTemplate]:
+    """The newest revision of every library template."""
+    with factory() as uow:
+        return uow.harness_components.latest()
+
+
+def library_template(factory: Factory, template_id: UUID, revision: int | None = None) -> ComponentTemplate:
+    """One revision of a template (the newest when `revision` is None)."""
+    with factory() as uow:
+        found = uow.harness_components.revision(template_id, revision)
+    if found is None:
+        raise HarnessNotFound("Шаблона компонента нет в библиотеке" if revision is None
+                              else f"Версии {revision} шаблона компонента нет в библиотеке")
+    return found
+
+
+def library_image(factory: Factory, template_id: UUID, revision: int, asset_id: str) -> bytes:
+    """The picture of a revision under the asset id its model draws it by."""
+    with factory() as uow:
+        found = uow.harness_components.image(template_id, revision)
+    if found is not None:
+        template, image = found
+        if any(str(asset.get("assetId")) == asset_id and asset.get("sha256") == template.image_sha256
+               for asset in template.assets):
+            return image
+    raise HarnessNotFound("Изображения шаблона компонента нет в библиотеке")
+
+
+def placements(factory: Factory, project: str, index: str) -> dict[str, Any]:
+    """The library placements of the drawing of a position and the revisions they pin (empty without a drawing)."""
+    with factory() as uow:
+        kitset, index = position(uow, project, index)
+        drawing = current(uow, kitset.project, index)
+        design = _stored_design(drawing)
+        return placement_graph(design, _pinned(uow), project=kitset.project, harness=index,
+                               updated=drawing.document.uploaded_at if drawing else None)

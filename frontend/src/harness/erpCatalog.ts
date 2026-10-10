@@ -4,8 +4,8 @@
 // документ и чего нет в справочниках, помечается «нет в справочнике» (данные для экрана; создание записи — позже).
 // Модуль грузится вместе с редактором (index.ts → loadErpHarnessCatalog), в основной чанк не попадает.
 import { api } from "../api";
-import { createInMemoryComponentTemplateCatalog } from "./component-library/component-template-api";
 import { createInMemoryCoveringMaterialApi } from "./editor/covering-assets";
+import { libraryTemplates } from "./library/library";
 import type { HarnessEditorCatalogApi } from "./editor/HarnessDesignEditor";
 import type { HarnessDesignDocument } from "./editor/model";
 import { resolveTerminalRecord } from "./editor/terminal-details";
@@ -102,11 +102,11 @@ export function createErpReferenceCatalog(load: ErpCatalogLoader = fetchErpHarne
   };
 }
 
-/** `catalogOverride` of the editor: reference books from the ERP. The component library and covering textures
- * have no ERP storage yet, so they stay empty. */
+/** The editor's catalog: reference books and the component library from the ERP. Covering textures have no ERP
+ * storage yet, so they stay empty. */
 export function createErpHarnessEditorCatalog(load: ErpCatalogLoader = fetchErpHarnessCatalog): HarnessEditorCatalogApi {
   return {
-    templates: createInMemoryComponentTemplateCatalog(),
+    templates: libraryTemplates(),
     references: createErpReferenceCatalog(load),
     materials: createInMemoryCoveringMaterialApi(),
   };

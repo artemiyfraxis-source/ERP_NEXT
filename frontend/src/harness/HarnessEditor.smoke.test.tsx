@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Suspense } from "react";
 import { beforeAll, expect, it, vi } from "vitest";
-import { HarnessEditorLazy, loadHarnessAdapters } from "./index";
+import { HarnessEditorLazy } from "./index";
+import { createInMemoryHarnessDesignApi, inMemoryEditorPorts } from "./testing/in-memory";
 
 beforeAll(() => {
   // jsdom has neither ResizeObserver nor a 2D canvas; the editor draws nothing here, only the DOM is checked.
@@ -11,10 +12,9 @@ beforeAll(() => {
 
 // Smoke test of the ported editor running from our code: lazy entry → in-memory adapters → autosave.
 it("renders the harness editor and autosaves a placed connector as snapshot v1 into the in-memory store", async () => {
-  const { createInMemoryHarnessDesignApi } = await loadHarnessAdapters();
   const api = createInMemoryHarnessDesignApi();
   const { container } = render(<Suspense fallback={<div>Загрузка редактора…</div>}>
-    <HarnessEditorLazy projectId="p-1" harnessId="h-1" harnessDesignation="Ж-001" initialView="e4" apiOverride={api} />
+    <HarnessEditorLazy projectId="p-1" harnessId="h-1" harnessDesignation="Ж-001" initialView="e4" {...inMemoryEditorPorts({}, api)} />
   </Suspense>);
 
   await waitFor(() => expect(container.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 10_000 });

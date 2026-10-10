@@ -8,7 +8,7 @@ import { HarnessPage } from "./HarnessPage";
 // которая читает и сохраняет чертёж через переданный адаптер так же, как автосохранение редактора.
 vi.mock("./harness", () => ({
   loadHarnessAdapters: async () => ({ createErpHarnessEditorCatalog: () => ({ erp: true, templates: { assetContentUrl: () => "" } }) }),
-  HarnessEditorLazy: ({ apiOverride, projectId, harnessId, harnessDesignation, catalogOverride, readOnly, componentPlacementApiOverride }: HarnessDesignEditorProps) => {
+  HarnessEditorLazy: ({ api: apiOverride, projectId, harnessId, harnessDesignation, catalog: catalogOverride, readOnly, placements: componentPlacementApiOverride }: HarnessDesignEditorProps) => {
     const edit = async () => {
       const resource = await apiOverride!.get(projectId, harnessId);
       await apiOverride!.save(projectId, harnessId, resource.revision, resource.content).catch(() => undefined);

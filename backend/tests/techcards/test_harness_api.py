@@ -64,6 +64,7 @@ def harness_api():
             ),
         ))
         uow.commit()
+    fx.library(factory)
     yield TestClient(app), factory, clock
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
@@ -601,71 +602,3 @@ def test_the_database_refuses_a_second_linked_drawing_but_not_unlinked_ones(harn
     with pytest.raises(IntegrityError):
         add("КБ1", HARNESS_CONTENT_TYPE, 5)
     assert len(_rows(factory, "КБ1")) == 4 and len(_linked(factory)) == 1
-
-
-# ── Library component placements live in the drawing ────────────────────────────────────────────────────────────
-
-
-def _graph():
-    snapshot = fx.snapshot()
-    return {"componentSnapshots": snapshot["componentSnapshots"],
-            "componentPlacements": [{**snapshot["componentPlacements"][0], "harnessId": "КБ1"}]}
-
-
-def test_library_placements_survive_the_editors_saves_and_a_reload(harness_api):
-    client, _factory, _clock = harness_api
-    graph = _graph()
-    placed = client.put(f"{BASE}/КБ1", json={"design": _design(**graph)}).json()
-    assert {key: placed["design"][key] for key in graph} == graph
-    assert not [warning for warning in placed["warnings"] if "component" in warning]
-
-    # The editor's autosave sends its own document model, which has no such section: the placements stay.
-    moved = _design()
-    moved["connectors"][0]["positions"] = {"e4": {"x": 400, "y": 200}, "drawing": {"x": 410, "y": 210}}
-    saved = client.put(f"{BASE}/КБ1", json={"design": moved, "version": placed["version"]}).json()
-    reloaded = client.get(f"{BASE}/КБ1").json()
-    assert {key: reloaded["design"][key] for key in graph} == graph
-    assert reloaded["design"]["connectors"][0]["positions"] == moved["connectors"][0]["positions"]
-    assert reloaded["version"] == saved["version"]
-
-    # Placing one more library component names the graph: that save wins.
-    more = deepcopy(graph)
-    more["componentPlacements"].append({**more["componentPlacements"][0], "placementId": "pl2"})
-    client.put(f"{BASE}/КБ1", json={"design": _design(**more), "version": saved["version"]})
-    assert len(client.get(f"{BASE}/КБ1").json()["design"]["componentPlacements"]) == 2
-
-
-def test_library_placements_go_out_with_the_export_and_back_in_with_the_import(harness_api):
-    client, _factory, _clock = harness_api
-    saved = client.put(f"{BASE}/КБ1", json={"design": _design(**_graph())}).json()
-    exported = client.get(f"{BASE}/КБ1/export")
-    with ZipFile(BytesIO(exported.content)) as archive:
-        snapshot = json.loads(archive.read("project/snapshot.json"))
-    [harness] = snapshot["harnesses"]
-    # As TECHMAP-GRAPHER keeps them: at the project level, the placement naming the exported harness.
-    assert "componentPlacements" not in harness["design"]["content"]
-    assert [row["harnessId"] for row in snapshot["componentPlacements"]] == [harness["harnessId"]]
-    assert snapshot["componentSnapshots"] == _graph()["componentSnapshots"]
-
-    imported = client.post(f"{BASE}/КБ2/import", json={
-        "file_name": "a.techmap-project.zip", "content_b64": base64.b64encode(exported.content).decode(),
-    }).json()
-    assert imported["design"]["componentSnapshots"] == saved["design"]["componentSnapshots"]
-    assert [row["placementId"] for row in imported["design"]["componentPlacements"]] == ["pl1"]
-
-
-def test_import_of_the_authors_export_takes_only_this_harness_placements(harness_api):
-    client, _factory, _clock = harness_api
-    snapshot = fx.snapshot()
-    other = deepcopy(snapshot["harnesses"][0])
-    other.update(harnessId="h-kb2", designation="КБ2")
-    snapshot["harnesses"].append(other)
-    snapshot["componentSnapshots"].append({**snapshot["componentSnapshots"][0], "snapshotId": "s-other"})
-    snapshot["componentPlacements"].append({**snapshot["componentPlacements"][0], "placementId": "pl9",
-                                            "harnessId": "h-kb2", "snapshotId": "s-other"})
-    kb1 = client.post(f"{BASE}/КБ1/import", json={"file_name": "p.zip", "content_b64": _zip(snapshot)}).json()
-    assert [row["placementId"] for row in kb1["design"]["componentPlacements"]] == ["pl1"]
-    assert [row["snapshotId"] for row in kb1["design"]["componentSnapshots"]] == [fx.UUID]
-    kb2 = client.post(f"{BASE}/КБ2/import", json={"file_name": "p.zip", "content_b64": _zip(snapshot)}).json()
-    assert [row["placementId"] for row in kb2["design"]["componentPlacements"]] == ["pl9"]
-    assert [row["snapshotId"] for row in kb2["design"]["componentSnapshots"]] == ["s-other"]

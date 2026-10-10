@@ -8,7 +8,6 @@ concurrency token: a save names the revision it was made on and gets a conflict 
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -26,7 +25,9 @@ HARNESS_UNLINKED_CONTENT_TYPE = "application/vnd.fraxis.harness-unlinked+json"
 # The same ceiling as an attached КД file.
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 
-# Library components placed on the drawing (TECHMAP-GRAPHER's project-level sections, only this harness's rows).
+# Library components as a drawing carried them before the component library (migration 0091) and as
+# TECHMAP-GRAPHER's export carries them (project-level sections). A write moves them into the library
+# (`components.split_embedded`); the stored drawing keeps only the pins on its connectors.
 COMPONENT_SNAPSHOTS = "componentSnapshots"
 COMPONENT_PLACEMENTS = "componentPlacements"
 COMPONENT_GRAPH_KEYS = (COMPONENT_SNAPSHOTS, COMPONENT_PLACEMENTS)
@@ -128,16 +129,6 @@ def legacy_version(content: bytes) -> str:
     """The version token before revisions (a hash of the stored bytes). Accepted for one release, so a browser tab
     opened before the update still saves; remove with `Expected.legacy`."""
     return content_sha256(content)[:32]
-
-
-def carry_component_graph(document: Mapping[str, Any], stored: Mapping[str, Any] | None) -> dict[str, Any]:
-    """The document to store: a save that does not name the library placements (the editor's autosave — its model has
-    no such section) keeps those of the stored drawing; a save that names them (placing a library component) wins."""
-    result = dict(document)
-    for key in COMPONENT_GRAPH_KEYS:
-        if key not in result and stored is not None and isinstance(stored.get(key), list):
-            result[key] = deepcopy(stored[key])
-    return result
 
 
 @dataclass(frozen=True)

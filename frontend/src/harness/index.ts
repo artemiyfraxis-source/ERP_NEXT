@@ -13,7 +13,6 @@ export type {
   HarnessDesignDocument,
   HarnessDesignResource,
   HarnessEditorCatalogApi,
-  InMemoryHarnessDesignApi,
   ReferenceCatalogAdapter,
 } from "./adapters";
 

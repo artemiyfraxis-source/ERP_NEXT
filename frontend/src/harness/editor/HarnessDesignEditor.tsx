@@ -41,23 +41,18 @@ import { DrawingRangeControl } from "./DrawingRangeControl";
 import { defaultDrawingSnaps, type DrawingSnaps } from "../component-library/drawing-geometry";
 import { terminalArticleLabel } from "./terminal-article-label";
 import { refreshedTemplateTerminalCatalog } from "./template-terminal-catalog";
-import {
-  createInMemoryHarnessDesignApi,
-  type HarnessDesignApi,
-  type HarnessDesignResource,
-} from "./design-api";
+import { type HarnessDesignApi, type HarnessDesignResource } from "./design-api";
 import { DesignSaveCoordinator } from "./design-save-coordinator";
 import {
-  createInMemoryComponentPlacementApi,
   componentPlacementRequest,
   type ComponentPlacementApi,
   type PlaceComponentRequest,
   type ProjectComponentPlacementGraph,
   type ProjectComponentSnapshotResource,
 } from "./component-placement-api";
-import { createInMemoryComponentTemplateCatalog, type ComponentTemplateApi } from "../component-library/component-template-api";
-import { createInMemoryReferenceCatalog, type ReferenceCatalogAdapter } from "../reference-catalog";
-import { createInMemoryCoveringMaterialApi, type CoveringMaterialApi } from "./covering-assets";
+import type { ComponentTemplateApi } from "../component-library/component-template-api";
+import type { ReferenceCatalogAdapter } from "../reference-catalog";
+import type { CoveringMaterialApi } from "./covering-assets";
 import { isTemplateContentV3, isTemplateContentV4, isTemplateContentV5 } from "../component-library/template-content";
 import {
   createConnectorInstanceFromComponentTemplateV3,
@@ -118,14 +113,6 @@ export interface HarnessEditorCatalogApi {
   readonly materials: CoveringMaterialApi;
 }
 
-export function createInMemoryHarnessEditorCatalog(parts: Partial<HarnessEditorCatalogApi> = {}): HarnessEditorCatalogApi {
-  return {
-    templates: parts.templates ?? createInMemoryComponentTemplateCatalog(),
-    references: parts.references ?? createInMemoryReferenceCatalog(),
-    materials: parts.materials ?? createInMemoryCoveringMaterialApi(),
-  };
-}
-
 export interface HarnessDesignEditorProps {
   readonly projectId: string;
   readonly harnessId: string;
@@ -133,12 +120,12 @@ export interface HarnessDesignEditorProps {
   readonly initialView: HarnessEditorView;
   readonly harnessQuantity?: number;
   readonly initialReveal?: { readonly projectId: string; readonly harnessId: string; readonly objectId: string };
-  /** Document storage. Defaults to an in-memory store (snapshot v1 JSON). */
-  readonly apiOverride?: HarnessDesignApi;
-  /** Library component placements. Defaults to an in-memory store bound to the default document store. */
-  readonly componentPlacementApiOverride?: ComponentPlacementApi;
-  /** Component library, reference books and covering materials. Defaults to empty in-memory catalogs. */
-  readonly catalogOverride?: HarnessEditorCatalogApi;
+  /** The drawing of the position (ERP: the harness КД with its revisions). */
+  readonly api: HarnessDesignApi;
+  /** Library connectors of the drawing and the template revisions they pin (ERP: the component library). */
+  readonly placements: ComponentPlacementApi;
+  /** Component library, reference books and covering materials. */
+  readonly catalog: HarnessEditorCatalogApi;
   readonly onClose?: () => void;
   readonly onViewChange?: (view: HarnessEditorView) => void;
   /** View mode (ERP: no «Проекты: правка»): pan, zoom and select-to-inspect only — no drag, no edits, never saved.
@@ -751,9 +738,9 @@ export function HarnessDesignEditor({
   harnessId,
   harnessDesignation,
   initialView, harnessQuantity = 1, initialReveal,
-  apiOverride,
-  componentPlacementApiOverride,
-  catalogOverride,
+  api,
+  placements: componentPlacementApi,
+  catalog: catalogApi,
   onClose,
   onViewChange,
   readOnly = false,
@@ -763,14 +750,7 @@ export function HarnessDesignEditor({
   // Subscribe the scene projection as well as the left-panel editor to the
   // global preference, so a column change is visible immediately on the field.
   const connectionTableSettings = useConnectionTableSettings();
-  const catalogApi = useMemo(() => catalogOverride ?? createInMemoryHarnessEditorCatalog(), [catalogOverride]);
-  const defaultStore = useMemo(() => {
-    const design = createInMemoryHarnessDesignApi();
-    return { design, placements: createInMemoryComponentPlacementApi(design, catalogApi.templates) };
-  }, [catalogApi]);
-  const api = apiOverride ?? defaultStore.design;
   const componentTemplateApi = catalogApi.templates;
-  const componentPlacementApi = componentPlacementApiOverride ?? defaultStore.placements;
   const prepareCoverings=useMemo(()=>createGlobalCoveringPreparer(catalogApi.materials,projectId),[catalogApi,projectId]);
   const preparingCovering=useRef(false);
   const catalog = useEditorReferenceCatalog(catalogApi.references, componentTemplateApi);
@@ -1536,7 +1516,7 @@ export function HarnessDesignEditor({
       pendingPlacementRef.current = pending;
       setPlacementPending(true);
       try {
-        const result = await componentPlacementApi.place(projectId, harnessId, pending.body);
+        const result = await componentPlacementApi.place(projectId, harnessId, pending.body, pending.nextHistory.present);
         const authoritative = await api.get(projectId, harnessId);
         if (pending.loadGeneration !== loadGeneration.current || pendingPlacementRef.current !== pending) return;
         nextHistory = pending.nextHistory;
@@ -1579,7 +1559,7 @@ export function HarnessDesignEditor({
     placementBusyRef.current = true;
     setPlacementBusy(true);
     try {
-      const result = await componentPlacementApi.place(projectId, harnessId, pending.body);
+      const result = await componentPlacementApi.place(projectId, harnessId, pending.body, pending.nextHistory.present);
       const authoritative = await api.get(projectId, harnessId);
       if (pending.loadGeneration !== loadGeneration.current || pendingPlacementRef.current !== pending) return;
       if (authoritative.revision !== result.resultingRevision ||

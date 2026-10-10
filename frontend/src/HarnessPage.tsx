@@ -102,7 +102,7 @@ export function HarnessPage({ project, index, canEdit, catalog, onBack = () => c
       {!api ? <div className="empty">Загрузка…</div>
         : <Suspense fallback={<div className="empty">Загрузка редактора…</div>}>
           <HarnessEditorLazy key={generation} projectId={project} harnessId={index} harnessDesignation={heading} initialView="e4"
-            apiOverride={api} componentPlacementApiOverride={placements} catalogOverride={erpCatalog} readOnly={!canEdit} />
+            api={api} placements={placements!} catalog={erpCatalog!} readOnly={!canEdit} />
         </Suspense>}
     </div>
     {historyOpen && <HarnessHistory project={project} index={index} canEdit={canEdit} onClose={() => setHistoryOpen(false)}

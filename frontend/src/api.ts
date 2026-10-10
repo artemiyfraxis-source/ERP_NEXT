@@ -3240,6 +3240,52 @@ export const kitsetsApi = {
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
 };
 
+/** Шаблон библиотеки компонентов жгута (последняя версия): разъём по ключу справочника и номеру версии. */
+export interface HarnessComponentSummary {
+  templateId: string;
+  version: number;
+  code: string;
+  name: string;
+  connectorRef: string;
+  articleBindings: { sourceId: string; entityType: string; articleKey: string }[];
+  createdUtc: string;
+  updatedUtc: string;
+  hasImage: boolean;
+}
+
+/** Версия шаблона целиком: модель TECHMAP-GRAPHER (v3–v5) и рисунки; соединитель на чертеже закрепляет
+ *  `templateId` + `version` + `versionSha256`. */
+export interface HarnessComponent extends HarnessComponentSummary {
+  versionSha256: string;
+  assets: { assetId: string; fileName: string; mediaType: "image/png"; sha256: string; sizeBytes: number }[];
+  content: Record<string, unknown>;
+}
+
+/** Библиотечные соединители чертежа и закреплённые ими версии шаблонов; `unresolved` — соединители, чьей версии нет
+ *  ни в библиотеке, ни в копии старого чертежа (рисуются по своим контактам). */
+export interface HarnessPlacementGraph {
+  placements: Record<string, unknown>[];
+  snapshots: Record<string, unknown>[];
+  unresolved: string[];
+}
+
+const componentsPath = "/api/techcards/harness-components";
+const componentPath = (templateId: string, revision?: number) =>
+  `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
+
+/** Чертёж жгута позиции: библиотека компонентов и что закреплено на чертеже. */
+export const harnessApi = {
+  /** Библиотека компонентов: последняя версия каждого шаблона. */
+  components: () => api<HarnessComponentSummary[]>(componentsPath),
+  /** Версия шаблона (без номера — последняя). */
+  component: (templateId: string, revision?: number) => api<HarnessComponent>(componentPath(templateId, revision)),
+  /** Рисунок версии шаблона (PNG). */
+  componentAssetUrl: (templateId: string, revision: number, assetId: string) =>
+    `${componentPath(templateId, revision)}/assets/${encodeURIComponent(assetId)}`,
+  /** Библиотечные соединители сохранённого чертежа и закреплённые версии. */
+  placements: (project: string, index: string) => api<HarnessPlacementGraph>(`${harnessPath(project, index)}/components`),
+};
+
 /** «Чертёж → схема»: черновики «Ручной сборки» по позиции проекта; финал и урок — пара для корпуса образцов. */
 export type AssemblyDraftSource = "claude-code" | "server-agent" | "manual";
 

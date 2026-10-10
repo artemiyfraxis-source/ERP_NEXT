@@ -65,9 +65,16 @@ describe("ERP harness catalog adapter", () => {
     expect(() => parseErpHarnessCatalog({ ...fixture, contractVersion: 2 })).toThrow("Обновите страницу");
   });
 
-  it("is a full catalogOverride: references from the ERP, empty library and textures", async () => {
+  it("is the editor's full catalog: references and the component library from the ERP, empty textures", async () => {
+    const fetch = vi.fn(async () => new Response(JSON.stringify([{ templateId: "t", version: 2, code: "SHR-04V-S",
+      name: "JST SH", connectorRef: "SHR-04V-S", articleBindings: [], createdUtc: "c", updatedUtc: "u", hasImage: true }])));
+    vi.stubGlobal("fetch", fetch);
     const editorCatalog = createErpHarnessEditorCatalog(async () => catalog);
-    expect(await editorCatalog.templates.list()).toEqual([]);
+    expect(await editorCatalog.templates.list()).toEqual([{ templateId: "t", version: 2, code: "SHR-04V-S", name: "JST SH",
+      articleBindings: [], createdUtc: "c", updatedUtc: "u" }]);
+    expect(fetch).toHaveBeenCalledWith("/api/techcards/harness-components", expect.anything());
+    expect(editorCatalog.templates.assetContentUrl("t", 2, "a")).toBe("/api/techcards/harness-components/t/versions/2/assets/a");
+    vi.unstubAllGlobals();
     expect(await editorCatalog.materials.listMaterials()).toEqual([]);
     expect((await editorCatalog.references.getActive("technology-coax-terminations"))?.records).toHaveLength(3);
   });

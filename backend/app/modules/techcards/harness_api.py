@@ -2,7 +2,8 @@
 THIRD_PARTY_NOTICES.md). Routes only: the rules live in `harness/` — the document (`schema`), what may be stored
 (`validate`), the use cases with the revision history (`application`; tables in `harness_infrastructure`),
 «Ручная сборка» from the drawing (`assembly`), its documents — connection table, cut list, specification
-(`documents`) — and the `.techmap-project.zip` exchange (`exchange`).
+(`documents`) — the `.techmap-project.zip` exchange (`exchange`) and the library placements of the drawing
+(`components`; the library itself — `harness_catalog_api`).
 
 The concurrency token is the integer `revision` of the drawing (each save is n+1, migration 0090; the history keeps
 thinned rows — autosaves of one person within 10 minutes share a row, see harness.application). For one
@@ -191,6 +192,19 @@ def derive_harness(
     return {"build_config": config, "warnings": list(dict.fromkeys([*warnings, *read_warnings, *notes]))}
 
 
+@router.get("/{project}/harness/{index}/components")
+def harness_components(
+    project: str, index: str,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """Библиотечные соединители чертежа и закреплённые ими версии шаблонов (из библиотеки компонентов). Соединитель
+    закрепляет шаблон и версию сам; разместить компонент — сохранить чертёж с ним (PUT): сервер проверит, что такая
+    версия в библиотеке есть."""
+    with _refusals():
+        return harness.placements(factory, project, index)
+
+
 @router.get("/{project}/harness/{index}/export")
 def export_harness(
     project: str, index: str,
@@ -210,6 +224,7 @@ def export_harness(
             decode(found.content), project=kitset.project, index=index, product=product,
             name=assembly.name if assembly else "", quantity=assembly.run if assembly else 1,
             harness_id=str(found.document.id), created=found.document.uploaded_at, updated=found.document.uploaded_at,
+            components=harness.placements(factory, kitset.project, index),
         )
     return file_response(archive, "application/zip", f"{product}.techmap-project.zip")
 

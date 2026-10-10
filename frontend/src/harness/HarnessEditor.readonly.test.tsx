@@ -3,7 +3,8 @@ import { Suspense } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { CANVAS_EDIT_PROPS, readOnlyCanvasProps, type CanvasViewportProps } from "./editor/CanvasViewport";
 import { physicalFixture } from "./editor/physical-topology-fixture";
-import { HarnessEditorLazy, loadHarnessAdapters } from "./index";
+import { HarnessEditorLazy } from "./index";
+import { createInMemoryHarnessDesignApi, inMemoryEditorPorts } from "./testing/in-memory";
 import type { HarnessDocumentsSource } from "./panels/documents-source";
 
 beforeAll(() => {
@@ -23,13 +24,12 @@ const documentsSource = {
 } as unknown as HarnessDocumentsSource;
 
 async function openReadOnly() {
-  const { createInMemoryHarnessDesignApi } = await loadHarnessAdapters();
   const api = createInMemoryHarnessDesignApi();
   await api.save("p-1", "h-1", 0, physicalFixture());
   const stored = api.exportSnapshot("p-1", "h-1");
   const save = vi.spyOn(api, "save");
   const view = render(<Suspense fallback={<div>Загрузка редактора…</div>}>
-    <HarnessEditorLazy projectId="p-1" harnessId="h-1" harnessDesignation="КБ1" initialView="e4" apiOverride={api} documentsSource={documentsSource} readOnly />
+    <HarnessEditorLazy projectId="p-1" harnessId="h-1" harnessDesignation="КБ1" initialView="e4" {...inMemoryEditorPorts({}, api)} documentsSource={documentsSource} readOnly />
   </Suspense>);
   await waitFor(() => expect(view.container.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 10_000 });
   return { api, stored, save, ...view };

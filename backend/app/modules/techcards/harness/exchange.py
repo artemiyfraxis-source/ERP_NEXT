@@ -2,8 +2,9 @@
 4, harness design schemaVersion 1; SqliteProjectExportService.cs of e63befb, © Василий, SaveOurSouls, used with the
 author's permission). One-way: after an import the ERP copy is the truth, nothing is synced back.
 
-Library components placed on the drawing live inside the ERP document under `componentSnapshots` /
-`componentPlacements` (only this harness's rows); the export moves them to the project level, the import back in."""
+Library components placed on the drawing: the export writes the placements of this harness and the library revisions
+they pin at the project level (`components.placement_graph`); the import puts them inside the design it returns, and
+the save moves those revisions into the ERP library (`components.split_embedded`)."""
 
 from __future__ import annotations
 
@@ -32,17 +33,21 @@ def _utc(value: datetime) -> str:
 
 
 def export_zip(design: Mapping[str, Any], *, project: str, index: str, product: str, name: str, quantity: object,
-               harness_id: str, created: datetime, updated: datetime) -> bytes:
+               harness_id: str, created: datetime, updated: datetime,
+               components: Mapping[str, Any] | None = None) -> bytes:
     """The archive of one harness: the ERP project number is the project designation, the position index is the
     harness designation (`product` — the full product id, the project name when the position has none), ids are
-    stable per project / КД row."""
+    stable per project / КД row. `components` — the placement graph of the drawing (placements and snapshots)."""
     run = plain(quantity) if isinstance(quantity, Decimal) else quantity
     content = {key: value for key, value in design.items() if key not in COMPONENT_GRAPH_KEYS}
-    placements = [{**row, "harnessId": harness_id} for row in _rows(design.get(COMPONENT_PLACEMENTS))]
+    graph = components or {}
+    project_id = str(uuid5(NAMESPACE_URL, f"fraxis-erp:project:{project}"))
+    placements = [{**row, "harnessId": harness_id} for row in _rows(graph.get("placements"))]
+    snapshots = [{**row, "projectId": project_id} for row in _rows(graph.get("snapshots"))]
     snapshot = {
         "snapshotFormat": SNAPSHOT_FORMAT,
         "project": {
-            "projectId": str(uuid5(NAMESPACE_URL, f"fraxis-erp:project:{project}")), "designation": project,
+            "projectId": project_id, "designation": project,
             "increment": 1, "name": name or product, "batchQuantity": run, "status": "active",
             "revision": 1, "createdUtc": _utc(created), "updatedUtc": _utc(updated),
         },
@@ -52,7 +57,7 @@ def export_zip(design: Mapping[str, Any], *, project: str, index: str, product: 
             "design": {"schemaVersion": SCHEMA_VERSION, "content": content},
         }],
         "attachments": [], "pinnedCharacteristics": [],
-        COMPONENT_SNAPSHOTS: _rows(design.get(COMPONENT_SNAPSHOTS)), COMPONENT_PLACEMENTS: placements,
+        COMPONENT_SNAPSHOTS: snapshots, COMPONENT_PLACEMENTS: placements,
     }
     buffer = BytesIO()
     with ZipFile(buffer, "w", ZIP_DEFLATED) as archive:

@@ -1,18 +1,12 @@
 // Хранилище чертежа жгута в ERP для редактора: `HarnessDesignApi` поверх `kitsetsApi.harness / saveHarness`.
 // Редактор считает версию своим счётчиком (`revision`), сервер — номером версии чертежа: адаптер держит серверный номер
 // у себя и с ним сохраняет; чужое сохранение даёт 409 — адаптер переходит в «конфликт» и больше ничего не пишет.
-// Библиотечные компоненты (закреплённый снимок шаблона, по которому рисуется соединитель) хранятся в том же документе
-// КД — `componentSnapshots` / `componentPlacements` (как в экспорте TECHMAP-GRAPHER, только этого жгута): размещение
-// пишет их вместе с соединителем одним сохранением, обычное автосохранение их не трогает (сервер переносит прежние).
+// Библиотечные компоненты: шаблоны — в библиотеке ERP (`harnessApi`, миграция 0091), соединитель закрепляет шаблон и
+// версию сам; разместить — сохранить чертёж с ним (сервер проверит закрепление по библиотеке).
 // `readOnly` — просмотр: сохранения и размещения отклоняются, не доходя до сервера.
-import { ApiError, kitsetsApi, type HarnessDrawing } from "../api";
+import { ApiError, harnessApi, kitsetsApi, type HarnessDrawing, type HarnessPlacementGraph } from "../api";
 import type { ComponentTemplateApi } from "./component-library/component-template-api";
-import {
-  parseComponentPlacementGraph,
-  type ComponentPlacementApi,
-  type ComponentPlacementResult,
-  type ProjectComponentPlacementGraph,
-} from "./editor/component-placement-api";
+import type { ComponentPlacementApi, ComponentPlacementResult } from "./editor/component-placement-api";
 import {
   HarnessDesignApiError,
   parseRecoverableHarnessDesignContent,
@@ -20,6 +14,7 @@ import {
   type HarnessDesignResource,
 } from "./editor/design-api";
 import { createEmptyHarnessDesign, type HarnessDesignDocument } from "./editor/model";
+import { placementGraphOf } from "./library/library";
 
 export type ServerSaveState = "saved" | "saving" | "conflict" | "error";
 
@@ -27,6 +22,7 @@ export interface ServerHarnessClient {
   harness: (project: string, index: string) => Promise<HarnessDrawing>;
   saveHarness: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
     Promise<HarnessDrawing & { created: boolean }>;
+  placements: (project: string, index: string) => Promise<HarnessPlacementGraph>;
 }
 
 export interface ServerHarnessDesignApi extends HarnessDesignApi {
@@ -41,32 +37,19 @@ export interface ServerHarnessDesignApi extends HarnessDesignApi {
 export const CONFLICT_CODE = "design_revision_conflict";
 export const READ_ONLY_CODE = "read_only";
 export const READ_ONLY_TEXT = "Чертёж открыт только для просмотра — изменения не сохраняются";
-export const COMPONENT_SNAPSHOTS = "componentSnapshots";
-export const COMPONENT_PLACEMENTS = "componentPlacements";
 
-type Row = Record<string, unknown>;
-const rows = (value: unknown): Row[] =>
-  Array.isArray(value) ? value.filter((item): item is Row => typeof item === "object" && item !== null && !Array.isArray(item)) : [];
-
-/** Библиотечные компоненты жгута из документа КД: размещения этого жгута и снимки, которые они закрепили. Жгут и
- *  проект — текущие (в импорте из TECHMAP-GRAPHER у размещений свой id жгута). */
-export function componentGraphOf(design: Row | null, projectId: string, harnessId: string): ProjectComponentPlacementGraph {
-  const placements: Row[] = rows(design?.[COMPONENT_PLACEMENTS]).map((item) => ({ ...item, harnessId }));
-  const used = new Set(placements.map((item) => item.snapshotId));
-  const snapshots = rows(design?.[COMPONENT_SNAPSHOTS]).filter((item) => used.has(item.snapshotId))
-    .map((item) => ({ ...item, projectId }));
-  return parseComponentPlacementGraph({ placements, snapshots }, projectId, harnessId);
-}
+const defaultClient: ServerHarnessClient = {
+  harness: kitsetsApi.harness, saveHarness: kitsetsApi.saveHarness, placements: harnessApi.placements,
+};
 
 export function createServerHarnessDesignApi(
   options: {
     onState?: (state: ServerSaveState, message?: string) => void; client?: ServerHarnessClient; now?: () => string;
-    newId?: () => string; readOnly?: boolean;
+    readOnly?: boolean;
   } = {},
 ): ServerHarnessDesignApi {
-  const client = options.client ?? kitsetsApi;
+  const client = options.client ?? defaultClient;
   const now = options.now ?? (() => new Date().toISOString());
-  const newId = options.newId ?? (() => crypto.randomUUID());
   const emit = options.onState ?? (() => undefined);
   const readOnly = options.readOnly === true;
   let stored: number | null = null;
@@ -86,10 +69,10 @@ export function createServerHarnessDesignApi(
   const conflict = (text: string) => new HarnessDesignApiError(text, CONFLICT_CODE, revision + 1);
   const refuseReadOnly = () => new HarnessDesignApiError(READ_ONLY_TEXT, READ_ONLY_CODE, null);
   // Запись на сервер с версией последнего чтения; 409 — «конфликт», дальше ничего не пишется.
-  const write = async (projectId: string, harnessId: string, design: Row) => {
+  const write = async (projectId: string, harnessId: string, design: HarnessDesignDocument) => {
     emit("saving");
     try {
-      const saved = await client.saveHarness(projectId, harnessId, design, stored);
+      const saved = await client.saveHarness(projectId, harnessId, JSON.parse(JSON.stringify(design)), stored);
       revision += 1;
       return saved;
     } catch (reason) {
@@ -100,6 +83,13 @@ export function createServerHarnessDesignApi(
       }
       emit("error", reason instanceof Error ? reason.message : undefined);
       throw reason;
+    }
+  };
+  const refuseStale = (expectedRevision: number) => {
+    if (conflicted || expectedRevision !== revision) {
+      conflicted = true;
+      emit("conflict");
+      throw conflict("Чертёж изменили — обновите страницу");
     }
   };
 
@@ -118,13 +108,8 @@ export function createServerHarnessDesignApi(
     },
     async save(projectId, harnessId, expectedRevision, content) {
       if (readOnly) throw refuseReadOnly();
-      if (conflicted || expectedRevision !== revision) {
-        conflicted = true;
-        emit("conflict");
-        throw conflict("Чертёж изменили — обновите страницу");
-      }
-      const saved = await write(projectId, harnessId, JSON.parse(JSON.stringify(content)));
-      const result = fromDrawing(harnessId, saved);
+      refuseStale(expectedRevision);
+      const result = fromDrawing(harnessId, await write(projectId, harnessId, content));
       emit("saved");
       return result;
     },
@@ -133,72 +118,33 @@ export function createServerHarnessDesignApi(
       const sources = new Map<string, { templateId: string; version: number }>();
       return {
         async list(projectId, harnessId) {
-          const drawing = await client.harness(projectId, harnessId);
-          const graph = componentGraphOf(drawing.design, projectId, harnessId);
+          const graph = placementGraphOf(await client.placements(projectId, harnessId), projectId, harnessId);
           for (const snapshot of graph.snapshots) {
             sources.set(snapshot.snapshotId, { templateId: snapshot.sourceTemplateId, version: snapshot.sourceVersion });
           }
           return graph;
         },
         assetContentUrl(_projectId, _harnessId, snapshotId, assetId) {
-          // Изображения снимков в ERP не хранятся: берутся из библиотеки, пока шаблон в ней есть.
           const source = sources.get(snapshotId);
           return source ? templates.assetContentUrl(source.templateId, source.version, assetId) : "";
         },
-        async place(projectId, harnessId, body) {
+        async place(projectId, harnessId, body, document) {
           const done = commands.get(body.commandId);
           if (done) return done;
           if (readOnly) throw refuseReadOnly();
-          if (conflicted || body.expectedRevision !== revision) {
-            conflicted = true;
-            emit("conflict");
-            throw conflict("Чертёж изменили — обновите страницу");
-          }
+          refuseStale(body.expectedRevision);
           const binding = body.instance.libraryBinding;
           if (binding?.mode !== "template" || binding.templateId !== body.sourceTemplateId ||
               binding.templateVersion !== body.sourceVersion) {
             throw new HarnessDesignApiError("Размещение не совпадает с привязкой компонента.", "placement_invalid", null);
           }
-          const template = await templates.getVersion(body.sourceTemplateId, body.sourceVersion);
-          if (template.versionSha256 !== binding.versionSha256) {
-            throw new HarnessDesignApiError("Версия библиотечного компонента изменилась.", "placement_invalid", null);
+          if (!document.connectors.some((connector) => connector.id === body.placementId)) {
+            throw new HarnessDesignApiError("Компонента нет в сохраняемом чертеже.", "placement_invalid", null);
           }
-          const drawing = await client.harness(projectId, harnessId);
-          if (drawing.revision !== stored) {
-            conflicted = true;
-            emit("conflict");
-            throw conflict("Чертёж изменили — обновите страницу");
-          }
-          const design: Row = drawing.design ?? JSON.parse(JSON.stringify(createEmptyHarnessDesign()));
-          const connectors = rows(design.connectors);
-          if (connectors.some((connector) => connector.id === body.placementId)) {
-            throw new HarnessDesignApiError("Компонент уже размещён в жгуте.", "placement_duplicate", null);
-          }
-          const timestamp = now();
-          const snapshotId = newId();
-          const snapshot = {
-            snapshotId, projectId,
-            sourceTemplateId: template.templateId, sourceVersion: template.version, sourceVersionSha256: template.versionSha256,
-            code: template.code, name: template.name, articleBindings: template.articleBindings, assets: template.assets,
-            schemaVersion: template.content.schemaVersion, content: template.content,
-            createdUtc: timestamp, updatedUtc: timestamp,
-          };
-          const placement = {
-            placementId: body.placementId, harnessId, snapshotId,
-            sourceId: body.sourceId, entityType: body.entityType, articleKey: body.articleKey,
-            instance: body.instance, createdUtc: timestamp, updatedUtc: timestamp,
-          };
-          const next: Row = JSON.parse(JSON.stringify({
-            ...design,
-            connectors: [...connectors, body.instance],
-            [COMPONENT_SNAPSHOTS]: [...rows(design[COMPONENT_SNAPSHOTS]), snapshot],
-            [COMPONENT_PLACEMENTS]: [...rows(design[COMPONENT_PLACEMENTS]), placement],
-          }));
-          const saved = await write(projectId, harnessId, next);
+          const saved = await write(projectId, harnessId, document);
           stored = saved.revision;
-          sources.set(snapshotId, { templateId: template.templateId, version: template.version });
           emit("saved");
-          const result = { commandId: body.commandId, resultingRevision: revision, snapshotId };
+          const result = { commandId: body.commandId, resultingRevision: revision, snapshotId: "" };
           commands.set(body.commandId, result);
           return result;
         },

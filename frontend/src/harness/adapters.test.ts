@@ -9,16 +9,17 @@ import {
 import { upgradeTemplateContentV2ToV3 } from "./component-library/template-upgrade-v3";
 import type { ArticleVariantV3, TemplateContentV3 } from "./component-library/template-model-v3";
 import {
-  createInMemoryComponentPlacementApi,
-  createInMemoryComponentTemplateCatalog,
-  createInMemoryHarnessDesignApi,
-  createInMemoryReferenceCatalog,
   HarnessDesignApiError,
+  createInMemoryReferenceCatalog,
   ReferenceCatalogApiError,
   type ComponentTemplate,
   type ReferenceCatalogSnapshot,
 } from "./adapters";
-import { componentPlacementRequest } from "./editor/component-placement-api";
+import { componentPlacementRequest, type PlaceComponentRequest } from "./editor/component-placement-api";
+import { createEmptyHarnessDesign } from "./editor/model";
+import { createInMemoryComponentPlacementApi, createInMemoryComponentTemplateCatalog, createInMemoryHarnessDesignApi } from "./testing/in-memory";
+
+const placed = (body: PlaceComponentRequest) => ({ ...createEmptyHarnessDesign(), connectors: [body.instance] });
 import { createConnectorInstanceFromComponentTemplateV3, type ComponentTemplatePlacementEnvelopeV3 } from "./editor/component-template-placement";
 import { buildComponentTemplateViewInstances, buildProjectComponentSnapshotLookup } from "./editor/HarnessDesignEditor";
 
@@ -68,7 +69,7 @@ describe("in-memory adapters of the harness editor", () => {
     const placements = createInMemoryComponentPlacementApi(design, templates);
     const body = placementBody(published, 0);
 
-    const result = await placements.place(projectId, harnessId, body);
+    const result = await placements.place(projectId, harnessId, body, placed(body));
     const stored = await design.get(projectId, harnessId);
 
     expect(result.resultingRevision).toBe(1);
@@ -86,8 +87,8 @@ describe("in-memory adapters of the harness editor", () => {
     const published = template();
     const placements = createInMemoryComponentPlacementApi(design, createInMemoryComponentTemplateCatalog({ templates: [published] }));
     const body = placementBody(published, 0, "11111111-1111-4111-8111-111111111111");
-    const first = await placements.place(projectId, harnessId, body);
-    const second = await placements.place(projectId, harnessId, body);
+    const first = await placements.place(projectId, harnessId, body, placed(body));
+    const second = await placements.place(projectId, harnessId, body, placed(body));
     expect(second).toEqual(first);
     expect((await design.get(projectId, harnessId)).content.connectors).toHaveLength(1);
   });
@@ -96,7 +97,8 @@ describe("in-memory adapters of the harness editor", () => {
     const design = createInMemoryHarnessDesignApi();
     const published = template();
     const placements = createInMemoryComponentPlacementApi(design, createInMemoryComponentTemplateCatalog({ templates: [published] }));
-    const error = await placements.place(projectId, harnessId, placementBody(published, 5)).catch((reason: unknown) => reason);
+    const stale = placementBody(published, 5);
+    const error = await placements.place(projectId, harnessId, stale, placed(stale)).catch((reason: unknown) => reason);
     expect(error).toBeInstanceOf(HarnessDesignApiError);
     expect(error).toMatchObject({ code: "design_revision_conflict", currentRevision: 0 });
     expect((await design.get(projectId, harnessId)).content.connectors).toHaveLength(0);
