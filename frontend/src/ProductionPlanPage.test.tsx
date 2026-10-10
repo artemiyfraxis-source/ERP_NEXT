@@ -39,6 +39,13 @@ const plan: ProductionPlanResult = {
   }],
 };
 
+const stagePreview = (over: Record<string, unknown> = {}) => ({
+  project: "70К.26.13", value: "Отгружено", kb: "", direction: "forward", reason_required: false, error: "", message: "",
+  terminal: "", blocker: "", warnings: [],
+  kbs: [{ kb: "КБ1", label: "КБ1", from: "Новый", to: "Отгружено", skipped: [], change: true, note: "", warnings: [] }],
+  ...over,
+});
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -189,6 +196,7 @@ it("sets the stage of a project without KBs through a journal mark with an empty
   const bare = { ...plan.rows[0], project: "70К.26.13", stage: "Новый", kits: [], blocker: null, events: [] };
   let payload: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).startsWith("/api/production/plan/stage-preview")) return json(stagePreview());
     if (String(input) === "/api/production/plan/events") {
       payload = JSON.parse(String(init?.body));
       return json({ event: plan.rows[0].events[0] }, 201);
@@ -200,8 +208,9 @@ it("sets the stage of a project without KBs through a journal mark with an empty
 
   expect(screen.queryByText(/набрано/)).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Этап проекта"), { target: { value: "Отгружено" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Сменить этап" }));
   await waitFor(() => expect(payload).toMatchObject({
-    project: "70К.26.13", kind: "stage", item_index: "", value: "Отгружено",
+    project: "70К.26.13", kind: "stage", item_index: "", value: "Отгружено", reason: "",
   }));
 });
 
@@ -227,7 +236,12 @@ it("adds a deadline through the native project journal", async () => {
 
 it("records manual kit stage and techcard review", async () => {
   const payloads: Record<string, unknown>[] = [];
+  const previews: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).startsWith("/api/production/plan/stage-preview")) {
+      previews.push(decodeURIComponent(String(input)));
+      return json(stagePreview({ direction: "back", reason_required: true }));
+    }
     if (String(input) === "/api/production/plan/events") {
       payloads.push(JSON.parse(String(init?.body)));
       return json({ event: plan.rows[0].events[0] }, 201);
@@ -238,8 +252,13 @@ it("records manual kit stage and techcard review", async () => {
   await openProject("708К.4");
 
   fireEvent.change(screen.getByLabelText("Этап КБ1"), { target: { value: "Отгружено" } });
+  const confirm = await screen.findByRole("button", { name: "Сменить этап" });
+  expect(previews[0]).toBe("/api/production/plan/stage-preview?project=708К.4&value=Отгружено&kb=КБ1");
+  expect(confirm).toBeDisabled(); // назад — без причины не отправить
+  fireEvent.change(screen.getByLabelText("Причина смены этапа"), { target: { value: "ошиблись кнопкой" } });
+  fireEvent.click(confirm);
   await waitFor(() => expect(payloads[0]).toMatchObject({
-    project: "708К.4", kind: "stage", item_index: "КБ1", value: "Отгружено",
+    project: "708К.4", kind: "stage", item_index: "КБ1", value: "Отгружено", reason: "ошиблись кнопкой",
   }));
   fireEvent.change(screen.getByLabelText("Проверка ТК КБ1"), { target: { value: "проверена" } });
   await waitFor(() => expect(payloads[1]).toMatchObject({

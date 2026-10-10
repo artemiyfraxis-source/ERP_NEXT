@@ -39,6 +39,13 @@ const card = {
   }],
 };
 
+const preview = (over: Record<string, unknown> = {}) => ({
+  project: "708К.4", value: "В работе", kb: "", direction: "forward", reason_required: false, error: "", message: "",
+  terminal: "", blocker: "", warnings: [],
+  kbs: [{ kb: "КБ1", label: "КБ1", from: "Новый", to: "В работе", skipped: ["ТК готова", "КБ набрана"], change: true, note: "", warnings: [] }],
+  ...over,
+});
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
 }
@@ -53,6 +60,7 @@ describe("ProjectsPage", () => {
       const method = init?.method || "GET";
       if (url.startsWith("/api/techcards/kitsets?sort=")) return json({ items: tiles, statuses });
       if (url === "/api/techcards/kitsets/708К.4" && method === "GET") return json(card);
+      if (url.startsWith("/api/techcards/kitsets/708К.4/status/preview")) return json(preview());
       if (url === "/api/techcards/kitsets/708К.4/lines") return json({ res: { updated: 1 } });
       if (url === "/api/techcards/kitsets/708К.4/issue") return json({ created: [{ no: "В-26-0001", index: "КБ1", shortfall: ["x"] }], skipped: [], message: "Заявок создано: 1, из них ждут поставки: 1." });
       if (url.startsWith("/api/techcards/kitsets/lots")) return json({ lots: [{ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "43025-0400", name: "Корпус Molex", unit: "шт", storage_location: "1F4", available: "15", reserved: "5" }] });
@@ -88,8 +96,13 @@ describe("ProjectsPage", () => {
     fireEvent.click(chip);
     const menu = screen.getByRole("menu", { name: "Статус проекта 708К.4" });
     fireEvent.click(within(menu).getByRole("menuitemradio", { name: "В работе" }));
+    // Этап ставится после подтверждения в окне с предпросмотром.
+    const dialog = await screen.findByRole("dialog", { name: "Смена этапа" });
+    expect(await within(dialog).findByText("пропущены: ТК готова, КБ набрана")).toBeTruthy();
+    expect(calls).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Сменить этап" }));
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0].body).toEqual({ action: "status", value: "В работе" });
+    expect(calls[0].body).toEqual({ action: "status", value: "В работе", reason: "" });
     expect(screen.queryByText("Жгут питания")).toBeNull(); // клик по статусу не открыл карточку
 
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
@@ -130,6 +143,38 @@ describe("ProjectsPage", () => {
     fireEvent.change(screen.getByLabelText("Текст записи"), { target: { value: "позвонили заказчику" } });
     fireEvent.click(screen.getByRole("button", { name: "Записать" }));
     await waitFor(() => expect(posted).toEqual([{ kind: "note", text: "позвонили заказчику", deadline: null }]));
+  });
+
+  it("changes one КБ stage from «Состав» through the confirm dialog and shows the journal «было → стало»", async () => {
+    const skippedCard = { ...card, status: "В работе",
+      assemblies: [{ ...card.assemblies[0], stage: { ...card.assemblies[0].stage, status: "Отгружено", manual: true, skipped: ["КБ на складе"] } }],
+      journal: [{ id: "e1", occurred_at: "2026-09-28T10:00:00", who: "РП", kind: "Этап КБ", blocker: "", text: "В работе → Отгружено · пропущены: КБ на складе · причина: сделали вживую", item_index: "КБ1", value: "Отгружено", from_value: "В работе", reason: "сделали вживую" }] };
+    const marks: unknown[] = [];
+    const previews: string[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(skippedCard);
+      if (url.startsWith("/api/techcards/kitsets/708К.4/status/preview")) { previews.push(url); return json(preview({ direction: "back", reason_required: true, kb: "КБ1" })); }
+      if (url === "/api/techcards/kitsets/708К.4/marks") { marks.push(JSON.parse(String(init?.body))); return json({ msg: "КБ1: Отгружено → Новый." }); }
+      return base(input, init);
+    });
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    render(<ProjectsPage principal={editor} />);
+    const select = await screen.findByLabelText("Этап КБ1");
+    expect(screen.getByText("пропущен").getAttribute("title")).toBe("Пропущены: КБ на складе");
+    fireEvent.change(select, { target: { value: "Новый" } });
+    const dialog = await screen.findByRole("dialog", { name: "Смена этапа" });
+    const confirm = await within(dialog).findByRole("button", { name: "Сменить этап" });
+    expect(previews[0]).toBe("/api/techcards/kitsets/708К.4/status/preview?value=Новый&kb=КБ1");
+    await waitFor(() => expect(within(dialog).getByText("Причина (обязательно: этап назад)")).toBeTruthy());
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Причина смены этапа"), { target: { value: "ошибка" } });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(marks).toEqual([{ kb: "КБ1", kind: "stage", value: "Новый", text: "", reason: "ошибка" }]));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Журнал · 1" }));
+    expect(screen.getByText("В работе → Отгружено · пропущены: КБ на складе · причина: сделали вживую")).toBeTruthy();
   });
 
   it("hides projects with an active blocker on request", async () => {
