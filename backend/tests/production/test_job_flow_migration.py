@@ -16,19 +16,27 @@ from app.modules.production.domain import FlowMode, ProductionStatus
 from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
 from tests.production.test_operation_inputs_migration import _config, _insert
 
-BEFORE = "0088_api_tokens_assembly_drafts"
+SLUG = "_production_job_flow"
+
+
+def _migration(config: Config):
+    """Эта миграция по имени (номер и предыдущая ревизия меняются при слиянии)."""
+    script = ScriptDirectory.from_config(config)
+    return next(item for item in script.walk_revisions() if item.revision.endswith(SLUG))
+
+
+def _before(config: Config) -> str:
+    return _migration(config).down_revision
 
 
 def _after(config: Config) -> str:
-    """Ревизия этой миграции: следующая за 0088 (номер может смениться при слиянии)."""
-    script = ScriptDirectory.from_config(config)
-    return next(item.revision for item in script.walk_revisions() if item.down_revision == BEFORE)
+    return _migration(config).revision
 
 
 def test_existing_tasks_keep_their_data_get_the_default_plan_and_constraints_hold(tmp_path):
     database_path = tmp_path / "flow.db"
     config = _config(database_path)
-    command.upgrade(config, BEFORE)
+    command.upgrade(config, _before(config))
     with sqlite3.connect(database_path) as connection:
         task = _insert(connection, "production_tasks", {
             "number": "ПЗ-0001", "source_idempotency_key": "k1", "status": "Запущено", "quantity": 10, "version": 3,
@@ -94,7 +102,7 @@ def test_existing_tasks_keep_their_data_get_the_default_plan_and_constraints_hol
     assert other.flow_mode is FlowMode.MIXED and other.team == ()
     assert delivered == {UUID(task): 10}
 
-    command.downgrade(config, BEFORE)
+    command.downgrade(config, _before(config))
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         columns = {row[1] for row in connection.execute("PRAGMA table_info(production_tasks)")}
