@@ -402,7 +402,8 @@ it("NAV-1: handout is its own route and shows only requests waiting for the shop
     if (path === "/api/auth/me") return json(as("foreman", { handout: "view" }));
     if (path === "/api/issues") return json({ requests: [
       { ...base, id: "i1", number: "FRX-ISS-1", status: "Новая" },
-      { ...base, id: "i2", number: "FRX-ISS-2", status: "Готов к выдаче" },
+      // The handout screen opens on «Укомплектован» + «КБ Возвращена» (owner, 10.10.2026).
+      { ...base, id: "i2", number: "FRX-ISS-2", status: "Укомплектован" },
     ], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });

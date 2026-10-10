@@ -546,6 +546,8 @@ export interface FulfillmentRequest {
   purpose: string;
   deadline: string | null;
   status: string;
+  /** «main» — комплект КБ (одна живая заявка на КБ проекта); «extra» — «Довыдача» сверх выданного комплекта. */
+  kind?: "main" | "extra";
   handout_location: string | null;
   /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
   handout_place?: string;
@@ -2551,6 +2553,22 @@ export const fulfillmentApi = {
       method: "POST",
       body: JSON.stringify({ version }),
     }),
+  /** «Довыдать»: заявка «Довыдача» на позиции выданного комплекта — с причиной, ждёт ГРН как новая. */
+  extra: (
+    requestId: string,
+    payload: { reason: string; deadline?: string | null; lines: Array<{ article: string; name: string; unit: string; quantity: string }> },
+    idempotencyKey: string,
+  ) => api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/extra`, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  /** «Вернуть в комплектацию»: «Готов к выдаче» → «Укомплектован», резервы остаются на партиях. */
+  returnToKitting: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/return-to-kitting`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
 };
 
 export interface AutoplanProposal {
@@ -3333,6 +3351,14 @@ export interface KitsetAssembly {
   components: KitsetComponent[];
 }
 
+/** КБ проекта перед отправкой на комплектацию: живая заявка — уже отправлена, второй раз не уйдёт. */
+export interface KitsetIssueAssembly {
+  index: string;
+  name: string;
+  has_items: boolean;
+  request: { id: string; no: string; status: string } | null;
+}
+
 export interface KitsetCard {
   project: string;
   customer: string;
@@ -3493,8 +3519,11 @@ export const kitsetsApi = {
     ),
   lots: (query: string, project: string) =>
     api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}&project=${encodeURIComponent(project)}`),
+  /** Перед «Отправить на комплектацию»: по каждой КБ — её живая заявка (не «Отменена») или null. */
+  issueState: (project: string) =>
+    api<{ project: string; assemblies: KitsetIssueAssembly[] }>(`${kitsetPath(project)}/issue`),
   issue: (project: string, deadline: string) =>
-    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string; reserve_error?: string }>(
+    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; already?: Array<{ index: string; no: string; status: string }>; message: string; reserve_error?: string }>(
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
     ),
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
