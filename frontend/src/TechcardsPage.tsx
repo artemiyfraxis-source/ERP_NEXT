@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
-import { ProjectEtk, ToolingBySection, editDraft } from "./ProjectEtk";
+import { formatDayMonth } from "./format";
+import { EtkSheet, GeneratorPane, ToolingBySection, editDraft } from "./ProjectEtk";
+import { StatusChip } from "./StatusChip";
+import { headerLabel } from "./referenceLabels";
 import { RECORD_CATEGORIES, recordCategory } from "./etkOperation";
 import {
   referencesApi,
@@ -19,19 +22,6 @@ const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name)
 // Где стороны (A)/(B) расходятся, чья сторона — запись (backend operation_cards.RECORD_SIDE_PICK).
 const RECORD_SIDE_PICK: Record<string, string> = { SDR_COAX_housing: "B", SDR_COAX_pin: "A" };
 
-
-function shortDate(value: string): string {
-  return new Date(value).toLocaleDateString("ru-RU").slice(0, 5);
-}
-
-function recordMeta(item: OperationCardSummary) {
-  const norms = item.norms_known ? (item.norms ? (item.norms.operation_seconds ? ` · ${item.norms.operation_seconds} с` : "") : null) : "";
-  return <>
-    {item.steps} шаг.{item.controls ? ` · ${item.controls} контр.` : ""} · {item.tooling} оснастки
-    {norms === null ? <> · <b className="danger-text">нет норм</b></> : norms}
-    {item.changed_at && <> · <b className="tr-edited">правлена {shortDate(item.changed_at)}</b></>}
-  </>;
-}
 
 // БД.ОП columns the DB_SCHEMA duplicates under its own keys (opNumber = «Номер» …) — shown once, by the sheet name.
 const OP_SCHEMA_KEYS = new Set(["opNumber", "opName", "tOp", "tPrep", "tMachine"]);
@@ -71,10 +61,10 @@ function OpFields({ record, canEdit, onSaved }: { record: TechOperationRecord; c
     {canEdit && !draft && <> <button type="button" className="secondary small" onClick={() => setDraft(Object.fromEntries(Object.entries(record.fields).filter(([key]) => !OP_SCHEMA_KEYS.has(key))))}>Править строку</button></>}</h4>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {draft ? <>
-      <div className="reference-fields db-form">{Object.entries(draft).map(([key, value]) => <label key={key}><small>{key}</small>
+      <div className="reference-fields db-form">{Object.entries(draft).map(([key, value]) => <label key={key}><small>{headerLabel(key)}</small>
         <input aria-label={`БД.ОП: ${key}`} value={value} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>)}</div>
       <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void save()}>Сохранить строку</button> <button className="secondary" onClick={() => setDraft(null)}>Отмена</button></div>
-    </> : rows.length ? <dl className="op-fields">{rows.map(([key, value]) => <div key={key}><dt>{key}</dt><dd className="pre-line">{value}</dd></div>)}</dl>
+    </> : rows.length ? <dl className="op-fields">{rows.map(([key, value]) => <div key={key}><dt>{headerLabel(key)}</dt><dd className="pre-line">{value}</dd></div>)}</dl>
       : <div className="empty">В БД.ОП строка пустая.</div>}
   </div>;
 }
@@ -97,51 +87,48 @@ function OpOnlyDetail({ record, canEdit, onSaved, onBack }: { record: TechOperat
 
 type OperationEntry = { key: string; code: string; name: string; template?: OperationCardSummary; op?: Record<string, string> };
 
-/** Операции карточками (SUPPLYMAP openTcRecords): шаблоны ТК + операции БД.ОП без шаблона, по категориям. */
-function OperationCards({ entries, onOpen, toolbar }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode }) {
-  const [chip, setChip] = useState("");
-  const [query, setQuery] = useState("");
-  const needle = query.trim().toLocaleLowerCase("ru-RU");
-  const searched = useMemo(() => !needle ? entries : entries.filter((entry) => [
-    entry.code, entry.name, entry.template?.first_step, entry.template?.step_text, ...Object.values(entry.op ?? {}),
-  ].join(" ").toLocaleLowerCase("ru-RU").includes(needle)), [entries, needle]);
-  const counts = useMemo(() => {
-    const byName = new Map<string, number>();
-    searched.forEach((entry) => byName.set(recordCategory(entry.code), (byName.get(recordCategory(entry.code)) ?? 0) + 1));
-    return byName;
-  }, [searched]);
-  const shown = CATEGORY_ORDER.filter((name) => counts.has(name) && (!chip || chip === name));
-  const missing = entries.filter((entry) => !entry.template).length;
-  return <>
-    <div className="tr-toolbar">
-      <input className="search-input" aria-label="Поиск: Операции" placeholder="Код, название, шаг, машина…" value={query} onChange={(event) => setQuery(event.target.value)} />
-      {missing > 0 && <small className="tr-meta">без шаблона ТК: {missing}</small>}
-      <span className="tr-toolbar-end">{toolbar}</span>
-    </div>
-    <div className="tr-chips">
-      <button className={chip ? "" : "on"} onClick={() => setChip("")}>Все · {searched.length}</button>
-      {CATEGORY_ORDER.filter((name) => counts.has(name)).map((name) => <button key={name} className={chip === name ? "on" : ""} onClick={() => setChip(chip === name ? "" : name)}>{name} · {counts.get(name)}</button>)}
-    </div>
-    {!shown.length && <div className="empty">Ничего не найдено.</div>}
-    {shown.map((name) => <section className="tr-group" key={name}>
-      <h3>{name} <span>{counts.get(name)}</span></h3>
-      <div className="tr-grid">
-        {searched.filter((entry) => recordCategory(entry.code) === name).map((entry) => {
-          const machine = entry.op?.["Машина"]?.trim();
-          const type = entry.op?.["Тип операции"]?.trim();
-          return <button type="button" key={entry.key} className={entry.template ? "tr-card" : "tr-card tr-card-op"} onClick={() => onOpen(entry)}>
-            <strong className="tr-name">{entry.name || recordCategory(entry.code)}</strong>
-            <span className="tr-code">{entry.code}</span>
-            {entry.template ? (entry.template.first_step && <span className="tr-first">{entry.template.first_step}</span>)
-              : <span className="tr-first"><b className="danger-text">нет шаблона ТК</b> · только строка БД.ОП</span>}
-            {(machine || type) && <span className="tr-meta">{[machine, type].filter(Boolean).join(" · ")}</span>}
-            {entry.template ? <small className="tr-meta">{recordMeta(entry.template)}</small>
-              : entry.op?.tOp ? <small className="tr-meta">{entry.op.tOp} с</small> : null}
-          </button>;
-        })}
-      </div>
-    </section>)}
-  </>;
+/** Операции таблицей (аудит БД-2: 139 карточек — это 6 500 px прокрутки, справочник читается строками): шаблоны ТК +
+    операции БД.ОП без шаблона; категории — чипы с числом, строка целиком открывает карточку операции. */
+function OperationsTable({ entries, onOpen, toolbar }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode }) {
+  const seconds = (entry: OperationEntry) => entry.template?.norms?.operation_seconds || entry.op?.tOp || "";
+  const columns: DataColumn<OperationEntry>[] = [
+    { key: "name", title: "Операция", value: (entry) => entry.name || recordCategory(entry.code) },
+    { key: "code", title: "Код", value: (entry) => entry.code, render: (entry) => <span className="tr-code">{entry.code}</span> },
+    { key: "category", title: "Категория", value: (entry) => recordCategory(entry.code), filter: true },
+    { key: "steps", title: "Шагов", numeric: true, value: (entry) => entry.template?.steps ?? "" },
+    { key: "controls", title: "Контролей", numeric: true, value: (entry) => entry.template ? entry.template.controls ?? 0 : "" },
+    { key: "tooling", title: "Оснастки", numeric: true, value: (entry) => entry.template?.tooling ?? "" },
+    { key: "seconds", title: "Время, с", numeric: true, value: (entry) => seconds(entry),
+      render: (entry) => seconds(entry) ? seconds(entry)
+        : entry.template && entry.template.norms_known && !entry.template.norms ? <b className="danger-text">нет норм</b> : <span className="cell-empty">—</span> },
+    { key: "machine", title: "Машина", value: (entry) => entry.op?.["Машина"]?.trim() ?? "",
+      render: (entry) => entry.op?.["Машина"]?.trim() ? <span className="db-clip" title={entry.op["Машина"]}>{entry.op["Машина"].trim()}</span> : <span className="cell-empty">—</span> },
+    { key: "type", title: "Тип операции", value: (entry) => entry.op?.["Тип операции"]?.trim() ?? "", hidden: true },
+    { key: "template", title: "Шаблон ТК", filter: true, value: (entry) => entry.template ? "есть" : "нет шаблона",
+      render: (entry) => entry.template ? <span className="muted">есть</span> : <StatusChip status="нет шаблона" tone="warning" /> },
+    { key: "changed", title: "Правка", value: (entry) => entry.template?.changed_at ?? "",
+      render: (entry) => entry.template?.changed_at ? <span className="tr-edited">{formatDayMonth(entry.template.changed_at)}</span> : <span className="cell-empty">—</span> },
+    // Текст шагов — только для поиска (флюс, жало, машина…), в таблице скрыт.
+    { key: "text", title: "Текст шагов", hidden: true, value: (entry) => [entry.template?.first_step, entry.template?.step_text, ...Object.values(entry.op ?? {})].filter(Boolean).join(" ") },
+  ];
+  const presets = useMemo(() => {
+    const names = new Set(entries.map((entry) => recordCategory(entry.code)));
+    return CATEGORY_ORDER.filter((name) => names.has(name)).map((name) => ({ label: name, test: (entry: OperationEntry) => recordCategory(entry.code) === name }));
+  }, [entries]);
+  return <DataTable
+    rows={entries}
+    columns={columns}
+    rowKey={(entry) => entry.key}
+    storageKey="db:operations"
+    label="Операции"
+    exportName="Операции"
+    presets={presets}
+    presetCountsFollowSearch
+    onRowClick={onOpen}
+    rowTitle={(entry) => `Открыть: ${entry.name || entry.code}`}
+    toolbar={toolbar}
+    emptyText="Ничего не найдено."
+  />;
 }
 
 /** Просмотр: карточка в форме листа техкарты (SUPPLYMAP openTcRecords → renderCard). */
@@ -193,7 +180,6 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const showLibrary = view !== "projects";
   const [cards, setCards] = useState<ProjectTechcard[]>([]);
   const [templates, setTemplates] = useState<OperationCardSummary[]>([]);
-  const [libraryCommit, setLibraryCommit] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   // БД.ОП rows (only with the reference-book grant): op-only operations become cards too, and every card shows its row.
   const [opRows, setOpRows] = useState<TechOperationRecord[]>([]);
@@ -201,6 +187,8 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const [templateDetail, setTemplateDetail] = useState<OperationCardDetail | null>(null);
   const [editingTemplate, setEditingTemplate] = useState(false);
   const [sheetsOpen, setSheetsOpen] = useState(false);
+  // ЭТК-3: под выданной ЭТК генератор свёрнут, пока не нажали «Пересобрать».
+  const [rebuilding, setRebuilding] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   // ?project= — opened as «Карточка проекта» from the production plan: only that project's cards.
   const [projectFilter, setProjectFilter] = useState(() => new URLSearchParams(window.location.search).get("project") ?? "");
@@ -213,18 +201,18 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const canEditTemplates = principal.permissions.erptctpl === "edit";
   const canGenerate = Boolean(principal.permissions.tcgen);
   const selected = useMemo(() => cards.find((card) => card.id === selectedId) ?? null, [cards, selectedId]);
+  const issued = selected?.status === "Выдана";
+  useEffect(() => setRebuilding(false), [selectedId]);
   const shownCards = useMemo(() => {
     const project = projectFilter.trim().toLocaleUpperCase("ru-RU");
     return project ? cards.filter((card) => card.project.toLocaleUpperCase("ru-RU") === project) : cards;
   }, [cards, projectFilter]);
   const cardColumns: DataColumn<ProjectTechcard>[] = [
-    { key: "project", title: "Проект", value: (card) => card.project,
-      render: (card) => <button className="link-button" onClick={() => setSelectedId(card.id)}><strong>{card.project}</strong></button> },
-    { key: "item", title: "Изделие", value: (card) => `${card.item_index} · ${card.product_name}`,
-      render: (card) => <button className="link-button" onClick={() => setSelectedId(card.id)}>{card.item_index} · {card.product_name}</button> },
-    { key: "status", title: "Статус", value: (card) => card.status },
-    { key: "revision", title: "Ревизия", value: (card) => card.revision || "—", numeric: true },
-    { key: "deadline", title: "Срок", value: (card) => card.deadline || "—" },
+    { key: "project", title: "Проект", value: (card) => card.project },
+    { key: "item", title: "Изделие", value: (card) => `${card.item_index} · ${card.product_name}`, grow: true },
+    { key: "status", title: "Статус", value: (card) => card.status, render: (card) => <StatusChip status={card.status} /> },
+    { key: "revision", title: "Ревизия", value: (card) => card.revision || "", numeric: true },
+    { key: "deadline", title: "Срок", value: (card) => card.deadline ?? "" },
   ];
   // Одна запись на код операции: пара (A)/(B) — одна карточка (SUPPLYMAP tcRecordsByCode_).
   const records = useMemo(() => {
@@ -265,7 +253,6 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       const first = projectResult.items.find((card) => !wanted || card.project.toLocaleUpperCase("ru-RU") === wanted) ?? projectResult.items[0];
       setSelectedId((current) => current || (projectResult.items.some((card) => card.id === linked) ? linked : "") || first?.id || "");
       setTemplates(libraryResult.items);
-      setLibraryCommit(libraryResult.metadata?.source_commit || "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить техкарты");
     }
@@ -317,9 +304,21 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
         { label: "Выданные", test: (card) => card.status === "Выдана" },
       ]}
       rowClassName={(card) => (selectedId === card.id ? "selected" : "")}
+      onRowClick={(card) => setSelectedId(card.id)}
+      rowTitle={(card) => `Открыть ЭТК: ${card.project} · ${card.item_index}`}
       emptyText={projectFilter ? `Карточек проекта ${projectFilter} нет.` : cards.length ? "Ничего не найдено." : "Техкарт пока нет: их заводит «Генератор» в карточке проекта."}
     />}
-    {selected && <ProjectEtk card={selected} principal={principal} onChange={replaceCard} />}
+    {selected && <article className="panel project-etk tc-etk">
+      <EtkSheet card={selected} principal={principal} onChange={replaceCard} onRebuild={issued ? () => setRebuilding(true) : undefined} />
+      {canGenerate && (!issued || rebuilding) && <>
+        {issued && <div className="tc-gen-head"><strong>Пересборка ЭТК</strong><button className="secondary small" onClick={() => setRebuilding(false)}>Свернуть генератор</button></div>}
+        <GeneratorPane key={selected.id} card={selected} principal={principal} onChange={replaceCard} onDone={(updated) => {
+          // Выданная ЭТК снова сворачивает генератор; итог сборки остаётся строкой наверху.
+          setRebuilding(false);
+          setNotice(updated.status !== "Выдана" ? "Черновик ЭТК собран — выдаёт технолог" : updated.revision > 1 ? `Техкарта пересобрана · ревизия ${updated.revision}` : "Техкарта создана");
+        }} />
+      </>}
+    </article>}
     </> : <>
     {!embedded && <header className="page-head"><h1>Шаблоны техкарт</h1></header>}
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -327,7 +326,6 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     </>}
     {showLibrary && <>
     {!embedded && <header className="page-head library-head"><h2>Библиотека операций</h2><span className="page-count">{records.length}</span></header>}
-    <p className="page-sub">Снимок SUPPLYMAP {libraryCommit ? libraryCommit.slice(0, 8) : "не загружен"} · пунктиром — операции БД.ОП без шаблона листа.</p>
     {sheetsOpen ? <TcTemplateSheets canEdit={canEditTemplates} onBack={() => setSheetsOpen(false)} onChanged={() => {
       void techcardsApi.templates().then((library) => setTemplates(library.items)).catch(() => undefined);
     }} /> : selectedOp ? <OpOnlyDetail record={selectedOp} canEdit={canEditOps} onSaved={replaceOp} onBack={() => setSelectedOpCode("")} /> : templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm
@@ -337,7 +335,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       onCancel={() => setEditingTemplate(false)}
       onSave={saveTemplate}
     /> : <TemplateDetail template={templateDetail} op={opByCode.get(templateDetail.code)} canEditOp={canEditOps} onOpSaved={replaceOp} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
-    <OperationCards entries={operationEntries} toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>} onOpen={(entry) => {
+    <OperationsTable entries={operationEntries} toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>} onOpen={(entry) => {
       if (entry.template) { setSelectedOpCode(""); setSelectedTemplateId(entry.template.id); } else setSelectedOpCode(entry.code);
     }} />
     </>}
