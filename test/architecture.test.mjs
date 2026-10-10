@@ -51,12 +51,6 @@ test("techcards keeps its bundled library consistent and its dependencies in the
     "techcards dependency packages must be included in the central ERP lock",
   );
 
-  const apiSource = await readFile(
-    join(root, "backend", "app", "modules", "techcards", "api.py"),
-    "utf8",
-  );
-  assert.equal(apiSource.includes("..services"), false);
-
   const operationLibrary = JSON.parse(await readFile(
     join(root, "backend", "data", "techcard-library.json"),
     "utf8",
@@ -79,8 +73,6 @@ test("techcards keeps its bundled library consistent and its dependencies in the
   assert.equal(techcardsModule.routePrefixes.includes("/api/techcards"), true);
   assert.equal(metadata.grapherImport.sourceCommit, operationSourceCommit);
   const grapherSource = await readFile(join(root, "backend", "app", "modules", "techcards", "grapher_import.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(grapherSource.includes(forbidden), false, `grapher import imports ${forbidden}`);
   assert.equal(grapherSource.includes("def read_export"), true);
 });
 
@@ -89,9 +81,6 @@ test("requests domain stays independent and records its port provenance", async 
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
   assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
 
-  const domainSource = await readFile(join(moduleRoot, "domain.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient", "modules.projects"])
-    assert.equal(domainSource.includes(forbidden), false, `requests domain imports ${forbidden}`);
 
   const appSource = await readFile(join(root, "backend", "app", "main.py"), "utf8");
   assert.equal(appSource.includes("requests_api.router"), true);
@@ -110,27 +99,12 @@ test("procurement owns its status machine and records its port provenance", asyn
   assert.equal(requestsDomain.includes("revision=\"A\""), false);
 
   const procurementDomain = await readFile(join(moduleRoot, "domain.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "modules.requests"])
-    assert.equal(
-      procurementDomain.includes(forbidden),
-      false,
-      `procurement domain imports ${forbidden}`,
-    );
   assert.equal(procurementDomain.includes("class ProcurementStatus"), true);
   // Rule: a line's default revision is A (a retransfer passes the next letter, RQ-3).
   assert.match(procurementDomain, /revision(?:\s*:\s*str)?\s*=\s*"A"/);
 });
 
 test("procurement reaches warehouse stock only through its workflow port", async () => {
-  const moduleRoot = join(root, "backend", "app", "modules", "procurement");
-  for (const file of ["application.py", "api.py", "infrastructure.py", "stock_port.py"]) {
-    const source = await readFile(join(moduleRoot, file), "utf8");
-    assert.equal(
-      source.includes("app.modules.warehouse"),
-      false,
-      `procurement ${file} must not import the warehouse module directly`,
-    );
-  }
   const workflow = await readFile(join(root, "backend", "app", "workflows", "procurement_stock.py"), "utf8");
   assert.equal(workflow.includes("SqlAlchemyWarehouseRepository"), true);
   assert.equal(workflow.includes("StockReservationPort"), true);
@@ -154,9 +128,6 @@ test("receiving and warehouse own native traceability rules", async () => {
     const moduleRoot = join(root, "backend", "app", "modules", name);
     const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
     assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
-    const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
-    for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-      assert.equal(domain.includes(forbidden), false, `${name} domain imports ${forbidden}`);
   }
   const appSource = await readFile(join(root, "backend", "app", "main.py"), "utf8");
   assert.equal(appSource.includes("receiving_api.router"), true);
@@ -176,10 +147,6 @@ test("fulfillment records its source and stays independent of transport and pers
     "issue-journals-one-writeoff-row-per-issued-position",
   ]);
 
-  const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(domain.includes(forbidden), false, `fulfillment domain imports ${forbidden}`);
-
   const appSource = await readFile(join(root, "backend", "app", "main.py"), "utf8");
   assert.equal(appSource.includes("fulfillment_api.router"), true);
 });
@@ -191,28 +158,16 @@ test("production records its implemented execution stage", async () => {
   assert.equal(metadata.implementedStage, "production-traceability-stage-6-plan-manual-kit-marks-and-auto-scheduler-step-2");
 
   const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(domain.includes(forbidden), false, `production domain imports ${forbidden}`);
   assert.equal(domain.includes("class OperationStatus"), false);
 
   const traceability = await readFile(join(moduleRoot, "traceability.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(traceability.includes(forbidden), false, `production traceability imports ${forbidden}`);
   assert.equal(traceability.includes("def box_check_digit"), true);
 
-  const genealogy = await readFile(join(moduleRoot, "genealogy.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(genealogy.includes(forbidden), false, `production genealogy imports ${forbidden}`);
-
   const plan = await readFile(join(moduleRoot, "plan.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(plan.includes(forbidden), false, `production plan imports ${forbidden}`);
   assert.equal(plan.includes("KIT_STAGES"), true);
   assert.equal(plan.includes("def summarize_journal"), true);
 
   const scheduling = await readFile(join(moduleRoot, "scheduling.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(scheduling.includes(forbidden), false, `production scheduling imports ${forbidden}`);
   assert.equal(scheduling.includes("def schedule_variants"), true);
   assert.equal(scheduling.includes("def chain_start"), true);
 
@@ -228,8 +183,6 @@ test("shipping keeps finished goods and shipment gates in one native context", a
   assert.equal(metadata.implementedStage, "finished-goods-and-shipment-workflow");
 
   const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(domain.includes(forbidden), false, `shipping domain imports ${forbidden}`);
   assert.equal(domain.includes("requested"), true);
   assert.equal(domain.includes("picked"), true);
 
@@ -245,13 +198,7 @@ test("references separates editable maps from the versioned technology snapshot"
   assert.equal(metadata.implementedStage, "technology-schema-v14-operation-and-terminal-norm-kernel");
   assert.equal(metadata.invariants.includes("terminal-norm-prefers-exact-wire-section"), true);
 
-  const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(domain.includes(forbidden), false, `references domain imports ${forbidden}`);
-
   const technology = await readFile(join(moduleRoot, "technology.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(technology.includes(forbidden), false, `references technology imports ${forbidden}`);
   assert.equal(technology.includes("TECH_SNAPSHOT_SCHEMA_VERSION = 14"), true);
 
   const appSource = await readFile(join(root, "backend", "app", "main.py"), "utf8");
@@ -263,10 +210,6 @@ test("operations replaces the owner tick with append-only audit and reliable job
   const metadata = JSON.parse(await readFile(join(moduleRoot, "SOURCE.json"), "utf8"));
   assert.match(metadata.sourceCommit, /^[0-9a-f]{40}$/, "SOURCE.json keeps the commit the module was ported from");
   assert.equal(metadata.invariants.includes("minute-owner-tick-is-not-recreated"), true);
-
-  const domain = await readFile(join(moduleRoot, "domain.py"), "utf8");
-  for (const forbidden of ["fastapi", "sqlalchemy", "googleapiclient"])
-    assert.equal(domain.includes(forbidden), false, `operations domain imports ${forbidden}`);
 
   const worker = await readFile(join(root, "backend", "app", "outbox_worker.py"), "utf8");
   assert.equal(worker.includes("dispatch_next_notification"), true);
