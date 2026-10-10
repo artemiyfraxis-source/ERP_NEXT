@@ -71,6 +71,11 @@ def database(tmp_path, monkeypatch):
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
         Base.metadata.tables["fulfillment_kit_reserves"].create(connection)
+        # 0089: the project / КБ / kind of a request and the year's number counter.
+        connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN project_key VARCHAR(128)"))
+        connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN item_index VARCHAR(64)"))
+        connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN kind VARCHAR(16) NOT NULL DEFAULT 'main'"))
+        Base.metadata.tables["fulfillment_request_counters"].create(connection)
         # The picked ГРН is reserved at once (T1): the kit request then looks for the project's «Со склада» covers.
         Base.metadata.tables["procurement_stock_covers"].create(connection)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)

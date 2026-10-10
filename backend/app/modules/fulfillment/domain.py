@@ -14,6 +14,11 @@ class FulfillmentValidationError(ValueError):
     """A fulfillment transition would break stock traceability."""
 
 
+class DuplicateKitRequest(FulfillmentValidationError):
+    """A КБ of a project already has a live kit request (any status but «Отменена»), or two of them would get the same
+    lots: a second one would hold the same goods twice (prod 180К.11, 10.10.2026). The API answers 409."""
+
+
 class FulfillmentStatus(str, Enum):
     NEW = "Новая"
     UNDERFILLED = "Недоукомплектован"
@@ -23,6 +28,18 @@ class FulfillmentStatus(str, Enum):
     RETURNED = "КБ Возвращена"
     DONE = "Готово"
     CANCELLED = "Отменена"
+
+
+class FulfillmentKind(str, Enum):
+    """The main kit request of a КБ (one live per project + КБ) or a «Довыдача» on top of an issued kit: the kit is
+    issued exactly to the need, a shortage is handed out later as an extra request (owner, 10.10.2026)."""
+
+    MAIN = "main"
+    EXTRA = "extra"
+
+
+# Statuses of a main kit after which «Довыдать» is offered: the kit went to the shop.
+EXTRA_AFTER = frozenset({FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE})
 
 
 # «Отправить на выдачу» offers this place when the kit's site has none used before (owner, G1-T3 05.10.2026): the rack
@@ -256,6 +273,7 @@ class FulfillmentRequest:
     at_issued: datetime | None = None
     at_returned: datetime | None = None
     at_closed: datetime | None = None
+    kind: FulfillmentKind = FulfillmentKind.MAIN
 
     @classmethod
     def create(
@@ -270,6 +288,7 @@ class FulfillmentRequest:
         lines: tuple[FulfillmentLine, ...],
         created_at: datetime,
         requester_id: UUID | None = None,
+        kind: FulfillmentKind = FulfillmentKind.MAIN,
     ) -> FulfillmentRequest:
         # FF-1: Issue.gs:121, 919 — a request without a deadline is refused.
         if deadline is None or not str(deadline).strip():
@@ -309,6 +328,7 @@ class FulfillmentRequest:
             status=FulfillmentStatus.NEW,
             lines=lines,
             requester_id=requester_id,
+            kind=FulfillmentKind(kind),
         )
 
     @property
@@ -492,6 +512,18 @@ class FulfillmentRequest:
             version=self.version + 1,
         )
 
+    def return_to_kitting(self) -> FulfillmentRequest:
+        """«Вернуть в комплектацию» (owner, 10.10.2026): a kit sent to the handout point comes back to the picker —
+        «Укомплектован» (or «Недоукомплектован» if a line lost its cover). The reserves stay on their lots; the
+        handout place and «Отправлена на выдачу» are cleared, the next sending stamps them anew. Only from
+        «Готов к выдаче»: cancelling a kit lying at the handout point goes through this step first."""
+        if self.status is not FulfillmentStatus.READY:
+            raise FulfillmentValidationError(
+                f"Вернуть в комплектацию можно только комплект «Готов к выдаче», а не «{self.status.value}»"
+            )
+        status = FulfillmentStatus.UNDERFILLED if self.open_lines() else FulfillmentStatus.COMPLETE
+        return replace(self, status=status, handout_location=None, at_picked=None, version=self.version + 1)
+
     def mark_issued(self) -> FulfillmentRequest:
         if self.status is not FulfillmentStatus.READY or not self.fully_reserved:
             raise FulfillmentValidationError("К выдаче допускается только полный готовый комплект")
@@ -537,6 +569,11 @@ class FulfillmentRequest:
             raise FulfillmentValidationError("Выданную заявку нельзя отменить — оформите возврат")
         if self.status in {FulfillmentStatus.CANCELLED, FulfillmentStatus.DONE}:
             return self
+        if self.status is FulfillmentStatus.READY:
+            # Prod 719К.2 (05.10.2026): a kit at the handout point was cancelled and its КБ vanished from the order.
+            raise FulfillmentValidationError(
+                "Комплект лежит в зоне выдачи — сначала «Вернуть в комплектацию», потом отменять"
+            )
         return replace(
             self,
             status=FulfillmentStatus.CANCELLED,

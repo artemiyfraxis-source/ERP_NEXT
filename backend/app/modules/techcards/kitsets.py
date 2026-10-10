@@ -24,6 +24,10 @@ from .etk_parts import kit_article
 # запас технолог ставит руками 0, 1, 2, 3…
 SCRAP_DEFAULT = Decimal("5")
 PIECE_SCRAP_DEFAULT = Decimal("0")
+# «Выдаём вровень» (владелец, 10.10.2026): запас на брак пока НЕ добавляется к «на партию» — ни в выдачу, ни в резерв
+# ГРН, ни в потребность снабжения; нехватку довыдают отдельной заявкой («Довыдача»). «% брака» строк хранится и
+# правится как прежде — вернуть запас = True здесь и `KIT_SCRAP_APPLIED` в ProjectsPage.tsx.
+SCRAP_APPLIED = False
 # Счётные единицы: половинки штуки не бывает, партия округляется вверх до целого.
 PIECE_UNITS = frozenset({"шт"})
 _HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
@@ -115,7 +119,8 @@ class KitComponent:
         return unit_for_type(self.type)
 
     def batch(self, run: Decimal) -> Decimal:
-        return batch_quantity(self.per_unit, run, self.scrap_pct, self.unit)
+        """«На партию»: расход × тираж, без запаса на брак, пока `SCRAP_APPLIED` выключен."""
+        return batch_quantity(self.per_unit, run, self.scrap_pct if SCRAP_APPLIED else Decimal("0"), self.unit)
 
 
 @dataclass(frozen=True)
