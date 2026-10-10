@@ -25,9 +25,10 @@ from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import ValidationError as RequestValidationError, unit_for_type
 from app.modules.warehouse.domain import WarehouseValidationError
 from app.modules.production.plan import (
-    KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, summarize_journal,
+    KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, stage_plan_message,
+    summarize_journal,
 )
-from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
+from app.modules.production.plan_application import AddPlanEventCommand, StageChangeConflict, add_plan_event
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import file_response
@@ -118,7 +119,7 @@ def _run(operation):
         WarehouseValidationError,
     ) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    except ConcurrentFulfillmentUpdate as error:  # the picked lot changed since the list was loaded
+    except (ConcurrentFulfillmentUpdate, StageChangeConflict) as error:  # changed since the screen was loaded
         raise HTTPException(status_code=409, detail=str(error)) from error
     except (IntegrityError, StaleDataError, reserve_flow.ConcurrentKitsetUpdate) as error:
         raise HTTPException(status_code=409, detail="Карточка проекта изменена конкурентно — обновите") from error
@@ -138,7 +139,7 @@ def _facts(request: Request) -> flow.KitsetFacts:
 def _kb_stage(stage) -> dict[str, Any]:
     return {
         "index": stage.item_index, "status": stage.status, "manual": stage.manual,
-        "tc": stage.tc, "kit": stage.kit,
+        "tc": stage.tc, "kit": stage.kit, "skipped": list(stage.skipped),
         "review": None if stage.review is None else {
             "value": stage.review.value, "text": stage.review.text, "who": stage.review.who,
         },
@@ -325,6 +326,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
         "journal": [{
             "id": str(event.id), "occurred_at": event.occurred_at.isoformat(), "who": event.who, "kind": event.kind,
             "blocker": event.blocker, "text": event.text, "item_index": event.item_index, "value": event.value,
+            "from_value": event.from_value, "reason": event.reason,
         } for event in (journal.events[:30] if journal is not None else ())],
         "stages": list(KIT_STAGES), "review_values": list(TC_REVIEW_VALUES),
         "terminals": list(PROJECT_TERMINALS), "blockers": list(PLAN_BLOCKERS),
@@ -557,6 +559,33 @@ class MarkPayload(BaseModel):
     kind: str = Field(min_length=1, max_length=16)
     value: str = Field(default="", max_length=64)
     text: str = Field(default="", max_length=5000)
+    # Ручной этап назад — причина обязательна (для этапа годится и `text`).
+    reason: str = Field(default="", max_length=2000)
+
+
+def _stage_state(request: Request, kitset: Kitset, kb: str = "") -> flow.ProjectStageState:
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return flow.load_project_stage_state(
+        kitset.project, production=factory, techcards=techcards_factory(request),
+        fulfillment=fulfillment_factory(request), shipping=shipping_factory(request),
+        item_indexes=[assembly.index for assembly in kitset.assemblies], kb=kb,
+    )
+
+
+@router.get("/{project}/status/preview")
+def status_preview(
+    project: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    value: Annotated[str, Query(min_length=1, max_length=64)],
+    kb: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    """Что сделает ручная смена этапа (проекта или одной КБ) — до записи: по КБ «было → станет», пропущенные этапы,
+    что смена не трогает (задания цеха, заявки на комплектацию, непоставленная ГП, блокер), нужна ли причина."""
+    kitset = _kitset(request, project)
+    return _run(lambda: flow.preview_project_stage(_stage_state(request, kitset, kb), value, kb))
 
 
 @router.post("/{project}/marks")
@@ -567,13 +596,23 @@ def mark(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKitMark`: ручной этап КБ и проверка ТК — в журнал проекта, как в «Производственном плане»."""
+    """`portalKitMark`: ручной этап КБ (через единую смену этапа) и проверка ТК — в журнал проекта."""
     if payload.kind not in {"stage", "tcReview"}:
         raise HTTPException(status_code=422, detail="Неизвестный вид отметки.")
     factory = production_factory(request)
     if factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     kitset = _kitset(request, project)
+    if payload.kind == "stage":
+        change = _run(lambda: flow.change_project_stage(flow.ChangeProjectStageCommand(
+            project=kitset.project, value=payload.value, kb=payload.kb, reason=payload.reason or payload.text,
+            actor=principal.actor, now=now,
+        ), _stage_state(request, kitset, payload.kb), factory))
+        last = change.events[-1] if change.events else None
+        return {
+            "msg": stage_plan_message(change.plan), "change": change.payload(),
+            "event": None if last is None else {"kind": last.kind, "value": last.value, "item_index": last.item_index},
+        }
     event = _run(lambda: add_plan_event(AddPlanEventCommand(
         project=kitset.project, kind=payload.kind, blocker="", text=payload.text, deadline=None,
         known_projects=(kitset.project,), actor=principal.actor, now=now,
@@ -586,6 +625,8 @@ class StatusPayload(BaseModel):
     action: str = Field(min_length=1, max_length=16)
     value: str = Field(default="", max_length=64)
     text: str = Field(default="", max_length=5000)
+    # Этап назад — причина обязательна (для этапа годится и `text`).
+    reason: str = Field(default="", max_length=2000)
 
 
 @router.post("/{project}/status")
@@ -596,16 +637,22 @@ def change_status(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """Статус проекта в один клик: этап (на все КБ) / «авто» / Отказ·Слился·Отменён, блокер или его снятие."""
+    """Статус проекта в один клик: этап (поднимает отставшие КБ; назад — с причиной) / «авто» / Отказ·Слился·Отменён,
+    блокер или его снятие."""
     factory = production_factory(request)
     if factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     kitset = _kitset(request, project)
-    events = _run(lambda: flow.change_project_status(flow.ChangeProjectStatusCommand(
+    stage = payload.action == flow.PROJECT_STATUS and payload.value not in PROJECT_TERMINALS
+    result = _run(lambda: flow.change_project_status(flow.ChangeProjectStatusCommand(
         project=kitset.project, item_indexes=tuple(assembly.index for assembly in kitset.assemblies),
-        action=payload.action, value=payload.value, text=payload.text, actor=principal.actor, now=now,
-    ), factory))
-    return {"events": len(events), "card": _card(request, kitset)}
+        action=payload.action, value=payload.value,
+        text=(payload.reason or payload.text) if stage else payload.text, actor=principal.actor, now=now,
+    ), factory, techcards=techcards_factory(request), fulfillment=fulfillment_factory(request),
+        shipping=shipping_factory(request)))
+    if isinstance(result, flow.ProjectStageChange):
+        return {"events": len(result.events), "change": result.payload(), "card": _card(request, kitset)}
+    return {"events": len(result), "change": None, "card": _card(request, kitset)}
 
 
 class JournalPayload(BaseModel):

@@ -19,7 +19,9 @@ from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .application import Absence, Operator
 from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
-from .plan import PlanEvent, PlanProjectSnapshot, normalize_project_number
+from .plan import (
+    KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
+)
 from .genealogy import (
     BoxConsumptionSnapshot,
     BoxSnapshot,
@@ -255,11 +257,34 @@ class ProductionPlanProjectRow(Base):
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+def _sql_in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({', '.join(chr(39) + value.replace(chr(39), chr(39) * 2) + chr(39) for value in values)})"
+
+
+# Migration 0100_production_stage_history adds the same checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
+# the journal only grows; DELETE stays for a deleted project). The value column comes first in each check: the
+# head-1 seeder (tests/migrations/seed_any_revision.py) fills a checked column with the first literal.
+PLAN_EVENT_CHECKS = {
+    "ck_production_plan_events_kind": _sql_in("kind", tuple(PLAN_KINDS.values())),
+    "ck_production_plan_events_stage_value": (
+        f"{_sql_in('value', (*KIT_STAGES, PLAN_STAGE_AUTO))} OR kind <> '{PLAN_KINDS['stage']}'"
+    ),
+    "ck_production_plan_events_status_value": (
+        f"{_sql_in('value', (*PROJECT_TERMINALS, PLAN_STAGE_AUTO))} OR kind <> '{PLAN_KINDS['status']}'"
+    ),
+    "ck_production_plan_events_from_value": (
+        f"from_value = '' OR (kind = '{PLAN_KINDS['stage']}' AND {_sql_in('from_value', KIT_STAGES)})"
+        f" OR (kind = '{PLAN_KINDS['status']}' AND {_sql_in('from_value', PROJECT_TERMINALS)})"
+    ),
+}
+
+
 class ProductionPlanEventRow(Base):
     __tablename__ = "production_plan_events"
     __table_args__ = (
         Index("ix_production_plan_events_project_time", "project", "occurred_at", "id"),
         Index("ux_production_plan_events_project_sequence", "project", "sequence", unique=True),
+        *(CheckConstraint(sql, name=name) for name, sql in PLAN_EVENT_CHECKS.items()),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -274,6 +299,8 @@ class ProductionPlanEventRow(Base):
     item_index: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     value: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     field: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    from_value: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    reason: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
 
 
 class ProductionBoxRow(Base):
@@ -939,7 +966,14 @@ class SqlAlchemyPlanEventRepository:
             who=row.who, kind=row.kind, blocker=row.blocker,
             text=row.text, deadline=row.deadline, sequence=row.sequence,
             item_index=row.item_index, value=row.value, field=row.field,
+            from_value=row.from_value, reason=row.reason,
         )
+
+    def last_sequence(self, project: str) -> int:
+        """The newest sequence of the project's journal (0 — empty): the version a stage change is checked against."""
+        return self.session.scalar(select(func.max(ProductionPlanEventRow.sequence)).where(
+            ProductionPlanEventRow.project == project,
+        )) or 0
 
     def list(self, project: str | None = None, limit: int = 10_000) -> list[PlanEvent]:
         statement = select(ProductionPlanEventRow)
@@ -976,15 +1010,13 @@ class SqlAlchemyPlanEventRepository:
         ).rowcount or 0
 
     def add(self, event: PlanEvent) -> PlanEvent:
-        sequence = self.session.scalar(select(func.max(ProductionPlanEventRow.sequence)).where(
-            ProductionPlanEventRow.project == event.project,
-        )) or 0
-        stored = replace(event, sequence=sequence + 1)
+        stored = replace(event, sequence=self.last_sequence(event.project) + 1)
         self.session.add(ProductionPlanEventRow(
             id=stored.id, project=stored.project, sequence=stored.sequence,
             occurred_at=stored.occurred_at, who=stored.who, kind=stored.kind,
             blocker=stored.blocker, text=stored.text, deadline=stored.deadline,
             item_index=stored.item_index, value=stored.value, field=stored.field,
+            from_value=stored.from_value, reason=stored.reason,
         ))
         return stored
 

@@ -12,11 +12,17 @@ from app.shared.identity import Actor
 
 from .domain import ProductionValidationError
 from .plan import (
+    KIT_STAGES,
     PLAN_KINDS,
+    PLAN_STAGE_AUTO,
+    PROJECT_TERMINALS,
     PlanEvent,
     PlanProjectSnapshot,
+    StagePlan,
+    kit_label,
     normalize_project_number,
     plan_mark_value,
+    stage_change_text,
     summarize_journal,
     validate_plan_note,
 )
@@ -32,6 +38,7 @@ class PlanEventRepository(Protocol):
     def add(self, event: PlanEvent) -> PlanEvent: ...
     def of_project(self, project: str) -> Sequence[PlanEvent]: ...
     def delete_project(self, project: str) -> int: ...
+    def last_sequence(self, project: str) -> int: ...
 
 
 class AppendOnlyRepository(Protocol):
@@ -158,6 +165,81 @@ def add_plan_event(command: AddPlanEventCommand, uow: PlanUnitOfWork) -> PlanEve
         ))
         uow.commit()
     return event
+
+
+class StageChangeConflict(Exception):
+    """The project's journal moved between reading the stages and writing the change (409, not 422)."""
+
+
+@dataclass(frozen=True)
+class ChangeStageCommand:
+    """A manual stage change already planned by `plan.plan_stage_change` over the stages read just before.
+
+    ``reopen_from`` — the closed status of the project (Отказ/Слился/Отменён): a stage pick first returns it to work.
+    ``expected_sequence`` — the project's last journal sequence the plan was read at; a newer one refuses the write."""
+
+    project: str
+    plan: StagePlan
+    actor: Actor
+    now: datetime
+    reason: str = ""
+    reopen_from: str = ""
+    expected_sequence: int | None = None
+
+
+def change_stage(command: ChangeStageCommand, uow: PlanUnitOfWork) -> tuple[PlanEvent, ...]:
+    """The one write path of a manual stage: every «Этап КБ» row of the change (with the stage before it and the
+    reason) and one audit event, in ONE transaction — a failure on any row writes nothing. Journal rows only: no
+    stock, shipments, write-offs, production tasks or kit requests are touched."""
+    plan = command.plan
+    if plan.error:
+        raise ProductionValidationError(plan.error)
+    reason = str(command.reason or "").strip()
+    if plan.reason_required and not reason:
+        raise ProductionValidationError("Этап назад — напишите причину.")
+    project = normalize_project_number(command.project)
+    if not project:
+        raise ProductionValidationError("Номер проекта обязателен")
+    for change in plan.changes:
+        if change.value not in (*KIT_STAGES, PLAN_STAGE_AUTO) or change.from_stage not in KIT_STAGES:
+            raise ProductionValidationError("Неизвестный этап.")
+    reopen_from = str(command.reopen_from or "").strip()
+    if not plan.changes and not reopen_from:
+        return ()
+    with uow:
+        if command.expected_sequence is not None and uow.plan_events.last_sequence(project) != command.expected_sequence:
+            raise StageChangeConflict("Этапы проекта только что изменили — обновите и повторите.")
+        events: list[PlanEvent] = []
+        if reopen_from:
+            text = f"{reopen_from} → в работе" + (f" · причина: {reason}" if reason else "")
+            events.append(uow.plan_events.add(PlanEvent(
+                project=project, occurred_at=command.now, who=command.actor.name, kind=PLAN_KINDS["status"],
+                text=text, value=PLAN_STAGE_AUTO, reason=reason,
+                from_value=reopen_from if reopen_from in PROJECT_TERMINALS else "",
+            )))
+        for change in plan.changes:
+            events.append(uow.plan_events.add(PlanEvent(
+                project=project, occurred_at=command.now, who=command.actor.name, kind=PLAN_KINDS["stage"],
+                text=stage_change_text(change, reason), item_index=change.item_index, value=change.value,
+                from_value=change.from_stage, reason=reason,
+            )))
+        skipped = {stage for change in plan.changes for stage in change.skipped}
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=events[0].id, event_type="production.stage_changed",
+            actor=command.actor, occurred_at=command.now,
+            details={
+                "project": project, "value": plan.value, "direction": plan.direction,
+                "kbs": [kit_label(change.item_index) for change in plan.changes],
+                "changes": [
+                    f"{kit_label(change.item_index)}: {change.from_stage} → {change.to_stage}" for change in plan.changes
+                ],
+                "skipped": [stage for stage in KIT_STAGES if stage in skipped],
+                "reason": reason,
+                **({"reopened": reopen_from} if reopen_from else {}),
+            },
+        ))
+        uow.commit()
+    return tuple(events)
 
 
 def delete_project_plan_events(command: DeleteProjectPlanEventsCommand, uow: PlanUnitOfWork) -> tuple[PlanEvent, ...]:
