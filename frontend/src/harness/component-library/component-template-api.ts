@@ -1,7 +1,7 @@
 import type { ComponentTemplateContent } from "./template-content";
 
-// Библиотека компонентов для редактора жгута — только чтение опубликованных версий.
-// Авторинг шаблонов (черновики, публикация, загрузка изображений) из TECHMAP-GRAPHER не перенесён.
+// Библиотека компонентов для редактора жгута — чтение опубликованных версий. Запись новых версий — экран
+// «Библиотека компонентов» (component-library-api.ts); серверных черновиков нет.
 
 export interface ArticleBinding { readonly sourceId: string; readonly entityType: string; readonly articleKey: string; }
 export interface TemplateAsset {
@@ -14,6 +14,8 @@ export interface TemplateAsset {
 export interface ComponentTemplateSummary {
   readonly templateId: string; readonly version: number; readonly code: string; readonly name: string;
   readonly articleBindings: readonly ArticleBinding[]; readonly createdUtc: string; readonly updatedUtc?: string;
+  /** У версии есть картинка разъёма (PNG). */
+  readonly hasImage?: boolean;
 }
 export interface ComponentTemplate extends ComponentTemplateSummary {
   readonly versionSha256: string;
