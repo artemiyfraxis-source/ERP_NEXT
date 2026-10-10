@@ -123,6 +123,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .suggest-list li.active { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 @media (pointer: coarse) { .suggest-list li { padding: 11px 12px; } }
 textarea { resize: vertical; }
+textarea.auto-textarea { display: block; resize: none; overflow-y: hidden; line-height: 20px; padding-top: 8px; padding-bottom: 8px; box-sizing: border-box; }
 .primary, .secondary { border: 1px solid transparent; border-radius: 10px; padding: 10px 16px; font-weight: 600; }
 .primary { color: var(--primary-foreground); background: var(--primary); }
 .primary:hover { opacity: .88; }
@@ -1169,12 +1170,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks .gtable td:first-child { padding: 9px 6px 0 10px; color: var(--muted-foreground); }
 .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select { width: 100%; height: 28px; }
 .tcgen .gen-marks .gtable input.num { text-align: right; }
+.tcgen .gen-marks .gtable textarea.auto-textarea { width: 100%; height: 28px; min-height: 28px; line-height: 18px; padding-top: 4px; padding-bottom: 4px; }
 .tcgen .gen-marks .gtable td small { padding: 1px 2px 0; }
 .tcgen .gen-marks col.c-n { width: 34px; }
-.tcgen .gen-marks col.c-target { width: 20%; }
-.tcgen .gen-marks col.c-text { width: 14%; }
-.tcgen .gen-marks col.c-mat { width: 21%; }
-.tcgen .gen-marks col.c-place { width: 31%; }
+.tcgen .gen-marks col.c-target { width: 17%; }
+.tcgen .gen-marks col.c-text { width: 38%; }
+.tcgen .gen-marks col.c-mat { width: 13%; }
+.tcgen .gen-marks col.c-place { width: 20%; }
 .tcgen .gen-marks col.c-qty { width: 64px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
 .tcgen .gen-marks-place { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 4px; }
@@ -1183,6 +1185,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks .btn-x:hover { color: var(--tone-danger); }
 @media (pointer: coarse) {
   .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select, .tcgen .gen-marks .btn-x { height: 40px; }
+  .tcgen .gen-marks .gtable textarea.auto-textarea { min-height: 40px; padding-top: 10px; }
   .tcgen .gen-marks .btn-x { width: 40px; }
   .tcgen .gen-marks .gtable td:first-child { padding-top: 15px; }
   .tcgen .gen-marks col.c-x { width: 44px; }

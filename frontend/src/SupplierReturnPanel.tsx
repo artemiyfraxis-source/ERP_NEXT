@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import { receivingApi, type SupplierReturnCandidate } from "./api";
 
 /** RC-6 «Возврат поставщику» (SUPPLYMAP SupplierReturn.gs): принятые позиции одной поставки уходят
@@ -100,7 +101,7 @@ export function SupplierReturnPanel({ onDone, onClose }: { onDone: () => void; o
         <div className="facts-grid">
           <label>Причина<select required value={reason} onChange={(event) => setReason(event.target.value)}><option value="">Выберите…</option>{reasons.map((item) => <option key={item}>{item}</option>)}</select></label>
           <label>№ претензии<input value={claim} onChange={(event) => setClaim(event.target.value)} /></label>
-          <label className="wide">Комментарий<input value={comment} onChange={(event) => setComment(event.target.value)} /></label>
+          <label className="wide">Комментарий<AutoTextarea value={comment} onChange={setComment} /></label>
           <fieldset className="check-field wide"><legend>Что с заказом</legend>
             {Object.entries(modes).map(([value, label]) => (
               <label key={value}><input type="radio" name="supplier-return-mode" checked={mode === value} onChange={() => setMode(value as "wait" | "close")} />{label}</label>
