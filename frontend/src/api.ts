@@ -1173,14 +1173,75 @@ export interface ReferenceBase {
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
-export type CableKind = "coax" | "wire" | "other";
+export type CableKind = "coax" | "wire" | "multi" | "other";
 
 export interface BasesResult {
   bases: ReferenceBase[];
   /** Records per stored tab and per cable list — the counts on the tab chips. */
   tabs?: Partial<Record<TechOperationTab, number>>;
   cables?: Record<CableKind, number>;
+  /** Rows of «Сечения AWG ↔ мм²». */
+  gauges?: number;
 }
+
+/** «Сечения AWG ↔ мм²»: one conductor size (backend `references/cable_structure.py`). */
+export interface WireGauge {
+  id: string;
+  /** «28», «1/0»; empty — a ГОСТ-only size. */
+  awg: string;
+  section_mm2: number;
+  conductor_d_mm: number | null;
+  strands: string;
+  label: string;
+  /** Hook-up wires on this size. */
+  wires: number;
+}
+
+/** «Монтажные провода»: the structure of a БД.ПРОВ wire; the conductor is a size row. */
+export interface HookupWire {
+  series: string;
+  gauge_id: string;
+  insulation: string;
+  outer_d_mm: number | null;
+  voltage_v: number | null;
+  temp_min_c: number | null;
+  temp_max_c: number | null;
+}
+
+export interface CoaxCard {
+  id: string;
+  name: string;
+  family: string;
+  layers: Array<{ layer: string; label: string; material: string; diameter_mm: number | null }>;
+  connectors: Array<{ family: string; max_ghz: number | null; max_note: string; span_to_ghz: number | null }>;
+  /** VSWR — an acceptance norm proposed for the VNA check, not a datasheet value. `peak` — the «Peak» marker. */
+  /** `vswr_ref` — what a reference assembly's datasheet guarantees (to settle a disputed reject). */
+  markers: Array<{ freq_mhz: number | null; peak: boolean; vswr_max: number | null; vswr_ref: number | null; note: string }>;
+  /** As the datasheet publishes it, plus the derived dB/m; `interpolated` + `basis` — not published at that frequency. */
+  attenuation: Array<{
+    freq_mhz: number; kind: "nominal" | "typical" | "max"; value: number; unit: string; ref_length_m: number;
+    temp_c: number | null; loss_db_m: number; derived: boolean; interpolated: boolean; source: string; basis: string;
+  }>;
+  span_from_mhz: number | null;
+  span_to_ghz: number | null;
+  span_note: string;
+  /** Cut-off of the first higher mode (TE11) — physics; not the rated limit `max_operating_ghz`. */
+  fc_ghz: number | null;
+  fc_note: string;
+  max_operating_ghz: number | null;
+  max_operating_note: string;
+  /** Datasheet wording behind a number («50 ±2», «>165 (EZ)»), and `mechanical` notes. */
+  param_notes: Record<string, string>;
+  notes: string;
+  sources: string[];
+  confidence: string;
+  verified: boolean;
+  changes: string[];
+  params: Partial<Record<CoaxParam, number>>;
+}
+
+export type CoaxParam = "impedance_ohm" | "velocity_pct" | "capacitance_pf_m" | "shielding_db" | "bend_static_mm"
+  | "bend_dynamic_mm" | "temp_min_c" | "temp_max_c" | "voltage_max_v" | "max_power_w" | "max_power_at_mhz" | "weight_g_m";
 
 /** The D1·D2·D3 row the ETK generator uses for a coax cable (СПР.КАБ · коаксиал). */
 export interface CableDiameters {
@@ -1203,12 +1264,30 @@ export interface CableRow {
   dia: CableDiameters | null;
   /** No own D row: the row of the same family («RG58» for «RG-58 A/U»), to copy from. */
   dia_hint: CableDiameters | null;
+  /** Coax: the card by the exact name (`card_exact`) or of the family («RG-58» for «RG-58 C/U»). */
+  card?: CoaxCard | null;
+  card_exact?: boolean;
+  /** Монтажный wire: its structure, or — not structured yet — why, and what the БД.ПРОВ row suggests. */
+  hookup?: HookupWire | null;
+  hookup_problem?: string;
+  hookup_suggestion?: Omit<HookupWire, "gauge_id"> & { gauge_id: string };
 }
 
 export interface CablesResult {
   columns: string[];
   counts: Record<CableKind, number>;
   rows: CableRow[];
+  gauges?: WireGauge[];
+}
+
+export interface HookupPayload {
+  series: string;
+  gauge_id: string;
+  insulation: string;
+  outer_d_mm: string;
+  voltage_v: string;
+  temp_min_c: string;
+  temp_max_c: string;
 }
 
 export interface TechOperationRecord {
@@ -2746,6 +2825,11 @@ export const referencesApi = {
     api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
   saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
     api<CableDiameters>("/api/references/cables/diameters", { method: "PUT", body: JSON.stringify(payload) }),
+  saveHookup: (recordId: string, payload: HookupPayload & { old: HookupPayload | null }) =>
+    api<{ hookup: HookupWire; record: TechOperationRecord }>(`/api/references/cables/${recordId}/hookup`, { method: "PUT", body: JSON.stringify(payload) }),
+  saveGauge: (gaugeId: string | null, payload: { awg: string; section_mm2: string; conductor_d_mm: string; strands: string }) =>
+    api<WireGauge>(gaugeId ? `/api/references/wire-gauges/${gaugeId}` : "/api/references/wire-gauges", { method: gaugeId ? "PUT" : "POST", body: JSON.stringify(payload) }),
+  deleteGauge: (gaugeId: string) => api<void>(`/api/references/wire-gauges/${gaugeId}`, { method: "DELETE" }),
   maps: () => api<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",

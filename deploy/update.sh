@@ -265,6 +265,7 @@ fi
 step=post
 "$erp" cli python -m app.modules.techcards.seed_library --erp-only || echo "Шаблоны карт ERP не записаны" >&2
 "$erp" cli python -m app.modules.references.erp_corrections || echo "Правки справочников не записаны" >&2
+"$erp" cli python -m app.modules.references.load_cables || echo "Структурная база кабелей не записана" >&2
 "$erp" cli python -m app.modules.identity.issue_logins --out /app/data/import/logins.csv || echo "Логины не выданы" >&2
 # The auto-update timer and command come from this repo too: refresh them when they are installed.
 if [ -f /etc/systemd/system/erp-auto-update.timer ]; then

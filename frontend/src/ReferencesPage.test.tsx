@@ -164,7 +164,7 @@ it("shows the AWG table as a read-only grid right after the hookup wires", async
   });
 
   render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "AWG ↔ сечение ↔ Ø" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Ø изоляции по маркам" }));
   expect(await screen.findByText("0,35")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
