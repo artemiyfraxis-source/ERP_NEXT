@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 
-BEFORE = "0088_api_tokens_assembly_drafts"
 AFTER = "0097_fulfillment_kit_request_unique"
 
 
@@ -15,6 +15,10 @@ def _config(database_path: Path) -> Config:
     config = Config(Path(__file__).parents[2] / "alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{database_path.as_posix()}")
     return config
+
+
+# The revision right before this migration (it changes when the migration is renumbered at merge).
+BEFORE = ScriptDirectory.from_config(_config(Path("unused.db"))).get_revision(AFTER).down_revision
 
 
 def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
