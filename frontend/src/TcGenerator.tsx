@@ -62,6 +62,7 @@ import {
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { MarkTable, markTotal } from "./GenMarkTable";
+import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
@@ -146,7 +147,7 @@ async function readRefs(): Promise<Refs> {
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
@@ -160,6 +161,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   /** Собранный по черновику, но ещё без урока: живёт у владельца вкладок, чтобы переживать переход на «ТК КБn». */
   builtId?: string;
   onBuiltChange?: (draftId: string) => void;
+  /** Пользователь: рабочее состояние формы сохраняется черновиком за ним, проектом и КБ (useGeneratorDraft). */
+  userId?: string;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
@@ -201,6 +204,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Режим запоминается за КБ: карта, собранная вручную, открывается на этой вкладке со своим списком и схемой.
   const [manual, setManual] = useState<ManualState>(emptyManual);
   const savedManual = (card.document?.build_config as { mode?: unknown } | undefined)?.mode === MANUAL_MODE;
+  // Черновик формы (владелец 10.10): переключение вкладок карточки и КБ размонтирует генератор — введённое не теряется.
+  const draftValue = useMemo(() => ({ S, manual, terEdits, coaxAdd }), [S, manual, terEdits, coaxAdd]);
+  const draft = useGeneratorDraft({ user: userId, project: card.project, index: card.item_index, document: card.document, value: draftValue,
+    apply: (value) => { setS(value.S); setManual(value.manual); setTerEdits(value.terEdits); setCoaxAdd(value.coaxAdd); } });
 
   // «Черновики с чертежей» по позиции: список читается один раз за карту и после загрузки/сборки; открытый черновик
   // (draftId) уходит в сборку, собранный (builtId) ждёт «Что поправили и почему».
@@ -237,11 +244,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   useLayoutEffect(() => {
     if (!refs || !kit) return;
     const restored = manualFromConfig(card.document?.build_config);
-    setManual(restored ?? emptyManual());
     // Метки по КД собранной карты возвращаются в форму: следующая сборка их не теряет.
     const markRows = markRowsFromConfig(card.document?.build_config);
     const seeded = markRows.length ? { ...initState(D), mark: true, markRows } : initState(D);
-    setS(restored ? switchGenTab(seeded, "manual") : seeded);
+    // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
+    const form = draft.open({ S: restored ? switchGenTab(seeded, "manual") : seeded, manual: restored ?? emptyManual(), terEdits: {}, coaxAdd: {} });
+    setManual(form.manual); setS(form.S); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
     setStatus({ text: "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
@@ -559,6 +567,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     try {
       const built = await onBuild(payload, fromDraft || undefined);
       setStatus({ text: "", error: false });
+      if (built !== false) draft.clear();
       if (fromDraft && built !== false) { setDraftId(""); setBuiltId(fromDraft); void reloadDrafts(); }
     } catch (reason) {
       const text = reason instanceof Error ? reason.message : "ЭТК не собрана";
@@ -983,7 +992,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </section>
   </>;
 
-  return <div className="tcgen">
+  return <div className="tcgen" {...draft.bind}>
     <div className="seg-tabs gen-modes" role="tablist" aria-label="Вид сборки">{TABS.map(([tab, label]) =>
       <button key={tab} type="button" role="tab" aria-selected={S.tab === tab} className={S.tab === tab ? "on" : ""}
         onClick={() => { setRouteError(""); update((current) => switchGenTab(current, tab)); }}>{label}</button>)}</div>
@@ -1028,6 +1037,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             {more}
           </details>
         </div>
+        <GeneratorDraftNote draft={draft} />
         {/* Одна кнопка (владелец 29.09): нет ТК — «Создать», ТК уже выдана — «Пересобрать». */}
         <div className="gen-foot">
           {status.text && !status.error ? <div className="gen-status">{status.text}</div>

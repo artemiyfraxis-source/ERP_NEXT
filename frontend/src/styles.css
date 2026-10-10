@@ -1290,6 +1290,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-side-head h3 { font-size: 15px; }
 .tcgen .gen-foot { position: sticky; bottom: -30px; z-index: 3; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; background: var(--card); }
 .tcgen .gen-foot > .primary { min-width: 180px; }
+/* Черновик формы: восстановленный и состояние автосохранения — строкой над кнопкой, всегда на виду. */
+.tcgen .gen-draft { flex: none; display: grid; gap: 2px; padding: 8px 14px 0; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .gen-draft + .gen-foot { border-top: 0; }
+.tcgen .gen-draft .link-button { padding: 0; font-size: inherit; }
 .tcgen > .gen-error { margin: 0 0 10px; }
 .tcgen .gen-status { flex: 1; color: var(--muted-foreground); font-size: 12.5px; }
 .tcgen .gen-foot-sum { display: none; margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
