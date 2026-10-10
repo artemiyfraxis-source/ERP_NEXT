@@ -40,6 +40,9 @@ class RequestRepository(Protocol):
     def recent(self, limit: int, search: str = "") -> Sequence[Request]:
         """Newest first; ``search`` — substring of ID, НАЗНАЧЕНИЕ, наименования, проекта, …"""
         ...
+    def for_project(self, project: str) -> Sequence[Request]:
+        """Every request of one project (by № ПРОЕКТА, ЦЕЛЬ or ОБОЗНАЧЕНИЕ, exact key), newest first."""
+        ...
     def by_initiator(
         self, actor_id: UUID, limit: int, offset: int, search: str = ""
     ) -> Sequence[Request]:

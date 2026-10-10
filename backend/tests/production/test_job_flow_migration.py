@@ -87,6 +87,8 @@ def test_existing_tasks_keep_their_data_get_the_default_plan_and_constraints_hol
             "VALUES (?, ?, 'ЖУК', 10, '2026-10-10 10:00:00', 'Мастер')", (uuid4().hex, task),
         )
         connection.execute("INSERT INTO production_task_team (task_id, operator_id, position) VALUES (?, ?, 0)", (task, user))
+        # Колонка поздней миграции (project_keys), которую читает ORM; база остаётся на этой ревизии.
+        connection.execute("ALTER TABLE production_tasks ADD COLUMN project_key VARCHAR(255)")
 
     # Текущий код читает перенесённые задания.
     engine = create_engine(f"sqlite+pysqlite:///{database_path.as_posix()}")

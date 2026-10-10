@@ -774,9 +774,14 @@ def project_supply(
         with factory() as uow:
             return tuple(reader(uow))
 
-    requests = read(requests_uow, lambda uow: uow.requests.recent(10_000))
-    procurement = read(procurement_uow, lambda uow: uow.procurement.list(limit=10_000))
-    kits = read(fulfillment_uow, lambda uow: uow.fulfillment.list(limit=10_000))
+    # Только этот проект, по индексам ключа № проекта (U06): «первые 10 000» всей ERP теряли старые записи проекта.
+    # Отбор шире, чем нужно цепочке (заявка — по № проекта, цели или обозначению), сужают `_project_chain` и др.
+    project = kitset.project
+    requests = read(requests_uow, lambda uow: uow.requests.for_project(project))
+    procurement = read(procurement_uow, lambda uow: uow.procurement.for_project(
+        project, tuple(request.id for request in requests),
+    ))
+    kits = read(fulfillment_uow, lambda uow: uow.fulfillment.for_project(project))
     off_book = supply_off_book(kitset.project, requests, procurement, procurement_uow)
     rows = supply_rows(kitset.project, requests, procurement, lotless=[line_id for line_id, _item in off_book])
     lines = supply_lines(

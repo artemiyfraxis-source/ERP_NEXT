@@ -92,6 +92,7 @@ class ReceivingRepository(Protocol):
         limit: int = 200,
         after_id: UUID | None = None,
     ) -> Sequence[ReceivingLine]: ...
+    def for_project(self, project: str, procurement_line_ids: Sequence[UUID] = ()) -> Sequence[ReceivingLine]: ...
     def work_queue(
         self,
         limit: int,

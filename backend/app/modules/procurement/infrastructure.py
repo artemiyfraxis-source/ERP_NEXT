@@ -28,9 +28,10 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.identity import Actor
+from app.shared.project_number import normalize_project_number
 from app.shared.persistence import (
     Base,
     SqlAlchemyAuditRepository,
@@ -147,11 +148,19 @@ class ProcurementLineRow(Base):
     actual_arrival: Mapped[Any | None] = mapped_column(Date)
     # DATASHEET: a link or text the buyer keeps on the line.
     datasheet: Mapped[str | None] = mapped_column(Text)
+    # № ПРОЕКТА строки для сравнения (`normalize_project_number`; «» — без проекта): строки проекта по индексу.
+    # Ставится при записи `project_reference`; NULL — строка мимо ORM (читается и сверяется в Python).
+    project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     __mapper_args__ = {
         "version_id_col": version,
         "version_id_generator": False,
     }
+
+    @validates("project_reference")
+    def _keep_project_key(self, _name: str, value: str | None) -> str | None:
+        self.project_key = normalize_project_number(value) if value else ""
+        return value
 
 
 def _line_row(line: ProcurementLine) -> ProcurementLineRow:
@@ -544,6 +553,26 @@ class SqlAlchemyProcurementRepository:
             .limit(limit)
         )
         return [_line_domain(row) for row in rows]
+
+    def for_project(self, project: str, request_ids: Sequence[UUID] = ()) -> list[ProcurementLine]:
+        """Строки одного проекта: по своему № ПРОЕКТА (точно по ключу, по индексу) или по заявке из `request_ids`
+        (индекс `source_request_id`). Старые первыми, как `list()`, но без общего лимита."""
+        key = normalize_project_number(project)
+        ids = list(dict.fromkeys(request_ids))
+        if not key and not ids:
+            return []
+        own = or_(ProcurementLineRow.project_key == key, ProcurementLineRow.project_key.is_(None)) if key else false()
+        rows = self.session.scalars(
+            select(ProcurementLineRow)
+            .where(or_(own, ProcurementLineRow.source_request_id.in_(ids)) if ids else own)
+            .order_by(ProcurementLineRow.created_at, ProcurementLineRow.id)
+        )
+        wanted = set(ids)
+        return [
+            _line_domain(row) for row in rows
+            if row.source_request_id in wanted
+            or (key and row.project_reference and normalize_project_number(row.project_reference) == key)
+        ]
 
     def legacy_ids_with_prefix(self, prefix: str) -> list[str]:
         # startswith() escapes LIKE wildcards, so an ID with "_" or "%" matches only itself.
