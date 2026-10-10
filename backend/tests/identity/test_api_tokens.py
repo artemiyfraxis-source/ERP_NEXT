@@ -408,6 +408,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("POST", "/api/route/harness", "tcgen"),
         ("POST", "/api/techcards/assembly/drafts", "assembly"),
         ("POST", "/api/techcards/assembly/drawings", "assembly"),
+        ("POST", "/api/techcards/assembly/drawings/merge", "assembly"),
         ("POST", "/api/techcards/assembly/from-generator", "assembly"),
         ("POST", "/api/techcards/assembly/from-generator", "tcgen"),
         ("POST", "/api/techcards/grapher/import", "tcgen"),
