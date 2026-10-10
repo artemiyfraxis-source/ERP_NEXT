@@ -124,6 +124,7 @@ from app.modules.techcards.kitsets import (
 )
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 from app.shared.events import AuditEvent
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.workflows.production_plan import kit_stage_facts
 
@@ -1436,7 +1437,7 @@ def attach_document(
         document = KitDocument(
             id=uuid4(), project=kitset.project, item_index=index,
             file_name=f"{item_id(kitset.project, index)} — {str(file_name or '').strip() or 'КД'}",
-            content_type=str(content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(content),
             size=len(content), uploaded_at=now, uploaded_by=actor.name,
         )
         uow.kitsets.add_document(document, content)

@@ -674,7 +674,7 @@ def document(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл КД не найден")
     meta, content = found
-    return file_response(content, meta.content_type or "application/octet-stream", meta.file_name)
+    return file_response(content, meta.file_name)
 
 
 @router.delete("/{project}/documents/{document_id}")
