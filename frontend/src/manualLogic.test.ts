@@ -16,6 +16,7 @@ import {
   isEmptyManual,
   kdOpSpec,
   kdStale,
+  kdVersionOf,
   kdSummary,
   proposeFromKd,
   manualConfig,
@@ -617,6 +618,15 @@ describe("manual assembly: «Предложить из КД»", () => {
     expect(own).not.toHaveProperty("kdVersion");
     expect(manualConfig(own, base)).not.toHaveProperty("kdHarnessVersion");
     expect(kdStale(own, "v2")).toBe(false);
+  });
+
+  it("versions the КД drawing by its revision; a mark from before the history (a hash) is not called stale", () => {
+    expect(kdVersionOf({ document: { id: "h1" }, revision: 3 })).toBe("3");
+    expect(kdVersionOf({ document: { id: "h1" }, revision: 0 })).toBe("0");
+    expect(kdVersionOf({ document: null, revision: null })).toBeNull();
+    expect(kdVersionOf(null)).toBeNull();
+    expect(kdStale({ kdVersion: "0123456789abcdef0123456789abcdef" }, "4")).toBe(false);
+    expect(kdStale({ kdVersion: "3" }, "4")).toBe(true);
   });
 
   it("asks the generator's card pick with the generator's hint or category per operation and fills code and БД.ОП norms", () => {

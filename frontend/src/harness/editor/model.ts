@@ -588,6 +588,7 @@ export const defaultLayerIds = {
   wires: "wires",
   dimensions: "dimensions",
   connectionPoints: "connection-points",
+  materialIndexes: "material-indexes",
 } as const;
 
 export function createDefaultConnectorBaseColumns(): readonly ConnectorBaseColumn[] {
@@ -704,6 +705,7 @@ export function connectorE4TableGeometry(connector: ConnectorInstance): Connecto
 
 function defaultLayers(): readonly EditorLayer[] {
   return [
+    { id: defaultLayerIds.materialIndexes, name: "Индексы материалов и позиции", order: 4, visible: true, locked: false },
     { id: defaultLayerIds.connectionPoints, name: "Точки соединения", order: 3, visible: true, locked: false },
     { id: defaultLayerIds.dimensions, name: "Размеры", order: 2, visible: true, locked: false },
     { id: defaultLayerIds.connectors, name: "Соединители", order: 1, visible: true, locked: false },
@@ -1969,6 +1971,16 @@ function parseView(value: unknown, isE4 = false): EditorViewState {
     while (occupiedOrders.has(nextOrder) && nextOrder >= 0) nextOrder--;
     if (nextOrder < 0) throw new Error("Нет свободного порядка для слоя точек соединения.");
     layers.push({ id: defaultLayerIds.connectionPoints, name: "Точки соединения", order: nextOrder, visible: true, locked: false });
+  }
+  // Material indices and positional designations are annotations, not artwork.
+  // Migrate older documents to a dedicated always-on-top layer while retaining
+  // every user-controlled visibility/lock state of existing layers.
+  if (!layers.some((layer) => layer.id === defaultLayerIds.materialIndexes)) {
+    const occupiedOrders = new Set(layers.map(layer => layer.order));
+    let nextOrder = 10000;
+    while (occupiedOrders.has(nextOrder) && nextOrder >= 0) nextOrder--;
+    if (nextOrder < 0) throw new Error("Нет свободного порядка для слоя индексов материалов.");
+    layers.push({ id: defaultLayerIds.materialIndexes, name: "Индексы материалов и позиции", order: nextOrder, visible: true, locked: false });
   }
   const wireCrossingStyle = record.wireCrossingStyle === undefined ? "none" : record.wireCrossingStyle;
   if (wireCrossingStyle !== "none" && wireCrossingStyle !== "bridge") {

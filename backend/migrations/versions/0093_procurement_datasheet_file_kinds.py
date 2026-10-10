@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0089_procurement_datasheet_file_kinds"
-down_revision: str | None = "0088_api_tokens_assembly_drafts"
+revision: str = "0093_procurement_datasheet_file_kinds"
+down_revision: str | None = "0092_harness_component_library"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

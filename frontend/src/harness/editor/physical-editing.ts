@@ -65,9 +65,14 @@ function directionFor(a:Point,p:Point,directions:readonly Point[],angleStep:numb
   return directions[snappedDirectionIndex(Math.atan2(dy,dx),angleStep)]!;
 }
 
-/** Automatic corners become author-owned only when an edit is committed. */
-export function physicalEditablePoints(document:HarnessDesignDocument,segment:PhysicalSegment):readonly Point[] {
-  if(document.physicalTopology?.joiningPipes?.some(pipe=>pipe.members.some(member=>member.segmentIds.includes(segment.id))))
+/**
+ * Automatic corners become author-owned only when an edit is committed.  This
+ * includes a member P which is currently projected through an OP: the source
+ * route may still be automatic even though its visible projection contains
+ * several corners.
+ */
+export function physicalEditablePoints(document:HarnessDesignDocument,segment:PhysicalSegment,materializeAutomatic=false):readonly Point[] {
+  if(document.physicalTopology?.joiningPipes?.some(pipe=>pipe.members.some(member=>member.segmentIds.includes(segment.id)))&&!materializeAutomatic)
     return physicalSegmentControls(document,segment);
   return segment.path.kind==="routed"&&!segment.path.points.length&&document.physicalTopology?.snap
     ? physicalSegmentPoints(document,segment) : physicalSegmentControls(document,segment);
@@ -77,7 +82,7 @@ export function physicalEditablePoints(document:HarnessDesignDocument,segment:Ph
 export function materializePhysicalPath(document:HarnessDesignDocument,id:string):HarnessDesignDocument {
   const segment=document.physicalTopology?.segments.find(s=>s.id===id);
   if(!segment||segment.path.kind==="polyline")return document;
-  const points=physicalEditablePoints(document,segment);
+  const points=physicalEditablePoints(document,segment,true);
   return replacePath(document,segment,points,anchorMap(document,segment,points));
 }
 
@@ -377,7 +382,7 @@ export function editPhysicalBend(document:HarnessDesignDocument,id:string,index:
     return [{pipeId:pipe.id,memberIndex,enterOuter:member.enterOuter??at(member.from/2),exitOuter:member.exitOuter??at((1+member.to)/2),
       authoredBendRegions:memberBendRegions(document,member)}];
   }));
-  const original=physicalEditablePoints(document,segment),map=anchorMap(document,segment,original);
+  const original=physicalEditablePoints(document,segment,true),map=anchorMap(document,segment,original);
   const points=[...original];
   const owned=frozen[0]?.authoredBendRegions??[];
   const selectedRegion=insert?region:owned.find(entry=>entry.segmentId===id&&entry.bendIndex===index)?.region;
@@ -424,7 +429,7 @@ export function editPhysicalBend(document:HarnessDesignDocument,id:string,index:
 
 export function deletePhysicalBend(document:HarnessDesignDocument,id:string,index:number):HarnessDesignDocument {
   const segment=document.physicalTopology?.segments.find(s=>s.id===id);if(!segment)return document;
-  const original=physicalEditablePoints(document,segment),map=anchorMap(document,segment,original),at=index+1;
+  const original=physicalEditablePoints(document,segment,true),map=anchorMap(document,segment,original),at=index+1;
   if(at<=0||at>=original.length-1)return document;
   for(const [old,value] of map){if(value===at)map.delete(old);else if(value>at)map.set(old,value-1);}
   const changed=replacePath(document,segment,original.filter((_,i)=>i!==at),map);

@@ -157,6 +157,8 @@ export interface HarnessEditorWorkspaceProps {
   readonly drawingAngleStep?:number;
   readonly selectedGraphic?:boolean; readonly canPasteGraphic?:boolean; readonly onGraphicCopy?:()=>void; readonly onGraphicPaste?:()=>void; readonly onGraphicDelete?:()=>void; readonly onUndo?:()=>void; readonly angleStep?:number; readonly onAngleStepChange?:(degrees:number)=>void; readonly onDrawingSnapsChange?:(snaps:DrawingSnaps)=>void;
   readonly documentActions?: ReactNode;
+  /** View mode: actions that only look at the drawing (open a table to read / download) — outside the disabled fieldset. */
+  readonly viewActions?: ReactNode;
   readonly drawingWindows?: (camera:EditorCamera)=>ReactNode;
   readonly revealRequest?: { readonly token: number; readonly objectIds: readonly string[] };
   readonly cables?: readonly CableInstance[];
@@ -284,7 +286,10 @@ export function reconcileWorkspaceGroupSelection(
   objectIds: readonly string[],
   objects: readonly EditorSceneObject[],
 ): { readonly objectIds: readonly string[]; readonly primaryObjectId: string | null } {
-  const available = new Set(objects.filter((object) => object.kind !== "dimension").map((object) => object.id));
+  // Dimensions are authored scene objects. Filtering them here made the canvas
+  // report a hit but immediately clear it again before its property panel could
+  // receive the selection.
+  const available = new Set(objects.map((object) => object.id));
   const nextObjectIds = [...new Set(objectIds)].filter((id) => available.has(id));
   return { objectIds: nextObjectIds, primaryObjectId: nextObjectIds.at(-1) ?? null };
 }
@@ -330,7 +335,7 @@ export function HarnessEditorWorkspace({
   catalogHasMore,
   selectedObjectId: controlledSelectedObjectId,
   selectedObjectIds: controlledSelectedObjectIds,
-  highlightedObjectIds = [], foregroundWireIds = [], relationPanel, revealRequest, documentActions, drawingWindows,onDimensionCreate,onPositionRailCreate,onGraphicCreate,drawingSnaps,drawingAngleStep,selectedGraphic,canPasteGraphic,onGraphicCopy,onGraphicPaste,onGraphicDelete,onUndo,angleStep,onAngleStepChange,onDrawingSnapsChange,onPipeIntervalSelect,onCoveringDrag,
+  highlightedObjectIds = [], foregroundWireIds = [], relationPanel, revealRequest, documentActions, viewActions, drawingWindows,onDimensionCreate,onPositionRailCreate,onGraphicCreate,drawingSnaps,drawingAngleStep,selectedGraphic,canPasteGraphic,onGraphicCopy,onGraphicPaste,onGraphicDelete,onUndo,angleStep,onAngleStepChange,onDrawingSnapsChange,onPipeIntervalSelect,onCoveringDrag,
   cables = [],
   saveState = "saved",
   onSaveRequest,
@@ -456,6 +461,11 @@ export function HarnessEditorWorkspace({
   );
   const selectedLayer = layers.find((layer) => layer.id === selectedObject?.layerId);
   const selectedWireIds = selectedObjectIds.filter((id) => objects.some((object) => object.id === id && object.kind === "wire"));
+  useEffect(() => {
+    if (selectedObject?.kind !== "dimension") return;
+    setInspectorTab("properties");
+    setInspectorOpen(true);
+  }, [selectedObject?.id, selectedObject?.kind]);
   const selectedFreeWireKey = selectedWireIds.filter(id => {
     const object = objects.find(item => item.id === id);
     return object?.metadata?.freeFrom === "true" || object?.metadata?.freeTo === "true";
@@ -740,6 +750,7 @@ export function HarnessEditorWorkspace({
               </label>
             </section>}
             <ReadOnlyFieldset readOnly={readOnly}>{documentActions}</ReadOnlyFieldset>
+            {readOnly && viewActions}
           </div>
         </aside>
         <EditorToolbar
@@ -827,7 +838,7 @@ export function HarnessEditorWorkspace({
           onCatalogDrop={droppedCatalogItem}
           inlineEditor={canvasEditor}
         />
-        {drawingWindows && <div className="he-table-window-layer"><ReadOnlyFieldset readOnly={readOnly}>{drawingWindows(camera)}</ReadOnlyFieldset></div>}
+        {drawingWindows && <div className="he-table-window-layer">{drawingWindows(camera)}</div>}
         {(previewMessage || cableSheathWarning) && <div className="he-routing-preview-error" role="status">
           {previewMessage || cableSheathWarning}
         </div>}

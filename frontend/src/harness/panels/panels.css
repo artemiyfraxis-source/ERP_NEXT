@@ -1,0 +1,39 @@
+/* Окна документов чертежа (panels/): общая DataTable ERP внутри окна редактора — токены styles.css, плотные строки. */
+.harness-root .he-panel-documents { display: flex; flex-direction: column; min-height: 0; padding: 0; }
+.harness-root .he-panel-documents > .he-document-content,
+.harness-root .he-panel-documents > .he-cut-embedded { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; padding: 8px; }
+.harness-root .he-panel-documents .data-table { gap: 6px; min-height: 0; }
+.harness-root .he-panel-documents .data-table .filters { flex-wrap: nowrap; gap: 8px; }
+.harness-root .he-panel-documents .data-table .search { max-width: 260px; height: 28px; }
+.harness-root .he-panel-documents .table-wrap { overflow: auto; }
+.harness-root .he-panel-documents .data-table td { height: 30px; padding: 2px 8px; vertical-align: middle; font-size: 13px; }
+.harness-root .he-panel-documents .data-table th { padding: 6px 8px; }
+.harness-root .he-panel-documents .check-inline input { width: auto; height: auto; min-width: 0; min-height: 0; }
+.harness-root .he-panel-documents .data-table td input,
+.harness-root .he-panel-documents .data-table td select { box-sizing: border-box; height: 26px; min-height: 26px; padding: 2px 6px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: inherit; font-size: 13px; }
+.harness-root .he-panel-documents .data-table td input:hover,
+.harness-root .he-panel-documents .data-table td select:hover { border-color: var(--border); }
+.harness-root .he-panel-documents .data-table td input:focus,
+.harness-root .he-panel-documents .data-table td select:focus { border-color: var(--primary); background: var(--card); outline: none; }
+.harness-root .he-panel-documents .data-table td select { min-width: 9ch; }
+.harness-root .he-connection-color { display: inline-block; padding: 1px 8px; border-radius: 10px; font-weight: 600; box-shadow: inset 0 0 0 1px var(--border); }
+.harness-root .he-bom-position { display: inline-flex; align-items: center; gap: 4px; }
+.harness-root .he-bom-position .ui-control { min-width: 0; height: 24px; padding: 0 6px; }
+.harness-root .he-bom-note-cell { display: inline-flex; align-items: center; gap: 4px; }
+.harness-root .he-cut-title { display: grid; line-height: 1.25; }
+.harness-root .he-cut-title small { color: var(--muted-foreground); font-size: 11px; }
+.harness-root .he-panel-documents .tone-ok { color: var(--tone-ok); }
+.harness-root .he-panel-documents .tone-warn { color: var(--tone-warn); }
+.harness-root .he-panel-documents .tone-danger { color: var(--tone-danger); }
+.harness-root .he-cut-sheet { display: grid; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); }
+.harness-root .he-cut-sheet-head { display: flex; align-items: center; gap: 12px; font-size: 14px; }
+.harness-root .he-cut-formula { margin: 0; font-size: 13px; font-variant-numeric: tabular-nums; }
+.harness-root .he-cut-warnings { margin: 0; padding-left: 24px; }
+.harness-root .he-cut-sheet .he-cut-svg { margin: 0; max-width: 900px; }
+.harness-root .he-relations .data-table td { font-size: 12px; }
+/* Карта резки: таблица и лист под ней, окно прокручивается целиком. */
+.harness-root .he-panel-documents > .he-cut-embedded { flex: none; min-height: auto; }
+.harness-root .he-cut-embedded .data-table,
+.harness-root .he-cut-embedded .table-wrap { flex: none; }
+.harness-root .he-panel-documents .data-table td select { min-width: 11ch; padding-right: 20px; }
+.harness-root .he-panel-documents .data-table td input { max-width: none; min-width: 0; }

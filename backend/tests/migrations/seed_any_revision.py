@@ -13,6 +13,7 @@ Never point it at a real database: it only inserts, but the rows are made up.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import sys
@@ -30,6 +31,8 @@ ROWS = 6
 # `status IN ('open', …)` on SQLite, `((status)::text = ANY ((ARRAY['open'::character varying, …` on PostgreSQL: the
 # first word is the column, the first quoted literal an allowed value.
 _CHECK_IN = re.compile(r"(\w+).*?'([^']*)'", re.DOTALL)
+_IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
+_CHECK_NULL_OR = re.compile(r"\s*\(?\s*(\w+)\s+IS\s+NULL\s+OR\b", re.IGNORECASE)
 _WAREHOUSES = ("ЦАР", "ЖУК")
 # Stock quantities per lot row, and what each holder takes of one lot: 3 holders × 1 ≤ РЕЗЕРВ 20 ≤ balance.
 _LOT_QUANTITIES = {
@@ -74,14 +77,20 @@ def _has_rows(connection: Connection, table: Table) -> bool:
     return connection.execute(select(1).select_from(table).limit(1)).first() is not None
 
 
-def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str, str], str]:
-    """CHECK `status IN ('open', …)` → ('table', 'status'): 'open' (the only CHECK shape the migrations use)."""
+def _check_values(connection: Connection, metadata: MetaData) -> dict[tuple[str, str], str | None]:
+    """CHECK `status IN ('open', …)` → ('table', 'status'): 'open'; CHECK `col IS NULL OR (…)` on a nullable column →
+    None (the column is left empty, e.g. «restored from» of a plain save)."""
     inspector = inspect(connection)
-    found: dict[tuple[str, str], str] = {}
+    found: dict[tuple[str, str], str | None] = {}
     for table in metadata.tables.values():
         for check in inspector.get_check_constraints(table.name):
-            match = _CHECK_IN.search(str(check.get("sqltext", "")))
-            if match and match.group(1) in table.c:
+            text = str(check.get("sqltext", ""))
+            empty = _CHECK_NULL_OR.match(text)
+            if empty and empty.group(1) in table.c and table.c[empty.group(1)].nullable:
+                found[(table.name, empty.group(1))] = None
+                continue
+            match = _CHECK_IN.search(text)
+            if match and match.group(1) in table.c and _IN_LIST.search(text):
                 found[(table.name, match.group(1))] = match.group(2)
     return found
 
@@ -108,7 +117,7 @@ def _lot_ids(connection: Connection, metadata: MetaData) -> list[Any]:
 
 
 def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any],
-         checks: dict[tuple[str, str], str], dialect: str) -> dict[str, Any]:
+         checks: dict[tuple[str, str], str | None], dialect: str) -> dict[str, Any]:
     row: dict[str, Any] = {}
     for column in table.columns:
         if _database_assigns(table, column, dialect):
@@ -181,6 +190,8 @@ def _value(table: str, column: Column, index: int) -> Any:
             return _WAREHOUSES[index % len(_WAREHOUSES)]
         if length == 32 and (name == "id" or name.endswith("_id")):
             return uuid.uuid4().hex  # a Uuid column as SQLite reflects it (CHAR(32))
+        if length == 64 and name.endswith("sha256"):
+            return hashlib.sha256(f"{table}.{name}-{index}".encode()).hexdigest()  # CHECK length(…) = 64
         return _fit(f"{name}-{index}", f"-{index}", length)
     raise RuntimeError(f"{table}.{name}: no seed value for type {kind!r}")
 

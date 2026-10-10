@@ -4,6 +4,7 @@ import {createConnector,createWire} from './commands';
 import {createEmptyHarnessDesign,type HarnessDesignDocument} from './model';
 import {physicalWireDisplayPaths,physicalWirePoints} from './physical-wire-geometry';
 import {drawingRouteCommands} from './drawing-route-path';
+import {physicalFixture} from './physical-topology-fixture';
 
 function fixture():HarnessDesignDocument {
   return {...createEmptyHarnessDesign(),connectors:[createConnector('A','X1',1,{x:0,y:0}),createConnector('B','X2',1,{x:400,y:200})],
@@ -39,4 +40,22 @@ it.each([0,1,2])('does not bridge hidden leg %s, including reversed topology',hi
     expect(paths.flatMap(path=>path.slice(1).map((p,i)=>[path[i],p]))).not.toContainEqual(forbidden);
     if(hidden===1)expect(paths).toEqual([[start,{x:200,y:0}],[{x:200,y:200},end]]);
   }
+});
+
+it('draws conductor exits through an extended nylon sleeve without changing its route',()=>{
+ const base=physicalFixture(),topology=base.physicalTopology!;
+ const covered={...base,physicalTopology:{...topology,coverings:[{
+   id:'nylon',name:'Нейлонка',kind:'nylon' as const,width:0,color:'#b19c77',lengthMm:null,
+   spans:[{segmentId:'S0',from:-10,to:.4}],
+ }]}};
+ const wire=covered.wires.find(item=>item.id==='W1')!;
+ const start=covered.connectors.find(connector=>connector.id===wire.from.connectorId)!.positions.drawing;
+ const end=covered.connectors.find(connector=>connector.id===wire.to.connectorId)!.positions.drawing;
+ const bare=physicalWireDisplayPaths(base,wire.id,start,end)!;
+ const sleeved=physicalWireDisplayPaths(covered,wire.id,start,end)!;
+ expect(sleeved[0]![0]).toEqual(start);
+ expect(sleeved[0]!.length).toBeGreaterThan(bare[0]!.length);
+ expect(sleeved.flat().some(point=>point.x>100&&point.x<190&&point.y<100)).toBe(true);
+ expect(covered.physicalTopology!.coverings).toHaveLength(1);
+ expect(covered.physicalTopology!.routes).toBe(topology.routes);
 });

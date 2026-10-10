@@ -174,7 +174,7 @@ def test_datasheet_and_file_kind_migration_keeps_existing_files_as_other_and_che
         _insert(connection, "procurement_lines", id=line, status="В оплату", version=5)
         _insert(connection, "procurement_files", id=invoice, line_id=line, file_name="Счёт № 58.pdf", content=b"%PDF")
 
-    command.upgrade(config, "0089_procurement_datasheet_file_kinds")
+    command.upgrade(config, "0093_procurement_datasheet_file_kinds")
     assert "datasheet" in _columns(database_path)
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT id, kind, file_name, content FROM procurement_files").fetchall() == [

@@ -1654,7 +1654,10 @@ consumer-функциях и dead-letter после исчерпания пов�
 | Смена статуса Закупки (`OwnerTick.gs:872-903`, `NOTIFY_PURCHASE_STATUSES`) | `notify_initiators` в `run_timers` | `procurement_lines.initiator_id` |
 | Комплект готов к выдаче (`Issue.gs:459-474`) | `mark_ready` | `fulfillment_requests.requester_id` |
 | Трек-номер отправки (`Shipment.gs:840-850`) | `update_documents`, трек изменился и не пуст | `shipments.manager_id`, нет — аудитория `project_manager` |
-| УПД приложена (`Shipment.gs:888`) | `update_documents`, ссылка на УПД изменилась и не пуста | аудитория `storekeeper` |
+| УПД приложена (`Shipment.gs:888`) | `update_documents` / файл УПД — ссылка изменилась и не пуста; `create_shipment` — ссылка задана уже при заведении | аудитория `storekeeper` |
+
+Вид уведомления (`kind`) каждого продюсера подписан по-русски в `frontend/src/notificationLabels.ts`; иначе на экране
+«Событие». `tests/operations/test_notification_kinds.py` краснеет на вид без подписи.
 
 **Решено агентом — проверить (OP-1, 2026-09-29; пункт «Технолог» — подтверждено владельцем 2026-10-04):**
 - «Технолог» = роль `admin`, не `engineer` (подтверждено владельцем 2026-10-04). Задание предлагало `engineer`, но в SUPPLYMAP `PORTAL_ROLE_LABELS_`
@@ -1673,6 +1676,8 @@ consumer-функциях и dead-letter после исчерпания пов�
   Нет совпадения или совпадений несколько — `NULL`, никого не уведомляем, имена пишутся предупреждением в лог
   миграции (`OP-1: … without a user, not notified`).
 - Тестовые строки (`isTestId_`) не исключаются: в ERP их нет. Почтового канала (`notify_email`) нет (OP-7).
+- УПД, указанная уже в новой отправке, тоже уходит кладовщикам (10.10.2026): иначе о файле, который менеджер дал
+  при заведении, не узнал бы никто — SUPPLYMAP заводил отправку без файла и слал только на `shipUpdAttach_`.
 
 ## Навигация портала
 

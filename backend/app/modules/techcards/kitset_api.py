@@ -40,6 +40,8 @@ from .kitsets import (
     Kitset,
     KitsetNotFound,
     KitsetValidationError,
+    document_json,
+    document_kind,
     item_id,
     sort_kitsets,
 )
@@ -329,7 +331,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
             "item": item_id(kitset.project, assembly.index),
             "stage": _kb_stage(stage_of[assembly.index]) if assembly.index in stage_of else None,
             "techcard": cards.get(assembly.index),
-            "kd": [_document_json(document) for document in documents if document.item_index == assembly.index],
+            "kd": [document_json(document) for document in documents if document.item_index == assembly.index],
             "components": [{
                 "art": component.article, "type": component.type, "name": component.name, "link": component.link,
                 "per": _number(component.per_unit), "scrap": _number(component.scrap_pct),
@@ -624,33 +626,6 @@ class DocumentPayload(BaseModel):
     content_b64: str = Field(min_length=1)
 
 
-# The harness drawing (TECHMAP-GRAPHER design document, schemaVersion 1) kept as a КД row of its position and
-# edited in ERP (harness_api.py): one row per position, saved over itself.
-HARNESS_CONTENT_TYPE = "application/vnd.fraxis.harness+json"
-# A drawing unlinked from its position («Отвязать»): the row and its bytes stay, the position no longer reads it, the card
-# lists it with «Вернуть». Nothing about the drawing is hard-deleted.
-HARNESS_UNLINKED_CONTENT_TYPE = "application/vnd.fraxis.harness-unlinked+json"
-DOCUMENT_KINDS = {HARNESS_CONTENT_TYPE: "harness", HARNESS_UNLINKED_CONTENT_TYPE: "harness_unlinked"}
-
-
-def document_kind(document) -> str:
-    """«harness» — the harness drawing edited in ERP; «harness_unlinked» — such a drawing unlinked from its position;
-    «file» — an attached file."""
-    return DOCUMENT_KINDS.get((document.content_type or "").split(";")[0].strip(), "file")
-
-
-def _document_json(document) -> dict:
-    """A row of the «КД» register as `tcKdByAssembly_` hands it to the card. `stored` — the bytes are in ERP (the
-    card links the download); otherwise `url` is the archived Drive link of a row from before the move, read-only.
-    `kind` — «harness» for the harness drawing (opened in the drawing editor), «file» otherwise."""
-    return {
-        "id": str(document.id), "index": document.item_index, "name": document.file_name,
-        "size": document.size, "stored": document.stored, "url": document.url or None,
-        "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
-        "kind": document_kind(document),
-    }
-
-
 @router.post("/{project}/documents", status_code=201)
 def add_document(
     project: str,
@@ -665,7 +640,7 @@ def add_document(
         project, payload.index, payload.file_name, payload.content_type, content,
         principal.actor, now, techcards_factory(request),
     ))
-    return {"res": _document_json(document)}
+    return {"res": document_json(document)}
 
 
 @router.get("/{project}/documents/{document_id}")

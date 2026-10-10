@@ -64,6 +64,7 @@ from .grapher_import import GrapherComponent, GrapherImportError, read_export
 from .harness import SheetRow
 from .harness.rules import to_decimal
 from .connector_housings import attach_housings, connector_catalog, housing_of
+from .connector_series import connector_series, find_in_series
 from .assembly_schema import generator_to_assembly
 from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
 from .etk_builder import attach_route
@@ -818,7 +819,26 @@ def delete_operation_sketch(
 def connector_families(article: str = "") -> dict:
     """База разъёмов: семейства корпусов с рисунком по образцу артикула — чтобы видеть, что умеет схема.
     `article` — проверить свой артикул: какой корпус нарисует ЭТК (или None — серия не распознана)."""
-    return {"items": connector_catalog(), "match": housing_of(article[:255]) if article.strip() else None}
+    return {"items": connector_catalog(), "match": housing_of(article[:255]) if article.strip() else None,
+            "series_count": len(connector_series())}
+
+
+@router.get("/techcards/connector-series", dependencies=[Depends(tctemplates_view_principal)])
+def connector_series_view(
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+    article: str = "",
+) -> dict:
+    """«База данных → Разъёмы» по сериям: все корпуса серии (по таблицам каталога производителя), вилки на плату,
+    совместимые терминалы БД.ТЕР и диапазон провода. `article` — найти серию и корпус своего артикула."""
+    records: list[dict] = []
+    if references_factory is not None:
+        with references_factory() as uow:
+            records = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
+    series = connector_series(records)
+    return {"series": series, "match": find_in_series(article[:255], series) if article.strip() else None}
 
 
 # ── жгут ────────────────────────────────────────────────────────────────────
