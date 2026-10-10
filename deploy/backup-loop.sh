@@ -2,6 +2,9 @@
 # Nightly pg_dump at BACKUP_HOUR (server time): /backups/daily keeps KEEP_DAILY dumps, Sunday's copy goes to
 # /backups/weekly (KEEP_WEEKLY), the copy of the 1st of a month goes to /backups/monthly (KEEP_MONTHLY, 36:
 # traceability records are kept 3 years — SUPPLYMAP OwnerTick.gs BACKUP_KEEP_MONTHS, owner 14.09.2026). Files (УПД, счета, КД-реестр) live in the database, so the dump is the whole ERP.
+# Daytime dumps (owner, 10.10.2026: lose at most 3 hours of shop work, copies stay on the server): at every hour of
+# BACKUP_INTRADAY_HOURS (9 12 15 18 21) into /backups/intraday, the newest KEEP_INTRADAY (15, about three days) kept;
+# no weekly/monthly copies from them. An empty BACKUP_INTRADAY_HOURS turns them off.
 #   --now                 one daily dump right away (erp.sh backup-now).
 #   --pre-update <name>   the dump update.sh takes before every update: /backups/pre-update/erp_<name>.dump + .sha256,
 #                         own rotation (KEEP_PRE_UPDATE, 10) — the daily ones are untouched. An existing name is refused.
@@ -24,6 +27,8 @@ set -u
 root=${BACKUP_ROOT:-/backups}
 KEEP_DAILY=${KEEP_DAILY:-14}; KEEP_WEEKLY=${KEEP_WEEKLY:-8}; KEEP_MONTHLY=${KEEP_MONTHLY:-36}
 KEEP_PRE_UPDATE=${KEEP_PRE_UPDATE:-10}; KEEP_PRE_RESTORE=${KEEP_PRE_RESTORE:-10}
+KEEP_INTRADAY=${KEEP_INTRADAY:-15}
+INTRADAY_HOURS=${BACKUP_INTRADAY_HOURS-9 12 15 18 21}
 MAX_AGE_HOURS=${BACKUP_MAX_AGE_HOURS:-26}
 MIN_FREE_MB=${BACKUP_MIN_FREE_MB:-1024}
 RETRY_MINUTES=${BACKUP_RETRY_MINUTES:-60}
@@ -88,7 +93,7 @@ space_ok() {  # dir → 0 when free space there ≥ max(MIN_FREE_MB, 2 × the ne
   local need_kb newest size avail_kb
   need_kb=$((MIN_FREE_MB * 1024))
   # shellcheck disable=SC2012  # our own names
-  newest=$(ls -1t "$root"/daily/*.dump "$root"/pre-update/*.dump 2>/dev/null | head -1)
+  newest=$(ls -1t "$root"/daily/*.dump "$root"/intraday/*.dump "$root"/pre-update/*.dump 2>/dev/null | head -1)
   if [ -n "$newest" ]; then
     size=$(stat -c %s "$newest" 2>/dev/null || wc -c < "$newest")
     [ $(( (size / 1024 + 1) * 2 )) -gt "$need_kb" ] && need_kb=$(( (size / 1024 + 1) * 2 ))
@@ -175,6 +180,32 @@ daily() {
   return "$code"
 }
 
+intraday_locked() {
+  if ! write_dump "$root/intraday" "erp_$(date +%Y-%m-%d_%H%M%S)" 0; then
+    write_status false intraday "$reason" 1; log "INTRADAY BACKUP FAILED: $reason" >&2
+    return 1
+  fi
+  keep_newest "$root/intraday" "$KEEP_INTRADAY"
+  write_status true intraday ok 0
+  log "intraday backup ok: $made ($(du -h "$made" | cut -f1))"
+}
+intraday() {
+  local code=0
+  locked intraday_locked || code=$?
+  if [ "$code" = 75 ]; then
+    reason="занято (восстановление или другая копия) дольше $LOCK_WAIT с"
+    write_status false intraday "$reason" 75; log "INTRADAY BACKUP FAILED: $reason" >&2
+  fi
+  return "$code"
+}
+
+next_at() {  # hour → epoch of its next occurrence after now ($now)
+  local t
+  t=$(date -d "today $1:00" +%s)
+  [ "$t" -le "$now" ] && t=$(date -d "tomorrow $1:00" +%s)
+  echo "$t"
+}
+
 named_locked() {  # kind dir keep name protected
   local kind=$1 dir=$2 keep=$3 name=$4 protected=${5:-}
   if ! write_dump "$dir" "erp_$name" 1; then
@@ -227,10 +258,14 @@ if ! fresh; then
   daily || failed=1
 fi
 while true; do
-  now=$(date +%s); next=$(date -d "today ${BACKUP_HOUR}:00" +%s)
-  [ "$next" -le "$now" ] && next=$(date -d "tomorrow ${BACKUP_HOUR}:00" +%s)
-  if [ "$failed" = 1 ] && [ $((now + RETRY_MINUTES * 60)) -lt "$next" ]; then next=$((now + RETRY_MINUTES * 60)); fi
+  now=$(date +%s); next=$(next_at "$BACKUP_HOUR"); kind=daily
+  for h in $INTRADAY_HOURS; do
+    [ "$h" = "$BACKUP_HOUR" ] && continue
+    t=$(next_at "$h"); [ "$t" -lt "$next" ] && { next=$t; kind=intraday; }
+  done
+  # A failed nightly dump is retried; a failed daytime one just waits for the next slot.
+  if [ "$failed" = 1 ] && [ $((now + RETRY_MINUTES * 60)) -lt "$next" ]; then next=$((now + RETRY_MINUTES * 60)); kind=daily; fi
   sleep $((next - now))
   failed=0
-  daily || failed=1
+  if [ "$kind" = daily ]; then daily || failed=1; else intraday || true; fi
 done

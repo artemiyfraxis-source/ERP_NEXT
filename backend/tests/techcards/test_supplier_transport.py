@@ -1,10 +1,11 @@
 """Supplier-site client (audit U09): the checked IP is the one connected to, redirects are checked again, certificates
-are verified except for the listed domains, and a page read without the check says so.
+are verified first, a site whose certificate fails is still read (owner, 10.10.2026) and the page says so.
 
 No network: the httpcore backend under the pinned one is a fake that records where it was asked to connect and plays
 back canned HTTP answers."""
 
 import socket
+import ssl
 
 import httpcore
 import pytest
@@ -31,25 +32,35 @@ def _answer(body: str, status: str = "200 OK", headers: tuple[str, ...] = ()) ->
 
 
 class RecordingStream(httpcore.MockStream):
-    def __init__(self, buffer, tls_names):
+    def __init__(self, buffer, tls_names, bad_certificate=False):
         super().__init__(buffer)
         self._tls_names = tls_names
+        self._bad_certificate = bad_certificate
 
     def start_tls(self, ssl_context, server_hostname=None, timeout=None):
         self._tls_names.append((server_hostname, ssl_context.verify_mode))
+        if self._bad_certificate and ssl_context.verify_mode == ssl.CERT_REQUIRED:
+            # as httpcore's SyncStream maps it: the ssl error under a ConnectError
+            try:
+                raise ssl.SSLCertVerificationError(1, "certificate verify failed: self-signed certificate")
+            except ssl.SSLCertVerificationError as error:
+                raise httpcore.ConnectError(str(error)) from error
         return self
 
 
 class FakeNetwork(httpcore.NetworkBackend):
     """Each connect plays the next canned answer and records (address, port)."""
 
-    def __init__(self, *answers: list[bytes]):
+    def __init__(self, *answers: list[bytes], bad_certificate: bool = False):
         self.answers = list(answers)
         self.connected: list[tuple[str, int]] = []
         self.tls: list[tuple[str | None, object]] = []
+        self.bad_certificate = bad_certificate
 
     def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
         self.connected.append((host, port))
+        if self.bad_certificate:  # the site presents a broken certificate; nothing is read until the check is off
+            return RecordingStream(list(self.answers[0]), self.tls, bad_certificate=True)
         if not self.answers:
             raise httpcore.ConnectError("no answer")
         return RecordingStream(list(self.answers.pop(0)), self.tls)
@@ -160,8 +171,6 @@ def test_a_redirect_to_a_public_host_is_followed_on_its_own_checked_address(hook
 
 
 def test_certificates_are_checked_by_default_with_the_host_name_as_sni(hook_dns):
-    import ssl
-
     network = FakeNetwork(_answer("<title>Разъём</title>"))
     page = fetch_page(
         supplier_client(SupplierSiteTransport(resolver=lambda h, p: [PUBLIC], backend=network, exceptions=())),
@@ -173,8 +182,6 @@ def test_certificates_are_checked_by_default_with_the_host_name_as_sni(hook_dns)
 
 
 def test_only_a_listed_domain_is_read_without_the_check_and_the_page_says_so(hook_dns):
-    import ssl
-
     network = FakeNetwork(_answer("<title>Старый сайт</title>"), _answer("<title>Другой</title>"))
     client = supplier_client(SupplierSiteTransport(
         resolver=lambda h, p: [PUBLIC], backend=network, exceptions=("old-shop.example",),
@@ -186,6 +193,26 @@ def test_only_a_listed_domain_is_read_without_the_check_and_the_page_says_so(hoo
     assert listed is not None and listed.tls_checked is False
     assert other is not None and other.tls_checked is True
     assert network.tls == [("www.old-shop.example", ssl.CERT_NONE), ("not-old-shop.example", ssl.CERT_REQUIRED)]
+
+
+def test_a_site_with_a_broken_certificate_is_still_read_and_the_page_says_so(hook_dns):
+    network = FakeNetwork(_answer("<title>Кабель МГТФ</title>"), bad_certificate=True)
+    client = supplier_client(SupplierSiteTransport(resolver=lambda h, p: [PUBLIC], backend=network, exceptions=()))
+
+    page = fetch_page(client, "https://bad-cert-shop.example/p")
+
+    assert page is not None and page.tls_checked is False
+    assert "Кабель МГТФ" in page.text
+    assert network.tls == [("bad-cert-shop.example", ssl.CERT_REQUIRED), ("bad-cert-shop.example", ssl.CERT_NONE)]
+
+
+def test_a_connect_failure_that_is_not_a_certificate_is_not_retried_without_the_check(hook_dns):
+    network = FakeNetwork()  # no answer: the connection itself fails
+    client = supplier_client(SupplierSiteTransport(resolver=lambda h, p: [PUBLIC], backend=network, exceptions=()))
+
+    assert fetch_page(client, "https://down-shop.example/p") is None
+    assert network.connected == [(PUBLIC, 443)]
+    assert network.tls == []
 
 
 def test_the_exception_list_comes_from_the_environment_only(monkeypatch):

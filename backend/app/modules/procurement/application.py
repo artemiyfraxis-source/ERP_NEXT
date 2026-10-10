@@ -912,8 +912,8 @@ class PageInfo:
 
     title: str = ""
     brand: str = ""
-    # Where the page really came from (the host after redirects) and whether its certificate was checked — a site in
-    # the ERP_TLS_UNVERIFIED_HOSTS exception list is read without the check, and the journal says so.
+    # Where the page really came from (the host after redirects) and whether its certificate was checked — a site whose
+    # certificate fails (or one in ERP_TLS_UNVERIFIED_HOSTS) is read without the check, and the journal says so.
     source: str = ""
     tls_checked: bool = True
 
