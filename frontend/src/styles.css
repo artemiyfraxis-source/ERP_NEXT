@@ -186,8 +186,7 @@ button.primary.danger:hover:not(:disabled) { background: color-mix(in srgb, var(
 @media (pointer: coarse) { .primary, .secondary { min-height: var(--control-h); } }
 
 /* RQ-IMPORT-UI: the three ways to create a request (SUPPLYMAP openCreate), and the Excel/calc panels. */
-.mode-tabs { display: flex; gap: 8px; padding: 0 20px 14px; flex-wrap: wrap; }
-.mode-tabs .active { border-color: var(--primary); color: var(--primary-foreground); background: var(--primary); }
+.mode-tabs { margin: 0 20px 14px; }
 .import-panel { padding: 0 20px 18px; display: grid; gap: 12px; }
 .import-panel .form-grid { padding: 0; }
 .rc-tsv { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
@@ -3228,3 +3227,11 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .wt-state.tone-ok { color: #15803d; }
 tr.wt-future td { color: var(--muted-foreground); opacity: .7; }
 tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--card)); }
+
+/* Снабжение (аудит дизайна 10.10, Б5): пустое состояние с действием, таблица без второй рамки, шапка сетки заявки. */
+.procurement-empty { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 14px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted-foreground); font-size: 13px; }
+.panel.procurement-flat > .data-table .table-wrap { border: 0; border-radius: 0; }
+.rg-col-quality_document { width: 120px; }
+.rg-hint, .procurement-auto-note { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
+.procurement-stages { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.panel.procurement-flat > .procurement-empty { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 14px 16px; }

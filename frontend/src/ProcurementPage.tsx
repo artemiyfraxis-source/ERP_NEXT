@@ -25,6 +25,7 @@ import {
 } from "./ProcurementStages";
 import { runInPool } from "./bulk";
 import { formatDate } from "./format";
+import { StatusChip } from "./StatusChip";
 import type { LineEditing } from "./ProcurementCellEdit";
 import { LineDocumentsForm, readBase64 } from "./ProcurementLineDocuments";
 
@@ -118,7 +119,7 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>{line.project_reference || line.designation}</small></> },
   { key: "name", title: "Позиция", value: (line) => line.calculated_name, render: (line) => <>{line.calculated_name}<small>{line.actual_quantity ?? line.calculated_quantity} {line.actual_unit ?? line.calculated_unit}</small></> },
   { key: "buyer", title: "Закупщик", value: (line) => line.buyer },
-  { key: "status", title: "Статус", value: (line) => line.status, filter: true },
+  { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <StatusChip status={line.status} /> },
   { key: "supplier", title: "Поставщик · заказ", value: (line) => line.supplier, render: (line) => <>{line.supplier || "—"}<small>{line.order_number || ""}</small></> },
   { key: "eta", title: "Ожидается", value: (line) => line.expected_arrival },
 ];
@@ -127,23 +128,34 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
 export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
   const [tab, setTab] = useState<ProcurementTab>("queues");
+  // Своих и свободных позиций нет — очереди пусты: первым открывается «Весь лист», а не пустой экран (аудит 10.10, СН-1).
+  const [autoOpened, setAutoOpened] = useState(false);
+  const picked = useRef(false);
+  const pick = (next: ProcurementTab) => { picked.current = true; setAutoOpened(false); setTab(next); };
+  const openSheetWhenIdle = () => {
+    if (picked.current) return;
+    setAutoOpened(true);
+    setTab("sheet");
+  };
+  const tabs: Array<[ProcurementTab, string]> = [["queues", "Очереди"], ["sheet", "Весь лист"], ["suppliers", "По поставщикам"]];
   return (
     <>
-      <header className="page-head"><h1>Закупка</h1></header>
+      <header className="page-head"><h1>Лист закупки</h1></header>
       {readOnly && <p className="page-sub">Лист закупки открыт вам только на просмотр: что свободно и что едет.</p>}
-      <nav className="shipping-tabs" aria-label="Разделы закупки">
-        <button type="button" className={`secondary small${tab === "queues" ? " active" : ""}`} aria-pressed={tab === "queues"} onClick={() => setTab("queues")}>Очереди</button>
-        <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
-        <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
-      </nav>
-      {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} />}
+      <div className="seg-tabs" role="tablist" aria-label="Разделы закупки">
+        {tabs.map(([key, label]) => (
+          <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => pick(key)}>{label}</button>
+        ))}
+      </div>
+      {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
+      {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} onIdle={openSheetWhenIdle} onOpenSheet={() => pick("sheet")} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}
     </>
   );
 }
 
-function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerName: string }) {
+function ProcurementQueues({ readOnly, buyerName, onIdle, onOpenSheet }: { readOnly: boolean; buyerName: string; onIdle?: () => void; onOpenSheet?: () => void }) {
   const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
   // «Заказы: Все · Активные · Скрыть» — у каждого закупщика свой выбор в этом браузере.
   // Только что взятые строки → их версия при взятии: пока сервер не дозаполнил строку, на ней «заполняется…».
@@ -170,6 +182,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const [hiddenBlocks, setHiddenBlocks] = useState<string[]>(() => migrateHiddenBlocks(readSaved(BLOCKS_KEY).hidden ?? []));
   const [choosingBlocks, setChoosingBlocks] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const idleChecked = useRef(false);
   const [loadingMore, setLoadingMore] = useState<"available" | "mine" | "">("");
   const kpReference = kpQueue[0] ?? "";
   const loadingQueue = refreshing || Boolean(loadingMore);
@@ -199,6 +212,10 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       setAvailableCursor(availableResult.next_cursor);
       setMineCursor(cursor);
       setLoaded(true);
+      if (!idleChecked.current) {
+        idleChecked.current = true;
+        if (!availableResult.lines.length && !mineLines.length) onIdle?.();
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Ошибка загрузки закупки");
     } finally {
@@ -481,9 +498,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Действия строки видны на ней (без меню «⋯»); формы раскрываются под таблицей стадии.
   const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
   const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", short: "Прослеж.…", panel: () => <TraceabilityForm {...form(line)} /> });
-  // DATASHEET, файлы разрешения и документа качества строки.
+  // Даташит, файлы разрешения и документа качества строки.
   const documents = (line: ProcurementLine): RowAction => ({
-    label: "Документы…", short: "Документы…", title: "DATASHEET, файл разрешения, документ качества",
+    label: "Документы…", short: "Документы…", title: "Даташит, файл разрешения, документ качества",
     panel: () => <LineDocumentsForm line={line} editing={editing} disabled={interactionLocked} onMessage={say} />,
   });
   const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", short: "Раздробить…", panel: () => <SplitAction {...form(line)} /> });
@@ -667,6 +684,12 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
               </label>
             ))}
           </fieldset>
+        )}
+        {!mine.length && !needle && (
+          <div className="procurement-empty">
+            <span>{readOnly ? "Сейчас никто не ведёт позиций." : "У вас нет позиций в работе. Возьмите позицию из «Неразобранных» или посмотрите, что на листе."}</span>
+            {onOpenSheet && <button type="button" className="secondary small" onClick={onOpenSheet}>Открыть весь лист</button>}
+          </div>
         )}
         {emptyTitles.length > 0 && <p className="empty-stages">Пусто: {emptyTitles.join(", ")}</p>}
         {showFilled("inwork") && <ProcurementInWorkTable

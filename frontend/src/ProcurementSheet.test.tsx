@@ -107,7 +107,7 @@ const ALL_COLUMNS = [
   // что закупаем
   "Категория", "Тип", "Артикул КД", "Наименование", "Наименование (сайт)",
   // поставщик
-  "Поставщик", "Изготовитель", "Страна", "Ссылка", "DATASHEET",
+  "Поставщик", "Изготовитель", "Страна", "Ссылка", "Даташит",
   // количество: расчёт и факт рядом
   "Кол-во (расчёт)", "Ед. (расчёт)", "Кол-во (факт)", "Ед. (факт)",
   // заказ, замена, документ качества
@@ -338,7 +338,7 @@ it("shows the server text on 422 and keeps the field open with what was typed", 
   expect(screen.getByLabelText("Ожид. дата SM-1")).toHaveValue("2020-01-01");
 });
 
-// ── DATASHEET, файлы разрешения и документа качества, «без ГРН» ─────────────────────────────────────
+// ── Даташит, файлы разрешения и документа качества, «без ГРН» ─────────────────────────────────────
 
 const file = (id: string, kind: "permit" | "quality", file_name: string) => ({
   id, kind, file_name, url: `/api/procurement/files/${id}`, uploaded_by: "Петров", uploaded_at: "2026-10-09T10:00:00+03:00",
@@ -350,7 +350,7 @@ function showColumns(...titles: string[]) {
   for (const title of titles) fireEvent.click(within(chooser).getByRole("checkbox", { name: title }));
 }
 
-it("edits DATASHEET of the buyer's own line, links the permit and quality files and keeps them after the save", async () => {
+it("edits Даташит of the buyer's own line, links the permit and quality files and keeps them after the save", async () => {
   const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
   const mine = own(1, {
     datasheet: "https://www.example.com/ds.pdf",
@@ -366,20 +366,20 @@ it("edits DATASHEET of the buyer's own line, links the permit and quality files 
   window.localStorage.clear();
   render(<ProcurementSheetView buyerName="Петров" />);
   await screen.findByText("Позиция 1");
-  showColumns("DATASHEET", "Файлы разрешения", "Нужен док. качества", "Док. качества");
+  showColumns("Даташит", "Файлы разрешения", "Нужен док. качества", "Док. качества");
 
-  expect(screen.getByRole("button", { name: "DATASHEET SM-1" })).toHaveTextContent("example.com");
+  expect(screen.getByRole("button", { name: "Даташит SM-1" })).toHaveTextContent("example.com");
   expect(screen.getByRole("link", { name: "открыть" })).toHaveAttribute("href", "https://www.example.com/ds.pdf");
-  expect(screen.queryByRole("button", { name: "DATASHEET SM-2" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Даташит SM-2" })).not.toBeInTheDocument();
   expect(screen.getByText("по запросу")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Разрешение 12.pdf" })).toHaveAttribute("href", "/api/procurement/files/f1");
   expect(screen.getByRole("link", { name: "Сертификат.pdf" })).toHaveAttribute("href", "/api/procurement/files/f3");
 
-  fireEvent.click(screen.getByRole("button", { name: "DATASHEET SM-1" }));
-  const field = screen.getByRole("textbox", { name: "DATASHEET SM-1" });
+  fireEvent.click(screen.getByRole("button", { name: "Даташит SM-1" }));
+  const field = screen.getByRole("textbox", { name: "Даташит SM-1" });
   fireEvent.change(field, { target: { value: "Описание у поставщика" } });
   fireEvent.keyDown(field, { key: "Enter" });
-  await waitFor(() => expect(screen.getByRole("button", { name: "DATASHEET SM-1" })).toHaveTextContent("Описание у поставщика"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Даташит SM-1" })).toHaveTextContent("Описание у поставщика"));
   expect(sent).toEqual([{ path: `/api/procurement/${mine.id}/datasheet`, body: { version: 3, datasheet: "Описание у поставщика" } }]);
   expect(screen.getByRole("link", { name: "Паспорт.pdf" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Разрешение 12.pdf" })).toBeInTheDocument();
