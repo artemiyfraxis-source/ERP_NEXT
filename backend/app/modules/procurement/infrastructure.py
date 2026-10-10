@@ -29,7 +29,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
 from app.shared.identity import Actor
 from app.shared.persistence import (
     Base,
@@ -889,9 +888,9 @@ class SqlAlchemyProcurementUnitOfWork:
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
         self.files = SqlAlchemyInvoiceFileRepository(self.session)
-        # «Со склада»: the cover and the lot's РЕЗЕРВ move in one transaction.
+        # «Со склада» covers stay owned by procurement; the warehouse reserve is
+        # supplied by the composite stock UoW in app.workflows.procurement_stock.
         self.stock_covers = SqlAlchemyStockCoverRepository(self.session)
-        self.warehouse = SqlAlchemyWarehouseRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:
