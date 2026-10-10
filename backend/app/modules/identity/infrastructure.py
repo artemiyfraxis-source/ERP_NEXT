@@ -551,6 +551,12 @@ class SqlAlchemyIdentityRepository:
         if row is not None:
             self.session.delete(row)
 
+    def release_throttles(self, keys: tuple[str, ...] | None) -> int:
+        statement = delete(IdentityLoginThrottleRow)
+        if keys is not None:
+            statement = statement.where(IdentityLoginThrottleRow.key.in_(keys))
+        return int(self.session.execute(statement).rowcount or 0)
+
     def deactivate_user(self, user_id: UUID) -> IdentityUser | None:
         row = self.session.get(IdentityUserRow, user_id, with_for_update=True)
         if row is None:

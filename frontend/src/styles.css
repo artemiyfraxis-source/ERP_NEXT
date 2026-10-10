@@ -488,7 +488,16 @@ table.ship-lines td:first-child { width: 1%; }
 .operations-metrics .metric.danger { border-color: #d9938d; color: #852a24; background: #fbe7e4; }
 .operations-failures { margin-bottom: 18px; padding: 18px; }
 .operations-failures h2 { margin: 0 0 10px; font-size: 16px; }
-.operations-failures > div { display: grid; grid-template-columns: 180px 1fr auto; gap: 10px; border-top: 1px solid var(--border); padding: 9px 0; font-size: 12px; }
+.operations-failures > div { display: grid; grid-template-columns: 180px 1fr auto auto; align-items: center; gap: 10px; border-top: 1px solid var(--border); padding: 9px 0; font-size: 12px; }
+/* «Фоновые процессы» (аудит U08): группа воркера — состояние, последний успех, прогон, последняя ошибка. */
+.operations-background { margin-bottom: 18px; padding: 18px; }
+.operations-background h2 { margin: 0 0 10px; font-size: 16px; }
+.operations-background .error-banner { margin-bottom: 10px; }
+.operations-bg-row { display: grid; grid-template-columns: minmax(200px, 1.2fr) 150px minmax(170px, 1fr) 80px minmax(200px, 2fr); gap: 10px; border-top: 1px solid var(--border); padding: 7px 0; font-size: 13px; }
+.operations-bg-head { border-top: 0; padding-top: 0; color: var(--muted-foreground); font-size: 12px; }
+.operations-bg-error { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.operations-bg-queue { margin: 10px 0 0; font-size: 13px; }
+.operations-background .warning-inline { margin-top: 10px; }
 .facts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 18px 0; }
 .facts-grid .wide { grid-column: span 2; }
 .card-footer { border-top: 1px solid #e5e9e3; padding-top: 14px; color: #77827b; }
@@ -866,7 +875,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .genealogy-edges > div { grid-template-columns: 1fr; }
   .ship-form > .ship-span2, .ship-accept > strong { grid-column: auto; }
   .operation-assign { grid-column: auto; }
-  .operations-metrics, .operations-failures > div { grid-template-columns: 1fr; }
+  .operations-metrics, .operations-failures > div, .operations-bg-row { grid-template-columns: 1fr; }
+  .operations-bg-head { display: none; }
   .etk-flow { grid-template-columns: 1fr; }
   .etk-wrap, .tr-head { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }

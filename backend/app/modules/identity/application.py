@@ -113,6 +113,9 @@ class IdentityRepository(Protocol):
     def increment_failure(self, key: str, now: datetime, window: timedelta) -> None: ...
     def mark_rate_limit_audited(self, key: str, now: datetime) -> bool: ...
     def reset_failures(self, key: str) -> None: ...
+    def release_throttles(self, keys: tuple[str, ...] | None) -> int:
+        """Delete the counters of `keys` (None — every counter); returns how many there were."""
+        ...
     def deactivate_user(self, user_id: UUID) -> IdentityUser | None: ...
     def revoke_user_sessions(self, user_id: UUID, revoked_at: datetime) -> int: ...
     # «Сотрудники» (ID-8, staff.py)
@@ -167,11 +170,19 @@ class UnitOfWork(Protocol):
 SESSION_TTL = timedelta(days=14)
 SESSION_ABSOLUTE_TTL = timedelta(days=30)
 THROTTLE_WINDOW = timedelta(minutes=10)
-# SUPPLYMAP Portal.gs:252-306 (ID-4): 10 failures per account and 30 over all accounts in 10 minutes close the login;
-# the global counter stops a fan-out over many accounts. ERP keeps its per-client ceiling on top.
+# Login throttling (audit U09, 10.10.2026; was SUPPLYMAP Portal.gs:252-306 ID-4, where 30 failures over all accounts
+# closed the login for everyone — the right password included). In a 10-minute window:
+# - an ACCOUNT closes after 10 failures from any number of addresses (many addresses guessing one account);
+# - a CLIENT ADDRESS closes after 30 failures over any accounts (one address fanning out over many accounts);
+# - 30 failures over all accounts no longer lock anyone out: the administrators are alerted and the login turns
+#   GUARDED — an address with 3 failures of its own is refused, while one that has not failed (the employee typing
+#   the right PIN) still signs in. That keeps a distributed guess slow without a hard lock of the whole shop.
+# An administrator lifts a lock early (`release_login_locks`, journal «Блокировка входа снята») from the screen API or,
+# when no administrator can sign in, from the server console (`python -m app.identity_admin release-login`).
 LOGIN_FAIL_LIMIT = 10
-LOGIN_FAIL_LIMIT_GLOBAL = 30
-CLIENT_FAIL_LIMIT = 300
+CLIENT_FAIL_LIMIT = 30
+GLOBAL_ALERT_THRESHOLD = 30
+GUARDED_CLIENT_FAIL_LIMIT = 3
 GLOBAL_KEY = "global:login"
 SECURITY_STATE_RETENTION = timedelta(days=7)
 DUMMY_PASSWORD_HASH = hash_password("not-a-real-user-password", salt=b"\0" * 16)
@@ -255,43 +266,39 @@ def _session_admin_mode(session: IdentitySession, user: IdentityUser, now: datet
 def _rate_limited(
     uow: UnitOfWork, account_key: str, client_key: str, identifier: str, now: datetime,
 ) -> tuple[int, int]:
-    """portalLoginBlocked_ (ID-4): 10 failures per account, 30 over all accounts, ERP's client ceiling. Raises when
-    the login is closed; otherwise returns (failures of the account, failures overall) for the next attempt."""
+    """Raises when this account or this client address is closed (see LOGIN_FAIL_LIMIT above); otherwise returns
+    (failures of the account, failures overall) for the next attempt. The overall count never closes the login by
+    itself — it only tightens the per-address limit."""
     uow.identity.cleanup_security_state(now, THROTTLE_WINDOW, SECURITY_STATE_RETENTION)
     uow.identity.lock_throttle_keys((account_key, client_key, GLOBAL_KEY))
     login_failures = uow.identity.failure_count(account_key, now, THROTTLE_WINDOW)
     client_failures = uow.identity.failure_count(client_key, now, THROTTLE_WINDOW)
     global_failures = uow.identity.failure_count(GLOBAL_KEY, now, THROTTLE_WINDOW)
-    if (
-        login_failures >= LOGIN_FAIL_LIMIT
-        or global_failures >= LOGIN_FAIL_LIMIT_GLOBAL
-        or client_failures >= CLIENT_FAIL_LIMIT
-    ):
-        if login_failures >= LOGIN_FAIL_LIMIT:
-            limited_key, limited_by = account_key, "login"
-            message = "Слишком много попыток. Подождите 10 минут."
-        elif global_failures >= LOGIN_FAIL_LIMIT_GLOBAL:
-            limited_key, limited_by = GLOBAL_KEY, "global"
-            message = "Вход временно закрыт (слишком много неудачных попыток). Подождите 10 минут."
-        else:
-            limited_key, limited_by = client_key, "client"
-            message = "Слишком много попыток входа; попробуйте позже"
-        if uow.identity.mark_rate_limit_audited(limited_key, now):
-            _audit(
-                uow,
-                aggregate_id=UUID(int=0),
-                event_type="identity.login_rate_limited",
-                actor=SYSTEM_ACTOR,
-                now=now,
-                details={
-                    "identifier_hash": secret_hash(identifier),
-                    "client_key": client_key,
-                    "limited_by": limited_by,
-                },
-            )
-            uow.commit()
-        raise AuthenticationRateLimited(message)
-    return login_failures, global_failures
+    guarded = global_failures >= GLOBAL_ALERT_THRESHOLD
+    client_limit = GUARDED_CLIENT_FAIL_LIMIT if guarded else CLIENT_FAIL_LIMIT
+    if login_failures >= LOGIN_FAIL_LIMIT:
+        limited_key, limited_by = account_key, "login"
+        message = "Слишком много попыток. Подождите 10 минут."
+    elif client_failures >= client_limit:
+        limited_key, limited_by = client_key, "guarded" if guarded and client_failures < CLIENT_FAIL_LIMIT else "client"
+        message = "Слишком много неудачных попыток с этого устройства. Подождите 10 минут."
+    else:
+        return login_failures, global_failures
+    if uow.identity.mark_rate_limit_audited(limited_key, now):
+        _audit(
+            uow,
+            aggregate_id=UUID(int=0),
+            event_type="identity.login_rate_limited",
+            actor=SYSTEM_ACTOR,
+            now=now,
+            details={
+                "identifier_hash": secret_hash(identifier),
+                "client_key": client_key,
+                "limited_by": limited_by,
+            },
+        )
+        uow.commit()
+    raise AuthenticationRateLimited(message)
 
 
 def _record_failure(
@@ -329,14 +336,19 @@ def _record_failure(
     )
     # …and exactly at a threshold the owner is told (SUPPLYMAP e-mailed CONFIG.ERROR_ALERT_EMAIL; ERP puts it
     # into the administrators' notification feed).
-    if attempt == LOGIN_FAIL_LIMIT or total == LOGIN_FAIL_LIMIT_GLOBAL:
+    if attempt == LOGIN_FAIL_LIMIT or total == GLOBAL_ALERT_THRESHOLD:
         publish_notification(uow.outbox, notification_requested(
             key=f"login-bruteforce:{secret_hash(identifier)}:{now.isoformat()}",
             now=now,
             title="Подбор пароля при входе",
             body=(
                 f"Неудачных входов за 10 мин: по учётной записи «{identifier}» — {attempt}, всего — {total}. "
-                "Вход заблокирован до конца окна. Записи — в системном журнале."
+                + (
+                    "Эта учётная запись заблокирована до конца окна. "
+                    if attempt >= LOGIN_FAIL_LIMIT else
+                    "Включён усиленный режим: устройства с ошибками входа блокируются, остальные входят как обычно. "
+                )
+                + "Снять блокировку раньше — администратор (release-login). Записи — в системном журнале."
             ),
             kind="security",
             audiences=(TECHNOLOGIST_AUDIENCE,),
@@ -401,6 +413,26 @@ def login(
             )
             raise AuthenticationError("Неверный логин или пароль")
         return _open_session(uow, record[0], login_key, client_key, now, "password")
+
+
+def release_login_locks(actor: Actor, now: datetime, uow: UnitOfWork, *, login: str | None = None) -> int:
+    """The administrator's emergency path: lift the lock of one account (`login`) or every login counter (None —
+    accounts, addresses and the overall count) before the 10-minute window ends. Journalled; returns how many counters
+    were dropped (0 — there was no lock, nothing changes but the journal)."""
+    now = as_utc(now)
+    keys = None if login is None else (f"login:{normalize_login(login)}",)
+    with uow:
+        released = uow.identity.release_throttles(keys)
+        _audit(
+            uow,
+            aggregate_id=UUID(int=0),
+            event_type="identity.login_lock_released",
+            actor=actor,
+            now=now,
+            details={"login": normalize_login(login) if login is not None else "все", "released": str(released)},
+        )
+        uow.commit()
+    return released
 
 
 # ── Вход по PIN (Portal.gs portalLogin / portalRevealPin_) ─────────────────────────────────────────────

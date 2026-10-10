@@ -5,10 +5,26 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, Text, UniqueConstraint, Uuid, case, delete, func, select
+import logging
+
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    case,
+    delete,
+    func,
+    select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.modules.identity.audience_directory import audience_emails, user_emails
+from app.shared.clock import as_utc
 from app.shared.persistence import (
     AuditEventRow,
     Base,
@@ -17,6 +33,7 @@ from app.shared.persistence import (
     SqlAlchemyOutboxRepository,
 )
 
+from .background import Heartbeat, PendingTopic
 from .domain import Notification, ProjectTask, ProjectTaskStatus
 
 
@@ -40,6 +57,58 @@ class OperationsJobMarkRow(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[str] = mapped_column(Text(), nullable=False)
     marked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WorkerHeartbeatRow(Base):
+    """One row per job group of the background worker (audit U08): its last start, success, failure and run time."""
+
+    __tablename__ = "worker_heartbeats"
+    __table_args__ = (
+        CheckConstraint("duration_ms >= 0", name="ck_worker_heartbeats_duration"),
+        CheckConstraint("failures >= 0", name="ck_worker_heartbeats_failures"),
+    )
+
+    job_group: Mapped[str] = mapped_column(String(64), primary_key=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    failures: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    return as_utc(value) if value is not None else None
+
+
+class SqlAlchemyWorkerHeartbeats:
+    """The worker's stamp. Each call is its own short transaction, so a stamp never rides on (or rolls back with) the
+    job's own work; a stamp that cannot be written is logged and never stops the worker."""
+
+    def __init__(self, sessions: sessionmaker[Session]):
+        self.sessions = sessions
+
+    def record(self, group: str, started_at: datetime, duration_ms: int, error: str | None) -> bool:
+        try:
+            with self.sessions() as session:
+                row = session.get(WorkerHeartbeatRow, group)
+                if row is None:
+                    row = WorkerHeartbeatRow(job_group=group, duration_ms=0, failures=0)
+                    session.add(row)
+                row.started_at = started_at
+                row.duration_ms = max(int(duration_ms), 0)
+                if error is None:
+                    row.success_at = started_at
+                    row.failures = 0
+                else:
+                    row.failure_at = started_at
+                    row.error = error[:1000]
+                    row.failures = (row.failures or 0) + 1
+                session.commit()
+            return True
+        except Exception:  # noqa: BLE001 — the stamp is diagnostics; the job itself already ran
+            logging.warning("Worker heartbeat %s was not recorded", group, exc_info=True)
+            return False
 
 
 class ProjectTaskRow(Base):
@@ -303,6 +372,49 @@ class SqlAlchemyOperationsRepository:
                 "dead": row.dead_lettered_at is not None,
             } for row in failures],
         }
+
+
+    def heartbeats(self) -> dict[str, Heartbeat]:
+        return {row.job_group: Heartbeat(
+            group=row.job_group,
+            started_at=_aware(row.started_at),
+            success_at=_aware(row.success_at),
+            failure_at=_aware(row.failure_at),
+            error=row.error,
+            duration_ms=row.duration_ms,
+            failures=row.failures,
+        ) for row in self.session.scalars(select(WorkerHeartbeatRow))}
+
+    def pending_topics(self) -> list[PendingTopic]:
+        """Topics with messages neither published nor dead-lettered: how many and since when (the oldest)."""
+        rows = self.session.execute(
+            select(OutboxMessageRow.topic, func.count(), func.min(OutboxMessageRow.created_at))
+            .where(OutboxMessageRow.published_at.is_(None), OutboxMessageRow.dead_lettered_at.is_(None))
+            .group_by(OutboxMessageRow.topic)
+        )
+        return [PendingTopic(topic=str(topic), count=int(count), oldest_at=as_utc(oldest)) for topic, count, oldest in rows]
+
+    def dead_letter_for_update(self, message_id: UUID) -> dict | None:
+        row = self.session.get(OutboxMessageRow, message_id, with_for_update=True)
+        if row is None:
+            return None
+        return {
+            "id": row.id,
+            "topic": row.topic,
+            "attempts": row.attempt_count,
+            "error": row.last_error or "",
+            "published": row.published_at is not None,
+            "dead": row.dead_lettered_at is not None,
+        }
+
+    def requeue_dead_letter(self, message_id: UUID, now: datetime) -> None:
+        """Back into the queue as it is — the payload is never touched; a fresh set of attempts, due at once."""
+        row = self.session.get(OutboxMessageRow, message_id, with_for_update=True)
+        if row is None or row.dead_lettered_at is None or row.published_at is not None:
+            raise KeyError(f"Outbox message is not dead-lettered: {message_id}")
+        row.dead_lettered_at = None
+        row.attempt_count = 0
+        row.next_attempt_at = now
 
 
 class SqlAlchemyOperationsUnitOfWork:

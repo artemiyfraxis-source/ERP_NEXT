@@ -164,3 +164,190 @@ def test_autofill_job_runs_on_its_own_thread_every_few_seconds_and_swallows_erro
 
     monkeypatch.setattr(outbox_worker, "procurement_autofill_tick", boom)
     assert outbox_worker.run_autofill_job("s") == 0
+
+
+# ── Audit U08: heartbeats, poison isolation, counts that survive a restart ──
+
+
+@pytest.fixture()
+def queue_db():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from app.shared.persistence import create_schema
+
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    create_schema(engine)
+    yield engine, sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    engine.dispose()
+
+
+def _put(sessions, topic: str, key: str, payload: dict):
+    from datetime import datetime
+    from uuid import uuid4
+
+    from app.shared.persistence import OutboxMessageRow
+
+    message_id = uuid4()
+    with sessions() as session:
+        session.add(OutboxMessageRow(
+            id=message_id, topic=topic, idempotency_key=key, created_at=datetime(2026, 10, 10, 9, 0), payload=payload,
+        ))
+        session.commit()
+    return message_id
+
+
+def _row(sessions, message_id):
+    from app.shared.persistence import OutboxMessageRow
+
+    with sessions() as session:
+        return session.get(OutboxMessageRow, message_id)
+
+
+def _beat(sessions, group: str):
+    from app.modules.operations.infrastructure import WorkerHeartbeatRow
+
+    with sessions() as session:
+        return session.get(WorkerHeartbeatRow, group)
+
+
+def _healthy_notification(sessions):
+    from uuid import uuid4
+
+    return _put(sessions, "notification.requested", f"notify:{uuid4()}", {
+        "recipient_user_ids": str(uuid4()), "recipient_audiences": "", "type": "status", "reference": "",
+        "title": "t", "body": "b",
+    })
+
+
+def test_a_crashing_message_does_not_stall_healthy_topics_and_is_dead_lettered_across_restarts(queue_db, monkeypatch):
+    """An unexpected crash on one topic (not its module's Poison* error) is recorded on the message with the backoff;
+    the other topics are worked off in the same pass; the attempt count lives in the database, so five passes — with a
+    restart of the worker between them — dead-letter it instead of crashing the worker forever."""
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from app.modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
+    from app.shared.persistence import OutboxMessageRow
+
+    engine, sessions = queue_db
+    poison = _put(sessions, "receiving.expected", "receiving:poison", {"anything": "x"})
+    healthy = _healthy_notification(sessions)
+
+    def crash(now, uow):
+        """Like the real handler: claims the next due message — and crashes on it."""
+        with uow:
+            if uow.outbox.next_unpublished("receiving.expected", now) is None:
+                return None
+            raise RuntimeError("payload makes the handler crash")
+
+    monkeypatch.setattr(outbox_worker, "dispatch_next_receiving_expected", crash)
+
+    assert outbox_worker.dispatch_available(sessions) == 2  # one quarantine attempt + one delivered notification
+    assert _row(sessions, healthy).published_at is not None
+    first = _row(sessions, poison)
+    assert (first.attempt_count, first.dead_lettered_at, first.last_error) == (
+        1, None, "RuntimeError: payload makes the handler crash",
+    )
+    assert first.next_attempt_at is not None  # backed off: the next pass does not hit it again at once
+    assert _beat(sessions, "dispatch").failures == 0  # the queue works; the bad message is the message's problem
+
+    for _ in range(4):  # the worker restarts (a fresh sessionmaker), and the backoff is over each time
+        sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+        with sessions() as session:
+            session.execute(update(OutboxMessageRow).where(OutboxMessageRow.id == poison).values(next_attempt_at=None))
+            session.commit()
+        outbox_worker.dispatch_available(sessions)
+
+    final = _row(sessions, poison)
+    assert final.attempt_count == 5 and final.dead_lettered_at is not None
+    with SqlAlchemyOperationsUnitOfWork(sessions) as uow:
+        counts = uow.operations.outbox_health()
+    assert (counts["dead"], counts["pending"], counts["published"]) == (1, 0, 1)
+    assert outbox_worker.dispatch_available(sessions) == 0  # nothing left to try: the worker idles, it does not crash
+
+
+def test_a_database_outage_leaves_the_message_alone_and_marks_the_group(queue_db, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    _engine, sessions = queue_db
+    waiting = _put(sessions, "receiving.expected", "receiving:1", {"x": 1})
+
+    def down(now, uow):
+        raise OperationalError("SELECT", {}, Exception("server closed the connection"))
+
+    monkeypatch.setattr(outbox_worker, "dispatch_next_receiving_expected", down)
+    assert outbox_worker.dispatch_available(sessions) == 0
+
+    assert (_row(sessions, waiting).attempt_count, _row(sessions, waiting).last_error) == (0, None)
+    beat = _beat(sessions, "dispatch")
+    assert beat.failures == 1 and beat.success_at is None and "OperationalError" in beat.error
+
+    monkeypatch.setattr(outbox_worker, "dispatch_next_receiving_expected", lambda now, uow: None)
+    outbox_worker.dispatch_available(sessions)
+    beat = _beat(sessions, "dispatch")
+    assert beat.failures == 0 and beat.success_at is not None and beat.error and beat.failure_at is not None
+
+
+def test_module_poison_errors_still_quarantine_through_their_module(queue_db, monkeypatch):
+    from uuid import uuid4
+
+    from app.modules.receiving.application import PoisonReceivingMessage
+
+    _engine, sessions = queue_db
+    calls = []
+
+    def poison(now, uow):
+        calls.append(now)
+        if len(calls) == 1:
+            raise PoisonReceivingMessage(uuid4(), "invalid")
+        return None
+
+    monkeypatch.setattr(outbox_worker, "dispatch_next_receiving_expected", poison)
+    assert outbox_worker.dispatch_available(sessions) == 1
+    assert len(calls) == 2  # the next turn asks the topic again; nothing left → the pass ends
+
+
+def test_every_job_group_stamps_its_heartbeat(queue_db, monkeypatch):
+    _engine, sessions = queue_db
+    monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", lambda now, uow: [])
+    monkeypatch.setattr(outbox_worker, "notify_initiators", lambda now, uow: 0)
+    for name in ("daily_overdue_digest", "quarantine_escalations", "alert_on_dead_letters", "feed_triggers",
+                 "close_followed_up", "leave_calendar_tick"):
+        monkeypatch.setattr(outbox_worker, name, lambda now, sessions: 0)
+    monkeypatch.setattr(outbox_worker, "kitset_names_tick", lambda now, sessions: 0)
+    monkeypatch.setattr(outbox_worker, "procurement_autofill_tick", lambda sessions, cap: 0)
+    for gate in ("_last_error_alert", "_last_arbiter_close", "_last_leave_calendar"):
+        monkeypatch.setattr(outbox_worker, gate, float("-inf"))
+
+    outbox_worker.run_timers(sessions)
+    outbox_worker.run_tail_jobs(sessions)
+    outbox_worker.run_autofill_job(sessions)
+    outbox_worker.dispatch_available(sessions)
+
+    from app.modules.operations.background import JOB_GROUP_KEYS
+
+    for group in JOB_GROUP_KEYS:
+        beat = _beat(sessions, group)
+        assert beat is not None and beat.success_at is not None and beat.failures == 0, group
+
+    def boom(now, sessions):
+        raise RuntimeError("digest broke")
+
+    monkeypatch.setattr(outbox_worker, "daily_overdue_digest", boom)
+    outbox_worker.run_owner_jobs(sessions)
+    outbox_worker.run_owner_jobs(sessions)
+    owner = _beat(sessions, "owner")
+    assert owner.failures == 2 and owner.error == "daily digest: RuntimeError: digest broke"
+
+
+def test_a_crashing_timer_does_not_stop_the_other_timers(monkeypatch):
+    calls = []
+
+    def broken(now, uow):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(outbox_worker, "quarantine_overdue_waiting", broken)
+    monkeypatch.setattr(outbox_worker, "notify_initiators", lambda now, uow: calls.append("notify") or 1)
+    assert outbox_worker.run_timers(object()) == 1 and calls == ["notify"]

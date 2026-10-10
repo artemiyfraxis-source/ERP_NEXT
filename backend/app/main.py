@@ -1,14 +1,20 @@
 """Fraxis ERP Next modular monolith entrypoint."""
 
+from datetime import datetime
 import os
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from .database import configure_database
+from .modules.operations.application import background_health
+from .modules.techcards.kitset_names import tls_exception_hosts
+from .shared.clock import moscow_now
+from .shared.http_auth import Principal
 from .modules.identity import api as identity_api
 from .modules.identity.middleware import IdentitySessionMiddleware
 from .shared.http_limits import RequestBodyLimitMiddleware
@@ -45,6 +51,8 @@ app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() no
     "no",
 }
 configured_rack_layout()  # a broken ERP_WAREHOUSE_RACK_LAYOUT stops the start, not the first placement
+# Supplier domains read without a certificate check (audit U09): shown on «Системный журнал» and in /api/health?detail.
+app.state.tls_exception_hosts = tls_exception_hosts()
 app.add_middleware(
     RequestBodyLimitMiddleware,
     max_bytes=1_048_576,
@@ -83,8 +91,22 @@ if database_url := os.getenv("ERP_DATABASE_URL"):
 watch_stop_file()  # локальная ERP на ПК: обновление останавливает API файлом-стопом (scripts/update-local.ps1)
 
 
+def signed_in_principal(request: Request) -> Principal | None:
+    """The caller if signed in, else None — /api/health itself stays open to the container health check."""
+    principal = getattr(request.state, "principal", None)
+    return principal if isinstance(principal, Principal) else None
+
+
 @app.get("/api/health")
-def health(db: int = 0):
+def health(
+    request: Request,
+    principal: Annotated[Principal | None, Depends(signed_in_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    db: int = 0,
+    detail: int = 0,
+):
+    if detail:
+        return _health_detail(request, principal, now)
     if not db:
         return {"ok": True, "service": "erp-next"}
     try:
@@ -93,6 +115,29 @@ def health(db: int = 0):
     except Exception:  # noqa: BLE001 - наружу уходит только короткий текст, без стека и адреса БД
         return JSONResponse(status_code=503, content={"ok": False, "error": "База данных недоступна или не размечена миграциями"})
     return {"ok": True, "revision": revision}
+
+
+def _health_detail(request: Request, principal: Principal | None, now: datetime):
+    """Audit U08: does the background actually work — heartbeats of the worker's job groups and the age of the oldest
+    pending message. Administrators only (it names the jobs and their last errors). 503 when any of it is red, so a
+    monitor can poll this one address."""
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Требуется вход в ERP"})
+    if principal.service or not principal.full_access:
+        return JSONResponse(status_code=403, content={"detail": "Только администратору."})
+    factory = getattr(app.state, "operations_uow_factory", None)
+    if not callable(factory):
+        return JSONResponse(status_code=503, content={"ok": False, "error": "База ERP не настроена"})
+    try:
+        background, counts = background_health(now, factory())
+    except Exception:  # noqa: BLE001 - наружу уходит только короткий текст, без стека и адреса БД
+        return JSONResponse(status_code=503, content={"ok": False, "error": "База данных недоступна"})
+    body = {
+        **operations_api.background_payload(background, counts),
+        "service": "erp-next",
+        "tls_exceptions": operations_api.tls_exceptions(request),
+    }
+    return JSONResponse(status_code=200 if background.ok else 503, content=body)
 
 
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"

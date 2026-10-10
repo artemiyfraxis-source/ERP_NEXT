@@ -117,6 +117,26 @@ def pin_reveal(args: argparse.Namespace, sessions: sessionmaker[Session]) -> Non
         print("Режим «узнать пароль» ВЫКЛЮЧЕН — вход только по PIN.")
 
 
+CONSOLE_ACTOR_NAME = "Консоль сервера"
+
+
+def release_login(args: argparse.Namespace, sessions: sessionmaker[Session]) -> None:
+    """Audit U09 emergency path: lift a login lock from the server console when no administrator can sign in."""
+    from uuid import UUID
+
+    from app.modules.identity.application import release_login_locks
+    from app.modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork
+    from app.shared.clock import moscow_now
+    from app.shared.identity import Actor
+
+    if bool(args.login) == bool(args.all):
+        raise SystemExit("Pass a login, or --all to lift every login lock")
+    actor = Actor(id=UUID(int=0), name=CONSOLE_ACTOR_NAME, department="Система")
+    released = release_login_locks(actor, moscow_now(), SqlAlchemyIdentityUnitOfWork(sessions), login=args.login or None)
+    target = f"«{args.login}»" if args.login else "все"
+    print(f"Блокировки входа сняты ({target}): {released}. Запись — в системном журнале.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Administer ERP Next Identity")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -136,6 +156,9 @@ def main() -> None:
     )
     reveal = subparsers.add_parser("pin-reveal", help="«узнать PIN при первом входе» (pinRevealOn/Off)")
     reveal.add_argument("state", choices=("on", "off"))
+    release = subparsers.add_parser("release-login", help="lift a login lock (one account, or --all)")
+    release.add_argument("login", nargs="?", default="")
+    release.add_argument("--all", action="store_true", help="every login lock: accounts, addresses, the overall count")
     args = parser.parse_args()
 
     database_url = os.getenv("ERP_DATABASE_URL")
@@ -148,6 +171,8 @@ def main() -> None:
             create_user(args, sessions)
         elif args.command == "pin-reveal":
             pin_reveal(args, sessions)
+        elif args.command == "release-login":
+            release_login(args, sessions)
     finally:
         engine.dispose()
 
