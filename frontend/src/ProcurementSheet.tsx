@@ -49,8 +49,9 @@ export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } 
     procurementApi.meta().then((meta) => setStatuses(meta.statuses)).catch(() => undefined);
   }, []);
 
-  /** Свежая строка после правки в ячейке — на её место в листе, без перезагрузки страниц. */
-  const replaceLine = (saved: ProcurementLine) => setLines((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+  /** Свежая строка после правки в ячейке — на её место в листе, без перезагрузки страниц. Слияние, а не замена: ответ
+      правки не несёт того, что лист читает одним запросом на список (цель, «без ГРН», файлы разрешения и качества). */
+  const replaceLine = (saved: ProcurementLine) => setLines((current) => current.map((item) => (item.id === saved.id ? { ...item, ...saved } : item)));
 
   /** 409: строку уже меняли — перечитываем именно её (поиск по System ID, затем по id среди найденных). */
   async function reloadLine(stale: ProcurementLine) {
@@ -71,7 +72,7 @@ export function ProcurementSheetView({ buyerName = "" }: { buyerName?: string } 
 
   return (
     <section className="panel table-panel procurement-sheet">
-      <div className="panel-heading"><h2>Весь лист закупки</h2><span>Все статусы и закупщики · в своих строках правятся «Комментарий» и «Ожид. дата»</span></div>
+      <div className="panel-heading"><h2>Весь лист закупки</h2><span>Все статусы и закупщики · в своих строках правятся «Комментарий», DATASHEET и «Ожид. дата»</span></div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <DataTable
         label="Лист закупки"

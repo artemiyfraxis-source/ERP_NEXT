@@ -575,11 +575,11 @@ it("hides the retired substitution and quality-document fields on every stage", 
     menus[id] = rowActionNames(id);
   }
   // «Готов к запросу» стоит в блоке «В работе» с тем же меню; ручного «На согласование» нет нигде.
-  expect(menus["REQ-B"]).toEqual(["Со склада", "Прослеживаемость, раздробить…", "Есть на складе, без ГРН", "Отменить строку"]);
+  expect(menus["REQ-B"]).toEqual(["Со склада", "Документы, прослеживаемость…", "Есть на складе, без ГРН", "Отменить строку"]);
   for (const items of Object.values(menus)) {
     expect(items.filter((item) => /замен(а|у)(?! счёт)|качества|разрешен|согласован/i.test(item))).toEqual([]);
   }
-  await pickRowAction("REQ-A", /Прослеживаемость/);
+  await pickRowAction("REQ-A", /прослеживаемость/i);
   expect(await screen.findByLabelText("Изготовитель")).toBeInTheDocument();
   expect(screen.queryByLabelText("№ док. качества")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Тип док.")).not.toBeInTheDocument();
@@ -1350,7 +1350,7 @@ it("saves traceability of an own line: maker, country, standard; the retired qua
 
   render(<ProcurementPage />);
   // «Готов к запросу» — строка блока «В работе»: прослеживаемость раскрывается под ней.
-  await pickRowAction("REQ-1", "Прослеживаемость, раздробить…");
+  await pickRowAction("REQ-1", "Документы, прослеживаемость…");
   fireEvent.change(await screen.findByLabelText("Изготовитель"), { target: { value: "Molex" } });
   fireEvent.change(screen.getByLabelText("Стандарт"), { target: { value: "ГОСТ 23587-96" } });
   expect(screen.queryByLabelText("Тип док.")).not.toBeInTheDocument();
@@ -1362,6 +1362,55 @@ it("saves traceability of an own line: maker, country, standard; the retired qua
     version: 3, manufacturer: "Molex", country: "", quality_document_type: "Паспорт", quality_document_number: "П-17",
     quality_document_date: "2026-09-01", standard: "ГОСТ 23587-96",
   }));
+});
+
+it("line card: saves DATASHEET, attaches a permit and a quality file, and the quality file turns «Док. качества» to «Да»", async () => {
+  const own: ProcurementLine = { ...line, status: "В работе", buyer: "Закупщик", quality_document: "Нет", datasheet: null, permit_files: [], quality_files: [] };
+  const quality = { id: "f2", kind: "quality", file_name: "Паспорт.pdf", url: "/api/procurement/files/f2", uploaded_by: "Закупщик", uploaded_at: "2026-10-09T10:00:00+03:00" };
+  const permit = { ...quality, id: "f1", kind: "permit", file_name: "Разрешение.pdf", url: "/api/procurement/files/f1" };
+  const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [own] });
+    if (path.endsWith("/datasheet") && init?.method === "PATCH") {
+      sent.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ line: { ...own, permit_files: undefined, quality_files: undefined, datasheet: "https://example.com/ds.pdf", version: 4 } });
+    }
+    if (path === `/api/procurement/${own.id}/files` && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      sent.push({ path, body: { kind: body.kind, file_name: body.file_name } });
+      return body.kind === "permit"
+        ? json({ file: permit, line: { ...own, datasheet: "https://example.com/ds.pdf", version: 4, permit_files: [permit] } })
+        : json({ file: quality, line: { ...own, datasheet: "https://example.com/ds.pdf", version: 5, quality_document: "Да", permit_files: [permit], quality_files: [quality] } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await pickRowAction("REQ-1", "Документы, прослеживаемость…");
+  const card = within(await screen.findByRole("form", { name: "Документы REQ-1" }));
+  expect(card.getByText("Документ качества · нужен: Нет")).toBeInTheDocument();
+  expect(card.getAllByText("нет файла")).toHaveLength(2);
+
+  fireEvent.change(card.getByLabelText("DATASHEET"), { target: { value: " https://example.com/ds.pdf " } });
+  fireEvent.click(card.getByRole("button", { name: "Сохранить DATASHEET" }));
+  expect(await screen.findByText("REQ-1: DATASHEET сохранён")).toBeInTheDocument();
+  expect(card.getByRole("button", { name: "Сохранить DATASHEET" })).toBeDisabled();
+
+  const pdf = (name: string) => new File(["%PDF"], name, { type: "application/pdf" });
+  fireEvent.change(card.getByLabelText("Файл разрешения REQ-1"), { target: { files: [pdf("Разрешение.pdf")] } });
+  expect(await card.findByRole("link", { name: "Разрешение.pdf" })).toHaveAttribute("href", "/api/procurement/files/f1");
+  fireEvent.change(card.getByLabelText("Документ качества REQ-1"), { target: { files: [pdf("Паспорт.pdf")] } });
+  expect(await card.findByRole("link", { name: "Паспорт.pdf" })).toHaveAttribute("href", "/api/procurement/files/f2");
+  expect(screen.getByText("REQ-1: документ качества «Паспорт.pdf» приложен · «Док. качества»: Да")).toBeInTheDocument();
+  expect(card.getByText("Документ качества · 1 · нужен: Да")).toBeInTheDocument();
+  expect(card.getAllByText("Приложить ещё")).toHaveLength(2);
+  expect(sent).toEqual([
+    { path: `/api/procurement/${own.id}/datasheet`, body: { version: 3, datasheet: "https://example.com/ds.pdf" } },
+    { path: `/api/procurement/${own.id}/files`, body: { kind: "permit", file_name: "Разрешение.pdf" } },
+    { path: `/api/procurement/${own.id}/files`, body: { kind: "quality", file_name: "Паспорт.pdf" } },
+  ]);
 });
 
 const UPLOADED = {
@@ -2154,6 +2203,10 @@ it("«Готово · без ГРН»: «Привязать ГРН» only on a l
   const statusOf = (id: string) => screen.getByText(id).closest("tr")!.querySelector(".status-cell")!.textContent;
   expect(statusOf("REQ-1")).toBe("Принятобез ГРН");
   expect(statusOf("REQ-2")).toBe("Принято");
+  // Заголовок заказа тоже говорит, что в нём есть строка без ГРН.
+  const chip = () => screen.getByRole("region", { name: "Заказы: Принято за 30 дней" }).querySelector(".order-chip");
+  expect(chip()?.textContent).toBe("Принято · без ГРН");
+  expect(chip()).toHaveClass("tone-info");
 
   await pickRowAction("REQ-1", "Привязать ГРН");
   expect(await screen.findByText(/Без ГРН: 2 шт — выберите партию ниже/)).toBeInTheDocument();
@@ -2167,4 +2220,5 @@ it("«Готово · без ГРН»: «Привязать ГРН» only on a l
   expect(await screen.findByText("REQ-1: ГРН ГРН-2 привязан, резерв 2 шт")).toBeInTheDocument();
   await waitFor(() => expect(rowActionNames("REQ-1")).not.toContain("Привязать ГРН"));
   expect(screen.queryByText(/Без ГРН: 2 шт/)).not.toBeInTheDocument();
+  expect(chip()?.textContent).toBe("Принято");
 });
