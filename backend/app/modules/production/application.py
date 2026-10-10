@@ -87,6 +87,11 @@ class Absence:
     from_date: date
     to_date: date
     kind: str
+    # Written from a registered leave request (identity/leave.py); None — the master's own row.
+    leave_request_id: UUID | None = None
+
+
+ABSENCE_KINDS = frozenset({"Отпуск", "Больничный", "Отгул", "Командировка", "Учёба"})
 
 
 class ProductionRepository(Protocol):
@@ -111,6 +116,7 @@ class CalendarRepository(Protocol):
     def absences(self) -> Sequence[Absence]: ...
     def shift(self) -> WorkShift: ...
     def replace(self, holidays: frozenset[date], absences: tuple[Absence, ...], shift: WorkShift) -> None: ...
+    def replace_leave_absences(self, absences: tuple[Absence, ...]) -> int: ...
 
 
 class SkillRepository(Protocol):
@@ -846,13 +852,25 @@ def set_production_cancelled(command: SetProductionCancelledCommand, uow: UnitOf
 def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: UnitOfWork) -> None:
     with uow:
         operators = {operator.id for operator in uow.operators.list() if operator.active}
-        for absence in command.absences:
+        # A screen that sends the leave-request absences back (they are listed with the master's) does not turn them
+        # into the master's rows: the same person, period and kind as a leave row is that row.
+        from_leave = {
+            (item.operator_id, item.from_date, item.to_date, item.kind)
+            for item in uow.calendar.absences() if item.leave_request_id is not None
+        }
+        manual = tuple(
+            absence for absence in command.absences
+            if absence.leave_request_id is None
+            and (absence.operator_id, absence.from_date, absence.to_date, absence.kind) not in from_leave
+        )
+        for absence in manual:
             if absence.operator_id not in operators:
                 raise ProductionValidationError("Оператора нет в справочнике сотрудников")
             if absence.to_date < absence.from_date:
                 raise ProductionValidationError("Конец отсутствия раньше начала")
-            if absence.kind not in {"Отпуск", "Больничный", "Отгул", "Командировка", "Учёба"}:
+            if absence.kind not in ABSENCE_KINDS:
                 raise ProductionValidationError("Неизвестный вид отсутствия")
+        command = replace(command, absences=manual)
         uow.calendar.replace(command.holidays, command.absences, command.shift)
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=command.actor.id, event_type="production.calendar_replaced",
@@ -866,6 +884,37 @@ def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: 
         ))
         uow.commit()
 
+
+
+@dataclass(frozen=True)
+class SyncLeaveAbsencesCommand:
+    absences: tuple[Absence, ...]  # one per registered leave request, `leave_request_id` set
+    actor: Actor
+    now: datetime
+
+
+def sync_leave_absences(command: SyncLeaveAbsencesCommand, uow: UnitOfWork) -> int:
+    """Registered leave requests → the shop calendar (cabinet plan T6): the planner and «Загрузка по людям» then do not
+    put the person on those days. Idempotent: the calendar's leave rows become exactly the given set; the master's own
+    absences are never touched. Returns the number of rows changed (0 — already in step, nothing written)."""
+    for absence in command.absences:
+        if absence.leave_request_id is None:
+            raise ProductionValidationError("Отсутствие по заявлению без заявления")
+        if absence.to_date < absence.from_date:
+            raise ProductionValidationError("Конец отсутствия раньше начала")
+        if absence.kind not in ABSENCE_KINDS:
+            raise ProductionValidationError("Неизвестный вид отсутствия")
+    with uow:
+        changed = uow.calendar.replace_leave_absences(command.absences)
+        if not changed:
+            return 0
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=command.actor.id, event_type="production.leave_absences_synced",
+            actor=command.actor, occurred_at=command.now,
+            details={"absences": len(command.absences), "changed": changed},
+        ))
+        uow.commit()
+        return changed
 
 def replace_operator_skills(command: ReplaceOperatorSkillsCommand, uow: UnitOfWork) -> None:
     with uow:

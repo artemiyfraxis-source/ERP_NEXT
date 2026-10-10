@@ -256,8 +256,10 @@ function CalendarForm({ operators, close }: { operators: ProductionOperator[]; c
       {sortedAbsences.length > 0
         ? <div className="table-wrap calendar-absences"><table className="grid"><thead><tr><th>Оператор</th><th>Вид</th><th>С</th><th>По</th><th></th></tr></thead><tbody>
           {sortedAbsences.map(({ absence, index }) => <tr key={absence.id ?? `${absence.operator_id}:${absence.from_date}:${index}`}>
-            <td>{operatorName(absence.operator_id)}</td><td>{absence.kind}</td><td>{formatDay(absence.from_date)}</td><td>{formatDay(absence.to_date)}</td>
-            <td className="row-end"><button type="button" className="link-button danger-link" aria-label={`Удалить отсутствие: ${operatorName(absence.operator_id)}, ${formatDay(absence.from_date)}`} onClick={() => setAbsences((current) => current.filter((_, position) => position !== index))}>Удалить</button></td>
+            <td>{absence.operator_name ?? operatorName(absence.operator_id)}</td><td>{absence.kind}</td><td>{formatDay(absence.from_date)}</td><td>{formatDay(absence.to_date)}</td>
+            <td className="row-end">{absence.leave_request_id
+              ? <small className="cal-leave" title="Зарегистрированное заявление: снимается отзывом заявления в «Моей карточке»">по заявлению</small>
+              : <button type="button" className="link-button danger-link" aria-label={`Удалить отсутствие: ${operatorName(absence.operator_id)}, ${formatDay(absence.from_date)}`} onClick={() => setAbsences((current) => current.filter((_, position) => position !== index))}>Удалить</button>}</td>
           </tr>)}
         </tbody></table></div>
         : !busy && <small className="cal-empty">Отсутствий нет — отпуска и больничные добавляются выше.</small>}

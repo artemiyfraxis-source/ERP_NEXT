@@ -194,6 +194,15 @@ class ProductionAbsenceRow(Base):
     from_date: Mapped[date] = mapped_column(Date(), nullable=False)
     to_date: Mapped[date] = mapped_column(Date(), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    # A registered leave request (0089, identity/leave.py → workflows/leave_calendar.py); NULL — the master's own row.
+    # The master's calendar save never touches these.
+    leave_request_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_leave_requests.id", ondelete="CASCADE", name="fk_production_absences_leave_request_id"),
+        nullable=True,
+    )
+
+    __table_args__ = (Index("ux_production_absences_leave_request_id", "leave_request_id", unique=True),)
 
 
 class ProductionShiftRow(Base):
@@ -773,7 +782,9 @@ class SqlAlchemyCalendarRepository:
 
     def absences(self) -> list[Absence]:
         rows = self.session.scalars(select(ProductionAbsenceRow).order_by(ProductionAbsenceRow.from_date, ProductionAbsenceRow.id))
-        return [Absence(row.id, row.operator_id, row.from_date, row.to_date, row.kind) for row in rows]
+        return [
+            Absence(row.id, row.operator_id, row.from_date, row.to_date, row.kind, row.leave_request_id) for row in rows
+        ]
 
     def shift(self) -> WorkShift:
         row = self.session.get(ProductionShiftRow, 1)
@@ -788,14 +799,47 @@ class SqlAlchemyCalendarRepository:
             effective_seconds=row.effective_seconds,
         )
 
+    def replace_leave_absences(self, absences: tuple[Absence, ...]) -> int:
+        """The absences of registered leave requests become exactly `absences` (one row per request); the master's rows
+        are untouched. Returns how many rows were added, changed or removed."""
+        wanted = {item.leave_request_id: item for item in absences if item.leave_request_id is not None}
+        rows = {
+            row.leave_request_id: row for row in self.session.scalars(
+                select(ProductionAbsenceRow).where(ProductionAbsenceRow.leave_request_id.is_not(None))
+            )
+        }
+        changed = 0
+        for request_id, row in rows.items():
+            item = wanted.get(request_id)
+            if item is None:
+                self.session.delete(row)
+                changed += 1
+            elif (row.operator_id, row.from_date, row.to_date, row.kind) != (
+                item.operator_id, item.from_date, item.to_date, item.kind,
+            ):
+                row.operator_id, row.from_date, row.to_date, row.kind = (
+                    item.operator_id, item.from_date, item.to_date, item.kind,
+                )
+                changed += 1
+        for request_id, item in wanted.items():
+            if request_id not in rows:
+                self.session.add(ProductionAbsenceRow(
+                    id=item.id, operator_id=item.operator_id, from_date=item.from_date, to_date=item.to_date,
+                    kind=item.kind, leave_request_id=request_id,
+                ))
+                changed += 1
+        self.session.flush()
+        return changed
+
     def replace(self, holidays: frozenset[date], absences: tuple[Absence, ...], shift: WorkShift) -> None:
         self.session.execute(delete(ProductionHolidayRow))
-        self.session.execute(delete(ProductionAbsenceRow))
+        # The master's rows only: the absences of registered leave requests stay as they are.
+        self.session.execute(delete(ProductionAbsenceRow).where(ProductionAbsenceRow.leave_request_id.is_(None)))
         self.session.add_all(ProductionHolidayRow(day=day) for day in sorted(holidays))
         self.session.add_all(ProductionAbsenceRow(
             id=item.id, operator_id=item.operator_id, from_date=item.from_date,
             to_date=item.to_date, kind=item.kind,
-        ) for item in absences)
+        ) for item in absences if item.leave_request_id is None)
         def minutes(value: time) -> int:
             return value.hour * 60 + value.minute
         row = self.session.get(ProductionShiftRow, 1)

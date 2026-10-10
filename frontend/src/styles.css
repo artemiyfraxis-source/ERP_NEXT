@@ -312,7 +312,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .production-calendar .calendar-block + .calendar-block { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .production-calendar .calendar-block h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .production-calendar .form-grid { padding: 0; }
-.production-calendar .field-group { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.production-calendar .field-group, .lv-form .field-group { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
 .production-calendar .weekday-toggles { justify-self: start; margin: 0; }
 @media (min-width: 1600px) { .production-calendar .form-grid > .weekdays { grid-column: span 3; } }
 .production-calendar .calendar-add { margin-bottom: 10px; }
@@ -326,6 +326,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .holiday-chip button { border: 0; border-radius: 999px; padding: 2px 7px; color: #a33830; background: transparent; font-size: 15px; line-height: 1; }
 .holiday-chip button:hover { background: #fde8e8; }
 .cal-empty { color: var(--muted-foreground); font-size: 12.5px; }
+.cal-leave { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
 .calendar-absences .row-end { text-align: right; }
 .calendar-absences .link-button { padding: 0; }
 @media (pointer: coarse) { .weekday-toggles button, .holiday-chip button { min-height: 40px; min-width: 40px; } }
@@ -2579,6 +2580,42 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .ec-now { margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: #fdf3d8; color: #8a5a00; font-size: 11px; font-weight: 600; }
 .ec-body .link-button { padding: 0; font-size: 13px; font-weight: 600; }
 .ec-body > .link-button { justify-self: start; margin-top: 4px; }
+/* «Отпуска и заявления» в «Моей карточке»: норма года, форма заявления, таблицы (входящие, свои, журнал кадров) и
+   раскрытая строка с подписями и действиями. */
+.ec-tab-count { margin-left: 6px; border-radius: 999px; padding: 0 7px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 700; }
+.lv-page { display: grid; gap: 12px; align-content: start; }
+.lv-page > .panel { margin-top: 0; }
+.lv-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; padding: 12px 16px; }
+.lv-summary h2 { margin: 0; }
+.lv-balance { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; flex: 1; }
+.lv-balance div { display: flex; align-items: baseline; gap: 6px; }
+.lv-balance dt { color: var(--muted-foreground); font-size: 12.5px; }
+.lv-balance dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.lv-balance .lv-left dd { color: var(--primary); }
+.lv-block > h2:first-child, .lv-form > h2:first-child { display: flex; align-items: center; gap: 8px; padding: 12px 16px 8px; margin: 0; }
+.lv-block > .empty { padding: 0 16px 14px; }
+.lv-form .form-actions { padding: 0 20px 16px; margin-top: 0; justify-content: flex-start; }
+.lv-form .warning-inline { margin: 0 20px 10px; }
+.lv-form textarea { min-height: 42px; height: 42px; resize: vertical; }
+.lv-form .field-group .seg-tabs { justify-self: start; margin: 0; }
+.lv-days { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.lv-days strong { padding: 9px 0; color: var(--foreground); font-size: 16px; font-variant-numeric: tabular-nums; }
+.lv-page .kit-status.tone-ok { background: var(--chip-ok-bg); }
+.lv-page .kit-status.tone-info { background: var(--chip-info-bg); }
+.lv-page .kit-status.tone-neutral { background: var(--chip-neutral-bg); }
+.lv-detail { display: grid; gap: 8px; max-width: 1100px; font-size: 13px; cursor: default; }
+.lv-hash { margin-left: 6px; color: var(--muted-foreground); font-family: ui-monospace, monospace; font-size: 11px; }
+.lv-signatures { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.lv-signatures li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 4px 0; border-top: 1px solid var(--border); }
+.lv-signatures li:first-child { border-top: 0; }
+.lv-step { min-width: 7.5em; color: var(--muted-foreground); font-weight: 600; }
+.lv-signatures small { color: var(--muted-foreground); }
+.lv-comment { flex-basis: 100%; padding-left: calc(7.5em + 10px); color: var(--foreground); }
+.lv-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 10px; }
+.lv-actions label { min-width: 220px; }
+.lv-actions .lv-reason { flex: 1; max-width: 420px; }
+.lv-actions input { padding: 6px 10px; }
+@media (pointer: coarse) { .lv-actions button, .lv-form button { min-height: 40px; } }
 /* «Мои позиции»: лента заказов под группами поставщиков (OrderList) — заголовок заказа свёрнут, щелчок раскрывает
    строки; плашка статуса меняется на месте. Переключатель «Заказы: Все · Активные · Скрыть» — в заголовке блока. */
 :root { --chip-info-bg: #e5edfb; --chip-warn-bg: #fdf3d8; --chip-ok-bg: #e3f5e8; --chip-neutral-bg: #eceff0; }
