@@ -64,9 +64,23 @@ function Pull-One([string]$Kind) {
         Remove-Item -Force -ErrorAction SilentlyContinue $parts
         & scp @SshOpts "${Target}:$RemoteRoot/$Kind/$name" "$name.part"
         if ($LASTEXITCODE -ne 0) { throw "scp $name -> код $LASTEXITCODE" }
-        & scp @SshOpts "${Target}:$RemoteRoot/$Kind/$name.sha256" "$name.sha256.part"
-        if ($LASTEXITCODE -ne 0) { throw "scp $name.sha256 -> код $LASTEXITCODE" }
-        $expected = Get-Hash256 "$name.sha256.part"
+        # У старых копий (до появления .sha256) файла суммы нет — тогда сумму считает сервер (sha256sum по ssh).
+        $remoteFile = "$RemoteRoot/$Kind/$name"
+        $has = & ssh @SshOpts $Target ("test -f $remoteFile.sha256 && echo yes || echo no")
+        if ($LASTEXITCODE -ne 0) { throw "ssh test .sha256 -> код $LASTEXITCODE" }
+        if (("$has").Trim() -eq 'yes') {
+            & scp @SshOpts "${Target}:$remoteFile.sha256" "$name.sha256.part"
+            if ($LASTEXITCODE -ne 0) { throw "scp $name.sha256 -> код $LASTEXITCODE" }
+            $expected = Get-Hash256 "$name.sha256.part"
+        } else {
+            $out = & ssh @SshOpts $Target "sha256sum $remoteFile"
+            if ($LASTEXITCODE -ne 0) { throw "ssh sha256sum $name -> код $LASTEXITCODE" }
+            $token = (("$out").Trim() -split '\s+')[0]
+            if ($token -notmatch '^[0-9A-Fa-f]{64}$') { throw "sha256sum $name вернул не сумму: $out" }
+            $expected = $token.ToLower()
+            # Стандартный формат «сумма  имя», как у серверных .sha256.
+            [System.IO.File]::WriteAllText((Join-Path (Get-Location).Path "$name.sha256.part"), "$expected  $name`n", (New-Object System.Text.UTF8Encoding($false)))
+        }
         $actual = (Get-FileHash -Algorithm SHA256 -Path "$name.part").Hash.ToLower()
         if ($actual -ne $expected) {
             throw "SHA-256 $name не совпал (сервер $expected, здесь $actual), файл удалён"
