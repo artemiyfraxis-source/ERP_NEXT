@@ -6,7 +6,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 scripts=(deploy/update.sh deploy/rehearse.sh deploy/backup-loop.sh deploy/restore.sh deploy/bootstrap.sh
          backend/docker-entrypoint.sh test/deploy/run.sh test/deploy/update.test.sh test/deploy/entrypoint.test.sh
-         test/deploy/rehearse.test.sh test/deploy/stubs/docker test/deploy/stubs/pg_dump test/deploy/stubs/pg_restore)
+         test/deploy/rehearse.test.sh test/deploy/stubs/docker test/deploy/stubs/pg_dump test/deploy/stubs/pg_restore
+         test/deploy/backup.test.sh test/deploy/restore.test.sh test/deploy/restore-drill.test.sh
+         test/deploy/stubs-restore/docker test/deploy/stubs-pg/docker)
 status=0
 cd "$repo" || exit 1
 shellcheck=${SHELLCHECK:-$(command -v shellcheck || true)}

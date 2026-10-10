@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2086  # `set -- $sql` splits our own SQL into words on purpose
+# Stub of the docker CLI for test/deploy/restore.test.sh: a fake PostgreSQL server where a database is a directory
+# $STUB_STATE/dbs/<name> (files `rev` and `counts` — «table rows» lines) and a dump's content is $STUB_STATE/dump.
+# Every call goes to $STUB_LOG. The safety dump (backup bash -s) runs the real deploy/backup-loop.sh with the
+# pg_dump/pg_restore stubs. Knobs: STUB_HEAD (alembic head of the image), STUB_RESTORE_RC (pg_restore -d fails after
+# a partial restore), STUB_MUTATE_SOURCE (pg_restore -d rewrites the source file), STUB_COUNT_SKEW (one row missing
+# after restore), STUB_INTEGRITY_RC, STUB_SAFETY_FAIL, STUB_RENAME_FAIL, STUB_HEALTH_RC.
+set -u
+printf '%s\n' "$*" >> "$STUB_LOG"
+dbs=$STUB_STATE/dbs
+case "${1:-}" in
+  info) exit 0 ;;
+  run) printf '%s (head)\n' "${STUB_HEAD:-}"; exit 0 ;;   # docker run --rm --network none erp-next:latest alembic heads
+  compose) shift ;;
+  *) exit 0 ;;
+esac
+while [ $# -gt 0 ]; do   # compose options before the subcommand (a later -f belongs to it: pg_restore -f -)
+  case "$1" in --env-file | -f | -p) shift 2 ;; *) break ;; esac
+done
+
+host_path() { printf '%s' "$ERP_HOME/backups/${1#/backups/}"; }
+rename() {  # from to
+  [ -d "$dbs/$1" ] && [ ! -e "$dbs/$2" ] && mv "$dbs/$1" "$dbs/$2"
+}
+psql() {  # psql args... (-d db, -c sql...)
+  local db="" sqls=() one=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -d) db=$2; shift 2 ;;
+      -c) sqls+=("$2"); shift 2 ;;
+      -1) one=1; shift ;;
+      -U | -v) shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [ "$one" = 1 ]; then   # the switch: every ALTER DATABASE … RENAME in one transaction
+    [ -z "${STUB_RENAME_FAIL:-}" ] || { echo "ERROR: database is being accessed by other users" >&2; exit 1; }
+    local backup_dir sql
+    backup_dir=$(mktemp -d); cp -R "$dbs/." "$backup_dir/"
+    for sql in "${sqls[@]}"; do
+      set -- $sql   # ALTER DATABASE <from> RENAME TO <to>
+      rename "$3" "$6" || { rm -rf "$dbs"; mkdir -p "$dbs"; cp -R "$backup_dir/." "$dbs/"; rm -rf "$backup_dir"; exit 1; }
+    done
+    rm -rf "$backup_dir"; exit 0
+  fi
+  local sql
+  for sql in "${sqls[@]}"; do
+    case "$sql" in
+      "CREATE DATABASE "*) set -- $sql; [ ! -e "$dbs/$3" ] && mkdir -p "$dbs/$3" || exit 1 ;;
+      "DROP DATABASE IF EXISTS "*) set -- $sql; rm -rf "${dbs:?}/$5" ;;
+      "ALTER DATABASE "*) set -- $sql; rename "$3" "$6" || exit 1 ;;
+      *pg_terminate_backend*) ;;
+      *pg_database_size*) echo 1000 ;;
+      *"FROM pg_database"*) ls -1 "$dbs" ;;
+      *"FROM alembic_version"*) [ -f "$dbs/$db/rev" ] || exit 1; cat "$dbs/$db/rev" ;;
+      *"' || count(*) FROM public."*) [ -f "$dbs/$db/counts" ] || exit 1; cat "$dbs/$db/counts" ;;
+      *"SELECT tablename FROM pg_tables"*) [ -f "$dbs/$db/counts" ] || exit 1; cut -d' ' -f1 "$dbs/$db/counts" ;;
+      *) echo "stub psql: unknown SQL: $sql" >&2; exit 1 ;;
+    esac
+  done
+}
+pg_restore() {  # pg_restore args... <file>
+  local file target="" data=0
+  file=$(host_path "${*: -1}")
+  grep -q '^PGDMP' "$file" || { echo "pg_restore: not an archive" >&2; exit 1; }
+  while [ $# -gt 1 ]; do
+    case "$1" in -d) target=$2; shift 2 ;; --data-only) data=1; shift ;; *) shift ;; esac
+  done
+  if [ -n "$target" ]; then
+    [ -d "$dbs/$target" ] || exit 1
+    [ -z "${STUB_MUTATE_SOURCE:-}" ] || echo "PGDMP changed" >> "$file"
+    if [ -n "${STUB_RESTORE_RC:-}" ]; then head -1 "$STUB_STATE/dump/counts" > "$dbs/$target/counts"; exit "$STUB_RESTORE_RC"; fi
+    cp "$STUB_STATE/dump/rev" "$STUB_STATE/dump/counts" "$dbs/$target/"
+    if [ -n "${STUB_COUNT_SKEW:-}" ]; then awk 'NR == 1 { $2 = $2 - 1 } { print }' "$STUB_STATE/dump/counts" > "$dbs/$target/counts"; fi
+    exit 0
+  fi
+  if [ "$data" = 1 ]; then   # the COPY stream: rows of every table, alembic_version holds the revision
+    local table rows i
+    while read -r table rows; do
+      echo "COPY public.$table (x) FROM stdin;"
+      for ((i = 0; i < rows; i++)); do
+        if [ "$table" = alembic_version ]; then cat "$STUB_STATE/dump/rev"; else echo "row$i"; fi
+      done
+      printf '\\.\n'
+    done < "$STUB_STATE/dump/counts"
+    exit 0
+  fi
+  # --list: the TOC
+  while read -r table _; do echo "1; 1259 1 TABLE public $table erp"; echo "2; 0 1 TABLE DATA public $table erp"; done \
+    < "$STUB_STATE/dump/counts"
+}
+
+case "$*" in
+  "exec -T db pg_isready"* | "exec -T backup true" | "up -d db backup") exit 0 ;;
+  "exec -T db psql "*) shift 3; psql "$@"; exit $? ;;
+  "exec -T backup pg_restore "*) shift 3; pg_restore "$@"; exit $? ;;
+  "exec -T -e BACKUP_LOCK_HELD=1 backup bash -s -- --pre-restore "*)
+    if [ -n "${STUB_SAFETY_FAIL:-}" ]; then cat > /dev/null; exit 1; fi
+    BACKUP_ROOT=$ERP_HOME/backups BACKUP_LOCK_HELD=1 BACKUP_MIN_FREE_MB=0 bash -s -- "${@: -3}"; exit $? ;;
+  "run --rm --no-deps -T -v "*" api sh -c "*)
+    [ -z "${STUB_INTEGRITY_RC:-}" ] || exit "$STUB_INTEGRITY_RC"
+    printf '{}\n' > "${6%:/integrity}/restored.json"; exit 0 ;;   # run --rm --no-deps -T -v <dir>:/integrity
+  "stop api worker") echo stopped > "$STUB_STATE/api"; exit 0 ;;
+  "start api worker") echo running > "$STUB_STATE/api"; exit 0 ;;
+  "exec -T api python - "*) cat > /dev/null; exit "${STUB_HEALTH_RC:-0}" ;;
+  *) echo "stub docker: unknown: $*" >&2; exit 1 ;;
+esac
