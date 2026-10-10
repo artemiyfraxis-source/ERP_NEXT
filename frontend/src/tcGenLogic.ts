@@ -53,6 +53,8 @@ export type Endpoint = {
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
   label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
   pins?: Record<number, string>;
+  /** «Распиновка проверена»: подпись проверенной распиновки (pinoutCheck.ts); другая подпись — флаг снят. */
+  pinChecked?: string;
 };
 /** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
 export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };
@@ -100,11 +102,16 @@ export type GenState = {
   manualTemplates: string[];
   times: Record<string, OpTimes>;
   materialsSheet: boolean;
+  /** Свой порядок операций (ключи opKey) — «Выше/Ниже» в схеме полуфабрикатов; пусто — порядок генератора. Уходит в
+      build_config.opOrder и возвращается из него при открытии карты. */
+  opOrder: string[];
 };
 
 export type OpSpec = {
   type: string; opKey: string; label: string; side?: Side; ord?: number; epId?: string; crimpEpId?: string; crimpEpIdB?: string;
   tmplHint?: string; cat?: string; termArt?: string; firstTerm?: boolean; wireIdxs?: number[];
+  /** Карта, которую операция хочет по правилу, когда tmplHint — замена за её отсутствием (CUT_WIRE+2crimp → +1crimp). */
+  tmplWant?: string;
   strip?: { a: boolean; lenA: string; b: boolean; lenB: string }; stripCount?: number;
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
   harness?: boolean; units?: number; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
@@ -176,6 +183,30 @@ const SOLDER_CONN_MAP: Array<[RegExp, string]> = [
 ];
 
 // ── Чистые помощники ──────────────────────────────────────────────────────
+/** «1 кабель», «4 кабеля», «5 кабелей». */
+export function pluralRu(n: number, one: string, few: string, many: string) {
+  const d = n % 10, dd = n % 100;
+  return d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many;
+}
+
+/** Свой порядок операций поверх порядка генератора: операции из `order` встают на места друг друга в его порядке,
+    новые (их в `order` нет) остаются там, куда их поставил генератор. «Первая опрессовка» — у первой по новому порядку. */
+export function applyOpOrder(ops: OpSpec[], order: string[]): OpSpec[] {
+  if (!order.length) return ops;
+  const rank = new Map(order.map((key, index) => [key, index]));
+  const known = ops.filter((op) => rank.has(op.opKey)).sort((a, b) => rank.get(a.opKey)! - rank.get(b.opKey)!);
+  let next = 0;
+  const sorted = ops.map((op) => (rank.has(op.opKey) ? known[next++] : op));
+  const firstPrs = sorted.find((op) => op.firstTerm !== undefined);
+  return sorted.map((op) => (op.firstTerm === undefined ? op : { ...op, firstTerm: op === firstPrs }));
+}
+
+/** Свой порядок операций сохранённой карты (`build_config.opOrder`); нет — порядок генератора. */
+export function opOrderFromConfig(config: unknown): string[] {
+  const raw = config && typeof config === "object" ? (config as { opOrder?: unknown }).opOrder : null;
+  return Array.isArray(raw) ? raw.filter((key): key is string => typeof key === "string" && key !== "") : [];
+}
+
 export function parseDecimal_(s: unknown): number {
   return parseFloat(String(s ?? "").replace(",", "."));
 }
@@ -282,7 +313,7 @@ export function emptyState(): GenState {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null,
     },
-    selectedTemplates: {}, manualTemplates: [], times: {}, materialsSheet: false,
+    selectedTemplates: {}, manualTemplates: [], times: {}, materialsSheet: false, opOrder: [],
   };
 }
 
@@ -985,7 +1016,11 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   // ── Маршрут межплатной / сложной сборки ──
+  /** Операции в порядке генератора, а поверх — свой порядок технолога (S.opOrder). */
   function getActiveOps(): OpSpec[] {
+    return applyOpOrder(autoOps(), S.opOrder || []);
+  }
+  function autoOps(): OpSpec[] {
     if (S.tab === "coax") return getActiveOpsCoax_();
     const ops: OpSpec[] = [];
     const activeWires = activeWires_();
@@ -1014,7 +1049,7 @@ export function makeGen(D: GenData, S: GenState) {
 
     if (activeWires.length > 0) {
       const nameOf = (w: WireEntry) => { const c = getCompById(w.compId); return c ? (c.name || c.art) : "?"; };
-      const cutLabel = (ws: WireEntry[], pfx: string) => { const ns = ws.map(nameOf); return ns.length === 1 ? `${pfx} — ${ns[0]}` : `${pfx} — ${ns.length} кабелей`; };
+      const cutLabel = (ws: WireEntry[], pfx: string) => { const ns = ws.map(nameOf); return ns.length === 1 ? `${pfx} — ${ns[0]}` : `${pfx} — ${ns.length} ${pluralRu(ns.length, "кабель", "кабеля", "кабелей")}`; };
       const splAtCut = spliceStripAtCut_();
       const splLen = (S.spl.strip || "").trim() || "—";
       const tinIdx = tinWireIndices_();
@@ -1077,7 +1112,7 @@ export function makeGen(D: GenData, S: GenState) {
           const terms = artOf(epA) === artOf(epB) ? artOf(epA) : `${artOf(epA)} / ${artOf(epB)}`;
           ops.push({ type: "cutWireCrimp", opKey: key, side: "A", crimpEpId: epA.id, crimpEpIdB: epB.id,
             label: cutLabel(ws, `Резка с обжимом А и В (${terms})`),
-            wireIdxs: ws.map((w) => w.idx), tmplHint: hasTemplateCode_(CRIMP_BOTH_CODE_) ? CRIMP_BOTH_CODE_ : "CUT_WIRE+1crimp", strip });
+            wireIdxs: ws.map((w) => w.idx), tmplHint: hasTemplateCode_(CRIMP_BOTH_CODE_) ? CRIMP_BOTH_CODE_ : "CUT_WIRE+1crimp", tmplWant: CRIMP_BOTH_CODE_, strip });
         } else if (g.crimp.length === 1) {
           const crimpSide = g.crimp[0], crimpEp = crimpEpOf(crimpSide)!;
           const term = getCompById(crimpEp.termId)!;
@@ -1339,7 +1374,7 @@ export function makeGen(D: GenData, S: GenState) {
       ...coaxDia_(rec), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
       lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType,
     } : null);
-    const ops = getActiveOpsCoax_().map((spec) => {
+    const ops = getActiveOps().map((spec) => {
       const row = opRow(spec);
       return { type: spec.type, side: spec.side || "", units: spec.units || 1, templateId: row.templateId,
         opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine };
@@ -1359,7 +1394,7 @@ export function makeGen(D: GenData, S: GenState) {
         sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : ""),
         sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : ""),
       },
-      ops,
+      ops, ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };
   }
   function applyTwistAllowance_(wires: Array<{ art: string; name: string; length: number }>, tw: { enabled: boolean; pitch: string; wireDia: string; mode: string; pairs: number[][]; wireIndices: number[] }) {
@@ -1475,6 +1510,7 @@ export function makeGen(D: GenData, S: GenState) {
     return {
       assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
       bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
+      ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };
   }
   function bomWarnings_(cfg: Record<string, unknown>) {

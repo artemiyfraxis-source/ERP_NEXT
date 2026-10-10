@@ -12,6 +12,7 @@ import {
   type ProductionPlanRow,
   type ProductionTask,
 } from "./api";
+import { StageChangeDialog } from "./StageChangeDialog";
 import { canAct } from "./navigation";
 import { PeopleLoadGrid } from "./PeopleLoad";
 import { EMPTY, formatDate, formatDayMonth, formatMoment } from "./format";
@@ -123,6 +124,12 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     }
   }
 
+  /** Ручной этап — после подтверждения в окне смены этапа; ошибка уходит в само окно (409, причина назад). */
+  async function applyStage(project: string, kb: string, value: string, reason: string) {
+    await productionPlanApi.addEvent({ project, kind: "stage", blocker: "", text: "", deadline: null, item_index: kb, value, reason });
+    await reload();
+  }
+
   async function addMark(mark: SheetMark) {
     await addEvent({ project: mark.project, kind: "mark", blocker: "", text: mark.text ?? "", deadline: null, field: mark.field, value: mark.value ?? "" });
   }
@@ -156,7 +163,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
         <div className="plan-drawer-scrim" onClick={() => setSelectedProject("")} />
         <div className="plan-drawer-body">
         <button className="link-button plan-details-close" onClick={() => setSelectedProject("")}>✕ Закрыть</button>
-        <PlanDetails row={selected} blockers={data.blockers} stages={data.stages} reviewValues={data.review_values} canEdit={canEdit} busy={busy} addEvent={addEvent}
+        <PlanDetails row={selected} blockers={data.blockers} stages={data.stages} reviewValues={data.review_values} canEdit={canEdit} busy={busy} addEvent={addEvent} applyStage={applyStage}
           openProjectCard={openProjectCard && hasCard(selected) ? () => openProjectCard(selected.project) : undefined}
           noCard={Boolean(openProjectCard) && !hasCard(selected)} />
         </div>
@@ -174,7 +181,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   </section>;
 }
 
-function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEvent, openProjectCard, noCard = false }: {
+function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEvent, applyStage, openProjectCard, noCard = false }: {
   row: ProductionPlanRow;
   openProjectCard?: () => void;
   /** У проекта нет карточки в «Проектах» — честная строка и переход к ним. */
@@ -185,7 +192,9 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
   canEdit: boolean;
   busy: boolean;
   addEvent: (payload: Parameters<typeof productionPlanApi.addEvent>[0]) => Promise<void>;
+  applyStage: (project: string, kb: string, value: string, reason: string) => Promise<void>;
 }) {
+  const [stagePick, setStagePick] = useState<{ kb: string; current: string; value: string } | null>(null);
   const [kind, setKind] = useState<"note" | "block" | "unblock" | "deadline">("note");
   const [blocker, setBlocker] = useState(blockers[0] ?? "");
   const [text, setText] = useState("");
@@ -217,16 +226,21 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
     <div className="plan-kit-stages">{row.kits.map((item) => <KitMarkEditor
       key={item.item_index} project={row.project} item={item} stages={stages}
       reviewValues={reviewValues} canEdit={canEdit} busy={busy} addEvent={addEvent}
+      pickStage={(value) => setStagePick({ kb: item.item_index, current: item.status, value })}
     />)}
       {/* A project without KBs takes its stage from a journal stage mark with an empty KB. */}
       {!row.kits.length && canEdit && stages.includes(row.stage) && <div className="plan-kit-mark">
         <strong>Без КБ</strong>
         <label>Этап проекта<select aria-label="Этап проекта" value={row.stage_manual ? row.stage : "авто"} disabled={busy}
-          onChange={(event) => void addEvent({ project: row.project, kind: "stage", blocker: "", text: "", deadline: null, item_index: "", value: event.target.value })}>
+          onChange={(event) => setStagePick({ kb: "", current: row.stage, value: event.target.value })}>
           <option value="авто">Авто · {row.stage}</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}
         </select></label>
       </div>}
     </div>
+    {stagePick && <StageChangeDialog project={row.project} kb={stagePick.kb} current={stagePick.current} value={stagePick.value}
+      loadPreview={() => productionPlanApi.stagePreview(row.project, stagePick.value, stagePick.kb)}
+      apply={async (reason) => { await applyStage(row.project, stagePick.kb, stagePick.value, reason); setStagePick(null); }}
+      onClose={() => setStagePick(null)} />}
     {row.supply ? <section><h3>Снабжение</h3><p>Всего {row.supply.total}: склад {row.supply.stock}, в пути {row.supply.transit}, в закупке {row.supply.buying}, в заявках {row.supply.request}.</p>
       <p>Давальческое: {row.supply.customer_supplied ? `${row.supply.customer_supplied_stock} из ${row.supply.customer_supplied} пришло` : "нет"}</p>
       {row.supply.eta && row.supply.stock < row.supply.total && <small>Всё будет к {row.supply.eta}</small>}</section>
@@ -243,7 +257,7 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
   </aside>;
 }
 
-function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, addEvent }: {
+function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, addEvent, pickStage }: {
   project: string;
   item: ProductionPlanRow["kits"][number];
   stages: string[];
@@ -251,6 +265,7 @@ function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, add
   canEdit: boolean;
   busy: boolean;
   addEvent: (payload: Parameters<typeof productionPlanApi.addEvent>[0]) => Promise<void>;
+  pickStage: (value: string) => void;
 }) {
   const currentReview = item.review?.value ?? "не проверена";
   const [review, setReview] = useState(currentReview);
@@ -260,7 +275,7 @@ function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, add
     setReviewText(item.review?.text ?? "");
   }, [project, item.item_index, currentReview, item.review?.text]);
 
-  function payload(kind: "stage" | "tcReview", value: string, text = "") {
+  function payload(kind: "tcReview", value: string, text = "") {
     return { project, kind, blocker: "", text, deadline: null, item_index: item.item_index, value } as const;
   }
 
@@ -269,7 +284,7 @@ function KitMarkEditor({ project, item, stages, reviewValues, canEdit, busy, add
     <span>{item.tc ? "ТК выдана" : "ТК нет"} · {item.kit ? "набрано" : "не набрано"}</span>
     {canEdit ? <>
       <label>Этап<select aria-label={`Этап ${item.item_index}`} value={item.manual ? item.status : "авто"} disabled={busy}
-        onChange={(event) => void addEvent(payload("stage", event.target.value))}>
+        onChange={(event) => pickStage(event.target.value)}>
         <option value="авто">Авто · {item.status}</option>{stages.map((stage) => <option key={stage}>{stage}</option>)}
       </select></label>
       <label>Проверка ТК<select aria-label={`Проверка ТК ${item.item_index}`} value={review} disabled={busy}

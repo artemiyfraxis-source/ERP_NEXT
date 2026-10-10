@@ -254,6 +254,63 @@ export function manualRoute(state: ManualState, partQty: number): { route: Route
   };
 }
 
+/** Название длиннее этого — не для квадратика схемы: генератор называет блоки полуфабрикатом целиком («Разъём … смонтирован
+    (ст. А, 4 пров.) (со свивкой) (маркирован)»), и соседние блоки читаются одинаково. */
+const LONG_TITLE = 40;
+
+/** Короткое название операции: до « — » («Монтаж в разъём А1 — I-DS1071» → «Монтаж в разъём А1»). */
+export function shortOpName(label: string): string {
+  return label.split(" — ")[0].trim();
+}
+
+/** Короткое название блока по его операциям: «Монтаж в разъём А1 · свивка · маркировка». */
+export function shortBlockName(labels: string[]): string {
+  const parts = [...new Set(labels.map(shortOpName).filter(Boolean))];
+  return parts.map((part, index) => (index ? part.charAt(0).toLowerCase() + part.slice(1) : part)).join(" · ");
+}
+
+/** Название блока для схемы и списков: своё, пока короткое; длинное — коротко по операциям блока, а целиком — `full`
+    (подсказка). Итоговый с операциями, названный изделием (или без названия), — по своим операциям, а изделие пишется
+    строкой «итог: …»; пустой итоговый — изделие, пустой блок — «Блок N» (как `blockTitle`). */
+export function manualShortTitle(block: Route["blocks"][number], ops: RouteOp[], finalName = ""): { title: string; full: string } {
+  const full = blockTitle(block, ops, finalName);
+  const byOps = () => shortBlockName([...block.ops].sort((a, b) => a - b).map((position) => ops.find((op) => op.position === position)?.label ?? ""));
+  const product = block.final && (!block.name.trim() || block.name.trim() === finalName.trim());
+  if (product && block.ops.length) return { title: byOps() || full, full };
+  if (full.length <= LONG_TITLE || !block.ops.length || product) return { title: full, full };
+  return { title: byOps() || full, full };
+}
+
+/** Блок `from` ведёт (через стрелки) в блок `to`. */
+function reaches(state: Pick<ManualState, "edges">, from: string, to: string): boolean {
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    const key = queue.shift()!;
+    if (key === to) return true;
+    state.edges.filter((edge) => edge.from === key && !seen.has(edge.to)).forEach((edge) => { seen.add(edge.to); queue.push(edge.to); });
+  }
+  return false;
+}
+
+/** «Выше» (−1) / «Ниже» (+1): блок меняется местами с соседним по порядку схемы — вместе с ним сдвигаются номера его
+    операций. Блок не встаёт выше своего входа (и ниже блока, который его берёт): тогда схема прежняя и слова почему. */
+export function moveBlock(state: ManualState, key: string, dir: -1 | 1, title: (key: string) => string = (item) => item): EdgeEdit {
+  const order = blockOrder(state);
+  const at = order.indexOf(key), other = order[at + dir];
+  if (at < 0 || !other) return { state, problem: null };
+  if (dir < 0 && reaches(state, other, key)) {
+    return { state, problem: `блок «${title(key)}» берёт полуфабрикат блока «${title(other)}» — выше него он встать не может` };
+  }
+  if (dir > 0 && reaches(state, key, other)) {
+    return { state, problem: `блок «${title(other)}» берёт полуфабрикат блока «${title(key)}» — ниже него этот блок встать не может` };
+  }
+  const next = [...order];
+  next[at] = other; next[at + dir] = key;
+  const rank = new Map(next.map((item, index) => [item, index]));
+  return { state: { ...state, blocks: [...state.blocks].sort((a, b) => rank.get(a.key)! - rank.get(b.key)!) }, problem: null };
+}
+
 /** Название блока на экране: своё; итоговый — наименование изделия; иначе — по последней операции, пустой — «Блок N». */
 export function manualBlockTitle(state: ManualState, key: string, finalName = ""): string {
   const { route, ops } = manualRoute(state, 1);
@@ -412,6 +469,18 @@ export function addLibraryOp(state: ManualState, card: LibraryCard, opRecs: OpRe
 
 export function addCustomOp(state: ManualState, blockKey = state.selected): ManualState {
   return withOp(state, blank(state.nextSeq), blockKey);
+}
+
+/** «Перенести в блок…»: операция уходит из своего блока в конец блока `key`. */
+export function moveOpToBlock(state: ManualState, seq: number, key: string): ManualState {
+  if (!state.blocks.some((block) => block.key === key) || !state.ops.some((op) => op.seq === seq)) return state;
+  return {
+    ...state,
+    blocks: state.blocks.map((block) => {
+      const ops = block.ops.filter((item) => item !== seq);
+      return block.key === key ? { ...block, ops: [...ops, seq] } : ops.length === block.ops.length ? block : { ...block, ops };
+    }),
+  };
 }
 
 /** Значение поля КД для сравнения (JSON: строки, комплектующие, поля генератора — одинаково). */

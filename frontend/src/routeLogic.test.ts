@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import {
-  deriveRoute, documentMinutes, mergeBlocks, moveOp, parseRoute, routeChain, routeLayout, routePayload, routeProblem, routeTotals,
+  blockCodes, blockTitle, deriveRoute, documentMinutes, mergeBlocks, moveBlock, moveOp, parseRoute, routeChain, routeLayout, routePayload, routeProblem, routeTotals,
   splitBlock, type Route, type RouteOp,
 } from "./routeLogic";
 
@@ -137,4 +137,33 @@ it("takes operation norms from the stored ETK only while it was built from the s
   expect(documentMinutes(document, ["cutWire"])).toBeNull();
   expect(documentMinutes(document, ["cutWire", "insTerm"])).toBeNull();
   expect(documentMinutes(null, ["cutWire"])).toBeNull();
+});
+
+it("names the final block after its own last operation when asked; an empty final block is the product", () => {
+  const ops = [op(1, "cutWire", "Резка"), op(2, "insTerm", "Монтаж В1")];
+  expect(blockTitle(block("b2", [2], true), ops, "Кабель USB")).toBe("Кабель USB");
+  expect(blockTitle(block("b2", [2], true), ops, "Кабель USB", false)).toBe("Монтаж В1");
+  expect(blockTitle(block("b2", [], true), ops, "Кабель USB", false)).toBe("Кабель USB");
+  expect(blockTitle({ ...block("b2", [2], true), name: "Готовый кабель" }, ops, "Кабель USB", false)).toBe("Готовый кабель");
+});
+
+it("lists the card codes of a block once each, in operation order, with the replaced-card notes", () => {
+  const ops: RouteOp[] = [
+    { ...op(1, "cutWireCrimp"), code: "CUT_WIRE+1crimp", codeNote: "вместо CUT_WIRE+2crimp — нет карты" },
+    { ...op(2, "insTerm"), code: "INS_terminal_2.50" }, { ...op(3, "insTerm"), code: "INS_terminal_2.50" }, op(4, "twist"),
+  ];
+  expect(blockCodes(block("b1", [3, 1, 2, 4]), ops)).toEqual({ codes: "CUT_WIRE+1crimp · INS_terminal_2.50", note: "вместо CUT_WIRE+2crimp — нет карты" });
+  expect(blockCodes(block("b4", [4]), ops)).toEqual({ codes: "", note: "" });
+});
+
+it("moves a block up or down in the ETK order: the two blocks swap their places, blocks and arrows stay", () => {
+  const route: Route = { blocks: [block("b1", [1]), block("b2", [2, 3]), block("b4", [4]), block("b5", [5], true)],
+    edges: [{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b4", per_unit: 1 }, { from: "b4", to: "b5", per_unit: 1 }] };
+  const up = moveBlock(route, "b4", -1, 5)!;
+  expect(up.order).toEqual([1, 4, 2, 3, 5]);
+  expect(up.route.blocks.map((item) => [item.key, item.ops])).toEqual([["b1", [1]], ["b4", [2]], ["b2", [3, 4]], ["b5", [5]]]);
+  expect(arrows(up.route).sort()).toEqual(arrows(route).sort());
+  expect(moveBlock(route, "b1", 1, 5)!.order).toEqual([2, 3, 1, 4, 5]);
+  expect(moveBlock(route, "b1", -1, 5)).toBeNull();
+  expect(moveBlock(route, "b5", 1, 5)).toBeNull();
 });

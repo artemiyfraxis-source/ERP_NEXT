@@ -56,3 +56,24 @@ def test_issued_kit_does_not_hold_back_later_stages():
     facts = _kit_facts(FulfillmentStatus.ISSUED)
     facts["stock"].add(key)
     assert project_stage("33МФ.2", ("КБ1",), facts).status == "КБ на складе"
+
+
+def test_issued_techcard_keeps_the_stages_a_manual_pick_skipped():
+    from datetime import datetime
+
+    from app.modules.production.plan import KitMark
+    from app.modules.techcards.project_cards import ProjectTechcard
+
+    now = datetime(2026, 10, 10, 12, 0)
+    card = ProjectTechcard.create(
+        project="708К.4", item_index="КБ1", product_name="Жгут", source_calculation="", deadline=None, now=now,
+    ).rebuild({"operations": [{"code": "10", "connector": "A", "name": "Резка"}]}, now).issue(now)
+    key = kit_stage_key("708К.4", "КБ1")
+    mark = KitMark(stage="В работе", review=None, skipped=("ТК готова", "КБ набрана"))
+
+    facts, marks = kit_stage_facts(cards=(card,), tasks=(), fulfillment=(), goods=(), marks={key: mark})
+
+    assert key in facts["tc"]
+    assert marks[key].skipped == ("ТК готова", "КБ набрана")
+    assert marks[key].stage == "В работе"
+    assert marks[key].review is not None and marks[key].review.text == "ТК выдана"

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
+import { pressBuild } from "./test/pressBuild";
 
 /* «Ручная сборка» (владелец 04.10, схема первой — 05.10): кастомный провод, под который типовые генераторы не подходят. */
 const card: ProjectTechcard = {
@@ -136,9 +137,9 @@ it("draws the diagram first: adds a block, puts library operations into it by a 
   expect(within(diagram()).getAllByRole("listitem")).toHaveLength(2);
   expect(blockButton(/Провод с лепестком/)).toHaveTextContent("1–2");
   // Число штук — «N шт» на стрелке; нажатие открывает поле.
-  fireEvent.click(screen.getByTitle("Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»"));
-  expect(screen.getByLabelText("Штук — Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»")).toHaveValue("1");
-  fireEvent.change(screen.getByLabelText("Штук — Штук из «Провод с лепестком» на один «Провод нетиповой 300мм»"), { target: { value: "2" } });
+  fireEvent.click(screen.getByTitle("Штук из «Провод с лепестком» на один «Пайка экрана»"));
+  expect(screen.getByLabelText("Штук — Штук из «Провод с лепестком» на один «Пайка экрана»")).toHaveValue("1");
+  fireEvent.change(screen.getByLabelText("Штук — Штук из «Провод с лепестком» на один «Пайка экрана»"), { target: { value: "2" } });
   const order = screen.getByRole("group", { name: "Порядок операций" });
   expect(within(order).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
     expect.stringMatching(/^1Резка/), expect.stringMatching(/^2Опрессовка терминалов \(А\)/), expect.stringMatching(/^3Пайка экрана/),
@@ -246,6 +247,9 @@ const builtCard: ProjectTechcard = {
 it("opens a card built by hand on its tab with its blocks, keeps them across tabs and asks before building it typically", async () => {
   const onBuild = mount({ card: builtCard });
   expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
+  // Собранная карта открывается схемой; панель блока — по нажатию на блок.
+  expect(screen.queryByLabelText("Название операции 1")).not.toBeInTheDocument();
+  fireEvent.click(blockButton(/Провод с лепестком/));
   expect(screen.getByLabelText("Название операции 1")).toHaveValue("Резка");
   unfold(2);
   expect(screen.getByLabelText("Подготовка, мин: Пайка экрана")).toHaveValue("5");
@@ -256,15 +260,16 @@ it("opens a card built by hand on its tab with its blocks, keeps them across tab
   expect(screen.queryByLabelText("Название операции 1")).not.toBeInTheDocument();
   // Типовая вкладка по карте, собранной вручную, — только после подтверждения.
   const confirm = vi.spyOn(window, "confirm").mockImplementation((text) => !String(text).includes("ручной сборкой"));
-  fireEvent.click(screen.getByRole("button", { name: "Пересобрать" }));
+  pressBuild("Пересобрать");
   expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Техкарта КБ7 собрана ручной сборкой.\n\nСобрать по вкладке «Межплатная»?"));
   expect(screen.getByRole("alert")).toHaveTextContent("Сборка отменена — техкарта осталась ручной сборкой.");
   expect(onBuild).not.toHaveBeenCalled();
 
   fireEvent.click(await screen.findByText("Ручная сборка", { selector: "[role=tab]" }, { timeout: 10000 }));
+  fireEvent.click(blockButton(/Провод с лепестком/));
   expect(screen.getByLabelText("Название операции 2")).toHaveValue("Пайка экрана");
   confirm.mockImplementation(() => true);
-  fireEvent.click(screen.getByRole("button", { name: "Пересобрать" }));
+  pressBuild("Пересобрать");
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0].ops.map((op: Record<string, unknown>) => op.seq)).toEqual([4, 7]);
   expect(onBuild.mock.calls[0][0].route).toEqual({ blocks: [{ key: "b1", name: "Провод с лепестком", ops: [1, 2], final: true }], edges: [] });
@@ -402,4 +407,74 @@ it("shows block kinds, the master's check and the КД marks of operations, and 
   expect(config.ops[0]).toMatchObject({ origin: "harness:w1:CUT", edited: ["label"], label: "Резка в размер" });
   expect(config.ops[1]).toMatchObject({ origin: "harness:w1:SOLDER", kdGone: true });
   expect(config.ops[2]).not.toHaveProperty("origin");
+});
+
+/* Владелец 10.10: «как тут порядок поменять — я не могу, и выйти из раздела не могу», «редактирование пока очень неудобное». */
+/** «Провод» (резка) и «Трубка» (усадка) — входы итога; номера операций: 1 — резка, 2 — усадка. */
+async function twoBlocksWithOps() {
+  await twoBlocks();
+  fireEvent.click(screen.getByRole("button", { name: "+ Операция из библиотеки" }));
+  addFromLibrary(/^Усадка$/);
+  fireEvent.click(blockButton(PROVOD)); // библиотека остаётся открытой — теперь в «Провод»
+  addFromLibrary(/^Резка$/);
+}
+const PROVOD = /Провод(?! нетиповой)/;
+const numberOf = (name: RegExp) => blockButton(name).querySelector(".route-block-no")?.textContent;
+
+it("the block pane closes with «Готово», × and Esc and opens again on a block; the diagram stays", async () => {
+  await twoBlocks();
+  expect(screen.getByRole("region", { name: "Блок «Трубка»" })).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole("region", { name: "Блок «Трубка»" })).getByRole("button", { name: "Готово" }));
+  expect(screen.queryByRole("region", { name: /^Блок «/ })).not.toBeInTheDocument();
+  expect(blockCount()).toBe(3);
+  fireEvent.click(blockButton(/Трубка/));
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть панель блока" }));
+  expect(screen.queryByRole("region", { name: /^Блок «/ })).not.toBeInTheDocument();
+  fireEvent.click(blockButton(/Трубка/));
+  fireEvent.keyDown(blockButton(/Трубка/), { key: "Escape" });
+  expect(screen.queryByRole("region", { name: /^Блок «/ })).not.toBeInTheDocument();
+});
+
+it("↑ / ↓ on a block reorder the blocks and the operation numbers; a block cannot pass the block that takes it", async () => {
+  await twoBlocksWithOps();
+  expect([numberOf(PROVOD), numberOf(/Трубка/)]).toEqual(["1", "2"]);
+  fireEvent.click(screen.getByRole("button", { name: "Выше: блок «Трубка»" }));
+  expect([numberOf(PROVOD), numberOf(/Трубка/)]).toEqual(["2", "1"]);
+  expect(screen.getByRole("button", { name: "Выше: блок «Трубка»" })).toBeDisabled();
+  // Ниже итога блок встать не может — итог берёт его полуфабрикат: слова, схема прежняя.
+  fireEvent.click(screen.getByRole("button", { name: "Ниже: блок «Провод»" }));
+  expect(screen.getAllByRole("alert").at(-1)).toHaveTextContent("Так нельзя: блок «Провод нетиповой 300мм» берёт полуфабрикат блока «Провод» — ниже него этот блок встать не может");
+  expect([numberOf(PROVOD), numberOf(/Трубка/)]).toEqual(["2", "1"]);
+  // В панели блока — те же «Выше / Ниже».
+  fireEvent.click(within(screen.getByRole("region", { name: "Блок «Провод»" })).getByRole("button", { name: "↑ Выше" }));
+  expect([numberOf(PROVOD), numberOf(/Трубка/)]).toEqual(["1", "2"]);
+});
+
+it("keyboard on the diagram: ↑/↓ pick the neighbour block, Alt+↑/↓ move the picked one", async () => {
+  await twoBlocksWithOps();
+  fireEvent.keyDown(blockButton(PROVOD), { key: "ArrowDown" });
+  expect(screen.getByRole("region", { name: "Блок «Трубка»" })).toBeInTheDocument();
+  fireEvent.keyDown(blockButton(/Трубка/), { key: "ArrowUp", altKey: true });
+  expect(numberOf(/Трубка/)).toBe("1");
+  // В поле ввода стрелки остаются полю.
+  fireEvent.keyDown(screen.getByLabelText("Название блока"), { key: "ArrowDown" });
+  expect(screen.getByRole("region", { name: "Блок «Трубка»" })).toBeInTheDocument();
+});
+
+it("«Перенести в блок…» moves an operation to another block", async () => {
+  await twoBlocksWithOps();
+  fireEvent.click(blockButton(/Трубка/));
+  fireEvent.change(screen.getByLabelText("Перенести в блок: Усадка"), { target: { value: "b2" } });
+  expect(blockButton(/Трубка/)).toHaveTextContent("нет операций");
+  expect(blockButton(PROVOD)).toHaveTextContent("2 оп.");
+});
+
+it("a long generated block name shows short by its operations, codes first, the full name in the tooltip", async () => {
+  await twoBlocksWithOps();
+  const long = "Разъём XHP-2 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)";
+  fireEvent.change(screen.getByLabelText("Название блока"), { target: { value: long } });
+  const block = within(diagram()).getByTitle(long);
+  expect(block.querySelector(".route-block-name")).toHaveTextContent(/^Резка$/);
+  expect(block.querySelector(".route-block-code")).toHaveTextContent("CUT_WIRE_hand");
+  expect(screen.getByRole("button", { name: "Добавить вход в блок «Резка»" })).toHaveAttribute("title", "Добавить вход — новый блок, который идёт в этот");
 });

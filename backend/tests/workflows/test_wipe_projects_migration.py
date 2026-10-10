@@ -67,6 +67,10 @@ def database(tmp_path, monkeypatch):
     with engine.begin() as connection:
         connection.execute(text(
             "ALTER TABLE production_plan_events ADD COLUMN field VARCHAR(32) NOT NULL DEFAULT ''"))
+        # 0100: история ручной смены этапа.
+        connection.execute(text(
+            "ALTER TABLE production_plan_events ADD COLUMN from_value VARCHAR(64) NOT NULL DEFAULT ''"))
+        connection.execute(text("ALTER TABLE production_plan_events ADD COLUMN reason TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN stage_key VARCHAR(128)"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))

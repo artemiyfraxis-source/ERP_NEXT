@@ -11,8 +11,11 @@ export type RouteEdge = EtkRouteEdge;
 export type Route = { blocks: RouteBlock[]; edges: RouteEdge[] };
 
 /** Операция, которая попадёт в сборку: position — номер в ЭТК, key — устойчивый ключ формы, minutes — норма на партию,
-    number — номер в списке операций формы (отличается от position, когда у операции выше нет шаблона). */
-export type RouteOp = { position: number; key: string; type: string; code: string; label: string; minutes: number | null; number?: number };
+    number — номер в списке операций формы (отличается от position, когда у операции выше нет шаблона), code — код карты
+    БД.ОП, codeNote — чем выбранная карта отличается от той, что просило правило («вместо CUT_WIRE+2crimp — нет карты»). */
+export type RouteOp = {
+  position: number; key: string; type: string; code: string; label: string; minutes: number | null; number?: number; codeNote?: string;
+};
 
 export type BlockTotals = {
   minutes: number | null;   // Σ норм операций блока на партию
@@ -95,12 +98,43 @@ export function routePayload(route: Route): Record<string, unknown> {
   };
 }
 
-/** Название блока на экране: своё, у итогового — наименование изделия, иначе — название последней операции. */
-export function blockTitle(block: RouteBlock, ops: RouteOp[], finalName = ""): string {
+/** Название блока на экране: своё, иначе — название последней операции блока. Итоговый блок без операций — изделие.
+    `productOnFinal` — итоговый блок называется изделием и тогда, когда у него есть операции (ручная сборка); схема
+    генератора показывает у итога его операции, а изделие — отдельной строкой «итог: …». */
+export function blockTitle(block: RouteBlock, ops: RouteOp[], finalName = "", productOnFinal = true): string {
   if (block.name.trim()) return block.name.trim();
-  if (block.final && finalName.trim()) return finalName.trim();
+  if (block.final && finalName.trim() && (productOnFinal || !block.ops.length)) return finalName.trim();
   const last = block.ops.length ? Math.max(...block.ops) : 0;
   return ops.find((op) => op.position === last)?.label || `Блок ${block.key.replace(/^b/, "")}`;
+}
+
+/** Коды карт БД.ОП операций блока по порядку («CUT_WIRE+2crimp · INS_terminal_2.50») и пометки о замене карты. */
+export function blockCodes(block: RouteBlock, ops: RouteOp[]): { codes: string; note: string } {
+  const own = [...block.ops].sort((a, b) => a - b).map((position) => ops.find((op) => op.position === position)).filter((op): op is RouteOp => !!op);
+  const unique = (items: string[]) => [...new Set(items.filter(Boolean))];
+  return { codes: unique(own.map((op) => op.code.trim())).join(" · "), note: unique(own.map((op) => op.codeNote?.trim() || "")).join("; ") };
+}
+
+/** Блоки по порядку в ЭТК — по первой операции. */
+export function blockSequence(route: Route): RouteBlock[] {
+  return ordered(route).blocks;
+}
+
+/** «Выше» (−1) / «Ниже» (+1): операции блока меняются местами в ЭТК с операциями соседнего по порядку блока (на местах,
+    которые занимают оба). Ответ: `order[n − 1]` — старый номер операции, что встаёт на место n, и схема с новыми номерами
+    (состав блоков и стрелки те же). Двигать некуда — null. */
+export function moveBlock(route: Route, key: string, dir: -1 | 1, count: number): { order: number[]; route: Route } | null {
+  const sequence = blockSequence(route);
+  const index = sequence.findIndex((block) => block.key === key);
+  const other = sequence[index + dir];
+  if (index < 0 || !other) return null;
+  const [upper, lower] = dir < 0 ? [sequence[index], other] : [other, sequence[index]];
+  const slots = [...upper.ops, ...lower.ops].sort((a, b) => a - b);
+  const moved = [...upper.ops].sort((a, b) => a - b).concat([...lower.ops].sort((a, b) => a - b));
+  const order = Array.from({ length: Math.max(count, ...slots) }, (_, at) => at + 1);
+  slots.forEach((slot, at) => { order[slot - 1] = moved[at]; });
+  const place = new Map(order.map((old, at) => [old, at + 1]));
+  return { order, route: ordered({ ...route, blocks: route.blocks.map((block) => ({ ...block, ops: block.ops.map((position) => place.get(position) ?? position) })) }) };
 }
 
 /** Порядок Кана: блоки, у которых все входы уже стоят. Короче числа блоков — в схеме есть цикл. */

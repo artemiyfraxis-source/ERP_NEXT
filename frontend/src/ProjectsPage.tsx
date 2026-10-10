@@ -10,6 +10,7 @@ import {
   type KitsetComponent,
   type KitsetDeleteResult,
   type KitsetIssueAssembly,
+  type KitsetJournalEvent,
   type KitsetLoadResult,
   type KitsetLot,
   type KitsetReserve,
@@ -25,6 +26,7 @@ import { formatDate } from "./format";
 import { openHarness } from "./harnessNav";
 import { useLatestSearch } from "./useLatestSearch";
 import { ProjectStatus } from "./ProjectStatus";
+import { StageChangeDialog, STAGE_AUTO } from "./StageChangeDialog";
 import { ProjectTrack } from "./ProjectTrack";
 import { supplyApi, type SupplyLine } from "./supplyApi";
 
@@ -470,6 +472,16 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
   </section>;
 }
 
+/** Запись смены этапа: сервер уже пишет «В работе → Отгружено · пропущены: КБ на складе · причина: …». Старая запись без
+ *  «→» (этап поставили до истории) собирается из значения и причины. */
+export function journalText(event: KitsetJournalEvent) {
+  if (event.kind !== "stage" || event.text.includes("→")) return event.text;
+  const parts = [`${event.from_value ? `${event.from_value} → ` : ""}${event.value === "авто" ? "Авто" : event.value}`];
+  const reason = event.reason || event.text;
+  if (reason) parts.push(`причина: ${reason}`);
+  return parts.join(" · ");
+}
+
 /** Журнал проекта в карточке — то, что раньше было только в нижней панели «Производственного плана»:
  *  комментарий, дедлайн и история (блокеры, этапы, проверка ТК, статус). Блокер и статус — меню статуса в шапке. */
 function JournalTab({ card, canEdit, changed }: { card: KitsetCard; canEdit: boolean; changed: (card: KitsetCard) => void }) {
@@ -504,8 +516,8 @@ function JournalTab({ card, canEdit, changed }: { card: KitsetCard; canEdit: boo
     <ul className="kit-journal-list">
       {events.map((event) => <li key={event.id}>
         <time>{new Date(event.occurred_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time>
-        <b>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}{event.item_index ? ` · ${event.item_index}` : ""}{event.value ? ` · ${event.value}` : ""}</b>
-        <span>{event.text}</span><small>{event.who}</small>
+        <b>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}{event.item_index ? ` · ${event.item_index}` : ""}{event.kind === "stage" ? "" : event.value ? ` · ${event.value}` : ""}</b>
+        <span>{journalText(event)}</span><small>{event.who}</small>
       </li>)}
       {!events.length && <li className="empty">Записей пока нет.</li>}
     </ul>
@@ -520,6 +532,14 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kdIndex, setKdIndex] = useState("");
+  const [stagePick, setStagePick] = useState<{ assembly: KitsetAssembly; value: string } | null>(null);
+
+  async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string) {
+    const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason });
+    setStagePick(null);
+    setNote(result.msg || `${assembly.index}: этап — ${value === STAGE_AUTO ? "по фактам" : value}`);
+    await reload();
+  }
 
   async function markKb(assembly: KitsetAssembly, kind: "stage" | "tcReview", value: string) {
     let text = "";
@@ -590,12 +610,16 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   </>;
   };
 
+  /** Этап КБ перескочили ручной сменой («сделали вживую»): метка с перечнем пропущенных. */
+  const skippedMark = (assembly: KitsetAssembly) => assembly.stage?.skipped?.length
+    ? <span className="stage-skipped-mark" title={`Пропущены: ${assembly.stage.skipped.join(", ")}`}>пропущен</span> : null;
+
   const stageCell = (assembly: KitsetAssembly) => canEdit
-    ? <select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => void markKb(assembly, "stage", event.target.value)}>
+    ? <><select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => setStagePick({ assembly, value: event.target.value })}>
       <option value="авто">авто: {assembly.stage?.manual ? "по фактам" : assembly.stage?.status || "—"}</option>
       {card.stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
-    </select>
-    : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted" title="выставлен вручную"> ✍</span>}</>;
+    </select>{skippedMark(assembly)}</>
+    : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted" title="выставлен вручную"> ✍</span>}{skippedMark(assembly)}</>;
 
   const reviewCell = (assembly: KitsetAssembly) => {
     const review = assembly.stage?.review || { value: "не проверена", text: "" };
@@ -632,6 +656,10 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
         <td>{reviewCell(assembly)}</td>
       </tr>)}</tbody>
     </table></div>}
+    {stagePick && <StageChangeDialog project={card.project} kb={stagePick.assembly.index}
+      current={stagePick.assembly.stage?.status || "—"} value={stagePick.value}
+      loadPreview={() => kitsetsApi.stagePreview(card.project, stagePick.value, stagePick.assembly.index)}
+      apply={(reason) => applyKbStage(stagePick.assembly, stagePick.value, reason)} onClose={() => setStagePick(null)} />}
   </div>;
 }
 
