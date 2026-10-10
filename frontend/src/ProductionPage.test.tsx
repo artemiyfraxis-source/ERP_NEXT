@@ -488,7 +488,7 @@ it("lets the master hand out operations of issued projects to installers and lau
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
   expect(await screen.findByText("к запуску 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
   expect(screen.getByText("ООО «Тест»")).toBeInTheDocument();
-  expect(screen.getByText("ТК ✓")).toBeInTheDocument();
+  expect(screen.getByText("ТК на все КБ")).toBeInTheDocument();
 
   await openBoardProject("591K.3");
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));

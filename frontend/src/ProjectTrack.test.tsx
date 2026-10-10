@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_CONNECTION } from "./api";
-import { ProjectTrack, trackWhen } from "./ProjectTrack";
+import { ProjectTrack, trackOrder, trackWhen } from "./ProjectTrack";
 
 const entries = [
   { at: "2026-10-01T00:00:00", module: "Проекты", kind: "Карточка проекта из расчёта", ref: "708К.4", status: "Создана", item_index: "" },
@@ -78,6 +78,20 @@ describe("ProjectTrack", () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
     render(<ProjectTrack project="708К.4" />);
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(NO_CONNECTION));
+  });
+
+  it("orders a day: entries with a time first, day-only entries after them, undated last (ПР-9)", () => {
+    const day = [
+      { at: "2026-10-10T00:00:00", kind: "Входной контроль" },
+      { at: null, kind: "Отправка запланирована" },
+      { at: "2026-10-10T21:53:00", kind: "Заявка на закупку" },
+      { at: "2026-10-09T08:00:00", kind: "Карточка проекта" },
+      { at: "2026-10-10T00:00:00", kind: "Отправка уехала" },
+      { at: "2026-10-10T09:15:00", kind: "Техкарта выдана" },
+    ];
+    expect(trackOrder(day).map((entry) => entry.kind)).toEqual([
+      "Карточка проекта", "Техкарта выдана", "Заявка на закупку", "Входной контроль", "Отправка уехала", "Отправка запланирована",
+    ]);
   });
 
   it("formats the moment: day only for midnight, minutes otherwise, a dash for no date", () => {

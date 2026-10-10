@@ -16,7 +16,8 @@ import { ETK_CONNECTION_COLUMNS, etkChips, etkConnectionRows, etkDrawHarness, et
 import { etkPrintPages } from "./etkPrint";
 import { etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, formatMinutes } from "./etkRoute";
 import { defectArt, defectGroupCode } from "./etkDefectArt";
-import { parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
 import { hasFullAccess } from "./navigation";
@@ -120,15 +121,23 @@ function defaultConfig(card: ProjectTechcard): Record<string, unknown> {
   };
 }
 
-/** «2000 Шт.»; без нормы — пусто, а не «— Шт.». */
-function quantity(row: EtkRow): string {
-  return row.norm ? `${row.norm} ${row.unit || ""}`.trim() : "";
+/** «2000 шт», «184,8 м» — число по-русски, единица строчными (аудит 10.10, ЭТК-2); без нормы — пусто, а не «— шт». */
+export function quantity(row: EtkRow): string {
+  return row.norm ? formatQty(row.norm, row.unit) : "";
+}
+
+/** Строка входа: название слева, количество справа крупной цифрой — монтажник видит число с первого взгляда. */
+function InputLine({ children, qty }: { children: ReactNode; qty: string }) {
+  return <div className="etk-in-row">
+    <span className="etk-in-name">{children}</span>
+    <span className="etk-in-qty">{qty || "—"}</span>
+  </div>;
 }
 
 function Rows({ title, rows }: { title: string; rows?: EtkRow[] }) {
   if (!rows?.length) return null;
   return <div className="etk-block"><strong>{title}</strong>{rows.map((row, index) =>
-    <span key={`${row.name || row.art}:${index}`}>{row.name || row.art || "—"}{quantity(row) && <small>{quantity(row)}</small>}</span>
+    <InputLine key={`${row.name || row.art}:${index}`} qty={quantity(row)}>{row.name || row.art || "—"}</InputLine>
   )}</div>;
 }
 
@@ -159,13 +168,13 @@ function ResultView({ label, result = [], time = [], batch }: { label: string; r
       <tbody>{result.map((row, index) => <tr key={`${row.name}:${index}`}>
         <td>{row.name || "—"}</td>
         <td className="num">{quantity(row)}</td>
-        {perRow && <td className="num">{byName.get(row.name || "")}</td>}
+        {perRow && <td className="num">{formatNumber(byName.get(row.name || ""))}</td>}
       </tr>)}</tbody>
     </table>}
     {time.length > 0 && <div className="etk-time" aria-label="Расчётное время">
       <small>{perRow || time.length > 1 ? "Расчётное время, итого" : "Расчётное время"}</small>
       <b>{formatMinutes(total)} <span>мин</span></b>
-      <small>{[hours, batch ? `на партию ${batch} шт.` : ""].filter(Boolean).join(" · ")}</small>
+      <small>{[hours, batch ? `на партию ${formatQty(batch, "шт")}` : ""].filter(Boolean).join(" · ")}</small>
       {!perRow && time.length > 1 && <ul>{time.map((row, index) =>
         <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>}
     </div>}
@@ -176,11 +185,10 @@ function ResultView({ label, result = [], time = [], batch }: { label: string; r
 function PartRows({ rows }: { rows?: EtkRow[] }) {
   if (!rows?.length) return null;
   return <div className="etk-block"><strong>Комплектующие</strong>{rows.map((row, index) =>
-    <span key={`${row.art || row.name}:${index}`}>
+    <InputLine key={`${row.art || row.name}:${index}`} qty={quantity(row)}>
       {row.art || row.name || "—"}{row.kd && <small>по КД: {row.kd}, аналог</small>}
       {row.art && row.name && <small>{row.name}</small>}{row.grn && <small>ГРН {row.grn}</small>}
-      <small>{row.norm || "—"} {row.unit || ""}</small>
-    </span>
+    </InputLine>
   )}</div>;
 }
 
@@ -188,7 +196,7 @@ function PartRows({ rows }: { rows?: EtkRow[] }) {
 function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
   return <table className="etk-marks" aria-label="Метки по КД">
     <caption>Метки по КД</caption>
-    <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th><th className="num">На изделие</th><th className="num">{batch ? `На партию ${batch} шт.` : "На партию"}</th></tr></thead>
+    <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th><th className="num">На изделие</th><th className="num">{batch ? `На партию ${formatQty(batch, "шт")}` : "На партию"}</th></tr></thead>
     <tbody>{marks.map((mark, index) => <tr key={index}>
       <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><b>{mark.text || "—"}</b></td><td>{mark.material || "—"}</td>
       <td>{mark.place || "—"}</td><td className="num">{mark.qty || ""}</td><td className="num">{mark.batch || ""}</td>
@@ -237,10 +245,10 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
         <Rows title="Полуфабрикат на входе" rows={operation.semis} />
       </div> : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
     </section>
-    <section className="etk-sec" aria-label="Инструмент, оборудование, расходники">
-      <h4><span className="etk-sec-n">{next()}</span>Инструмент, оборудование, расходники</h4>
+    <section className="etk-sec" aria-label="Оснастка">
+      <h4><span className="etk-sec-n">{next()}</span>Оснастка</h4>
       {solder && <SolderPanel mode={solder} />}
-      <ToolingBySection tooling={tooling} />
+      <ToolingBySection tooling={tooling} fixed />
     </section>
     {operation.card?.steps?.length || marks.length ? <section className="etk-sec" aria-label="Ход операции">
       <h4><span className="etk-sec-n">{next()}</span>Ход операции</h4>
@@ -370,23 +378,29 @@ function OperationSketchView({ cardId, operationKey, canEdit, sketch, onChanged,
       <input ref={input} type="file" accept={SKETCH_TYPES} hidden onChange={(event) => { upload(event.target.files?.[0]); event.target.value = ""; }} />
       <button className="secondary small" disabled={busy} onClick={() => input.current?.click()}>{sketch ? "Заменить картинку" : "Загрузить картинку эскиза"}</button>
       {sketch && <button className="secondary small" disabled={busy} onClick={() => void remove()}>Убрать</button>}
-      <small className="muted">{sketch ? `${sketch.uploaded_by} · ${new Date(sketch.uploaded_at).toLocaleDateString("ru-RU")}` : "или вставьте скриншот: щёлкните здесь и Ctrl+V"}</small>
+      <small className="muted">{sketch ? `${sketch.uploaded_by} · ${formatDateTime(sketch.uploaded_at)}` : "или вставьте скриншот: щёлкните здесь и Ctrl+V"}</small>
     </div>}
     {error && <div className="error-banner" role="alert">{error}</div>}
   </div>;
 }
 
-export function ToolingBySection({ tooling }: { tooling: EtkTool[] }) {
-  if (!tooling.length) return <div className="empty">Инструмент, оборудование и расходники не указаны.</div>;
-  const sections = toolingSections(tooling.map((tool) => tool.section || ""));
-  return <div className="tr-tooling">{sections.map((section) => <div className="tr-sec" key={section}>
-    {section && <div className="tr-sec-h">{section}</div>}
-    {tooling.filter((tool) => (tool.section || "") === section).map((tool, index) => <div className="tr-tool" key={`${section}:${index}`}>
-      <span className="tr-n">{tool.number}</span>
-      <span>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}
-        {toolSub(tool) && <small>{toolSub(tool)}</small>}</span>
-    </div>)}
-  </div>)}</div>;
+/** Оснастка по разделам. `fixed` — операция ЭТК (erp-screens §6): три раздела Инструмент · Оборудование · Расходники
+ *  всегда, пустой — «нет» серым; без `fixed` (шаблон в базе) — только заполненные разделы. */
+export function ToolingBySection({ tooling, fixed = false }: { tooling: EtkTool[]; fixed?: boolean }) {
+  if (!tooling.length && !fixed) return <div className="empty">Инструмент, оборудование и расходники не указаны.</div>;
+  const sections = toolingSections([...(fixed ? ETK_TOOLING_SECTIONS : []), ...tooling.map((tool) => tool.section || "")]);
+  return <div className="tr-tooling">{sections.map((section) => {
+    const tools = tooling.filter((tool) => (tool.section || "") === section);
+    return <div className="tr-sec" key={section}>
+      {section && <div className="tr-sec-h">{section}</div>}
+      {!tools.length && <div className="tr-none">нет</div>}
+      {tools.map((tool, index) => <div className="tr-tool" key={`${section}:${index}`}>
+        <span className="tr-n">{tool.number}</span>
+        <span>{tool.name}{tool.inventory_number && <span className="tr-inv">{tool.inventory_number}</span>}
+          {toolSub(tool) && <small>{toolSub(tool)}</small>}</span>
+      </div>)}
+    </div>;
+  })}</div>;
 }
 
 /** Что в операции считает генератор (чипы параметров, вход, эскиз, результат) — в форме правки на своих местах, без правки. */
@@ -493,7 +507,7 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
     <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
       <button key={`${etkOperationKey(item)}:${position}`} className={position === index ? "on" : ""} onClick={() => { setSelected(position); setEditing(false); }}>
         <span className="etk-no">{String(item.position || position + 1).padStart(2, "0")}</span>
-        <span>{etkTitle(item)}{item.edited ? " ✏️" : ""}{navSub(item) && <small>{navSub(item)}</small>}</span>
+        <span>{etkTitle(item)}{(navSub(item) || item.edited) && <small>{[navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ")}</small>}</span>
       </button>)}
     </nav>
     <div className="etk-main" ref={main}>
@@ -510,7 +524,7 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
           batch={String(record(card.document?.kit).part_quantity ?? "")}
-          actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>✏️ Править</button> : null}
+          actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>Править операцию</button> : null}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />
         <div className="etk-nav">
@@ -527,11 +541,11 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
 }
 
 function stamp(value: string | null | undefined) {
-  return value ? new Date(value).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  return formatDateTime(value);
 }
 
 /** Вкладка «ТК КБn»: одна строка о карте и действия, схема жгута один раз, маршрут слева и операция справа, журнал
-    ревизий свёрнут. Правят операции здесь («✏️ Править»); пересборка — в «Генераторе». */
+    ревизий свёрнут. Правят операции здесь («Править операцию»); пересборка — в «Генераторе». */
 export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
 
 export function EtkSheet({ card, principal, title, focus, onChange, onRebuild, sketchSource }: {
@@ -573,22 +587,22 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild, s
   return <div className="etk-sheet">
     <div className="etk-top">
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
-        <span className="muted">{list.length} операций · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
+        <span className="muted">{countLabel(list.length, ["операция", "операции", "операций"])} · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
       {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, Object.fromEntries(sketches.map((item) =>
-        [item.operation_key, window.location.origin + source.url(item.operation_key, item.uploaded_at)]))))}>🖨 Печать / PDF</button>}
-      {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>⚙️ Пересобрать</button>}
+        [item.operation_key, window.location.origin + source.url(item.operation_key, item.uploaded_at)]))))}>Печать / PDF</button>}
+      {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
-    {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>⚠ Предупреждения сборки · {warnings(card.document).length}</summary>
+    {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)} />
     <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} />
-    {!list.length && <div className="etk-empty">ЭТК ещё не собрана — открой «Генератор» и нажми «Создать».</div>}
+    {!list.length && <div className="etk-empty">ЭТК ещё не собрана — откройте «Генератор» и нажмите «Создать».</div>}
     {revisions.length > 0 && <details className="etk-revs"><summary>Журнал ревизий · {revisions.length}</summary>
       {revisions.map((revision) => <div key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span className="muted">{revision.actor_name} · {stamp(revision.occurred_at)}</span></div>)}
     </details>}

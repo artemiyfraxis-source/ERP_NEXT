@@ -589,7 +589,7 @@ table.ship-lines td:first-child { width: 1%; }
 .etk-block > span { display: grid; gap: 2px; border-top: 1px solid #dfe4df; padding-top: 5px; }
 .etk-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .etk-chips span { padding: 4px 10px; border-radius: 10px; background: #f0f3f0; border: 1px solid var(--border); font-size: 12.5px; font-weight: 600; }
-.etk-chips small { display: block; font-size: 10px; font-weight: 400; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .04em; }
+.etk-chips small { display: block; font-size: 11px; font-weight: 400; color: var(--muted-foreground); }
 .etk-figure { margin-top: 12px; background: #fff; border: 1px solid var(--border); }
 .etk-fig svg { max-width: 760px; height: auto; }
 .etk-steps { display: grid; gap: 8px; margin: 12px 0 0; padding-left: 28px; }
@@ -652,7 +652,8 @@ table.ship-lines td:first-child { width: 1%; }
 .tr-paper { display: grid; gap: 12px; }
 .tr-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .tr-head > div { display: grid; gap: 2px; }
-.tr-head small, .tr-sec-h { color: var(--muted-foreground); font-size: 11px; text-transform: uppercase; }
+.tr-head small { color: var(--muted-foreground); font-size: 11px; }
+.tr-sec-h { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
 .tr-block { display: grid; gap: 6px; font-size: 12px; }
 .tr-block h4 { margin: 0; font-size: 13px; }
 .tr-block textarea { width: 100%; }
@@ -1043,9 +1044,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .kit-kd .kit-kd-action:not(:disabled):hover { color: var(--primary); }
 .kit-kd-unlinked { font-size: 12px; }
 @media (pointer: coarse) { .kit-kd .kit-kd-action { min-height: 40px; padding: 0 8px; } }
-.kit-supply-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 14px; }
-.kit-supply-count { padding: 14px 16px; display: grid; gap: 4px; }
-.kit-supply-count strong { font-size: 24px; }
+.kit-supply-summary { display: flex; flex-wrap: wrap; gap: 4px 24px; align-items: baseline; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); font-size: 13px; }
+.kit-supply-count { display: inline-flex; gap: 8px; align-items: baseline; }
+.kit-supply-count dt { color: var(--muted-foreground); }
+.kit-supply-count dd { margin: 0; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kit-autosave { font-size: 12px; }
 
 /* DataTable: общая таблица разделов (поиск, фильтры, сортировка, чипы, группы, массовые действия). */
@@ -1952,12 +1954,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .seg-tabs button { border: 0; border-radius: 9px; padding: 7px 14px; background: transparent; color: #4b5a58; font-size: 13px; font-weight: 600; }
 .seg-tabs button:hover { color: var(--foreground); }
 .seg-tabs button.on { background: var(--card); color: var(--primary); box-shadow: 0 1px 3px rgba(0, 26, 24, .12); }
-.kit-sostav table { font-size: 12.5px; }
-.kit-sostav th, .kit-sostav td { padding: 8px 12px; }
-.kit-sostav thead th { background: #0e6f68; color: #fff; font-weight: 600; letter-spacing: .04em; }
+/* «Состав»: шапка и строки как у DataTable (класс .grid, аудит 10.10 ПР-3), ширина по содержимому — на 27" таблица
+   не растягивается на весь экран, растёт только «Наименование». */
+.kit-sostav { width: fit-content; max-width: 100%; }
+.kit-sostav table { width: auto; }
 .kit-sostav tbody tr { cursor: pointer; }
-.kit-sostav tbody tr:hover td { background: color-mix(in srgb, var(--primary) 6%, white); }
-.kit-sostav td.wrap { white-space: normal; min-width: 260px; }
+.kit-sostav td.wrap { white-space: normal; min-width: 260px; max-width: 520px; }
 .kit-sostav th.num, .kit-sostav td.num { text-align: right; }
 .kit-sostav select { width: auto; min-width: 130px; padding: 3px 6px; font-size: 12.5px; border-radius: 6px; }
 .kit-sostav .link-button { padding: 0; }
@@ -2005,7 +2007,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-op .etk-flow { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .etk-op .etk-block { border-radius: 0; background: none; padding: 10px 12px; font-size: 12.5px; border-left: 1px solid var(--border); }
 .etk-op .etk-block:first-child { border-left: 0; }
-.etk-op .etk-block > strong { font-size: 11px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; }
+.etk-op .etk-block > strong { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
 .etk-op .etk-block > span { border-top: 0; padding-top: 0; }
 .etk-sec h4 { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
 .etk-op .etk-steps { margin: 0; gap: 6px; padding-left: 22px; }
@@ -2067,8 +2069,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-safety > div { margin-top: 6px; white-space: pre-line; line-height: 1.45; }
 .etk-solder { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .etk-solder > div { display: grid; gap: 2px; padding: 8px 12px; border-radius: 10px; border: 1px solid #f0b8a8; background: #fff4f0; font-size: 13px; min-width: 220px; }
-.etk-solder small { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: #9a3412; }
-.etk-assumed { justify-self: start; padding: 1px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 10.5px; cursor: help; }
+.etk-solder small { font-size: 11px; color: #9a3412; }
+.etk-assumed { justify-self: start; padding: 1px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 11px; cursor: help; }
 .etk-defects > summary { cursor: pointer; list-style: none; }
 .etk-defects > summary::-webkit-details-marker { display: none; }
 .etk-defects > summary h4::after { content: "▾"; color: var(--muted-foreground); font-weight: 400; }
@@ -2088,12 +2090,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
 .etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
 .etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
-.etk-marks th { padding: 6px 10px; text-align: left; font-size: 11px; font-weight: 700; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; background: var(--accent); white-space: nowrap; }
+.etk-marks th { padding: 6px 10px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); white-space: nowrap; }
 .etk-marks td { padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: top; }
 .etk-marks .num { width: 1%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .etk-marks td.num:not(:first-child) { font-weight: 600; }
 .etk-result-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
-.etk-result-table th { padding: 6px 12px; text-align: left; font-size: 11px; font-weight: 700; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; background: var(--accent); }
+.etk-result-table th { padding: 6px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); }
 .etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }
 .etk-result-table .num, .etk-time .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
 .etk-result-table th:not(:first-child) { text-align: right; width: 1%; white-space: nowrap; }
@@ -2103,7 +2105,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-links td { padding: 4px 12px; }
 .etk-time { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .etk-time > small { font-size: 11px; color: var(--muted-foreground); }
-.etk-time > small:first-child { font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.etk-time > small:first-child { font-size: 12px; font-weight: 600; }
 .etk-time > b { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .etk-time > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
 .etk-time ul { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; }
@@ -2132,8 +2134,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 
 /* Статус проекта в один клик (ProjectStatus): бейдж-кнопка и меню — плитка списка и шапка карточки. */
 .proj-status { position: relative; display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.proj-status-btn { border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5; }
-.proj-status-btn:hover { filter: brightness(.96); box-shadow: 0 0 0 1px currentColor inset; }
+.proj-status-btn { display: inline-flex; padding: 0; border: 0; border-radius: 999px; background: none; cursor: pointer; font: inherit; }
+.proj-status-btn:hover .status-chip { box-shadow: 0 0 0 1px currentColor inset; }
+.proj-status-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.proj-status-caret { margin-left: 2px; font-size: 10px; }
+.psm-item[data-tone="success"] { color: var(--chip-success-fg); }
+.psm-item[data-tone="info"] { color: var(--chip-info-fg); }
+.psm-item[data-tone="warning"] { color: var(--chip-warning-fg); }
+.psm-item[data-tone="danger"] { color: var(--chip-danger-fg); }
+.psm-item[data-tone="neutral"] { color: var(--chip-neutral-fg); }
 .proj-status-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: min(420px, 86vw); display: grid; gap: 6px; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card, #fff); box-shadow: 0 10px 30px rgba(0,0,0,.14); cursor: default; }
 .psm-head { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); margin-top: 2px; }
 .psm-row { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -2144,10 +2153,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .psm-reason input { flex: 1; min-width: 0; }
 .psm-error { color: #b91c1c; font-size: 12px; }
 .kit-head { align-items: center; gap: 12px; }
-.kit-head .proj-status-btn { font-size: 13px; padding: 4px 12px; }
-.kit-blocker { margin: -4px 0 8px; padding: 6px 10px; border-left: 3px solid #b91c1c; background: #fdf1f1; color: #7f1d1d; font-size: 13px; border-radius: 0 6px 6px 0; }
-.kit-journal-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-.kit-journal-form input:not([type=date]) { flex: 1; min-width: 220px; }
+.kit-head .status-chip { height: 24px; padding: 0 10px; font-size: 13px; line-height: 24px; }
+.kit-blocker { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: -4px 0 8px; padding: 6px 10px; border-left: 3px solid var(--chip-danger-fg); background: var(--chip-danger-bg); color: var(--foreground); font-size: 13px; border-radius: 0 6px 6px 0; }
+/* «Журнал»: одна строка [вид 180][дедлайн][текст][Записать] (аудит 10.10, ПР-5). */
+.kit-journal-form { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; }
+.kit-journal-form select { flex: 0 0 180px; width: 180px; }
+.kit-journal-form input[type=date] { flex: 0 0 160px; width: 160px; }
+.kit-journal-form .auto-textarea { flex: 1; min-width: 0; }
+.kit-journal-form button { flex: none; }
+@media (max-width: 700px) { .kit-journal-form { flex-wrap: wrap; } .kit-journal-form .auto-textarea { flex-basis: 100%; } }
 .kit-journal-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .kit-journal-list li { display: grid; grid-template-columns: 96px minmax(160px, auto) 1fr auto; gap: 10px; align-items: baseline; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .kit-journal-list time, .kit-journal-list small { color: var(--muted-foreground); font-size: 12px; }
@@ -3220,6 +3234,34 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .wt-state.tone-ok { color: #15803d; }
 tr.wt-future td { color: var(--muted-foreground); opacity: .7; }
 tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--card)); }
+
+/* Б3 · Проекты, карточка проекта, ЭТК (аудит дизайна 10.10). */
+.kit-review { color: var(--muted-foreground); }
+.kit-review-success { color: var(--chip-success-fg); }
+.kit-review-warning { color: var(--chip-warning-fg); }
+.kit-review-danger { color: var(--chip-danger-fg); }
+.kit-meta .kit-calc-link { color: var(--primary); text-decoration: none; }
+.kit-meta .kit-calc-link:hover { text-decoration: underline; }
+/* «Ещё ▾» за чертой после рабочих кнопок: удаление отдельно от них (ПР-2). */
+.kit-actions .kit-more { margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--border); }
+.kit-more .more-menu-list button.kit-more-danger { color: var(--tone-danger); }
+.kit-more .more-menu-list button.kit-more-danger:hover { background: var(--danger-soft); }
+.kit-delete-dialog .page-sub { line-height: 1.5; }
+.kit-missing { display: grid; gap: 8px; max-width: 720px; }
+.kit-missing p { margin: 0; }
+.kit-missing .page-actions { margin: 0; justify-content: flex-start; }
+/* ЭТК в «Техкартах проектов»: строка о карте не прижата к рамке панели (ЭТК-5). */
+.panel.project-etk { padding: 12px 16px 16px; }
+/* «Вход»: название слева, количество справа крупной цифрой (ЭТК-2). */
+.etk-in-row { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; padding: 4px 0; border-top: 1px solid var(--border); }
+.etk-block > strong + .etk-in-row { border-top: 0; }
+.etk-in-name { display: grid; gap: 1px; min-width: 0; }
+.etk-in-name small { color: var(--muted-foreground); font-size: 11px; }
+.etk-in-qty { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* «Оснастка»: пустой раздел — «нет» серым (ЭТК-1). */
+.tr-none { color: var(--muted-foreground); font-size: 12px; }
+@media (pointer: coarse) { .proj-status-btn .status-chip { min-height: 32px; } .kit-more .more-menu-list button { min-height: 40px; } }
+.kit-supply-count dd.muted { color: var(--muted-foreground); font-weight: 400; }
 
 /* ── Ресурсное планирование и «Задания» (аудит дизайна 10.10, пакет Б2) ── */
 /* Код операции — мелкой серой второй строкой под русским названием (РП-8, erp-screens §1). */
