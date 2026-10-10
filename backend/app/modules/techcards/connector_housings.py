@@ -33,14 +33,14 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # windows down (PH, ZH) -> contact 1 on the LEFT, as before. PH/ZH cross-check: their header front view has circuit 1
     # on the right, so the mated housing shows the header its smooth back — the windows face away from the header wall.
     # `body`: B = A + extra (A = (n−1)·pitch), h — thickness at the wire end without the lock, lock_* — the lock on top.
-    _jst("jst-gh", "GH", r"^GHR-0*(\d+)V-S", 1.25, "ramp", conf="high", src="JST eGH, Housing",
+    _jst("jst-gh", "GH", r"^GHR-0*(\d+)V-S", 1.25, "ramp", conf="high", src="JST eGH, Housing", model="plate",
          note="по чертежу JST eGH: защёлка сверху, контакт 1 слева",
          body={"extra": 2.5, "h": 2.85, "len": 5.7, "lock_inset": 2.5, "lock_h": 1.3, "win": (0.7, 1.2)}),
     # SH — checked against the JST eSH housing drawing (owner's screenshot, 30.09): the top view has the wire end with
     # the protrusions at the top and Circuit No.1 ▽ on the left, so from the wire side with the ▽ face up contact 1 is
     # on the RIGHT (SUPPLYMAP draws it on the left — mirrored). Body from the same sheet: B = A + 4.0 with protrusions
     # (-B), A + 2.0 without; 2.8 thick at the wire end, 2.1 at the mating part, 5 long.
-    _jst("jst-sh", "SH", r"^SHR-?0*(\d+)V-S", 1.0, "mark", start="TR", conf="high",
+    _jst("jst-sh", "SH", r"^SHR-?0*(\d+)V-S", 1.0, "mark", start="TR", conf="high", model="slots",
          note="по чертежу JST eSH: метка ▽ у контакта 1", src="JST eSH, Housing",
          body={"extra": 2.0, "h": 2.8, "rear_h": 2.1, "len": 5.0, "front_len": 1.8, "ear_len": 1.0, "win": (0.6, 1.3)},
          body_by=((r"V-S-B", {"ears": 1.0}),)),
@@ -49,24 +49,24 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # of the front view; from the wire side, lock up, contact 1 is on the LEFT (as GH). B = A + 3.0; 4.2 thick with the
     # lock, 3.6 without; 6.2 long; lock 4.4 wide (measured off the 4–9 circuit view). NSHR-02V-S is the 3-circuit housing
     # with the middle cavity plugged (contacts 2.0 apart), so its B is 5.0.
-    _jst("jst-nsh", "NSH", r"^NSHR-0*(\d+)V-S", 1.0, "ramp", conf="high", src="JST eNSH, Housing",
+    _jst("jst-nsh", "NSH", r"^NSHR-0*(\d+)V-S", 1.0, "ramp", conf="high", src="JST eNSH, Housing", model="plate",
          note="по чертежу JST eNSH: защёлка сверху, контакт 1 слева (метка на торце корпуса)",
          body={"extra": 3.0, "h": 3.6, "len": 6.2, "lock_w": 4.4, "lock_h": 0.6, "win": (0.6, 1.1)},
          body_by=((r"^NSHR-0*2V", {"extra": 4.0}),)),
-    _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="high", src="JST eXH, Housing",
+    _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="high", src="JST eXH, Housing", model="frame",
          note="по чертежу JST eXH: защёлка сверху, контакт 1 слева",
          body={"extra": 4.8, "h": 4.1, "len": 7.75, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}),
-    _jst("jst-ph", "PH", r"^PHR-(\d+)", 2.0, "windows", conf="high", src="JST ePH, Housing",
+    _jst("jst-ph", "PH", r"^PHR-(\d+)", 2.0, "windows", conf="high", src="JST ePH, Housing", model="slots",
          note="по чертежу JST ePH: окна фиксаторов снизу, контакт 1 слева",
          body={"extra": 3.8, "h": 4.5, "len": 6.85, "win": (1.0, 1.6)}),
     # EH — JST eEH «Housing»: front view with the wire end up shows the face with the contact windows and the moulded
     # circuit numbers (2, 3, … left to right; No. 1 circuit on the left); the locks are ramps on the ends (side view and
     # the header's end-wall hooks), not on a face. Turned to the wire side with that face down: contact 1 on the LEFT,
     # as before; the face is drawn like PH/ZH («windows»). B = A + 4.5, 3.8 thick, 6.5 long; `win` is a sketch size.
-    _jst("jst-eh", "EH", r"^EHR-(\d+)", 2.5, "windows", conf="high", src="JST eEH, Housing",
+    _jst("jst-eh", "EH", r"^EHR-(\d+)", 2.5, "windows", conf="high", src="JST eEH, Housing", model="slots",
          note="по чертежу JST eEH: окна и цифры контактов на одной грани, защёлки на торцах; окнами вниз — контакт 1 слева",
          body={"extra": 4.5, "h": 3.8, "len": 6.5, "win": (1.3, 1.6)}),
-    _jst("jst-zh", "ZH", r"^ZHR-(\d+)", 1.5, "windows", conf="high", src="JST eZH, Housing",
+    _jst("jst-zh", "ZH", r"^ZHR-(\d+)", 1.5, "windows", conf="high", src="JST eZH, Housing", model="slots",
          note="по чертежу JST eZH: окна фиксаторов и цифры снизу, контакт 1 слева",
          body={"extra": 3.0, "h": 3.4, "len": 4.8, "win": (0.8, 1.3)}),
     # VH — JST eVH «Housing» (N and M type): front view shows the lock lever on the front face; the view below it (third
@@ -144,7 +144,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # face with the lock, wire end up; the bottom (mating) view puts «Circuit No.1 Mark» at the right end -> from the
     # wire side, lock up, contact 1 on the LEFT, exactly as JST eXH. Same sizes as XH: B = N·2.5 + 2.3, 4.1 thick
     # (5.7 with the lock), 7.8 long.
-    {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "conf": "high",
+    {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "conf": "high", "model": "frame",
      "src": "Connfly DS1069 + JST eXH", "note": "по чертежу Connfly DS1069 (метка Circuit No.1) и JST eXH: защёлка сверху, контакт 1 слева",
      "body": {"extra": 4.8, "h": 4.1, "len": 7.8, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}, "color_by": ((r"-SCB", BLACK),)},
     # Amass XT / QS8: the Amass product specifications (XT60, XT60H 2021V1) show the faces without numbers or «+»/«−»,
@@ -347,6 +347,8 @@ def _layout(
         "conf": "low" if alias else family.get("conf", "low"),
         "note": f"в наборе артикул без исполнения — нарисован {alias}" if alias else family.get("note", ""),
         "src": family.get("src", ""),
+        # Gallery model template matched against the maker drawing (connectorModel.ts); "" — no checked model.
+        "model": family.get("model", ""),
     }
 
 
