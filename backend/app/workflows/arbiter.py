@@ -47,11 +47,13 @@ from app.modules.production.infrastructure import (
     ProductionOperationRow,
     ProductionTaskRow,
 )
+from app.modules.production.launchable import route_from_document, stage_name
 from app.modules.production.plan import kit_key_from_purpose, normalize_project_number
 from app.modules.production.traceability import BoxStatus
 from app.modules.shipping.domain import ShipmentStatus
 from app.modules.shipping.infrastructure import ShipmentLineRow, ShipmentRow, SqlAlchemyFinishedGoodsRepository
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardRepository
+from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW
 from app.shared.notifications import notification_requested, publish_notification
 from app.shared.persistence import AuditEventRow, OutboxMessageRow, SqlAlchemyOutboxRepository
@@ -317,6 +319,18 @@ def _handed_notice(session: Session, trigger: Trigger) -> list[Notice]:
     return [Notice(master.id, "Коробка ждёт подтверждения", body, box.number) for master in masters]
 
 
+def _route_names(session: Session) -> dict[str, str]:
+    """Код операции → русское название по маршрутам выданных техкарт (так же, как в карточке сотрудника)."""
+    names: dict[str, str] = {}
+    for card in SqlAlchemyTechcardRepository(session).list():
+        if card.status is not TechcardStatus.ISSUED:
+            continue
+        for step in route_from_document(card.document):
+            if step.code and step.stage:
+                names.setdefault(step.code, stage_name(step.stage))
+    return names
+
+
 def _confirmed_notice(session: Session, trigger: Trigger) -> list[Notice]:
     """Подтверждена коробка → монтажникам операций, которые берут её на вход: можно начинать."""
     box = _box_of(session, trigger)
@@ -324,8 +338,9 @@ def _confirmed_notice(session: Session, trigger: Trigger) -> list[Notice]:
         return []
     notices: list[Notice] = []
     seen: set[UUID] = set()
-    for stage, number, operator_id in session.execute(
-        select(ProductionOperationRow.stage, ProductionTaskRow.number, ProductionOperationOperatorRow.operator_id)
+    names: dict[str, str] | None = None
+    for stage, code, number, operator_id in session.execute(
+        select(ProductionOperationRow.stage, ProductionOperationRow.code, ProductionTaskRow.number, ProductionOperationOperatorRow.operator_id)
         .join(ProductionOperationInputRow, ProductionOperationInputRow.operation_id == ProductionOperationRow.id)
         .join(ProductionTaskRow, ProductionTaskRow.id == ProductionOperationRow.task_id)
         .join(ProductionOperationOperatorRow, ProductionOperationOperatorRow.operation_id == ProductionOperationRow.id)
@@ -335,6 +350,9 @@ def _confirmed_notice(session: Session, trigger: Trigger) -> list[Notice]:
         if operator_id in seen:  # человек на двух операциях, питаемых коробкой, — одно письмо
             continue
         seen.add(operator_id)
+        if names is None:
+            names = _route_names(session)
+        stage = names.get(code) or stage_name(stage)  # название, не код операции
         body = f"Можно начинать: {number} {stage} — пришла коробка {box.number} ({_count(box.quantity)} шт)"
         notices.append(Notice(operator_id, "Можно начинать", body, box.number))
     return notices
