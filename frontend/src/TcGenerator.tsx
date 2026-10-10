@@ -28,6 +28,7 @@ import {
   makeGen,
   onCoaxConnChange,
   opFromFields,
+  opOrderFromConfig,
   parseDecimal_,
   sideRu_,
   switchGenTab,
@@ -151,8 +152,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   kit?: KitsetBom | null;
   kitError?: string;
   busy: boolean;
-  /** draftId — «Ручная сборка» открыта из черновика с чертежа: сборка завершает его. */
-  onBuild: (config: Record<string, unknown>, draftId?: string) => Promise<boolean | void> | boolean | void;
+  /** draftId — «Ручная сборка» открыта из черновика с чертежа: сборка завершает его. generatorOrigin — типовая сборка,
+      из которой «Поправить вручную» сделало эту ручную (сервер сверяет с ней правки технолога). */
+  onBuild: (config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>) => Promise<boolean | void> | boolean | void;
   onDiscard: () => Promise<void> | void;
   /** Экспертное (JSON-конфигурация) — под «Ещё», рядом со сводом материалов. */
   more?: ReactNode;
@@ -240,7 +242,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     setManual(restored ?? emptyManual());
     // Метки по КД собранной карты возвращаются в форму: следующая сборка их не теряет.
     const markRows = markRowsFromConfig(card.document?.build_config);
-    const seeded = markRows.length ? { ...initState(D), mark: true, markRows } : initState(D);
+    // Свой порядок операций собранной карты («Выше/Ниже» в схеме) возвращается в форму вместе с метками.
+    const base = { ...initState(D), opOrder: restored ? [] : opOrderFromConfig(card.document?.build_config) };
+    const seeded = markRows.length ? { ...base, mark: true, markRows } : base;
     setS(restored ? switchGenTab(seeded, "manual") : seeded);
     setStatus({ text: "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -314,7 +318,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           summary: kdSummary(manual, proposeFromKd(manual, kdProposal.derived, kdProposal.version)), warnings: kdProposal.warnings,
           onApply: () => {
             const { derived, version } = kdProposal;
-            setManual((current) => proposeFromKd(current, derived!, version)); setRouteError(""); setKdProposal(null);
+            setManual((current) => proposeFromKd(current, derived!, version)); setRouteError(""); setKdProposal(null); setOrigin(null);
           },
           onCancel: () => setKdProposal(null),
         }
@@ -328,14 +332,22 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // набором операций, под который сделаны (сменились операции — правки не подходят и не уходят на сервер).
   const routeSpecs = useMemo(() => ops.filter((spec) => gen.opRow(spec).templateId), [gen, ops]);
   const docMinutes = useMemo(() => documentMinutes(card.document, routeSpecs.map((spec) => spec.type)), [card.document, routeSpecs]);
-  const routeOps = useMemo<RouteOp[]>(() => routeSpecs.map((spec, index) => {
-    const title = D.templates.find((tmpl) => tmpl.id === gen.opRow(spec).templateId)?.title || "";
-    return {
-      position: index + 1, key: spec.opKey, type: spec.type, code: title.includes("|") ? title.split("|")[0].trim() : "",
-      label: spec.label || spec.cat || `Операция ${index + 1}`, minutes: docMinutes ? docMinutes.minutes[index] : null,
-      number: ops.indexOf(spec) + 1,
-    };
-  }), [routeSpecs, gen, D.templates, docMinutes, ops]);
+  const routeOps = useMemo<RouteOp[]>(() => {
+    const codeOf = (title: string) => (title.includes("|") ? title.split("|")[0].trim() : "");
+    const norm = (code: string) => code.replace(/\s+/g, "").toLowerCase();
+    return routeSpecs.map((spec, index) => {
+      const code = codeOf(D.templates.find((tmpl) => tmpl.id === gen.opRow(spec).templateId)?.title || "");
+      // Карта не та, что просило правило генератора (её нет в библиотеке или технолог выбрал другую) — пометка у блока.
+      const want = (spec.tmplWant || spec.tmplHint || "").trim();
+      const differs = !!code && !!want && norm(code) !== norm(want);
+      const known = differs && D.templates.some((tmpl) => norm(codeOf(tmpl.title)) === norm(want));
+      return {
+        position: index + 1, key: spec.opKey, type: spec.type, code,
+        label: spec.label || spec.cat || `Операция ${index + 1}`, minutes: docMinutes ? docMinutes.minutes[index] : null,
+        number: ops.indexOf(spec) + 1, codeNote: differs ? `вместо ${want}${known ? "" : " — нет карты"}` : "",
+      };
+    });
+  }, [routeSpecs, gen, D.templates, docMinutes, ops]);
   const routeSig = routeOps.map((op) => op.key).join("|");
   const finalName = String((config as Record<string, unknown>).assemblyName || "");
   const [routeEdit, setRouteEdit] = useState<{ route: Route | null; sig: string } | undefined>();
@@ -346,6 +358,28 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const savedFits = !!savedRoute && !!docMinutes && !routeProblem(savedRoute, routeOps, finalName);
   const routeOverride = routeEdit ? (routeEdit.sig === routeSig ? routeEdit.route : null) : (savedFits ? savedRoute : null);
   const routeStale = routeOps.length > 0 && (routeEdit ? !!routeEdit.route && routeEdit.sig !== routeSig : !!savedRoute && !savedFits);
+
+  // «Выше/Ниже» в схеме: свой порядок операций (S.opOrder, по opKey — шаблоны и времена операций остаются при них).
+  const autoKeys = useMemo(() => (S.opOrder.length ? makeGen(D, { ...S, opOrder: [] }).getActiveOps().map((spec) => spec.opKey) : null), [D, S]);
+  const orderChanged = !!autoKeys && autoKeys.join("|") !== ops.map((spec) => spec.opKey).join("|");
+  function reorder(order: number[], route: Route | null) {
+    const moved = order.map((position) => routeOps[position - 1].key);
+    const inRoute = new Set(moved);
+    let next = 0;
+    const full = ops.map((spec) => (inRoute.has(spec.opKey) ? moved[next++] : spec.opKey));
+    setS((current) => ({ ...current, opOrder: full }));
+    setRouteError("");
+    setRouteEdit({ route, sig: moved.join("|") });
+  }
+  function resetOrder() {
+    const inRoute = new Set(routeOps.map((op) => op.key));
+    setS((current) => ({ ...current, opOrder: [] }));
+    setRouteError("");
+    setRouteEdit({ route: null, sig: (autoKeys ?? []).filter((key) => inRoute.has(key)).join("|") });
+  }
+  // «Поправить вручную»: типовая сборка, с которой начата ручная, — уходит со сборкой как generator_origin.
+  const [origin, setOrigin] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => { setOrigin(null); }, [card.id]);
 
   // Нормы терминала по сечению проводов разъёма (TcGenerator.gs:762-788) — через справочник ERP.
   const crimpEndpoints = S.tab === "coax" || manualTab ? [] : S.endpoints.filter((ep) => ep.method === "crimp" && ep.termId);
@@ -529,9 +563,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const ops = (cfg.ops as Array<Record<string, unknown>>).map((op, index) => (routeSpecs[index]?.label ? { ...op, label: routeSpecs[index].label } : op));
     setStatus({ text: "Открываю в ручной сборке…", error: false });
     try {
-      const restored = manualFromConfig(await assemblyApi.fromGenerator({ ...cfg, ops }));
+      const typical = routeOverride ? { ...cfg, route: routePayload(routeOverride) } : cfg;
+      const restored = manualFromConfig(await assemblyApi.fromGenerator({ ...typical, ops }));
       if (!restored) throw new Error("Сборку не удалось открыть в ручной сборке");
-      setManual(restored); setDraftId(""); setBuiltId(""); setRouteError("");
+      setManual(restored); setDraftId(""); setBuiltId(""); setRouteError(""); setOrigin(typical);
       update((current) => switchGenTab(current, "manual"));
       setStatus({ text: "", error: false });
     } catch (reason) {
@@ -542,7 +577,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   function openDraft(draft: AssemblyDraft) {
     const restored = manualFromConfig(draft.draft_config);
     if (!restored) { setStatus({ text: "Черновик не открыт: в нём нет ручной сборки.", error: true }); return; }
-    setManual(restored); setDraftId(draft.id); setBuiltId(""); setRouteError("");
+    setManual(restored); setDraftId(draft.id); setBuiltId(""); setRouteError(""); setOrigin(null);
     update((current) => switchGenTab(current, "manual"));
     setStatus({ text: "", error: false });
   }
@@ -557,7 +592,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     }
     setStatus({ text: card.status === "Выдана" ? "Пересобираю техкарты…" : "Создаю техкарты…", error: false });
     try {
-      const built = await onBuild(payload, fromDraft || undefined);
+      const sent = manualTab ? origin : null;
+      const built = sent ? await onBuild(payload, fromDraft || undefined, sent) : await onBuild(payload, fromDraft || undefined);
       setStatus({ text: "", error: false });
       if (fromDraft && built !== false) { setDraftId(""); setBuiltId(fromDraft); void reloadDrafts(); }
     } catch (reason) {
@@ -1019,7 +1055,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 onChange={(route) => { setRouteError(""); setRouteEdit({ route, sig: routeSig }); }} error={routeError}
                 notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
                 skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
-                renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }} />
+                renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }}
+                onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} />
             </>}
           {/* Служебное (владелец 29.09) — свод материалов, удаление черновика, JSON — свёрнуто в «Ещё». */}
           <details className="gen-more"><summary>Ещё</summary>

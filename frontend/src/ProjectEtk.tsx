@@ -623,11 +623,11 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
   }, [card.project, card.item_index]);
 
   /** true — техкарта собрана (в том числе черновиком), false — нет; от этого зависит, завершён ли черновик с чертежа. */
-  async function build(config: Record<string, unknown>, draftId?: string): Promise<boolean> {
+  async function build(config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>): Promise<boolean> {
     if (busy) return false;
     setBusy(true); setError(""); setNotice("");
     try {
-      let updated = await techcardsApi.autoBuild(card.id, card.version, config, draftId);
+      let updated = await techcardsApi.autoBuild(card.id, card.version, config, draftId, generatorOrigin);
       const rebuilt = updated.status === "Выдана";
       if (!rebuilt && canIssue) {
         try { updated = await techcardsApi.issue(updated.id, updated.version); }

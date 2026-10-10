@@ -22,7 +22,12 @@ import {
   manualConfig,
   manualFromConfig,
   manualProblem,
+  manualRoute,
+  manualShortTitle,
+  moveBlock,
   moveOp,
+  moveOpToBlock,
+  shortBlockName,
   nameBlockAfter,
   orderedOps,
   removeBlock,
@@ -656,5 +661,45 @@ describe("manual assembly: «Предложить из КД»", () => {
     expect(payload[2]).not.toHaveProperty("templateId");
     // Карточка уже есть — не перебирается.
     expect(fillKdCards(filled, () => ({ templateId: "other", code: "X", prepSec: "", opSec: "" })).ops[0]).toBe(op(1));
+  });
+});
+
+describe("manual assembly: order of blocks and short names (owner 10.10: «как тут порядок поменять — я не могу»)", () => {
+  it("moves a block up and down among the blocks it does not depend on; the operation numbers follow", () => {
+    const state = twoBranches();
+    const up = moveBlock(state, "b3", -1);
+    expect(up.problem).toBeNull();
+    expect(blockOrder(up.state)).toEqual(["b3", "b2", "b1"]);
+    expect(order(up.state)).toEqual(["Резка ТУТ", "Резка", "Опрессовка терминалов (А)", "Усадка", "Контроль"]);
+    expect(blockOrder(moveBlock(up.state, "b3", 1).state)).toEqual(["b2", "b3", "b1"]);
+    // Края: выше первого и ниже последнего двигать некуда — схема прежняя, без слов.
+    expect(moveBlock(state, "b2", -1)).toEqual({ state, problem: null });
+    expect(moveBlock(state, "b1", 1)).toEqual({ state, problem: null });
+  });
+
+  it("will not put a block above its own input or below the block that takes it, and says why in Russian", () => {
+    const state = twoBranches();
+    const names: Record<string, string> = { b1: "Изделие", b2: "Провод", b3: "Трубка" };
+    const title = (key: string) => names[key];
+    expect(moveBlock(state, "b1", -1, title)).toEqual({ state, problem: "блок «Изделие» берёт полуфабрикат блока «Трубка» — выше него он встать не может" });
+    expect(moveBlock(state, "b3", 1, title)).toEqual({ state, problem: "блок «Изделие» берёт полуфабрикат блока «Трубка» — ниже него этот блок встать не может" });
+  });
+
+  it("«Перенести в блок…» puts an operation at the end of another block", () => {
+    const moved = moveOpToBlock(twoBranches(), 4, "b2");
+    expect(moved.blocks.map((block) => [block.key, block.ops])).toEqual([["b1", [1, 5]], ["b2", [2, 3, 4]], ["b3", []]]);
+    expect(moveOpToBlock(twoBranches(), 4, "nope")).toEqual(twoBranches());
+  });
+
+  it("shortens a long generated block name to its operations, keeping the full name for the tooltip", () => {
+    expect(shortBlockName(["Монтаж в разъём А1 — I-DS1071-SCB02X5", "Свивка", "Маркировка — БМ-25"])).toBe("Монтаж в разъём А1 · свивка · маркировка");
+    let state = renameBlock(twoBranches(), "b2", "Разъём I-DS1071-SCB02X5 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)");
+    state = renameBlock(state, "b3", "Трубка");
+    const { route, ops } = manualRoute(state, 1);
+    const title = (key: string) => manualShortTitle(route.blocks.find((block) => block.key === key)!, ops, "Изделие");
+    expect(title("b2")).toEqual({ title: "Резка · опрессовка терминалов (А)", full: "Разъём I-DS1071-SCB02X5 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)" });
+    expect(title("b3")).toEqual({ title: "Трубка", full: "Трубка" });
+    // Итог с операциями назван ими, изделие — в подсказке (и строкой «итог: …» на схеме).
+  expect(title("b1")).toEqual({ title: "Усадка · контроль", full: "Изделие" });
   });
 });

@@ -76,7 +76,7 @@ it("keeps a linear scheme collapsed, opens it on demand and sends the hand-edite
   fireEvent.click(screen.getByRole("button", { name: "Показать схему" }));
   const chain = screen.getByRole("list", { name: "Блоки схемы" });
   expect(within(chain).getAllByRole("listitem")).toHaveLength(3);
-  expect(screen.getByText("3 блока · 3 оп.")).toBeInTheDocument();
+  expect(screen.getByText("3 блока · 3 операции")).toBeInTheDocument();
   // «Монтаж в разъём» (3 и 5 в списке) без шаблона в сборку не идёт — схема о них говорит
   expect(screen.getByText("Без шаблона, в схему не входят: 3, 5")).toBeInTheDocument();
 
@@ -151,4 +151,89 @@ it("opens a block with the same operation editor the list has, so its template a
   fireEvent.change(within(panel).getByLabelText("Карточка: Резка — МГТФ 0,12"), { target: { value: "prsA" } });
   // одно состояние формы: тот же шаблон стоит и в общем списке операций
   await waitFor(() => expect((screen.getAllByLabelText("Карточка: Резка — МГТФ 0,12") as HTMLSelectElement[]).map((select) => select.value)).toEqual(["prsA", "prsA"]));
+});
+
+/* Кабель USB «Сибирь»: обжим обеих сторон при резке (600 проводов в партии), карты CUT_WIRE+2crimp в библиотеке нет —
+   резка по CUT_WIRE+1crimp; монтаж А1 и В1. Владелец: «неправильный порядок … не могу его редактировать … мне нужны коды». */
+const USB = [
+  { type: "Провод", name: "Провод НВ4 0,2", art: "НВ4 0,2", qty: 0.3 },
+  { type: "Терминал", name: "Контакт XH", art: "SXH-001T-P0.6N", qty: 6 },
+  { type: "Соед", name: "Розетка XH", art: "I-DS1071-SCB02X5", qty: 2 },
+];
+const USB_NAME = "Кабель USB «Сибирь» ТСЦМ.685621.047 150мм";
+const usbKit = (): KitsetBom => ({
+  project: "P-100", index: "КБ1", name: USB_NAME, run: "200", part_qty: "200", calc_source: "", calc_ops: [],
+  components: USB.map((item, i) => ({ id: `kit-${i}`, kd: "", ...item })),
+});
+function mockUsb() {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [
+      { id: "cwc", code: "CUT_WIRE+1crimp", side: "", title: "CUT_WIRE+1crimp | Автомат резка + опрессовка", name: "", category: "Автомат резка + опрессовка", steps: 1, tooling: 1 },
+      { id: "insA", code: "INS_terminal_2.50", side: "A", title: "INS_terminal_2.50 | Монтаж терминалов (А)", name: "", category: "Монтаж терминалов", steps: 1, tooling: 1 },
+      { id: "insB", code: "INS_terminal_2.50", side: "B", title: "INS_terminal_2.50 | Монтаж терминалов (В)", name: "", category: "Монтаж терминалов", steps: 1, tooling: 1 },
+    ] });
+    if (path.startsWith("/api/references/tech-operations?")) {
+      const tab = new URLSearchParams(path.split("?")[1]).get("tab");
+      return json({ metadata: null, columns: [], records: tab === "ter"
+        ? [{ id: "t1", tab: "ter", display_text: "XH", source_sheet: "", fields: { terArticle: "SXH-001T-P0.6N", terLPlus: "5", terStep: "2.50", terStrip: "2", terApplicator: "S5/M5/A2" } }] : [] });
+    }
+    if (path === "/api/references/technology/resolve-terminal") return json({ applicator: "", crimp_height: "", pull_force: "", by_section: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+const mountUsb = (cardPatch: Partial<ProjectTechcard> = {}) => {
+  mockUsb();
+  const onBuild = vi.fn();
+  const view = render(<TcGenerator card={{ ...card, product_name: USB_NAME, ...cardPatch }} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={usbKit()} />);
+  return { onBuild, view };
+};
+const opList = () => (within(screen.getByRole("group", { name: "Операции" })).getAllByLabelText(/^Карточка: /) as HTMLSelectElement[])
+  .map((select) => select.getAttribute("aria-label")!.replace("Карточка: ", ""));
+const schemeBlocks = () => within(screen.getByRole("list", { name: "Блоки схемы" })).getAllByRole("button").filter((button) => button.classList.contains("route-block"));
+
+it("USB: every block starts with its card code, the replaced card is noted and the В1 mounting stays visible in the final block", async () => {
+  mountUsb();
+  await screen.findByText("Схема полуфабрикатов");
+  expect(screen.getByText("Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Показать схему" }));
+  const blocks = schemeBlocks();
+  expect(blocks.map((block) => block.querySelector(".route-block-code")?.textContent)).toEqual(["CUT_WIRE+1crimp", "INS_terminal_2.50", "INS_terminal_2.50"]);
+  expect(blocks[0]).toHaveTextContent("вместо CUT_WIRE+2crimp — нет карты");
+  expect(blocks[2].querySelector(".route-block-name")).toHaveTextContent("Монтаж в разъём В1 — I-DS1071-SCB02X5");
+  expect(blocks[2]).toHaveTextContent(`итог: ${USB_NAME}`);
+  expect(screen.getByText("3 блока · 3 операции")).toBeInTheDocument();
+  // Внутренние имена типов операций на экран не попадают.
+  expect(document.body.textContent).not.toMatch(/cutWireCrimp|insTerm/);
+});
+
+it("USB: «Выше» on a block reorders the operations, the build sends that order and the card reopens with it", async () => {
+  const { onBuild, view } = mountUsb();
+  await screen.findByText("Схема полуфабрикатов");
+  fireEvent.click(screen.getByRole("button", { name: "Изменить схему" }));
+  fireEvent.click(screen.getByRole("button", { name: "Выше: блок «Монтаж в разъём В1 — I-DS1071-SCB02X5»" }));
+  // Список операций и схема — в новом порядке; шаблоны операций остались при них.
+  expect(opList()).toEqual(["Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5"]);
+  expect(schemeBlocks().map((block) => block.querySelector(".route-block-name")?.textContent)).toEqual([
+    "Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5",
+  ]);
+  expect(screen.getByText("свой порядок операций")).toBeInTheDocument();
+  await build();
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  const config = onBuild.mock.calls[0][0];
+  expect(config.ops.map((op: { type: string; side?: string; templateId: string }) => [op.type, op.side ?? "", op.templateId])).toEqual([
+    ["cutWireCrimp", "A", "cwc"], ["insTerm", "B", "insB"], ["insTerm", "A", "insA"],
+  ]);
+  expect(config.opOrder).toEqual(["cutWire", "insTermB1", "insTermA1"]);
+  expect(config).not.toHaveProperty("route");
+
+  // Карта, собранная с этим порядком, открывается с ним же; «Вернуть порядок генератора» возвращает правило.
+  view.unmount();
+  vi.restoreAllMocks();
+  mountUsb({ version: 2, document: { kit: { part_quantity: "200" }, operations: [], warnings: [], build_config: config } });
+  await screen.findByText("Схема полуфабрикатов");
+  expect(opList()[1]).toBe("Монтаж в разъём В1 — I-DS1071-SCB02X5");
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть порядок генератора" }));
+  expect(opList()[1]).toBe("Монтаж в разъём А1 — I-DS1071-SCB02X5");
+  expect(screen.queryByText("свой порядок операций")).not.toBeInTheDocument();
 });
