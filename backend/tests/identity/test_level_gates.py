@@ -118,7 +118,8 @@ def test_route_role_lists_are_gone():
 
 
 def test_level_sections_are_the_old_ones_without_staffdir_plus_the_split_sections():
-    assert set(LEVEL_SECTION_LABELS) == (set(OLD_SECTIONS) - {"staffdir"}) | {"myops", "quality", "shipping_goods"}
+    # «Кадры» (`hr`, 0089) came after the transfer: the matrix offers it, the transfer never saw it.
+    assert set(LEVEL_SECTION_LABELS) == (set(OLD_SECTIONS) - {"staffdir"}) | {"myops", "quality", "shipping_goods", "hr"}
     assert domain.FULL_ACCESS_LEVELS == {"superadmin", "admin"}
     assert domain.LEVEL_LABELS == {
         "superadmin": "Суперадминистратор", "admin": "Администратор", "commercial": "Коммерческое руководство",

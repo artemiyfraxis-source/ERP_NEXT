@@ -27,6 +27,7 @@ from typing import Any
 from uuid import UUID, uuid5
 
 from .connector_housings import ALIAS_RULES, ALIASES, CATALOG_SAMPLES, FAMILIES, housing_of
+from .harness.validate import ReferenceBook
 
 CONTRACT_VERSION = 1
 SOURCE_KIND = "erp-references"
@@ -365,3 +366,23 @@ def build_harness_catalog(tables: Mapping[str, Iterable[Mapping[str, Any]]], *, 
         "contractVersion": CONTRACT_VERSION, "capturedUtc": captured_utc, "snapshots": snapshots,
         "counts": {snapshot["sourceId"]: len(snapshot["records"]) for snapshot in snapshots},
     }
+
+
+def reference_book(tables: Mapping[str, Iterable[Mapping[str, Any]]]) -> ReferenceBook:
+    """The keys a drawing may reference, from the same records the editor's pickers offer: wire / cable marks
+    (БД.ПРОВ, СПР.КАБ), terminal articles REEL and BAG (БД.ТЕР), covering names (БД.МАТ), coax strip keys (БД.КОАКС)."""
+    keys: dict[str, set[str]] = {"wire": set(), "terminal": set(), "covering": set(), "strip": set()}
+    kinds = {"wire": "wire", "cable": "wire", "coax-cable": "wire", "terminal": "terminal",
+             "protective-covering": "covering", "coax-termination": "strip"}
+    for snapshot in build_harness_catalog(tables, captured_utc="")["snapshots"]:
+        for record in snapshot["records"]:
+            kind = kinds.get(record["entityType"])
+            if kind is None:
+                continue
+            keys[kind].add(record["sourceKey"])
+            if kind == "terminal":
+                keys[kind].update(str(record["payload"].get(name) or "") for name in ("reelArticle", "bagArticle"))
+    return ReferenceBook(
+        wires=frozenset(keys["wire"]), terminals=frozenset(keys["terminal"] - {""}),
+        coverings=frozenset(keys["covering"]), strips=frozenset(keys["strip"]),
+    )

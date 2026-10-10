@@ -379,7 +379,13 @@ export function orderStatus(group: OrderGroup): { label: string; tone: string; t
   const stage = orderStage(group);
   if (stage === "awaiting") return { label: "Жду счёт", tone: "tone-info", title: group.date ? `Запрос отправлен ${formatDay(group.date)}` : "Запрос отправлен" };
   if (stage === "topay") return { label: "Ждёт оплаты", tone: "tone-warn" };
-  if (stage === "accepted") return { label: "Принято", tone: "tone-neutral" };
+  if (stage === "accepted") {
+    // Строка «Готово · без ГРН» в заказе: принято, но партию к ней ещё привязывают — заголовок говорит об этом сразу.
+    const lotless = group.lines.filter(waitsForGrn);
+    return lotless.length
+      ? { label: "Принято · без ГРН", tone: "tone-info", title: `Ждут «Привязать ГРН»: ${lotless.map((line) => line.legacy_id).join(", ")}` }
+      : { label: "Принято", tone: "tone-neutral" };
+  }
   const done = group.lines.filter((line) => line.status === DONE).length;
   const accepted = done ? `принято ${done} из ${group.lines.length}` : "";
   if (stage === "quarantine") {

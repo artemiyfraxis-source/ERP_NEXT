@@ -97,6 +97,7 @@ export type EditorCommand =
   | { readonly type: "update-joining-pipe-exit"; readonly pipeId:string; readonly side:"from"|"to"; readonly position:Point }
   | { readonly type: "update-joining-pipe-member-bend"; readonly pipeId:string; readonly memberIndex:number; readonly side:"enter"|"exit"; readonly position?:Point; readonly clear?:boolean; readonly mode?:PhysicalDragMode; readonly origin?:Point; readonly outerOrigin?:Point }
   | { readonly type: "update-joining-pipe-member-boundary"; readonly pipeId:string; readonly memberIndex:number; readonly boundary:"outerEnter"|"axisEnter"|"axisExit"|"outerExit"; readonly origin:Point; readonly position:Point }
+  | { readonly type: "clear-joining-pipe-member-boundary"; readonly pipeId:string; readonly memberIndex:number; readonly boundary:"outerEnter"|"outerExit" }
   | { readonly type: "update-joining-pipe"; readonly pipeId:string; readonly start?:Point; readonly end?:Point; readonly mode?:"flat"|"round"; readonly width?:number; readonly color?:string; readonly opacity?:number; readonly volumeShading?:boolean }
   | { readonly type: "add-connector"; readonly connector: ConnectorInstance }
   | { readonly type: "set-drawing-placement"; readonly connectorId:string; readonly drawingId:string; readonly scale?:number; readonly rotationDegrees?:number; readonly rotationCenter?:Point; readonly visible?:boolean; readonly offset?:Point }
@@ -343,6 +344,14 @@ function applyCommand(document: HarnessDesignDocument, command: EditorCommand): 
       }
       const key=boundary==="outerEnter"?"enterOuter":"exitOuter";
       const members=pipe.members.map((member,index)=>index===command.memberIndex?{...member,[key]:position}:member);
+      return {...document,physicalTopology:parsePhysicalTopology({...t,joiningPipes:t.joiningPipes?.map(p=>p.id===pipe.id?{...p,members}:p)},document)};
+    }
+    case "clear-joining-pipe-member-boundary": {
+      if(document.views.drawing.layers.some(l=>l.id==="wires"&&l.locked))throw new Error("Слой трассы заблокирован.");
+      const t=document.physicalTopology,pipe=t?.joiningPipes?.find(p=>p.id===command.pipeId);
+      if(!t||!pipe||!pipe.members[command.memberIndex])return document;
+      const key=command.boundary==="outerEnter"?"enterOuter":"exitOuter";
+      const members=pipe.members.map((member,index)=>index===command.memberIndex?{...member,[key]:undefined}:member);
       return {...document,physicalTopology:parsePhysicalTopology({...t,joiningPipes:t.joiningPipes?.map(p=>p.id===pipe.id?{...p,members}:p)},document)};
     }
     case "update-joining-pipe": {

@@ -39,8 +39,21 @@ from .application import (
     set_production_cancelled,
     hand_over_production,
     HandOverProductionCommand,
+    CancelDeliveryCommand,
+    FlowView,
+    RecordDeliveryCommand,
+    RefreshNormsCommand,
+    SetTaskDoneCommand,
+    UpdateFlowCommand,
+    cancel_delivery,
+    flow_view,
+    record_delivery,
+    refresh_norms,
+    set_task_done,
+    update_flow,
 )
-from .domain import OperatorSkill, ProductionTask, ProductionValidationError, WorkShift
+from .domain import FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total
+from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
     item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, route_from_document,
     stage_name,
@@ -91,6 +104,26 @@ class LaunchPayload(BaseModel):
     quantity: int = Field(gt=0, le=1_000_000)
     fulfillment_request_id: UUID | None = None
     deadline: date | None = None
+
+
+class FlowPayload(BaseModel):
+    # План задания: режим передачи, передаточная партия (null — вся партия), «первые k раньше» (null — нет), команда.
+    version: int = Field(ge=1)
+    flow_mode: FlowMode
+    transfer_batch: int | None = Field(default=None, ge=1, le=1_000_000)
+    early_quantity: int | None = Field(default=None, ge=1, le=1_000_000)
+    team: list[UUID] = Field(default_factory=list, max_length=50)
+
+
+class DeliveryPayload(BaseModel):
+    # «Сдано N шт»; null — весь остаток одним разом.
+    version: int = Field(ge=1)
+    quantity: int | None = Field(default=None, ge=1, le=1_000_000)
+
+
+class TaskDonePayload(BaseModel):
+    version: int = Field(ge=1)
+    done: bool
 
 
 class AssignPayload(BaseModel):
@@ -282,7 +315,7 @@ def _fact_result(fact: dict | None, quantity: Decimal) -> dict:
     }
 
 
-def _result(task: ProductionTask, facts: dict | None = None) -> dict:
+def _result(task: ProductionTask, facts: dict | None = None, delivered: int | None = None) -> dict:
     starts = [operation.planned_start for operation in task.operations if operation.planned_start]
     finishes = [operation.planned_finish for operation in task.operations if operation.planned_finish]
     positions = {operation.id: operation.position for operation in task.operations}
@@ -296,6 +329,13 @@ def _result(task: ProductionTask, facts: dict | None = None) -> dict:
         "fulfillment_request_id": str(task.fulfillment_request_id) if task.fulfillment_request_id else None,
         "deadline": task.deadline.isoformat() if task.deadline else None,
         "status": task.status.value, "launched_by": task.launched_by, "handed_to": task.handed_to,
+        # План задания (Цель 2): техкарта и ревизия норм, режим передачи, партия, «первые k раньше», команда;
+        # delivered — «Сдано N шт» площадки (без отменённых), null — не считалось в этом ответе.
+        "techcard_id": str(task.techcard_id) if task.techcard_id else None,
+        "techcard_revision": task.techcard_revision,
+        "flow_mode": task.flow_mode.value, "transfer_batch": task.transfer_batch,
+        "early_quantity": task.early_quantity, "team": [str(value) for value in task.team],
+        "delivered": delivered,
         "planned_start": min(starts).isoformat() if starts else None,
         "planned_finish": max(finishes).isoformat() if finishes else None,
         "assigned": sum(bool(operation.operator_ids) for operation in task.operations),
@@ -450,7 +490,11 @@ def tasks(
         rows = list(uow.production.list(limit + 1, after))
         page = rows[:limit]
         facts = _facts(uow, page)
-    return {"tasks": [_result(task, facts) for task in page], "next_cursor": str(page[-1].id) if len(rows) > limit else None}
+        totals = uow.deliveries.totals(task.id for task in page) if hasattr(uow, "deliveries") else {}
+    return {
+        "tasks": [_result(task, facts, totals.get(task.id, 0)) for task in page],
+        "next_cursor": str(page[-1].id) if len(rows) > limit else None,
+    }
 
 
 @router.get("/traceability")
@@ -1126,6 +1170,7 @@ def launch(
         name=card.product_name, quantity=payload.quantity,
         fulfillment_request_id=payload.fulfillment_request_id, deadline=payload.deadline,
         operations=operations, actor=principal.actor, now=now,
+        techcard_id=card.id, techcard_revision=card.revision if card.revision >= 1 else None,
     ), uow_factory()))
     # Схема полуфабрикатов не подошла — задание идёт цепочкой; экран заданий показывает warnings мастеру.
     response["warnings"] = list(planned.warnings)
@@ -1271,12 +1316,17 @@ def calendar(
         holidays = uow.calendar.holidays()
         absences = uow.calendar.absences()
         shift = uow.calendar.shift()
+        # A leave-request absence may belong to anyone (office staff too), not only to the operators the screen lists.
+        names = {operator.id: operator.name for operator in uow.operators.list()}
     return {
         "holidays": [day.isoformat() for day in sorted(holidays)],
         "shift": _shift_result(shift),
         "absences": [{
             "id": str(item.id), "operator_id": str(item.operator_id),
             "from_date": item.from_date.isoformat(), "to_date": item.to_date.isoformat(), "kind": item.kind,
+            # Set — the absence of a registered leave request: shown, never edited or saved by the calendar screen.
+            "leave_request_id": str(item.leave_request_id) if item.leave_request_id else None,
+            "operator_name": names.get(item.operator_id),
         } for item in absences],
     }
 
@@ -1351,3 +1401,169 @@ def replace_skills(
         ), uow_factory())
     except ProductionValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+# ── Цель 2: план задания, «Сдано N шт», «Выполнено» ─────────────────────────────────────────────────────────
+
+
+def _delivery_result(item: TaskDelivery) -> dict:
+    return {
+        "id": str(item.id), "site": item.site, "quantity": item.quantity,
+        "delivered_at": item.delivered_at.isoformat(), "delivered_by": item.delivered_by,
+        "cancelled_at": item.cancelled_at.isoformat() if item.cancelled_at else None,
+        "cancelled_by": item.cancelled_by,
+    }
+
+
+def _card_of(task: ProductionTask, techcards_factory):
+    """Техкарта задания: по сохранённому id, у заданий до 0089 — выданная карта проекта и КБ."""
+    if techcards_factory is None:
+        return None
+    with techcards_factory() as techcards:
+        card = techcards.techcards.get(task.techcard_id) if task.techcard_id else None
+        return card if card is not None else issued_card_for_item(techcards, task.project, task.item)
+
+
+def _flow_result(view: FlowView, card) -> dict:
+    task, plan = view.task, view.plan
+    stages = {operation.id: operation for operation in task.operations}
+    issued = card is not None and card.status is TechcardStatus.ISSUED
+    current = card.revision if issued else None
+    return {
+        "task": _result(task, delivered=delivered_total(view.deliveries)),
+        "modes": [{"value": mode.value, "name": FLOW_MODE_NAMES[mode]} for mode in FlowMode],
+        "thresholds": {"notice": _number(EARLY_NOTICE * 100), "limit": _number(EARLY_LIMIT * 100)},
+        "plan": {
+            "anchor": view.anchor.isoformat(),
+            "transfer_batch": plan.transfer_batch,
+            "first_ready": view.first_ready.isoformat(), "first_quantity": plan.first_quantity,
+            "finish": view.finish.isoformat(),
+            "baseline_finish": view.baseline_finish.isoformat(),
+            "baseline_early_ready": view.baseline_early_ready.isoformat() if view.baseline_early_ready else None,
+            "delay_percent": _number((plan.delay * 100).quantize(Decimal("0.1"))) if plan.delay is not None else None,
+            "level": plan.level,
+            "work_seconds": int(plan.finish),
+            "warnings": list(view.warnings),
+            "steps": [{
+                "operation_id": str(item.operation_id), "position": item.position,
+                "stage": stage_name(stages[item.operation_id].stage),
+                "code": operation_code(stages[item.operation_id].code),
+                "people": _number(item.people),
+                "operator_ids": [str(value) for value in stages[item.operation_id].operator_ids],
+                "start": item.start.isoformat(), "first_out": item.first_out.isoformat(),
+                "finish": item.finish.isoformat(), "wait_seconds": item.wait_seconds,
+            } for item in view.steps],
+        },
+        "deliveries": [_delivery_result(item) for item in view.deliveries],
+        "delivered": delivered_total(view.deliveries),
+        "norms": {
+            "techcard_id": str(card.id) if card is not None else None,
+            "revision": task.techcard_revision,
+            "current_revision": current,
+            # Нормы задания старее выданной ЭТК — мастер обновляет кнопкой, сами нормы не меняются.
+            "outdated": current is not None and (task.techcard_revision is None or current > task.techcard_revision),
+        },
+    }
+
+
+@router.get("/tasks/{task_id}/flow")
+def task_flow(
+    task_id: UUID,
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    view = _execution(lambda: flow_view(task_id, uow_factory(), now))
+    return _flow_result(view, _card_of(view.task, techcards_factory))
+
+
+@router.put("/tasks/{task_id}/flow")
+def update_task_flow(
+    task_id: UUID,
+    payload: FlowPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    return _run(lambda: update_flow(UpdateFlowCommand(
+        task_id=task_id, expected_version=payload.version, flow_mode=payload.flow_mode,
+        transfer_batch=payload.transfer_batch, early_quantity=payload.early_quantity,
+        team=tuple(payload.team), actor=principal.actor, now=now,
+    ), uow_factory()))
+
+
+@router.post("/tasks/{task_id}/norms/refresh")
+def refresh_task_norms(
+    task_id: UUID,
+    payload: BoxVersionPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    card = _card_of(task, techcards_factory)
+    if card is None or card.status is not TechcardStatus.ISSUED:
+        raise HTTPException(status_code=422, detail=f"Техкарта «{task.project} {task.item}» не выдана — нормы брать неоткуда")
+    steps = launch_route(card.document).steps
+    norms = {step.position: (step.code, step.seconds_per_unit, step.setup_seconds) for step in steps}
+    return _run(lambda: refresh_norms(RefreshNormsCommand(
+        task_id=task_id, expected_version=payload.version, techcard_id=card.id, revision=card.revision,
+        norms=norms, actor=principal.actor, now=now,
+    ), uow_factory()))
+
+
+@router.post("/tasks/{task_id}/deliveries")
+def deliver(
+    task_id: UUID,
+    payload: DeliveryPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    result: dict = {}
+
+    def execute():
+        task, delivery = record_delivery(RecordDeliveryCommand(
+            task_id=task_id, expected_version=payload.version, quantity=payload.quantity,
+            actor=principal.actor, now=now,
+        ), uow_factory())
+        result["delivery"] = _delivery_result(delivery)
+        return task
+
+    response = _run(execute)
+    response.update(result)
+    return response
+
+
+@router.post("/tasks/{task_id}/deliveries/{delivery_id}/cancel")
+def cancel_task_delivery(
+    task_id: UUID,
+    delivery_id: UUID,
+    payload: BoxVersionPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    return _run(lambda: cancel_delivery(CancelDeliveryCommand(
+        task_id=task_id, expected_version=payload.version, delivery_id=delivery_id,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+
+
+@router.post("/tasks/{task_id}/status")
+def set_task_status(
+    task_id: UUID,
+    payload: TaskDonePayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+) -> dict:
+    return _run(lambda: set_task_done(SetTaskDoneCommand(
+        task_id=task_id, expected_version=payload.version, done=payload.done,
+        actor=principal.actor, now=now,
+    ), uow_factory()))
