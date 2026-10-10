@@ -40,7 +40,7 @@ case "$dump" in
   *) echo "копия должна лежать в $backups" >&2; exit 2 ;;
 esac
 case "$dump" in *"/../"* | *"/./"*) echo "путь к копии без /../ и /./" >&2; exit 2 ;; esac
-[ -f "$dump" ] && [ -s "$dump" ] || { echo "нет файла копии $dump" >&2; exit 2; }
+if [ ! -f "$dump" ] || [ ! -s "$dump" ]; then echo "нет файла копии $dump" >&2; exit 2; fi
 rel=${dump#"$backups/"}
 
 step=start created=0 stopped=0 switched=0 finished=0 pinned="" dump_rev=""
@@ -84,7 +84,7 @@ fail() {  # message — production as before the restore
   echo "ВОССТАНОВЛЕНИЕ НЕ ВЫПОЛНЕНО ($step): $1 — рабочая база не изменена" >&2
   exit 1
 }
-# shellcheck disable=SC2329  # the EXIT trap calls it
+# shellcheck disable=SC2317,SC2329  # the EXIT trap calls it
 on_exit() {
   local code=$?
   [ "$finished" = 0 ] && [ "$code" != 0 ] || return 0
@@ -152,8 +152,9 @@ awk '$4 == "TABLE" && $5 == "public" { print $6 }' "$work/toc.txt" | LC_ALL=C so
   /^COPY .* FROM stdin;$/ { table = $2; sub(/^public\./, "", table); gsub(/"/, "", table); rows = 0; incopy = 1 }
 ' > "$work/dump-data.txt" || fail "данные копии не читаются (pg_restore --data-only)"
 dump_rev=$(awk '$1 == "V" { print $2 }' "$work/dump-data.txt")
-[ -n "$dump_rev" ] && [ "$(printf '%s\n' "$dump_rev" | wc -l)" -eq 1 ] \
-  || fail "в копии не одна ревизия alembic_version: '${dump_rev//$'\n'/ }'"
+if [ -z "$dump_rev" ] || [ "$(printf '%s\n' "$dump_rev" | wc -l)" -ne 1 ]; then
+  fail "в копии не одна ревизия alembic_version: '${dump_rev//$'\n'/ }'"
+fi
 awk 'NR == FNR { if ($1 == "R") rows[$2] = $3; next } { print $1, ($1 in rows ? rows[$1] : "нет-данных") }' \
   "$work/dump-data.txt" "$work/dump-tables.txt" | LC_ALL=C sort > "$work/dump-counts.txt"
 say "копия: ревизия $dump_rev, таблиц $(wc -l < "$work/dump-tables.txt"), строк $(awk '{ s += $2 } END { print s + 0 }' "$work/dump-counts.txt")"
