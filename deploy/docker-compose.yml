@@ -85,6 +85,9 @@ services:
       KEEP_DAILY: ${KEEP_DAILY:-14}
       KEEP_WEEKLY: ${KEEP_WEEKLY:-8}
       KEEP_MONTHLY: ${KEEP_MONTHLY:-36}
+      # Daytime dumps into backups/intraday (owner, 10.10.2026): at most 3 hours of work lost.
+      BACKUP_INTRADAY_HOURS: ${BACKUP_INTRADAY_HOURS-9 12 15 18 21}
+      KEEP_INTRADAY: ${KEEP_INTRADAY:-15}
       # Freshness: the container turns unhealthy (./erp.sh ps) when the last dump failed or the last good one is older.
       BACKUP_MAX_AGE_HOURS: ${BACKUP_MAX_AGE_HOURS:-26}
       BACKUP_MIN_FREE_MB: ${BACKUP_MIN_FREE_MB:-1024}

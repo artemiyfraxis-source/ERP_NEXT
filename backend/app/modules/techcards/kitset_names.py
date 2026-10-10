@@ -16,6 +16,7 @@ import ipaddress
 import os
 import re
 import socket
+import ssl
 from typing import Protocol
 
 import httpcore
@@ -118,10 +119,11 @@ class PageFetcher(Protocol):
         """`fetchPageInfo_(url).title`: сетевая ошибка или код ≥ 400 → ''."""
 
 
-# TLS exceptions (audit U09, 10.10.2026): certificates are verified for every supplier. A site with a broken certificate
-# is read without the check only when its domain is listed here by hand — comma-separated, a domain covers its
-# subdomains (`shop.example` → `www.shop.example`). The list is shown on «Системный журнал» and in /api/health?detail,
-# and a field filled from such a site says so in the journal.
+# TLS (audit U09, 10.10.2026): the certificate is checked first. A site whose certificate fails the check is still read
+# without it (owner, 10.10.2026: autofill must keep working, as in SUPPLYMAP — some suppliers' certificates are
+# broken), and a field filled from such a page says so in the journal. Domains listed here by hand skip the first,
+# checked attempt — comma-separated, a domain covers its subdomains (`shop.example` → `www.shop.example`); the list is
+# shown on «Системный журнал» and in /api/health?detail.
 TLS_EXCEPTIONS_ENV = "ERP_TLS_UNVERIFIED_HOSTS"
 
 
@@ -200,10 +202,22 @@ class PinnedPublicBackend(httpcore.NetworkBackend):
 TLS_UNVERIFIED_EXTENSION = "erp_tls_unverified"
 
 
+def _certificate_failed(error: BaseException) -> bool:
+    """The connect error came from a certificate that failed the check (expired, self-signed, wrong host name)."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 class SupplierSiteTransport(httpx.BaseTransport):
     """The transport of the supplier-site client: pinned public addresses, certificates verified, and a separate pool
-    without the check for the listed exception domains only. A response read without the check carries
-    `extensions[TLS_UNVERIFIED_EXTENSION] = True`."""
+    without the check for a site whose certificate failed (and for the listed domains at once). A response read
+    without the check carries `extensions[TLS_UNVERIFIED_EXTENSION] = True`."""
 
     def __init__(
         self,
@@ -228,10 +242,15 @@ class SupplierSiteTransport(httpx.BaseTransport):
         return transport
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        unverified = request.url.scheme == "https" and tls_unverified(request.url.host, self.exceptions)
-        response = (self._unverified if unverified else self._verified).handle_request(request)
-        if unverified:
-            response.extensions = {**response.extensions, TLS_UNVERIFIED_EXTENSION: True}
+        https = request.url.scheme == "https"
+        if not (https and tls_unverified(request.url.host, self.exceptions)):
+            try:
+                return self._verified.handle_request(request)
+            except httpx.ConnectError as error:
+                if not (https and _certificate_failed(error)):
+                    raise
+        response = self._unverified.handle_request(request)
+        response.extensions = {**response.extensions, TLS_UNVERIFIED_EXTENSION: True}
         return response
 
     def close(self) -> None:
@@ -279,7 +298,8 @@ def fetch_page(client: httpx.Client, url: str) -> FetchedPage | None:
 class HttpPageFetcher:
     """httpx-адаптер `fetchPageInfo_`: редиректы, браузерный UA, тайм-ауты, тело не больше 2 МБ.
 
-    Сертификаты проверяются (аудит U09); без проверки читаются только домены из ERP_TLS_UNVERIFIED_HOSTS. В отличие
+    Сертификат сначала проверяется (аудит U09); сайт с плохим сертификатом читается без проверки, и журнал это
+    отмечает (владелец, 10.10.2026: автозаполнение не должно ломаться). В отличие
     от UrlFetchApp запрос идёт из сети ERP, поэтому адреса внутренней сети (localhost, 10/8, 169.254/16 …) не
     запрашиваются ни напрямую, ни через редирект, ни через DNS-ответ, сменившийся после проверки: соединение идёт на
     проверенный IP (`PinnedPublicBackend`).
