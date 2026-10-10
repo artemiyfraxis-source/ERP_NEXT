@@ -4,12 +4,13 @@ import type { EditorCamera } from "./editor-types";
 import type { HarnessDesignDocument } from "./model";
 import type { EditorCommand } from "./commands";
 import { emptyDrawingDocuments, type DrawingDocuments, type DrawingTable } from "./drawing-documents";
-import { DrawingDocumentsPanel } from "./DrawingDocumentsPanel";
-import { CutDiagramPanel } from "./CutDiagramPanel";
+import { ConnectionsTable } from "../panels/ConnectionsTable";
+import { CutListPanel } from "../panels/CutListPanel";
+import { SpecificationTable } from "../panels/SpecificationTable";
+import { useHarnessDocumentsSource } from "../panels/documents-source";
 import { InfoHint } from "../InfoHint";
 import type { WireDatabaseOption } from "./wire-database";
 import type { ConnectionTableSettings } from "./connection-table-settings";
-import { downloadTables, tableFileName } from "./table-download";
 
 export function tableWindowPosition(table:DrawingTable,camera:EditorCamera):CSSProperties {
   if(table.dock) return table.dock==="right"?{right:8,top:8}:table.dock==="bottom"?{left:8,bottom:8}:{left:8,top:8};
@@ -21,14 +22,14 @@ export function tableWindowStyle(table:DrawingTable,camera:EditorCamera):CSSProp
 export function resizeTableWindow(size:{width:number;height:number},dx:number,dy:number,dock?:DrawingTable["dock"]){
   return {width:Math.max(280,Math.min(4000,Math.round(size.width+(dock==="right"?-dx:dx)))),height:Math.max(160,Math.min(4000,Math.round(size.height+(dock==="bottom"?-dy:dy))))};
 }
-/** The table windows on the field. `readOnly` (view mode): the tables cannot be edited; moving, docking, resizing and
- *  closing a window still work — the caller keeps them on a view-only copy of the drawing documents, never saved.
- *  `exportName` — the file name prefix of «Скачать» (the harness designation). */
-export function DrawingTableWindows(props:{readOnly?:boolean;exportName?:string;connectionTableSettings?:ConnectionTableSettings;sourceFingerprint?:string;perimeters?:DrawingPerimeters;view?:"e4"|"drawing";document:HarnessDesignDocument;camera:EditorCamera;quantity:number;revision:number;unsaved:boolean;selectedIds:readonly string[];onChange:(d:DrawingDocuments)=>boolean;onCommand:(c:EditorCommand)=>boolean;onReveal:(ids:readonly string[])=>void;wireOptions?:readonly WireDatabaseOption[];wireDatabaseOptions?:readonly WireDatabaseOption[];onWireSearch?:(query:string)=>void}) {
+/** The table windows on the field; their rows come from the server (`panels/`). `readOnly` (view mode): the tables cannot
+ *  be edited; moving, docking, resizing and closing a window still work — the caller keeps them on a view-only copy of
+ *  the drawing documents, never saved. «Скачать» — the document of the saved drawing as an Excel file. */
+export function DrawingTableWindows(props:{readOnly?:boolean;connectionTableSettings?:ConnectionTableSettings;perimeters?:DrawingPerimeters;view?:"e4"|"drawing";document:HarnessDesignDocument;camera:EditorCamera;quantity:number;selectedIds:readonly string[];onChange:(d:DrawingDocuments)=>boolean;onCommand:(c:EditorCommand)=>boolean;onReveal:(ids:readonly string[])=>void;wireOptions?:readonly WireDatabaseOption[];wireDatabaseOptions?:readonly WireDatabaseOption[];onWireSearch?:(query:string)=>void}) {
   const d=props.document.drawingDocuments??emptyDrawingDocuments();
   return <>{d.tables.filter(table=>props.view!=="e4"||table.kind==="connections").map(table=><TableWindow key={table.id} {...props} table={table}/>)}</>;
 }
-function TableWindow({readOnly=false,exportName="",table,sourceFingerprint,perimeters,camera,document,quantity,revision,unsaved,selectedIds,onChange,onCommand,onReveal,wireOptions,wireDatabaseOptions,onWireSearch,connectionTableSettings}:Parameters<typeof DrawingTableWindows>[0]&{table:DrawingTable}) {
+function TableWindow({readOnly=false,table,perimeters,camera,document,quantity,selectedIds,onChange,onCommand,onReveal,wireOptions,wireDatabaseOptions,onWireSearch,connectionTableSettings}:Parameters<typeof DrawingTableWindows>[0]&{table:DrawingTable}) {
   const drag=useRef<{x:number;y:number}|null>(null);
   const windowRef=useRef<HTMLElement|null>(null);
   const resize=useRef<{x:number;y:number;width:number;height:number}|null>(null);
@@ -37,7 +38,8 @@ function TableWindow({readOnly=false,exportName="",table,sourceFingerprint,perim
   const d=document.drawingDocuments!;
   const update=(patch:Partial<DrawingTable>)=>onChange({...d,tables:d.tables.map(t=>t.id===table.id?{...t,...patch}:t)});
   const cancelResize=()=>{resize.current=null;setSize(null);};
-  const title=table.kind==="bom"?"Спецификация":table.kind==="cut"?"Резка и разделка":"Таблица соединений";
+  const source=useHarnessDocumentsSource();
+  const title=table.kind==="bom"?"Спецификация":table.kind==="cut"?"Карта резки":"Таблица соединений";
   return <section ref={windowRef} className="he-table-window" aria-label={title+" на поле"} style={{...tableWindowStyle(table,camera),...size,transform:`translate(${delta.x}px,${delta.y}px)`}}
     onPointerDown={e=>e.stopPropagation()} onWheel={e=>e.stopPropagation()} onKeyDown={e=>{if(!((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"))e.stopPropagation();}}>
     <header onPointerDown={e=>{if(table.dock||e.button!==0||(e.target as HTMLElement).closest("button,select"))return;drag.current={x:e.clientX,y:e.clientY};e.currentTarget.setPointerCapture(e.pointerId);}}
@@ -47,9 +49,11 @@ function TableWindow({readOnly=false,exportName="",table,sourceFingerprint,perim
       <strong>{title}</strong><InfoHint>Перетаскивайте окно за заголовок, растягивайте за угловой маркер. На маркере работают стрелки, Shift увеличивает шаг. Положение и размер сохраняются; Ctrl+Z отменяет растяжение целиком. Закреплённое окно остаётся у края при перемещении и масштабировании чертежа.</InfoHint>
       <select aria-label={`Закрепить: ${title}`} value={table.dock??""} onChange={e=>update({dock:(e.target.value||undefined) as DrawingTable["dock"],...(!e.target.value?{position:{x:(24-camera.offsetX)/camera.zoom,y:(24-camera.offsetY)/camera.zoom}}:{})})}>
         <option value="">На поле</option><option value="left">Слева</option><option value="right">Справа</option><option value="top">Сверху</option><option value="bottom">Снизу</option>
-      </select><button type="button" className="ui-control he-table-window-download" title={`Скачать «${title}» в Excel`} onClick={()=>{const body=windowRef.current?.querySelector(".he-table-window-body");if(body)downloadTables(body,tableFileName(exportName,title));}}>Скачать</button><button type="button" className="ui-control" aria-label={`Закрыть: ${title}`} onClick={()=>onChange({...d,tables:d.tables.filter(t=>t.id!==table.id)})}>×</button>
+      </select><button type="button" className="ui-control he-table-window-download" title={`Скачать «${title}» сохранённого чертежа в Excel`} disabled={!source} onClick={()=>source?.download(table.kind,quantity)}>Скачать</button><button type="button" className="ui-control" aria-label={`Закрыть: ${title}`} onClick={()=>onChange({...d,tables:d.tables.filter(t=>t.id!==table.id)})}>×</button>
     </header>
-    <div className={`he-table-window-body ${table.kind!=="cut"?"he-table-window-document":""}`}>{table.kind==="cut"?<CutDiagramPanel readOnly={readOnly} sourceFingerprint={sourceFingerprint} embedded document={document} quantity={quantity} revision={revision} unsaved={unsaved} relatedIds={selectedIds} onCommand={onCommand} onReveal={id=>onReveal([id])}/>:<DrawingDocumentsPanel readOnly={readOnly} connectionTableSettings={connectionTableSettings} sourceFingerprint={sourceFingerprint} unsaved={unsaved} perimeters={perimeters} mode={table.kind} document={document} quantity={quantity} selectedId={null} selectedIds={selectedIds} onChange={onChange} onCommand={onCommand} onReveal={onReveal} wireOptions={wireOptions} wireDatabaseOptions={wireDatabaseOptions} onWireSearch={onWireSearch}/>}</div>
+    <div className="he-table-window-body he-panel-documents">{table.kind==="cut"?<CutListPanel readOnly={readOnly} document={document} quantity={quantity} relatedIds={selectedIds} onCommand={onCommand} onReveal={id=>onReveal([id])}/>
+      :table.kind==="bom"?<SpecificationTable readOnly={readOnly} perimeters={perimeters} document={document} quantity={quantity} selectedIds={selectedIds} onChange={onChange} onReveal={onReveal}/>
+      :<ConnectionsTable readOnly={readOnly} settings={connectionTableSettings} document={document} quantity={quantity} selectedIds={selectedIds} onCommand={onCommand} wireOptions={wireOptions} wireDatabaseOptions={wireDatabaseOptions} onWireSearch={onWireSearch}/>}</div>
     <button type="button" className={`he-table-window-resize ${table.dock==="right"?"at-left":table.dock==="bottom"?"at-top":""}`} aria-label={`Изменить размер: ${title}`}
       onPointerDown={e=>{if(e.button!==0||!windowRef.current)return;e.preventDefault();e.currentTarget.focus();const rect=windowRef.current.getBoundingClientRect();resize.current={x:e.clientX,y:e.clientY,width:rect.width,height:rect.height};e.currentTarget.setPointerCapture(e.pointerId);}}
       onPointerMove={e=>{const start=resize.current;if(start)setSize(resizeTableWindow(start,e.clientX-start.x,e.clientY-start.y,table.dock));}}

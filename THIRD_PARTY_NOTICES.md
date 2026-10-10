@@ -12,3 +12,8 @@ Used in `backend/app/modules/techcards/harness/` (the harness model, its length 
 `.techmap-project.zip` design document) and `backend/app/modules/techcards/grapher_import.py`. The rules are
 rewritten in Python on the ERP's architecture, checked against the author's docs and examples; each function names
 the original file it follows, and the places where it deliberately differs.
+
+The component library of the harness drawing (`harness_component_templates`, migration 0091) is seeded with the
+author's own JST SH connector artwork — `design/jst-sh-assets/variants/*.png` of the same repository, copied
+unchanged into `backend/data/harness-library/jst-sh/` (`build_seed.py` turns them into templates). The QCAD hatching
+catalog of that repository (GPL-3.0) is not used anywhere in ERP_NEXT.

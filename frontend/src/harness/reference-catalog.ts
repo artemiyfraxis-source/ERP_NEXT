@@ -101,8 +101,9 @@ function matchesFilter(record: ReferenceCatalogRecord, filter: ReferenceCatalogS
   }
 }
 
-/** In-memory reference catalog: one active snapshot per source, text search, offset cursor. */
-export function createInMemoryReferenceCatalog(
+/** The reference books of the editor over published snapshots (ERP: `harnessApi.catalog`): one active snapshot per
+ *  source, text search, offset cursor. */
+export function snapshotReferenceCatalog(
   snapshots: readonly ReferenceCatalogSnapshot[] = [],
 ): ReferenceCatalogAdapter {
   const active = new Map(snapshots.map((snapshot) => [snapshot.sourceId, snapshot]));

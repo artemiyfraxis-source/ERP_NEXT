@@ -13,8 +13,8 @@ import { DrawingDimensionsPanel } from "./DrawingDimensionsPanel";
 import { drawingDimensionScene, dimensionRouteKey, toggleDrawingDimensions } from "./drawing-dimensions";
 import { projectComponentTemplateView } from "./component-template-view-renderer";
 import { materializePlacementRows } from "./component-template-placement";
-import { routeCutReadiness } from "./cut-readiness";
 import { DrawingTableWindows } from "./DrawingTableWindows";
+import type { HarnessDocumentsSource } from "../panels/documents-source";
 import { CONTACT_SIDE_VIEW_PLACEMENT_ID, drawingLocalDirection, drawingLocalDirectionVector, drawingLocalPoint, drawingScale, DRAWING_VIEW_PLACEMENT_ID } from "./drawing-scale";
 import { DrawingScaleControl } from "./DrawingScaleControl";
 import { DrawingDocumentsPanel } from "./DrawingDocumentsPanel";
@@ -41,23 +41,18 @@ import { DrawingRangeControl } from "./DrawingRangeControl";
 import { defaultDrawingSnaps, type DrawingSnaps } from "../component-library/drawing-geometry";
 import { terminalArticleLabel } from "./terminal-article-label";
 import { refreshedTemplateTerminalCatalog } from "./template-terminal-catalog";
-import {
-  createInMemoryHarnessDesignApi,
-  type HarnessDesignApi,
-  type HarnessDesignResource,
-} from "./design-api";
+import { type HarnessDesignApi, type HarnessDesignResource } from "./design-api";
 import { DesignSaveCoordinator } from "./design-save-coordinator";
 import {
-  createInMemoryComponentPlacementApi,
   componentPlacementRequest,
   type ComponentPlacementApi,
   type PlaceComponentRequest,
   type ProjectComponentPlacementGraph,
   type ProjectComponentSnapshotResource,
 } from "./component-placement-api";
-import { createInMemoryComponentTemplateCatalog, type ComponentTemplateApi } from "../component-library/component-template-api";
-import { createInMemoryReferenceCatalog, type ReferenceCatalogAdapter } from "../reference-catalog";
-import { createInMemoryCoveringMaterialApi, type CoveringMaterialApi } from "./covering-assets";
+import type { ComponentTemplateApi } from "../component-library/component-template-api";
+import type { ReferenceCatalogAdapter } from "../reference-catalog";
+import type { CoveringMaterialApi } from "./covering-assets";
 import { isTemplateContentV3, isTemplateContentV4, isTemplateContentV5 } from "../component-library/template-content";
 import {
   createConnectorInstanceFromComponentTemplateV3,
@@ -118,14 +113,6 @@ export interface HarnessEditorCatalogApi {
   readonly materials: CoveringMaterialApi;
 }
 
-export function createInMemoryHarnessEditorCatalog(parts: Partial<HarnessEditorCatalogApi> = {}): HarnessEditorCatalogApi {
-  return {
-    templates: parts.templates ?? createInMemoryComponentTemplateCatalog(),
-    references: parts.references ?? createInMemoryReferenceCatalog(),
-    materials: parts.materials ?? createInMemoryCoveringMaterialApi(),
-  };
-}
-
 export interface HarnessDesignEditorProps {
   readonly projectId: string;
   readonly harnessId: string;
@@ -133,17 +120,20 @@ export interface HarnessDesignEditorProps {
   readonly initialView: HarnessEditorView;
   readonly harnessQuantity?: number;
   readonly initialReveal?: { readonly projectId: string; readonly harnessId: string; readonly objectId: string };
-  /** Document storage. Defaults to an in-memory store (snapshot v1 JSON). */
-  readonly apiOverride?: HarnessDesignApi;
-  /** Library component placements. Defaults to an in-memory store bound to the default document store. */
-  readonly componentPlacementApiOverride?: ComponentPlacementApi;
-  /** Component library, reference books and covering materials. Defaults to empty in-memory catalogs. */
-  readonly catalogOverride?: HarnessEditorCatalogApi;
+  /** The drawing of the position (ERP: the harness КД with its revisions). */
+  readonly api: HarnessDesignApi;
+  /** Library connectors of the drawing and the template revisions they pin (ERP: the component library). */
+  readonly placements: ComponentPlacementApi;
+  /** Component library, reference books and covering materials. */
+  readonly catalog: HarnessEditorCatalogApi;
   readonly onClose?: () => void;
   readonly onViewChange?: (view: HarnessEditorView) => void;
   /** View mode (ERP: no «Проекты: правка»): pan, zoom and select-to-inspect only — no drag, no edits, never saved.
    *  Load-time normalisation still runs in memory so the drawing looks as it does for the editor. */
   readonly readOnly?: boolean;
+  /** Where the document windows get their rows (connection table, cut list, specification). Defaults to the ERP server
+   *  for `projectId` / `harnessId` (`HarnessEditor` provides it). */
+  readonly documentsSource?: HarnessDocumentsSource;
 }
 
 export type ProjectComponentSnapshotLookup = ReadonlyMap<string, ProjectComponentSnapshotResource>;
@@ -748,9 +738,9 @@ export function HarnessDesignEditor({
   harnessId,
   harnessDesignation,
   initialView, harnessQuantity = 1, initialReveal,
-  apiOverride,
-  componentPlacementApiOverride,
-  catalogOverride,
+  api,
+  placements: componentPlacementApi,
+  catalog: catalogApi,
   onClose,
   onViewChange,
   readOnly = false,
@@ -760,14 +750,7 @@ export function HarnessDesignEditor({
   // Subscribe the scene projection as well as the left-panel editor to the
   // global preference, so a column change is visible immediately on the field.
   const connectionTableSettings = useConnectionTableSettings();
-  const catalogApi = useMemo(() => catalogOverride ?? createInMemoryHarnessEditorCatalog(), [catalogOverride]);
-  const defaultStore = useMemo(() => {
-    const design = createInMemoryHarnessDesignApi();
-    return { design, placements: createInMemoryComponentPlacementApi(design, catalogApi.templates) };
-  }, [catalogApi]);
-  const api = apiOverride ?? defaultStore.design;
   const componentTemplateApi = catalogApi.templates;
-  const componentPlacementApi = componentPlacementApiOverride ?? defaultStore.placements;
   const prepareCoverings=useMemo(()=>createGlobalCoveringPreparer(catalogApi.materials,projectId),[catalogApi,projectId]);
   const preparingCovering=useRef(false);
   const catalog = useEditorReferenceCatalog(catalogApi.references, componentTemplateApi);
@@ -1533,7 +1516,7 @@ export function HarnessDesignEditor({
       pendingPlacementRef.current = pending;
       setPlacementPending(true);
       try {
-        const result = await componentPlacementApi.place(projectId, harnessId, pending.body);
+        const result = await componentPlacementApi.place(projectId, harnessId, pending.body, pending.nextHistory.present);
         const authoritative = await api.get(projectId, harnessId);
         if (pending.loadGeneration !== loadGeneration.current || pendingPlacementRef.current !== pending) return;
         nextHistory = pending.nextHistory;
@@ -1576,7 +1559,7 @@ export function HarnessDesignEditor({
     placementBusyRef.current = true;
     setPlacementBusy(true);
     try {
-      const result = await componentPlacementApi.place(projectId, harnessId, pending.body);
+      const result = await componentPlacementApi.place(projectId, harnessId, pending.body, pending.nextHistory.present);
       const authoritative = await api.get(projectId, harnessId);
       if (pending.loadGeneration !== loadGeneration.current || pendingPlacementRef.current !== pending) return;
       if (authoritative.revision !== result.resultingRevision ||
@@ -1760,12 +1743,11 @@ export function HarnessDesignEditor({
     const documents = withDrawingTable(shownDocuments, kind);
     if (documents && documents !== shownDocuments) changeShownDocuments(documents);
   };
-  const cutReadiness = routeCutReadiness(history.present, resource.sourceFingerprint, saveState !== "saved");
   const documentsSection = <section className="he-utility-section he-documents-section" aria-labelledby="he-documents-heading">
     <h3 id="he-documents-heading">Документы</h3>
     {view === "drawing" && !readOnly && <button type="button" className="ui-control he-document-action" onClick={()=>run({type:"set-drawing-documents",documents:addDrawingPositions(history.present,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="positions" /></span>Добавить позиции</button>}
     {view === "drawing" && !readOnly && <button type="button" className="ui-control he-document-action he-document-toggle" aria-pressed={positionsVisible} aria-label={positionsVisible?"Скрыть позиции":"Показать позиции"} title={positionsVisible?"Скрыть позиции на чертеже":"Показать позиции на чертеже"} onClick={()=>run({type:"set-drawing-documents",documents:setDrawingPositionsVisibility(history.present,!positionsVisible,drawingPerimeters)})}><span className="he-doc-icon"><DocumentIcon kind="visibility" visible={positionsVisible} /></span>Позиции</button>}
-    {(["connections","cut","bom"] as const).map(kind=><button type="button" className="ui-control he-document-action" key={kind} disabled={kind==="cut"&&!cutReadiness.ready} title={kind==="cut"?cutReadiness.message:undefined} onClick={()=>openTable(kind)}><span className="he-doc-icon"><DocumentIcon kind={kind} /></span>{kind==="bom"?"Спецификация":kind==="cut"?"Карта резки":"Таблица соединений"}</button>)}
+    {(["connections","cut","bom"] as const).map(kind=><button type="button" className="ui-control he-document-action" key={kind} onClick={()=>openTable(kind)}><span className="he-doc-icon"><DocumentIcon kind={kind} /></span>{kind==="bom"?"Спецификация":kind==="cut"?"Карта резки":"Таблица соединений"}</button>)}
   </section>;
   return (
     <div className={`he-host ${placementBusy ? "is-placement-busy" : ""}`}>
@@ -1865,7 +1847,7 @@ export function HarnessDesignEditor({
           {!readOnly && documentsSection}
         </>}
         viewActions={documentsSection}
-        drawingWindows={camera=><DrawingTableWindows readOnly={readOnly} exportName={harnessDesignation} connectionTableSettings={connectionTableSettings} sourceFingerprint={resource.sourceFingerprint} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} view={view} document={shownDocument ?? history.present} camera={camera} quantity={harnessQuantity} revision={resource.revision} unsaved={saveState!=="saved"} selectedIds={[...selectedObjectIds,...related.rowIds]} onChange={changeShownDocuments} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}}/>}
+        drawingWindows={camera=><DrawingTableWindows readOnly={readOnly} connectionTableSettings={connectionTableSettings} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} view={view} document={shownDocument ?? history.present} camera={camera} quantity={harnessQuantity} selectedIds={[...selectedObjectIds,...related.rowIds]} onChange={changeShownDocuments} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}}/>}
         onDimensionCreate={(wireId,from,to,pointCount,mode,auxiliary)=>{
           const wire=history.present.wires.find(w=>w.id===wireId),segment=history.present.physicalTopology?.segments.find(s=>s.id===wireId);if(!wire&&!segment)return;
           const id=crypto.randomUUID(),documents=history.present.drawingDocuments??{tables:[],leaders:[],bomOrder:[]};
@@ -1892,7 +1874,7 @@ export function HarnessDesignEditor({
         angleStep={graphicAngleStep}
         onAngleStepChange={setGraphicAngleStep}
         onDrawingSnapsChange={setDrawingSnaps}
-        relationPanel={()=><>{view === "drawing" && <PhysicalTopologyPanel mode="actions" document={history.present} selectedId={selectedObjectId} selectedIds={selectedObjectIds} onChange={topology => run({ type: "set-physical-topology", topology })} onSelect={(id,additive) => { setRelatedSourceIds([]); setSelectedObjectId(id); setSelectedObjectIds(additive ? [...new Set([...selectedObjectIds,id])] : [id]); }} />}{view==="drawing"&&<SpecificationItemsPanel documents={history.present.drawingDocuments} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})} onSelect={id=>{setSelectedObjectId(id);setSelectedObjectIds([id]);}}/>}{view==="drawing"&&<DrawingDimensionsPanel pipeInterval={selectedPipeInterval} document={history.present} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})}/>} {<DrawingDocumentsPanel connectionTableSettings={connectionTableSettings} sourceFingerprint={resource.sourceFingerprint} unsaved={saveState!=="saved"} wireOptions={wireLookup.options} wireDatabaseOptions={wireLookup.databaseOptions} onWireSearch={wireLookup.search} perimeters={drawingPerimeters} availableKinds={view==="drawing"?undefined:["connections"]} document={history.present} quantity={harnessQuantity} selectedId={selectedObjectId} selectedIds={[...selectedObjectIds,...related.wireIds,...related.componentIds,...related.rowIds]} onChange={documents=>run({type:"set-drawing-documents",documents})} onCommand={run} onReveal={ids=>{setRelatedSourceIds(ids);setSelectedObjectId(null);setSelectedObjectIds([]);}} />}<HarnessRelationsPanel sourceFingerprint={resource.sourceFingerprint} showCut={view==="drawing"} onOpenCut={view==="drawing"?()=>{const documents=withDrawingTable(history.present.drawingDocuments,"cut");if(documents&&documents!==history.present.drawingDocuments)run({type:"set-drawing-documents",documents});}:undefined} revision={resource.revision} onCommand={run} document={history.present} projectId={projectId} harnessId={harnessId} quantity={harnessQuantity} related={related} wholeNet={wholeNet} onWholeNet={setWholeNet} unsaved={saveState !== "saved"} hiddenCount={related.wireIds.filter(id => { const wire = history.present.wires.find(w => w.id === id); return wire && layers.some(layer => layer.id === wire.layerIds[view] && !layer.visible); }).length}
+        relationPanel={()=><>{view === "drawing" && <PhysicalTopologyPanel mode="actions" document={history.present} selectedId={selectedObjectId} selectedIds={selectedObjectIds} onChange={topology => run({ type: "set-physical-topology", topology })} onSelect={(id,additive) => { setRelatedSourceIds([]); setSelectedObjectId(id); setSelectedObjectIds(additive ? [...new Set([...selectedObjectIds,id])] : [id]); }} />}{view==="drawing"&&<SpecificationItemsPanel documents={history.present.drawingDocuments} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})} onSelect={id=>{setSelectedObjectId(id);setSelectedObjectIds([id]);}}/>}{view==="drawing"&&<DrawingDimensionsPanel pipeInterval={selectedPipeInterval} document={history.present} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})}/>} {<DrawingDocumentsPanel perimeters={drawingPerimeters} availableKinds={view==="drawing"?undefined:["connections"]} document={history.present} selectedId={selectedObjectId} onChange={documents=>run({type:"set-drawing-documents",documents})} />}<HarnessRelationsPanel showCut={view==="drawing"} onOpenCut={view==="drawing"?()=>{const documents=withDrawingTable(history.present.drawingDocuments,"cut");if(documents&&documents!==history.present.drawingDocuments)run({type:"set-drawing-documents",documents});}:undefined} document={history.present} quantity={harnessQuantity} related={related} wholeNet={wholeNet} onWholeNet={setWholeNet} hiddenCount={related.wireIds.filter(id => { const wire = history.present.wires.find(w => w.id === id); return wire && layers.some(layer => layer.id === wire.layerIds[view] && !layer.visible); }).length}
           onClear={() => {setRelatedSourceIds([]); setSelectedObjectId(null); setSelectedObjectIds([]);}}
           onReveal={id => {
             const found = id && selectionIndex ? resolveHarnessSelection(selectionIndex, [id], wholeNet) : related;
@@ -2242,6 +2224,12 @@ export function HarnessDesignEditor({
           if (topology && segment) { const sceneObject=physicalTopologyScene(history.present).find(o=>o.id===wireId);
             const transition=sceneObject?.pipe?.joiningTransitionHandles?.find(handle=>handle.index===routeIndex);
             if(transition){const pipe=topology.joiningPipes?.find(p=>p.members[transition.memberIndex]?.segmentIds.includes(wireId));if(pipe)run({type:"update-joining-pipe-member-bend",pipeId:pipe.id,memberIndex:transition.memberIndex,side:transition.side,clear:true});return;}
+            const boundary=sceneObject?.pipe?.joiningBoundaryHandles?.find(handle=>handle.index===routeIndex);
+            if(boundary&&(boundary.boundary==="outerEnter"||boundary.boundary==="outerExit")){
+              const pipe=topology.joiningPipes?.find(p=>p.members[boundary.memberIndex]?.segmentIds.includes(wireId));
+              if(pipe)run({type:"clear-joining-pipe-member-boundary",pipeId:pipe.id,memberIndex:boundary.memberIndex,boundary:boundary.boundary});
+              return;
+            }
             const authoredIndex=sceneObject?.pipe?.authoredHandleIndices?.[routeIndex];if(authoredIndex===-1)return;
             run({type:"remove-physical-bend",segmentId:wireId,index:(authoredIndex??routeIndex+1)-1}); return; }
           const wire = history.present.wires.find((item) => item.id === wireId);

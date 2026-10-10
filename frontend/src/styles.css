@@ -2843,9 +2843,13 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 
 /* Чертёж жгута на весь экран: шапка в одну строку, редактор занимает остальную высоту. */
 .harness-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; padding: 8px 12px 0; background: var(--background); }
-.harness-page-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-bottom: 8px; }
-.harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; }
-.harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.harness-page-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; min-width: 0; }
+.harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.harness-page-head > .muted, .harness-save { white-space: nowrap; }
+.harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex-shrink: 0; }
+.harness-page-note { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.harness-conflict { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--warn-border); border-radius: 6px; background: var(--warn-soft); color: var(--foreground); font-size: 13px; }
+.harness-conflict > span { flex: 1; min-width: 0; }
 .harness-page .button-link { display: inline-flex; align-items: center; text-decoration: none; }
 .harness-save { font-size: 13px; font-weight: 600; }
 .harness-page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -2854,6 +2858,11 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
    (масштаб «100% · Ctrl + колесо», окна таблиц снизу) уходит за край экрана на высоту шапки. */
 .harness-page-body > .harness-root > .he-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .harness-page-body > .harness-root > .he-host > .harness-editor { flex: 1; height: auto; min-height: 0; }
+/* «История версий» чертежа: сбоку поверх редактора; строка выбирается кликом, действие одно — в шапке. */
+.harness-history-actions { display: flex; align-items: center; gap: 12px; }
+.harness-history-current { margin-left: 8px; font-size: 12px; font-weight: 500; }
+.harness-history .data-table tr.selected td, .harness-history .data-table tr.selected:hover td { background: var(--sheet-selected); }
+.harness-history .data-table tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
 
 /* ── Обход на 16" ноутбуке (1536×864): всё меню и профиль без прокрутки меню; действия строки сотрудника в одну строку ── */
 @media (hover: hover) and (pointer: fine) and (min-width: 901px) and (max-height: 960px) {

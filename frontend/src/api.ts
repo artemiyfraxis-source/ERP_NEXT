@@ -2971,13 +2971,79 @@ export interface KitsetDocument {
   kind?: "harness" | "harness_unlinked" | "file";
 }
 
-/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — одна строка КД, сохраняется поверх себя.
- *  `version` — с чем сохранять: чужое сохранение после неё даёт 409. Чертежа нет — всё null. */
+/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — строка КД с текущим чертежом и история версий.
+ *  `revision` — номер версии, с которым сохранять: чужое сохранение после него даёт 409. Чертежа нет — всё null.
+ *  `version` — прежнее имя того же номера (текстом), сервер отдаёт его один выпуск для открытых вкладок. */
 export interface HarnessDrawing {
   document: KitsetDocument | null;
   design: Record<string, unknown> | null;
-  version: string | null;
+  revision: number | null;
+  version?: string | null;
   warnings: string[];
+}
+
+/** Строка «Истории версий»: чертёж на версию `revision`; автосохранения одного сотрудника в пределах 10 минут —
+ *  одна строка (`first_revision`…`revision`, `started_at`…`saved_at`). Как появилась — сохранение, загрузка из
+ *  TECHMAP-GRAPHER, восстановление (`restored_from` — из какой), начальная (чертёж до истории); `closed` — закреплена
+ *  кнопкой «Сохранить версию». */
+export interface HarnessRevision {
+  revision: number;
+  first_revision: number;
+  started_at: string;
+  closed: boolean;
+  saved_at: string;
+  saved_by: string;
+  size: number;
+  kind: "saved" | "imported" | "restored" | "initial";
+  restored_from: number | null;
+}
+
+export interface HarnessRevisions {
+  document_id: string;
+  current: number;
+  total: number;
+  revisions: HarnessRevision[];
+}
+
+/** Документы чертежа жгута, построенные сервером из самого чертежа (techcards/harness/documents.py): ничего не хранится. */
+export type HarnessDocumentKind = "connections" | "cut" | "bom";
+
+/** Строка «Таблицы соединений» — один провод; пустое значение — «—». */
+export interface HarnessConnectionRow {
+  wire_id: string; index: string; mark: string; section: string; marking: string;
+  from: string; to: string; color: string; color_hex: string; length_mm: number | null; route: string;
+}
+
+export interface HarnessStripStep { index: number; diameter_mm: number | null; length_mm: number; step_mm: number }
+export interface HarnessCutEnd { label: string; profile: string | null; steps: HarnessStripStep[] }
+
+/** Заготовка «Карты резки»: провод вне кабеля, кабель или оболочка; длины — мм, метраж — м на все жгуты. */
+export interface HarnessCutItem {
+  id: string; kind: "wire" | "cable" | "covering"; title: string; material: string | null; material_key: string | null;
+  length_mm: number | null; correction_a_mm: number; correction_b_mm: number; rounding_step_mm: number;
+  cut_mm: number | null; unrounded_mm: number | null; pieces: number; total_m: number | null;
+  status: "ready" | "incomplete"; warnings: ("material-missing" | "length-missing")[];
+}
+
+/** Лист резки и разделки одной заготовки (провода или кабеля). */
+export interface HarnessCutSheet {
+  object_id: string; member_wire_ids: string[]; kind: "wire" | "cable"; title: string; material: string | null;
+  a: HarnessCutEnd; b: HarnessCutEnd;
+  sheath: { a_mm: number | null; b_mm: number | null; total_mm: number | null; complete: boolean } | null;
+  conductors: { id: string; a: HarnessCutEnd; b: HarnessCutEnd }[];
+  warnings: string[];
+}
+
+/** Строка «Спецификации»; `key` — тот же ключ, по которому на чертеже стоят позиции, порядок и правки текста. */
+export interface HarnessBomRow {
+  key: string; position: number; index: string; designation: string; name: string; amount: number | null;
+  unit: string; note: string; object_ids: string[];
+}
+
+export interface HarnessDocuments {
+  connections: { kind: "connections"; rows: HarnessConnectionRow[] };
+  cut: { kind: "cut"; quantity: number; items: HarnessCutItem[]; sheets: HarnessCutSheet[]; status: "ready" | "incomplete" };
+  bom: { kind: "bom"; quantity: number; rows: HarnessBomRow[] };
 }
 
 /** «Ручная сборка» из чертежа: build_config (операции с `origin` = `harness:<объект>:<код>`, блоки по маршруту КД) —
@@ -3174,25 +3240,95 @@ export const kitsetsApi = {
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
   removeDocument: (project: string, id: string) =>
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  harness: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
-  /** Сохранить чертёж: `version` — из последнего чтения (null — чертежа ещё нет). */
-  saveHarness: (project: string, index: string, design: Record<string, unknown>, version: string | null) =>
-    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, version }) }),
-  /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
-  deriveHarness: (project: string, index: string, design?: Record<string, unknown>) =>
-    api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
-  harnessExportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
-  /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
-  unlinkHarness: (project: string, index: string, version: string | null = null) =>
-    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ version }) }),
-  /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
-  restoreHarness: (project: string, index: string, documentId: string) =>
-    api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
-  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — ложится поверх прежнего (та же проверка версии). */
-  importHarness: (project: string, index: string, payload: { file_name: string; content_b64: string; version: string | null }) =>
-    api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
+};
+
+/** Шаблон библиотеки компонентов жгута (последняя версия): разъём по ключу справочника и номеру версии. */
+export interface HarnessComponentSummary {
+  templateId: string;
+  version: number;
+  code: string;
+  name: string;
+  connectorRef: string;
+  articleBindings: { sourceId: string; entityType: string; articleKey: string }[];
+  createdUtc: string;
+  updatedUtc: string;
+  hasImage: boolean;
+}
+
+/** Версия шаблона целиком: модель TECHMAP-GRAPHER (v3–v5) и рисунки; соединитель на чертеже закрепляет
+ *  `templateId` + `version` + `versionSha256`. */
+export interface HarnessComponent extends HarnessComponentSummary {
+  versionSha256: string;
+  assets: { assetId: string; fileName: string; mediaType: "image/png"; sha256: string; sizeBytes: number }[];
+  content: Record<string, unknown>;
+}
+
+/** Библиотечные соединители чертежа и закреплённые ими версии шаблонов; `unresolved` — соединители, чьей версии нет
+ *  ни в библиотеке, ни в копии старого чертежа (рисуются по своим контактам). */
+export interface HarnessPlacementGraph {
+  placements: Record<string, unknown>[];
+  snapshots: Record<string, unknown>[];
+  unresolved: string[];
+}
+
+const componentsPath = "/api/techcards/harness-components";
+const componentPath = (templateId: string, revision?: number) =>
+  `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
+
+/** Чертёж жгута позиции — единственный сетевой слой редактора жгута: чертёж и его история, документы, «Ручная сборка»,
+ *  обмен с TECHMAP-GRAPHER, справочники ERP для пикеров и библиотека компонентов. */
+export const harnessApi = {
+  /** Чертёж позиции; `revision` — номер версии, с которым сохранять (чертежа нет — всё null). */
+  drawing: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
+  /** Сохранить чертёж новой версией: `revision` — из последнего чтения (null — чертежа ещё нет; иначе 409, если его
+   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`). */
+  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+  /** «Сохранить версию»: текущая версия остаётся в истории отдельной строкой; `revision` — версия на экране (иначе 409). */
+  checkpoint: (project: string, index: string, revision: number | null) =>
+    api<{ revision: number | null; row: HarnessRevision | null }>(`${harnessPath(project, index)}/checkpoint`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «История версий» чертежа, новые сверху. */
+  revisions: (project: string, index: string) => api<HarnessRevisions>(`${harnessPath(project, index)}/revisions`),
+  /** Восстановить версию: она становится чертежом новой версией; `current` — версия на экране (иначе 409). */
+  restoreRevision: (project: string, index: string, revision: number, current: number | null) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/revisions/${revision}/restore`, { method: "POST", body: JSON.stringify({ revision: current }) }),
+  /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
+  derive: (project: string, index: string, design?: Record<string, unknown>) =>
+    api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
+  /** Документ чертежа: по чертежу из редактора (`design`, ещё не сохранённому) или по сохранённому. */
+  documents: <K extends HarnessDocumentKind>(project: string, index: string, kind: K, quantity = 1, design?: Record<string, unknown>) => {
+    const path = `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}`;
+    return design
+      ? api<HarnessDocuments[K]>(path, { method: "POST", body: JSON.stringify({ design }) })
+      : api<HarnessDocuments[K]>(path);
+  },
+  /** Документ сохранённого чертежа файлом для Excel. */
+  documentsExcelUrl: (project: string, index: string, kind: HarnessDocumentKind, quantity = 1) =>
+    `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}&format=xlsx`,
+  /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
+  unlink: (project: string, index: string, revision: number | null = null) =>
+    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
+  relink: (project: string, index: string, documentId: string) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+  /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
+  exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
+  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */
+  import: (project: string, index: string, payload: { file_name: string; content_b64: string; revision: number | null }) =>
+    api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
+  /** Справочники ERP для пикеров редактора (БД.ТЕР, БД.ПРОВ, СПР.КАБ, БД.КОАКС, БД.МАТ, разъёмы) — снимками. */
+  catalog: () => api<unknown>("/api/techcards/harness-catalog"),
+  /** Библиотека компонентов: последняя версия каждого шаблона. */
+  components: () => api<HarnessComponentSummary[]>(componentsPath),
+  /** Версия шаблона (без номера — последняя). */
+  component: (templateId: string, revision?: number) => api<HarnessComponent>(componentPath(templateId, revision)),
+  /** Рисунок версии шаблона (PNG). */
+  componentAssetUrl: (templateId: string, revision: number, assetId: string) =>
+    `${componentPath(templateId, revision)}/assets/${encodeURIComponent(assetId)}`,
+  /** Библиотечные соединители сохранённого чертежа и закреплённые версии. */
+  placements: (project: string, index: string) => api<HarnessPlacementGraph>(`${harnessPath(project, index)}/components`),
 };
 
 /** «Чертёж → схема»: черновики «Ручной сборки» по позиции проекта; финал и урок — пара для корпуса образцов. */
