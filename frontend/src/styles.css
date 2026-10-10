@@ -936,6 +936,18 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .panel.kit-pane, .panel.kit-modal { padding: 16px 18px; }
 .kit-modal { margin: 0 0 16px; display: grid; gap: 10px; }
 .kit-modal h3 { margin: 0; font-size: 16px; font-weight: 600; }
+/* «Отправить на комплектацию»: КБ проекта — уйдёт / уже отправлена (номер заявки) / нет состава. */
+.issue-kbs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.issue-kbs li { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 10px; }
+.issue-kbs li + li { border-top: 1px solid var(--border); }
+.issue-kbs li.muted { color: var(--muted-foreground); background: var(--accent); }
+.issue-kb-state { white-space: nowrap; }
+/* «Довыдать»: короткое поле количества с единицей в строке, причина — не на всю ширину. */
+.extra-issue td.num { white-space: nowrap; }
+.extra-issue td.num input { width: 96px; text-align: right; }
+.extra-issue > label { max-width: 720px; }
+/* Отменённая КБ в карточке проекта «Комплектации»: след остаётся, вкладкой не открывается. */
+.calendar-chip.chip-cancelled { color: var(--muted-foreground); background: transparent; border: 1px dashed var(--border); cursor: default; }
 .kit-modal > div.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 13px 16px; }
 .kit-modal > div.grid > label:first-child { grid-column: 1 / -1; }
 .page-actions + .kit-modal, .page-sub + .page-actions { margin-top: 12px; }

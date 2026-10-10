@@ -25,8 +25,12 @@ from app.modules.fulfillment.application import (
     complete_return,
     create_fulfillment,
     issue_fulfillment,
+    kit_key,
     mark_ready,
     mark_returned,
+    next_request_number,
+    request_sequence,
+    return_to_kitting,
 )
 from app.modules.fulfillment.domain import (
     FulfillmentLine,
@@ -40,6 +44,7 @@ from tests.factories import Actor
 class Fulfillments:
     def __init__(self):
         self.items = {}
+        self.counters = {}
 
     def get(self, request_id):
         return self.items.get(request_id)
@@ -53,6 +58,17 @@ class Fulfillments:
     def numbers(self, year):
         prefix = f"REQ.{year % 100:02d}."
         return [item.number for item in self.items.values() if item.number.startswith(prefix)]
+
+    def next_number(self, year):
+        number = next_request_number(year, self.numbers(year), self.counters.get(year, 0))
+        self.counters[year] = request_sequence(number)
+        return number
+
+    def live_kit_request(self, project_key, item_index):
+        return next((
+            item for item in self.items.values()
+            if kit_key(item.purpose) == (project_key, item_index) and item.status is not FulfillmentStatus.CANCELLED
+        ), None)
 
     def list(self, limit=200, after_id=None):
         items = sorted(self.items.values(), key=lambda item: item.id)

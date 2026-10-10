@@ -478,6 +478,9 @@ def test_supplier_requests_endpoint_persists_orders_and_serves_the_letter(procur
     assert file.headers["content-type"] == "application/pdf"
     assert file.headers["content-disposition"] == f"inline; filename*=UTF-8''{quote('Запрос ' + numbers['ООО Б'] + '.pdf')}"
     assert file.content.startswith(b"%PDF")
+    # the file's own policy survives the app-wide headers: nothing loads or runs, no sandbox for Chrome's viewer
+    assert file.headers["content-security-policy"].startswith("default-src 'none'")
+    assert "sandbox" not in file.headers["content-security-policy"]
     assert "Контактное лицо для доставки: Гусев Алексей, тел. +79259647705." in _pdf_text(file.content).replace("\n", " ")
     download = client.get(document["url"] + "?download=1")
     assert download.headers["content-disposition"].startswith("attachment; filename*=UTF-8''")

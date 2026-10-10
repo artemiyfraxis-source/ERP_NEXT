@@ -117,10 +117,10 @@ def seed_purchase(erp, project=PROJECT):
     return request, line, accepted
 
 
-def seed_workshop(erp, project=PROJECT):
+def seed_workshop(erp, project=PROJECT, kb="КБ1"):
     line = FulfillmentLine.create(article="43025-0400", name="Корпус Molex", unit="шт", requirement=Decimal("10"))
     kit = create_fulfillment(CreateFulfillmentCommand(
-        idempotency_key=f"track:{uuid4()}", purpose=f"{project} · КБ1 · Жгут питания", deadline=date(2026, 10, 20),
+        idempotency_key=f"track:{uuid4()}", purpose=f"{project} · {kb} · Жгут питания", deadline=date(2026, 10, 20),
         lines=(line,), actor=ACTOR, now=at(22, 9),
     ), erp.fulfillment())
     with erp.fulfillment() as uow:
@@ -131,7 +131,7 @@ def seed_workshop(erp, project=PROJECT):
         seconds_per_unit=Decimal("60"), setup_seconds=Decimal("0"), quantity=2,
     )
     task = launch_production(LaunchProductionCommand(
-        idempotency_key=f"track:{uuid4()}", project=project, item="КБ1", name="Жгут", quantity=2,
+        idempotency_key=f"track:{uuid4()}", project=project, item=kb, name="Жгут", quantity=2,
         fulfillment_request_id=kit.id, deadline=date(2026, 10, 20), operations=(operation,), actor=ACTOR, now=at(23, 8),
     ), erp.production())
     return kit, task
@@ -227,7 +227,7 @@ def test_receipt_shows_its_grn_and_the_line_it_came_from(erp, seeded):
 
 
 def test_an_operation_is_done_only_when_the_task_quantity_is_handed_in(erp, seeded):
-    other = seed_workshop(erp, PROJECT)[1]  # a second task of the same project
+    other = seed_workshop(erp, PROJECT, kb="КБ2")[1]  # a second task of the same project (one kit per КБ)
     seed_output(erp, other, "1")  # 1 of 2 — not done
 
     kinds = [(item.kind, item.ref) for item in track(erp) if item.module == "Производство"]
