@@ -15,7 +15,7 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, Security
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -68,6 +68,15 @@ from .connector_series import connector_series, find_in_series
 from .assembly_schema import generator_to_assembly
 from .scheme_corrections import list_scheme_corrections
 from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
+from .generator_drafts import (
+    GeneratorDraft,
+    GeneratorDraftConflict,
+    GeneratorDraftTooLarge,
+    SaveGeneratorDraftCommand,
+    delete_generator_draft,
+    get_generator_draft,
+    save_generator_draft,
+)
 from .etk_builder import attach_route
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
@@ -217,6 +226,9 @@ def _generator_gate(*scopes: str):
 # generator config into «Ручная сборка» is pure computation and serves both the generator and the drafting agent.
 assembly_principal = _generator_gate("assembly")
 generator_or_assembly_principal = _generator_gate("tcgen", "assembly")
+# The generator's draft on the server is a person's own scratch pad: the generator's gate, and no token at all (a token
+# acts for nobody, so it has no draft).
+generator_person_principal = _generator_gate()
 
 
 def techcards_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -977,3 +989,79 @@ def route_coax(body: КоаксIn) -> dict:
         strip_free_end=body.strip_free_end,
     )
     return _выдать(*построить_коакс(сборка))
+
+
+# ── Черновик генератора ТК на сервере (владелец 11.10.2026) ─────────────────────────────────────────────────────────
+# The unfinished generator form of the signed-in person for one position (КБ): read, save over a version, delete. Only
+# one's own draft — the person is the session's, never a parameter. No audit event per save (a scratch pad).
+
+
+class GeneratorDraftBody(BaseModel):
+    payload: dict[str, Any]
+    build_fingerprint: str = Field(default="", max_length=64)
+    # The version the browser saved over; 0 — it has none yet (the first save creates the draft).
+    base_version: int = Field(ge=0)
+
+
+def _generator_position(project: str, item_index: str) -> tuple[str, str]:
+    project, item_index = project.strip(), item_index.strip()
+    if not project or not item_index:
+        raise HTTPException(status_code=422, detail="Укажите проект и КБ черновика.")
+    return project, item_index
+
+
+def _generator_draft_json(draft: GeneratorDraft) -> dict:
+    return {
+        "project": draft.project, "item_index": draft.item_index, "payload": draft.payload,
+        "build_fingerprint": draft.build_fingerprint, "version": draft.version,
+        "created_at": draft.created_at.isoformat(), "updated_at": draft.updated_at.isoformat(),
+    }
+
+
+@router.get("/techcards/generator-draft")
+def read_generator_draft(
+    principal: Annotated[Principal, Depends(generator_person_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+    item_index: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    project, item_index = _generator_position(project, item_index)
+    draft = get_generator_draft(principal.actor.id, project, item_index, uow_factory)
+    return {"draft": None if draft is None else _generator_draft_json(draft)}
+
+
+@router.put("/techcards/generator-draft")
+def write_generator_draft(
+    payload: GeneratorDraftBody,
+    principal: Annotated[Principal, Depends(generator_person_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+    item_index: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    project, item_index = _generator_position(project, item_index)
+    try:
+        draft = save_generator_draft(SaveGeneratorDraftCommand(
+            user_id=principal.actor.id, project=project, item_index=item_index, payload=payload.payload,
+            build_fingerprint=payload.build_fingerprint, base_version=payload.base_version, now=now,
+        ), uow_factory)
+    except GeneratorDraftTooLarge as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
+    except GeneratorDraftConflict as error:
+        current = error.current
+        raise HTTPException(status_code=409, detail={
+            "message": str(error), "code": "generator_draft_conflict", "version": current.version,
+            "updated_at": current.updated_at.isoformat() if current.version else None,
+        }) from error
+    return _generator_draft_json(draft)
+
+
+@router.delete("/techcards/generator-draft")
+def remove_generator_draft(
+    principal: Annotated[Principal, Depends(generator_person_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+    item_index: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    project, item_index = _generator_position(project, item_index)
+    return {"deleted": delete_generator_draft(principal.actor.id, project, item_index, uow_factory)}
