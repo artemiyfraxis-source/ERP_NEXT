@@ -1,12 +1,13 @@
 """RC-6: возврат поставщику уже принятой позиции (SupplierReturn.gs)."""
 
-from datetime import date, datetime
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -38,7 +39,7 @@ from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.shared.clock import moscow_now
 from app.shared.events import OutboxMessage
 from app.shared.http_auth import Principal, authenticated_principal
-from app.shared.persistence import create_schema
+from app.shared.persistence import OutboxMessageRow, create_schema
 from app.workflows.receiving_stock import WarehouseStockBalanceLookup
 from tests.factories import Actor
 
@@ -176,6 +177,130 @@ def test_close_writes_off_the_returned_quantity_and_ends_the_order(erp):
     assert entry.remaining_after == Decimal("6")
     # Posted once: the message is spent.
     assert dispatch_next_supplier_return(NOW, warehouse()) is None
+
+
+@pytest.mark.parametrize("quantity, expected_balance, expected_return", [
+    (Decimal("4"), Decimal("6"), Decimal("4")),
+    (None, Decimal("0"), Decimal("10")),
+])
+@pytest.mark.parametrize("return_before_receipt", [False, True])
+def test_supplier_return_converges_when_return_and_receipt_are_processed_in_either_order(
+    erp, quantity, expected_balance, expected_return, return_before_receipt,
+):
+    receiving, warehouse, stock = erp
+    accepted = accept(receiving)
+    placed = place_receiving(
+        PlaceReceivingCommand(
+            line_id=accepted.id, expected_version=accepted.version, storage_location="1F4",
+            actor=RECEIVER, now=NOW,
+        ),
+        receiving(),
+    )
+    if not return_before_receipt:
+        dispatch_next_warehouse_received(NOW, warehouse())
+
+    returned = return_to_supplier(
+        command(placed, quantity=quantity), receiving(), stock
+    ).lines[0]
+    if return_before_receipt:
+        # The source receipt is still pending: leave the return due later, without consuming attempts.
+        assert dispatch_next_supplier_return(NOW, warehouse()) is None
+        with warehouse() as uow:
+            receipt = uow.outbox.by_idempotency_key(placed.warehouse_event_key)
+            assert receipt is not None
+            [deferred] = uow.session.scalars(select(OutboxMessageRow).where(
+                OutboxMessageRow.idempotency_key
+                == f"receiving:{returned.id}:supplier-return:{returned.supplier_returns}"
+            ))
+            assert deferred.attempt_count == 0
+            assert deferred.dead_lettered_at is None
+            assert deferred.next_attempt_at == NOW + timedelta(seconds=2)
+        dispatch_next_warehouse_received(NOW, warehouse())
+        dispatch_time = NOW + timedelta(seconds=2)
+    else:
+        dispatch_time = NOW
+
+    written = dispatch_next_supplier_return(dispatch_time, warehouse())
+    assert written is not None
+    assert written.balance == expected_balance
+
+    # Simulate broker redelivery after a lost acknowledgement. The stock and journal must remain single-posted.
+    key = f"receiving:{returned.id}:supplier-return:{returned.supplier_returns}"
+    with warehouse() as uow:
+        uow.session.execute(update(OutboxMessageRow).where(
+            OutboxMessageRow.idempotency_key == key
+        ).values(published_at=None, next_attempt_at=None))
+        uow.commit()
+    replayed = dispatch_next_supplier_return(dispatch_time, warehouse())
+    assert replayed is not None and replayed.balance == expected_balance
+    with warehouse() as uow:
+        final_lot = uow.warehouse.by_key("ЦАР", placed.grn, placed.package)
+        entries = uow.writeoffs.for_lot(final_lot.id)
+    assert final_lot.inbound == Decimal("10")
+    assert final_lot.balance == expected_balance
+    [entry] = [row for row in entries if row.kind == "supplier_return"]
+    assert entry.quantity == expected_return
+    assert entry.remaining_after == expected_balance
+    assert len([row for row in entries if row.kind == "supplier_return"]) == 1
+
+
+def test_supplier_return_does_not_wait_forever_for_a_dead_lettered_receipt(erp):
+    receiving, warehouse, stock = erp
+    accepted = accept(receiving)
+    placed = place_receiving(
+        PlaceReceivingCommand(
+            line_id=accepted.id, expected_version=accepted.version, storage_location="1F4",
+            actor=RECEIVER, now=NOW,
+        ),
+        receiving(),
+    )
+    returned = return_to_supplier(command(placed), receiving(), stock).lines[0]
+    return_key = f"receiving:{returned.id}:supplier-return:{returned.supplier_returns}"
+    with warehouse() as uow:
+        uow.session.execute(update(OutboxMessageRow).where(
+            OutboxMessageRow.idempotency_key == placed.warehouse_event_key
+        ).values(dead_lettered_at=NOW))
+        uow.commit()
+
+    with pytest.raises(PoisonWarehouseMessage):
+        dispatch_next_supplier_return(NOW, warehouse())
+    with warehouse() as uow:
+        [message] = uow.session.scalars(select(OutboxMessageRow).where(
+            OutboxMessageRow.idempotency_key == return_key
+        ))
+        assert message.attempt_count == 1
+
+
+def test_deferred_supplier_return_does_not_block_a_later_ready_return(erp):
+    receiving, warehouse, stock = erp
+    ready, ready_lot = accept_and_stock(receiving, warehouse, suffix=2)
+    accepted = accept(receiving, suffix=1)
+    pending = place_receiving(
+        PlaceReceivingCommand(
+            line_id=accepted.id, expected_version=accepted.version, storage_location="1F4",
+            actor=RECEIVER, now=NOW,
+        ),
+        receiving(),
+    )
+
+    deferred = return_to_supplier(command(pending, quantity=Decimal("1")), receiving(), stock).lines[0]
+    ready_command = replace(command(ready, quantity=Decimal("2")), now=NOW + timedelta(seconds=1))
+    posted = return_to_supplier(ready_command, receiving(), stock).lines[0]
+
+    assert dispatch_next_supplier_return(NOW, warehouse()) is None
+    second = dispatch_next_supplier_return(NOW + timedelta(seconds=1), warehouse())
+    assert second is not None and second.id == ready_lot.id and second.balance == Decimal("8")
+    with warehouse() as uow:
+        deferred_message = uow.outbox.by_idempotency_key(
+            f"receiving:{deferred.id}:supplier-return:{deferred.supplier_returns}"
+        )
+        posted_message = uow.outbox.by_idempotency_key(
+            f"receiving:{posted.id}:supplier-return:{posted.supplier_returns}"
+        )
+        assert deferred_message is not None
+        assert posted_message is not None
+        assert uow.outbox.is_open("warehouse.supplier_return_requested", deferred_message.idempotency_key)
+        assert not uow.outbox.is_open("warehouse.supplier_return_requested", posted_message.idempotency_key)
 
 
 def test_empty_quantity_returns_the_whole_fact(erp):

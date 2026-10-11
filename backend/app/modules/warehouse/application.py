@@ -6,7 +6,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
@@ -79,7 +79,9 @@ class WarehouseRepository(Protocol):
 class OutboxRepository(Protocol):
     def add(self, message: OutboxMessage) -> None: ...
     def by_idempotency_key(self, idempotency_key: str) -> OutboxMessage | None: ...
+    def is_open(self, topic: str, idempotency_key: str) -> bool: ...
     def next_unpublished(self, topic: str, now: datetime) -> OutboxMessage | None: ...
+    def defer(self, message_id: UUID, retry_at: datetime) -> None: ...
     def mark_published(self, message_id: UUID, published_at: datetime) -> None: ...
     def mark_failed(self, message_id: UUID, failed_at: datetime, error: str) -> None: ...
 
@@ -88,9 +90,13 @@ class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
 
 
+class WriteOffRepository(AppendOnlyRepository, Protocol):
+    def by_source_key(self, source_key: str) -> WriteOffEntry | None: ...
+
+
 class UnitOfWork(Protocol):
     warehouse: WarehouseRepository
-    writeoffs: AppendOnlyRepository  # the СПИСАНИЕ journal (SK-13)
+    writeoffs: WriteOffRepository  # the СПИСАНИЕ journal (SK-13)
     audit: AppendOnlyRepository
     outbox: OutboxRepository
 
@@ -374,6 +380,7 @@ def dispatch_next_supplier_return(now: datetime, uow: UnitOfWork) -> StockLot | 
                 grn = str(payload["grn"]).strip()
                 package = str(payload.get("package") or "").strip()
                 reason = str(payload["reason"]).strip()
+                receipt_event_key = str(payload.get("receipt_event_key") or "").strip()
                 actor = Actor(
                     id=UUID(str(payload["actor_id"])),
                     name=str(payload.get("actor_name") or "").strip(),
@@ -383,6 +390,18 @@ def dispatch_next_supplier_return(now: datetime, uow: UnitOfWork) -> StockLot | 
                 raise WarehouseValidationError(
                     f"Invalid warehouse.supplier_return_requested payload: {error}"
                 ) from error
+            if receipt_event_key and uow.outbox.is_open("warehouse.received", receipt_event_key):
+                # A receipt and return use separate outbox rows, so either consumer can win the race. Keep the
+                # return pending until the receipt's stock mutation and acknowledgement commit atomically.
+                uow.outbox.defer(message.id, now + timedelta(seconds=2))
+                uow.commit()
+                return None
+            prior = uow.writeoffs.by_source_key(message.idempotency_key)
+            if prior is not None:
+                lot = uow.warehouse.get(prior.lot_id) if prior.lot_id is not None else None
+                uow.outbox.mark_published(message.id, now)
+                uow.commit()
+                return lot
             current = uow.warehouse.by_key(warehouse, grn, package)
             if current is None:
                 label = grn + (f" (пакет {package})" if package else "")

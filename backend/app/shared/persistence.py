@@ -146,6 +146,27 @@ class SqlAlchemyOutboxRepository:
         )
         return _outbox_domain(row) if row is not None else None
 
+    def is_open(self, topic: str, idempotency_key: str) -> bool:
+        """Whether a message can still be delivered (unpublished and not dead-lettered)."""
+        row_id = self.session.scalar(
+            select(OutboxMessageRow.id).where(
+                OutboxMessageRow.topic == topic,
+                OutboxMessageRow.idempotency_key == idempotency_key,
+                OutboxMessageRow.published_at.is_(None),
+                OutboxMessageRow.dead_lettered_at.is_(None),
+            )
+        )
+        return row_id is not None
+
+    def defer(self, message_id: UUID, retry_at: datetime) -> None:
+        """Delay an open message without counting a failed delivery attempt."""
+        row = self.session.get(OutboxMessageRow, message_id)
+        if row is None:
+            raise KeyError(f"Outbox message not found: {message_id}")
+        if row.published_at is not None or row.dead_lettered_at is not None:
+            raise ValueError(f"Outbox message is no longer open: {message_id}")
+        row.next_attempt_at = retry_at
+
     def next_unpublished(self, topic: str, now: datetime) -> OutboxMessage | None:
         statement = (
             select(OutboxMessageRow)
