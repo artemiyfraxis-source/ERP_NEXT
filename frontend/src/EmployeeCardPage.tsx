@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   employeeCardApi,
   failureText,
+  documentsApi,
   leaveApi,
   type EmployeeCard,
   type EmployeeCardAbsence,
@@ -11,12 +12,18 @@ import {
 import { formatDate, formatDay } from "./format";
 import { hasFullAccess } from "./navigation";
 import { LeaveRequests } from "./LeaveRequests";
+import { EmployeeDocuments } from "./EmployeeDocuments";
+import { EmployeeSkills } from "./EmployeeSkills";
+import { WorkTime } from "./WorkTime";
 
 /** «Личная карточка» сотрудника (концепт владельца, 04.10): одна страница про человека из данных всех модулей, только
  *  чтение. Вкладка «Обзор» — карточки в порядке концепта: Основные данные · Подчинённость · Проекты · Отпуска · Рабочее
  *  время · Компетенции · Мои заявки на покупку · Задачи. Нет данных — «нет данных», а не ноль. Своя карточка — ещё вкладка
  *  «Отпуска и заявления» (заявления, входящие на согласование, журнал кадров) со счётчиком ждущих решения. */
 
+type Tab = "overview" | "leave" | "documents" | "skills" | "worktime";
+const OWN_TABS: Tab[] = ["leave", "documents", "skills", "worktime"];
+const OWN_ONLY: Tab[] = ["leave", "documents"];
 const NO_DATA = "нет данных";
 const SKILLS_SHOWN = 8;
 
@@ -40,9 +47,14 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
   const own = !userId || userId === principal.user.id;
   const [card, setCard] = useState<EmployeeCard | null>(null);
   const [error, setError] = useState("");
-  // `?section=card&tab=leave` opens the leave tab at once (a link from a notification or a bookmark).
-  const [tab, setTab] = useState<"overview" | "leave">(() => (new URLSearchParams(window.location.search).get("tab") === "leave" ? "leave" : "overview"));
+  // `?section=card&tab=leave|documents|skills|worktime` opens that tab at once (a link from a notification or a bookmark).
+  const [tab, setTab] = useState<Tab>(() => {
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    const allowed = OWN_TABS.includes(wanted as Tab) && (own || !OWN_ONLY.includes(wanted as Tab));
+    return allowed ? (wanted as Tab) : "overview";
+  });
   const [waiting, setWaiting] = useState(0);
+  const [unread, setUnread] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -58,6 +70,13 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
     if (!own) return;
     let live = true;
     leaveApi.waiting().then((result) => { if (live) setWaiting(result.count); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [own]);
+
+  useEffect(() => {
+    if (!own) return;
+    let live = true;
+    documentsApi.pending().then((result) => { if (live) setUnread(result.count); }).catch(() => undefined);
     return () => { live = false; };
   }, [own]);
 
@@ -100,11 +119,20 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
         {own && <button role="tab" aria-selected={tab === "leave"} className={tab === "leave" ? "on" : undefined} onClick={() => setTab("leave")}>
           Отпуска и заявления{waiting > 0 && <span className="ec-tab-count" aria-label={`ждут решения: ${waiting}`}>{waiting}</span>}
         </button>}
+        {own && <button role="tab" aria-selected={tab === "documents"} className={tab === "documents" ? "on" : undefined} onClick={() => setTab("documents")}>
+          Документы{unread > 0 && <span className="ec-tab-count" aria-label={`ждут ознакомления: ${unread}`}>{unread}</span>}
+        </button>}
+        <button role="tab" aria-selected={tab === "skills"} className={tab === "skills" ? "on" : undefined} onClick={() => setTab("skills")}>Компетенции</button>
+        <button role="tab" aria-selected={tab === "worktime"} className={tab === "worktime" ? "on" : undefined} onClick={() => setTab("worktime")}>Рабочее время</button>
       </div>
       <span className="ec-asof">Сведения на {formatDate(card.as_of)}</span>
     </div>
 
-    {tab === "leave" && own ? <LeaveRequests onWaiting={setWaiting} /> : <div className="ec-grid">
+    {tab === "leave" && own ? <LeaveRequests onWaiting={setWaiting} />
+      : tab === "documents" && own ? <EmployeeDocuments onPending={setUnread} />
+      : tab === "skills" ? <EmployeeSkills skills={card.skills} personnel={personnel} />
+      : tab === "worktime" ? <WorkTime userId={own ? undefined : userId ?? undefined} />
+      : <div className="ec-grid">
       <Card title="Основные данные">
         <dl className="ec-facts">
           {personnel && <Fact label="Табельный номер" value={personnel.tab_number} />}

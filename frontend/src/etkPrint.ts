@@ -1,10 +1,11 @@
 // Печатная форма электронной ТК (SUPPLYMAP PortalApp.html etkPrintHtml_ / etkPrint_): титул с маршрутом и
-// журналом ревизий, затем по листу на операцию — шапка документа, безопасность, комплектующие, полуфабрикат,
-// оснастка, ход операции, дефекты, эскиз, результат, время, подписи. Идёт через общий контракт print.ts.
+// журналом ревизий, затем по листу на операцию — шапка документа, безопасность и разделы в порядке экрана ЭТК
+// (1 Вход · 2 Оснастка · 3 Ход операции · 4 Типовые дефекты · 5 Эскиз · 6 Результат), подписи. Через общий print.ts.
 // Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
 import type { ProjectTechcard, TechcardRevision } from "./api";
 import { ETK_CONNECTION_COLUMNS, etkConnectionRows, etkDrawHarness, etkFigure, etkTolerance, type EtkTopologyData } from "./etkDraw";
-import { solderMode, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, solderMode, toolingSections } from "./etkOperation";
+import { formatDateTime, unitLabel } from "./format";
 import { etkRouteLine, etkRouteOf } from "./etkRoute";
 import type { PrintBlock, PrintPage } from "./print";
 
@@ -90,9 +91,23 @@ function harnessPinsOf(operations: Row[]): Record<string, Record<number, string>
   return out;
 }
 
-function sortedTooling(items: Row[]): Row[] {
-  const order = toolingSections(items.map((tool) => text(tool.section)));
-  return order.flatMap((section) => items.filter((tool) => text(tool.section) === section));
+/** Строки оснастки по разделам; Инструмент · Оборудование · Расходники есть всегда — пустой раздел строкой «нет»
+ *  (erp-screens §6, как на экране). */
+function toolingRows(items: Row[]): string[][] {
+  const order = toolingSections([...ETK_TOOLING_SECTIONS, ...items.map((tool) => text(tool.section))]);
+  return order.flatMap((section) => {
+    const tools = items.filter((tool) => text(tool.section) === section);
+    if (!tools.length) return [[section, "", "нет", "", "", "", ""]];
+    return tools.map((tool) => [
+      text(tool.section), text(tool.number), text(tool.name), text(tool.inventory_number),
+      [tool.program && tool.program !== "-" ? text(tool.program) : "", text(tool.parameters)].filter(Boolean).join(" · "),
+      text(tool.norm), unitLabel(text(tool.unit)),
+    ]);
+  });
+}
+
+function table(columns: string[], body: string[][]): PrintBlock[] {
+  return body.length ? [{ table: { columns, rows: body } }] : [];
 }
 
 /** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP. */
@@ -120,7 +135,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           const times = object(operation.times);
           return [
             text(operation.position || index + 1), text(operation.code),
-            etkOperationTitle(operation) + (operation.edited ? " ✏" : ""), text(operation.connector),
+            etkOperationTitle(operation) + (operation.edited ? " (правлена)" : ""), text(operation.connector),
             text(times.operation_seconds), text(times.setup_seconds),
           ];
         }),
@@ -130,7 +145,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         { table: {
           columns: ["Рев.", "Дата", "Кто", "Изменение"],
           rows: revisions.map((item) => [
-            String(item.revision), new Date(item.occurred_at).toLocaleString("ru-RU"), item.actor_name, item.reason,
+            String(item.revision), formatDateTime(item.occurred_at), item.actor_name, item.reason,
           ]),
         } },
       ] as PrintBlock[] : []),
@@ -140,51 +155,48 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const pages = operations.map((operation, index): PrintPage => {
     const opCard = object(operation.card);
     const numbered = (items: Row[], pick: (item: Row) => string[]) => items.map((item, row) => [String(row + 1), ...pick(item)]);
+    // Разделы — в порядке экрана ЭТК (erp-screens §6): Вход → Оснастка → Ход операции → Типовые дефекты → Эскиз →
+    // Результат; номер считается по напечатанным разделам, как на экране.
+    let shown = 0;
+    const section = (title: string): PrintBlock => ({ heading: `${++shown}. ${title}` });
+    const components = numbered(rows(operation.components), (item) => [
+      text(item.art) + (item.kd ? ` (по КД: ${text(item.kd)}, аналог)` : ""), text(item.name), text(item.grn),
+      text(item.norm), "", unitLabel(text(item.unit)),
+    ]);
+    const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
+    const marks = numbered(rows(object(operation.fields).marks), (mark) => [
+      text(mark.target), text(mark.text), text(mark.material), text(mark.place), text(mark.qty), text(mark.batch),
+    ]);
+    const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text), text(step.tolerance)]);
+    const defects = text(opCard.defects);
+    const figure = etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]);
+    const result = numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
+    const time = numbered(rows(operation.time), (item) => [text(item.name), text(item.norm), ""]);
     return {
       title: `Операция ${text(operation.position || index + 1)}. ${etkOperationTitle(operation)}${operation.connector ? ` — ${text(operation.connector)}` : ""}`,
       subtitle: facts(object(operation.fields)),
       blocks: [
         ...head(kit, revision, text(operation.code)),
         { text: text(opCard.safety) },
-        { table: {
-          columns: ["№", "Комплектующие: артикул", "Наименование", "ГРН", "Норма", "Факт", "Ед."],
-          rows: numbered(rows(operation.components), (item) => [
-            text(item.art) + (item.kd ? ` (по КД: ${text(item.kd)}, аналог)` : ""), text(item.name), text(item.grn),
-            text(item.norm), "", text(item.unit),
-          ]),
-        } },
-        { table: {
-          columns: ["№", "Полуфабрикат на входе", "Норма", "Факт", "Ед."],
-          rows: numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", text(item.unit)]),
-        } },
-        { table: {
-          columns: ["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],
-          rows: [...solderRows(operation), ...sortedTooling(rows(opCard.tooling)).map((tool) => [
-            text(tool.section), text(tool.number), text(tool.name), text(tool.inventory_number),
-            [tool.program && tool.program !== "-" ? text(tool.program) : "", text(tool.parameters)].filter(Boolean).join(" · "),
-            text(tool.norm), text(tool.unit),
-          ])],
-        } },
-        ...(rows(object(operation.fields).marks).length ? [{ table: {
-          columns: ["№", "Что маркируем", "Надпись", "Материал", "Где", "На изделие", "На партию"],
-          rows: numbered(rows(object(operation.fields).marks), (mark) => [
-            text(mark.target), text(mark.text), text(mark.material), text(mark.place), text(mark.qty), text(mark.batch),
-          ]),
-        } }] as PrintBlock[] : []),
-        { table: {
-          columns: ["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"],
-          rows: rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text), text(step.tolerance)]),
-        } },
-        { text: text(opCard.defects) },
-        { figure: etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]) },
-        { table: {
-          columns: ["№", text(operation.result_label) || "Результат", "Норма", "Факт / брак", "Ед."],
-          rows: numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", text(item.unit)]),
-        } },
-        { table: {
-          columns: ["№", "Расчётное время", "Норма, мин", "Факт"],
-          rows: numbered(rows(operation.time), (item) => [text(item.name), text(item.norm), ""]),
-        } },
+        section("Вход"),
+        ...table(["№", "Комплектующие: артикул", "Наименование", "ГРН", "Норма", "Факт", "Ед."], components),
+        ...table(["№", "Полуфабрикат на входе", "Норма", "Факт", "Ед."], semis),
+        ...(components.length || semis.length ? [] : [{ text: "Комплектующих и полуфабрикатов на входе нет." }]),
+        section("Оснастка: инструмент, оборудование, расходники"),
+        ...table(["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],
+          [...solderRows(operation), ...toolingRows(rows(opCard.tooling))]),
+        ...(marks.length || steps.length ? [
+          section("Ход операции"),
+          ...table(["№", "Что маркируем", "Надпись", "Материал", "Где", "На изделие", "На партию"], marks),
+          ...table(["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"], steps),
+        ] : []),
+        ...(defects ? [section("Типовые дефекты"), { text: defects }] : []),
+        ...(figure ? [section("Эскиз"), { figure }] : []),
+        ...(result.length || time.length ? [
+          section("Результат"),
+          ...table(["№", text(operation.result_label) || "Результат", "Норма", "Факт / брак", "Ед."], result),
+          ...table(["№", "Расчётное время", "Норма, мин", "Факт"], time),
+        ] : []),
       ],
       sign: `${SIGN}\nДокумент составлен в соответствии с ГОСТ 3.1407-86 · ревизия ${revision}`,
     };

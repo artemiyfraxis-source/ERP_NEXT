@@ -1,12 +1,16 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
 import { RouteDiagram, numberRange } from "./RouteDiagram";
+import { pluralRu } from "./tcGenLogic";
 import {
   addEdge,
+  blockCodes,
+  blockSequence,
   blockTitle,
   deriveRoute,
   inputCandidates,
   mergeBlocks,
+  moveBlock,
   moveOp,
   neighbours,
   removeEdge,
@@ -23,11 +27,13 @@ import {
 } from "./routeLogic";
 
 /**
- * Схема полуфабрикатов сборки (ARCH-TRACK-1): блоки-квадратики слева направо и стрелки между ними, число штук на
- * стрелке правится, блок открывается — его операции настраиваются как в генераторе. Без правок схема собирается
- * автоматически (`value` = null); любая правка делает её ручной, «Сбросить к автоматической» возвращает null.
+ * Схема полуфабрикатов сборки генератора (ARCH-TRACK-1): блоки сверху вниз и стрелки между ними, на блоке — коды карт
+ * БД.ОП и название его операций, у итогового ещё «итог: изделие»; на стрелке — сколько штук берёт следующий блок.
+ * Блок открывается — его операции настраиваются как в генераторе. Без правок схема собирается автоматически
+ * (`value` = null); любая правка делает её ручной, «Сбросить к автоматической» возвращает null. «Изменить схему»
+ * показывает «Выше/Ниже» на блоках — порядок операций в ЭТК (`onMove`).
  */
-export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp, derive = deriveRoute, defaultOpen = false, timeSource = "время из последней сборки ЭТК" }: {
+export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange, error, notice, skipped, renderOp, derive = deriveRoute, defaultOpen = false, timeSource = "время из последней сборки ЭТК", onMove, orderChanged = false, onResetOrder }: {
   /** Операции, которые попадут в сборку: номер, название, норма на партию (null — ЭТК ещё не собиралась). */
   ops: RouteOp[];
   /** Наименование изделия — название итогового блока. */
@@ -50,6 +56,12 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   defaultOpen?: boolean;
   /** Откуда время в итоге «на изделие». */
   timeSource?: string;
+  /** «Выше/Ниже»: `order[n − 1]` — старый номер операции на месте n; `route` — ручная схема с новыми номерами (у
+      автоматической — null, она выводится заново). */
+  onMove?: (order: number[], route: Route | null) => void;
+  /** Порядок операций свой, не генератора — «Вернуть порядок генератора». */
+  orderChanged?: boolean;
+  onResetOrder?: () => void;
 }) {
   const [selected, setSelected] = useState("");
   const [shown, setShown] = useState<boolean | null>(null);
@@ -57,16 +69,25 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const [mergeWith, setMergeWith] = useState("");
   const [splitAfter, setSplitAfter] = useState("");
   const [addFrom, setAddFrom] = useState("");
+  const [editing, setEditing] = useState(false);
 
   const route = useMemo(() => value ?? derive(ops), [value, ops, derive]);
   const totals = useMemo(() => routeTotals(route, ops, quantity), [route, ops, quantity]);
-  const title = (block: RouteBlock) => blockTitle(block, ops, finalName);
+  // Итоговый блок называется своей операцией (иначе последняя операция пропадает с экрана), изделие — строкой «итог: …».
+  const title = (block: RouteBlock) => blockTitle(block, ops, finalName, false);
   const numberOf = (position: number) => ops.find((op) => op.position === position)?.number ?? position;
   const byKey = new Map(route.blocks.map((block) => [block.key, block]));
   const finalBlock = route.blocks.find((block) => block.final);
   const total = finalBlock ? totals.get(finalBlock.key) : undefined;
-  const open = shown ?? (defaultOpen || !routeChain(route) || value !== null || !!error);
+  const open = editing || (shown ?? (defaultOpen || !routeChain(route) || value !== null || !!error));
   const block = byKey.get(selected);
+  const sequence = blockSequence(route).map((item) => item.key);
+  const move = onMove ? (key: string, dir: -1 | 1) => {
+    const moved = moveBlock(route, key, dir, ops.length);
+    if (!moved) return;
+    setProblem("");
+    onMove(moved.order, value !== null ? moved.route : null);
+  } : undefined;
 
   function apply(next: Route): boolean {
     const wrong = routeProblem(next, ops, finalName);
@@ -82,6 +103,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     return `Штук из «${from ? title(from) : edge.from}» на один «${to ? title(to) : edge.to}»`;
   };
   const diagram = () => <RouteDiagram route={route} title={title} numbers={(item) => numberRange(item.ops.map(numberOf))} totals={totals}
+    codes={(item) => blockCodes(item, ops)} product={finalName.trim()} perLead="берёт" onMove={editing ? move : undefined}
     selected={selected} onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, next) => edit(setPerUnit(route, edge.from, edge.to, next))} />;
 
   function panel(item: RouteBlock) {
@@ -100,6 +122,10 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
       <div className="route-panel-head">
         <label className="field-label">Название блока
           <input value={item.name} placeholder={title({ ...item, name: "" })} onChange={(event) => edit(renameBlock(route, item.key, event.target.value))} /></label>
+        {move && <span className="route-order" role="group" aria-label="Порядок в ЭТК">
+          <button type="button" className="secondary small" disabled={sequence.indexOf(item.key) <= 0} onClick={() => move(item.key, -1)}>↑ Выше</button>
+          <button type="button" className="secondary small" disabled={sequence.indexOf(item.key) >= sequence.length - 1} onClick={() => move(item.key, 1)}>↓ Ниже</button>
+        </span>}
         <button type="button" className="btn-link" onClick={() => select(item.key)}>Закрыть блок</button>
       </div>
       <div className="route-ops">
@@ -140,16 +166,23 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     <div className="route-head">
       <h3>Схема полуфабрикатов</h3>
       <span className={manual ? "route-badge manual" : "route-badge"}>{manual ? "правлена вручную" : "автоматическая"}</span>
+      {orderChanged && <span className="route-badge manual">свой порядок операций</span>}
       {manual && <button type="button" className="btn-link" onClick={() => { setProblem(""); onChange(null); }}>Сбросить к автоматической</button>}
-      <button type="button" className="btn-link route-toggle" aria-expanded={open} onClick={() => setShown(!open)}>{open ? "Свернуть схему" : "Показать схему"}</button>
+      {orderChanged && onResetOrder && <button type="button" className="btn-link" onClick={() => { setProblem(""); onResetOrder(); }}>Вернуть порядок генератора</button>}
+      <span className="route-head-actions">
+        <button type="button" className={editing ? "primary small" : "secondary small"} aria-pressed={editing}
+          onClick={() => { setEditing(!editing); setProblem(""); if (editing) setShown(true); }}>{editing ? "Готово" : "Изменить схему"}</button>
+        {!editing && <button type="button" className="btn-link route-toggle" aria-expanded={open} onClick={() => setShown(!open)}>{open ? "Свернуть схему" : "Показать схему"}</button>}
+      </span>
     </div>
     <div className="route-summary">
-      {pluralBlocks(route.blocks.length)} · {ops.length} оп.
+      {pluralBlocks(route.blocks.length)} · {ops.length} {pluralRu(ops.length, "операция", "операции", "операций")}
       {total?.rolled != null && <> · на изделие <strong>{formatMinutes(total.rolled)} мин</strong> ({timeSource})</>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="warning-inline">{notice}</div>}
     {open && <>
+      {editing && <p className="route-link-hint" role="status">{onMove ? "↑ ↓ на блоке — порядок операций в ЭТК. " : ""}Нажмите блок — объединить, разделить, входы; число на стрелке — сколько штук берёт следующий блок.</p>}
       {diagram()}
       {!!skipped?.length && <div className="route-summary">Без шаблона, в схему не входят: {skipped.join(", ")}</div>}
       {problem && <div className="warning-inline" role="alert">{problem}</div>}

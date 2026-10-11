@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NO_CONNECTION } from "./api";
-import { ProjectTrack, trackWhen } from "./ProjectTrack";
+import { ProjectTrack, trackOrder, trackWhen } from "./ProjectTrack";
 
 const entries = [
   { at: "2026-10-01T00:00:00", module: "Проекты", kind: "Карточка проекта из расчёта", ref: "708К.4", status: "Создана", item_index: "" },
@@ -37,10 +37,10 @@ describe("ProjectTrack", () => {
     expect(headers).toEqual(["Когда", "Раздел", "Событие", "Номер", "Статус", "КБ"]);
     const rows = bodyRows().map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
     expect(rows).toEqual([
-      ["01.10.2026", "Проекты", "Карточка проекта из расчёта", "708К.4", "Создана", ""],
+      ["01.10.2026", "Проекты", "Карточка проекта из расчёта", "708К.4", "Создана", "—"],
       ["04.10.2026 14:30", "Техкарты", "Техкарта выдана", "708К.4КБ1", "Выдана", "КБ1"],
       ["05.10.2026 09:05", "Заявки", "Заявка на закупку", "ЗК-0001", "Новая", "КБ2"],
-      ["—", "Отгрузка", "Отправка уехала", "ОТ-0001", "Запланирована", ""],
+      ["—", "Отгрузка", "Отправка уехала", "ОТ-0001", "Запланирована", "—"],
     ]);
     expect(document.body.textContent).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(screen.queryByText("По проекту в разделах ещё ничего нет")).toBeNull();
@@ -78,6 +78,20 @@ describe("ProjectTrack", () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
     render(<ProjectTrack project="708К.4" />);
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(NO_CONNECTION));
+  });
+
+  it("orders a day: entries with a time first, day-only entries after them, undated last (ПР-9)", () => {
+    const day = [
+      { at: "2026-10-10T00:00:00", kind: "Входной контроль" },
+      { at: null, kind: "Отправка запланирована" },
+      { at: "2026-10-10T21:53:00", kind: "Заявка на закупку" },
+      { at: "2026-10-09T08:00:00", kind: "Карточка проекта" },
+      { at: "2026-10-10T00:00:00", kind: "Отправка уехала" },
+      { at: "2026-10-10T09:15:00", kind: "Техкарта выдана" },
+    ];
+    expect(trackOrder(day).map((entry) => entry.kind)).toEqual([
+      "Карточка проекта", "Техкарта выдана", "Заявка на закупку", "Входной контроль", "Отправка уехала", "Отправка запланирована",
+    ]);
   });
 
   it("formats the moment: day only for midnight, minutes otherwise, a dash for no date", () => {

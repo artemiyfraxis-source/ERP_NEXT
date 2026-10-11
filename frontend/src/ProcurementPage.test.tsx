@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProcurementPage, migrateHiddenBlocks } from "./ProcurementPage";
 import type { OrderDocumentRecognition, ProcurementLine, RecognizedOrderLine } from "./api";
 
@@ -779,6 +779,7 @@ it("collapses empty «Мои позиции» blocks into one grey line «Пус
   mockMine([]);
 
   const { container } = render(<ProcurementPage />);
+  fireEvent.click(screen.getByRole("tab", { name: "Очереди" })); // выбор вкладки руками отменяет автопереход на «Весь лист»
   await screen.findByText(/^Пусто:/);
   expect(screen.getByText(/^Пусто:/)).toHaveTextContent("Пусто: В работе, Жду счёт, Ждёт оплаты, В пути, Карантин, Принято за 30 дней, Дозавоз, Прочие позиции");
   expect(headingNames()).toEqual([]);
@@ -1364,7 +1365,7 @@ it("saves traceability of an own line: maker, country, standard; the retired qua
   }));
 });
 
-it("line card: saves DATASHEET, attaches a permit and a quality file, and the quality file turns «Док. качества» to «Да»", async () => {
+it("line card: saves Даташит, attaches a permit and a quality file, and the quality file turns «Док. качества» to «Да»", async () => {
   const own: ProcurementLine = { ...line, status: "В работе", buyer: "Закупщик", quality_document: "Нет", datasheet: null, permit_files: [], quality_files: [] };
   const quality = { id: "f2", kind: "quality", file_name: "Паспорт.pdf", url: "/api/procurement/files/f2", uploaded_by: "Закупщик", uploaded_at: "2026-10-09T10:00:00+03:00" };
   const permit = { ...quality, id: "f1", kind: "permit", file_name: "Разрешение.pdf", url: "/api/procurement/files/f1" };
@@ -1393,10 +1394,10 @@ it("line card: saves DATASHEET, attaches a permit and a quality file, and the qu
   expect(card.getByText("Документ качества · нужен: Нет")).toBeInTheDocument();
   expect(card.getAllByText("нет файла")).toHaveLength(2);
 
-  fireEvent.change(card.getByLabelText("DATASHEET"), { target: { value: " https://example.com/ds.pdf " } });
-  fireEvent.click(card.getByRole("button", { name: "Сохранить DATASHEET" }));
-  expect(await screen.findByText("REQ-1: DATASHEET сохранён")).toBeInTheDocument();
-  expect(card.getByRole("button", { name: "Сохранить DATASHEET" })).toBeDisabled();
+  fireEvent.change(card.getByLabelText("Даташит"), { target: { value: " https://example.com/ds.pdf " } });
+  fireEvent.click(card.getByRole("button", { name: "Сохранить Даташит" }));
+  expect(await screen.findByText("REQ-1: Даташит сохранён")).toBeInTheDocument();
+  expect(card.getByRole("button", { name: "Сохранить Даташит" })).toBeDisabled();
 
   const pdf = (name: string) => new File(["%PDF"], name, { type: "application/pdf" });
   fireEvent.change(card.getByLabelText("Файл разрешения REQ-1"), { target: { files: [pdf("Разрешение.pdf")] } });
@@ -1688,7 +1689,7 @@ it("opens the buyer's own line of the whole sheet for editing by the signed-in n
   });
 
   render(<ProcurementPage buyerName="Артемий" />);
-  fireEvent.click(screen.getByRole("button", { name: "Весь лист" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Весь лист" }));
   expect(await screen.findByRole("button", { name: "Ожид. дата REQ-77" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Ожид. дата REQ-78" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Комментарий REQ-77" })).toBeInTheDocument();
@@ -1705,12 +1706,14 @@ it("shows «Неразобранные» only when there is something to take; v
   });
 
   const empty = render(<ProcurementPage />);
+  fireEvent.click(screen.getByRole("tab", { name: "Очереди" }));
   await screen.findByText(/^Пусто:/);
   expect(screen.queryByRole("region", { name: "Неразобранные" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /Неразобранные/ })).not.toBeInTheDocument();
   empty.unmount();
 
   render(<ProcurementPage readOnly />);
+  fireEvent.click(screen.getByRole("tab", { name: "Очереди" }));
   expect(await screen.findByRole("region", { name: "Неразобранные" })).toBeInTheDocument();
 });
 
@@ -2221,4 +2224,40 @@ it("«Готово · без ГРН»: «Привязать ГРН» only on a l
   await waitFor(() => expect(rowActionNames("REQ-1")).not.toContain("Привязать ГРН"));
   expect(screen.queryByText(/Без ГРН: 2 шт/)).not.toBeInTheDocument();
   expect(chip()?.textContent).toBe("Принято");
+});
+
+describe("«Лист закупки» без своих и свободных позиций", () => {
+  const sheetLine = { ...line, id: "30000000-0000-0000-0000-000000000099", legacy_id: "REQ-99", buyer: "Петров", status: "Жду счет" };
+  function mockEmptyQueues() {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+      if (path === "/api/procurement/mine?limit=500") return json({ lines: [], next_cursor: null });
+      if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: ["Жду счет"] });
+      if (path === "/api/procurement/lines") return json({ lines: [sheetLine], next_cursor: null, buyers: ["Петров"] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+  }
+
+  it("opens «Весь лист» with its rows instead of an empty queue and says why", async () => {
+    mockEmptyQueues();
+    render(<ProcurementPage />);
+    expect(await screen.findByText("REQ-99")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Весь лист" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { level: 1, name: "Лист закупки" })).toBeInTheDocument();
+    expect(screen.getByText(/показан весь лист/)).toBeInTheDocument();
+    // статус на листе — чип со словом ERP
+    expect(screen.getByText("Жду счёт")).toHaveClass("status-chip");
+  });
+
+  it("does not jump away when the buyer picked «Очереди» himself, and offers the sheet as an action", async () => {
+    mockEmptyQueues();
+    render(<ProcurementPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "Очереди" }));
+    expect(await screen.findByText(/У вас нет позиций в работе/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Очереди" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Открыть весь лист" }));
+    expect(await screen.findByText("REQ-99")).toBeInTheDocument();
+    expect(screen.queryByText(/показан весь лист/)).not.toBeInTheDocument();
+  });
 });

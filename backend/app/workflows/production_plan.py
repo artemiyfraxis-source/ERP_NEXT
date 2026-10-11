@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Iterable, Mapping
@@ -174,9 +174,8 @@ def kit_stage_facts(
                 current.review.occurred_at is not None
                 and _utc_timestamp(current.review.occurred_at) < _utc_timestamp(card.updated_at)
             ):
-                marks[key] = KitMark(
-                    stage=current.stage,
-                    review=KitReview("не проверена", "ТК выдана", "генератор", card.updated_at),
+                marks[key] = replace(
+                    current, review=KitReview("не проверена", "ТК выдана", "генератор", card.updated_at),
                 )
     picked = {
         FulfillmentStatus.COMPLETE, FulfillmentStatus.READY, FulfillmentStatus.ISSUED,
