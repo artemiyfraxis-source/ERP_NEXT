@@ -39,6 +39,13 @@ const card = {
   }],
 };
 
+const preview = (over: Record<string, unknown> = {}) => ({
+  project: "708К.4", value: "В работе", kb: "", direction: "forward", reason_required: false, error: "", message: "",
+  terminal: "", blocker: "", warnings: [],
+  kbs: [{ kb: "КБ1", label: "КБ1", from: "Новый", to: "В работе", skipped: ["ТК готова", "КБ набрана"], change: true, note: "", warnings: [] }],
+  ...over,
+});
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status });
 }
@@ -53,6 +60,7 @@ describe("ProjectsPage", () => {
       const method = init?.method || "GET";
       if (url.startsWith("/api/techcards/kitsets?sort=")) return json({ items: tiles, statuses });
       if (url === "/api/techcards/kitsets/708К.4" && method === "GET") return json(card);
+      if (url.startsWith("/api/techcards/kitsets/708К.4/status/preview")) return json(preview());
       if (url === "/api/techcards/kitsets/708К.4/lines") return json({ res: { updated: 1 } });
       if (url === "/api/techcards/kitsets/708К.4/issue") return json({ created: [{ no: "В-26-0001", index: "КБ1", shortfall: ["x"] }], skipped: [], message: "Заявок создано: 1, из них ждут поставки: 1." });
       if (url.startsWith("/api/techcards/kitsets/lots")) return json({ lots: [{ lot_id: "l1", warehouse: "ЦАР", grn: "FRX.26.0000001", package: "", article: "43025-0400", name: "Корпус Molex", unit: "шт", storage_location: "1F4", available: "15", reserved: "5" }] });
@@ -63,9 +71,12 @@ describe("ProjectsPage", () => {
   it("lists project tiles with facts, filters by status and keeps the choice", async () => {
     render(<ProjectsPage principal={editor} />);
     expect(await screen.findByText("708К.4")).toBeTruthy();
-    expect(screen.getByText("ТК 1/2")).toBeTruthy();
-    expect(screen.getByText("⛔ ХОЛД")).toBeTruthy();
-    expect(screen.getByText("✓ ТК проверено 1")).toBeTruthy();
+    // Факты — общим чипом статуса, с тем, о скольких КБ речь (аудит 10.10, ПР-4, ПР-11); корзины на плитке нет.
+    expect(screen.getByText("ТК 1 из 2 КБ").classList.contains("status-chip")).toBe(true);
+    expect(screen.getByText("ХОЛД").classList.contains("status-chip")).toBe(true);
+    expect(screen.getByText("проверена — КБ1")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Удалить/ })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/[⛔🗑✓]/u);
     fireEvent.change(screen.getByLabelText("Статус"), { target: { value: "В работе" } });
     expect(screen.queryByText("708К.4")).toBeNull();
     expect(screen.getByText("показано 1 из 2")).toBeTruthy();
@@ -88,8 +99,13 @@ describe("ProjectsPage", () => {
     fireEvent.click(chip);
     const menu = screen.getByRole("menu", { name: "Статус проекта 708К.4" });
     fireEvent.click(within(menu).getByRole("menuitemradio", { name: "В работе" }));
+    // Этап ставится после подтверждения в окне с предпросмотром.
+    const dialog = await screen.findByRole("dialog", { name: "Смена этапа" });
+    expect(await within(dialog).findByText("пропущены: ТК готова, КБ набрана")).toBeTruthy();
+    expect(calls).toHaveLength(0);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Сменить этап" }));
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0].body).toEqual({ action: "status", value: "В работе" });
+    expect(calls[0].body).toEqual({ action: "status", value: "В работе", reason: "" });
     expect(screen.queryByText("Жгут питания")).toBeNull(); // клик по статусу не открыл карточку
 
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
@@ -125,11 +141,47 @@ describe("ProjectsPage", () => {
     window.history.replaceState({}, "", "/?section=projects&project=708К.4");
     render(<ProjectsPage principal={editor} />);
     expect(await screen.findByRole("button", { name: "Статус проекта 708К.4: В работе, блокер ХОЛД" })).toBeTruthy();
-    expect(screen.getByText(/ХОЛД с 28\.09\.2026 · ждём оплату — РП/)).toBeTruthy();
+    expect(screen.getByText("с 28.09.2026 · ждём оплату — РП")).toBeTruthy();
+    expect(document.querySelector(".kit-blocker .status-chip")?.textContent).toBe("ХОЛД");
     fireEvent.click(screen.getByRole("tab", { name: "Журнал · 1" }));
-    fireEvent.change(screen.getByLabelText("Текст записи"), { target: { value: "позвонили заказчику" } });
-    fireEvent.click(screen.getByRole("button", { name: "Записать" }));
+    // Текст записи — растущее поле; Enter записывает, как раньше в однострочном.
+    const text = screen.getByLabelText("Текст записи");
+    expect(text.tagName).toBe("TEXTAREA");
+    fireEvent.change(text, { target: { value: "позвонили заказчику" } });
+    fireEvent.keyDown(text, { key: "Enter" });
     await waitFor(() => expect(posted).toEqual([{ kind: "note", text: "позвонили заказчику", deadline: null }]));
+  });
+
+  it("changes one КБ stage from «Состав» through the confirm dialog and shows the journal «было → стало»", async () => {
+    const skippedCard = { ...card, status: "В работе",
+      assemblies: [{ ...card.assemblies[0], stage: { ...card.assemblies[0].stage, status: "Отгружено", manual: true, skipped: ["КБ на складе"] } }],
+      journal: [{ id: "e1", occurred_at: "2026-09-28T10:00:00", who: "РП", kind: "Этап КБ", blocker: "", text: "В работе → Отгружено · пропущены: КБ на складе · причина: сделали вживую", item_index: "КБ1", value: "Отгружено", from_value: "В работе", reason: "сделали вживую" }] };
+    const marks: unknown[] = [];
+    const previews: string[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(skippedCard);
+      if (url.startsWith("/api/techcards/kitsets/708К.4/status/preview")) { previews.push(url); return json(preview({ direction: "back", reason_required: true, kb: "КБ1" })); }
+      if (url === "/api/techcards/kitsets/708К.4/marks") { marks.push(JSON.parse(String(init?.body))); return json({ msg: "КБ1: Отгружено → Новый." }); }
+      return base(input, init);
+    });
+    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
+    render(<ProjectsPage principal={editor} />);
+    const select = await screen.findByLabelText("Этап КБ1");
+    expect(screen.getByText("пропущен").getAttribute("title")).toBe("Пропущены: КБ на складе");
+    fireEvent.change(select, { target: { value: "Новый" } });
+    const dialog = await screen.findByRole("dialog", { name: "Смена этапа" });
+    const confirm = await within(dialog).findByRole("button", { name: "Сменить этап" });
+    expect(previews[0]).toBe("/api/techcards/kitsets/708К.4/status/preview?value=Новый&kb=КБ1");
+    await waitFor(() => expect(within(dialog).getByText("Причина (обязательно: этап назад)")).toBeTruthy());
+    expect(confirm).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Причина смены этапа"), { target: { value: "ошибка" } });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(marks).toEqual([{ kb: "КБ1", kind: "stage", value: "Новый", text: "", reason: "ошибка" }]));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Журнал · 1" }));
+    expect(screen.getByText("В работе → Отгружено · пропущены: КБ на складе · причина: сделали вживую")).toBeTruthy();
   });
 
   it("hides projects with an active blocker on request", async () => {
@@ -342,6 +394,78 @@ describe("ProjectsPage", () => {
     expect(await screen.findByRole("button", { name: "Пересобрать" })).toBeTruthy();
   });
 
+  it("deletes a project only from «Ещё» through the confirm window and reports back in the list (ПР-2)", async () => {
+    const deleted: string[] = [];
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4" && init?.method === "DELETE") {
+        deleted.push(url);
+        return json({ res: { deleted: 3, erp: { "Проект": 1 } } });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    expect(await screen.findByText("Жгут питания")).toBeTruthy();
+    // Рабочие кнопки без эмодзи; удаления среди них нет.
+    for (const name of ["Обновить из расчёта", "Отгрузить"]) expect(screen.getByRole("button", { name })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Удалить/ })).toBeNull();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("708К.4");
+
+    fireEvent.click(screen.getByRole("button", { name: "Ещё действия с проектом 708К.4" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Удалить проект…" }));
+    const dialog = screen.getByRole("dialog", { name: "Удалить проект 708К.4" });
+    expect(within(dialog).getByText(/Проект уйдёт целиком/)).toBeTruthy();
+    // Отмена ничего не удаляет; фокус по умолчанию — на «Отмена».
+    expect(document.activeElement?.textContent).toBe("Отмена");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(deleted).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Ещё действия с проектом 708К.4" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Удалить проект…" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Удалить проект 708К.4" }));
+    await waitFor(() => expect(deleted).toHaveLength(1));
+    expect(await screen.findByText("Проект «708К.4» удалён. Снесено строк: спецификация 3, проект 1")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Проекты" })).toBeTruthy();
+  });
+
+  it("says honestly that a project is not in ERP and offers the way back instead of a timed redirect", async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/999К.9") return json({ detail: { message: "Карточка набора «999К.9» не найдена", gone: true } }, 404);
+      return base(input, init);
+    });
+    window.history.replaceState({}, "", "/?section=projects&project=999К.9");
+    render(<ProjectsPage principal={editor} />);
+    expect(await screen.findByText("Проекта «999К.9» в ERP нет: его удалили или в ссылке другой номер.")).toBeTruthy();
+    expect(screen.queryByText(/уже удалена/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "К списку проектов" }));
+    expect(await screen.findByText("708К.4")).toBeTruthy();
+  });
+
+  it("opens the generator of the first assembly at once when the project has one or two (ПР-10)", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/techcards/КБ1") return json({ card_id: "tc-1" });
+      if (url === "/api/techcards/projects/tc-1") return json({
+        id: "tc-1", version: 1, project: "708К.4", item_index: "КБ1", product_name: "Жгут питания", source_calculation: "",
+        deadline: null, status: "Черновик", revision: 0, document: null, manual_operation_keys: [],
+        created_at: "2026-09-29T10:00:00", updated_at: "2026-09-29T10:00:00", issued_at: null,
+      });
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", techcards: "edit", tcgen: "edit" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Генератор" }));
+    expect(await screen.findByRole("tab", { name: "КБ1", selected: true })).toBeTruthy();
+    expect(screen.queryByText(/Выбери/)).toBeNull();
+  });
+
   it("hides writing controls for view-only access", async () => {
     render(<ProjectsPage principal={viewer} />);
     await screen.findByText("708К.4");
@@ -545,7 +669,7 @@ describe("ProjectsPage", () => {
     expect(screen.getByText("12")).toBeTruthy();
     expect(screen.getAllByText("Закупка · Готово · без ГРН").some((node) => node.className === "tone-info")).toBe(true);
     const fromStock = screen.getByText("Со склада, без закупки").parentElement!;
-    expect(fromStock.querySelector("strong")!.textContent).toBe("1");
+    expect(fromStock.querySelector("dd")!.textContent).toBe("1");
     expect(screen.queryByLabelText("Заказать 43025-0400")).toBeNull();  // covered without a ГРН: nothing to order
     expect(screen.getByLabelText("Заказать 43030-0007")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Заказать недостающее (1)" })).toBeTruthy();
@@ -573,7 +697,7 @@ describe("ProjectsPage", () => {
     fireEvent.click(await screen.findByRole("tab", { name: "Спецификация" }));
     fireEvent.click(screen.getByRole("button", { name: "Отправить на комплектацию" }));
     fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
-    expect(screen.getByText("Укажи дедлайн.")).toBeTruthy();
+    expect(screen.getByText("Укажите дедлайн.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Дедлайн"), { target: { value: "2026-10-10" } });
     fireEvent.click(screen.getByRole("button", { name: "Отправить" }));
     expect(await screen.findByText("Заявок создано: 1, из них ждут поставки: 1. В-26-0001 (недобор)")).toBeTruthy();

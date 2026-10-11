@@ -25,3 +25,11 @@ Bodies are agent-facing guidance; bundled scripts are NOT auto-run.
 Native repo skills (code-review, codebase-design, diagnosing-bugs, domain-modeling, grilling,
 implement, prototype, research, wayfinder, writing-great-skills, to-spec, to-tickets, triage,
 supplymap-*) are project-owned — not third-party.
+
+## ui-guidelines-audit
+Adapted from https://github.com/vercel-labs/agent-skills (`skills/web-design-guidelines`, commit 063bee9) and
+https://github.com/vercel-labs/web-interface-guidelines (`command.md`, pinned 10.10.2026). MIT License, © Vercel.
+
+## erp-dense-ui
+Adapted from https://github.com/educlopez/ui-craft (`skills/ui-craft-dense-dashboard`, commit ceecc8e).
+MIT License, © educlopez.

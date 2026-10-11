@@ -490,6 +490,85 @@ def test_project_status_in_one_click(kitset_api):
     assert [event["kind"] for event in card["journal"][:2]] == ["Дедлайн", "Этап КБ"]
 
 
+def _side_effects(lot):
+    """What a stage change must never touch: kit requests, the lot's stock and reserve, shop tasks, goods."""
+    with app.state.fulfillment_uow_factory() as uow:
+        requests = sorted((str(item.id), item.status.value, item.version) for item in uow.fulfillment.list(limit=100))
+        stock = uow.warehouse.get(lot.id)
+    with app.state.production_uow_factory() as uow:
+        tasks = len(uow.production.list(limit=100))
+    with app.state.shipping_uow_factory() as uow:
+        goods = len(uow.goods.list(limit=100))
+    return requests, (stock.balance, stock.reserved, stock.version), tasks, goods
+
+
+def test_manual_stage_change_previews_skips_needs_a_reason_back_and_touches_nothing_else(kitset_api):
+    client, lot = kitset_api
+    _load(client)
+    assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
+    before = _side_effects(lot)
+
+    preview = client.get("/api/techcards/kitsets/708К.4/status/preview", params={"value": "Отгружено"})
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert (body["direction"], body["reason_required"], body["error"]) == ("forward", False, "")
+    assert [(kb["kb"], kb["from"], kb["to"], kb["skipped"]) for kb in body["kbs"]] == [
+        ("КБ1", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
+        ("КБ2", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
+    ]
+    assert body["kbs"][0]["warnings"] == ["Живых заявок на комплектацию: 1 — смена этапа их не трогает."]
+    # Предпросмотр ничего не пишет.
+    assert client.get("/api/techcards/kitsets/708К.4").json()["status"] == "Новый"
+
+    # КБ2 руками вперёд, затем проект на «КБ на складе»: КБ1 поднимается, КБ2 (уже выше) не понижается.
+    kb2 = client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ2", "kind": "stage", "value": "Отгружено"})
+    assert kb2.status_code == 200, kb2.text
+    staged = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "КБ на складе"})
+    assert staged.status_code == 200, staged.text
+    assert staged.json()["change"]["kbs"][1]["note"] == "Выше выбранного этапа — не понижаем."
+    card = staged.json()["card"]
+    stages = {item["index"]: item["stage"] for item in card["assemblies"]}
+    assert (stages["КБ1"]["status"], stages["КБ2"]["status"]) == ("КБ на складе", "Отгружено")
+    assert stages["КБ1"]["skipped"] == ["ТК готова", "КБ набрана", "В работе"]
+    assert card["journal"][0]["from_value"] == "Новый" and card["journal"][0]["value"] == "КБ на складе"
+
+    # Назад — только с причиной (и для проекта, и для КБ).
+    refused = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "В работе"})
+    assert refused.status_code == 422 and refused.json()["detail"] == "Этап назад — напишите причину."
+    refused = client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ2", "kind": "stage", "value": "Новый"})
+    assert refused.status_code == 422 and refused.json()["detail"] == "Этап назад — напишите причину."
+    back = client.post("/api/techcards/kitsets/708К.4/status", json={
+        "action": "status", "value": "В работе", "reason": "вернули на доработку",
+    })
+    assert back.status_code == 200, back.text
+    assert back.json()["change"]["direction"] == "back" and back.json()["events"] == 2
+    assert back.json()["card"]["journal"][0]["reason"] == "вернули на доработку"
+
+    assert _side_effects(lot) == before
+
+
+def test_plan_page_stage_goes_through_the_same_service(kitset_api):
+    client, _lot = kitset_api
+    _load(client)
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
+
+    preview = client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "В работе", "kb": "КБ1"})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["kbs"][0]["skipped"] == ["ТК готова", "КБ набрана"]
+
+    saved = client.post("/api/production/plan/events", json={
+        "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "В работе",
+    })
+    assert saved.status_code == 201, saved.text
+    assert (saved.json()["event"]["from_value"], saved.json()["event"]["value"]) == ("Новый", "В работе")
+    back = client.post("/api/production/plan/events", json={
+        "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "Новый",
+    })
+    assert back.status_code == 422 and back.json()["detail"] == "Этап назад — напишите причину."
+    unknown = client.get("/api/production/plan/stage-preview", params={"project": "999К", "value": "В работе"})
+    assert unknown.status_code == 422 and unknown.json()["detail"] == "Проект не найден в реестре."
+
+
 class FakeZpk:
     """«Из расчёта» reader fake: the ЗКП sheet of the same calculation."""
 

@@ -37,6 +37,7 @@ from .assembly_drafts import (
     set_lesson,
     submit_draft,
 )
+from .drawing_merge import DrawingMergeError, merge_pdfs
 from .kitsets import KitsetNotFound, KitsetValidationError
 
 router = APIRouter(prefix="/api/techcards/assembly", tags=["Схемы сборки"])
@@ -56,6 +57,19 @@ class DrawingPayload(BaseModel):
     item_index: str = Field(min_length=1, max_length=64)
     file_name: str = Field(min_length=1, max_length=400)
     content_base64: str = Field(min_length=1, max_length=28_000_000)
+
+
+class DrawingPart(BaseModel):
+    file_name: str = Field(min_length=1, max_length=400)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
+
+
+class MergedDrawingPayload(BaseModel):
+    project: str = Field(min_length=1, max_length=255)
+    item_index: str = Field(min_length=1, max_length=64)
+    # Имя сшитого файла; пусто — «<первый файл без расширения>+<сколько ещё>.pdf».
+    file_name: str = Field(default="", max_length=400)
+    files: list[DrawingPart] = Field(min_length=2, max_length=20)
 
 
 class DraftPayload(BaseModel):
@@ -133,6 +147,53 @@ def upload_drawing(
         "id": str(document.id), "project": document.project, "item_index": document.item_index,
         "name": document.file_name, "size": document.size, "content_type": document.content_type,
         "url": _document_url(document.project, document.id),
+    }
+
+
+def _merged_name(first: str, others: int) -> str:
+    stem = first.strip().rsplit(".", 1)[0] if "." in first else first.strip()
+    return f"{stem}+{others}.pdf"
+
+
+@router.post("/drawings/merge", status_code=201)
+def upload_merged_drawing(
+    payload: MergedDrawingPayload,
+    principal: Annotated[Principal, Depends(assembly_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    """Несколько PDF в заданном порядке — один файл КД позиции (как одиночный чертёж). Всё или ничего: пока
+    любая часть не прочитана, в КД ничего не попадает."""
+    parts: list[tuple[str, bytes]] = []
+    for part in payload.files:
+        name = part.file_name.strip()
+        content = decode_upload(part.content_base64.split(",", 1)[-1], f"Файл «{name}» передан не в base64")
+        if not content:
+            raise HTTPException(status_code=422, detail=f"Файл «{name}» пуст")
+        if len(content) > MAX_DRAWING_BYTES:
+            raise HTTPException(status_code=422, detail=f"Файл «{name}» больше 20 МБ")
+        if not name.lower().endswith(".pdf"):
+            raise HTTPException(status_code=422, detail=f"Сшиваются только PDF: «{name}» — другой формат")
+        parts.append((name, content))
+    try:
+        merged = merge_pdfs(parts)
+    except DrawingMergeError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if len(merged.content) > MAX_DRAWING_BYTES:
+        raise HTTPException(status_code=422, detail="Сшитый чертёж больше 20 МБ")
+    file_name = payload.file_name.strip() or _merged_name(parts[0][0], len(parts) - 1)
+    if not file_name.lower().endswith(".pdf"):
+        file_name += ".pdf"
+    parts_note = "; ".join(f"{name} — {count} стр." for name, count in merged.pages)
+    document = _run(lambda: flow.attach_document(
+        payload.project, payload.item_index, file_name, "application/pdf", merged.content, principal.actor, now,
+        uow_factory, audit_extra={"parts": parts_note, "pages": str(sum(count for _, count in merged.pages))},
+    ))
+    return {
+        "id": str(document.id), "project": document.project, "item_index": document.item_index,
+        "name": document.file_name, "size": document.size, "content_type": document.content_type,
+        "url": _document_url(document.project, document.id),
+        "pages": [{"file_name": name, "pages": count} for name, count in merged.pages],
     }
 
 

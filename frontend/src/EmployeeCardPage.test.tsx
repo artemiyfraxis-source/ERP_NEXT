@@ -83,7 +83,7 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
   expect(screen.getByText("доступ: Мастер")).toBeInTheDocument();
   expect(screen.getByText("Карточка активна")).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Обзор" })).toBeInTheDocument();
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Обзор", "Отпуска и заявления"]);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Обзор", "Отпуска и заявления", "Документы", "Компетенции", "Рабочее время"]);
   expect(screen.getByText("Сведения на 04.10.2026")).toBeInTheDocument();
 
   const titles = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.firstChild?.textContent);
@@ -304,4 +304,26 @@ it("offers no leave tab on someone else's card", async () => {
   render(<EmployeeCardPage principal={principal({}, "admin")} userId={OTHER} />);
   await screen.findByRole("heading", { level: 1 });
   expect(screen.queryByRole("tab", { name: /Отпуска/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Обзор", "Компетенции", "Рабочее время"]);
+});
+
+it("opens the new tabs by ?tab= and shows the unread-documents counter on «Документы»", async () => {
+  window.history.pushState({}, "", "/?section=card&tab=worktime");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/employee-card/me") return json(FULL);
+    if (path === "/api/documents/pending") return json({ count: 2 });
+    if (path.startsWith("/api/employee-card/me/worktime")) {
+      return json({ available: false, no_data_reason: "Нет данных: нет сессий.", month: "2026-10", label: "октябрь 2026", days: [], totals: null, balance: null, source: "", note: "" });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<EmployeeCardPage principal={principal()} />);
+
+  expect(await screen.findByText("Нет данных: нет сессий.")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Рабочее время" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByLabelText("ждут ознакомления: 2")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Компетенции" }));
+  expect(screen.getByRole("region", { name: "Допуски к операциям" })).toHaveTextContent("Резка провода");
+  window.history.pushState({}, "", "/");
 });

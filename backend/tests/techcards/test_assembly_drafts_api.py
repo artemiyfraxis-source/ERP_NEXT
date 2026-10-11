@@ -364,3 +364,101 @@ def test_drawing_for_an_unknown_position_is_refused(drafts_api):
     assert agent.post("/api/techcards/assembly/drawings", headers=token, json=body).status_code == 422
     body["project"] = "999К.1"
     assert agent.post("/api/techcards/assembly/drawings", headers=token, json=body).status_code == 404
+
+
+# --- несколько PDF чертежа → один файл КД (владелец 10.10.2026) ---
+
+def _pdf(*widths: int, encrypt: bool = False) -> bytes:
+    """Настоящий PDF: по странице на ширину — по ней видно порядок после сшивки."""
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    for width in widths:
+        writer.add_blank_page(width=width, height=100)
+    if encrypt:
+        writer.encrypt("secret")
+    out = BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def _merge(client, headers, files, **changes):
+    body = {"project": PROJECT, "item_index": INDEX,
+            "files": [{"file_name": name, "content_base64": _b64(content)} for name, content in files]}
+    body.update(changes)
+    return client.post("/api/techcards/assembly/drawings/merge", headers=headers, json=body)
+
+
+def _widths(content: bytes) -> list[int]:
+    from io import BytesIO
+
+    from pypdf import PdfReader
+
+    return [int(page.mediabox.width) for page in PdfReader(BytesIO(content)).pages]
+
+
+def _document_events(sessions):
+    with sessions() as session:
+        return list(session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "techcards.kitset_document_added")))
+
+
+def test_merge_stitches_in_the_given_order_counts_pages_and_names_the_file(drafts_api):
+    sessions, _clock, admin = drafts_api
+    token = _token(admin, "assembly")
+    first = "ТСЦМ.685621.047_V00-1 (1).pdf"
+    files = [(first, _pdf(101, 102)), ("лист 2.pdf", _pdf(201)), ("лист 3.pdf", _pdf(301, 302, 303))]
+    response = _merge(TestClient(app), token, files)
+    assert response.status_code == 201, response.text
+    stored = response.json()
+    assert stored["name"] == "708К.4КБ1 — ТСЦМ.685621.047_V00-1 (1)+2.pdf" and stored["content_type"] == "application/pdf"
+    assert stored["pages"] == [{"file_name": first, "pages": 2}, {"file_name": "лист 2.pdf", "pages": 1},
+                               {"file_name": "лист 3.pdf", "pages": 3}]
+    assert _widths(admin.get(stored["url"]).content) == [101, 102, 201, 301, 302, 303]
+    assert _count(sessions, KitDocumentRow) == 1
+    (event,) = _document_events(sessions)
+    assert event.details["pages"] == "6" and "лист 2.pdf — 1 стр." in event.details["parts"]
+    # Порядок задаёт пользователь: меняем местами и называем файл сами.
+    reordered = _merge(TestClient(app), token, list(reversed(files)), file_name="Общий чертёж")
+    assert reordered.json()["name"] == "708К.4КБ1 — Общий чертёж.pdf"
+    assert _widths(admin.get(reordered.json()["url"]).content) == [301, 302, 303, 201, 101, 102]
+
+
+@pytest.mark.parametrize(("bad", "message"), [
+    (("сломан.pdf", b"%PDF-1.4\nnot a pdf at all"), "Файл «сломан.pdf» повреждён"),
+    (("защита.pdf", _pdf(100, encrypt=True)), "Файл «защита.pdf» защищён паролем"),
+    (("картинка.png", b"\x89PNG\r\n\x1a\n0000"), "Сшиваются только PDF: «картинка.png»"),
+    (("не-пдф.pdf", b"MZ\x90\x00"), "Файл «не-пдф.pdf» не похож на PDF"),
+], ids=["broken", "encrypted", "not-pdf-extension", "bad-signature"])
+def test_merge_refuses_a_bad_part_by_name_and_stores_nothing(drafts_api, bad, message):
+    sessions, _clock, admin = drafts_api
+    token = _token(admin, "assembly")
+    audit_before = _count(sessions, AuditEventRow)
+    response = _merge(TestClient(app), token, [("хороший.pdf", _pdf(100)), bad, ("ещё.pdf", _pdf(120))])
+    assert response.status_code == 422, response.text
+    assert message in response.json()["detail"]
+    assert _count(sessions, KitDocumentRow) == 0 and _count(sessions, AuditEventRow) == audit_before
+
+
+def test_merge_to_an_unknown_position_stores_nothing_and_needs_two_files(drafts_api):
+    sessions, _clock, admin = drafts_api
+    token = _token(admin, "assembly")
+    files = [("а.pdf", _pdf(100)), ("б.pdf", _pdf(110))]
+    assert _merge(TestClient(app), token, files, item_index="КБ9").status_code == 422
+    assert _merge(TestClient(app), token, files[:1]).status_code == 422
+    assert _count(sessions, KitDocumentRow) == 0
+
+
+def test_single_file_upload_is_unchanged(drafts_api):
+    sessions, _clock, admin = drafts_api
+    token = _token(admin, "assembly")
+    pdf = _pdf(100, 110)
+    response = TestClient(app).post("/api/techcards/assembly/drawings", headers=token, json={
+        "project": PROJECT, "item_index": INDEX, "file_name": "один.pdf", "content_base64": _b64(pdf),
+    })
+    assert response.status_code == 201 and response.json()["name"] == "708К.4КБ1 — один.pdf"
+    assert admin.get(response.json()["url"]).content == pdf
+    (event,) = _document_events(sessions)
+    assert "parts" not in event.details

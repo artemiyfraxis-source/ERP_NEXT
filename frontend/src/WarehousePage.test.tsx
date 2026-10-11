@@ -318,7 +318,7 @@ it("groups article rows by manufacturer series", async () => {
   await screen.findByText("GHR-04V-S");
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "series" } });
 
-  expect(screen.getByText("LOT-2409 · 1")).toBeInTheDocument();
+  expect(screen.getByText(/^LOT-2409 · 1\sартикул$/)).toBeInTheDocument();
   expect(screen.getByText("GHR-04V-S")).toBeInTheDocument();
 });
 
@@ -330,7 +330,7 @@ it("groups article rows by ГРН, packages of one ГРН under one header", asy
   await screen.findByText("GHR-04V-S");
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "grn" } });
 
-  expect(screen.getByText("FRX.26.0000001 · 2")).toBeInTheDocument();
+  expect(screen.getByText(/^FRX\.26\.0000001 · 2\sартикула$/)).toBeInTheDocument();
   expect(screen.getByText("GHR-06V-S")).toBeInTheDocument();
 });
 
@@ -595,8 +595,8 @@ it("shows the same group and article totals on page 1 as after «Загрузи�
   });
 
   render(<WarehousePage />);
-  const header = await screen.findByText(/партий 2 · остаток 15 шт/);
-  expect(screen.getByText("LOT-2409 · 1")).toBeInTheDocument();
+  const header = await screen.findByText(/2\sпартии · остаток 15 шт/);
+  expect(screen.getByText(/^LOT-2409 · 1\sартикул$/)).toBeInTheDocument();
   const row = screen.getByRole("button", { name: "Показать партии (1)" }).closest("tr")!;
   const cells = () => within(row).getAllByRole("cell").map((cell) => cell.textContent);
   expect(cells()).toContain("15 шт");           // 10 loaded, 15 on the shelf: the server number, not the loaded sum
@@ -607,7 +607,7 @@ it("shows the same group and article totals on page 1 as after «Загрузи�
 
   fireEvent.click(screen.getByRole("button", { name: "Загрузить всё" }));
   await screen.findByRole("button", { name: "Показать партии (2)" });
-  expect(screen.getByText(/партий 2 · остаток 15 шт/).textContent).toBe(onPageOne[0]);
+  expect(screen.getByText(/2\sпартии · остаток 15 шт/).textContent).toBe(onPageOne[0]);
   expect(sums(within(screen.getByRole("button", { name: "Показать партии (2)" }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent))).toEqual(onPageOne[1]);
   expect(requested.filter((path) => path.startsWith("/api/stock/totals")).length).toBeGreaterThan(0);
 });
@@ -743,7 +743,7 @@ it("writes an old address as is from the lot operations and shows a lot without 
 
   render(<WarehousePage />);
   fireEvent.change(await screen.findByLabelText("Группировка склада"), { target: { value: "place" } });
-  expect(await screen.findByText("Без места · 1")).toBeInTheDocument();
+  expect(await screen.findByText(/^Без места · 1\sартикул$/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Показать партии (1)" }));
   expect(screen.getByText("без места")).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));

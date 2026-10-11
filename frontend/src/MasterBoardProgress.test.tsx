@@ -53,7 +53,7 @@ describe("opProgress", () => {
     expect(opProgress(tasks[0], tasks[0].operations[0], NOW).flags).not.toContain("late");
   });
 
-  it("позже дедлайна — плановый конец после даты задания; у выполненной флагов нет", () => {
+  it("позже срока задания — плановый конец после даты задания; у выполненной флагов нет", () => {
     expect(opProgress(tasks[0], tasks[0].operations[2], NOW).flags).toEqual(["over"]);
     expect(opProgress(tasks[0], tasks[0].operations[3], NOW)).toMatchObject({ percent: 100, flags: [] });
   });
@@ -67,7 +67,7 @@ describe("экран мастера: прогресс и «Сегодня»", ()
     const strip = screen.getByRole("group", { name: "Сегодня" });
     expect(within(strip).getByRole("button", { name: /не начато, план истёк: 1/ })).toBeInTheDocument();
     expect(within(strip).getByRole("button", { name: /ждёт подтверждения: 1/ })).toBeInTheDocument();
-    expect(within(strip).getByRole("button", { name: /позже дедлайна: 1/ })).toBeInTheDocument();
+    expect(within(strip).getByRole("button", { name: /позже срока задания: 1/ })).toBeInTheDocument();
   });
 
   it("в строке операции: «сдано 250/500 · 50 ждут подтверждения», полоса и флаги", () => {
@@ -77,20 +77,62 @@ describe("экран мастера: прогресс и «Сегодня»", ()
     expect(screen.getAllByRole("progressbar")[0]).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getAllByText("не начато, план истёк").some((node) => node.className.includes("mb-flag danger"))).toBe(true);
     expect(screen.getAllByText("ждёт подтверждения").some((node) => node.className.includes("mb-flag warn"))).toBe(true);
-    expect(screen.getAllByText("позже дедлайна").some((node) => node.className.includes("mb-flag danger"))).toBe(true);
+    expect(screen.getAllByText("позже срока задания").some((node) => node.className.includes("mb-flag danger"))).toBe(true);
   });
 
   it("клик по отметке оставляет только проекты и операции с ней, повторный клик снимает", () => {
     mount();
     expect(screen.getByText("BBB")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /позже дедлайна/ }));
+    fireEvent.click(screen.getByRole("button", { name: /позже срока задания/ }));
     expect(screen.queryByText("BBB")).not.toBeInTheDocument();
     openProject();
     expect(screen.getByText("Пайка")).toBeInTheDocument();
     expect(screen.queryByText("Резка")).not.toBeInTheDocument();
     expect(screen.queryByText("Опрессовка")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /позже дедлайна/ }));
+    fireEvent.click(screen.getByRole("button", { name: /позже срока задания/ }));
     expect(screen.getByText("Резка")).toBeInTheDocument();
     expect(screen.getByText("Опрессовка")).toBeInTheDocument();
+  });
+});
+
+describe("экран мастера: сроки и доска монтажников (аудит 10.10, Б2)", () => {
+  const shift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]] as [string, string][], effective_hours: "8" };
+  const operators = [{ id: "p1", name: "Волков Дмитрий", site: "ЦАР" }];
+  function mountBoard() {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], statuses: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    return render(<MasterBoard tasks={tasks} operators={operators} skills={[]} absences={[]} shift={shift} canEdit busy="" mutate={async () => {}} openTask={() => {}}
+      projectDeadlines={{ aaa: { deadline: "2026-11-04", days_left: 30 } }} />);
+  }
+
+  it("плитка: «ДЛ проекта» из плана и отдельно «задание до» — не одно «ДЛ» на два разных срока (РП-1, РП-2)", () => {
+    mountBoard();
+    const tile = screen.getByText("AAA").closest(".kit-tile") as HTMLElement;
+    expect(within(tile).getByText("ДЛ проекта 04.11")).toHaveAttribute("data-tone", "neutral");
+    expect(within(tile).getByText("задание до 10.10")).toHaveAttribute("title", "Срок задания, указанный при запуске, 10.10.2026 — через 5 дн");
+    // Проекта BBB нет в плане — только срок задания, и он не красный за 5 дней.
+    const other = screen.getByText("BBB").closest(".kit-tile") as HTMLElement;
+    expect(within(other).queryByText(/ДЛ проекта/)).toBeNull();
+    expect(within(other).getByText("задание до 10.10")).toHaveAttribute("data-tone", "neutral");
+    fireEvent.click(screen.getByText("AAA"));
+    expect(screen.getByText("ДЛ проекта 04.11")).toBeInTheDocument();
+  });
+
+  it("доска монтажников: период словами, навигация как в плане, ячейка и легенда — общие с «Загрузкой по людям» (РП-3, РП-4)", () => {
+    mountBoard();
+    const board = screen.getByRole("complementary", { name: "Монтажники" });
+    expect(within(board).getByText("5–11 октября 2026")).toBeInTheDocument();
+    expect(within(board).getByRole("button", { name: "Сегодня" })).toBeDisabled();
+    fireEvent.click(within(board).getByRole("button", { name: "неделя →" }));
+    expect(within(board).getByText("12–18 октября 2026")).toBeInTheDocument();
+    fireEvent.click(within(board).getByRole("button", { name: "Сегодня" }));
+    // Свободный рабочий день — пустая ячейка (не «0/8»), выходной — без «вых»; легенда по смене 8 ч, без «/7».
+    const free = within(board).getByRole("button", { name: "День Волков Дмитрий 07.10" });
+    expect(free.textContent).toBe("");
+    expect(free.closest("td")).toHaveClass("mb-cell", "free");
+    expect(within(board).getByTitle("Волков Дмитрий, 11.10: нерабочий день").textContent).toBe("");
+    const legend = board.querySelector(".mb-legend") as HTMLElement;
+    expect(legend).toHaveAttribute("title", expect.stringContaining("Смена 8 ч"));
+    expect(legend.textContent).toContain("8/8");
+    expect(legend.textContent).not.toContain("/7");
   });
 });

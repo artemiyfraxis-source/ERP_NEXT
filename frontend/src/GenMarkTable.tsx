@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import { Toggle } from "./GenControls";
 import {
   MARK_KIND_DEFAULT, MARK_KINDS, MARK_PLACES, markMaterialSource, markRowActive, newMarkRow, productMarkRow, type MarkMat, type MarkPlace, type MarkRow,
@@ -60,7 +61,7 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
         return <tr key={index}>
           <td className="num">{n}</td>
           <td><input aria-label={`Что маркируем ${n}`} list={`${id}-targets`} value={row.target} title={row.target || undefined} placeholder="жгут, разъём, провод" onChange={(event) => set(index, { target: event.target.value })} /></td>
-          <td><input aria-label={`Надпись ${n}`} value={row.text} placeholder="как в КД" onChange={(event) => set(index, { text: event.target.value })} /></td>
+          <td><AutoTextarea aria-label={`Надпись ${n}`} value={row.text} placeholder="как в КД" onChange={(text) => set(index, { text })} /></td>
           <td><select aria-label={`Материал ${n}`} className={missing ? "is-warn" : undefined} value={row.material} title={missing ? "Нет в справочнике БД.МАТ и в составе" : undefined}
             onChange={(event) => set(index, { material: event.target.value })}>
             {options.map((name) => <option key={name} value={name}>{name}</option>)}
@@ -72,7 +73,7 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
               {MARK_PLACES.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
             {row.place === "dist" && <span className="gunit" data-unit="мм"><input aria-label={`Расстояние от конца ${n}`} inputMode="decimal" value={row.mm} placeholder="—" onChange={(event) => set(index, { mm: event.target.value })} /></span>}
-            {row.place === "free" && <input aria-label={`Место ${n}`} value={row.where} placeholder="где по КД" onChange={(event) => set(index, { where: event.target.value })} />}
+            {row.place === "free" && <AutoTextarea aria-label={`Место ${n}`} value={row.where} placeholder="где по КД" onChange={(where) => set(index, { where })} />}
           </span></td>
           <td><input aria-label={`На изделие ${n}`} title="Штук на изделие" className="num" inputMode="decimal" value={row.qty} onChange={(event) => set(index, { qty: event.target.value })} /></td>
           <td><button type="button" className="btn-x" aria-label={`Удалить метку ${n}`} onClick={() => onChange(rows.filter((_, i) => i !== index))}>×</button></td>

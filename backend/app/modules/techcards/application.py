@@ -19,6 +19,7 @@ from .operation_cards import (
     parse_operation_template,
 )
 from .etk_builder import build_etk
+from .scheme_corrections import EVENT as SCHEME_CORRECTED, scheme_correction
 
 
 class TechcardRepository(Protocol):
@@ -83,6 +84,9 @@ class RebuildProjectTechcardCommand(ChangeProjectTechcardCommand):
 class AutoBuildProjectTechcardCommand(ChangeProjectTechcardCommand):
     config: dict[str, Any]
     technology_source: dict[str, Any] | None = None
+    # «Поправить вручную»: the generator config the manual one was converted from — only to rebuild the automatic
+    # scheme the correction is logged against (scheme_corrections.py), never used as a scheme.
+    generator_origin: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +219,17 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
                 "operation_library_commit": metadata["source_commit"],
             },
         ))
+        correction = scheme_correction(document, command.generator_origin, current.document)
+        if correction is not None:
+            uow.audit.add(AuditEvent(
+                id=uuid4(), aggregate_id=updated.id, event_type=SCHEME_CORRECTED,
+                actor=command.actor, occurred_at=command.now,
+                details={
+                    "project": updated.project, "item_index": updated.item_index, "card_id": str(updated.id),
+                    "revision": updated.revision, "operation_library_commit": metadata["source_commit"],
+                    **correction,
+                },
+            ))
         uow.commit()
         return updated
 

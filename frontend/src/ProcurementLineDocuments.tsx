@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { failureText, procurementApi, type ProcurementFile, type ProcurementFileKind, type ProcurementLine } from "./api";
 import { canEditNote, saveLineField, type LineEditing } from "./ProcurementCellEdit";
 
-/* Документы строки закупки — как колонки листа SUPPLYMAP DATASHEET, РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА: ссылка на описание
+/* Документы строки закупки — как колонки листа SUPPLYMAP Даташит, РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА: ссылка на описание
    позиции и файлы разрешения на замену и документа качества. Правит закупщик строки, в том же окне статусов, что и
    «Комментарий» (не «Новый» и не «Отменено»). Документ качества, приложенный файлом, ставит строке «Док. качества: Да» —
    приёмка тогда ждёт его при входном контроле (решено агентом — проверить). */
@@ -87,7 +87,7 @@ function FileInput({ line, kind, disabled, onSaved, extra }: {
   );
 }
 
-/** Карточка строки: DATASHEET и файлы разрешения и документа качества. */
+/** Карточка строки: Даташит и файлы разрешения и документа качества. */
 export function LineDocumentsForm({ line, editing, disabled, onMessage }: {
   line: ProcurementLine;
   editing: LineEditing;
@@ -106,7 +106,7 @@ export function LineDocumentsForm({ line, editing, disabled, onMessage }: {
     setError("");
     try {
       await saveLineField(line, "datasheet", draft.trim(), editing);
-      onMessage?.(`${line.legacy_id}: DATASHEET сохранён`);
+      onMessage?.(`${line.legacy_id}: Даташит сохранён`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не сохранилось");
     } finally {
@@ -124,7 +124,7 @@ export function LineDocumentsForm({ line, editing, disabled, onMessage }: {
   return (
     <form className="line-documents" aria-label={`Документы ${line.legacy_id}`} onSubmit={(event) => void save(event)}>
       <div className="form-grid">
-        <label className="wide half">DATASHEET
+        <label className="wide half">Даташит
           <span className="line-doc-datasheet">
             <input value={draft} placeholder="ссылка или текст" disabled={locked || saving} onChange={(event) => setDraft(event.target.value)} />
             {WEB_LINK.test((line.datasheet ?? "").trim()) && <a href={(line.datasheet ?? "").trim()} target="_blank" rel="noreferrer">открыть</a>}
@@ -140,7 +140,7 @@ export function LineDocumentsForm({ line, editing, disabled, onMessage }: {
       <div className="card-footer">
         <small>{closed ? "Строка закрыта для правки" : "Документ качества файлом ставит «Док. качества: Да»"}</small>
         <button className="secondary small" disabled={locked || saving || draft.trim() === (line.datasheet ?? "")}>
-          {saving ? "Сохраняем…" : "Сохранить DATASHEET"}
+          {saving ? "Сохраняем…" : "Сохранить Даташит"}
         </button>
       </div>
     </form>

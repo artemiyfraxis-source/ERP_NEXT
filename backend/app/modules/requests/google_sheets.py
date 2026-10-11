@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
 import threading
@@ -30,6 +31,7 @@ import httpx
 from .application import CalcSheetError, CalcSpreadsheet
 from .domain import CALC_PROJECT_CELL, CALC_PROJECT_SHEET, CALC_ZPK_SHEET
 
+logger = logging.getLogger(__name__)
 ENV_VAR = "ERP_GOOGLE_SERVICE_ACCOUNT_JSON"
 SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -175,27 +177,23 @@ class ServiceAccount:
         return f"{signing_input}.{_b64url(signature)}"
 
 
-NOT_CONFIGURED = (
-    "Чтение расчёта по ссылке не настроено на сервере ERP: администратору нужно задать "
-    f"{ENV_VAR} (ключ сервисного аккаунта Google, см. README)."
-)
+NOT_CONFIGURED = "Чтение расчёта по ссылке не настроено — вставьте диапазон листа ЗКП вручную (ниже)."
+UNREADABLE_KEY = "Чтение расчёта по ссылке сейчас недоступно — вставьте диапазон листа ЗКП вручную (ниже)."
 
 
 def load_service_account(raw: str | None) -> ServiceAccount:
     """``ERP_GOOGLE_SERVICE_ACCOUNT_JSON``: the key JSON itself, or a path to the key file."""
     text = str(raw or "").strip()
     if not text:
+        logger.warning("Ключ Google не задан: %s", ENV_VAR)
         raise CalcSheetError(NOT_CONFIGURED, "config")
     try:
         if not text.startswith("{"):
             text = Path(text).expanduser().read_text(encoding="utf-8")
         return ServiceAccount.from_info(json.loads(text))
     except (OSError, ValueError, TypeError) as error:
-        raise CalcSheetError(
-            f"Ключ сервисного аккаунта Google в {ENV_VAR} не читается ({error.__class__.__name__}) — "
-            "проверьте, что там JSON-ключ или путь к нему.",
-            "config",
-        ) from error
+        logger.warning("Ключ Google в %s не читается (%s)", ENV_VAR, error.__class__.__name__)
+        raise CalcSheetError(UNREADABLE_KEY, "config") from error
 
 
 # ── Reader ─────────────────────────────────────────────────────────────────────────────────────
@@ -237,11 +235,11 @@ class GoogleSheetsCalcReader:
             except httpx.HTTPError as error:
                 raise CalcSheetError("Google не ответил на вход сервисного аккаунта — повторите позже.") from error
             if response.status_code != 200:
-                raise CalcSheetError(
-                    f"Google отклонил ключ сервисного аккаунта {self.account.client_email} "
-                    f"(HTTP {response.status_code}) — проверьте ключ в {ENV_VAR}.",
-                    "config",
+                logger.warning(
+                    "Google отклонил ключ %s (HTTP %s) — проверьте ключ в %s",
+                    self.account.client_email, response.status_code, ENV_VAR,
                 )
+                raise CalcSheetError(UNREADABLE_KEY, "config")
             body = response.json()
             self._token = str(body.get("access_token") or "")
             self._token_expires = now + float(body.get("expires_in") or 3600)

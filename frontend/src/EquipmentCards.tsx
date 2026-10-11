@@ -1,7 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { TechOperationRecord } from "./api";
+import { DataTable, type DataColumn } from "./DataTable";
+import { headerLabel, valueLabel } from "./referenceLabels";
 
-/** БД.ОБ as cards, the way «Операции» shows БД.ОП (owner 29.09.2026 «с оборудованием то же самое»): grouped by «Тип»,
+/** БД.ОБ as a dense table (audit БД-2: 192 cards were 6 500 px of scrolling), a row opens the card: by «Тип» chips,
     every sheet column in the open card, plus the БД.ОП operations that name the unit as «Машина» / «Инструмент» /
     «Апликаторы / модули» by its «Для базы» value (the same key SUPPLYMAP's БД.ОП dropdowns use). */
 
@@ -33,8 +35,6 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, toolbar }
   onEdit: (record: TechOperationRecord) => void;
   toolbar?: ReactNode;
 }) {
-  const [chip, setChip] = useState("");
-  const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState("");
   const usedBy = useMemo(() => {
     const byBase = new Map<string, string[]>();
@@ -52,14 +52,13 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, toolbar }
     return byBase;
   }, [operations]);
   const opsOf = (record: TechOperationRecord) => (baseOf(record) ? usedBy.get(norm(baseOf(record))) ?? [] : []);
-  const needle = query.trim().toLocaleLowerCase("ru-RU");
-  const searched = useMemo(() => !needle ? records
-    : records.filter((record) => Object.values(record.fields).join(" ").toLocaleLowerCase("ru-RU").includes(needle)), [records, needle]);
   const types = useMemo(() => {
     const counts = new Map<string, number>();
-    searched.forEach((record) => counts.set(typeOf(record), (counts.get(typeOf(record)) ?? 0) + 1));
+    records.forEach((record) => counts.set(typeOf(record), (counts.get(typeOf(record)) ?? 0) + 1));
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
-  }, [searched]);
+  }, [records]);
+  // Пустые строки листа (ни номера, ни названия) — в конец: они не должны открывать таблицу.
+  const rows = useMemo(() => [...records].sort((a, b) => Number(!(invOf(a) || nameOf(a))) - Number(!(invOf(b) || nameOf(b)))), [records]);
   const open = openId ? records.find((record) => record.id === openId) : undefined;
 
   if (open) {
@@ -71,11 +70,11 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, toolbar }
         <div><small>Инв. номер</small><b>{invOf(open) || "—"}</b></div>
         <div className="tr-head-name"><small>Наименование</small><b>{nameOf(open) || "—"}</b></div>
         <div><small>Тип</small><b>{typeOf(open)}</b></div>
-        <div><small>Расположение</small><b>{pick(open.fields, "Расположение") || "—"}</b></div>
+        <div><small>Расположение</small><b>{valueLabel("Расположение", pick(open.fields, "Расположение")) || "—"}</b></div>
       </div>
       <div className="tr-block"><h4>Строка БД.ОБ <span>{filledColumns(open.fields).length} полей</span></h4>
-        <dl className="op-fields">{filledColumns(open.fields).map(([key, value]) => <div key={key}><dt>{key}</dt><dd className="pre-line">{
-          /^https?:\/\//.test(value.trim()) ? <a href={value.trim()} target="_blank" rel="noreferrer">{value.trim()}</a> : value
+        <dl className="op-fields">{filledColumns(open.fields).map(([key, value]) => <div key={key}><dt>{headerLabel(key)}</dt><dd className="pre-line">{
+          /^https?:\/\//.test(value.trim()) ? <a href={value.trim()} target="_blank" rel="noreferrer">{value.trim()}</a> : valueLabel(key, value)
         }</dd></div>)}</dl>
       </div>
       <div className="tr-block"><h4>Операции БД.ОП с этим оборудованием <span>{ops.length}</span></h4>
@@ -85,30 +84,29 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, toolbar }
     </article>;
   }
 
-  return <>
-    <div className="tr-toolbar">
-      <input aria-label="Поиск: Оборудование" placeholder="Инв. номер, название, артикул, производитель…" value={query} onChange={(event) => setQuery(event.target.value)} />
-      <span className="tr-toolbar-end">{toolbar}</span>
-    </div>
-    <div className="tr-chips">
-      <button className={chip ? "" : "on"} onClick={() => setChip("")}>Все · {searched.length}</button>
-      {types.map(([name, n]) => <button key={name} className={chip === name ? "on" : ""} onClick={() => setChip(chip === name ? "" : name)}>{name} · {n}</button>)}
-    </div>
-    {!searched.length && <div className="empty">{records.length ? "Ничего не найдено." : "Записей нет."}</div>}
-    {types.filter(([name]) => !chip || chip === name).map(([name, n]) => <section className="tr-group" key={name}>
-      <h3>{name} <span>{n}</span></h3>
-      <div className="tr-grid">
-        {searched.filter((record) => typeOf(record) === name).map((record) => {
-          const ops = opsOf(record);
-          const sub = [pick(record.fields, "Артикул"), pick(record.fields, "Производитель").replace(/^-+$/, "")].filter(Boolean).join(" · ");
-          return <button type="button" key={record.id} className="tr-card" onClick={() => setOpenId(record.id)}>
-            <strong className="tr-code">{invOf(record) || "без инв. номера"}</strong>
-            <span className="tr-name">{nameOf(record) || "—"}</span>
-            {sub && <span className="tr-first">{sub}</span>}
-            <small className="tr-meta">{[pick(record.fields, "Расположение"), ops.length ? `в ${ops.length} опер.` : ""].filter(Boolean).join(" · ") || "—"}</small>
-          </button>;
-        })}
-      </div>
-    </section>)}
-  </>;
+  const columns: DataColumn<TechOperationRecord>[] = [
+    { key: "inv", title: "Инв. номер", value: (record) => invOf(record) },
+    { key: "name", title: "Наименование", value: (record) => nameOf(record) },
+    { key: "type", title: "Тип", value: typeOf, filter: true },
+    { key: "article", title: "Артикул", value: (record) => pick(record.fields, "Артикул") },
+    { key: "maker", title: "Производитель", value: (record) => pick(record.fields, "Производитель").replace(/^-+$/, "") },
+    { key: "place", title: "Расположение", value: (record) => valueLabel("Расположение", pick(record.fields, "Расположение")), filter: true },
+    { key: "ops", title: "Операций", numeric: true, value: (record) => opsOf(record).length, hint: "Сколько операций БД.ОП ссылаются на эту единицу в «Машина», «Инструмент» или «Апликаторы / модули»" },
+  ];
+  const presets = types.map(([name]) => ({ label: name, test: (record: TechOperationRecord) => typeOf(record) === name }));
+  return <DataTable
+    rows={rows}
+    columns={columns}
+    rowKey={(record) => record.id}
+    storageKey="db:equipment"
+    label="Оборудование"
+    exportName="Оборудование"
+    searchPlaceholder="Поиск: инв. номер, название, артикул, производитель…"
+    presets={presets}
+    presetCountsFollowSearch
+    onRowClick={(record) => setOpenId(record.id)}
+    rowTitle={(record) => `Открыть: ${nameOf(record) || invOf(record)}`}
+    toolbar={toolbar}
+    emptyText={records.length ? "Ничего не найдено." : "Записей нет."}
+  />;
 }

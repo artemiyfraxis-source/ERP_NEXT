@@ -19,6 +19,9 @@ function str(value: unknown): string {
 /** Порядок разделов оснастки: инструмент → оборудование → расходники, затем прочее (SUPPLYMAP PortalApp:4533). */
 export const TOOLING_ORDER = ["Инструмент", "Оборудование", "Расходники", "Матрицы", "Оснастка"];
 
+/** Разделы блока «Оснастка» операции ЭТК, которые показываются всегда, даже пустыми (erp-screens §6, аудит 10.10 ЭТК-1). */
+export const ETK_TOOLING_SECTIONS = ["Инструмент", "Оборудование", "Расходники"] as const;
+
 export function toolingSections(sections: string[]): string[] {
   const rank = (section: string) => {
     const index = TOOLING_ORDER.indexOf(section);
