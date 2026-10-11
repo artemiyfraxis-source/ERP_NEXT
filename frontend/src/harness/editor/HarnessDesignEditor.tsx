@@ -69,6 +69,7 @@ import { useEditorReferenceCatalog, useTerminalArticleLookup, useWireDatabaseLoo
 import { hydrateTerminalDetails, resolveTerminalDetails, wireEndTerminalCorrections } from "./terminal-details";
 import type { EditorCatalogItem, EditorLayer as UiLayer, EditorSceneObject, HarnessEditorView } from "./editor-types";
 import { HarnessEditorWorkspace, type EditorSaveState } from "./HarnessEditorWorkspace";
+import type { HarnessExportPort } from "../export/port";
 import { CableSelectionPanel } from "./CableSelectionPanel";
 import { E4ConnectorInspector } from "./E4ConnectorInspector";
 import { resolveConnectedWireMaterials } from "./resolve-wire-materials";
@@ -132,6 +133,8 @@ export interface HarnessDesignEditorProps {
   /** View mode (ERP: no «Проекты: правка»): pan, zoom and select-to-inspect only — no drag, no edits, never saved.
    *  Load-time normalisation still runs in memory so the drawing looks as it does for the editor. */
   readonly readOnly?: boolean;
+  /** Выгрузка листа (PNG / PDF): страница получает порт отрисовки чертежа; null — поле закрыто. */
+  readonly onExportPort?: (port: HarnessExportPort | null) => void;
   /** Where the document windows get their rows (connection table, cut list, specification). Defaults to the ERP server
    *  for `projectId` / `harnessId` (`HarnessEditor` provides it). */
   readonly documentsSource?: HarnessDocumentsSource;
@@ -745,6 +748,7 @@ export function HarnessDesignEditor({
   onClose,
   onViewChange,
   readOnly = false,
+  onExportPort,
 }: HarnessDesignEditorProps) {
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
@@ -1812,6 +1816,7 @@ export function HarnessDesignEditor({
         }}
       ><HarnessEditorWorkspace
         readOnly={readOnly}
+        onExportPort={onExportPort}
         harnessId={harnessId}
         harnessDesignation={harnessDesignation}
         view={view}

@@ -1,8 +1,10 @@
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { failureText, harnessApi, kitsetsApi } from "./api";
 import { HarnessEditorLazy, loadHarnessDrawing, type DrawingSaveState, type HarnessDrawingPorts, type HarnessEditorCatalogApi } from "./harness";
 import { HarnessHistory } from "./HarnessHistory";
 import { closeHarness, openLibrary } from "./harnessNav";
+import { ExportMenu } from "./harness/export/ExportMenu";
+import type { HarnessExportPort } from "./harness/export/port";
 import { readFileBase64 } from "./ProjectsPage";
 import { formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
@@ -55,6 +57,9 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
   const [generation, setGeneration] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Порт выгрузки листа: поле чертежа обновляет его при каждой перерисовке сцены, страница читает при нажатии.
+  const exportPort = useRef<HarnessExportPort | null>(null);
+  const rememberExportPort = useCallback((port: HarnessExportPort | null) => { exportPort.current = port; }, []);
 
   useEffect(() => {
     let live = true;
@@ -152,6 +157,7 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
         <button className="secondary small" onClick={() => setHistoryOpen(true)}>История версий</button>
         <button className="secondary small" onClick={() => openLibrary(project, index)}
           title="Шаблоны разъёмов жгута: список, редактор, публикация версий">Библиотека компонентов</button>
+        <ExportMenu project={project} index={index} heading={heading} port={() => exportPort.current} version={() => ports?.revision() ?? null} />
         <a className="secondary small button-link" href={harnessApi.exportUrl(project, index)} download
           title="Чертёж в формате TECHMAP-GRAPHER (.techmap-project.zip)">Скачать .zip</a>
         {canEdit && <button className="secondary small" onClick={() => fileRef.current?.click()}
@@ -171,7 +177,7 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
       {!ports || !catalog ? <div className="empty">Загрузка…</div>
         : <Suspense fallback={<div className="empty">Загрузка редактора…</div>}>
           <HarnessEditorLazy key={generation} projectId={project} harnessId={index} harnessDesignation={heading} initialView="e4"
-            api={ports.api} placements={ports.placements} catalog={catalog} readOnly={!canEdit} />
+            api={ports.api} placements={ports.placements} catalog={catalog} readOnly={!canEdit} onExportPort={rememberExportPort} />
         </Suspense>}
     </div>
     {historyOpen && <HarnessHistory project={project} index={index} canEdit={canEdit} onClose={() => setHistoryOpen(false)}
