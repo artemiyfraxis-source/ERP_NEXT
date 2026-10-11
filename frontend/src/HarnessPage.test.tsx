@@ -188,6 +188,19 @@ describe("HarnessPage", () => {
     expect(calls.some((call) => call.method === "PUT")).toBe(false);
   });
 
+  it("«Выгрузить» есть и в просмотре, и в правке: PNG с выбором 1×/2×/4× (по умолчанию 2×) и печать PDF листом", async () => {
+    for (const canEdit of [false, true]) {
+      const view = render(<HarnessPage project="708К.4" index="КБ1" canEdit={canEdit} />);
+      await screen.findByTestId("editor");
+      fireEvent.click(screen.getByRole("button", { name: /Выгрузить/ }));
+      expect(screen.getByRole("radio", { name: "2×" }).getAttribute("aria-checked")).toBe("true");
+      expect(screen.getByRole("radio", { name: "4×" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Скачать PNG" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Печать / Сохранить как PDF" })).toBeTruthy();
+      view.unmount();
+    }
+  });
+
   it("с правом правки редактор получает размещения библиотечных компонентов того же чертежа", async () => {
     render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
     const editor = await screen.findByTestId("editor");

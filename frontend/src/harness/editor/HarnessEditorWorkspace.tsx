@@ -45,6 +45,7 @@ import type { WireBlankEnd } from "../WireBlankCatalog";
 import { FreeWireEndsPanel } from "./FreeWireEndsPanel";
 import { HarnessSectionNavigation, type HarnessSectionId } from "./HarnessSectionNavigation";
 import "./harness-editor.css";
+import type { HarnessExportPort } from "../export/port";
 
 const defaultLayers: readonly EditorLayer[] = [
   { id: "annotations", label: "Размеры и обозначения", visible: true, locked: false },
@@ -165,6 +166,8 @@ export interface HarnessEditorWorkspaceProps {
   readonly viewControls?: ReactNode;
   /** Set while the drawing is in «Реальные размеры, мм»: scale bar and cursor in mm on the field. */
   readonly realSize?: RealSizeStatus | null;
+  /** Выгрузка листа: порт отрисовки чертежа (со знаменателем М 1:N), см. `harness/export`. */
+  readonly onExportPort?: (port: HarnessExportPort | null) => void;
   readonly revealRequest?: { readonly token: number; readonly objectIds: readonly string[] };
   readonly cables?: readonly CableInstance[];
   readonly saveState?: EditorSaveState;
@@ -408,7 +411,13 @@ export function HarnessEditorWorkspace({
   onSectionChange,
   viewControls,
   realSize,
+  onExportPort,
 }: HarnessEditorWorkspaceProps) {
+  const realSizeDenominator = realSize?.denominator ?? null;
+  const forwardExportPort = useMemo(
+    () => onExportPort ? (port: Omit<HarnessExportPort, "realSizeDenominator"> | null) => onExportPort(port ? { ...port, realSizeDenominator } : null) : undefined,
+    [onExportPort, realSizeDenominator],
+  );
   const [localView, setLocalView] = useState<HarnessEditorView>("e4");
   const [tool, setTool] = useState<EditorTool>("select");
   const [localObjects, setLocalObjects] = useState(defaultObjects);
@@ -829,6 +838,7 @@ export function HarnessEditorWorkspace({
           drawingAngleStep={drawingAngleStep}
           onCameraChange={setCamera}
           onViewportSizeChange={rememberViewportSize}
+          onExportPort={forwardExportPort}
           onObjectSelect={selectObject}
           onObjectGroupSelect={selectObjectGroup}
           onObjectsIsolate={localCopyControls ? isolateCopyObjects : undefined}
