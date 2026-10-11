@@ -176,7 +176,8 @@ it("keeps the instrument form closed until «+ Добавить СИ» and lists
   expect(within(table).getByRole("columnheader", { name: /Поверка до/ })).toBeInTheDocument();
   expect(within(table).getByText("СИ-014")).toBeInTheDocument();
   expect(within(table).getByText("Микрометр МК-25")).toBeInTheDocument();
-  expect(within(table).getByText("01.09.2027 09:00")).toBeInTheDocument();
+  expect(within(table).getByText("01.09.2027")).toBeInTheDocument();
+  expect(within(table).queryByText(/09:00/)).not.toBeInTheDocument(); // a verification date has no time (audit М-7)
   expect(screen.queryByRole("button", { name: "Сохранить СИ" })).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Инв. №")).not.toBeInTheDocument();
 

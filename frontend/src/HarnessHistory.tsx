@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { failureText, harnessApi, type HarnessRevision, type HarnessRevisions } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
+import { StatusChip } from "./StatusChip";
 
 /** Как появилась версия — по-русски. */
 export function revisionOrigin(item: HarnessRevision): string {
@@ -64,7 +65,7 @@ export function HarnessHistory({ project, index, canEdit, onClose, onRestored }:
 
   const columns: DataColumn<HarnessRevision>[] = [
     { key: "revision", title: "Версия", numeric: true, value: (item) => item.revision,
-      render: (item) => <strong>{item.revision}{history?.current === item.revision ? <span className="tone-ok harness-history-current">текущая</span> : null}</strong> },
+      render: (item) => <strong>{item.revision}{history?.current === item.revision ? <span className="harness-history-current"><StatusChip tone="success">текущая</StatusChip></span> : null}</strong> },
     { key: "saved_at", title: "Когда", value: revisionSpan },
     { key: "saved_by", title: "Кто", value: (item) => item.saved_by },
     { key: "origin", title: "Как появилась", value: revisionOrigin },

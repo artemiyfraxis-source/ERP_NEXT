@@ -138,6 +138,17 @@ it("names the competences in Russian, the allowed ones first, with the code as a
   const rows = within(skills).getAllByRole("listitem").map((row) => row.textContent);
   expect(rows[0]).toContain("Резка провода");
   expect(rows[1]).toContain("нет допуска");
+  // Звёзды без легенды нечитаемы (аудит М-4): одна строка говорит, что они значат.
+  expect(within(skills).getByText(/уровень владения операцией, от 1 до 5/)).toBeInTheDocument();
+});
+
+it("does not print «0 ч» for a month with work sessions but no counted hours", async () => {
+  serve({ ...FULL, hours_this_month: { month: "2026-10", label: "октябрь 2026", hours: 0, sessions: 2 } });
+  render(<EmployeeCardPage principal={principal()} />);
+  const time = await screen.findByRole("region", { name: "Рабочее время" });
+  expect(time).toHaveTextContent("рабочих сессий: 2, учтённых часов нет");
+  expect(within(time).queryByText(/^0\s*ч$/)).toBeNull();
+  expect(within(time).getByText("нет данных")).toBeInTheDocument();
 });
 
 it("says «нет данных» for every section the modules gave nothing for, never a zero", async () => {

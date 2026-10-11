@@ -3,7 +3,11 @@ import { operationsApi, type NotificationItem } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
 import { NOTIFICATIONS_CHANGED } from "./NotificationBell";
-import { notificationKind } from "./notificationLabels";
+import { notificationKind, type NotificationTone } from "./notificationLabels";
+import { StatusChip } from "./StatusChip";
+import type { Tone } from "./statusTone";
+
+const CHIP_TONE: Record<NotificationTone, Tone> = { ok: "success", warn: "warning", danger: "danger", info: "info", neutral: "neutral" };
 
 function deletedText(count: number) {
   return count > 0 ? `Удалено уведомлений: ${count}` : "Удалять нечего";
@@ -88,7 +92,7 @@ export function NotificationsPage() {
       key: "kind", title: "Тип", width: 150, value: (item) => notificationKind(item.type).label, filter: true,
       render: (item) => {
         const kind = notificationKind(item.type);
-        return <span className={`kit-status tone-${kind.tone}`}>{kind.label}</span>;
+        return <StatusChip tone={CHIP_TONE[kind.tone]}>{kind.label}</StatusChip>;
       },
     },
     {

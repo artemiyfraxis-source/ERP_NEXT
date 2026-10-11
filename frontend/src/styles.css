@@ -547,9 +547,9 @@ table.ship-lines td:first-child { width: 1%; }
 .operations-failures > div { display: grid; grid-template-columns: 180px 1fr auto auto; align-items: center; gap: 10px; border-top: 1px solid var(--border); padding: 9px 0; font-size: 12px; }
 /* «Фоновые процессы» (аудит U08): группа воркера — состояние, последний успех, прогон, последняя ошибка. */
 .operations-background { margin-bottom: 18px; padding: 18px; }
-.operations-background h2 { margin: 0 0 10px; font-size: 16px; }
+.panel.operations-background > h2:first-child, .panel.operations-failures > h2:first-child { margin: 0 0 10px; padding: 0; font-size: 16px; }
 .operations-background .error-banner { margin-bottom: 10px; }
-.operations-bg-row { display: grid; grid-template-columns: minmax(200px, 1.2fr) 150px minmax(170px, 1fr) 80px minmax(200px, 2fr); gap: 10px; border-top: 1px solid var(--border); padding: 7px 0; font-size: 13px; }
+.operations-bg-row { display: grid; align-items: center; grid-template-columns: minmax(200px, 1.2fr) 150px minmax(170px, 1fr) 80px minmax(200px, 2fr); gap: 10px; border-top: 1px solid var(--border); padding: 7px 0; font-size: 13px; }
 .operations-bg-head { border-top: 0; padding-top: 0; color: var(--muted-foreground); font-size: 12px; }
 .operations-bg-error { color: var(--muted-foreground); overflow-wrap: anywhere; }
 .operations-bg-queue { margin: 10px 0 0; font-size: 13px; }
@@ -2254,19 +2254,18 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .table-wrap tr.clickable { cursor: pointer; }
 .table-wrap tr.clickable:hover td { background: var(--accent); }
 
-.staff-departments .staff-dep-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; padding: 0 20px 18px; }
-.staff-dep-list { display: grid; gap: 8px; width: min(100%, 420px); }
+.staff-departments .staff-dep-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 24px; padding: 0 16px 16px; }
+@media (max-width: 1100px) { .staff-departments .staff-dep-body { grid-template-columns: minmax(0, 1fr); } }
+.staff-dep-list, .staff-dep-heads { display: grid; gap: 8px; min-width: 0; }
+.staff-dep-list h3, .staff-dep-heads h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.staff-dep-list textarea { width: 100%; resize: vertical; }
 .staff-dep-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.staff-dep-rename input { width: 240px; }
-/* «Личная карточка»: руководители отделов — compact table + one picker row. */
-.staff-dep-heads { display: grid; gap: 8px; width: min(100%, 560px); }
 .staff-dep-heads .table-wrap { max-height: 320px; overflow-y: auto; }
-.staff-dep-heads th, .staff-dep-heads td { padding: 6px 12px; }
+.staff-dep-heads th, .staff-dep-heads td { padding: 4px 12px; }
 .staff-dep-heads tr.selected td { background: var(--accent); }
-.staff-dep-heads .staff-dep-rename { flex-wrap: nowrap; }
-.staff-dep-heads .staff-dep-rename select { flex: 1 1 150px; width: auto; min-width: 0; }
-.staff-dep-heads .staff-dep-rename input { flex: 1 1 200px; width: auto; min-width: 0; }
-.staff-dep-heads .staff-dep-rename button { flex: none; }
+.staff-dep-rename select { flex: 1 1 150px; width: auto; min-width: 0; }
+.staff-dep-rename input { flex: 1 1 180px; width: auto; min-width: 0; }
+.staff-dep-rename button { flex: none; }
 /* A табельный номер («FRX-0017») never breaks at its hyphen. */
 .staff-page td.tab-no { white-space: nowrap; }
 /* The employee form has two titled blocks, «Кадры» (personnel facts) and «Доступ в ERP» (what the person may open),
@@ -3156,12 +3155,8 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
   .profile .link-button { padding-top: 2px; }
 }
 .row-action-cell .row-actions { flex-direction: row; align-items: center; width: auto; max-width: none; }
-/* «Сотрудники»: действия строки всегда на виду, узкими текстовыми кнопками — без пустой колонки справа. */
-.staff-page tr .row-action.always { visibility: visible; }
-.staff-page .row-action-cell .row-actions { gap: 10px; }
-.staff-page .row-action-cell .link-button { padding: 0; font-size: 12.5px; }
-@media (pointer: coarse) { .staff-page .row-action-cell .link-button { min-height: 40px; } }
-.staff-page td.text > strong, .staff-page td.text small { white-space: nowrap; }
+.staff-page .data-table td strong, .staff-page .data-table td small { white-space: nowrap; }
+.staff-page .data-table td small { display: block; }
 
 /* Цель 2: «План задания» и «Сдача ЖУК» в карточке задания (JobPlan.tsx). */
 .status.status-done { color: var(--tone-ok); background: color-mix(in srgb, var(--tone-ok) 14%, transparent); }
@@ -3298,3 +3293,30 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rg-hint, .procurement-auto-note { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
 .procurement-stages { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 .panel.procurement-flat > .procurement-empty { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 14px 16px; }
+
+/* Б7 · управление, ОТК, личный кабинет (аудит дизайна 10.10: М-1 … М-8, Ж-3). */
+.row-action-menu { display: inline-block; }
+.row-action-open { min-width: var(--control-h-cell); height: var(--control-h-cell); padding: 0 6px; border: 1px solid transparent; border-radius: var(--control-radius); background: transparent; color: var(--muted-foreground); font-size: 16px; line-height: 1; }
+.row-action-open:hover:not(:disabled), .row-action-open[aria-expanded="true"] { border-color: var(--border); background: var(--card); color: var(--foreground); }
+.row-action-popup { z-index: 60; display: grid; min-width: 180px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); box-shadow: 0 4px 16px rgba(0, 0, 0, .15); }
+.row-action-popup button { min-height: 32px; padding: 4px 10px; border: 0; background: none; color: var(--foreground); font-size: 13px; text-align: left; cursor: pointer; }
+.row-action-popup button:hover:not(:disabled), .row-action-popup button:focus-visible { background: var(--accent); }
+.row-action-popup button.danger { color: var(--tone-danger); }
+.row-action-popup button:disabled { color: var(--muted-foreground); cursor: not-allowed; }
+@media (pointer: coarse) { .row-action-popup button { min-height: 40px; } }
+.staff-page .data-table td:last-child { text-align: right; }
+
+.audit-event { display: inline-flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.audit-code { color: var(--muted-foreground); font-size: 11px; }
+@media (max-width: 1799px) { .audit-event > strong + .audit-code { display: none; } }
+.operations-page .data-table td { vertical-align: middle; }
+
+.tile-icon { color: var(--primary); }
+.block-icon { display: block; }
+
+.quality-page .box-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.quality-page .production-box { gap: 6px; padding: 10px; }
+.quality-page .production-box > strong { font-size: 15px; }
+.quality-page .danger-text { color: var(--tone-danger); }
+
+.ec-legend { display: flex; align-items: center; gap: 4px; margin-top: 2px; }

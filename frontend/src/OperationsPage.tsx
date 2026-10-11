@@ -3,6 +3,8 @@ import { failureText, operationsApi, type AuditItem, type BackgroundGroup, type 
 import { AUDIT_MODULES, auditDetails, auditEventName, auditModule } from "./auditLabels";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate, formatMoment } from "./format";
+import { StatusChip } from "./StatusChip";
+import type { Tone } from "./statusTone";
 
 const EMPTY_HEALTH: OutboxHealth = { total: 0, published: 0, pending: 0, dead: 0, failures: [] };
 
@@ -10,18 +12,18 @@ const COLUMNS: DataColumn<AuditItem>[] = [
   { key: "at", title: "Время", value: (event) => event.occurred_at, render: (event) => formatDate(event.occurred_at) },
   {
     key: "event", title: "Событие", value: (event) => `${auditEventName(event.event_type)} ${event.event_type}`,
-    render: (event) => <><strong>{auditEventName(event.event_type)}</strong><small className="muted">{event.event_type}</small></>,
+    render: (event) => <span className="audit-event" title={event.event_type}><strong>{auditEventName(event.event_type)}</strong><small className="audit-code">{event.event_type}</small></span>,
   },
   { key: "module", title: "Раздел", value: (event) => auditModule(event.event_type), filter: true },
-  { key: "actor", title: "Сотрудник", value: (event) => event.actor, filter: true, render: (event) => <>{event.actor}<small className="muted">{event.department}</small></> },
+  { key: "actor", title: "Сотрудник", value: (event) => event.actor, filter: true, render: (event) => <span className="audit-event">{event.actor}{event.department && <small className="audit-code">{event.department}</small>}</span> },
   { key: "details", title: "Подробности", value: (event) => auditDetails(event.details) || "—", wrap: true },
   { key: "object", title: "Объект", value: (event) => event.aggregate_id, hidden: true },
 ];
 
-const STATUS: Record<BackgroundStatus, [label: string, tone: string]> = {
-  ok: ["Работает", "tone-ok"],
-  warn: ["Сбои", "tone-warn"],
-  red: ["Стоит", "tone-danger"],
+const STATUS: Record<BackgroundStatus, [label: string, tone: Tone]> = {
+  ok: ["Работает", "success"],
+  warn: ["Сбои", "warning"],
+  red: ["Стоит", "danger"],
 };
 
 /** «3 с», «4 мин», «2 ч 05 мин» — сколько прошло. */
@@ -60,7 +62,7 @@ function BackgroundPanel({ health }: { health: OutboxHealth }) {
       const [label, tone] = STATUS[group.status];
       return <div key={group.key} className="operations-bg-row">
         <strong>{group.label}</strong>
-        <span className={tone}>{label}{group.failures > 0 ? ` · ${group.failures} подряд` : ""}</span>
+        <span><StatusChip tone={tone}>{label}{group.failures > 0 ? ` · ${group.failures} подряд` : ""}</StatusChip></span>
         <span>{lastSuccess(group)}</span>
         <span>{group.success_at || group.failure_at ? runTime(group.duration_ms) : "—"}</span>
         <span className="operations-bg-error">{group.error ? <>{group.failure_at ? `${formatMoment(group.failure_at)} · ` : ""}{group.error}</> : "—"}</span>

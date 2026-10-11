@@ -6,6 +6,9 @@ import { closeHarness, openLibrary } from "./harnessNav";
 import { ExportMenu } from "./harness/export/ExportMenu";
 import type { HarnessExportPort } from "./harness/export/port";
 import { readFileBase64 } from "./ProjectsPage";
+import { formatMoment } from "./format";
+import { StatusChip } from "./StatusChip";
+import type { Tone } from "./statusTone";
 
 const STATE_TEXT: Record<DrawingSaveState, string> = {
   saved: "Сохранено",
@@ -36,7 +39,6 @@ const conflictReason = (message: string) => {
   const reason = message.split(" — ")[0]!.replace(/[.\s]+$/, "");
   return reason ? reason.charAt(0).toLowerCase() + reason.slice(1) : "чертёж изменили в другом окне";
 };
-const clock = (iso: string) => new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(",", "");
 
 /** Чертёж жгута на весь экран: редактор над чертежом из КД позиции, справочники и библиотека компонентов ERP.
  *  Без права «Проекты: правка» — тот же чертёж в режиме просмотра. Чужое сохранение (409) не теряет правки: они
@@ -139,15 +141,15 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
   }
 
   const heading = `${index}${title ? ` ${title}` : ""}`;
-  const tone = state === "conflict" || state === "error" ? "danger" : state === "saving" ? "warn" : "ok";
+  const tone: Tone = state === "conflict" || state === "error" ? "danger" : state === "saving" ? "warning" : "success";
   return <section className="harness-page" aria-label={`Чертёж жгута ${heading}`}>
     <header className="harness-page-head">
       <button className="secondary small" onClick={onBack}>← Назад</button>
       <h1>{heading}</h1>
       <span className="muted">Чертёж жгута</span>
       {canEdit
-        ? <span className={`harness-save tone-${tone}`} role="status">{STATE_TEXT[state]}</span>
-        : <span className="harness-save tone-neutral" role="status" title="Правят сотрудники с правом «Проекты: правка»">Только просмотр</span>}
+        ? <span className="harness-save" role="status"><StatusChip tone={tone}>{STATE_TEXT[state]}</StatusChip></span>
+        : <span className="harness-save" role="status" title="Правят сотрудники с правом «Проекты: правка»"><StatusChip tone="neutral">Только просмотр</StatusChip></span>}
       <span className="harness-page-actions">
         {note && <span className="muted harness-page-note">{note}</span>}
         {canEdit && <button className="secondary small" disabled={!ports || state !== "saved" || Boolean(copy)} onClick={() => void checkpoint()}
@@ -164,7 +166,7 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
       <input ref={fileRef} type="file" accept=".zip" hidden data-testid="harness-zip" onChange={(event) => { void importZip(event.target.files?.[0]); event.target.value = ""; }} />
     </header>
     {copy && <div className="harness-conflict" role="alert">
-      <span><b>Ваши правки от {clock(copy.at)} не сохранены</b> — {conflictReason(copy.message)}. Правки остались на экране:
+      <span><b>Ваши правки от {formatMoment(copy.at)} не сохранены</b> — {conflictReason(copy.message)}. Правки остались на экране:
         возьмите сохранённую версию или сохраните свою поверх неё.</span>
       <button className="secondary small" disabled={busy} onClick={takeTheirs}>Взять их версию</button>
       <button className="primary small" disabled={busy} onClick={() => void saveMine()}
