@@ -24,6 +24,7 @@ import {
 } from "./navigation";
 import { LoginPage, SessionExpiredDialog } from "./LoginPage";
 import { UpdateFailure } from "./UpdateBanner";
+import { BlockIcon } from "./BlockIcon";
 import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
 import { ProductionPage } from "./ProductionPage";
@@ -353,7 +354,7 @@ function Home({
           const names = block.items.map((item) => item.label).join(" · ");
           return (
             <button className="tile block-tile" key={block.id} onClick={() => openBlock(block.id)} aria-label={block.title}>
-              <span className="tile-icon" aria-hidden="true">{block.icon}</span>
+              <span className="tile-icon" aria-hidden="true"><BlockIcon id={block.id} /></span>
               <span className="tile-body">
                 <strong className="t-h">{block.title}</strong>
                 {/* With few sections the block's promise would lie; print the sections themselves. */}
@@ -385,7 +386,7 @@ function BlockPage({
     <section className="page">
       <button className="link-button back-link" onClick={home}>← Главная</button>
       <header className="page-header">
-        <div><span className="eyebrow">Блок</span><h1><span aria-hidden="true">{block.icon}</span> {block.title}</h1><p>{block.sub}</p></div>
+        <div><span className="eyebrow">Блок</span><h1>{block.title}</h1><p>{block.sub}</p></div>
       </header>
       <div className="tiles section-tiles">
         {block.items.map((item) => (

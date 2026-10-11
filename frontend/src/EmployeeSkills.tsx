@@ -1,6 +1,7 @@
 import { DataTable, type DataColumn } from "./DataTable";
 import type { EmployeeCardPersonnel, EmployeeCardSkill } from "./api";
 import { formatDate } from "./format";
+import { StatusChip } from "./StatusChip";
 
 /** Вкладка «Компетенции»: операции из матрицы допусков — допуск, звёзды, коэффициент — и квалификация из кадровых данных.
  *  Только чтение. Название операции по-русски, код — мелкой серой строкой под ним. */
@@ -20,10 +21,10 @@ const COLUMNS: DataColumn<EmployeeCardSkill>[] = [
   },
   {
     key: "allowed", title: "Допуск", width: 120, filter: true, value: (item) => item.allowed ? "Допущен" : "Нет допуска",
-    render: (item) => <span className={item.allowed ? "tone-ok" : "tone-danger"}>{item.allowed ? "Допущен" : "Нет допуска"}</span>,
+    render: (item) => <StatusChip tone={item.allowed ? "success" : "danger"}>{item.allowed ? "Допущен" : "Нет допуска"}</StatusChip>,
   },
   {
-    key: "stars", title: "Звёзды", width: 110, numeric: true, value: (item) => item.allowed ? item.stars : "",
+    key: "stars", title: "Звёзды", hint: "Уровень владения операцией, от 1 до 5", width: 110, numeric: true, value: (item) => item.allowed ? item.stars : "",
     render: (item) => item.allowed ? <span className="ec-stars" aria-label={`${item.stars} из 5`}>{"★".repeat(item.stars) || "—"}</span> : <span className="ec-nodata">—</span>,
   },
   {

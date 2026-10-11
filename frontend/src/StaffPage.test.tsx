@@ -32,6 +32,13 @@ function json(body: unknown, status = 200) {
 
 afterEach(() => vi.restoreAllMocks());
 
+/** Действие строки: меню «⋯» сотрудника, затем пункт. */
+async function rowAction(action: string, person: string) {
+  fireEvent.click(await screen.findByRole("button", { name: `Действия: ${person}` }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: action }));
+}
+
+
 /** Mocks the directory and the session; `handler` answers anything else (PUT / POST / DELETE), a throw is a failure. */
 function serve(directory: StaffDirectory, handler: (path: string, init?: RequestInit) => Response | undefined = () => undefined, me = ME_ADMIN) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -54,8 +61,9 @@ it("lists employees with the access level label and creates a new one with a lev
   });
 
   render(<StaffPage />);
-  expect(await screen.findByText("Технический руководитель")).toBeInTheDocument();
-  expect(screen.getByText("Администратор")).toBeInTheDocument();
+  const list = await screen.findByRole("region", { name: "Сотрудники" });
+  expect(within(list).getByRole("cell", { name: "Технический руководитель" })).toBeInTheDocument();
+  expect(within(list).getByRole("cell", { name: "Администратор" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "+ Сотрудник" }));
   fireEvent.change(screen.getByLabelText("E-mail"), { target: { value: "new@example.test" } });
@@ -88,7 +96,7 @@ it("edits an employee, keeps the password when the field is empty and shows the 
   }, ME_SUPERADMIN);
 
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Админов" }));
+  await rowAction("Править", "Админов");
   fireEvent.click(screen.getByLabelText("Вход разрешён"));
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
@@ -138,7 +146,7 @@ it("sets a new PIN from the employee form (portalStaffSave pin)", async () => {
   });
 
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  await rowAction("Править", "Закупкин");
   fireEvent.change(screen.getByLabelText("Новый PIN"), { target: { value: "7654321" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
 
@@ -164,7 +172,7 @@ it("deletes an employee after confirmation and hides switched-off ones until ask
   });
 
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Удалить Закупкин" }));
+  await rowAction("Удалить", "Закупкин");
 
   expect(await screen.findByText("Сотрудник Закупкин отключён и скрыт: за ним есть история работы")).toBeInTheDocument();
   expect(deleted).toEqual(["/api/auth/staff/u2"]);
@@ -180,7 +188,7 @@ it("opens the personal card of a row and, when sent from a card, the edit form o
   });
   const openCard = vi.fn();
   const view = render(<StaffPage openCard={openCard} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Карточка Закупкин" }));
+  await rowAction("Открыть карточку", "Закупкин");
   expect(openCard).toHaveBeenCalledWith("u2");
   expect(screen.queryByRole("heading", { name: "Правка: Закупкин" })).not.toBeInTheDocument();
   view.unmount();
@@ -211,12 +219,12 @@ it("edits personnel fields and picks the manager from a searchable list without 
   });
 
   render(<StaffPage />);
-  const staffTable = await screen.findByRole("table", { name: "Сотрудники" });
+  const staffTable = await screen.findByRole("region", { name: "Сотрудники" });
   expect(within(staffTable).getByText("FRX-0003")).toBeInTheDocument();
   expect(within(staffTable).getByText("Мастер участка")).toBeInTheDocument();
   expect(within(staffTable).getByText("5 разряд")).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole("button", { name: "Править Закупкин" }));
+  await rowAction("Править", "Закупкин");
   fireEvent.change(screen.getByLabelText("Табельный номер"), { target: { value: "FRX-0017" } });
   fireEvent.change(screen.getByLabelText("Должность"), { target: { value: "Специалист по снабжению" } });
   fireEvent.change(screen.getByLabelText("Категория / квалификация"), { target: { value: "1 категория" } });
@@ -240,7 +248,7 @@ it("splits the form into «Кадры» and «Доступ в ERP», each with i
   const fieldsOf = (block: HTMLElement) => Array.from(block.querySelectorAll("[aria-label]")).map((field) => field.getAttribute("aria-label"));
 
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  await rowAction("Править", "Закупкин");
   const form = document.getElementById("staff-edit-form") as HTMLElement;
   expect(within(form).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["Кадры", "Доступ в ERP"]);
   expect(fieldsOf(screen.getByRole("region", { name: "Кадры" }))).toEqual([
@@ -269,7 +277,7 @@ it("puts the e-mail and login of a new employee into the access block, before th
 it("explains the level, the site and the two flags in tooltips", async () => {
   serve(DIRECTORY);
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  await rowAction("Править", "Закупкин");
   expect(screen.getByLabelText("Уровень доступа").closest("label")).toHaveAttribute(
     "title", "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»",
   );
@@ -287,7 +295,7 @@ it("explains the level, the site and the two flags in tooltips", async () => {
 it("offers the six levels with the owner's names; «Суперадминистратор» and «Администратор» are shut for an administrator", async () => {
   serve(DIRECTORY);
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  await rowAction("Править", "Закупкин");
   const select = screen.getByLabelText("Уровень доступа");
   expect(select).toHaveValue("tech_lead");
   expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual([
@@ -306,18 +314,18 @@ it("offers the six levels with the owner's names; «Суперадминистр
 it("a superadministrator can give any level, an administrator cannot move a holder of a full level", async () => {
   serve(DIRECTORY, () => undefined, ME_SUPERADMIN);
   const view = render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Закупкин" }));
+  await rowAction("Править", "Закупкин");
   await waitFor(() => expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Администратор" })).toBeEnabled());
   expect(within(screen.getByLabelText("Уровень доступа")).getByRole("option", { name: "Суперадминистратор" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
-  fireEvent.click(screen.getByRole("button", { name: "Править Админов" }));
+  await rowAction("Править", "Админов");
   expect(screen.getByLabelText("Уровень доступа")).toBeEnabled();
   view.unmount();
   vi.restoreAllMocks();
 
   serve(DIRECTORY); // the session is an administrator
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Админов" }));
+  await rowAction("Править", "Админов");
   const select = screen.getByLabelText("Уровень доступа");
   expect(select).toHaveValue("admin");
   expect(select).toBeDisabled();
@@ -336,7 +344,7 @@ it("sends a flag only when its switch was touched (the rest is KEEP) and shows t
   });
 
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Мастеров" }));
+  await rowAction("Править", "Мастеров");
   expect(screen.getByLabelText("Монтажник (работает в цеху)")).not.toBeChecked();
   expect(screen.getByLabelText("Мастер площадки")).toBeChecked();
   expect(screen.getByLabelText("Мастер площадки")).toHaveAttribute("role", "switch");
@@ -356,7 +364,7 @@ it("sends a flag only when its switch was touched (the rest is KEEP) and shows t
   expect(updates[1]).toMatchObject({ shop_worker: true, site_master: false });
 
   // A switch turned and turned back is untouched again.
-  fireEvent.click(await screen.findByRole("button", { name: "Править Мастеров" }));
+  await rowAction("Править", "Мастеров");
   fireEvent.click(screen.getByLabelText("Монтажник (работает в цеху)"));
   fireEvent.click(screen.getByLabelText("Монтажник (работает в цеху)"));
   fireEvent.click(screen.getByRole("button", { name: "Сохранить сотрудника" }));
@@ -367,9 +375,9 @@ it("sends a flag only when its switch was touched (the rest is KEEP) and shows t
 it("keeps the position and the access level in separate table columns", async () => {
   serve(TEAM);
   render(<StaffPage />);
-  const table = await screen.findByRole("table", { name: "Сотрудники" });
+  const table = await screen.findByRole("region", { name: "Сотрудники" });
   const headers = within(table).getAllByRole("columnheader").map((header) => header.textContent);
-  expect(headers).toEqual(["ФИО", "Таб. №", "Должность", "Логин / e-mail", "Отдел", "Площадка", "Доступ", "Вход", ""]);
+  expect(headers.slice(0, 8)).toEqual(["ФИО", "Таб. №", "Должность", "Логин / e-mail", "Отдел", "Площадка", "Доступ", "Вход"]);
   const cell = (name: string, column: string) => {
     const row = within(table).getByText(name).closest("tr") as HTMLElement;
     return within(row).getAllByRole("cell")[headers.indexOf(column)];
@@ -393,7 +401,7 @@ it("shows the current manager and refuses a name typed but not picked from the l
   });
 
   render(<StaffPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Править Мастеров" }));
+  await rowAction("Править", "Мастеров");
   const manager = screen.getByRole("combobox", { name: "Руководитель" });
   expect(manager).toHaveValue("Закупкин · Снабжение");
   expect(screen.getByLabelText("Табельный номер")).toHaveValue("FRX-0003");
@@ -446,4 +454,32 @@ it("assigns and removes a department head", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Снять руководителя" }));
   expect(await screen.findByText("У отдела «Снабжение» больше нет руководителя")).toBeInTheDocument();
   expect(calls).toEqual([{ department: "Снабжение", head_id: "u2" }, { department: "Снабжение", head_id: null }]);
+});
+
+it("opens the card by a click on the whole row; edit and delete sit in the row menu, delete last and in red", async () => {
+  serve(DIRECTORY);
+  const openCard = vi.fn();
+  render(<StaffPage openCard={openCard} />);
+  const list = await screen.findByRole("region", { name: "Сотрудники" });
+  expect(within(list).queryByRole("button", { name: /^(Править|Удалить|Карточка)/ })).not.toBeInTheDocument();
+
+  fireEvent.click(within(list).getByText("Закупкин"));
+  expect(openCard).toHaveBeenCalledWith("u2");
+  expect(screen.queryByRole("heading", { name: "Правка: Закупкин" })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Действия: Закупкин" }));
+  const items = screen.getAllByRole("menuitem");
+  expect(items.map((item) => item.textContent)).toEqual(["Открыть карточку", "Править", "Удалить"]);
+  expect(items[2]).toHaveClass("danger");
+  expect(openCard).toHaveBeenCalledTimes(1); // the menu itself does not open the card
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+});
+
+it("without a card handler a click on the row opens the edit form", async () => {
+  serve(DIRECTORY);
+  render(<StaffPage />);
+  const list = await screen.findByRole("region", { name: "Сотрудники" });
+  fireEvent.click(within(list).getByText("Закупкин"));
+  expect(await screen.findByRole("heading", { name: "Правка: Закупкин" })).toBeInTheDocument();
 });

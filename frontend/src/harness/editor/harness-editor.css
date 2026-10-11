@@ -429,6 +429,7 @@
 .harness-root .he-physical-fields { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:5px 0; }
 .harness-root .he-physical-fields select { max-width:115px; }
 .harness-root .he-physical-fields input { width:65px; }
+.harness-root .he-physical-fields textarea.auto-textarea { width:130px; min-height:0; padding-top:3px; padding-bottom:3px; font-size:12px; line-height:16px; }
 .harness-root .he-physical-list { max-height:150px; overflow:auto; }
 .harness-root .he-physical-list button { font-size:11px; }
 
@@ -486,16 +487,16 @@
 .harness-root .he-document-nav { grid-column:2; grid-row:2; z-index:6; display:flex; align-items:center; gap:6px; padding:5px 8px; border-top:1px solid var(--border); background:var(--card); }
 .harness-root .he-document-nav .ui-control { min-height:25px; padding:3px 9px; border-color:var(--muted-foreground); background:var(--panel-soft); color:var(--primary); font-size:10px; }
 
-.harness-root .harness-editor .he-header { background:var(--foreground); border-color:var(--foreground); box-shadow:none; }
-.harness-root .harness-editor .he-header-identity strong { color:var(--primary-foreground); }
+.harness-root .harness-editor .he-header { background:var(--card); border-color:var(--border); box-shadow:none; }
+.harness-root .harness-editor .he-header-identity strong { color:var(--foreground); }
 .harness-root .harness-editor .he-header-identity span { color:var(--muted-foreground); }
-.harness-root .harness-editor .he-view-tabs { border:0; border-radius:4px; background:var(--foreground); }
-.harness-root .harness-editor .he-view-tabs button { color:var(--border); }
-.harness-root .harness-editor .he-view-tabs button.active { background:var(--primary); color:var(--primary-foreground); box-shadow:none; }
+.harness-root .harness-editor .he-view-tabs { border:1px solid var(--border); border-radius:8px; background:var(--accent); }
+.harness-root .harness-editor .he-view-tabs button { color:var(--muted-foreground); }
+.harness-root .harness-editor .he-view-tabs button.active { background:var(--card); color:var(--primary); box-shadow:0 1px 3px color-mix(in srgb, var(--foreground) 14%, transparent); }
 .harness-root .harness-editor .he-save-state { color:var(--muted-foreground); }
 .harness-root .harness-editor .he-save-state:not(:disabled) { border:1px solid var(--border); background:var(--card); color:var(--foreground); }
 .harness-root .harness-editor .he-save-state.error { border-color:var(--tone-danger); background:var(--sheet-invalid-bg); color:var(--tone-danger); }
-.harness-root .harness-editor .he-back { background:var(--foreground); color:var(--border); border-color:var(--muted-foreground); }
+.harness-root .harness-editor .he-back { background:var(--card); color:var(--foreground); border-color:var(--border); }
 .harness-root .harness-editor .he-tool.active { background:var(--border); color:var(--primary); border-color:var(--muted-foreground); }
 .harness-root .he-workspace { grid-template-rows:minmax(0,1fr) auto auto; }
 .harness-root .he-toolbar,
@@ -612,7 +613,7 @@
 .harness-root .harness-editor .he-header > .harness-section-navigation { grid-column:1; }
 .harness-root .harness-editor .he-header > .he-save-state { grid-column:2; }
 .harness-root .harness-editor .he-header-panels { display:none; }
-.harness-root .he-inspector-toggle { padding:7px 10px; border:1px solid var(--muted-foreground); border-radius:6px; background:var(--foreground); color:var(--border); font:600 11px Arial,sans-serif; cursor:pointer; }
+.harness-root .he-inspector-toggle { padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--foreground); font:600 12px Arial,sans-serif; cursor:pointer; }
 .harness-root .he-inspector-content { min-width:0; overflow-x:hidden; }
 .harness-root .he-right-panel { min-width:0; }
 .harness-root .he-workspace { position:relative; --utility-width:244px; --inspector-width:270px; grid-template-columns:54px var(--utility-width) minmax(0,1fr) var(--inspector-width); grid-template-rows:minmax(0,1fr) auto; }
@@ -924,3 +925,26 @@
   .harness-root .he-real-size-toggle input { width: 20px; height: 20px; }
   .harness-root .he-real-size-scale input { height: 40px; width: 60px; }
 }
+
+/* Аудит дизайна 10.10 (Ж-2): читаемый текст редактора — не мельче 11 px, подписи кнопок 12–13 px. Блок идёт последним,
+   чтобы перекрыть прежние правила и их узкие media-запросы. Буквы горячих клавиш на кнопках инструментов убраны с
+   кнопки: клавиша названа в подсказке и в имени кнопки. */
+.harness-root .he-toolbar-tabs button { min-height: 32px; font-size: 13px; font-weight: 600; }
+.harness-root .he-tool small { display: none; }
+.harness-root .he-toolbar-panel .he-tool-caption { font-size: 11px; }
+.harness-root .he-utility-toggle { font-size: 12px; font-weight: 700; }
+.harness-root .he-utility-section h3, .harness-root .he-copy-visibility-heading h3 { font-size: 11px; }
+.harness-root .he-document-action { min-height: 36px; font-size: 13px; font-weight: 600; }
+.harness-root .he-controls-section .ui-control { min-height: 32px; font-size: 12px; }
+.harness-root .he-controls-section .he-thickness-control, .harness-root .he-controls-section .he-thickness-control output { font-size: 12px; }
+.harness-root .he-panel-note, .harness-root .he-wire-length-status small, .harness-root .he-cable-panel > small, .harness-root .he-readonly-facts span,
+.harness-root .he-readonly-facts strong, .harness-root .he-property-form > .he-context-fields > small, .harness-root .he-wire-strip-empty small { font-size: 11px; }
+.harness-root .he-property-form label, .harness-root .he-wire-length-status, .harness-root .he-cable-panel > p, .harness-root .he-wire-material > small,
+.harness-root .he-layer-name, .harness-root .he-copy-object-name, .harness-root .he-wire-strip-empty span { font-size: 12px; }
+.harness-root .he-catalog-card strong { font-size: 12px; }
+.harness-root .he-catalog-card small, .harness-root .he-catalog-hint { font-size: 11px; }
+.harness-root .he-catalog-empty, .harness-root .he-catalog-empty button { font-size: 12px; }
+.harness-root .he-header-identity span { font-size: 11px; }
+.harness-root .he-save-state { font-size: 12px; }
+/* Ж-3: «Сохранено» уже стоит в шапке страницы; кнопка в левой панели нужна, только когда есть что сохранять. */
+.harness-root .he-save-state-utility.saved { display: none; }

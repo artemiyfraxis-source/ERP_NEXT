@@ -11,8 +11,8 @@
   overflow-x: auto;
   scrollbar-width: none;
   padding: 4px 14px;
-  background: var(--foreground);
-  border-bottom: 1px solid var(--foreground);
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
 }
 
 .harness-root .harness-section-links {
@@ -35,23 +35,23 @@
   border: 1px solid transparent !important;
   border-radius: 6px !important;
   background: transparent !important;
-  color: var(--border) !important;
-  font: 700 11px/1.25 "Segoe UI", Arial, sans-serif !important;
+  color: var(--muted-foreground) !important;
+  font: 600 13px/1.25 "Segoe UI", Arial, sans-serif !important;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .harness-root .harness-section-navigation button:hover:not(:disabled) {
-  border-color: var(--muted-foreground) !important;
-  background: var(--foreground) !important;
-  color: var(--primary-foreground) !important;
+  border-color: var(--border) !important;
+  background: var(--accent) !important;
+  color: var(--foreground) !important;
 }
 
 .harness-root .harness-section-navigation button.active,
 .harness-root .harness-section-navigation button[aria-current="page"] {
-  border-color: var(--primary) !important;
-  background: var(--primary) !important;
-  color: var(--primary-foreground) !important;
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--card)) !important;
+  background: color-mix(in srgb, var(--primary) 12%, var(--card)) !important;
+  color: var(--primary) !important;
 }
 
 .harness-root .harness-section-navigation button:disabled {
@@ -68,9 +68,9 @@
   align-items: center;
   gap: 5px;
   flex: 0 0 auto;
-  border-color: var(--muted-foreground) !important;
-  background: var(--foreground) !important;
-  color: var(--border) !important;
+  border-color: var(--border) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
 }
 
 .harness-root .harness-section-home > span:first-child {
@@ -86,12 +86,12 @@
 }
 
 .harness-root .harness-editor .harness-section-navigation button {
-  color: var(--border);
+  color: var(--muted-foreground);
 }
 
 .harness-root .harness-editor .harness-section-navigation button.active,
 .harness-root .harness-editor .harness-section-navigation button[aria-current="page"] {
-  color: var(--primary-foreground);
+  color: var(--primary);
 }
 
 .harness-root .manufacturing-route-panel > .harness-section-navigation {

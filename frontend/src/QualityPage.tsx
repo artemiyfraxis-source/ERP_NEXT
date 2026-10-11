@@ -11,9 +11,10 @@ import {
   type ProductionTask,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
-import { formatDate, formatDay } from "./format";
+import { formatDay } from "./format";
 import { canAct } from "./navigation";
 import { isFinal } from "./productionGraph";
+import { StatusChip } from "./StatusChip";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -190,9 +191,9 @@ const INSTRUMENT_COLUMNS: DataColumn<ProductionInstrument>[] = [
   { key: "name", title: "Наименование", value: (item) => item.name },
   { key: "instrument_type", title: "Тип", value: (item) => item.instrument_type, filter: true },
   { key: "verification_number", title: "№ поверки", value: (item) => item.verification_number },
-  { key: "verified_at", title: "Поверено", value: (item) => item.verified_at, render: (item) => formatDate(item.verified_at) },
-  { key: "verification_due", title: "Поверка до", value: (item) => item.verification_due, render: (item) => formatDate(item.verification_due) },
-  { key: "status", title: "Статус", value: (item) => item.status, filter: true, render: (item) => <span className={item.status === "Действует" ? "tone-ok" : "tone-neutral"}>{item.status}</span> },
+  { key: "verified_at", title: "Поверено", value: (item) => item.verified_at, render: (item) => formatDay(item.verified_at) },
+  { key: "verification_due", title: "Поверка до", value: (item) => item.verification_due, render: (item) => formatDay(item.verification_due) },
+  { key: "status", title: "Статус", value: (item) => item.status, filter: true, render: (item) => <StatusChip status={item.status} /> },
 ];
 
 // Реестр средств измерения: форма появляется только по «+ Добавить СИ», список — плотной таблицей.

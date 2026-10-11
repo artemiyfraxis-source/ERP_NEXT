@@ -129,7 +129,8 @@ export function CatalogDock({
                 draggable={item.placement === "connector"}
                 onDragStart={(event) => beginDrag(event, item)}
                 onDoubleClick={() => onActivate(item)}
-                title={item.placement === "reference-only" ? "Справочная позиция. Размещение будет подключено с соответствующим инструментом." : "Перетащить на поле"}
+                title={`${[item.title, item.subtitle].filter(Boolean).join(" — ")}
+${item.placement === "reference-only" ? "Справочная позиция. Размещение будет подключено с соответствующим инструментом." : "Перетащить на поле"}`}
               >
                 <span className="he-catalog-thumbnail" style={{ "--catalog-accent": item.accent } as React.CSSProperties} aria-hidden="true">▣</span>
                 <span>

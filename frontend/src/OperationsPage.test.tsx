@@ -70,8 +70,8 @@ it("shows the worker heartbeats, a stopped group, the old queue and retries a st
 
   expect(await screen.findByText("Фоновые процессы")).toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("Не работает: Автозаполнение строк закупки. «Ожидается поставка» ждёт 22 мин");
-  expect(screen.getByText("Стоит · 7 подряд")).toHaveClass("tone-danger");
-  expect(screen.getByText("Работает")).toHaveClass("tone-ok");
+  expect(screen.getByText("Стоит · 7 подряд")).toHaveAttribute("data-tone", "danger");
+  expect(screen.getByText("Работает")).toHaveAttribute("data-tone", "success");
   expect(screen.getByText("ни разу")).toBeInTheDocument();
   expect(screen.getByText("15,0 с")).toBeInTheDocument();
   expect(screen.getByText("22 мин")).toHaveClass("tone-danger");

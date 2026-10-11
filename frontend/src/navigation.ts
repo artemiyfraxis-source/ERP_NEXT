@@ -30,14 +30,14 @@ export interface NavItem {
   within?: Section;
 }
 
-export const BLOCKS: Array<{ id: BlockId; icon: string; title: string; sub: string }> = [
-  { id: "prod", icon: "🏭", title: "Производство", sub: "проекты · планирование · задания" },
-  { id: "supply", icon: "🛒", title: "Снабжение", sub: "оформить · заявки · закупка" },
+export const BLOCKS: Array<{ id: BlockId; title: string; sub: string }> = [
+  { id: "prod", title: "Производство", sub: "проекты · планирование · задания" },
+  { id: "supply", title: "Снабжение", sub: "оформить · заявки · закупка" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
-  { id: "stock", icon: "📦", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
-  { id: "mgmt", icon: "📊", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
+  { id: "stock", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
+  { id: "mgmt", title: "Менеджмент", sub: "производственный план · сотрудники · доступы · журнал" },
   // Reference books are not a production step (owner 29.09.2026): their own block, last in the menu.
-  { id: "refs", icon: "📚", title: "Справочники", sub: "база данных · шаблоны техкарт" },
+  { id: "refs", title: "Справочники", sub: "база данных · шаблоны техкарт" },
 ];
 
 // Access levels (owner 04.10.2026): a card opens by its section key and nothing else — no role lists. superadmin / admin

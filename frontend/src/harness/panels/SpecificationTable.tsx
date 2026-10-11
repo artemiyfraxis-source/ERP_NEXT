@@ -2,6 +2,7 @@
 // Строка знает свой ключ — тот же, по которому на чертеже стоят номера позиций, порядок строк и правленые тексты, —
 // поэтому правка текста, порядок и показ номера остаются правкой чертежа (команды редактора).
 import { useState } from "react";
+import { AutoTextarea } from "../../AutoTextarea";
 import { DataTable, type DataColumn } from "../../DataTable";
 import type { HarnessBomRow } from "../../api";
 import { addDrawingPositions, drawingObjectOrigin, emptyDrawingDocuments, setDrawingPositionVisibility, type DrawingDocuments } from "../editor/drawing-documents";
@@ -50,8 +51,8 @@ export function SpecificationTable({ document, quantity, readOnly, selectedIds, 
     textColumn("name", "Наименование", 14, 44),
     { key: "amount", title: "Кол-во", numeric: true, value: row => row.amount, render: row => `${formatNumber(row.amount, 6)} ${row.unit}` },
     { ...textColumn("note", "Примечание", 10, 30), render: readOnly ? undefined : row => <span className="he-bom-note-cell">
-      <input style={compactFieldStyle(text(row, "note"), 12, 40)} aria-label={`Примечание позиции ${row.position}`} value={text(row, "note")}
-        onClick={e => e.stopPropagation()} onChange={e => edit(row, "note", e.target.value)} />
+      <AutoTextarea style={compactFieldStyle(text(row, "note"), 12, 40)} aria-label={`Примечание позиции ${row.position}`} value={text(row, "note")}
+        onClick={e => e.stopPropagation()} onChange={value => edit(row, "note", value)} />
       <button className="ui-control" type="button" title="Поднять строку" aria-label={`Поднять позицию ${row.position}`} disabled={row.position === 1}
         onClick={e => { e.stopPropagation(); up(row); }}>↑</button>
     </span> },

@@ -14,6 +14,7 @@ import { hasFullAccess } from "./navigation";
 import { LeaveRequests } from "./LeaveRequests";
 import { EmployeeDocuments } from "./EmployeeDocuments";
 import { EmployeeSkills } from "./EmployeeSkills";
+import { StatusChip } from "./StatusChip";
 import { WorkTime } from "./WorkTime";
 
 /** «Личная карточка» сотрудника (концепт владельца, 04.10): одна страница про человека из данных всех модулей, только
@@ -184,10 +185,15 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
       <Card title="Рабочее время">
         {card.hours_this_month.hours === null
           ? <><NoData /><p className="ec-note">за {card.hours_this_month.label}</p></>
-          : <>
-            <p className="ec-big">{hoursText(card.hours_this_month.hours)} <span>ч</span></p>
-            <p className="ec-note">за {card.hours_this_month.label} · рабочих сессий: {card.hours_this_month.sessions ?? 0}</p>
-          </>}
+          : card.hours_this_month.hours === 0 && (card.hours_this_month.sessions ?? 0) > 0
+            ? <>
+              <p className="ec-big"><NoData /></p>
+              <p className="ec-note">за {card.hours_this_month.label} · рабочих сессий: {card.hours_this_month.sessions}, учтённых часов нет</p>
+            </>
+            : <>
+              <p className="ec-big">{hoursText(card.hours_this_month.hours)} <span>ч</span></p>
+              <p className="ec-note">за {card.hours_this_month.label} · рабочих сессий: {card.hours_this_month.sessions ?? 0}</p>
+            </>}
       </Card>
 
       <Card title="Компетенции" count={card.skills.length || undefined}>
@@ -201,7 +207,7 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
             <ul className="ec-list">
               {card.requests.items.map((item) => <li key={item.id} className="ec-row">
                 <span className="ec-main"><strong>{item.number}</strong> {item.name}</span>
-                <span className="ec-note">{item.status}</span>
+                <StatusChip status={item.status} />
               </li>)}
             </ul>
             {card.requests.count > card.requests.items.length && <p className="ec-note">Показаны первые {card.requests.items.length} из {card.requests.count}</p>}
@@ -289,6 +295,7 @@ function Skills({ skills }: { skills: EmployeeCardSkill[] }) {
         </li>;
       })}
     </ul>
+    <p className="ec-note ec-legend"><span className="ec-stars" aria-hidden="true">★</span> — уровень владения операцией, от 1 до 5</p>
     {sorted.length > SKILLS_SHOWN && <button className="link-button" onClick={() => setAll((open) => !open)}>
       {all ? "Свернуть" : `Показать все (${sorted.length})`}
     </button>}

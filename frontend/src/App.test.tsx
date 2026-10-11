@@ -58,6 +58,20 @@ it("opens procurement by the section grant alone: the level's name decides nothi
   expect(screen.getByRole("button", { name: "Заявки" })).toBeInTheDocument();
 });
 
+it("draws the block tiles with line icons, never emoji (audit М-6)", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(principal));
+
+  render(<App />);
+
+  await screen.findByText("Добрый день, Сотрудник");
+  const tiles = document.querySelectorAll(".block-tile");
+  expect(tiles.length).toBeGreaterThan(0);
+  tiles.forEach((tile) => {
+    expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
+    expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
+  });
+});
+
 it("closes procurement without a grant on it, whatever the level", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ...principal, permissions: { requests: "view" } }));
 

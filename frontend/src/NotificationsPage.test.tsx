@@ -48,7 +48,7 @@ it("shows Russian type labels and dates, never a raw type code", async () => {
   expect(screen.getByText("04.10.2026 00:00")).toBeInTheDocument();
   expect(screen.getByText("03.10.2026 09:30")).toBeInTheDocument();
   const table = screen.getByRole("table");
-  const badges = [...table.querySelectorAll(".kit-status")].map((badge) => badge.textContent);
+  const badges = [...table.querySelectorAll(".status-chip")].map((badge) => badge.textContent);
   expect(badges).toEqual(["Сводка", "Статус заявки", "Событие"]); // an unknown kind falls back, not «brand_new_kind»
   for (const raw of ["digest", "status", "brand_new_kind"]) expect(table.textContent).not.toContain(raw);
   expect(screen.getByText("1 непрочитанных")).toBeInTheDocument();
