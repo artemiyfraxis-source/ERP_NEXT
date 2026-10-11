@@ -137,6 +137,7 @@ class AppendOnlyRepository(Protocol):
 
 class OutboxRepository(AppendOnlyRepository, Protocol):
     def by_idempotency_key(self, key: str) -> OutboxMessage | None: ...
+    def is_open(self, topic: str, idempotency_key: str) -> bool: ...
     def next_unpublished(self, topic: str, now: datetime) -> OutboxMessage | None: ...
     def mark_published(self, message_id: UUID, published_at: datetime) -> None: ...
     def mark_failed(self, message_id: UUID, failed_at: datetime, error: str) -> None: ...
@@ -275,9 +276,17 @@ def return_to_supplier(
                 notes.append(f"{label}: ГРН не присвоен — складской проводки нет, только статус приёмки")
             else:
                 lot = stock.lot_balance(current.grn, current.package) if current.warehouse_event_emitted else None
-                if lot is None:
+                receipt_pending = bool(
+                    current.warehouse_event_emitted
+                    and uow.outbox.is_open("warehouse.received", current.warehouse_event_key)
+                )
+                # A receipt may commit between the balance lookup and outbox-state query. Refresh after observing
+                # that its source event is no longer pending so this return uses the materialized lot when present.
+                if lot is None and current.warehouse_event_emitted and not receipt_pending:
+                    lot = stock.lot_balance(current.grn, current.package)
+                if lot is None and not receipt_pending:
                     notes.append(f"{label}: на складе партии {current.grn} нет (ещё не разложена) — снимать нечего")
-                elif quantity > lot.balance:
+                elif lot is not None and quantity > lot.balance:
                     notes.append(
                         f"{label}: склад — больше остатка (есть {_quantity_text(lot.balance)}), списание не поставлено"
                     )
@@ -291,9 +300,10 @@ def return_to_supplier(
                             payload={
                                 "receiving_line_id": str(current.id),
                                 "legacy_id": current.legacy_id,
-                                "warehouse": lot.warehouse,
+                                "warehouse": lot.warehouse if lot is not None else current.warehouse,
                                 "grn": current.grn,
                                 "package": current.package,
+                                "receipt_event_key": current.warehouse_event_key,
                                 "quantity": str(quantity),
                                 "reason": basis,
                                 "supplier": current.supplier,
