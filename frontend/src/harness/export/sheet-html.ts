@@ -85,7 +85,9 @@ export function printSheet(page: SheetPage): boolean {
   win.document.write(page.html);
   win.document.close();
   try {
-    const sheet = new win.CSSStyleSheet();
+    // Конструктор берётся из окна печати: таблица стилей должна принадлежать его документу (тип Window его не описывает).
+    const SheetCtor = (win as Window & { CSSStyleSheet?: typeof CSSStyleSheet }).CSSStyleSheet ?? CSSStyleSheet;
+    const sheet = new SheetCtor();
     sheet.replaceSync(page.css);
     win.document.adoptedStyleSheets = [...win.document.adoptedStyleSheets, sheet];
   } catch { /* старый браузер: остаётся <style> из разметки */ }
