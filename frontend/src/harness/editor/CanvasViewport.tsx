@@ -68,6 +68,7 @@ import type { CableInstance } from "./model";
 import { railCatchDistance, railDistance, railParameter, snapRailEnd } from "./position-rail";
 import { snapDrawingPoint, type DrawingOutline, type DrawingSnaps } from "../component-library/drawing-geometry";
 import { materialObjectGroup } from "./MaterialObjectsPanel";
+import type { HarnessExportPort } from "../export/port";
 
 export interface CanvasViewportProps {
   readonly onFreeWireEndpointMove?: (wireId:string,end:"from"|"to",point:EditorPoint)=>void;
@@ -106,6 +107,8 @@ export interface CanvasViewportProps {
   readonly inlineEditor?: ReactNode;
   readonly onCameraChange: (camera: EditorCamera) => void;
   readonly onViewportSizeChange?: (size: EditorViewportSize) => void;
+  /** Выгрузка листа: поле отдаёт порт с габаритами чертежа и отрисовкой без сетки и выделения; null — поле закрыто. */
+  readonly onExportPort?: (port: Omit<HarnessExportPort, "realSizeDenominator"> | null) => void;
   readonly onObjectSelect: (objectId: string | null, additive?: boolean) => void;
   /** Selects all members of a linked E4 overlay in one state update. */
   readonly onObjectGroupSelect?: (objectIds: readonly string[], mode?: EditorSelectionMode) => void;
@@ -2843,10 +2846,12 @@ export function redrawCanvas(
   foregroundWireIds:readonly string[] = [],
   backgroundObjects:readonly EditorSceneObject[] = [],
   backgroundOpacity = 0,
+  /** Выгрузка листа: белый фон вместо сетки и свой масштаб пикселей; в редакторе не задаётся. */
+  exportOptions: { readonly skipGrid?: boolean; readonly pixelRatio?: number } = {},
 ) {
   const context = canvas.getContext("2d");
   if (!context) return;
-  const ratio = window.devicePixelRatio || 1;
+  const ratio = exportOptions.pixelRatio ?? (window.devicePixelRatio || 1);
   const width = Math.max(1, Math.round(canvas.clientWidth));
   const height = Math.max(1, Math.round(canvas.clientHeight));
   const pixelWidth = Math.round(width * ratio);
@@ -2856,7 +2861,8 @@ export function redrawCanvas(
     canvas.height = pixelHeight;
   }
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
-  drawGrid(context, width, height, camera);
+  if (exportOptions.skipGrid) { context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height); }
+  else drawGrid(context, width, height, camera);
   context.save();
   context.translate(camera.offsetX, camera.offsetY);
   context.scale(camera.zoom, camera.zoom);
@@ -3101,6 +3107,7 @@ function EditableCanvasViewport({
   inlineEditor,
   onCameraChange,
   onViewportSizeChange,
+  onExportPort,
   onObjectSelect,
   onObjectGroupSelect,
   onObjectsIsolate,
@@ -3282,11 +3289,27 @@ function EditableCanvasViewport({
     };
   }, [effectiveHighlights, foregroundWireIds, backgroundObjects, backgroundOpacity, cables, camera, displayInstances, connectorAlignmentGuides, paintObjects, inlineObject?.id, layers, onViewportSizeChange, overlays, resolveComponentTemplateAssetUrl, selectedObjectIds, selectedObjectId, view, physicalNodePreview]);
 
+  // Выгрузка листа (PNG / PDF): страница получает порт «нарисуй эту сцену на белом без сетки и выделения».
+  // Порт только читает то, что уже нарисовано в поле; без `onExportPort` поле ведёт себя как раньше.
+  useEffect(() => {
+    if (!onExportPort) return;
+    onExportPort({
+      view: view === "drawing" ? "drawing" : "e4",
+      bounds: getEditorSceneBounds(paintObjects, layers, view, overlays, displayInstances, resolveComponentTemplateAssetUrl, cables),
+      paint: (target, exportCamera, pixelRatio) => redrawCanvas(
+        target as unknown as HTMLCanvasElement, view, exportCamera, paintObjects, layers, new Set<string>(), cables, overlays,
+        undefined, displayInstances, resolveComponentTemplateAssetUrl, componentTemplateImageCacheRef.current!, [], null, [],
+        backgroundObjects, backgroundOpacity, { skipGrid: true, pixelRatio },
+      ),
+    });
+  }, [onExportPort, view, paintObjects, layers, overlays, displayInstances, resolveComponentTemplateAssetUrl, cables, backgroundObjects, backgroundOpacity]);
+  useEffect(() => () => onExportPort?.(null), [onExportPort]);
+
   useEffect(() => {
     const frame = frameRef.current;
     const canvas = canvasRef.current;
     if (!frame || !canvas) return;
-    const wheel = (event: globalThis.WheelEvent) => {
+    const wheel =(event: globalThis.WheelEvent) => {
       handleEditorViewportWheel(event, camera, canvas.getBoundingClientRect(), onCameraChange);
     };
     frame.addEventListener("wheel", wheel, { passive: false, capture: true });

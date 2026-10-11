@@ -52,7 +52,13 @@ export function buildPrintSheetHtml(sheet: PrintSheet): string {
     `</body></html>`;
 }
 
-function openPrintHtml(html: string): void {
+/** Paper of a print job: `@page { size }` — «A3 landscape» or exact «420mm 297mm»; margin in mm (0 = no browser margin). */
+export interface PrintPageOptions { readonly size: string; readonly marginMm?: number }
+export function pageRule(options: PrintPageOptions): string {
+  return `@page { size: ${options.size}; margin: ${options.marginMm ?? 0}mm; }`;
+}
+
+export function openPrintHtml(html: string): void {
   const win = window.open("", "_blank", "noopener,noreferrer,width=900,height=1150");
   if (!win) return;
   win.document.open();
@@ -91,7 +97,7 @@ function blockHtml(block: PrintBlock): string {
   return tableHtml(block.table);
 }
 
-export function buildPrintDocumentHtml(title: string, pages: PrintPage[]): string {
+export function buildPrintDocumentHtml(title: string, pages: PrintPage[], pageOptions?: PrintPageOptions): string {
   const body = pages.map((page) =>
     `<section class="page"><h1>${escapeHtml(page.title)}</h1>` +
     (page.subtitle ? `<p class="subtitle">${escapeHtml(page.subtitle)}</p>` : "") +
@@ -99,7 +105,7 @@ export function buildPrintDocumentHtml(title: string, pages: PrintPage[]): strin
     `<p class="sign">${escapeHtml(page.sign)}</p></section>`,
   ).join("");
   return `<!doctype html><html><head><meta charset="utf-8">` +
-    `<title>${escapeHtml(title)}</title><style>${PRINT_CSS}${PAGE_CSS}</style></head><body>${body}</body></html>`;
+    `<title>${escapeHtml(title)}</title><style>${PRINT_CSS}${PAGE_CSS}${pageOptions ? pageRule(pageOptions) : ""}</style></head><body>${body}</body></html>`;
 }
 
 export function openPrintDocument(title: string, pages: PrintPage[]): void {
