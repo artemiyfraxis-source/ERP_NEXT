@@ -41,20 +41,22 @@ import { TechcardsPage } from "./TechcardsPage";
 import { ProjectsPage } from "./ProjectsPage";
 // Экран чертежа жгута грузится отдельным куском — вместе с редактором, главный пакет не растёт.
 const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
+// «Библиотека компонентов» — тоже отдельным куском, открывается из чертежа жгута.
+const ComponentLibraryPage = lazy(() => import("./ComponentLibraryPage").then((module) => ({ default: module.ComponentLibraryPage })));
 import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
-type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string } };
+type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean } };
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
   const value = params.get("section");
   if (value === "warehouse") return { section: "stock", block: null };
   if (value === "projects" && params.get("project") && params.get("harness")) {
-    return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")! } };
+    return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")!, library: params.get("library") === "1" } };
   }
   if (isSection(value)) return { section: value, block: null, user: params.get("user") || null };
   const block = params.get("block");
@@ -116,6 +118,7 @@ export function App() {
     url.searchParams.delete("project");
     url.searchParams.delete("user");
     url.searchParams.delete("harness");
+    url.searchParams.delete("library");
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     if (next.user) url.searchParams.set("user", next.user);
@@ -210,7 +213,9 @@ export function App() {
     return <>
       <div key={principal.user.id} className="harness-host" inert={expired}>
         <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
-          <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
+          {place.harness.library
+            ? <ComponentLibraryPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
+            : <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />}
         </Suspense>
       </div>
       {relogin}

@@ -3793,6 +3793,14 @@ export interface HarnessComponent extends HarnessComponentSummary {
   content: Record<string, unknown>;
 }
 
+/** Тело записи шаблона: модель, код и название; картинка разъёма — по желанию. */
+export interface HarnessComponentInput {
+  code: string;
+  name: string;
+  model: Record<string, unknown>;
+  png_base64?: string;
+}
+
 /** Библиотечные соединители чертежа и закреплённые ими версии шаблонов; `unresolved` — соединители, чьей версии нет
  *  ни в библиотеке, ни в копии старого чертежа (рисуются по своим контактам). */
 export interface HarnessPlacementGraph {
@@ -3852,6 +3860,13 @@ export const harnessApi = {
   components: () => api<HarnessComponentSummary[]>(componentsPath),
   /** Версия шаблона (без номера — последняя). */
   component: (templateId: string, revision?: number) => api<HarnessComponent>(componentPath(templateId, revision)),
+  /** Новый шаблон библиотеки (версия 1): модель TECHMAP-GRAPHER, код и название; `png_base64` — картинка разъёма.
+   *  403 — нет права «Проекты: правка»; 422 — русская причина, по которой модель не принята. */
+  createComponent: (input: HarnessComponentInput) =>
+    api<HarnessComponent>(componentsPath, { method: "POST", body: JSON.stringify(input) }),
+  /** Новая версия шаблона (N+1); `base_revision` — версия, с которой правили (устаревшая — 409 «Шаблон уже изменил …»). */
+  publishComponentVersion: (templateId: string, baseRevision: number, input: HarnessComponentInput) =>
+    api<HarnessComponent>(`${componentPath(templateId)}/versions`, { method: "POST", body: JSON.stringify({ base_revision: baseRevision, ...input }) }),
   /** Рисунок версии шаблона (PNG). */
   componentAssetUrl: (templateId: string, revision: number, assetId: string) =>
     `${componentPath(templateId, revision)}/assets/${encodeURIComponent(assetId)}`,

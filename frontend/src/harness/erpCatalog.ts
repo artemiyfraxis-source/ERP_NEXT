@@ -10,6 +10,7 @@ import { libraryTemplates } from "./library/library";
 import type { HarnessEditorCatalogApi } from "./editor/HarnessDesignEditor";
 import type { HarnessDesignDocument } from "./editor/model";
 import { resolveTerminalRecord } from "./editor/terminal-details";
+import { matchConnectorFamily, normalizeConnectorArticle } from "./editor/connector-pitch";
 import { normalizeWireChoice, normalizeWireSectionChoice, wireDatabaseOption } from "./editor/wire-database";
 import {
   snapshotReferenceCatalog,
@@ -184,35 +185,12 @@ export interface MissingReference {
   readonly status: typeof NOT_IN_REFERENCES;
 }
 
-/** Same normalisation as the ERP base of connectors (`connector_housings.normalize_article`). */
-export function normalizeConnectorArticle(value: string): string {
-  return value.trim().toUpperCase()
-    .replace(/^(MOLEX|JST|HIROSE|JAE|TE(?:\s+CONNECTIVITY)?|CONNFLY|AMASS|AMP)\s+/, "")
-    .replace(/\s+/g, "");
-}
-
-function regex(pattern: unknown): RegExp | null {
-  if (typeof pattern !== "string" || !pattern) return null;
-  try {
-    return new RegExp(pattern, "i");
-  } catch {
-    return null;
-  }
-}
+export { normalizeConnectorArticle };
 
 /** True when the ERP base of connectors draws this part number (a family pattern matches it, after the analogues). */
 export function connectorKnown(article: string, records: readonly ReferenceCatalogRecord[]): boolean {
-  let normalized = normalizeConnectorArticle(article);
-  if (!normalized) return true;
-  for (const record of records) {
-    if (record.entityType !== "connector-alias") continue;
-    const pattern = regex(record.payload.pattern);
-    const replacement = record.payload.replacement;
-    if (pattern && typeof replacement === "string" && pattern.test(normalized)) {
-      normalized = normalizeConnectorArticle(normalized.replace(pattern, replacement));
-    }
-  }
-  return records.some((record) => record.entityType === "connector-family" && regex(record.payload.pattern)?.test(normalized));
+  if (!normalizeConnectorArticle(article)) return true;
+  return matchConnectorFamily(article, records) !== null;
 }
 
 /** Everything the document references that our reference books do not hold, one entry per kind and key. */

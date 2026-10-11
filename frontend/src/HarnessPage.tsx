@@ -2,7 +2,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { failureText, harnessApi, kitsetsApi } from "./api";
 import { HarnessEditorLazy, loadHarnessDrawing, type DrawingSaveState, type HarnessDrawingPorts, type HarnessEditorCatalogApi } from "./harness";
 import { HarnessHistory } from "./HarnessHistory";
-import { closeHarness } from "./harnessNav";
+import { closeHarness, openLibrary } from "./harnessNav";
 import { readFileBase64 } from "./ProjectsPage";
 
 const STATE_TEXT: Record<DrawingSaveState, string> = {
@@ -148,6 +148,8 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
         {canEdit && <button className="secondary small" disabled={!ports || state !== "saved" || Boolean(copy)} onClick={() => void checkpoint()}
           title="Текущая сохранённая версия останется в истории отдельной строкой">Сохранить версию</button>}
         <button className="secondary small" onClick={() => setHistoryOpen(true)}>История версий</button>
+        <button className="secondary small" onClick={() => openLibrary(project, index)}
+          title="Шаблоны разъёмов жгута: список, редактор, публикация версий">Библиотека компонентов</button>
         <a className="secondary small button-link" href={harnessApi.exportUrl(project, index)} download
           title="Чертёж в формате TECHMAP-GRAPHER (.techmap-project.zip)">Скачать .zip</a>
         {canEdit && <button className="secondary small" onClick={() => fileRef.current?.click()}

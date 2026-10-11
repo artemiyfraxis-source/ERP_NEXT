@@ -374,6 +374,34 @@ def test_export_and_import_round_trip_through_techmap_project_zip(harness_api):
     assert [row.item_index for row in _rows(factory)] == ["КБ1", "КБ2"]
 
 
+def test_real_size_view_setting_survives_save_export_and_import_unchanged(harness_api):
+    """«Реальные размеры, мм» (drawingDocuments.realSize) is the editor's own optional field: the ERP keeps it as
+    written through save, the .techmap-project.zip export and an import back, and adds it to no drawing."""
+    client, _factory, _clock = harness_api
+    plain = client.put(f"{BASE}/КБ2", json={"design": _design()}).json()
+    assert "realSize" not in plain["design"]["drawingDocuments"]
+    real_size = {"enabled": True, "scaleDenominator": 2.5}
+    design = _design()
+    design["drawingDocuments"] = {**design["drawingDocuments"], "realSize": real_size}
+    saved = client.put(f"{BASE}/КБ1", json={"design": design})
+    assert saved.status_code == 200, saved.text
+    read = client.get(f"{BASE}/КБ1").json()
+    assert read["design"]["drawingDocuments"] == design["drawingDocuments"]
+    assert read["design"] == saved.json()["design"]
+
+    exported = client.get(f"{BASE}/КБ1/export")
+    with ZipFile(BytesIO(exported.content)) as archive:
+        snapshot = json.loads(archive.read("project/snapshot.json"))
+    assert snapshot["harnesses"][0]["design"]["content"]["drawingDocuments"]["realSize"] == real_size
+
+    imported = client.post(f"{BASE}/КБ2/import", json={
+        "file_name": "708К.4КБ1.techmap-project.zip", "content_b64": base64.b64encode(exported.content).decode(),
+        "version": plain["version"],
+    })
+    assert imported.status_code == 200, imported.text
+    assert client.get(f"{BASE}/КБ2").json()["design"] == read["design"]
+
+
 def test_import_of_the_authors_export_picks_the_harness_of_the_position_and_overwrites(harness_api):
     client, factory, _clock = harness_api
     first = client.put(f"{BASE}/КБ1", json={"design": _design(views={})}).json()

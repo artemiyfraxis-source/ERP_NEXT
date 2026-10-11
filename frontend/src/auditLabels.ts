@@ -155,6 +155,8 @@ const EVENT_NAMES: Record<string, string> = {
   "techcards.project_draft_discarded": "Черновик ТК удалён",
   "techcards.operation_edited": "Операция ТК исправлена",
   "techcards.operation_record_edited": "Строка БД.ОП исправлена",
+  "techcards.harness_component_created": "Шаблон компонента создан",
+  "techcards.harness_component_published": "Опубликована версия шаблона",
   "techcards.operation_library_replaced": "Библиотека операций обновлена",
   "techcards.template_sheet_saved": "Шаблон-лист сохранён",
   "techcards.template_sheet_deleted": "Шаблон-лист удалён",

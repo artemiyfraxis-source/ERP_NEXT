@@ -12,7 +12,8 @@ A save:
 5. writes the current bytes into the КД row and appends revision n+1 — both in one transaction; a concurrent save on
    the same revision hits UNIQUE(document_id, revision) and gets the conflict instead of a lost update.
 
-The component library (read, its pictures, the placements of a drawing) is at the end of this file.
+The component library (read, its pictures, the placements of a drawing; create a template, publish its next
+revision) is at the end of this file.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
+import hashlib
 from typing import Any, Mapping, Protocol
 from uuid import UUID, uuid4
 
@@ -28,8 +30,9 @@ from app.shared.identity import Actor
 
 from ..kitsets import KitDocument, Kitset, document_json, document_kind, item_id
 from .components import (
-    MAX_REF, Candidate, ComponentError, ComponentTemplate, Pin, embedded_pins, embedded_templates, library_pins,
-    placement_graph, split_embedded,
+    MAX_REF, Candidate, ComponentError, ComponentTemplate, Pin, connector_ref, embedded_pins, embedded_templates,
+    image_of, library_pins, model_code, placement_graph, publishable, split_embedded, template_identity,
+    template_model,
 )
 from .schema import (
     HARNESS_CONTENT_TYPE, HARNESS_UNLINKED_CONTENT_TYPE, Expected, HarnessError, HarnessRevision,
@@ -508,3 +511,107 @@ def placements(factory: Factory, project: str, index: str) -> dict[str, Any]:
         design = _stored_design(drawing)
         return placement_graph(design, _pinned(uow), project=kitset.project, harness=index,
                                updated=drawing.document.uploaded_at if drawing else None)
+
+
+# ── Publishing into the library: create a template, publish its next revision ─────────────────────────────────────
+# After TECHMAP-GRAPHER `ComponentTemplateEndpoints.cs` (POST create, PUT with the expected version → 409 on a stale
+# one), © Василий (SaveOurSouls), used with the author's permission. A revision is a row that never changes: a drawing
+# that placed revision N keeps it; publishing adds N+1.
+
+TEMPLATE_STALE = "Шаблон уже изменил {who} — версия {revision}"
+TEMPLATE_TAKEN = "Шаблон «{ref}» уже есть в библиотеке ({who}, версия {revision}) — опубликуйте его новую версию"
+TEMPLATE_RACED = "Шаблон только что изменили — обновите библиотеку"
+
+
+def _same(stored: ComponentTemplate, candidate: Candidate, image: bytes | None) -> bool:
+    """The revision asked for is `stored` already (model, identity and picture)."""
+    wanted = hashlib.sha256(image).hexdigest() if image is not None else None
+    return stored.version_sha256 == candidate.version_sha256 and stored.image_sha256 == wanted
+
+
+def _publish(uow: TechcardsUnitOfWork, candidate: Candidate, ref: str, image: bytes | None, *, actor: Actor,
+             now: datetime, event: str) -> ComponentTemplate:
+    """The revision as a new row and its journal event, committed (a number taken meanwhile → HarnessWriteConflict)."""
+    template = uow.harness_components.add(ComponentTemplate(
+        id=uuid4(), template_id=candidate.template_id, connector_ref=ref, revision=candidate.revision,
+        version_sha256=candidate.version_sha256, content_sha256=candidate.content_sha256, code=candidate.code,
+        name=candidate.name, article_bindings=candidate.article_bindings, assets=candidate.assets,
+        model=candidate.model, created_by=actor.name, created_at=now,
+        image_sha256=hashlib.sha256(image).hexdigest() if image is not None else None,
+    ), image)
+    uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=template.template_id, event_type=event, actor=actor,
+                             occurred_at=now, details={
+                                 "template_id": str(template.template_id), "connector_ref": template.connector_ref,
+                                 "code": template.code, "name": template.name, "revision": str(template.revision),
+                                 "version_sha256": template.version_sha256,
+                             }))
+    uow.commit()
+    return template
+
+
+def create_template(factory: Factory, model: object, *, image: bytes | None, actor: Actor, now: datetime,
+                    code: str | None = None, name: str | None = None) -> ComponentTemplate:
+    """A new library template — its revision 1. Its key is the connector code (given, or the model's first article);
+    a key the library already holds is that template: the same content returns its newest revision, other content
+    is a conflict (publish a version of it instead)."""
+    model = template_model(model)
+    code = (code or "").strip() or model_code(model)
+    if not code:
+        raise ComponentError("У шаблона компонента нет кода разъёма: в модели нет артикула, код не передан")
+    ref = connector_ref(code)
+    candidate = publishable(model, template_id=template_identity(ref), revision=1, code=code, name=name or "",
+                            image=image)
+
+    def held(uow: TechcardsUnitOfWork) -> ComponentTemplate | None:
+        return uow.harness_components.by_ref(ref) or uow.harness_components.revision(candidate.template_id)
+
+    with factory() as uow:
+        found = held(uow)
+        if found is None:
+            try:
+                return _publish(uow, candidate, ref, image, actor=actor, now=now,
+                                event="techcards.harness_component_created")
+            except HarnessWriteConflict:  # a concurrent create took the key: answer by what it stored
+                pass
+    if found is None:
+        with factory() as uow:
+            found = held(uow)
+    if found is not None and _same(found, candidate, image):
+        return found
+    raise HarnessConflict(TEMPLATE_TAKEN.format(ref=found.connector_ref, who=found.created_by,
+                                                revision=found.revision) if found else TEMPLATE_RACED)
+
+
+def publish_version(factory: Factory, template_id: UUID, base_revision: int, model: object, *, image: bytes | None,
+                    actor: Actor, now: datetime, code: str | None = None,
+                    name: str | None = None) -> ComponentTemplate:
+    """The next revision (N+1) of a template, made on revision `base_revision` — which must be the newest, else a
+    conflict naming who published the newest. Content equal to the newest is that revision (a retry, an unchanged
+    save): no new row. Code and name not given are the newest's; its picture goes on when the model still names it
+    and no other is uploaded. No stored row changes."""
+    model = template_model(model)
+    with factory() as uow:
+        newest = uow.harness_components.revision(template_id)
+        if newest is None:
+            raise HarnessNotFound("Шаблона компонента нет в библиотеке")
+        candidate = publishable(model, template_id=newest.template_id, revision=newest.revision + 1,
+                                code=(code or "").strip() or newest.code, name=(name or "").strip() or newest.name,
+                                image=image)
+        if image is None and image_of(newest, candidate.assets):
+            carried = uow.harness_components.image(newest.template_id, newest.revision)
+            image = carried[1] if carried is not None else None
+        if _same(newest, candidate, image):
+            return newest
+        if base_revision != newest.revision:
+            raise HarnessConflict(TEMPLATE_STALE.format(who=newest.created_by, revision=newest.revision))
+        try:
+            return _publish(uow, candidate, newest.connector_ref, image, actor=actor, now=now,
+                            event="techcards.harness_component_published")
+        except HarnessWriteConflict:  # a concurrent publish took revision N+1: answer by what it stored
+            pass
+    with factory() as uow:
+        newest = uow.harness_components.revision(template_id)
+    if newest is not None and _same(newest, candidate, image):
+        return newest
+    raise HarnessConflict(TEMPLATE_STALE.format(who=newest.created_by, revision=newest.revision) if newest
+                          else TEMPLATE_RACED)

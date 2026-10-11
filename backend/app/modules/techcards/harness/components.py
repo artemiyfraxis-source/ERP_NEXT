@@ -153,6 +153,95 @@ def candidate_from_snapshot(snapshot: Mapping[str, Any]) -> Candidate:
     )
 
 
+# ── Publishing from the ERP (create a template, publish its next revision) ──────────────────────────────────────────
+# Ported from TECHMAP-GRAPHER `ComponentTemplateEndpoints.cs` / `SqliteComponentTemplateStore.cs` (create, update with
+# the expected version, the picture of a version carried into the next one), © Василий (SaveOurSouls), used with the
+# author's permission. Here a revision is an immutable library row: publishing never changes a stored one.
+
+MAX_CODE, MAX_NAME = 120, 256
+MAX_PICTURE = 10 * 1024 * 1024  # as TECHMAP-GRAPHER's MaximumAssetBytes
+PNG_MEDIA = "image/png"
+_PNG = b"\x89PNG\r\n\x1a\n"
+
+
+def template_model(model: object) -> dict[str, Any]:
+    """The model of a template to publish (a deep copy), or ComponentError: only a TECHMAP-GRAPHER component template
+    of schemaVersion 3–5 — what the library reads and the editor places."""
+    if not isinstance(model, Mapping):
+        raise ComponentError("Модель компонента не передана — нужен шаблон TECHMAP-GRAPHER (версия схемы 3–5)")
+    version = model.get("schemaVersion")
+    if type(version) is not int or version not in TEMPLATE_SCHEMAS:
+        shown = "не указана" if version is None else json.dumps(version, ensure_ascii=False)
+        raise ComponentError(f"Модель компонента не поддерживается: нужен шаблон TECHMAP-GRAPHER версии схемы 3–5, "
+                             f"а у этой версия схемы {shown}")
+    return json.loads(json.dumps(model, ensure_ascii=False))
+
+
+def model_bindings(model: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The articles a template binds (its `articleVariants`, each article once) — the catalog's `articleBindings`."""
+    bindings: list[dict[str, Any]] = []
+    for variant in _rows(model.get("articleVariants")):
+        binding = {key: _text(variant.get(key)) for key in ("sourceId", "entityType", "articleKey")}
+        if all(binding.values()) and binding not in bindings:
+            bindings.append(binding)
+    return bindings
+
+
+def model_code(model: Mapping[str, Any]) -> str:
+    """The connector code a model names when the request gives none: its first article."""
+    bindings = model_bindings(model)
+    return bindings[0]["articleKey"] if bindings else ""
+
+
+def picture(content: bytes | None) -> bytes | None:
+    """The picture of a revision as uploaded: a PNG of at most 10 MB, or ComponentError."""
+    if content is None:
+        return None
+    if not content.startswith(_PNG):
+        raise ComponentError("Рисунок шаблона — не PNG")
+    if len(content) > MAX_PICTURE:
+        raise ComponentError("Рисунок шаблона больше 10 МБ")
+    return content
+
+
+def publishable(model: Mapping[str, Any], *, template_id: UUID, revision: int, code: str, name: str,
+                image: bytes | None) -> Candidate:
+    """A revision to publish from an ERP request: the model (`template_model`), its code and name, the articles and
+    pictures the model itself lists. The picture is the model's PNG asset of the same sha256 — or, when the model has
+    exactly one PNG asset, that asset takes the uploaded picture's hash and size (the server hashes the bytes)."""
+    code, name = _text(code), _text(name)
+    if not code:
+        raise ComponentError("У шаблона компонента нет кода разъёма: в модели нет артикула, код не передан")
+    if len(code) > MAX_CODE:
+        raise ComponentError(f"Код шаблона длиннее {MAX_CODE} символов")
+    if len(name) > MAX_NAME:
+        raise ComponentError(f"Название шаблона длиннее {MAX_NAME} символов")
+    assets = _rows(model.get("assets"))
+    if image is not None:
+        digest = hashlib.sha256(image).hexdigest()
+        pngs = [asset for asset in assets if asset.get("mediaType") == PNG_MEDIA]
+        named = [asset for asset in pngs if _text(asset.get("sha256")).lower() == digest]
+        if not named and len(pngs) != 1:
+            raise ComponentError("Рисунок не к чему привязать: в модели должно быть одно изображение PNG "
+                                 "(или изображение с тем же sha256)")
+        for asset in named or pngs:
+            asset.update(sha256=digest, sizeBytes=len(image))
+    model = {**model, "assets": assets} if "assets" in model else dict(model)
+    name = name or code
+    bindings = model_bindings(model)
+    return Candidate(
+        template_id=template_id, revision=revision, code=code, name=name, article_bindings=bindings, assets=assets,
+        model=model, version_sha256=version_sha256(code=code, name=name, article_bindings=bindings, assets=assets,
+                                                   model=model),
+    )
+
+
+def image_of(template: ComponentTemplate, assets: Iterable[Mapping[str, Any]]) -> bool:
+    """The picture of `template` is one the assets name (a next revision keeps it without an upload)."""
+    return template.image_sha256 is not None and any(
+        _text(asset.get("sha256")).lower() == template.image_sha256 for asset in assets)
+
+
 def split_embedded(design: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The drawing without the pre-0091 component sections, and the snapshots it carried."""
     return ({key: value for key, value in design.items() if key not in COMPONENT_GRAPH_KEYS},
