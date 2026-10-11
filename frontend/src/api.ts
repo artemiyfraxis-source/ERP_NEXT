@@ -3917,6 +3917,32 @@ export const assemblyApi = {
     }),
 };
 
+/* Черновик генератора ТК на сервере (владелец 11.10): недособранная форма генератора — своя у каждого человека за
+   проектом и КБ; сохраняется поверх версии (409 — изменён в другом месте). */
+export interface GeneratorDraftRecord {
+  project: string;
+  item_index: string;
+  payload: Record<string, unknown>;
+  build_fingerprint: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+export interface GeneratorDraftConflict { message: string; code: "generator_draft_conflict"; version: number; updated_at: string | null }
+
+const generatorDraftUrl = (project: string, itemIndex: string) =>
+  `/api/techcards/generator-draft?project=${encodeURIComponent(project)}&item_index=${encodeURIComponent(itemIndex)}`;
+
+export const generatorDraftApi = {
+  get: (project: string, itemIndex: string) => api<{ draft: GeneratorDraftRecord | null }>(generatorDraftUrl(project, itemIndex)),
+  /** Повтор безвреден (`safe`): запись идёт поверх версии. keepalive — при закрытии страницы: запрос доходит и после
+   *  её выгрузки. */
+  save: (project: string, itemIndex: string, body: { payload: unknown; build_fingerprint: string; base_version: number }, keepalive = false) =>
+    api<GeneratorDraftRecord>(generatorDraftUrl(project, itemIndex), { method: "PUT", body: JSON.stringify(body), keepalive, safe: true }),
+  remove: (project: string, itemIndex: string) =>
+    api<{ deleted: boolean }>(generatorDraftUrl(project, itemIndex), { method: "DELETE", safe: true }),
+};
+
 /* Токены API (генератор техкарт, черновики сборки): выпускает и отзывает только полный доступ. */
 export type ApiTokenStatus = "active" | "expired" | "revoked";
 export interface ApiTokenRow {

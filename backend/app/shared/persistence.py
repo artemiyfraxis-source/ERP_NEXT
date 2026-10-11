@@ -217,5 +217,6 @@ def create_schema(engine: Engine) -> None:
     from app.modules.references import infrastructure as _references  # noqa: F401
     from app.modules.operations import infrastructure as _operations  # noqa: F401
     from app.modules.techcards import assembly_drafts_infrastructure as _assembly_drafts  # noqa: F401
+    from app.modules.techcards import generator_drafts_infrastructure as _generator_drafts  # noqa: F401
 
     Base.metadata.create_all(engine)

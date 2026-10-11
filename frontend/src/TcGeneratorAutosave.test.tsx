@@ -27,10 +27,29 @@ function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
+// Черновик на сервере (владелец 11.10): один на позицию, версия +1 на запись.
+let serverDraft: Record<string, unknown> | null = null;
+
+function generatorDraft(init?: RequestInit) {
+  const method = init?.method ?? "GET";
+  if (method === "PUT") {
+    const body = JSON.parse(String(init?.body));
+    const version = Number(serverDraft?.version ?? 0);
+    if (serverDraft && version !== body.base_version) return new Response(JSON.stringify({ detail: { message: "Черновик изменён в другом месте" } }), { status: 409 });
+    const now = new Date().toISOString();
+    serverDraft = { project: "P-21", item_index: "КБ3", payload: body.payload, build_fingerprint: body.build_fingerprint, version: version + 1, created_at: now, updated_at: now };
+    return json(serverDraft);
+  }
+  if (method === "DELETE") { const deleted = !!serverDraft; serverDraft = null; return json({ deleted }); }
+  return json({ draft: serverDraft });
+}
+
 beforeEach(() => {
   window.localStorage.clear();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  serverDraft = null;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
+    if (path.startsWith("/api/techcards/generator-draft?project=P-21&item_index=")) return generatorDraft(init);
     if (path === "/api/techcards/templates") return json({ metadata: null, items: [
       { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
       { id: "prsA", code: "PRS", side: "A", title: "PRS_TERMINAL | Опрессовка терминалов (А)", name: "", category: "Опрессовка терминалов", steps: 1, tooling: 1 },
@@ -64,6 +83,21 @@ it("keeps the typed form through a tab switch, restores it with a note and clear
   expect(onBuild.mock.calls[0][0]).toMatchObject({ materialsSheet: true });
   await waitFor(() => expect(screen.queryByText(/Восстановлен несохранённый черновик/)).not.toBeInTheDocument());
   expect(window.localStorage.getItem(KEY)).toBeNull();
+  await waitFor(() => expect(serverDraft).toBeNull());
+});
+
+it("opens on another computer what was typed here (the draft on the server)", async () => {
+  const first = render(<TcGenerator card={card} kit={kit} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} userId="user-1" />);
+  await screen.findByRole("tab", { name: "Межплатная", selected: true });
+  fireEvent.click(sheetSwitch());
+  first.unmount();
+  await waitFor(() => expect(serverDraft).toMatchObject({ version: 1, payload: { S: { materialsSheet: true } } }));
+
+  window.localStorage.clear(); // другой компьютер: в браузере ничего нет
+  render(<TcGenerator card={card} kit={kit} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} userId="user-1" />);
+  await screen.findByRole("tab", { name: "Межплатная", selected: true });
+  await waitFor(() => expect(sheetSwitch()).toBeChecked());
+  expect(screen.getByText(/Восстановлен несохранённый черновик от/)).toBeInTheDocument();
 });
 
 it("keeps the draft when the build fails", async () => {
@@ -92,4 +126,5 @@ it("«Отбросить» returns the form to the kit seeding", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Отбросить" }));
   expect(await screen.findByRole("tab", { name: "Межплатная", selected: true })).toBeInTheDocument();
   expect(window.localStorage.getItem(KEY)).toBeNull();
+  await waitFor(() => expect(serverDraft).toBeNull());
 });
