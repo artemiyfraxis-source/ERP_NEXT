@@ -309,7 +309,8 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
     expect((await screen.findByRole("link", { name: "расчёт" })).getAttribute("href")).toBe(linked.calc_source);
-    fireEvent.click(screen.getByRole("button", { name: /Обновить из расчёта/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Ещё действия с проектом 708К.4" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Обновить из расчёта/ }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
     const [, init] = fetchMock.mock.calls.find(([url]) => String(url) === "/api/techcards/kitsets/load")!;
     expect(JSON.parse(String(init?.body))).toEqual({ url: linked.calc_source, number: "708К.4" });
@@ -408,12 +409,15 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
     expect(await screen.findByText("Жгут питания")).toBeTruthy();
-    // Рабочие кнопки без эмодзи; удаления среди них нет.
-    for (const name of ["Обновить из расчёта", "Отгрузить"]) expect(screen.getByRole("button", { name })).toBeTruthy();
+    // «Отгрузить» нет совсем, рабочие действия и удаление — только внутри «Ещё».
+    expect(screen.queryByRole("button", { name: "Отгрузить" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Обновить из расчёта/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Удалить/ })).toBeNull();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("708К.4");
 
     fireEvent.click(screen.getByRole("button", { name: "Ещё действия с проектом 708К.4" }));
+    expect(screen.getByRole("menuitem", { name: "Обновить из расчёта" })).toBeTruthy();
+    expect(screen.getAllByRole("menuitem").at(-1)?.textContent).toBe("Удалить проект…");
     fireEvent.click(screen.getByRole("menuitem", { name: "Удалить проект…" }));
     const dialog = screen.getByRole("dialog", { name: "Удалить проект 708К.4" });
     expect(within(dialog).getByText(/Проект уйдёт целиком/)).toBeTruthy();

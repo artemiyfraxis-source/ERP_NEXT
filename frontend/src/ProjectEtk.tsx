@@ -154,14 +154,31 @@ function hoursText(value: number): string {
   return `${Math.floor(total / 60)} ч${rest ? ` ${rest} мин` : ""}`;
 }
 
-/** 6 Результат: что операция отдаёт дальше (наименование, количество на партию) и расчётное время отдельной цифрой.
- *  Время по строкам (резка, опрессовка стороны А — на каждый провод) встаёт колонкой к своей строке, итог — в плитке;
- *  одно время на операцию — только в плитке, без повтора наименования (в Google оно дублировалось). */
-function ResultView({ label, result = [], time = [], batch }: { label: string; result?: EtkRow[]; time?: EtkRow[]; batch: string }) {
+/** 6 Результат: что операция отдаёт дальше (наименование, количество) и расчётное время — две равные цифры одного
+ *  размера и вида (владелец 12.10: «одно большое, а другое маленькое»; подпись «на партию» убрана — путала рядом с
+ *  количеством полуфабриката). Одна строка результата — название и две цифры рядом; несколько строк — плотная таблица
+ *  (время по строкам — колонкой, если у каждой своё) и итоговая цифра времени тем же видом. */
+function ResultView({ label, result = [], time = [] }: { label: string; result?: EtkRow[]; time?: EtkRow[] }) {
   const byName = new Map(time.map((row) => [row.name || "", row.norm || ""]));
   const perRow = time.length > 1 && result.length === time.length && result.every((row) => byName.has(row.name || ""));
   const total = time.reduce((sum, row) => sum + minutes(row.norm), 0);
   const hours = hoursText(total);
+  const timeFig = time.length > 0 && <div className="etk-fig etk-time" aria-label="Расчётное время">
+    <small>{perRow || time.length > 1 ? "Расчётное время, итого" : "Расчётное время"}</small>
+    <b>{formatMinutes(total)} <span>мин{hours ? ` · ${hours}` : ""}</span></b>
+    {!perRow && time.length > 1 && <ul>{time.map((row, index) =>
+      <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>}
+  </div>;
+  if (result.length === 1) {
+    const [row] = result;
+    return <div className="etk-result etk-result-one">
+      <div className="etk-result-name"><small>{label}</small><span>{row.name || "—"}</span></div>
+      <div className="etk-figs">
+        <div className="etk-fig"><small>Количество</small><b>{quantity(row) || "—"}</b></div>
+        {timeFig}
+      </div>
+    </div>;
+  }
   return <div className="etk-result">
     {result.length > 0 && <table className="etk-result-table">
       <thead><tr><th>{label}</th><th>Кол-во</th>{perRow && <th>Время, мин</th>}</tr></thead>
@@ -171,13 +188,7 @@ function ResultView({ label, result = [], time = [], batch }: { label: string; r
         {perRow && <td className="num">{formatNumber(byName.get(row.name || ""))}</td>}
       </tr>)}</tbody>
     </table>}
-    {time.length > 0 && <div className="etk-time" aria-label="Расчётное время">
-      <small>{perRow || time.length > 1 ? "Расчётное время, итого" : "Расчётное время"}</small>
-      <b>{formatMinutes(total)} <span>мин</span></b>
-      <small>{[hours, batch ? `на партию ${formatQty(batch, "шт")}` : ""].filter(Boolean).join(" · ")}</small>
-      {!perRow && time.length > 1 && <ul>{time.map((row, index) =>
-        <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>}
-    </div>}
+    {timeFig}
   </div>;
 }
 
@@ -274,7 +285,7 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
       </div>
     </EtkSection>}
     {hasResult && <EtkSection label="Результат" number={next()}>
-      <ResultView label={resultLabel} result={operation.result} time={operation.time} batch={batch} />
+      <ResultView label={resultLabel} result={operation.result} time={operation.time} />
     </EtkSection>}
   </article>;
 }
@@ -437,7 +448,7 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
       {sketchUrl && <div className="etk-sketch"><img src={sketchUrl} alt="Эскиз операции" /></div>}
     </div> : undefined,
     result: operation.result?.length || operation.time?.length
-      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={operation.result} time={operation.time} batch={batch} /> : undefined,
+      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={operation.result} time={operation.time} /> : undefined,
   };
 }
 

@@ -458,19 +458,16 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
     <header className="page-head kit-head">{toList}<h1>{card.project}</h1>
       <ProjectStatus project={card.project} status={card.status} blocker={card.blocker} canEdit={canEdit}
         stages={card.stages} terminals={card.terminals} blockers={card.blockers} onChanged={setCard} onError={setError} />
+      {/* Рабочие действия — в «Ещё» рядом с этапом (владелец 12.10: «много кнопок рудиментов»); «Отгрузить» убрана:
+          отгрузка идёт через приёмку кладовщика на экране «Отгрузка». Без прав на правку и заявку меню нет. */}
+      {(canEdit || (canRequest && card.calc_source)) && <CardMoreMenu project={card.project}
+        refreshing={refreshing} onRefresh={canEdit ? () => void refresh() : undefined}
+        onRequest={canRequest && card.calc_source ? () => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project }) : undefined}
+        onDelete={canEdit ? () => setDeleting(true) : undefined} />}
     </header>
     <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.deadline && <> · дедлайн {formatDay(card.deadline)}</>} · обновлено {formatDateTime(card.updated_at)} {card.updated_by}</p>
     {blockerInfo && <p className="kit-blocker"><StatusChip status={blockerInfo.type} /> <span>с {formatDay(blockerInfo.since)} · {blockerInfo.text} — {blockerInfo.who}</span></p>}
-    <div className="kit-actions">
-      {canEdit && <button className="secondary small" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
-      <button className="secondary small" onClick={() => openSection("shipping", { ship_project: card.project })}>Отгрузить</button>
-      {/* Заявка — отдельный шаг, как в SUPPLYMAP (заведение создаёт её только по галочке «Сразу создать заявки»);
-          кнопка открывает «Оформить заявку → Из расчёта» с этой ссылкой и номером, оператор проверяет строки. */}
-      {canRequest && card.calc_source && <button className="secondary small" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>Оформить заявку из расчёта</button>}
-      {/* Удаление — отдельно от рабочих кнопок, в «Ещё», красным и только через окно подтверждения (аудит 10.10, ПР-2). */}
-      {canEdit && <CardMoreMenu project={card.project} onDelete={() => setDeleting(true)} />}
-      {note && <span className="muted">{note}</span>}
-    </div>
+    {note && <div className="kit-actions"><span className="muted">{note}</span></div>}
     {deleting && <DeleteProjectDialog project={card.project} remove={remove} onClose={() => setDeleting(false)} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {warning && <div className="warning-banner" role="alert">{warning}</div>}
@@ -493,8 +490,12 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   </section>;
 }
 
-/** «Ещё ▾» карточки проекта: редкие и опасные действия подальше от рабочих кнопок. Пока одно — «Удалить проект…». */
-function CardMoreMenu({ project, onDelete }: { project: string; onDelete: () => void }) {
+/** «Ещё ▾» карточки проекта: «Обновить из расчёта», «Оформить заявку из расчёта» и — последним, красным — «Удалить
+ *  проект…». Заявка — отдельный шаг, как в SUPPLYMAP: «Оформить заявку → Из расчёта» открывается с этой ссылкой и
+ *  номером, оператор проверяет строки. Пункт показан только если действие доступно. */
+function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onDelete }: {
+  project: string; refreshing: boolean; onRefresh?: () => void; onRequest?: () => void; onDelete?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -511,7 +512,9 @@ function CardMoreMenu({ project, onDelete }: { project: string; onDelete: () => 
     <button type="button" className="secondary small more-menu-trigger" aria-haspopup="menu" aria-expanded={open}
       aria-label={`Ещё действия с проектом ${project}`} onClick={() => setOpen((value) => !value)}>Ещё ▾</button>
     {open && <div className="more-menu-list" role="menu">
-      <button type="button" role="menuitem" className="kit-more-danger" autoFocus onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>
+      {onRefresh && <button type="button" role="menuitem" autoFocus disabled={refreshing} onClick={() => { setOpen(false); onRefresh(); }}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
+      {onRequest && <button type="button" role="menuitem" autoFocus={!onRefresh} onClick={() => { setOpen(false); onRequest(); }}>Оформить заявку из расчёта</button>}
+      {onDelete && <button type="button" role="menuitem" className="kit-more-danger" autoFocus={!onRefresh && !onRequest} onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>}
     </div>}
   </div>;
 }
