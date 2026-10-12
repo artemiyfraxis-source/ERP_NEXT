@@ -32,11 +32,12 @@ STAGE_SHOP_STATUS = {
     "В работе": "В РАБОТЕ",
     "ОТК": "ОТК",
     "Принято складом": "ГОТОВО",
+    "Упаковано": "УПАК",
     "Отгружено": "ОТГРУЖЕН",
 }
 SHOP_HOLD = frozenset(("ХОЛД", "СТОП", "ПАУЗА"))
 # Работа цеха закончена: изделие принято на склад ГП и дальше (ОТК ещё у цеха — строка активная).
-SHOP_DONE_STAGES = frozenset(("Принято складом", "Отгружено"))
+SHOP_DONE_STAGES = frozenset(("Принято складом", "Упаковано", "Отгружено"))
 # Производство закончено (ОТК и дальше): готовность 100.
 SHOP_PRODUCED_STAGES = frozenset(("ОТК", *SHOP_DONE_STAGES))
 SHEET_GROUPS = ("hold", "active", "done", "closed")
@@ -64,7 +65,7 @@ def shop_status_auto(stage: str, blocker: str = "") -> str:
 
 
 def sheet_group(stage: str, blocker: str = "", terminal: bool = False) -> str:
-    """Rows on hold go on top, finished ones (Принято складом, Отгружено) to the bottom, refused
+    """Rows on hold go on top, finished ones (Принято складом, Упаковано, Отгружено) to the bottom, refused
     projects last."""
     if blocker in SHOP_HOLD:
         return "hold"

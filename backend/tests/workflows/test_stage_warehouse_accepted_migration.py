@@ -115,7 +115,7 @@ def test_closed_projects_get_one_cancelled_row_with_the_old_word_and_stage_rows_
         "10К.1": "Отменён", "11К.1": "", "12К.1": "Отменён", "13К.1": "Отменён", "14К.1": None, "15К.1": "",
     }
     stages = [(event.from_value, event.value) for event in events if event.project == "14К.1"]
-    assert stages == [("ОТК", "Принято складом"), ("Принято складом", "Принято складом")]
+    assert stages == [("ОТК", "Принято складом"), ("Принято складом", "Упаковано")]
     assert project_terminal(PlanProjectSnapshot("12К.1", status="Слился", terminal=True), None) == "Отменён"
 
 

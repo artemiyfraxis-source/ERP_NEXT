@@ -304,19 +304,27 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   render(<ProductionPlanPage principal={principal} />);
   await screen.findByText("Альфа");
 
-  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1", "706К.1"]);
+  // Отгруженные скрыты по умолчанию (владелец 12.10), счётчик в шапке — видимые проекты.
+  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1"]);
   expect(Array.from(document.querySelectorAll(".zg-group-label")).map((item) => item.textContent)).toEqual([
-    "Новый · 1", "В работе · 3", "Отгружено · 1",
+    "Новый · 1", "В работе · 3",
   ]);
+  expect(document.querySelector(".page-count")?.textContent).toBe("4");
   // The blocked project keeps its stage group and its chip.
   expect(within(sheetRow("703К.1")).getByText("ХОЛД")).toBeInTheDocument();
   // A collapsed stage hides its rows and stays collapsed after a remount.
   fireEvent.click(screen.getByRole("button", { name: "В работе · 3" }));
-  expect(projects()).toEqual(["703К.1", "706К.1"]);
+  expect(projects()).toEqual(["703К.1"]);
   expect(JSON.parse(window.localStorage.getItem("erp-zg-collapsed") ?? "null")).toEqual(["В работе"]);
   fireEvent.click(screen.getByRole("button", { name: "В работе · 3" }));
-  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1", "706К.1"]);
+  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1"]);
   window.localStorage.removeItem("erp-zg-collapsed");
+  // «Показать отгруженные» adds the last group, folded.
+  fireEvent.click(screen.getByLabelText("Показать отгруженные · 1"));
+  expect(screen.getByRole("button", { name: "Отгружено · 1" })).toHaveAttribute("aria-expanded", "false");
+  expect(projects()).not.toContain("706К.1");
+  fireEvent.click(screen.getByRole("button", { name: "Отгружено · 1" }));
+  expect(projects()).toContain("706К.1");
   // A shop holiday (24.09) is grey like a weekend.
   await waitFor(() => expect(document.querySelectorAll(".zg-table thead th.zg-day-head")[9]?.className).toContain("zg-off"));
   fireEvent.click(screen.getByLabelText("Закрытые проекты · 1"));
@@ -327,7 +335,7 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   expect(screen.getByText("Под этот поиск проектов нет.")).toBeInTheDocument();
 });
 
-const STAGES = ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Отгружено"];
+const STAGES = ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"];
 const names = (groups: ReturnType<typeof groupSheetRows>) => groups.map((group) => [group.label, group.rows.map((item) => item.project)]);
 
 it("groupSheetRows: groups follow the stage list, empty ones are hidden, closed go last", () => {

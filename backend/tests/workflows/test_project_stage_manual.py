@@ -116,7 +116,7 @@ def test_kb_pick_moves_only_that_kb_and_auto_clears_manual_marks():
 
     forward = plan_stage_change(kits, "Отгружено", "КБ2")
     assert [(c.item_index, c.skipped) for c in forward.changes] == [
-        ("КБ2", ("ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом")),
+        ("КБ2", ("ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано")),
     ]
     auto = plan_stage_change(kits, "авто")
     assert auto.direction == "auto" and not auto.reason_required
@@ -303,7 +303,7 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
     assert preview["direction"] == "forward" and preview["reason_required"] is False and preview["error"] == ""
     kb1, kb2 = preview["kbs"]
     assert {key: kb1[key] for key in ("kb", "from", "to", "skipped", "change", "note")} == {
-        "kb": "КБ1", "from": "ОТК", "to": "Отгружено", "skipped": ["Принято складом"], "change": True,
+        "kb": "КБ1", "from": "ОТК", "to": "Отгружено", "skipped": ["Принято складом", "Упаковано"], "change": True,
         "note": "",
     }
     # Пропущенное закрывается, готовая продукция остаётся — с причиной.
@@ -321,13 +321,13 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
         "Готовая продукция Жгут: Отгружено 1 шт — отгрузки остаются, переносу не мешают.",
     ]
     assert (kb2["skipped"], kb2["close"], kb2["keep"], kb2["warnings"]) == (
-        ["ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом"], [], [], [],
+        ["ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано"], [], [], [],
     )
     assert preview["totals"] == {"tasks": 1, "kit_requests": 1, "reserves": 0, "close": 2, "keep": 2}
     assert len(preview["preview_token"]) == 32
     assert preview["warnings"] == ["Активный блокер «ХОЛД»: ждём оплату — смена этапа его не снимает."]
     assert preview["message"].startswith(
-        "КБ1: ОТК → Отгружено (пропущены: Принято складом); КБ2: Новый → Отгружено",
+        "КБ1: ОТК → Отгружено (пропущены: Принято складом, Упаковано); КБ2: Новый → Отгружено",
     )
 
 

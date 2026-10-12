@@ -18,8 +18,8 @@ const BACKEND_STATUSES: Record<string, string[]> = {
   "shipping/domain.py ShipmentStatus": ["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта", "Отменена"],
   "techcards/project_cards.py TechcardStatus": ["Черновик", "Выдана"],
   "production/plan.py PLAN_BLOCKERS": ["ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА"],
-  "production/plan.py KIT_STAGES": ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Отгружено"],
-  "production/plan.py SHOP_STATUSES": ["ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "РАСПЛАН", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН"],
+  "production/plan.py KIT_STAGES": ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"],
+  "production/plan.py SHOP_STATUSES": ["ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "РАСПЛАН", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "УПАК", "ОТГРУЖЕН"],
   "production/plan.py TC_REVIEW_VALUES": ["не проверена", "проверена", "с погрешностями"],
   "production/plan.py PROJECT_TERMINALS": ["Отменён"],
   "identity/leave.py STATUS_LABELS": ["Черновик", "На согласовании у руководителя", "Согласовано руководителем", "Зарегистрировано кадрами", "Отклонено", "Отозвано"],
@@ -68,7 +68,8 @@ describe("statusTone", () => {
     expect(statusLabel("В РАБОТЕ")).toBe("В работе");
     expect(statusLabel("ОТГРУЖЕН")).toBe("Отгружено");
     expect(statusLabel("К ЗАПУС")).toBe("КБ набрана");
-    expect(statusLabel("НА ОТГР")).toBe("Принято складом");
+    expect(statusLabel("НА ОТГР")).toBe("Упаковано");
+    expect(statusLabel("УПАК")).toBe("Упаковано");
     expect(statusLabel("РАСПЛАН")).toBe("Распланировано");
     expect(statusLabel("Жду счет")).toBe("Жду счёт");
     expect(statusTone("В РАБОТЕ")).toBe(statusTone("В работе"));
@@ -80,8 +81,8 @@ describe("statusTone", () => {
   });
 
   it("colours the project stage ladder from new to shipped", () => {
-    expect(["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Отгружено"]
-      .map(statusTone)).toEqual(["neutral", "info", "info", "info", "info", "info", "success", "success"]);
+    expect(["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"]
+      .map(statusTone)).toEqual(["neutral", "info", "info", "info", "info", "info", "success", "info", "success"]);
     // Слова листа «К ЗАПУСК» больше нет на экране — это этап «КБ набрана».
     expect(statusLabel("К ЗАПУСК")).toBe("КБ набрана");
   });

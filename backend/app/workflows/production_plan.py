@@ -170,7 +170,7 @@ def kit_stage_facts(
     worked: Collection[UUID] = (),
 ) -> tuple[dict[str, set[str]], dict[str, KitMark]]:
     """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, tasks placed in the resource plan, work begun,
-    finished production (ОТК), finished goods accepted, gone.
+    finished production (ОТК), finished goods accepted and packed, gone.
 
     ``worked`` — ids of tasks that have a work session (any but a cancelled one): someone started work on them.
     «Распланировано»: the КБ has running tasks and every one of them is placed (handed to a site, or every operation
@@ -184,7 +184,7 @@ def kit_stage_facts(
     marks = dict(marks)
     facts: dict[str, set[str]] = {
         "tc": set(), "tc_project": set(), "kit": set(), "planned": set(), "work": set(),
-        "qc": set(), "stock": set(), "shipped": set(),
+        "qc": set(), "stock": set(), "packed": set(), "shipped": set(),
     }
     facts["tc_project"].update(MANUAL_TECHCARD_PROJECTS)
     for card in cards:
@@ -241,6 +241,9 @@ def kit_stage_facts(
         need = good.ordered or good.accepted
         if good.accepted > 0 and good.accepted >= need:
             facts["stock"].add(key)
+        # «Упаковано» - отобрано в отправки (`shipped`, растёт при «Упаковать»), ещё не уехало.
+        if good.shipped > 0 and good.shipped >= need:
+            facts["packed"].add(key)
         # Этап «Отгружено» — по уехавшему (`sent`), не по отобранному: упакованное ещё на складе (решено агентом 30.09).
         if good.sent > 0 and good.sent >= need:
             facts["shipped"].add(key)

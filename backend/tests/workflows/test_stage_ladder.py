@@ -50,7 +50,7 @@ LEGACY = "КБ на складе"
 
 def test_the_ladder_is_eight_steps_in_shop_order():
     assert KIT_STAGES == (
-        "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Отгружено",
+        "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено",
     )
 
 
@@ -121,8 +121,10 @@ def test_accepted_and_sent_goods_climb_the_ladder():
     accepted = _good("10")
     assert _stage(done, goods=(accepted,)) == "Принято складом"
     taken = accepted.take(Decimal("10"))
-    assert _stage(done, goods=(taken,)) == "Принято складом"  # отобрано в отправку - этапа «На отгрузке» больше нет
-    assert _stage(done, goods=(taken.dispatch(Decimal("4")),)) == "Принято складом"  # уехала часть
+    assert _stage(done, goods=(taken,)) == "Упаковано"  # отобрано в отправки и упаковано, ещё не уехало
+    assert _stage(done, goods=(taken.dispatch(Decimal("4")),)) == "Упаковано"  # уехала часть
+    partly = accepted.take(Decimal("4"))
+    assert _stage(done, goods=(partly,)) == "Принято складом"  # упакована не вся ГП
     assert _stage(done, goods=(taken.dispatch(Decimal("10")),)) == "Отгружено"
 
 
@@ -139,16 +141,16 @@ def test_an_old_journal_word_reads_as_accepted_by_the_warehouse():
         PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value="В работе", from_value=LEGACY),
     ))
     assert back[next(iter(back))].stage == "В работе"
-    for word in ("Готово к отгрузке", "На отгрузке"):
+    for word, now in (("Готово к отгрузке", "Принято складом"), ("На отгрузке", "Упаковано")):
         marks = summarize_kit_marks((
             PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value=word, from_value="ОТК"),
         ))
-        assert project_stage(PROJECT, ("КБ1",), {}, marks=marks).kits[0].status == "Принято складом"
+        assert project_stage(PROJECT, ("КБ1",), {}, marks=marks).kits[0].status == now
 
 
 def test_a_new_write_of_the_old_word_is_refused_by_name():
-    for word in (LEGACY, "Готово к отгрузке", "На отгрузке"):
-        hint = f"Этапа «{word}» больше нет — теперь «Принято складом»."
+    for word, now in ((LEGACY, "Принято складом"), ("Готово к отгрузке", "Принято складом"), ("На отгрузке", "Упаковано")):
+        hint = f"Этапа «{word}» больше нет — теперь «{now}»."
         with pytest.raises(ProductionValidationError) as picked:
             plan_stage_change((KitStageNow("КБ1", "Новый", False, "Новый"),), word)
         assert str(picked.value) == hint
