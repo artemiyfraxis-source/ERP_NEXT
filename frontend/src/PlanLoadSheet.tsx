@@ -333,7 +333,6 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, suppliedValues,
   onDeadline: (project: string, deadline: string) => Promise<void>;
   onOpenProject: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
-  onStatusChanged: () => void;
   /** Есть ли у проекта карточка в «Проектах» (подсказка к №); по умолчанию — есть КБ. */
   hasCard?: (row: ProductionPlanRow) => boolean;
 }) {
