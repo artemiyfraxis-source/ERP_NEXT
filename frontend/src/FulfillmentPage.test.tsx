@@ -317,11 +317,12 @@ it("searches by number, purpose, requester and status and counts every stage in 
   });
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
-  expect(await screen.findByRole("button", { name: "Новая · 1" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Не начата · 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Недоукомплектован · 1" })).toBeInTheDocument();
   // «Готов к выдаче» is done for the picker: hidden until ticked (ISS_MODES_.pick.hidden).
   expect(screen.queryByText("FRX-ISS-26-0003")).not.toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("показать «Готов к выдаче»"));
+  await showAll();
   expect(await screen.findByText("FRX-ISS-26-0003")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Поиск: Запросы на комплектацию"), { target: { value: "петров КБ1" } });
@@ -329,8 +330,61 @@ it("searches by number, purpose, requester and status and counts every stage in 
   expect(screen.getByRole("button", { name: /^708К\.4/ })).toBeInTheDocument();
   expect(screen.queryByText("FRX-ISS-26-0001")).not.toBeInTheDocument();
   // issFilterRender_: the chips count what the search left.
-  expect(screen.getByRole("button", { name: "Новая · 0" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Не начата · 0" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Недоукомплектован · 1" })).toBeInTheDocument();
+});
+
+function kitRequests() {
+  return [
+    request,
+    { ...request, id: "r2", number: "FRX-ISS-26-0002", purpose: "708К.4 · КБ1 · Жгут", project: "708К.4", status: "Недоукомплектован" },
+    { ...request, id: "r4", number: "FRX-ISS-26-0004", purpose: "708К.4 · КБ2 · Жгут", project: "708К.4", status: "Укомплектован" },
+    { ...request, id: "r5", number: "FRX-ISS-26-0005", purpose: "", project: "", status: "Укомплектован" },
+  ];
+}
+
+function mockKit() {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: kitRequests(), next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("opens the picking screen on «К набору»: new and short requests only, «Новая» reads «Не начата», «Все» is last", async () => {
+  mockKit();
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  const chip = await screen.findByRole("button", { name: "К набору · 2" });
+  expect(chip).toHaveAttribute("aria-pressed", "true");
+  const labels = within(screen.getByRole("group", { name: "Стадии" })).getAllByRole("button").map((button) => button.textContent);
+  expect(labels).toEqual(["К набору · 2", "Не начата · 1", "Недоукомплектован · 1", "Укомплектован · 2", "Все · 4"]);
+  expect(screen.getByRole("button", { name: "Не начата · 1" })).toHaveAttribute("title", "заявка пришла, комплектовщик ещё ничего не набрал");
+  expect(screen.queryByText("Новая")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^708К.4/ })).toBeInTheDocument();
+  expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();
+  expect(screen.queryByText("FRX-ISS-26-0005")).not.toBeInTheDocument();
+  // The tile and the project card count only what the chip lets through: one КБ of 708К.4, not both.
+  expect(screen.getByText("сборок: 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /^708К.4/ }));
+  expect(await screen.findByRole("tab", { name: /КБ1/ })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /КБ2/ })).not.toBeInTheDocument();
+});
+
+it("«Все» and a stage chip widen or narrow the picking screen; the table opens on the same chip", async () => {
+  mockKit();
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Все · 4" }));
+  expect(screen.getByText("FRX-ISS-26-0005")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Укомплектован · 2" }));
+  expect(screen.queryByText("FRX-ISS-26-0001")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "К набору · 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Таблицей" }));
+  const group = await screen.findByRole("group", { name: "Быстрый отбор" });
+  expect(within(group).getByRole("button", { name: "К набору · 2" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(group).getAllByRole("button").at(-1)).toHaveTextContent("Все · 4");
+  expect(screen.queryByText("FRX-ISS-26-0005")).not.toBeInTheDocument();
+  expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();
 });
 
 it("opens a project with every request of it and a whole-order view", async () => {
@@ -622,6 +676,7 @@ const projectLots = [
 
 async function openWholeOrder() {
   render(<FulfillmentPage principal={principal} mode="pick" />);
+  await showAll();
   fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
 }
 
@@ -924,6 +979,7 @@ it("gives no issue action without the handout right or on the picking screen", a
   unmount();
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
+  await showAll();
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
   expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));

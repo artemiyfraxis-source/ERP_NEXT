@@ -37,6 +37,34 @@ const MODES = {
   },
 };
 const ARCHIVE = ["Готово", "Отменена"];
+
+/* «Запросы на комплектацию» opens on what is still to be picked (owner, 12.10.2026): «Новая» + «Недоукомплектован».
+   «Новая» reads «Не начата» on these screens — the stored status value stays «Новая». */
+export const TO_PICK_LABEL = "К набору";
+export const TO_PICK_STAGES = ["Новая", "Недоукомплектован"];
+const NOT_STARTED_HINT = "заявка пришла, комплектовщик ещё ничего не набрал";
+
+export function stageLabel(status: string) {
+  return status === "Новая" ? "Не начата" : status;
+}
+
+function RequestStatus({ status }: { status: string }) {
+  return status === "Новая"
+    ? <StatusChip status={status} title={NOT_STARTED_HINT}>{stageLabel(status)}</StatusChip>
+    : <StatusChip status={status} />;
+}
+
+type StageChip = { label: string; stages: string[]; hint?: string };
+
+/* The chips of the screen: on the picking screen «К набору» first and «Все» last, a chip per stage between. */
+function stageChips(mode: keyof typeof MODES | undefined, stages: string[]): StageChip[] {
+  const single = stages.map((stage) => ({ label: stageLabel(stage), stages: [stage], hint: stage === "Новая" ? NOT_STARTED_HINT : undefined }));
+  return mode === "pick" ? [{ label: TO_PICK_LABEL, stages: TO_PICK_STAGES, hint: "Не начата и недоукомплектован" }, ...single] : single;
+}
+
+function sameStages(a: string[], b: string[]) {
+  return a.length === b.length && a.every((item) => b.includes(item));
+}
 const ALL_STAGES = ["Новая", "Недоукомплектован", "Укомплектован", "Готов к выдаче", "КБ Выдана", "КБ Возвращена"];
 
 type Mutate = (requestId: string, operation: () => Promise<unknown>) => Promise<void>;
@@ -158,7 +186,7 @@ function createdDay(value?: string | null) {
 
 function StageChips({ counts }: { counts: Map<string, number> }) {
   return <div className="kit-chips">{[...counts].map(([status, count]) => <span key={status} className="iss-chip-wrap">
-    <StatusChip status={status} />
+    <RequestStatus status={status} />
     {count > 1 && <small className="t-sub">×{count}</small>}
   </span>)}</div>;
 }
@@ -230,15 +258,17 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   const [view, setView] = useState(savedView);
   const [query, setQuery] = useState("");
   // The chosen stage chips; empty — «Все». The handout screen picks several, the others one.
-  const [picked, setPicked] = useState<string[]>(() => (mode === "give" ? savedGiveStages() : []));
+  const [picked, setPicked] = useState<string[]>(() => (mode === "give" ? savedGiveStages() : mode === "pick" ? TO_PICK_STAGES : []));
   const multi = mode === "give";
   function choose(next: string[]) {
     setPicked(next);
     if (multi) saveGiveStages(next);
   }
-  function toggle(item: string) {
-    if (!multi) return choose(picked.length === 1 && picked[0] === item ? [] : [item]);
-    choose(picked.includes(item) ? picked.filter((value) => value !== item) : [...picked, item]);
+  // The picking screen always opens on «К набору»; its chips are exclusive, «Все» clears them.
+  function toggle(item: StageChip) {
+    if (!multi) return choose(sameStages(picked, item.stages) ? [] : item.stages);
+    const [stage] = item.stages;
+    choose(picked.includes(stage) ? picked.filter((value) => value !== stage) : [...picked, stage]);
   }
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -321,10 +351,12 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   };
 
   // issFilterRender_: one chip per stage of the screen with its count; the archive splits into its two closings.
-  const presets = (archive ? ARCHIVE : stages ?? ALL_STAGES).map((stage) => ({
-    label: stage,
-    test: (request: FulfillmentRequest) => request.status === stage,
+  const chips: StageChip[] = archive ? ARCHIVE.map((stage) => ({ label: stage, stages: [stage] })) : stageChips(mode, stages ?? ALL_STAGES);
+  const presets = chips.map((chip) => ({
+    label: chip.label,
+    test: (request: FulfillmentRequest) => chip.stages.includes(request.status),
   }));
+  const defaultPreset = mode === "pick" && !archive ? TO_PICK_LABEL : "";
 
   const columns: DataColumn<FulfillmentRequest>[] = [
     { key: "number", title: "№", value: (request) => request.number, render: (request) => <strong>{request.number}</strong> },
@@ -338,13 +370,14 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
     },
     { key: "purpose", title: "Назначение", value: (request) => request.purpose, wrap: true, grow: true },
     { key: "requester", title: "Заявитель", value: (request) => request.requester },
-    { key: "status", title: "Статус", value: (request) => request.status, filter: true, render: (request) => <StatusChip status={request.status} /> },
+    { key: "status", title: "Статус", value: (request) => request.status, filter: true, render: (request) => <RequestStatus status={request.status} /> },
     { key: "deadline", title: "Дедлайн", value: (request) => request.deadline ?? "", render: (request) => day(request.deadline) || "—" },
     { key: "count", title: "Позиций", numeric: true, value: (request) => (request.lines ?? []).length },
     { key: "waiting", title: "Ждут ГРН", numeric: true, value: (request) => openLines(request).length },
   ];
 
-  const projectRequests = project ? requests.filter((request) => projectOf(request) === project && inScreenIgnoringStage(request)) : [];
+  // The project card shows the requests of the chosen chip only, like its tile does.
+  const projectRequests = project ? requests.filter((request) => projectOf(request) === project && inScreenIgnoringStage(request) && (archive || mode !== "pick" || !picked.length || picked.includes(request.status))) : [];
   // Прод 719К.2: отменённая КБ пропадала из карточки проекта без следа — в активной карточке она остаётся серой плашкой.
   const projectCancelled = project && !archive ? requests.filter((request) => projectOf(request) === project && request.status === "Отменена") : [];
   function inScreenIgnoringStage(request: FulfillmentRequest) {
@@ -358,10 +391,11 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   }
 
   // issFilterRender_: the chips count what the search left, not what the chip itself narrows to.
-  const chipStages = presets.map((item) => item.label);
   const found = shown.filter((request) => issMatch(request, query));
   const tiled = picked.length ? found.filter((request) => picked.includes(request.status)) : found;
   const opened = openId ? requests.find((request) => request.id === openId) : undefined;
+  const allLast = mode === "pick" && !archive;
+  const allChip = <button type="button" className={`calendar-chip${picked.length ? "" : " active"}`} aria-pressed={!picked.length} onClick={() => choose([])}>Все · {found.length}</button>;
   const emptyText = archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта.";
   const readyToggle = screen && screen.hidden.length > 0 && !archive && <label className="check-inline"><input type="checkbox" checked={showReady} onChange={(event) => {
     setShowReady(event.target.checked);
@@ -372,9 +406,9 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   return (
     <section className="page">
       <header className="page-head">
-        <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>
+        <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{mode === "pick" && view === "tiles" ? tiled.length : shown.length}</span>
         <div className="page-actions">
-        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setPicked([]); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
+        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setPicked(archive && mode === "pick" ? TO_PICK_STAGES : []); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
         {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => { setCreating((value) => !value); setFromCalc(false); }}>+ Заявка</button>}
         {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>Заявка по расчёту</button>}
         <button className="secondary small" onClick={() => switchView(view === "tiles" ? "table" : "tiles")}>{view === "tiles" ? "Таблицей" : "Плитками"}</button>
@@ -396,15 +430,22 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
             {readyToggle}
           </div>
           <div className="calendar-chips" role="group" aria-label="Стадии">
-            <button type="button" className={`calendar-chip${picked.length ? "" : " active"}`} aria-pressed={!picked.length} onClick={() => choose([])}>Все · {found.length}</button>
-            {chipStages.map((item) => <button type="button" key={item} className={`calendar-chip${picked.includes(item) ? " active" : ""}`} aria-pressed={picked.includes(item)} onClick={() => toggle(item)}>{item} · {found.filter((request) => request.status === item).length}</button>)}
+            {!allLast && allChip}
+            {chips.map((item) => {
+              const on = multi ? picked.includes(item.stages[0]) : sameStages(picked, item.stages);
+              return <button type="button" key={item.label} title={item.hint} className={`calendar-chip${on ? " active" : ""}`} aria-pressed={on} onClick={() => toggle(item)}>{item.label} · {found.filter((request) => item.stages.includes(request.status)).length}</button>;
+            })}
+            {allLast && allChip}
           </div>
           {tiled.length
             ? <RequestTiles requests={tiled} openProject={setProject} openRequest={setOpenId} />
-            : <div className="empty">{!loaded ? "Загружаю…" : query ? "Ничего не нашлось." : picked.length ? `На ${picked.length > 1 ? "стадиях" : "стадии"} ${picked.map((item) => `«${item}»`).join(", ")} заявок нет.` : emptyText}</div>}
+            : <div className="empty">{!loaded ? "Загружаю…" : query ? "Ничего не нашлось." : !shown.length ? emptyText : allLast && sameStages(picked, TO_PICK_STAGES) ? "Набирать нечего: заявок «Не начата» и «Недоукомплектован» нет." : picked.length ? `На ${picked.length > 1 ? "стадиях" : "стадии"} ${picked.map((item) => `«${stageLabel(item)}»`).join(", ")} заявок нет.` : emptyText}</div>}
         </>)}
       {!project && view === "table" && <DataTable
+        key={archive ? "archive" : "active"}
         rows={shown}
+        defaultPreset={defaultPreset}
+        allLast={allLast}
         columns={columns}
         rowKey={(request) => request.id}
         label={screen?.title ?? "Заявки на выдачу"}
@@ -602,7 +643,7 @@ function IssueChooser({ project, requests, busy, onCancel, onIssue }: {
           <td className="check"><input type="checkbox" aria-label={`Выдать ${kbOf(request)}`} disabled={!can || busy} checked={can && picked.has(request.id)} onChange={() => toggle(request.id)} /></td>
           <td><strong>{kbOf(request)}</strong></td>
           <td>{request.number}</td>
-          <td><StatusChip status={request.status} /></td>
+          <td><RequestStatus status={request.status} /></td>
           <td className="num">{request.lines.length}</td>
           <td>{request.at_picked ? `${stamp(request.at_picked)}${request.handout_location ? ` · ${request.handout_location}` : ""}` : can ? `сейчас · ${request.handout_place || DEFAULT_HANDOUT_PLACE}` : "—"}</td>
           <td>{can ? "" : notIssuable(request)}</td>
@@ -671,7 +712,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
 
   return (
     <article className="panel fulfillment-card">
-      <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><StatusChip status={request.status} /></div>
+      <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><RequestStatus status={request.status} /></div>
       {meta.length > 0 && <dl className="fulfillment-meta">{meta.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
       <p className="fulfillment-progress">Набрано {request.lines.length - waiting.length} из {request.lines.length} поз.{waiting.length - absent > 0 && !closed ? ` · ждут ГРН: ${waiting.length - absent}` : ""}{absent > 0 && !closed ? ` · нет на складе: ${absent}` : ""}</p>
       {request.shortfall && <details className="fulfillment-short"><summary>Недобор по составу</summary><div>{request.shortfall}</div></details>}

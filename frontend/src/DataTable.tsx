@@ -67,6 +67,8 @@ export interface DataTableProps<T> {
   /** Счётчики чипов — по строкам, прошедшим поиск и фильтры колонок (без самого чипа), как issFilterRender_ в
       SUPPLYMAP. По умолчанию — по всем строкам. */
   presetCountsFollowSearch?: boolean;
+  /** «Все» стоит после остальных чипов, а не перед ними. */
+  allLast?: boolean;
   groupBy?: (row: T) => string;
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
   groupLabel?: (name: string, rows: T[]) => string;
@@ -214,6 +216,7 @@ export function DataTable<T>({
   presets = [],
   defaultPreset = "",
   presetCountsFollowSearch = false,
+  allLast = false,
   groupBy,
   groupLabel,
   bulkActions = [],
@@ -472,12 +475,13 @@ export function DataTable<T>({
       )}
       {presets.length > 0 && (
         <div className="calendar-chips" role="group" aria-label="Быстрый отбор">
-          <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>
+          {!allLast && <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>}
           {presets.map((item) => (
             <button type="button" key={item.label} className={`calendar-chip${preset === item.label ? " active" : ""}`} aria-pressed={preset === item.label} onClick={() => setPreset(preset === item.label ? "" : item.label)}>
               {item.label} · {counted.filter(item.test).length}
             </button>
           ))}
+          {allLast && <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>}
         </div>
       )}
       {selectable && selectedRows.length > 0 && (
