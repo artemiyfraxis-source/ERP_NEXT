@@ -148,3 +148,13 @@ it("вид маркировки Термотрубка / Хлястик не с�
   expect(markMaterialSource("Хлястик", [], [])).toBe("ref");
   expect(markMaterialSource("Самоклейка неведомая", [], [])).toBeNull();
 });
+
+it("tube length goes to the operation as a number (comma accepted), only for tubes and only when > 0; saved config gives it back", () => {
+  const specs = markSpecs([
+    newMarkRow({ text: "X1", material: "Термотрубка", len: "25,5" }), newMarkRow({ text: "X2", material: "Термотрубка", len: "0" }),
+    newMarkRow({ text: "X3", material: "Термотрубка" }), newMarkRow({ text: "КБ1", material: "Хлястик", len: "30" }),
+  ], []);
+  expect(specs.map((spec) => spec.lengthMm)).toEqual([25.5, undefined, undefined, undefined]);
+  expect("lengthMm" in specs[1]).toBe(false);
+  expect(markRowsFromConfig({ ops: [{ type: "insMark", marks: [specs[0], specs[2]] }] }).map((row) => row.len ?? "")).toEqual(["25,5", ""]);
+});

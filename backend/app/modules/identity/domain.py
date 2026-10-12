@@ -370,17 +370,26 @@ def _ru_key(value: str) -> tuple[str, str]:
     return lowered.replace("ё", "е"), lowered
 
 
-def department_list(*sources: list[str]) -> list[str]:
+def department_list(ordered: list[str], *more: list[str]) -> list[str]:
     """staffDepts_: the union of every source, trimmed, without blanks, case-insensitive duplicates and
-    role-like values, sorted as Russian text. The first spelling met wins."""
+    role-like values. The first source (the saved list, or what the administrator typed) keeps its order — the
+    «Отделы» list is shown as stored (owner 12.10.2026, migration 0104); departments only the other sources bring (in
+    use, not listed yet) go to the end, sorted as Russian text. The first spelling met wins."""
     result: dict[str, str] = {}
-    for source in sources:
-        for value in source:
+
+    def take(values: list[str]) -> list[str]:
+        taken: list[str] = []
+        for value in values:
             name = str(value or "").strip()
             if not name or department_is_role_like(name) or name.casefold() in result:
                 continue
             result[name.casefold()] = name
-    return sorted(result.values(), key=_ru_key)
+            taken.append(name)
+        return taken
+
+    head = take(ordered)
+    tail = [name for source in more for name in take(source)]
+    return head + sorted(tail, key=_ru_key)
 
 
 # ── Кадровые поля «Личной карточки» (native, owner 04.10.2026; no SUPPLYMAP source) ──────────────

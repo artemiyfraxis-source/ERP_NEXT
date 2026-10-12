@@ -400,7 +400,6 @@ def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
                 json={"techcard_id": str(card.id), "quantity": 10})
 
     marks = [
-        {"field": "status", "value": "холд, к запус"},
         {"field": "comment", "text": "ждём ответ заказчика"},
         {"field": "kit_arrival", "value": "2026-10-09"},
         {"field": "test_sb", "value": "да"},
@@ -410,20 +409,24 @@ def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
     ]
     saved = [client.post("/api/production/plan/events", json={"project": "708К.4", "kind": "mark", **mark}) for mark in marks]
     bad = client.post("/api/production/plan/events", json={"project": "708К.4", "kind": "mark", "field": "ready", "value": "300"})
+    status_mark = client.post("/api/production/plan/events", json={
+        "project": "708К.4", "kind": "mark", "field": "status", "value": "холд",
+    })
     loaded = client.get("/api/production/plan")
 
     assert [response.status_code for response in saved] == [201] * len(marks), [r.text for r in saved]
-    assert saved[0].json()["event"]["value"] == "ХОЛД, К ЗАПУСК"
-    assert saved[0].json()["event"]["field"] == "status"
+    assert saved[0].json()["event"]["field"] == "comment"
     assert saved[0].json()["event"]["kind"] == "Отметка плана"
     assert bad.status_code == 422
+    assert status_mark.status_code == 422
+    assert "меняйте этап" in status_mark.text
     body = loaded.json()
     assert "ОТГРУЖЕН" in body["shop_statuses"]
     assert (body["calendar_from"], body["calendar_to"]) == ("2026-09-15", "2026-11-21")
     row = body["rows"][0]
     sheet = row["sheet"]
-    assert sheet["status"] == {"value": "ХОЛД, К ЗАПУСК", "auto": "В РАБОТЕ", "manual": True}
-    assert row["group"] == "hold"
+    assert sheet["status"] == {"value": "В работе", "auto": "В работе", "manual": False}
+    assert row["group"] == "active"
     assert sheet["comment"]["value"] == "ждём ответ заказчика"
     assert sheet["kit_arrival"]["value"] == "2026-10-09" and sheet["kit_arrival"]["manual"] is True
     assert sheet["test_sb"]["value"] == "да"
@@ -436,7 +439,7 @@ def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
             AuditEventRow.event_type == "production.plan_event_added"))]
     mark_audit = [details for details in audit if details["kind"] == "Отметка плана"]
     assert len(mark_audit) == len(marks)
-    assert {"project": "708К.4", "kind": "Отметка плана", "field": "status", "value": "ХОЛД, К ЗАПУСК"} in mark_audit
+    assert {"project": "708К.4", "kind": "Отметка плана", "field": "test_sb", "value": "да"} in mark_audit
 
 
 def test_production_plan_rejects_note_for_unknown_project(production_api):
@@ -880,3 +883,24 @@ def test_staff_cannot_pass_operator_id(production_api):
 
     assert own.status_code == 200
     assert foreign.status_code == 403 and foreign_execution.status_code == 403
+
+
+def test_terminal_project_status_event_and_stage_kinds_still_work_next_to_refused_status_mark(production_api):
+    client, _operator_id = production_api
+    client.put("/api/production/plan/projects-snapshot", json={"projects": [{
+        "project": "708К.4", "customer": "Заказчик", "status": "Новый", "terminal": False,
+    }]})
+
+    def post(**body):
+        return client.post("/api/production/plan/events", json={"project": "708К.4", **body})
+
+    refused = post(kind="mark", field="status", value="ХОЛД")
+    block = post(kind="block", blocker="ХОЛД", text="ждём")
+    unblock = post(kind="unblock", text="снято")
+    stage = post(kind="stage", value="ТК готова")
+    closed = post(kind="status", value="Отказ")  # last: a stage change on a closed project would reopen it
+
+    assert refused.status_code == 422 and "меняйте этап" in refused.text
+    assert [r.status_code for r in (closed, block, unblock, stage)] == [201] * 4
+    row = client.get("/api/production/plan").json()["rows"][0]
+    assert row["terminal"] is True and row["group"] == "closed"

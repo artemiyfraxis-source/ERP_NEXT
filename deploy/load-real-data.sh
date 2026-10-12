@@ -32,7 +32,7 @@ done
 case "${1:-}" in
   base)
     if ! ./erp.sh run --rm -e ERP_NEW_USER_PASSWORD="$password" api python -m app.identity_admin create-user \
-        --login "$login" --email "$login@erp.local" --name 'Администратор ERP' --department 'Руководство' --role admin; then
+        --login "$login" --email "$login@erp.local" --name 'Администратор ERP' --department 'Руководящий состав' --role admin; then
       echo "(admin уже есть — пропускаю)"
     fi
     cli python -m app.modules.identity.import_staff --apply --source /opt/supplymap | tee "$ERP_HOME/config/staff-pins.txt"

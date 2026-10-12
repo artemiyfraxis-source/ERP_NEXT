@@ -36,3 +36,11 @@ it("длинная надпись целиком в поле «Надпись»,
   expect(rows[0].text).toBe(`${long}, версия 3`);
   expect(fireEvent.keyDown(box, { key: "Enter" })).toBe(false);
 });
+
+it("«Длина, мм» есть только у строк-трубок; запятая принимается и правка уходит в строку", () => {
+  let rows = [newMarkRow({ text: "X1", material: "Термотрубка" }), newMarkRow({ text: "X2", material: "Хлястик" })];
+  render(<MarkTable enabled onEnabled={() => undefined} hint="" onChange={(next) => { rows = next; }} targets={[]} kitMarks={[]} comps={[]} mats={[]} rows={rows} />);
+  expect(screen.queryByLabelText("Длина трубки 2")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Длина трубки 1"), { target: { value: "25,5" } });
+  expect(rows[0].len).toBe("25,5");
+});

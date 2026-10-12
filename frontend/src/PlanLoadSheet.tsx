@@ -3,20 +3,16 @@ import type { ProductionPlanRow, ProductionPlanSheetCell, ProductionPlanSheetFie
 import { AutoTextarea } from "./AutoTextarea";
 import { matchesWords } from "./DataTable";
 import { formatDate, formatDayMonth } from "./format";
-import { StatusChip } from "./StatusChip";
+import { ProjectStatus, planStatusApi } from "./ProjectStatus";
 import { statusLabel, statusTone, type Tone } from "./statusTone";
 
 /* Лист цеха «ЗАГРУЗ» в ERP (владелец 04.10: «тут вот такое представление я хочу»): строка — проект, слева
    закреплённые колонки листа, справа календарь по дням (или по неделям) с полосой плановых работ. Значения считает
    ERP, ручная отметка («Отметка плана») ставится поверх и видна уголком в ячейке. */
 
-export type SheetGroup = "hold" | "active" | "done" | "closed";
-export const SHEET_GROUPS: Array<[SheetGroup, string]> = [
-  ["hold", "На паузе"],
-  ["active", "В работе"],
-  ["done", "ОТК, отгрузка, готово"],
-  ["closed", "Закрытые проекты"],
-];
+/** Группа листа — один этап из `stages` плана (порядок сервера) или «Закрытые» (статус проекта конечный). */
+export const CLOSED_GROUP = "Закрытые";
+export interface SheetGroupData { key: string; label: string; closed: boolean; rows: ProductionPlanRow[] }
 
 export type SheetMark = { project: string; field: string; value?: string; text?: string };
 /** Масштаб календаря: день — колонка, или неделя — колонка (взгляд на 2–3 месяца). */
@@ -123,16 +119,25 @@ export function todayScrollLeft(days: Pick<SheetDay, "iso">[], today: string, da
   return index < 0 || dayWidth <= 0 ? 0 : Math.max(0, (index - lead) * dayWidth);
 }
 
-/** Строки по группам листа: на паузе сверху, в работе, готовые внизу; внутри — горящий дедлайн первым. */
-export function groupSheetRows(rows: ProductionPlanRow[], query = ""): Record<SheetGroup, ProductionPlanRow[]> {
-  const result: Record<SheetGroup, ProductionPlanRow[]> = { hold: [], active: [], done: [], closed: [] };
+/** Строки по этапам в порядке `stages`, закрытые проекты — последней группой. Пустые группы не возвращаются.
+ *  Внутри группы: просроченные и горящие первыми (days_left по возрастанию, без срока — в конце), затем номер проекта
+ *  с числовым сравнением («КБ9» раньше «КБ10»). Блокер строку из этапа не уводит. Этап вне списка — после известных. */
+export function groupSheetRows(rows: ProductionPlanRow[], stages: string[], query = ""): SheetGroupData[] {
+  const byKey = new Map<string, ProductionPlanRow[]>();
+  const extra: string[] = [];
+  const closed: ProductionPlanRow[] = [];
   for (const row of rows) {
     if (!matchesWords([row.project, row.customer], query)) continue;
-    result[row.group ?? (row.terminal ? "closed" : "active")].push(row);
+    if (row.terminal) { closed.push(row); continue; }
+    if (!stages.includes(row.stage) && !extra.includes(row.stage)) extra.push(row.stage);
+    byKey.set(row.stage, [...(byKey.get(row.stage) ?? []), row]);
   }
-  for (const list of Object.values(result)) {
-    list.sort((a, b) => (a.days_left ?? 1e9) - (b.days_left ?? 1e9) || a.project.localeCompare(b.project, "ru"));
-  }
+  const order = (a: ProductionPlanRow, b: ProductionPlanRow) =>
+    (a.days_left ?? 1e9) - (b.days_left ?? 1e9) || a.project.localeCompare(b.project, "ru", { numeric: true });
+  const result: SheetGroupData[] = [...stages, ...extra]
+    .map((stage) => ({ key: stage, label: stage || "Без этапа", closed: false, rows: (byKey.get(stage) ?? []).sort(order) }))
+    .filter((group) => group.rows.length > 0);
+  if (closed.length) result.push({ key: CLOSED_GROUP, label: CLOSED_GROUP, closed: true, rows: closed.sort(order) });
   return result;
 }
 
@@ -179,15 +184,15 @@ function chipTextWidth(text: string) {
   return width;
 }
 
-export const STATUS_WIDTH = { min: 84, max: 200, more: 26 };
+export const STATUS_WIDTH = { min: 84, max: 260, caret: 14 };
 
-/** Ширина колонки «Статус» по самому длинному главному слову листа (+ место под «+N»): слово не обрезается. */
-export function statusColumnWidth(rows: Pick<ProductionPlanRow, "sheet">[]) {
+/** Ширина колонки «Статус» по самому длинному этапу и блокеру рядом с ним (чип со стрелкой меню): слово не обрезается. */
+export function statusColumnWidth(rows: Pick<ProductionPlanRow, "stage" | "blocker">[]) {
   let widest = 0;
   for (const row of rows) {
-    const [first, ...rest] = orderStatuses(row.sheet?.status?.value ?? "");
-    if (!first) continue;
-    widest = Math.max(widest, Math.ceil(chipTextWidth(statusLabel(first)) + 16 + 10 + (rest.length ? STATUS_WIDTH.more : 0)));
+    const stage = chipTextWidth(statusLabel(row.stage)) + 16 + STATUS_WIDTH.caret;
+    const blocker = row.blocker ? chipTextWidth(statusLabel(row.blocker.type)) + 16 + 6 : 0;
+    widest = Math.max(widest, Math.ceil(stage + blocker + 10));
   }
   return Math.min(STATUS_WIDTH.max, Math.max(STATUS_WIDTH.min, widest));
 }
@@ -247,6 +252,7 @@ export const MIN_VISIBLE_DAYS = 35;
 export const MIN_VISIBLE_WEEKS = 8;
 const COLUMNS_KEY = "erp-zg-columns";
 const SCALE_KEY = "erp-zg-scale";
+const COLLAPSED_KEY = "erp-zg-collapsed";
 
 /** Ширина колонки: «Статус» — по самому длинному слову; на планшете отметки шире — под палец. */
 function columnWidth(column: Column, coarse: boolean, statusWidth = column.width) {
@@ -284,6 +290,7 @@ function writeStored(key: string, value: unknown) {
 
 const readChosen = () => readStored<ColumnKey[]>(COLUMNS_KEY, (saved) => Array.isArray(saved)
   ? saved.filter((key): key is ColumnKey => COLUMNS.some((column) => column.key === key)) : null);
+const readCollapsed = () => readStored<string[]>(COLLAPSED_KEY, (saved) => Array.isArray(saved) ? saved.filter((item): item is string => typeof item === "string") : null) ?? [];
 const readScale = () => readStored<SheetScale>(SCALE_KEY, (saved) => saved === "week" ? "week" : null) ?? "day";
 
 function isCoarse() {
@@ -317,17 +324,20 @@ function sheetLayout(hidden: ColumnKey[], coarse: boolean, statusWidth: number):
 
 type Editing = { project: string; field: string; top: number; left: number };
 
-export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, suppliedValues, arrivalValues, canEdit, busy, onMark, onDeadline, onOpenProject, onOpenJournal, hasCard }: {
+export function PlanLoadSheet({ rows, from, to, today, holidays, stages, suppliedValues, arrivalValues, canEdit, busy, onStatusChanged, onMark, onDeadline, onOpenProject, onOpenJournal, hasCard }: {
   rows: ProductionPlanRow[];
   from: string;
   to: string;
   today: string;
   holidays: string[];
-  shopStatuses: string[];
+  /** Этапы проекта по порядку — из плана (`stages`); по ним строятся группы листа. */
+  stages: string[];
   suppliedValues: string[];
   arrivalValues: string[];
   canEdit: boolean;
   busy: boolean;
+  /** Статус проекта сменили в меню ячейки «Статус» — перечитать план. */
+  onStatusChanged: () => void;
   onMark: (mark: SheetMark) => Promise<void>;
   onDeadline: (project: string, deadline: string) => Promise<void>;
   onOpenProject: (row: ProductionPlanRow) => void;
@@ -337,6 +347,7 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
 }) {
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  const [collapsed, setCollapsed] = useState<string[]>(readCollapsed);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [choosing, setChoosing] = useState(false);
   const [chosen, setChosen] = useState<ColumnKey[] | null>(readChosen);
@@ -347,7 +358,7 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
   const days = useMemo(() => sheetDays(from, to, holidays), [from, to, holidays]);
   const weeks = useMemo(() => sheetWeeks(days), [days]);
   const months = useMemo(() => sheetMonths(scale === "week" ? weeks : days), [scale, weeks, days]);
-  const groups = useMemo(() => groupSheetRows(rows, query), [rows, query]);
+  const groups = useMemo(() => groupSheetRows(rows, stages, query), [rows, stages, query]);
   const statusWidth = useMemo(() => statusColumnWidth(rows), [rows]);
   const hidden = chosen ?? autoHiddenColumns(space.available, space.day, coarse, statusWidth, scale === "week" ? MIN_VISIBLE_WEEKS : MIN_VISIBLE_DAYS);
   const layout = useMemo(() => sheetLayout(hidden, coarse, statusWidth), [hidden.join(","), coarse, statusWidth]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -409,8 +420,16 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
     writeStored(SCALE_KEY, next === "week" ? next : null);
   }
 
-  const visible = SHEET_GROUPS.filter(([group]) => group !== "closed" || showClosed);
-  const shown = visible.reduce((count, [group]) => count + groups[group].length, 0);
+  const closedCount = groups.find((group) => group.closed)?.rows.length ?? 0;
+  const visible = groups.filter((group) => !group.closed || showClosed);
+  const shown = visible.reduce((count, group) => count + group.rows.length, 0);
+  const lastStage = stages[stages.length - 1];
+
+  function toggleGroup(key: string) {
+    const next = collapsed.includes(key) ? collapsed.filter((item) => item !== key) : [...collapsed, key];
+    setCollapsed(next);
+    writeStored(COLLAPSED_KEY, next.length ? next : null);
+  }
   const row = editing ? rows.find((item) => item.project === editing.project) : undefined;
   const span = layout.columns.length + units;
   const cardOf = hasCard ?? ((item: ProductionPlanRow) => item.kits.length > 0);
@@ -418,7 +437,7 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
   return <div className="zg">
     <div className="zg-toolbar">
       <input aria-label="Поиск проекта" placeholder="№ проекта или заказчик…" value={query} onChange={(event) => setQuery(event.target.value)} />
-      {groups.closed.length > 0 && <label className="zg-toggle"><input type="checkbox" checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} />Закрытые проекты · {groups.closed.length}</label>}
+      {closedCount > 0 && <label className="zg-toggle"><input type="checkbox" checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} />Закрытые проекты · {closedCount}</label>}
       <div className="zg-scale" role="group" aria-label="Масштаб календаря">
         <button type="button" className={scale === "day" ? "on" : undefined} aria-pressed={scale === "day"} onClick={() => pickScale("day")}>Дни</button>
         <button type="button" className={scale === "week" ? "on" : undefined} aria-pressed={scale === "week"} onClick={() => pickScale("week")}>Недели</button>
@@ -475,8 +494,9 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
           </tr>
         </thead>
         <tbody>
-          {visible.map(([group, label]) => groups[group].length > 0 && <SheetGroupRows key={group} group={group} label={label} rows={groups[group]}
-            layout={layout} days={days} weeks={scale === "week" ? weeks : null} units={units} today={today} canEdit={canEdit} busy={busy} suppliedValues={suppliedValues}
+          {visible.map((group) => <SheetGroupRows key={group.key} group={group} showSpan={!group.closed && group.key !== lastStage}
+            folded={collapsed.includes(group.key)} onToggle={() => toggleGroup(group.key)}
+            layout={layout} days={days} weeks={scale === "week" ? weeks : null} units={units} today={today} canEdit={canEdit} busy={busy} suppliedValues={suppliedValues} onStatusChanged={onStatusChanged}
             open={open} mark={mark} onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} hasCard={cardOf} />)}
           {!shown && <tr className="zg-empty-row"><td colSpan={span} className="zg-empty">
             <span className="zg-empty-text">{query ? "Под этот поиск проектов нет." : "Проектов в плане нет — заведите проект в «Проектах»."}</span>
@@ -487,7 +507,7 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
     {editing && row && <>
       <div className="zg-scrim" onClick={() => setEditing(null)} />
       <div className="zg-pop" role="dialog" aria-label={`Правка: ${editing.project}`} style={{ top: editing.top, left: editing.left }}>
-        <SheetEditor row={row} field={editing.field} busy={busy} shopStatuses={shopStatuses} arrivalValues={arrivalValues}
+        <SheetEditor row={row} field={editing.field} busy={busy} arrivalValues={arrivalValues}
           mark={mark} onDeadline={async (value) => { setEditing(null); await onDeadline(row.project, value); }}
           close={() => setEditing(null)} />
       </div>
@@ -510,10 +530,12 @@ function dayClass(day: SheetDay, today: string, base: string) {
   return [base, day.off && "zg-off", day.iso === today && "zg-today", day.monthStart && "zg-month"].filter(Boolean).join(" ");
 }
 
-function SheetGroupRows({ group, label, rows, layout, days, weeks, units, today, canEdit, busy, suppliedValues, open, mark, onOpenProject, onOpenJournal, hasCard }: {
-  group: SheetGroup;
-  label: string;
-  rows: ProductionPlanRow[];
+function SheetGroupRows({ group, showSpan, folded, onToggle, layout, days, weeks, units, today, canEdit, busy, suppliedValues, onStatusChanged, open, mark, onOpenProject, onOpenJournal, hasCard }: {
+  group: SheetGroupData;
+  /** Полоса плановых работ нужна только открытым проектам не на последнем этапе. */
+  showSpan: boolean;
+  folded: boolean;
+  onToggle: () => void;
   layout: Layout;
   days: SheetDay[];
   weeks: SheetWeek[] | null;
@@ -526,15 +548,18 @@ function SheetGroupRows({ group, label, rows, layout, days, weeks, units, today,
   mark: (project: string, field: string, value: string, text?: string) => Promise<void>;
   onOpenProject: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
+  onStatusChanged: () => void;
   hasCard: (row: ProductionPlanRow) => boolean;
 }) {
-  const showSpan = group === "active" || group === "hold";
+  const { rows } = group;
   return <>
-    <tr className={`zg-group zg-group-${group}`}><td colSpan={layout.columns.length + units}><span className="zg-group-label">{label} · {rows.length}</span></td></tr>
-    {rows.map((row) => <tr key={row.project} className={`zg-row zg-row-${group}`} data-project={row.project}
+    <tr className={`zg-group${group.closed ? " zg-group-closed" : ""}`}><td colSpan={layout.columns.length + units}>
+      <button type="button" className="zg-group-label" aria-expanded={!folded} onClick={onToggle}>{group.label} · {rows.length}</button>
+    </td></tr>
+    {!folded && rows.map((row) => <tr key={row.project} className={`zg-row${group.closed ? " zg-row-closed" : ""}`} data-project={row.project}
       style={{ "--zg-color": `var(--zg-c${projectColor(row.project)})` } as CSSProperties}>
       {layout.columns.map((column, index) => <SheetCellView key={column.key} column={column} index={index} layout={layout} row={row}
-        canEdit={canEdit} busy={busy} suppliedValues={suppliedValues} open={open} mark={mark}
+        canEdit={canEdit} busy={busy} suppliedValues={suppliedValues} onStatusChanged={onStatusChanged} open={open} mark={mark}
         onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} hasCard={hasCard} />)}
       {weeks ? <WeekCells row={row} weeks={weeks} today={today} showSpan={showSpan} /> : <CalendarCells row={row} days={days} today={today} showSpan={showSpan} canEdit={canEdit} open={open} />}
     </tr>)}
@@ -558,7 +583,7 @@ function arrivalTone(value: string, late: boolean) {
   return "";
 }
 
-function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValues, open, mark, onOpenProject, onOpenJournal, hasCard }: {
+function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValues, onStatusChanged, open, mark, onOpenProject, onOpenJournal, hasCard }: {
   column: Column;
   index: number;
   layout: Layout;
@@ -570,11 +595,12 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   mark: (project: string, field: string, value: string, text?: string) => Promise<void>;
   onOpenProject: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
+  onStatusChanged: () => void;
   hasCard: (row: ProductionPlanRow) => boolean;
 }) {
   const key = column.key;
   const cell = key in (row.sheet ?? {}) ? row.sheet?.[key as ProductionPlanSheetField] : undefined;
-  const manual = cell?.manual ? "zg-manual" : "";
+  const manual = (key === "status" ? row.stage_manual : cell?.manual) ? "zg-manual" : "";
   const editable = canEdit ? "zg-edit" : "";
   const td = (content: ReactNode, extra = "", props: Record<string, unknown> = {}) => {
     const base = frozen(layout, index, [`zg-col-${key}`, manual, extra].filter(Boolean).join(" "));
@@ -637,14 +663,11 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   }
   const click = { onClick: (event: MouseEvent<HTMLElement>) => open(event, row.project, key) };
   if (key === "status") {
-    // Главный статус — целым словом (ПП-1); остальные — «+N», полный список словами ERP — в подсказке.
-    const [first, ...rest] = orderStatuses(value);
-    const all = orderStatuses(value).map(statusLabel).join(", ");
-    return td(<span className="zg-chips">
-      {first ? <StatusChip status={first} title={all} /> : <span className="zg-empty-mark">—</span>}
-      {rest.length > 0 && <span className="zg-more" title={all} aria-label={`ещё ${rest.length}: ${rest.map(statusLabel).join(", ")}`}>+{rest.length}</span>}
-    </span>,
-    editable, { title: [all, manualTitle(cell, (auto) => statusList(auto).map(statusLabel).join(", ")), row.blocker ? `${row.blocker.type}: ${row.blocker.text}` : ""].filter(Boolean).join(" — ") || undefined, ...click });
+    // Тот же чип и меню, что в «Проектах»: этап, блокер, закрытие проекта; расчётные слова листа — в подсказке.
+    const words = orderStatuses(value).map(statusLabel).join(", ");
+    return td(<ProjectStatus project={row.project} status={row.stage} blocker={row.blocker?.type ?? ""} canEdit={canEdit && !busy}
+      api={planStatusApi} floating onChanged={onStatusChanged} />,
+    "", { title: [words, row.stage_manual ? "Этап поставлен вручную" : "", row.blocker ? `${row.blocker.type}: ${row.blocker.text}` : ""].filter(Boolean).join(" — ") || undefined });
   }
   if (key === "ready") {
     const percent = Math.max(0, Math.min(100, Number(value) || 0));
@@ -769,11 +792,10 @@ function WeekCells({ row, weeks, today, showSpan }: { row: ProductionPlanRow; we
   })}</>;
 }
 
-function SheetEditor({ row, field, busy, shopStatuses, arrivalValues, mark, onDeadline, close }: {
+function SheetEditor({ row, field, busy, arrivalValues, mark, onDeadline, close }: {
   row: ProductionPlanRow;
   field: string;
   busy: boolean;
-  shopStatuses: string[];
   arrivalValues: string[];
   mark: (project: string, field: string, value: string, text?: string) => Promise<void>;
   onDeadline: (value: string) => Promise<void>;
@@ -786,8 +808,7 @@ function SheetEditor({ row, field, busy, shopStatuses, arrivalValues, mark, onDe
     if (field === "kit_arrival") return /^\d{4}-\d{2}-\d{2}$/.test(cell?.value ?? "") ? cell!.value : "";
     return cell?.value ?? "";
   });
-  const [picked, setPicked] = useState(() => statusList(cell?.value ?? ""));
-  const autoShown = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDate(value) : field === "status" ? statusList(value).map(statusLabel).join(", ") : value;
+  const autoShown = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDate(value) : value;
   const auto = cell?.manual ? <button className="secondary small" disabled={busy} onClick={() => void mark(row.project, field, "авто")}>
     Вернуть расчёт ERP{cell.auto ? `: ${autoShown(cell.auto)}${field === "ready" ? "%" : ""}` : ""}
   </button> : null;
@@ -809,18 +830,6 @@ function SheetEditor({ row, field, busy, shopStatuses, arrivalValues, mark, onDe
       <div className="zg-pop-acts">
         <button className="primary small" disabled={busy || !text.trim()} onClick={() => void mark(row.project, field, text.trim())}>Записать</button>
         {row.calendar?.notes[day] && <button className="secondary small" disabled={busy} onClick={() => void mark(row.project, field, "")}>Убрать отметку</button>}
-      </div>
-    </>;
-  }
-  if (field === "status") {
-    return <>{head("Статус")}
-      <div className="zg-status-pick">{shopStatuses.map((status) => <label key={status} data-status={status} className={`zg-pick${picked.includes(status) ? " on" : ""}`}>
-        <input type="checkbox" checked={picked.includes(status)} onChange={(event) => setPicked((current) => event.target.checked ? [...current, status] : current.filter((item) => item !== status))} />
-        <StatusChip status={status} />
-      </label>)}</div>
-      <div className="zg-pop-acts">
-        <button className="primary small" disabled={busy || !picked.length} onClick={() => void mark(row.project, field, picked.filter((item) => shopStatuses.includes(item)).join(", "))}>Поставить статус</button>
-        {auto}
       </div>
     </>;
   }

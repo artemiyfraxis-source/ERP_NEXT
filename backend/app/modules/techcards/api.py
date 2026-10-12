@@ -863,10 +863,12 @@ def connector_series_view(
     """«База данных → Разъёмы» по сериям: все корпуса серии (по таблицам каталога производителя), вилки на плату,
     совместимые терминалы БД.ТЕР и диапазон провода. `article` — найти серию и корпус своего артикула."""
     records: list[dict] = []
+    coax: list[dict] = []
     if references_factory is not None:
         with references_factory() as uow:
             records = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
-    series = connector_series(records)
+            coax = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)]
+    series = connector_series(records, coax)
     return {"series": series, "match": find_in_series(article[:255], series) if article.strip() else None}
 
 

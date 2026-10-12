@@ -81,8 +81,18 @@ class FulfillmentRequestCounterRow(Base):
     last_number: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+# «нет на складе» (migration 0106): who and when together, and only on a line without «есть, но не заведено», a lot,
+# a reserve or an issue — the database refuses any other combination.
+ABSENT_WHO_WHEN_CHECK = "(absent_at IS NULL AND absent_by IS NULL) OR (absent_at IS NOT NULL AND absent_by IS NOT NULL)"
+ABSENT_ALONE_CHECK = "absent_at IS NULL OR (NOT off_book AND lot_id IS NULL AND reserved = 0 AND issued = 0)"
+
+
 class FulfillmentLineRow(Base):
     __tablename__ = "fulfillment_lines"
+    __table_args__ = (
+        CheckConstraint(ABSENT_WHO_WHEN_CHECK, name="ck_fulfillment_lines_absent_who_when"),
+        CheckConstraint(ABSENT_ALONE_CHECK, name="ck_fulfillment_lines_absent_alone"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     request_id: Mapped[UUID] = mapped_column(
@@ -109,6 +119,9 @@ class FulfillmentLineRow(Base):
     lot_storage_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # «есть, но не заведено»: passes without a lot and without a stock movement (migration 0087).
     off_book: Mapped[bool] = mapped_column(Boolean(), nullable=False, default=False, server_default=false())
+    # «нет на складе»: when and who confirmed the part is physically absent (migration 0106).
+    absent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    absent_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 _OPEN_STATUSES = (FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED, FulfillmentStatus.COMPLETE)
@@ -222,6 +235,8 @@ def _line(row: FulfillmentLineRow) -> FulfillmentLine:
         defective_returned=row.defective_returned,
         defective_missing=row.defective_missing,
         off_book=bool(row.off_book),
+        absent_at=row.absent_at,
+        absent_by=row.absent_by or "",
     )
 
 
@@ -424,6 +439,8 @@ class SqlAlchemyFulfillmentRepository:
             line_row.lot_package = line.lot.package if line.lot else None
             line_row.lot_storage_location = line.lot.storage_location if line.lot else None
             line_row.off_book = line.off_book
+            line_row.absent_at = line.absent_at
+            line_row.absent_by = line.absent_by if line.absent_at is not None else None
         for stale in existing.values():
             self.session.delete(stale)
 

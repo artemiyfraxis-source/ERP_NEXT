@@ -125,8 +125,8 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   }
 
   /** Ручной этап — после подтверждения в окне смены этапа; ошибка уходит в само окно (409, причина назад). */
-  async function applyStage(project: string, kb: string, value: string, reason: string) {
-    await productionPlanApi.addEvent({ project, kind: "stage", blocker: "", text: "", deadline: null, item_index: kb, value, reason });
+  async function applyStage(project: string, kb: string, value: string, reason: string, previewToken: string) {
+    await productionPlanApi.addEvent({ project, kind: "stage", blocker: "", text: "", deadline: null, item_index: kb, value, reason, preview_token: previewToken });
     await reload();
   }
 
@@ -153,10 +153,10 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
       <div className="plan-section-head"><h2>Загрузка цеха</h2>
         <span className="zg-span" title={`Период листа ${shortDate(sheetSpan.from)} – ${shortDate(sheetSpan.to)}`}><b>{periodWords(sheetSpan.from, sheetSpan.to)}</b> · сегодня {WEEKDAYS[new Date(`${sheetSpan.today}T00:00:00`).getDay()]} {formatDayMonth(sheetSpan.today)}</span></div>
       {!loaded ? <div className="empty">Загрузка…</div>
-        : <PlanLoadSheet rows={data.rows} from={sheetSpan.from} to={sheetSpan.to} today={sheetSpan.today} holidays={holidays}
-          shopStatuses={data.shop_statuses ?? []} suppliedValues={data.supplied_values ?? ["НЕТ", "ДА", "Ч/Т"]}
+        : <PlanLoadSheet rows={data.rows} from={sheetSpan.from} to={sheetSpan.to} today={sheetSpan.today} holidays={holidays} stages={data.stages}
+          suppliedValues={data.supplied_values ?? ["НЕТ", "ДА", "Ч/Т"]}
           arrivalValues={data.arrival_values ?? ["Склад", "Ждем", "???"]} canEdit={canEdit} busy={busy}
-          onMark={addMark}
+          onStatusChanged={() => void reload()} onMark={addMark}
           onDeadline={(project, deadline) => addEvent({ project, kind: "deadline", blocker: "", text: "", deadline })}
           onOpenProject={openRow} onOpenJournal={(row) => setSelectedProject(row.project)} hasCard={hasCard} />}
       {selected && <div className="plan-drawer" role="dialog" aria-label={`Проект ${selected.project}`}>
@@ -192,7 +192,7 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
   canEdit: boolean;
   busy: boolean;
   addEvent: (payload: Parameters<typeof productionPlanApi.addEvent>[0]) => Promise<void>;
-  applyStage: (project: string, kb: string, value: string, reason: string) => Promise<void>;
+  applyStage: (project: string, kb: string, value: string, reason: string, previewToken: string) => Promise<void>;
 }) {
   const [stagePick, setStagePick] = useState<{ kb: string; current: string; value: string } | null>(null);
   const [kind, setKind] = useState<"note" | "block" | "unblock" | "deadline">("note");
@@ -239,7 +239,7 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
     </div>
     {stagePick && <StageChangeDialog project={row.project} kb={stagePick.kb} current={stagePick.current} value={stagePick.value}
       loadPreview={() => productionPlanApi.stagePreview(row.project, stagePick.value, stagePick.kb)}
-      apply={async (reason) => { await applyStage(row.project, stagePick.kb, stagePick.value, reason); setStagePick(null); }}
+      apply={async (reason, token) => { await applyStage(row.project, stagePick.kb, stagePick.value, reason, token); setStagePick(null); }}
       onClose={() => setStagePick(null)} />}
     {row.supply ? <section><h3>Снабжение</h3><p>Всего {row.supply.total}: склад {row.supply.stock}, в пути {row.supply.transit}, в закупке {row.supply.buying}, в заявках {row.supply.request}.</p>
       <p>Давальческое: {row.supply.customer_supplied ? `${row.supply.customer_supplied_stock} из ${row.supply.customer_supplied} пришло` : "нет"}</p>

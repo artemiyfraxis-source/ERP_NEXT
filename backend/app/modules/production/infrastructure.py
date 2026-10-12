@@ -21,6 +21,7 @@ from .application import Absence, Operator
 from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
+    stage_alias,
 )
 from .genealogy import (
     BoxConsumptionSnapshot,
@@ -55,6 +56,7 @@ from .traceability import (
     issue_box_number,
     issue_defect_number,
 )
+from .worklog import SUMMARY_KEYS, WorkEvent, WorkTimeEntry
 
 
 class ProductionTaskRow(Base):
@@ -261,9 +263,11 @@ def _sql_in(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN ({', '.join(chr(39) + value.replace(chr(39), chr(39) * 2) + chr(39) for value in values)})"
 
 
-# Migration 0101_production_stage_history adds the same checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
-# the journal only grows; DELETE stays for a deleted project). The value column comes first in each check: the
-# head-1 seeder (tests/migrations/seed_any_revision.py) fills a checked column with the first literal.
+# Migration 0101_production_stage_history added these checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
+# the journal only grows; DELETE stays for a deleted project); 0107_stage_ladder re-points them at the 8-stage ladder
+# (old «КБ на складе» rows stay as written — NOT VALID — and read as «Готово к отгрузке» via `stage_alias`).
+# The value column comes first in each check: the head-1 seeder (tests/migrations/seed_any_revision.py) fills a
+# checked column with the first literal.
 PLAN_EVENT_CHECKS = {
     "ck_production_plan_events_kind": _sql_in("kind", tuple(PLAN_KINDS.values())),
     "ck_production_plan_events_stage_value": (
@@ -385,6 +389,59 @@ class ProductionOutputRow(Base):
     defect_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     output_box_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=False, index=True)
     correction_of_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_outputs.id", ondelete="RESTRICT"), nullable=True)
+
+
+WORK_TIME_EVENTS = tuple(item.value for item in WorkEvent)
+
+
+class ProductionWorkTimeLogRow(Base):
+    """Журнал рабочего времени (миграция 0105): строка не меняется после записи (триггер в миграции)."""
+    __tablename__ = "production_work_time_log"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_production_work_time_log_idempotency_key"),
+        UniqueConstraint("session_id", "sequence", name="uq_production_work_time_log_session_sequence"),
+        CheckConstraint(f"event IN ({', '.join(repr(item) for item in WORK_TIME_EVENTS)})", name="ck_production_work_time_log_event"),
+        CheckConstraint("sequence >= 0", name="ck_production_work_time_log_sequence"),
+        CheckConstraint("seconds_per_unit >= 0", name="ck_production_work_time_log_unit"),
+        CheckConstraint("setup_seconds >= 0", name="ck_production_work_time_log_setup"),
+        CheckConstraint("planned_norm_seconds >= 0", name="ck_production_work_time_log_planned"),
+        CheckConstraint("good_quantity IS NULL OR good_quantity >= 0", name="ck_production_work_time_log_good"),
+        CheckConstraint("defect_quantity IS NULL OR defect_quantity >= 0", name="ck_production_work_time_log_defect"),
+        CheckConstraint("running_seconds IS NULL OR running_seconds >= 0", name="ck_production_work_time_log_running"),
+        CheckConstraint("earned_norm_seconds IS NULL OR earned_norm_seconds >= 0", name="ck_production_work_time_log_earned"),
+        CheckConstraint(
+            "event <> 'finish' OR (good_quantity IS NOT NULL AND defect_quantity IS NOT NULL"
+            " AND running_seconds IS NOT NULL AND earned_norm_seconds IS NOT NULL)",
+            name="ck_production_work_time_log_finish",
+        ),
+        Index("ix_production_work_time_log_occurred", "event", "occurred_at"),
+        Index("ix_production_work_time_log_operator", "operator_id", "operation_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    session_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_work_sessions.id", ondelete="RESTRICT"), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event: Mapped[str] = mapped_column(String(16), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="RESTRICT"), nullable=False, index=True)
+    operation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_operations.id", ondelete="RESTRICT"), nullable=False)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False)
+    operator_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    item: Mapped[str] = mapped_column(String(255), nullable=False)
+    task_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation_code: Mapped[str] = mapped_column(String(255), nullable=False)
+    stage: Mapped[str] = mapped_column(String(255), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    seconds_per_unit: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    setup_seconds: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    planned_norm_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    good_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    defect_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    running_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    earned_norm_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ProductionConsumptionRow(Base):
@@ -965,8 +1022,10 @@ class SqlAlchemyPlanEventRepository:
             id=row.id, project=row.project, occurred_at=row.occurred_at,
             who=row.who, kind=row.kind, blocker=row.blocker,
             text=row.text, deadline=row.deadline, sequence=row.sequence,
-            item_index=row.item_index, value=row.value, field=row.field,
-            from_value=row.from_value, reason=row.reason,
+            item_index=row.item_index, field=row.field, reason=row.reason,
+            # Old «Этап КБ» rows keep their word (the journal is immutable); it reads as the current ladder stage.
+            value=stage_alias(row.value) if row.kind == PLAN_KINDS["stage"] else row.value,
+            from_value=stage_alias(row.from_value) if row.kind == PLAN_KINDS["stage"] else row.from_value,
         )
 
     def last_sequence(self, project: str) -> int:
@@ -1165,6 +1224,10 @@ class SqlAlchemyOutputRepository:
         row = self.session.get(ProductionOutputRow, output_id)
         return self._domain(row) if row is not None else None
 
+    def for_session(self, session_id: UUID) -> ProductionOutput | None:
+        row = self.session.scalar(select(ProductionOutputRow).where(ProductionOutputRow.session_id == session_id))
+        return self._domain(row) if row is not None else None
+
     def is_superseded(self, output_id: UUID) -> bool:
         return self.session.scalar(select(ProductionOutputRow.id).where(
             ProductionOutputRow.correction_of_id == output_id,
@@ -1205,6 +1268,75 @@ class SqlAlchemyOutputRepository:
             func.sum(ProductionOutputRow.good_quantity + ProductionOutputRow.defect_quantity), 0,
         )).where(ProductionOutputRow.operation_id == operation_id, self._active()))
         return Decimal(value or 0)
+
+
+class SqlAlchemyWorkLogRepository:
+    """Журнал рабочего времени: add и чтение; строки не меняются и не удаляются."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionWorkTimeLogRow) -> WorkTimeEntry:
+        values = {name: getattr(row, name) for name in WorkTimeEntry.__dataclass_fields__}
+        return WorkTimeEntry(**{**values, "event": WorkEvent(row.event)})
+
+    def add(self, entry: WorkTimeEntry) -> None:
+        self.session.add(ProductionWorkTimeLogRow(**{**entry.__dict__, "event": entry.event.value}))
+        # Сразу в базу: UNIQUE ключа повтора и номера записи срабатывает в этой транзакции, а не на commit.
+        self.session.flush()
+
+    def by_key(self, idempotency_key: str) -> WorkTimeEntry | None:
+        row = self.session.scalar(select(ProductionWorkTimeLogRow).where(
+            ProductionWorkTimeLogRow.idempotency_key == idempotency_key,
+        ))
+        return self._domain(row) if row is not None else None
+
+    def next_sequence(self, session_id: UUID) -> int:
+        value = self.session.scalar(select(func.max(ProductionWorkTimeLogRow.sequence)).where(
+            ProductionWorkTimeLogRow.session_id == session_id,
+        ))
+        return 0 if value is None else int(value) + 1
+
+    def entries(
+        self, *, since: datetime | None = None, until: datetime | None = None,
+        operator_id: UUID | None = None, operation_ids: tuple[UUID, ...] | None = None, limit: int = 5_000,
+    ) -> list[WorkTimeEntry]:
+        query = select(ProductionWorkTimeLogRow)
+        if since is not None:
+            query = query.where(ProductionWorkTimeLogRow.occurred_at >= since)
+        if until is not None:
+            query = query.where(ProductionWorkTimeLogRow.occurred_at < until)
+        if operator_id is not None:
+            query = query.where(ProductionWorkTimeLogRow.operator_id == operator_id)
+        if operation_ids is not None:
+            if not operation_ids:
+                return []
+            query = query.where(ProductionWorkTimeLogRow.operation_id.in_(operation_ids))
+        rows = self.session.scalars(query.order_by(
+            ProductionWorkTimeLogRow.occurred_at, ProductionWorkTimeLogRow.session_id, ProductionWorkTimeLogRow.sequence,
+        ).limit(limit))
+        return [self._domain(row) for row in rows]
+
+    def summary(self, by: str, *, since: datetime, until: datetime) -> list[dict]:
+        """Сдачи за период [since, until), сгруппированные по коду операции, исполнителю или проекту: факт, норма на
+        сданные штуки, штуки, число сдач. Код операции подписан названием этапа (последнее по алфавиту, если их
+        несколько)."""
+        if by not in SUMMARY_KEYS:
+            raise ProductionValidationError("Сводка группируется по коду операции, исполнителю или проекту")
+        row = ProductionWorkTimeLogRow
+        key = {"operation_code": row.operation_code, "operator": row.operator_id, "project": row.project}[by]
+        label = {"operation_code": func.max(row.stage), "operator": func.max(row.operator_name), "project": func.max(row.project)}[by]
+        query = select(
+            key.label("key"), label.label("label"),
+            func.count(row.id).label("finishes"),
+            func.coalesce(func.sum(row.good_quantity + row.defect_quantity), 0).label("quantity"),
+            func.coalesce(func.sum(row.running_seconds), 0).label("actual_seconds"),
+            func.coalesce(func.sum(row.earned_norm_seconds), 0).label("norm_seconds"),
+        ).where(
+            row.event == WorkEvent.FINISH.value, row.occurred_at >= since, row.occurred_at < until,
+        ).group_by(key).order_by(key)
+        return [dict(item._mapping) for item in self.session.execute(query)]
 
 
 class SqlAlchemyConsumptionRepository:
@@ -1484,6 +1616,10 @@ class SqlAlchemyQcRepository:
         row = self.session.get(ProductionQcInspectionRow, inspection_id)
         return self._domain(row) if row is not None else None
 
+    def inspected_box_ids(self) -> set[UUID]:
+        """Boxes ОТК has inspected (the stage ladder: a final-operation box inspected → «ОТК»)."""
+        return set(self.session.scalars(select(ProductionQcInspectionRow.box_id)))
+
     def list_rejections(self) -> list[QcInspection]:
         rows = self.session.scalars(select(ProductionQcInspectionRow).where(
             ProductionQcInspectionRow.rejected > 0,
@@ -1574,6 +1710,7 @@ class SqlAlchemyProductionUnitOfWork:
         self.boxes = SqlAlchemyBoxRepository(self.session)
         self.work = SqlAlchemyWorkRepository(self.session)
         self.outputs = SqlAlchemyOutputRepository(self.session)
+        self.work_log = SqlAlchemyWorkLogRepository(self.session)
         self.consumption = SqlAlchemyConsumptionRepository(self.session)
         self.materials = SqlAlchemyMaterialRepository(self.session)
         self.goods = SqlAlchemyFinishedGoodsRepository(self.session)

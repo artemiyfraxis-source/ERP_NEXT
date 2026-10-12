@@ -377,7 +377,11 @@ def test_a_tcgen_token_never_builds_a_project_techcard(tokens_api):
 
 PATH_PARAM = re.compile(r"{([^}:]+)(:[^}]+)?}")
 # Routes whose gate names `tcgen` but which refuse a token anyway (`refuse_api_tokens`: a project techcard write).
-TOKEN_REFUSED_IN_ENDPOINT = {("POST", "/api/techcards/projects/{card_id}/build")}
+# … and the delete of a «Справочник» row: `refs:write` loads and edits, a token never deletes (owner 12.10.2026).
+TOKEN_REFUSED_IN_ENDPOINT = {
+    ("POST", "/api/techcards/projects/{card_id}/build"),
+    ("DELETE", "/api/references/wire-gauges/{gauge_id}"),
+}
 
 
 def _route_calls(route, inherited) -> list:
@@ -414,12 +418,14 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
     reads = [
         ("GET", "/api/references/bases"),
         ("GET", "/api/references/cables"),
+        ("GET", "/api/references/import/{table}/schema"),
         ("GET", "/api/references/tech-operations"),
+        ("GET", "/api/references/wire-dia"),
         ("POST", "/api/references/technology/resolve-terminal"),
     ]
     writes = [
-        ("DELETE", "/api/references/wire-gauges/{gauge_id}"),
         ("PATCH", "/api/references/tech-operations/{record_id}"),
+        ("POST", "/api/references/import/{table}"),
         ("POST", "/api/references/tech-operations"),
         ("POST", "/api/references/wire-gauges"),
         ("PUT", "/api/references/cables/diameters"),

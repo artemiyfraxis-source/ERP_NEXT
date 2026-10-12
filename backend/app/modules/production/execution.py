@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol, Sequence
@@ -13,8 +13,8 @@ from app.shared.identity import Actor
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.shipping.domain import FinishedGood
 
-from .application import CalendarRepository, OperatorRepository, ProductionRepository, SkillRepository, record_fact, release_fact
-from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError
+from .application import CalendarRepository, ConcurrentProductionUpdate, OperatorRepository, ProductionRepository, SkillRepository, record_fact, release_fact
+from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, operation_duration_seconds
 from .launchable import stage_name
 from .traceability import (
     ConsumptionEdge,
@@ -38,6 +38,7 @@ from .traceability import (
     take_inputs,
     validate_box_number,
 )
+from .worklog import WorkEvent, WorkTimeEntry, earned_norm_seconds
 
 
 class BoxRepository(Protocol):
@@ -61,6 +62,7 @@ class WorkRepository(Protocol):
 class OutputRepository(Protocol):
     def add(self, output: ProductionOutput) -> None: ...
     def get(self, output_id: UUID) -> ProductionOutput | None: ...
+    def for_session(self, session_id: UUID) -> ProductionOutput | None: ...
     def is_superseded(self, output_id: UUID) -> bool: ...
     def lineage(self, output_id: UUID) -> tuple[UUID, ...]: ...
     def active_for_box(self, box_id: UUID) -> Sequence[ProductionOutput]: ...
@@ -113,6 +115,13 @@ class AppendOnlyRepository(Protocol):
     def add(self, item) -> None: ...
 
 
+class WorkLogRepository(Protocol):
+    """Журнал рабочего времени: только дополняется (worklog.py)."""
+    def add(self, entry: WorkTimeEntry) -> None: ...
+    def by_key(self, idempotency_key: str) -> WorkTimeEntry | None: ...
+    def next_sequence(self, session_id: UUID) -> int: ...
+
+
 class ExecutionUnitOfWork(Protocol):
     production: ProductionRepository
     # Смена, отсутствия и компетенции — чтобы факт «взял»/«закончил» двигал план (application.record_fact).
@@ -130,6 +139,7 @@ class ExecutionUnitOfWork(Protocol):
     qc: QcHandoffRepository
     serials: SerialHandoffRepository
     audit: AppendOnlyRepository
+    work_log: WorkLogRepository
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
     def commit(self) -> None: ...
@@ -143,6 +153,11 @@ class StartWorkCommand:
     actor: Actor
     now: datetime
     materials: tuple[MaterialInput, ...] = ()
+    # Работа за сотрудника (владелец, 12.10.2026): исполнитель — монтажник, чьи это факт, коробки и время;
+    # actor — кто нажал. None — сам actor. Право проверяет API (production/api.py `_performer`).
+    performer: Actor | None = field(default=None, kw_only=True)
+    # Ключ повтора: тот же ключ второй раз ничего не делает и отдаёт уже записанное (двойной клик, повтор запроса).
+    idempotency_key: str | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -150,6 +165,8 @@ class SessionCommand:
     session_id: UUID
     actor: Actor
     now: datetime
+    performer: Actor | None = field(default=None, kw_only=True)
+    idempotency_key: str | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -185,6 +202,7 @@ class CorrectBoxCommand(BoxCommand):
     defect_quantity: Decimal
     defect_character: str = ""
     defect_description: str = ""
+    performer: Actor | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -197,10 +215,62 @@ class DecideDefectCommand:
     now: datetime
 
 
-def _audit(aggregate_id: UUID, event_type: str, actor: Actor, now: datetime, details: dict, uow: ExecutionUnitOfWork) -> None:
+def _audit(aggregate_id: UUID, event_type: str, actor: Actor, now: datetime, details: dict, uow: ExecutionUnitOfWork, performer: Actor | None = None) -> None:
+    # Работа за сотрудника: в журнале действий — кто нажал (actor) и за кого («Артемий за Богородская Элина»).
+    if performer is not None and performer.id != actor.id:
+        details = {**details, "performer_id": str(performer.id), "performer_name": performer.name,
+                   "on_behalf": f"{actor.name} за {performer.name}"}
     uow.audit.add(AuditEvent(
         id=uuid4(), aggregate_id=aggregate_id, event_type=event_type,
         actor=actor, occurred_at=now, details=details,
+    ))
+
+
+def _worker(command) -> Actor:
+    """Исполнитель: монтажник, за которого работают, иначе тот, кто нажал."""
+    return command.performer or command.actor
+
+
+def _replayed(command, event: WorkEvent, uow: ExecutionUnitOfWork, session_id: UUID | None = None) -> WorkSession | None:
+    """Повтор того же действия (тот же ключ): сессия, которую оно уже записало; другой смысл ключа — отказ."""
+    key = str(command.idempotency_key or "").strip()
+    if not key:
+        return None
+    entry = uow.work_log.by_key(key)
+    if entry is None:
+        return None
+    if entry.event is not event or entry.operator_id != _worker(command).id or (session_id is not None and entry.session_id != session_id):
+        raise ConcurrentProductionUpdate("Ключ повтора уже использован другим действием — обновите страницу")
+    session = uow.work.get(entry.session_id)
+    if session is None:
+        raise KeyError(f"Work session not found: {entry.session_id}")
+    return session
+
+
+def _log(
+    uow: ExecutionUnitOfWork, command, session: WorkSession, event: WorkEvent,
+    task: ProductionTask, operation: ProductionOperation, *,
+    good: Decimal | None = None, defect: Decimal | None = None,
+    running: int | None = None, earned: int | None = None,
+) -> None:
+    """Строка журнала времени с копией норм операции на этот момент (worklog.py)."""
+    worker = _worker(command)
+    share = operation.share_of(worker.id)
+    sequence = uow.work_log.next_sequence(session.id)
+    key = str(command.idempotency_key or "").strip() or f"auto:{session.id}:{sequence}"
+    uow.work_log.add(WorkTimeEntry(
+        id=uuid4(), idempotency_key=key, session_id=session.id, sequence=sequence, event=event,
+        occurred_at=command.now, task_id=task.id, operation_id=operation.id,
+        operator_id=worker.id, operator_name=worker.name,
+        actor_id=command.actor.id, actor_name=command.actor.name,
+        project=task.project, item=task.item, task_number=task.number,
+        operation_code=operation.code, stage=operation.stage, position=operation.position,
+        seconds_per_unit=operation.seconds_per_unit, setup_seconds=operation.setup_seconds,
+        # Плановая норма доли без коэффициента скорости: штуки доли (бригада — всё задание) по норме ЭТК.
+        planned_norm_seconds=operation_duration_seconds(
+            operation, task.operation_units(operation.id, share.quantity if share is not None else None),
+        ),
+        good_quantity=good, defect_quantity=defect, running_seconds=running, earned_norm_seconds=earned,
     ))
 
 
@@ -286,9 +356,13 @@ def _input_boxes(numbers: Sequence[str], item: str, previous_position: int | tup
 
 def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSession:
     with uow:
-        if uow.work.current(command.actor.id) is not None:
+        worker = _worker(command)
+        replayed = _replayed(command, WorkEvent.START, uow)
+        if replayed is not None:
+            return replayed
+        if uow.work.current(worker.id) is not None:
             raise ProductionValidationError("Сначала завершите или отмените текущую работу")
-        task, operation = _task_operation(command.task_id, command.operation_id, command.actor, uow)
+        task, operation = _task_operation(command.task_id, command.operation_id, worker, uow)
         stages = input_stages(task, operation)
         takes_kit = operation.id == material_operation(task).id
         if not stages and command.box_numbers:
@@ -329,7 +403,7 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
                     "операция собирается из полуфабрикатов всех входящих этапов.",
                 )
             inputs = tuple(WorkInput(box.id, box.available) for box in boxes)
-        session = WorkSession.start(task.id, operation.id, command.actor.id, command.now)
+        session = WorkSession.start(task.id, operation.id, worker.id, command.now)
         uow.work.save(session)
         uow.work.add_inputs(session.id, inputs)
         uow.work.add_material_inputs(session.id, command.materials)
@@ -337,10 +411,11 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
             "task_id": str(task.id), "operation_id": str(operation.id),
             "inputs": [str(item.box_id) for item in inputs],
             "materials": {str(item.fulfillment_line_id): str(item.quantity) for item in command.materials},
-        }, uow)
+        }, uow, worker)
+        _log(uow, command, session, WorkEvent.START, task, operation)
         # «Взял»: окно доли начинается сейчас, работа после неё сдвигается или подтягивается.
         record_fact(
-            uow, task_id=task.id, operation_id=operation.id, operator_id=command.actor.id,
+            uow, task_id=task.id, operation_id=operation.id, operator_id=worker.id,
             actor=command.actor, now=command.now, started=True,
         )
         uow.commit()
@@ -351,45 +426,71 @@ def _session(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSession:
     session = uow.work.get(command.session_id)
     if session is None:
         raise KeyError(f"Work session not found: {command.session_id}")
-    if session.operator_id != command.actor.id:
+    if session.operator_id != _worker(command).id:
         raise ProductionValidationError("Работа принадлежит другому оператору")
     return session
 
 
-def pause_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSession:
+def _session_task(session: WorkSession, uow: ExecutionUnitOfWork) -> tuple[ProductionTask, ProductionOperation]:
+    task = uow.production.get(session.task_id)
+    if task is None:
+        raise KeyError(f"Production task not found: {session.task_id}")
+    return task, task.operation(session.operation_id)
+
+
+def _session_step(command: SessionCommand, uow: ExecutionUnitOfWork, event: WorkEvent, audit_type: str) -> WorkSession:
+    """Пауза / продолжить: сессия исполнителя, строка журнала времени, запись в журнал действий."""
     with uow:
-        session = _session(command, uow).pause(command.now)
+        replayed = _replayed(command, event, uow, command.session_id)
+        if replayed is not None:
+            return replayed
+        current = _session(command, uow)
+        session = current.pause(command.now) if event is WorkEvent.PAUSE else current.resume(command.now)
         uow.work.save(session)
-        _audit(session.id, "production.work_paused", command.actor, command.now, {}, uow)
+        task, operation = _session_task(session, uow)
+        _log(uow, command, session, event, task, operation)
+        _audit(session.id, audit_type, command.actor, command.now, {}, uow, _worker(command))
         uow.commit()
         return session
+
+
+def pause_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSession:
+    return _session_step(command, uow, WorkEvent.PAUSE, "production.work_paused")
 
 
 def resume_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSession:
-    with uow:
-        session = _session(command, uow).resume(command.now)
-        uow.work.save(session)
-        _audit(session.id, "production.work_resumed", command.actor, command.now, {}, uow)
-        uow.commit()
-        return session
+    return _session_step(command, uow, WorkEvent.RESUME, "production.work_resumed")
 
 
 def cancel_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSession:
     with uow:
+        replayed = _replayed(command, WorkEvent.CANCEL, uow, command.session_id)
+        if replayed is not None:
+            return replayed
         session = _session(command, uow)
         # prodWorkToggle_ drop: входные коробки при начале не резервируются, отменять нечего.
         cancelled = session.cancel()
         uow.work.save(cancelled)
-        _audit(cancelled.id, "production.work_cancelled", command.actor, command.now, {}, uow)
-        release_fact(uow, task_id=session.task_id, operation_id=session.operation_id, operator_id=command.actor.id, now=command.now)
+        task, operation = _session_task(session, uow)
+        _log(uow, command, cancelled, WorkEvent.CANCEL, task, operation)
+        _audit(cancelled.id, "production.work_cancelled", command.actor, command.now, {}, uow, _worker(command))
+        release_fact(uow, task_id=session.task_id, operation_id=session.operation_id, operator_id=session.operator_id, now=command.now)
         uow.commit()
         return cancelled
 
 
 def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[WorkSession, ProductionBox, ProductionOutput, DefectRecord | None]:
     with uow:
+        worker = _worker(command)
+        replayed = _replayed(command, WorkEvent.FINISH, uow, command.session_id)
+        if replayed is not None:
+            output = uow.outputs.for_session(replayed.id)
+            box = uow.boxes.get(output.output_box_id) if output is not None else None
+            if output is None or box is None:
+                raise ConcurrentProductionUpdate("Сдача по этому ключу не найдена — обновите страницу")
+            return replayed, box, output, uow.defects.active_for_outputs((output.id,))
         session = _session(command, uow)
-        task, operation = _task_operation(session.task_id, session.operation_id, command.actor, uow)
+        task, operation = _task_operation(session.task_id, session.operation_id, worker, uow)
         good = Decimal(command.good_quantity)
         defect = Decimal(command.defect_quantity)
         if not good.is_finite() or not defect.is_finite() or good < 0 or defect < 0 or good + defect <= 0:
@@ -398,7 +499,7 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
         done = uow.outputs.total_for_operation(operation.id)
         mine = sum((
             item.good_quantity + item.defect_quantity for item in uow.outputs.active_for_tasks((task.id,))
-            if item.operation_id == operation.id and item.operator_id == command.actor.id
+            if item.operation_id == operation.id and item.operator_id == worker.id
         ), Decimal(0))
         # Сетевой график: операция сдаёт тираж × штук её полуфабриката на изделие (в цепочке — тираж).
         factor = unit_factor(task, operation)
@@ -426,13 +527,14 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
             inputs = take_inputs(stages, sources, good + defect)
         output_box = ProductionBox.submitted(
             task_id=task.id, operation_id=operation.id, item=task.item,
-            operation_position=operation.position, operator_id=command.actor.id,
-            number=uow.boxes.reserve_number(), good=good, actor=command.actor.name, now=command.now,
+            operation_position=operation.position, operator_id=worker.id,
+            number=uow.boxes.reserve_number(), good=good, actor=worker.name, now=command.now,
         )
+        running = session.running_seconds(command.now)
         completed = session.complete(command.now)
         output = ProductionOutput(
             id=uuid4(), session_id=session.id, task_id=task.id,
-            operation_id=operation.id, operator_id=command.actor.id,
+            operation_id=operation.id, operator_id=worker.id,
             started_at=session.started_at, finished_at=command.now,
             pause_seconds=completed.pause_seconds, good_quantity=good,
             defect_quantity=defect, output_box_id=output_box.id,
@@ -442,7 +544,7 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
             defect_record = DefectRecord.create(
                 number=uow.defects.reserve_number(), output_id=output.id,
                 source_box_id=output_box.id, task_id=task.id,
-                operation_id=operation.id, operator_id=command.actor.id,
+                operation_id=operation.id, operator_id=worker.id,
                 quantity=defect, character=command.defect_character,
                 description=command.defect_description, created_at=command.now,
             )
@@ -475,11 +577,16 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
         _audit(output.id, "production.output_recorded", command.actor, command.now, {
             "task_id": str(task.id), "operation_id": str(operation.id),
             "good": str(good), "defect": str(defect), "box_id": str(output_box.id),
-        }, uow)
+        }, uow, worker)
+        # Сдача в журнал времени: факт сессии без пауз и норма на сданные штуки (подготовка — в первой сдаче).
+        _log(
+            uow, command, completed, WorkEvent.FINISH, task, operation, good=good, defect=defect, running=running,
+            earned=earned_norm_seconds(operation.seconds_per_unit, operation.setup_seconds, good + defect, first=mine == 0),
+        )
         # Сдал свои штуки — «закончил»: окно доли кончается сейчас; не всё — конец по оставшимся штукам.
         # План считает штуки в изделиях задания: полуфабрикат «2 на одну» переводится в изделия.
         record_fact(
-            uow, task_id=task.id, operation_id=operation.id, operator_id=command.actor.id,
+            uow, task_id=task.id, operation_id=operation.id, operator_id=worker.id,
             actor=command.actor, now=command.now,
             mine=(mine + good + defect) / factor, total=(done + good + defect) / factor,
         )
@@ -524,11 +631,12 @@ def correct_box(command: CorrectBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
         defect = Decimal(command.defect_quantity)
         if not good.is_finite() or not defect.is_finite() or good < 0 or defect < 0 or good + defect <= 0:
             raise ProductionValidationError("Сумма годных и брака должна быть положительной")
+        worker = _worker(command)
         corrected_box = box.correct(
             replaced_good=replaced.good_quantity, good=good,
-            operator_id=command.actor.id, actor=command.actor.name, now=command.now,
+            operator_id=worker.id, actor=worker.name, now=command.now,
         )
-        task, operation = _task_operation(box.task_id, box.operation_id, command.actor, uow)
+        task, operation = _task_operation(box.task_id, box.operation_id, worker, uow)
         replaced_total = replaced.good_quantity + replaced.defect_quantity
         done = uow.outputs.total_for_operation(operation.id) - replaced_total
         required = operation_quantity(task, operation)
@@ -539,7 +647,7 @@ def correct_box(command: CorrectBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
             )
         output = ProductionOutput(
             id=uuid4(), session_id=None, task_id=task.id,
-            operation_id=operation.id, operator_id=command.actor.id,
+            operation_id=operation.id, operator_id=worker.id,
             started_at=command.now, finished_at=command.now, pause_seconds=0,
             good_quantity=good, defect_quantity=defect, output_box_id=box.id,
             correction_of_id=replaced.id,
@@ -577,7 +685,7 @@ def correct_box(command: CorrectBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
                 defect_record = DefectRecord.create(
                     number=uow.defects.reserve_number(), output_id=output.id,
                     source_box_id=box.id, task_id=task.id,
-                    operation_id=operation.id, operator_id=command.actor.id,
+                    operation_id=operation.id, operator_id=worker.id,
                     quantity=defect, character=command.defect_character,
                     description=command.defect_description, created_at=command.now,
                 )
@@ -591,7 +699,7 @@ def correct_box(command: CorrectBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
             "defect": [str(replaced.defect_quantity), str(defect)],
             "inputs": {str(item.box_id): str(item.quantity if delta > 0 else -item.quantity) for item in moves},
             "defect_number": defect_record.number if defect_record else None,
-        }, uow)
+        }, uow, worker)
         uow.commit()
         return corrected_box, output, defect_record
 

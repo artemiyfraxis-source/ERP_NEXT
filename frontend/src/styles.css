@@ -280,6 +280,13 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-progress { margin: 8px 0 0; font-size: 13px; color: var(--muted-foreground); }
 .fulfillment-create, .fulfillment-project { padding: 18px 20px; margin-bottom: 16px; }
 .fulfillment-head-actions { display: flex; gap: 8px; align-items: center; }
+/* Card footer: the main action first, secondary after it, destructive ones apart on the far side; one height for all. */
+.fulfillment-card-actions { justify-content: flex-start; align-items: center; }
+.fulfillment-card-actions > .handout-offer { margin-left: auto; }
+.fulfillment-danger-group { display: flex; flex-wrap: wrap; gap: 10px; margin-left: auto; padding-left: 16px; border-left: 1px solid var(--border); }
+.project-kb-bar { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 16px; }
+.project-kb-bar .calendar-chips { margin-bottom: 0; flex: 0 1 auto; }
+.project-issue-btn { flex: none; white-space: nowrap; }
 .issue-chooser { margin: 12px 0 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 12px 0; }
 .issue-chooser h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
 .issue-chooser th.check, .issue-chooser td.check { width: 36px; text-align: center; }
@@ -606,6 +613,7 @@ table.ship-lines td:first-child { width: 1%; }
 .etk-steps li { padding-left: 4px; white-space: pre-line; font-size: 12px; }
 .etk-steps li > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
 .etk-steps li > small { display: block; margin-top: 3px; color: var(--muted-foreground); }
+.etk-steps li > small.tone-danger { color: var(--tone-danger); font-weight: 600; }
 .housing-view { display: grid; justify-items: center; gap: 6px; margin-top: 14px; padding: 12px; border-radius: 10px; background: #f0f3f0; }
 .housing-view > small { color: var(--muted-foreground); text-align: center; }
 .housing-grid { display: grid; gap: 5px; padding: 12px; border: 2px solid #17272b; border-radius: 8px; }
@@ -944,6 +952,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .manual-stock-grid { grid-template-columns: 1fr; }
   .manual-stock-grid .span-2 { grid-column: auto; }
   .fulfillment-actions { align-items: stretch; flex-direction: column; }
+  .fulfillment-danger-group { margin-left: 0; padding-left: 0; border-left: 0; flex-direction: column; }
   .fulfillment-actions label { width: 100%; }
   .return-line { grid-template-columns: 1fr; }
   .production-launch-grid, .route-draft, .production-operation, .operation-assign, .ship-form, .ship-docs, .ship-accept, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }
@@ -1281,6 +1290,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks col.c-mat { width: 13%; }
 .tcgen .gen-marks col.c-place { width: 20%; }
 .tcgen .gen-marks col.c-qty { width: 64px; }
+.tcgen .gen-marks col.c-len { width: 84px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
 .tcgen .gen-marks-place { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 4px; }
 .tcgen .gen-marks-place > select:only-child { grid-column: 1 / -1; }
@@ -1897,6 +1907,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-col-balance { width: 98px; }
 .stock-col-lots { width: 76px; }
 .stock-col-available { width: 96px; }
+.stock-col-reserved { width: 92px; }
+.stock-table td.stock-dim { color: var(--muted-foreground); }
 .stock-col-place { width: 12%; }
 .stock-col-warehouse { width: 92px; }
 .stock-col-purpose { width: 104px; }
@@ -2036,6 +2048,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-base svg { display: block; max-width: 100%; height: auto; }
 .conn-warn { color: var(--tone-danger); }
 .conn-muted { color: var(--muted-foreground); font-size: 12px; }
+.conn-cats { margin: 0; }
+.conn-sections { display: grid; gap: 14px; }
+.conn-section h3 { margin: 0 0 6px; font-size: 14px; }
+.conn-section h3 .muted { font-weight: 400; }
 .conn-series-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
 .conn-series { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; min-height: 72px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; }
 .conn-series:hover, .conn-series:focus-visible { border-color: var(--primary); background: var(--accent); }
@@ -2661,7 +2677,9 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-row-closed > td { color: var(--muted-foreground); }
 .zg-table .zg-group td { height: 22px; padding: 0; background: var(--accent); overflow: visible; }
 .zg-group-label { position: sticky; left: 0; display: inline-block; padding: 0 10px; font-size: var(--zg-font-sm); font-weight: 700; color: var(--foreground); line-height: 22px; }
-.zg-group-hold .zg-group-label { color: #5f6368; }
+.zg-group-label { border: 0; background: none; cursor: pointer; font-family: inherit; text-align: left; }
+.zg-group-label::before { content: "▾ "; color: var(--muted-foreground); }
+.zg-group-label[aria-expanded="false"]::before { content: "▸ "; }
 .zg-edit { cursor: pointer; }
 .zg-edit:hover { outline: 1px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
 .zg-edit:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
@@ -2678,11 +2696,10 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-project { position: relative; }
 .zg-note-mark { position: absolute; top: 50%; right: 5px; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--zg-note); }
 
-/* Статус: главный статус — общим чипом и целым словом (ширина колонки — по самому длинному слову), «+N» —
-   остальные, полный список — в подсказке (аудит 10.10, ПП-1, ПП-3). */
-.zg-chips { display: flex; align-items: center; gap: 4px; }
+/* Статус: тот же чип и меню, что в «Проектах» (ProjectStatus); ширина колонки — по самому длинному этапу с блокером. */
 .zg-col-status .status-chip { flex: none; max-width: none; overflow: visible; }
-.zg-more { flex: none; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Открытое меню статуса — выше соседних закреплённых ячеек, иначе строки ниже закрывают его. */
+.zg-table td.zg-col-status:has(.proj-status-menu) { z-index: 8; }
 .zg-empty-mark { color: var(--muted-foreground); }
 
 /* Готовность: тонкая полоса и число справа. */
@@ -2760,10 +2777,6 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .zg-pop-row { display: flex; gap: 6px; }
 .zg-pop-row input { flex: 1; }
 .zg-pop-acts { display: flex; flex-wrap: wrap; gap: 6px; }
-.zg-status-pick { display: flex; flex-wrap: wrap; gap: 5px; }
-.zg-pick { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 2px; border-radius: 999px; cursor: pointer; opacity: .6; }
-.zg-pick.on { opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 35%, transparent); }
-.zg-status-pick input { width: 14px; height: 14px; margin: 0; }
 @media (pointer: coarse) {
   :root { --zg-row: 40px; --zg-day: 26px; --zg-week: 52px; --zg-days-h: 34px; }
   .zg-table .zg-project, .zg-table .zg-link { min-height: 0; }
@@ -2938,15 +2951,25 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .data-table.order-list .table-wrap { max-height: none; }
 
 /* Автоплан */
-.autoplan-body { width: min(780px, 100vw); }
-.autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+.autoplan-dialog { display: flex; flex-direction: column; gap: 10px; width: min(880px, 100%); height: auto; max-height: calc(100vh - 32px); overflow: hidden; padding: 16px 20px; outline: none; }
+.autoplan-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.autoplan-head h2 { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
+.autoplan-scroll { display: grid; gap: 10px; align-content: start; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
+.autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .autoplan-form label { display: grid; gap: 3px; font-size: 12px; }
-.autoplan-tasks { margin-bottom: 8px; font-size: 13px; }
-.autoplan-tasks summary { cursor: pointer; padding: 4px 0; }
-.autoplan-task-list { display: grid; gap: 2px; max-height: 180px; overflow: auto; padding: 4px 0; }
+.autoplan-tasks { font-size: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.autoplan-tasks-bar { display: flex; align-items: center; gap: 14px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.autoplan-tasks-bar .link-button { padding: 0; margin: 0; }
+.autoplan-tasks-bar .link-button:disabled { color: var(--muted-foreground); }
+.autoplan-count { margin-right: auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.autoplan-task-list { display: grid; max-height: 240px; overflow: auto; padding: 2px 10px; }
+.autoplan-check.autoplan-task-line { display: grid; grid-template-columns: 20px 84px minmax(110px, 190px) minmax(0, 1fr); gap: 8px; min-height: 28px; font-variant-numeric: tabular-nums; }
+.autoplan-task-line b { font-weight: 600; white-space: nowrap; }
+.autoplan-task-item, .autoplan-task-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autoplan-task-name { color: var(--muted-foreground); }
 .autoplan-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
-.autoplan-check input { width: auto; margin: 0; }
-.autoplan-result { display: grid; gap: 8px; margin-top: 8px; }
+.autoplan-check input { width: auto; margin: 0; justify-self: start; }
+.autoplan-result { display: grid; gap: 8px; }
 .autoplan-summary { font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 8px; background: var(--accent); }
 .autoplan-fitter { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 8px 10px; }
 .autoplan-fitter h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 14px; }
@@ -2963,9 +2986,9 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-unplaced { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--card); }
 .autoplan-unplaced h3 { margin: 0 0 4px; font-size: 14px; }
 .autoplan-unplaced-row { font-size: 13px; padding: 2px 0; }
-.autoplan-actions { position: sticky; bottom: 0; background: var(--background, #f6f8f8); padding: 8px 0; }
-@media (max-width: 700px) { .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
-@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-body button { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
+.autoplan-dialog .autoplan-actions { margin: 0; padding: 10px 0 0; border-top: 1px solid var(--border); flex-wrap: nowrap; }
+@media (max-width: 700px) { .autoplan-task-line { grid-template-columns: 20px 76px minmax(0, 1fr); } .autoplan-task-name { grid-column: 3; } .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
+@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"] { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
 
 /* Вид сотрудника: выбор рядом с заголовком, заметная полоса «только просмотр» */
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -3058,6 +3081,17 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .box-chip span { font-size: 12px; color: var(--muted-foreground); }
 .box-chip.on { border-color: var(--primary); box-shadow: inset 0 0 0 2px var(--primary); background: var(--accent); }
 @media (pointer: coarse) { .mo-act button { min-height: 44px; } .box-chip { min-height: 56px; } }
+/* Карточка задания (12.10): главное действие справа вверху рядом с состоянием, ЭТК — второстепенная. */
+.mo-h { align-items: flex-start; justify-content: space-between; }
+.mo-side { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-left: auto; }
+.mo-side button { min-width: 96px; }
+.mo-state { font-size: 13px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mo-plan .mo-window { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.mo-tf { font-weight: 600; font-variant-numeric: tabular-nums; }
+.mo-submit { padding: 10px; border-radius: 8px; background: var(--accent); }
+.view-strip.acting { border-color: var(--primary); background: var(--chip-ok-bg); }
+@media (pointer: coarse) { .mo-side button, .mo-submit button, .mo-submit input { min-height: 44px; } }
+@media (max-width: 700px) { .mo-h { flex-wrap: wrap; } .mo-side { justify-content: flex-start; margin-left: 0; } }
 /* Мастер: прогресс операции и полоса «Сегодня» (05.10). */
 .mb-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 2px; font-size: 12px; color: var(--muted-foreground); }
 .mb-progress.tone-ok > span:first-child { color: var(--tone-ok); }
@@ -3348,3 +3382,17 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .crimp-val { text-align: right; }
 .crimp-unit { font-style: normal; color: var(--muted-foreground); }
 @media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }
+
+.stage-dialog-body { display: grid; gap: 10px; max-height: calc(100vh - 240px); overflow-y: auto; overflow-x: hidden; padding-right: 2px; min-width: 0; }
+.stage-dialog-kbs { table-layout: auto; }
+.stage-dialog-kbs td, .stage-dialog-kbs th { overflow-wrap: anywhere; }
+.stage-cascade { display: grid; gap: 6px; font-size: 13px; }
+.stage-cascade h3 { margin: 0 0 2px; font-size: 13px; font-weight: 600; }
+.stage-cascade ul { margin: 2px 0 0; padding-left: 18px; }
+.stage-cascade > section > .stage-cascade-list { padding-left: 0; list-style: none; }
+.stage-cascade summary { cursor: pointer; padding: 2px 0; color: var(--foreground); font-weight: 400; }
+.stage-cascade summary b { font-weight: 600; }
+.stage-cascade-keep > summary, .stage-cascade section.muted summary { color: var(--muted-foreground); font-weight: 500; }
+.stage-cascade li { overflow-wrap: anywhere; }
+.stage-cascade .muted, .stage-cascade section.muted { color: var(--muted-foreground); }
+@media (pointer: coarse) { .stage-cascade summary { padding: 10px 0; } }

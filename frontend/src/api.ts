@@ -379,6 +379,9 @@ export interface WarehouseLot {
   balance: string;
   available: string;
   source_receiving_ids: string[];
+  /** Who holds the reserve: kit requests, techcards, procurement covers. Only lots with a reserve carry holders. */
+  reserve_holders?: Array<{ kind: string; label: string; quantity: string; unit: string }>;
+  reserve_note?: string;
   // Lot passport (SK-6); older payloads may lack it.
   unit_mass_g?: string | null;
   expiry_date?: string | null;
@@ -643,6 +646,8 @@ export interface ProductionOperation {
   /** Готовность входов для монтажника («Мои задания») и сколько штук ему осталось сдать. */
   readiness?: ProductionReadiness;
   remaining?: string;
+  /** «Факт / норма» сданного исполнителем по журналу времени: факт без пауз, норма на сданные штуки. */
+  time_fact?: { actual_seconds: number; norm_seconds: number; percent: number | null; finishes: number } | null;
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
@@ -993,6 +998,19 @@ export interface ProductionOutput {
   defect_quantity: string;
   finished_at: string;
   correction_of_id: string | null;
+}
+
+export interface WorkCall {
+  onBehalfOf?: string;
+  key?: string;
+}
+
+function behalfQuery(onBehalfOf: string | undefined): string {
+  return onBehalfOf ? `?on_behalf_of=${encodeURIComponent(onBehalfOf)}` : "";
+}
+
+function replayHeaders(key: string | undefined): Record<string, string> | undefined {
+  return key ? { "Idempotency-Key": key } : undefined;
 }
 
 export interface CorrectBoxInput {
@@ -1506,6 +1524,10 @@ export interface ConnectorSeries {
   color: string | null;
   checked: boolean;
   sample: ConnectorSeriesHousing | null;
+  /** Раздел галереи: «Провод — плата», «Автомобильные», … — у каждой серии ровно один. */
+  category: string;
+  /** Артикулы БД.КОАКС для ВЧ-серий. */
+  catalog: Array<{ article: string; kind: string; maker: string; wire: string }>;
 }
 
 export interface ConnectorSeriesMatch {
@@ -2777,7 +2799,8 @@ export const productionApi = {
       body: JSON.stringify(payload),
     }),
   list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
-  mine: (operatorId = "") => api<{ tasks: ProductionTask[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
+  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
@@ -2862,26 +2885,28 @@ export const productionApi = {
     `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
-  inputs: (taskId: string, operationId: string) =>
-    api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
+  inputs: (taskId: string, operationId: string, operatorId = "") =>
+    api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs${operatorId ? `?operator_id=${operatorId}` : ""}`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
-  startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = []) =>
-    api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start`, {
-      method: "POST", body: JSON.stringify({ inputs, materials }),
+  // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
+  // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = [], work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ inputs, materials }),
     }),
-  workAction: (sessionId: string, action: "pause" | "resume" | "cancel") =>
-    api<{ session: ProductionWorkSession }>(`/api/production/work/${sessionId}/${action}`, { method: "POST" }),
-  submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "") =>
-    api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit`, {
-      method: "POST", body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
+  workAction: (sessionId: string, action: "pause" | "resume" | "cancel", work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession }>(`/api/production/work/${sessionId}/${action}${behalfQuery(work.onBehalfOf)}`, { method: "POST", headers: replayHeaders(work.key) }),
+  submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "", work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
     }),
   boxAction: (boxId: string, action: "confirm", version: number) =>
     api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
     }),
   boxOutputs: (boxId: string) => api<{ outputs: ProductionOutput[] }>(`/api/production/boxes/${boxId}/outputs`),
-  correctBox: (boxId: string, version: number, input: CorrectBoxInput) =>
-    api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct`, {
+  correctBox: (boxId: string, version: number, input: CorrectBoxInput, onBehalfOf = "") =>
+    api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct${behalfQuery(onBehalfOf)}`, {
       method: "POST", body: JSON.stringify({ version, ...input }),
     }),
   returnBox: (boxId: string, version: number, reason: string) =>
@@ -2922,7 +2947,7 @@ export const productionPlanApi = {
     api<StagePreview>(`/api/production/plan/stage-preview?project=${encodeURIComponent(project)}&value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   addEvent: (payload: {
     project: string;
-    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark";
+    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark" | "status";
     blocker?: string;
     text?: string;
     deadline?: string | null;
@@ -2930,6 +2955,7 @@ export const productionPlanApi = {
     value?: string;
     field?: string;
     reason?: string;
+    preview_token?: string;
   }) => api<{ event: ProductionPlanEvent }>("/api/production/plan/events", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -3418,7 +3444,15 @@ export interface StagePreviewKb {
   change: boolean;
   note: string;
   warnings: string[];
+  /** Что смена закроет в этой КБ и что оставит (с причиной). */
+  close?: StageCloseItem[];
+  keep?: StageKeepItem[];
 }
+
+/** Закрываемое ручной сменой вперёд: задание цеха, заявка на комплектацию, резерв техкарты. */
+export interface StageCloseItem { kind: "task" | "kit_request" | "reserve" | string; id: string; label: string; qty: string; unit: string }
+export interface StageKeepItem { kind: string; label: string; reason: string }
+export interface StageCascadeTotals { tasks: number; kit_requests: number; reserves: number; close: number; keep: number }
 
 export interface StagePreview {
   project: string;
@@ -3432,6 +3466,13 @@ export interface StagePreview {
   blocker: string;
   kbs: StagePreviewKb[];
   warnings: string[];
+  close?: StageCloseItem[];
+  keep?: StageKeepItem[];
+  totals?: StageCascadeTotals;
+  /** «Назад ничего не открывается» — для хода назад и «авто». */
+  cascade_note?: string;
+  /** Уходит с записью: изменилось закрываемое с момента предпросмотра — сервер ответит 409. */
+  preview_token?: string;
 }
 
 export interface KitsetTile {
@@ -3633,7 +3674,7 @@ export interface KitsetJournalEvent {
 }
 
 /** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
-export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string }
+export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string; preview_token?: string }
   | { action: "block"; value: string; text: string }
   | { action: "unblock"; text?: string };
 
@@ -3769,7 +3810,7 @@ export const kitsetsApi = {
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
     ),
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
-  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string }) =>
+  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string; preview_token?: string }) =>
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
   stagePreview: (project: string, value: string, kb = "") =>
     api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),

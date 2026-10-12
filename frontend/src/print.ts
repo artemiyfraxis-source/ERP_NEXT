@@ -1,6 +1,6 @@
 // Shared "печатный бланк" mechanism: no PDF/Doc generation in this stack (Google exit horizon —
 // cheap, temporary mechanisms only). A module's backend builds a `PrintSheet` (title/columns/rows/
-// sign), and this file turns it into a plain HTML document opened in a new window and sent straight
+// sign), and this file turns it into a plain HTML document printed through a hidden iframe and sent straight
 // to the browser's print dialog (Ctrl+P / "Save as PDF" is the browser's own job). Several modules
 // print through this same tiny contract (fulfillment, warehouse, procurement; techcards — multi-page ЭТК) — keep it
 // minimal and stable.
@@ -59,17 +59,28 @@ export function pageRule(options: PrintPageOptions): string {
   return `@page { size: ${options.size}; margin: ${options.marginMm ?? 0}mm; }`;
 }
 
+/** Prints an HTML document through a hidden same-page iframe (`srcdoc`). The earlier `window.open("", "_blank",
+ * "noopener,…")` always returned null (noopener hides the handle), so every print button silently did nothing.
+ * An iframe has no popup blocker, works after an `await` and needs no window handle. The iframe is removed
+ * after printing. */
 export function openPrintHtml(html: string): void {
-  const win = window.open("", "_blank", "noopener,noreferrer,width=900,height=1150");
-  if (!win) return;
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  win.print();
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+  frame.onload = () => {
+    const win = frame.contentWindow;
+    if (!win) { frame.remove(); return; }
+    win.addEventListener("afterprint", () => frame.remove());
+    win.focus();
+    win.print();
+    // afterprint is not fired everywhere; drop the frame later anyway.
+    window.setTimeout(() => frame.remove(), 120_000);
+  };
+  frame.srcdoc = html;
+  document.body.appendChild(frame);
 }
 
-/** Opens the sheet in a new window and triggers the browser print dialog. No-op if popups are blocked. */
+/** Sends the sheet to the browser print dialog. */
 export function openPrintSheet(sheet: PrintSheet): void {
   openPrintHtml(buildPrintSheetHtml(sheet));
 }

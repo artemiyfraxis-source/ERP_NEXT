@@ -8,8 +8,10 @@ COPY frontend/package.json frontend/package-lock.json ./
 # and fetch retries ride out a flaky network (a one-off `npm ci` exit 146 on the server, 06.10).
 RUN --mount=type=cache,target=/root/.npm     npm config set fetch-retries 5 && npm config set fetch-retry-mintimeout 20000 && npm config set fetch-retry-maxtimeout 120000     && npm ci --no-audit --no-fund
 COPY frontend/ ./
-# The harness library seed is shared with the backend; tsc -b type-checks the test that imports it.
+# Backend data the frontend imports (harness library seed, ETK marking catalog); tsc -b type-checks the tests that
+# import them. test/architecture.test.mjs fails when a new import is not copied here.
 COPY backend/data/harness-library/ /src/backend/data/harness-library/
+COPY backend/data/etk-marking.json /src/backend/data/etk-marking.json
 # Cap the V8 heap so the tsc/vite build stays predictable on a small host instead of being OOM-killed.
 ENV NODE_OPTIONS=--max-old-space-size=6144
 RUN npm run build && npm run build:tcgen

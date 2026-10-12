@@ -45,6 +45,22 @@ it("the marking operation of the ETK lists every mark by КД before the steps, 
   expect(html).toMatch(/Что маркируем[\s\S]*Надпись[\s\S]*708К\.4КБ1[\s\S]*на обоих концах[\s\S]*Описание операции/);
 });
 
+it("a tube cutting step without a length shows «длина не задана» in red on screen and with a warning sign in print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks });
+  const operation = (card.document as { operations: Array<{ card: { steps: unknown[] } }> }).operations[0];
+  operation.card.steps = [
+    { number: "1", kind: "Операция", text: "Нарезать трубки в размер — станок резки трубок.", tolerance: "длина не задана" },
+    { number: "2", kind: "Контроль", text: "ВИЗУАЛЬНЫЙ КОНТРОЛЬ: надпись на трубке соответствует КД.", tolerance: "Согласно КД" },
+  ];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByText("Допуск: длина не задана")).toHaveClass("tone-danger");
+  expect(screen.getByText("Допуск: Согласно КД")).not.toHaveClass("tone-danger");
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  expect(buildPrintDocumentHtml("ТК", etkPrintPages(card, []))).toContain("⚠ длина не задана");
+});
+
 it("an old marking operation without a mark list renders and prints as before", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -53,4 +69,19 @@ it("an old marking operation without a mark list renders and prints as before", 
   expect(screen.queryByRole("table", { name: "Метки по КД" })).toBeNull();
   expect(etkPrintPages(techcard({}), [])).toEqual(etkPrintPages(techcard({ marks: [] }), []));
   expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({}), []))).not.toContain("Что маркируем");
+});
+
+it("the marks table gets «Длина, мм» only when a tube row has it, on screen and in print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const withLength = [{ ...marks[0], material: "Термотрубка", length: "25" }, marks[1]];
+  render(<EtkSheet card={techcard({ marks: withLength })} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  expect(within(table).getByRole("columnheader", { name: "Длина, мм" })).toBeInTheDocument();
+  expect(within(table).getAllByRole("row").slice(1).map((row) => row.textContent)).toEqual([
+    "1Разъём X1 (DB-9F)X1Термотрубкау разъёма25110", "2Провод W1708К.4КБ1Маркировкана обоих концах220",
+  ]);
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks: withLength }), []))).toMatch(/Где[\s\S]*Длина, мм[\s\S]*На изделие/);
+  expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks }), []))).not.toContain("Длина, мм");
 });

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { FulfillmentPage } from "./FulfillmentPage";
 import type { FulfillmentRequest, Principal } from "./api";
+import { capturePrintFrames } from "./testPrintFrames";
 
 const principal: Principal = {
   user: {
@@ -128,6 +129,8 @@ it("does not load lots or show editing actions to a view-only grant", async () =
   expect(await screen.findByText("Ждём поставки")).toBeInTheDocument();
   expect(paths).toEqual(["/api/issues"]);
   expect(screen.queryByRole("button", { name: "Выбрать ГРН" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Есть, не заведено" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Нет на складе" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Отменить заявку" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "+ Заявка" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
@@ -178,8 +181,8 @@ it("lets a technical lead with edit on handout hand a kit out", async () => {
 
 it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
   const printedPaths: string[] = [];
-  const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(printWindow as unknown as Window);
+  const open = vi.spyOn(window, "open");
+  const printed = capturePrintFrames();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     printedPaths.push(path);
@@ -199,8 +202,10 @@ it("prints the issue sheet and, once something is issued, offers the return shee
   fireEvent.click(screen.getByRole("button", { name: "Печать заявки" }));
 
   await waitFor(() => expect(printedPaths).toContain(`/api/issues/${request.id}/print`));
-  await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
-  expect(printWindow.document.write.mock.calls[0][0]).toContain("ЗАЯВКА НА ВЫДАЧУ FRX-ISS-26-0001");
+  await waitFor(() => expect(printed.print).toHaveBeenCalled());
+  expect(printed.html[0]).toContain("ЗАЯВКА НА ВЫДАЧУ FRX-ISS-26-0001");
+  expect(open).not.toHaveBeenCalled();
+  printed.restore();
 });
 
 it("records good return and both defect quantities for every issued line", async () => {
@@ -620,6 +625,25 @@ async function openWholeOrder() {
   fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
 }
 
+it("counts a line «нет на складе» as waiting on its КБ chip and names it in the order, never as «есть»", async () => {
+  const absentKb2 = { ...kb2, status: "Недоукомплектован", lines: [{ ...kb2.lines[0], absent_at: "2026-10-12T09:30:00", absent_by: "Кладовщик" }] };
+  const offKb1 = { ...kb1, status: "Укомплектован", lines: [{ ...kb1.lines[0], off_book: true }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [offKb1, absentKb2], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  await openWholeOrder();
+  const tabs = await screen.findByRole("tablist", { name: "Заявки проекта" });
+  expect(within(tabs).getByRole("tab", { name: "КБ1 ✓" })).toBeInTheDocument();
+  expect(within(tabs).getByRole("tab", { name: "КБ2 · ждут 1 (нет 1)" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "КБ2 0 / 4 · нет на складе" })).toBeInTheDocument();
+  expect(screen.getByText("4 нет на складе")).toBeInTheDocument();
+  expect(screen.getByText("4 есть, не заведено")).toBeInTheDocument();
+});
+
 it("picks several lots for every КБ at once, previews the FIFO split and reports what was assigned", async () => {
   let payload: any;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -752,6 +776,35 @@ it("marks one line «есть, не заведено», counts it as closed and 
   expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
 });
 
+it("marks one line «нет на складе»: it stays open, shows who and when, and the mark comes off", async () => {
+  const calls: Array<[string, string, unknown]> = [];
+  let marked = false;
+  const url = `/api/issues/${request.id}/lines/${request.lines[0].id}/absent`;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    const line = marked ? { ...request.lines[0], absent_at: "2026-10-12T09:30:00", absent_by: "Кладовщик" } : request.lines[0];
+    if (path === "/api/issues") return json({ requests: [{ ...request, version: marked ? 4 : 3, status: marked ? "Недоукомплектован" : "Новая", lines: [line] }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path === url) {
+      calls.push([init?.method ?? "GET", path, JSON.parse(String(init?.body))]);
+      marked = init?.method === "POST";
+      return json({ request });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  await expand(request.number);
+  fireEvent.click(await screen.findByRole("button", { name: "Нет на складе" }));
+  expect(await screen.findByText("Набрано 0 из 1 поз. · нет на складе: 1")).toBeInTheDocument();
+  expect(screen.getByText("нет на складе")).toBeInTheDocument();
+  expect(screen.getByText("Кладовщик · 12.10.2026, 09:30")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Есть, не заведено" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Укомплектован" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Снять отметку" }));
+  expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
+  expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
+});
+
 /* Owner 06.10.2026, project 33МФ.2: КБ1 and КБ2 «Укомплектован», КБ3 «Готов к выдаче» — issue any КБ or the whole order. */
 const order = (overrides: Partial<FulfillmentRequest>[]): FulfillmentRequest[] => overrides.map((item, index) => ({
   ...request,
@@ -806,7 +859,7 @@ it("issues the ticked КБ of the whole order in one call; a КБ not picked is 
 
   render(<FulfillmentPage principal={principal} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ }));
 
   const chooser = screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" });
   expect(within(chooser).getByLabelText("Выдать КБ1")).toBeChecked();
@@ -838,11 +891,25 @@ it("keeps the chooser open and names the КБ when the server refuses the batch"
 
   render(<FulfillmentPage principal={principal} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ }));
   fireEvent.click(screen.getByRole("button", { name: "Выдать выбранные (2)" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("КБ2 (REQ.26.0000020): заявка изменилась после загрузки");
   expect(screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" })).toBeInTheDocument();
+});
+
+it("keeps the issue button visible but disabled, with the reason, when no КБ is ready; an issued КБ says so on its chip", async () => {
+  issueFetch(order([
+    { status: "КБ Выдана", at_issued: "2026-10-05T15:20:00", lines: [{ ...boundLine, reserved: "0", issued: "4" }] },
+    { status: "Недоукомплектован", lines: [boundLine, { ...request.lines[0], id: "waiting" }] },
+  ]), []);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  expect(screen.getByRole("tab", { name: "КБ1 · выдан" })).toBeInTheDocument();
+  const issue = screen.getByRole("button", { name: "Выдать комплекты" });
+  expect(issue).toBeDisabled();
+  expect(issue).toHaveAttribute("title", expect.stringContaining("Нет КБ, готовых к выдаче"));
 });
 
 it("gives no issue action without the handout right or on the picking screen", async () => {
@@ -851,14 +918,14 @@ it("gives no issue action without the handout right or on the picking screen", a
 
   const { unmount } = render(<FulfillmentPage principal={picker} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
   expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
   unmount();
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
   expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();
@@ -893,7 +960,9 @@ it("draws «Отменить заявку» as a danger button and asks before c
   render(<FulfillmentPage principal={principal} mode="pick" />);
   await expand(request.number);
   const cancel = await screen.findByRole("button", { name: "Отменить заявку" });
-  expect(cancel).toHaveClass("danger");
+  expect(cancel).toHaveClass("secondary", "danger");
+  expect(screen.getByRole("button", { name: "Печать заявки" })).toHaveClass("secondary");
+  expect(screen.getByRole("button", { name: "Печать заявки" })).not.toHaveClass("small");
   fireEvent.click(cancel);
   expect(confirm).toHaveBeenCalledTimes(1);
 });

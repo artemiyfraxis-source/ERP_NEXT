@@ -2,7 +2,7 @@ import { useId } from "react";
 import { AutoTextarea } from "./AutoTextarea";
 import { Toggle } from "./GenControls";
 import {
-  MARK_KIND_DEFAULT, MARK_KINDS, MARK_PLACES, markMaterialSource, markRowActive, newMarkRow, productMarkRow, type MarkMat, type MarkPlace, type MarkRow,
+  MARK_KIND_DEFAULT, MARK_KINDS, MARK_PLACES, markIsTube, markMaterialSource, markRowActive, newMarkRow, productMarkRow, type MarkMat, type MarkPlace, type MarkRow,
 } from "./tcGenMarks";
 
 type CompLike = { art?: string; name?: string };
@@ -53,8 +53,8 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
     {enabled && <>
     <datalist id={`${id}-targets`}>{targets.map((item) => <option key={item} value={item} />)}</datalist>
     {rows.length ? <div className="gtable-wrap"><table className="gtable">
-      <colgroup><col className="c-n" /><col className="c-target" /><col className="c-text" /><col className="c-mat" /><col className="c-place" /><col className="c-qty" /><col className="c-x" /></colgroup>
-      <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Вид / материал</th><th>Где</th><th className="num" title="Штук на изделие">Кол-во</th><th aria-label="Удалить" /></tr></thead>
+      <colgroup><col className="c-n" /><col className="c-target" /><col className="c-text" /><col className="c-mat" /><col className="c-place" /><col className="c-qty" /><col className="c-len" /><col className="c-x" /></colgroup>
+      <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Вид / материал</th><th>Где</th><th className="num" title="Штук на изделие">Кол-во</th><th className="num" title="Длина отрезка трубки, мм">Длина, мм</th><th aria-label="Удалить" /></tr></thead>
       <tbody>{rows.map((row, index) => {
         const n = index + 1;
         const missing = markMaterialSource(row.material, mats, comps) === null;
@@ -76,6 +76,8 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
             {row.place === "free" && <AutoTextarea aria-label={`Место ${n}`} value={row.where} placeholder="где по КД" onChange={(where) => set(index, { where })} />}
           </span></td>
           <td><input aria-label={`На изделие ${n}`} title="Штук на изделие" className="num" inputMode="decimal" value={row.qty} onChange={(event) => set(index, { qty: event.target.value })} /></td>
+          <td>{markIsTube(row.material) && <input aria-label={`Длина трубки ${n}`} title="Длина отрезка трубки, мм" className="num" inputMode="decimal" value={row.len ?? ""} placeholder="—"
+            onChange={(event) => set(index, { len: event.target.value })} />}</td>
           <td><button type="button" className="btn-x" aria-label={`Удалить метку ${n}`} onClick={() => onChange(rows.filter((_, i) => i !== index))}>×</button></td>
         </tr>;
       })}</tbody>

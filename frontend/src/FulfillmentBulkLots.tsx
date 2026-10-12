@@ -20,11 +20,22 @@ export const bulkApi = {
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/off-book`, {
       method: on ? "POST" : "DELETE", body: JSON.stringify({ version }),
     }),
+  /** «Нет на складе» (owner 12.10.2026): the line stays open as a shortage; a repeat on a marked line changes nothing. */
+  absent: (requestId: string, lineId: string, version: number, on: boolean) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/absent`, {
+      method: on ? "POST" : "DELETE", body: JSON.stringify({ version }),
+    }),
 };
 
 /** «Есть, не заведено»: the line is marked, not bound to a lot. */
 export function isOffBook(line: FulfillmentLine) {
   return Boolean((line as FulfillmentLine & { off_book?: boolean }).off_book);
+}
+
+/** «Нет на складе»: who confirmed the part is absent and when; null — no mark. */
+export function absentMark(line: FulfillmentLine): { by: string; at: string } | null {
+  const mark = line as FulfillmentLine & { absent_at?: string | null; absent_by?: string | null };
+  return mark.absent_at ? { by: mark.absent_by ?? "", at: mark.absent_at } : null;
 }
 
 export const STALE_TEXT = "Заявки изменились, пока выбирали ГРН. Список обновлён — повторите.";

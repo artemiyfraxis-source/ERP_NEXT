@@ -1,5 +1,5 @@
 from app.modules.techcards.connector_housings import CATALOG_SAMPLES, FAMILIES
-from app.modules.techcards.connector_series import connector_series, find_in_series, terminals_for, wire_range
+from app.modules.techcards.connector_series import CATEGORIES, connector_series, find_in_series, terminals_for, wire_range
 
 from .test_project_cards import project_techcards_api  # noqa: F401 — the shared API fixture
 
@@ -115,6 +115,62 @@ def test_connector_series_api(project_techcards_api):
     assert body["match"]["series"] == "jst-ph" and body["match"]["article"] == "PHR-4"
     assert len(body["series"]) == families["series_count"]
     assert project_techcards_api.get("/api/techcards/connector-series").json()["match"] is None
+
+
+def test_every_series_has_one_known_category_and_the_list_runs_by_category():
+    series = connector_series()
+    assert all(item["category"] in CATEGORIES for item in series)
+    order = [CATEGORIES.index(item["category"]) for item in series]
+    assert order == sorted(order)
+    by_id = {item["id"]: item["category"] for item in series}
+    assert by_id["jst-gh"] == by_id["molex-picoblade"] == "Провод — плата"
+    assert by_id["jst-sm"] == by_id["jst-rcy"] == "Провод — провод"
+    assert by_id["deutsch-dt"] == by_id["te-superseal"] == by_id["te-multilock-040"] == "Автомобильные"
+    assert by_id["weipu-sa8"] == by_id["cnlinko-lp12"] == by_id["aviation-gx"] == "Цилиндрические"
+    assert by_id["amass-xt"] == "Силовые" and by_id["rj45"] == by_id["usb-a"] == by_id["dsub"] == "Интерфейсные"
+    assert by_id["dc-barrel"] == by_id["banana"] == "Питание и штекеры"
+    assert by_id["lug"] == by_id["flat-quick"] == "Наконечники и клеммы" and by_id["rf-sma"] == "ВЧ"
+
+
+def test_series_ids_are_unique_and_the_warehouse_connector_has_its_series():
+    ids = [item["id"] for item in connector_series()]
+    assert len(ids) == len(set(ids))
+    assert "connfly-ds1066" in ids  # the warehouse lots I-DS1066-SCW02 / 03 (type «Соединитель»)
+
+
+def test_series_known_only_from_the_reference_data_have_no_invented_housings():
+    series = _series(TERMINALS + [
+        {"terManufacturer": "Molex", "terSeries": "2695", "terComponent": "KK 254", "terType": "Female", "terArticle": "08-50-0114"},
+    ])
+    kk = series["molex-kk254"]
+    assert kk["variants"] == [] and kk["housing_count"] == 0 and kk["counts"] == [] and not kk["checked"]
+    assert [t["article"] for t in kk["terminals"]] == ["08-50-0114"]
+    assert kk["sample"] is not None and kk["sample"]["article"] == ""  # a picture of the closest shape, not a model number
+    assert kk["pitch"] is None and kk["category"] == "Провод — плата"
+
+
+def test_ds1066_housing_comes_from_the_warehouse_article():
+    series = _series()["connfly-ds1066"]
+    sample = series["variants"][0]["housings"][0]
+    assert sample["article"] == "I-DS1066-SCW02" and sample["n"] == 2 and sample["housing"]["pitch"] == 2.0
+    assert find_in_series("I-DS1066-SCW03@CONNFLY", connector_series())["series"] == "connfly-ds1066"
+
+
+def test_coax_articles_fill_the_rf_series_by_type():
+    coax = [
+        {"coaxArticle": "SMA-male RG-316", "coaxType": "SMA-male", "coaxMfr": "LenoRF", "coaxWire": "RG-316"},
+        {"coaxArticle": "RP-SMA-female RG-316", "coaxType": "RP-SMA-female", "coaxMfr": "", "coaxWire": "RG-316"},
+        {"coaxArticle": "U.FL", "coaxType": "U.FL-female R/A", "coaxMfr": "", "coaxWire": ""},
+        {"coaxArticle": "Fakra Z-Female", "coaxType": "Fakra-female", "coaxMfr": "", "coaxWire": ""},
+        {"coaxArticle": "QMA-KPD7", "coaxType": "QMA", "coaxMfr": "", "coaxWire": ""},
+    ]
+    series = {item["id"]: item for item in connector_series((), coax)}
+    assert [c["article"] for c in series["rf-sma"]["catalog"]] == ["SMA-male RG-316"]
+    assert [c["article"] for c in series["rf-rpsma"]["catalog"]] == ["RP-SMA-female RG-316"]
+    assert [c["article"] for c in series["rf-mhf"]["catalog"]] == ["U.FL"]
+    assert [c["article"] for c in series["rf-qma"]["catalog"]] == ["QMA-KPD7"]
+    assert series["rf-fakra"]["category"] == "Автомобильные" and len(series["rf-fakra"]["catalog"]) == 1
+    assert series["rf-bnc"]["catalog"] == [] and series["rf-bnc"]["housing_count"] == 0
 
 
 def test_terminal_payload_carries_crimp_height_and_pull_force():
