@@ -119,6 +119,11 @@ class FulfillmentLine:
     # «есть, но не заведено» (owner 05.10.2026): the goods are on the shelf but on no lot — the position passes
     # without a lot, no reserve, no stock movement and no СПИСАНИЕ row at issue.
     off_book: bool = False
+    # «нет на складе» (owner 12.10.2026): the storekeeper confirmed the part is physically absent — the line is a
+    # shortage, it keeps waiting for a delivery and the project's «Снабжение» stops counting book stock for it. Who and
+    # when; never together with «есть, но не заведено», a lot, a reserve or an issue (CHECK in migration 0104).
+    absent_at: datetime | None = None
+    absent_by: str = ""
 
     @classmethod
     def create(
@@ -151,8 +156,14 @@ class FulfillmentLine:
 
     @property
     def waiting(self) -> bool:
-        """No lot, no «есть, но не заведено», nothing issued: the position still waits for stock."""
+        """No lot, no «есть, но не заведено», nothing issued: the position still waits for stock (a line marked «нет
+        на складе» waits too — an arrival or a bulk ГРН binds it like any waiting line)."""
         return self.lot is None and not self.off_book and self.reserved == 0 and self.issued == 0
+
+    @property
+    def absent(self) -> bool:
+        """«нет на складе»: the storekeeper confirmed the part is not on the shelf."""
+        return self.absent_at is not None
 
     def bind(
         self,
@@ -172,8 +183,12 @@ class FulfillmentLine:
         if amount > self.requirement:
             raise FulfillmentValidationError("Резерв не может превышать потребность")
         # issueAttachLot_: the bound row takes the lot's ЕД.ИЗМ; the remainder row keeps the position's own unit.
+        # A lot found for a line marked «нет на складе» (a delivery came): the bound part loses the mark, the rest
+        # keeps it.
         lot_unit = str(unit or "").strip()
-        bound = replace(self, requirement=amount, reserved=amount, lot=lot, unit=lot_unit or self.unit)
+        bound = replace(
+            self, requirement=amount, reserved=amount, lot=lot, unit=lot_unit or self.unit, absent_at=None, absent_by="",
+        )
         remainder = None
         if amount < self.requirement:
             remainder = replace(
@@ -197,7 +212,7 @@ class FulfillmentLine:
             raise FulfillmentValidationError("Позиция уже отмечена «есть, но не заведено»")
         if self.lot is not None or self.reserved > 0:
             raise FulfillmentValidationError("У позиции выбрана партия — сначала сними её")
-        return replace(self, off_book=True)
+        return replace(self, off_book=True, absent_at=None, absent_by="")  # the part is there after all
 
     def clear_off_book(self) -> FulfillmentLine:
         if self.issued > 0:
@@ -205,6 +220,26 @@ class FulfillmentLine:
         if not self.off_book:
             raise FulfillmentValidationError("Позиция не отмечена «есть, но не заведено»")
         return replace(self, off_book=False)
+
+    def mark_absent(self, by: str, at: datetime) -> FulfillmentLine:
+        """«нет на складе» on a line without a lot; it replaces «есть, но не заведено» (one of the two, never both)."""
+        if self.issued > 0:
+            raise FulfillmentValidationError("Выданную позицию нельзя менять")
+        if self.absent:
+            raise FulfillmentValidationError("Позиция уже отмечена «нет на складе»")
+        if self.lot is not None or self.reserved > 0:
+            raise FulfillmentValidationError("У позиции выбрана партия — сначала сними её")
+        who = str(by or "").strip()
+        if not who:
+            raise FulfillmentValidationError("Не указано, кто отметил «нет на складе»")
+        return replace(self, off_book=False, absent_at=at, absent_by=who)
+
+    def clear_absent(self) -> FulfillmentLine:
+        if self.issued > 0:
+            raise FulfillmentValidationError("Выданную позицию нельзя менять")
+        if not self.absent:
+            raise FulfillmentValidationError("Позиция не отмечена «нет на складе»")
+        return replace(self, absent_at=None, absent_by="")
 
     def mark_issued(self) -> FulfillmentLine:
         if not self.covered:
@@ -396,7 +431,7 @@ class FulfillmentRequest:
             picked = line.issued if line.issued > 0 else line.reserved
             if picked >= line.requirement:
                 continue
-            where = f" ({line.lot.grn})" if line.lot else " (ГРН не выбран)"
+            where = f" ({line.lot.grn})" if line.lot else " (нет на складе)" if line.absent else " (ГРН не выбран)"
             parts.append(f"{line.name}{where}: −{number(line.requirement - picked)}")
         return "; ".join(parts)
 
@@ -499,6 +534,31 @@ class FulfillmentRequest:
             shortfall_note=None,
         )
 
+    def mark_absent(self, line_id: UUID, by: str, at: datetime) -> FulfillmentRequest:
+        """«нет на складе»: the line stays open — a shortage, never «есть». The kit is in work and short: «Новая» and
+        «Укомплектован» (the line was «есть, но не заведено») → «Недоукомплектован»; the handout place is forgotten
+        like after a lot is removed; НЕДОБОР is rewritten from the lines."""
+        self._require_editable()
+        if not any(line.id == line_id for line in self.lines):
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        lines = tuple(line.mark_absent(by, at) if line.id == line_id else line for line in self.lines)
+        return replace(
+            self, lines=lines, status=FulfillmentStatus.UNDERFILLED, handout_location=None,
+            version=self.version + 1, shortfall_note=None,
+        )
+
+    def clear_absent(self, line_id: UUID) -> FulfillmentRequest:
+        """The mark removed: the line waits again without it (folds with free rows of the same item, FF-6); the kit
+        stays «Недоукомплектован» — the line is still open."""
+        self._require_editable()
+        if not any(line.id == line_id for line in self.lines):
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        lines = [line.clear_absent() if line.id == line_id else line for line in self.lines]
+        return replace(
+            self, lines=_merged_free(lines), status=FulfillmentStatus.UNDERFILLED, version=self.version + 1,
+            shortfall_note=None,
+        )
+
     def mark_ready(self, handout_location: str) -> FulfillmentRequest:
         if self.status is not FulfillmentStatus.COMPLETE or not self.fully_reserved:
             raise FulfillmentValidationError("Комплект ещё не укомплектован целиком")
@@ -596,10 +656,14 @@ class FulfillmentRequest:
 def _merged_free(lines) -> tuple[FulfillmentLine, ...]:
     """FF-6, Issue.gs issueMergeFreePlan_: after a lot is removed, every FREE row (no lot, no reserve, no issue, not
     «есть, но не заведено») of one article + name + unit folds into the first such row — also rows that came from
-    different positions of the composition; the need is summed. Any other row keeps its own quantity."""
+    different positions of the composition; the need is summed. Any other row keeps its own quantity. A row marked
+    «нет на складе» folds only with another marked row: a need nobody confirmed absent never takes the mark."""
 
     def free_key(line: FulfillmentLine) -> tuple[str, ...]:
-        return tuple(str(value or "").strip().casefold() for value in (line.article, line.name, line.unit))
+        return (
+            *(str(value or "").strip().casefold() for value in (line.article, line.name, line.unit)),
+            "absent" if line.absent else "",
+        )
 
     merged: list[FulfillmentLine] = []
     for line in lines:

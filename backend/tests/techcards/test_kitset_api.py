@@ -799,3 +799,34 @@ def test_order_missing_picked_lines_deadline_and_rights(kitset_api, scrap_allowa
     # No earlier request of the project: the first point of the directory, the deadline given.
     assert (filed.delivery_point, str(filed.planned_date)) == ("г. Москва, ул. 6-я Радиальная, д. 17", "2026-10-15")
     assert _supply(client)["43030-0007"]["short"] == "32"  # not picked — not ordered
+
+
+def test_a_kit_line_marked_absent_makes_the_position_short_and_is_ordered_once(kitset_api):
+    """«нет на складе» (owner 12.10.2026): the storekeeper found nothing on the shelf, so the book stock does not cover
+    the КБ — «Свободно» drops by the marked line, «Заказать недостающее» buys it, a second press buys nothing."""
+    client, _lot = kitset_api  # 15 шт of 43025-0400 lie free on the shelf (by the books)
+    app.dependency_overrides[authenticated_principal] = _principal(
+        {"projects": "edit", "newrequest": "edit", "fulfillment": "edit"},
+    )
+    assert _load(client, deadline="2026-10-20").status_code == 200
+    client.put("/api/techcards/kitsets/708К.4/lines", json={"edits": [
+        {"index": "КБ1", "art": "43025-0400", "per": "1", "scrap": "0"},
+    ]})
+    assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
+    with app.state.fulfillment_uow_factory() as uow:
+        kb1 = next(request for request in uow.fulfillment.list(limit=10) if "КБ1" in request.purpose)
+    line = next(item for item in kb1.lines if item.article == "43025-0400")
+    assert line.lot is None  # the kit waits for its lot: nothing is reserved yet
+    before = _supply(client)["43025-0400"]
+    assert (before["free"], before["short"]) == ("15", "0")
+
+    marked = client.post(f"/api/issues/{kb1.id}/lines/{line.id}/absent", json={"version": kb1.version})
+    assert marked.status_code == 200, marked.text
+
+    after = _supply(client)["43025-0400"]
+    assert (after["need"], after["free"], after["short"]) == ("10", "5", "5")
+    first = client.post("/api/techcards/kitsets/708К.4/order-missing", json={"articles": ["43025-0400"]}).json()
+    assert [(item["art"], item["quantity"]) for item in first["created"]] == [("43025-0400", "5")]
+    second = client.post("/api/techcards/kitsets/708К.4/order-missing", json={"articles": ["43025-0400"]}).json()
+    assert second["created"] == []
+    assert second["skipped"][0]["kind"] == "уже в закупке"

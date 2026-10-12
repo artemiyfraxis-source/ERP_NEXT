@@ -21,7 +21,12 @@ from app.modules.warehouse.domain import (
 )
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
-from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
+from app.shared.notifications import (
+    SUPPLY_AUDIENCE,
+    NotificationOutbox,
+    notification_requested,
+    publish_notification,
+)
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
@@ -177,6 +182,14 @@ class OffBookCommand(VersionedFulfillmentCommand):
 
     line_id: UUID
     off_book: bool = True
+
+
+@dataclass(frozen=True)
+class AbsentCommand(VersionedFulfillmentCommand):
+    """«нет на складе» on one line without a lot (`absent=True`) or the mark removed (`absent=False`)."""
+
+    line_id: UUID
+    absent: bool = True
 
 
 @dataclass(frozen=True)
@@ -876,6 +889,52 @@ def set_off_book(command: OffBookCommand, uow: UnitOfWork) -> FulfillmentRequest
         return updated
 
 
+def set_absent(command: AbsentCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    """«нет на складе» (owner 12.10.2026): the storekeeper confirms the part is physically absent. The line stays open
+    as a shortage («ждут» on the КБ, НЕДОБОР «(нет на складе)»), «есть, но не заведено» on it is dropped; nothing on
+    the warehouse moves. Supply hears it once per mark; the project's «Снабжение» counts the line short, so «Заказать
+    недостающее» orders it (that order is idempotent by itself). A repeated press on a line already in the wanted
+    state changes nothing — no version bump, no second audit or message — whatever version the screen sent."""
+    with uow:
+        request = uow.fulfillment.get(command.request_id)
+        if request is None:
+            raise KeyError(f"Fulfillment request not found: {command.request_id}")
+        line = next((item for item in request.lines if item.id == command.line_id), None)
+        if line is None:
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        if line.absent == command.absent:
+            return request
+        if request.version != command.expected_version:
+            raise ConcurrentFulfillmentUpdate("Заявка изменилась после загрузки формы")
+        details = _off_book_details(line)
+        if command.absent:
+            updated = request.mark_absent(line.id, command.actor.name, command.now).stamped(command.now)
+            event = "fulfillment.absent_marked"
+            if line.off_book:
+                details["off_book_cleared"] = True
+        else:
+            updated = request.clear_absent(line.id).stamped(command.now)
+            event = "fulfillment.absent_cleared"
+        uow.fulfillment.add(updated)
+        _audit(updated, event, command.actor, command.now, details, uow)
+        if command.absent:
+            kit = f"{updated.purpose}, заявка {updated.number}"
+            publish_notification(uow.outbox, notification_requested(
+                key=f"fulfillment:{updated.id}:absent:{line.id}:v{updated.version}",
+                now=command.now,
+                title=f"Нет на складе: {line.article or line.name}",
+                body=(
+                    f"{line.name} — {_display_number(line.requirement)} {line.unit}. {kit}."
+                    f"\nОтметил: {command.actor.name}. Нужна закупка: проект → «Снабжение» → «Заказать недостающее»."
+                ),
+                kind="absent",
+                reference=updated.number,
+                audiences=(SUPPLY_AUDIENCE,),
+            ))
+        uow.commit()
+        return updated
+
+
 def _item_key(article: str, name: str) -> tuple[str, str]:
     """The screen's position key (FulfillmentPage ProjectPanel: «article|name», trimmed, case-insensitive)."""
     return str(article or "").strip().casefold(), str(name or "").strip().casefold()
@@ -1528,6 +1587,8 @@ def build_issue_print_sheet(request: FulfillmentRequest, now: datetime) -> Print
     for index, line in enumerate(request.lines, start=1):
         if line.off_book:
             grn = "есть, не заведено"
+        elif line.absent:
+            grn = "— нет на складе —"
         else:
             grn = line.lot.grn if line.lot else "— ждём поставки —"
         package = line.lot.package if line.lot else ""

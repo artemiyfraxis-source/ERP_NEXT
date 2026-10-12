@@ -942,6 +942,19 @@ def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list
     return kitted
 
 
+def supply_absent(project: str, requests: Iterable[FulfillmentRequest]) -> list[SupplyStock]:
+    """Kit lines of the project marked «нет на складе»: the storekeeper found nothing on the shelf, so that much of the
+    book stock is not there for the project — `supply_lines` takes it off «Свободно» and the position becomes short."""
+    canon = normalize_project_number(project)
+    return [
+        SupplyStock(article=line.article, name=line.name, quantity=line.requirement)
+        for request in requests
+        if request.status is not FulfillmentStatus.CANCELLED and project_from_purpose(request.purpose) == canon
+        for line in request.lines
+        if line.absent
+    ]
+
+
 def _same_text(left: object, right: object) -> bool:
     return " ".join(str(left or "").split()).casefold() == " ".join(str(right or "").split()).casefold()
 
@@ -972,7 +985,7 @@ def project_supply(
     rows = supply_rows(kitset.project, requests, procurement, lotless=[line_id for line_id, _item in off_book])
     lines = supply_lines(
         kitset, rows, supply_stock(kitset.project, fulfillment_uow), supply_kitting(kitset.project, kits),
-        off_book=[item for _line_id, item in off_book],
+        off_book=[item for _line_id, item in off_book], absent=supply_absent(kitset.project, kits),
     )
     return lines, requests
 
