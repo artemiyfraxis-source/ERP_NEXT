@@ -45,7 +45,7 @@ from typing import Any, Protocol
 
 from app.modules.production.plan import MANUAL_TECHCARD_PROJECTS, normalize_project_number
 from app.modules.references.domain import TechOperationTab
-from app.modules.references.wire_dia import wire_dia_rows
+from app.modules.references.wire_dia import read_wire_dia
 from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import spreadsheet_id_from_url
 from app.modules.techcards.application import (
@@ -325,7 +325,7 @@ def generator_refs(techcards_factory: Callable[[], Any], references_factory: Cal
                 records = uow.tech_operations.list(tab=TechOperationTab(tab), query="", limit=5000)
                 tabs[tab] = ([{"id": str(item.id), "fields": item.fields} for item in records] if tab == "ter"
                              else [item.fields for item in records])
-            wire_dia = wire_dia_rows(uow.cable_structure.gauges(), uow.cable_structure.hookups())
+            wire_dia = read_wire_dia(uow)
     return {"templates": templates, **tabs, "wire_dia": wire_dia}
 
 

@@ -269,6 +269,10 @@ const EPS_BY_MARK: Record<string, number> = {
 };
 /** Провод без Ø в базе монтажных (марка вне 12 серий или размера нет): видимая подсказка вместо молчаливого 0. */
 export const WIRE_DIA_MISSING_ = "Ø провода не найден в базе монтажных проводов — задайте вручную";
+/** Ø взят из старой таблицы СПР.КАБ (в базе монтажных его ещё нет, wire_dia «По старой таблице»): видно, что не подтверждён. */
+export const WIRE_DIA_OLD_ = "Ø провода по старой таблице, не подтверждено источником — проверьте";
+const WIRE_DIA_OLD_COLUMN_ = "По старой таблице";
+const OLD_FLAG_ = "old:"; // WireDiaRow[OLD_FLAG_ + norm] = 1 — Ø этой марки в строке из старой таблицы
 // Латинские буквы, набранные вместо кириллических двойников («MГТФ», «HB-4»), — как cables.hookup_series.
 const LATIN_TWINS_: Record<string, string> = { a: "а", b: "в", c: "с", e: "е", h: "н", k: "к", m: "м", o: "о", p: "р", t: "т", x: "х", y: "у" };
 /** Марка таблицы Ø в строке артикула: целиком, не частью другой марки (МНВ-4 — не НВ-4, ПуГВнг(А)-LS — не ПуГВ,
@@ -773,6 +777,13 @@ export function makeGen(D: GenData, S: GenState) {
     return row ? { row, mk } : null;
   }
   function lookupWireDia_(art: string) { const r = wireRow_(art); return (r && r.row[r.mk.norm]) || 0; }
+  /** Ø провода (по артикулу, иначе по наименованию — как свивка его берёт) и взят ли он из старой таблицы. */
+  function compWireDia_(c: Comp) {
+    const art = lookupWireDia_(c.art) ? c.art : c.name;
+    const r = wireRow_(art);
+    const dia = (r && r.row[r.mk.norm]) || 0;
+    return { dia, old: !!(r && dia && r.row[OLD_FLAG_ + r.mk.norm]) };
+  }
   function wireGauge_(art: string) {
     const wd = D.wireDia;
     const s = String(art || "").toLowerCase().replace(/,/g, ".");
@@ -866,17 +877,20 @@ export function makeGen(D: GenData, S: GenState) {
   const twistDiaValue = () => (S.twist.diaManual || !S.twist.enabled ? S.twist.dia : autoTwistDia());
   /** Свиваемые провода, Ø которых нет в базе монтажных проводов (марка вне базы или размера нет), — по ним видна
    *  подсказка WIRE_DIA_MISSING_ вместо молчаливого 0. Ручной Ø снимает её: свивка считается по нему. */
-  function twistDiaMissing_() {
+  function twistWiresWhere_(test: (d: ReturnType<typeof compWireDia_>) => boolean) {
     if (!S.twist.enabled || (S.twist.diaManual && parseDecimal_(S.twist.dia) > 0)) return [] as string[];
     const active = activeWires_();
     const names = new Set<string>();
     twistIdx_().forEach((i) => {
       const w = active[i];
       const c = w ? getCompById(w.compId) : null;
-      if (c && !(lookupWireDia_(c.art) || lookupWireDia_(c.name))) names.add(c.name || c.art);
+      if (c && test(compWireDia_(c))) names.add(c.name || c.art);
     });
     return [...names];
   }
+  const twistDiaMissing_ = () => twistWiresWhere_((d) => !d.dia);
+  /** Свиваемые провода, Ø которых пришёл из старой таблицы (WIRE_DIA_OLD_), — пока у размера нет источника. */
+  const twistDiaOld_ = () => twistWiresWhere_((d) => d.old);
   function twistZ0Warn_(g: NonNullable<ReturnType<typeof wireGeom_>>, z0: number, p: number) {
     if (!(g && z0 > 0)) return "";
     const min = twistZ0_(g.d, g.D, 2, g.eps), max = twistZ0_(g.d, g.D, 2000, g.eps);
@@ -1569,8 +1583,8 @@ export function makeGen(D: GenData, S: GenState) {
   }
   /** generate(): проверки перед отправкой. error — стоп, warnings — спросить подтверждение. */
   function twistDiaWarnings_() {
-    const missing = twistDiaMissing_();
-    return missing.length ? ["• Свивка: " + missing.map((n) => "«" + n + "»").join(", ") + " — " + WIRE_DIA_MISSING_ + " (поле «Ø провода»)"] : [];
+    const line = (names: string[], text: string) => (names.length ? ["• Свивка: " + names.map((n) => "«" + n + "»").join(", ") + " — " + text + " (поле «Ø провода»)"] : []);
+    return line(twistDiaMissing_(), WIRE_DIA_MISSING_).concat(line(twistDiaOld_(), WIRE_DIA_OLD_));
   }
   function validate() {
     const cfg = buildConfig();
@@ -1589,7 +1603,7 @@ export function makeGen(D: GenData, S: GenState) {
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
-    twistGeom_, twistDiaValue, twistDiaMissing_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
+    twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
@@ -1947,6 +1961,8 @@ export function wireDiaFromRecords(rows: Array<Record<string, string>>): WireDia
     const core = parseFloat(String(r[coreKey] || "").replace(",", "."));
     if (isFinite(core) && core > 0) row.__core = core;
     marks.forEach((m) => { const v = parseFloat(String(r[m.name] || "").replace(",", ".")); if (isFinite(v) && v > 0) row[m.norm] = v; });
+    String(r[WIRE_DIA_OLD_COLUMN_] || "").split(",").map((s) => s.trim().toLowerCase().replace(/[\s-]/g, "")).filter(Boolean)
+      .forEach((norm) => { if (row[norm]) row[OLD_FLAG_ + norm] = 1; });
     if (awg) byAwg[awg] = row;
     if (isFinite(gv)) byGost[String(gv)] = row;
     if (isFinite(gv) && /^\d+$/.test(awg)) gostAwg[String(gv)] = Number(awg);

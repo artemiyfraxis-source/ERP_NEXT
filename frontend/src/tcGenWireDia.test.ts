@@ -1,17 +1,17 @@
 import { expect, it } from "vitest";
-import { findWireMark_, initState, makeGen, WIRE_DIA_MISSING_, wireDiaFromRecords, type GenData } from "./tcGenLogic";
+import { findWireMark_, initState, makeGen, WIRE_DIA_MISSING_, WIRE_DIA_OLD_, wireDiaFromRecords, type GenData } from "./tcGenLogic";
 
 // Строки GET /api/references/wire-dia (backend references.wire_dia): AWG · ГОСТ · Ø жилы · 12 серий базы монтажных.
 const SERIES = ["UL1061", "UL1571", "UL1007", "UL3239", "НВ-4", "ПВАМ", "МГТФ", "МГШВ", "МС 16-13", "МС 15-11", "МК 26-13", "ПуГВ"];
-function row(awg: string, gost: string, core: string, values: Record<string, string>) {
-  return { AWG: awg, "ГОСТ": gost, "Ø жилы": core, ...Object.fromEntries(SERIES.map((s) => [s, values[s] || "—"])) };
+function row(awg: string, gost: string, core: string, values: Record<string, string>, old = "") {
+  return { "По старой таблице": old, AWG: awg, "ГОСТ": gost, "Ø жилы": core, ...Object.fromEntries(SERIES.map((s) => [s, values[s] || "—"])) };
 }
 const ROWS = [
   row("30", "0,05", "0,26", { UL1061: "0,81" }),
   row("", "0,07", "—", { "МГТФ": "0,75" }),
   row("28", "0,08", "0,32", { UL1061: "0,89", "МС 16-13": "0,72" }),
   row("26", "0,12", "0,41", { "МГТФ": "0,9", "НВ-4": "1,3" }),
-  row("20", "0,5", "0,81", { "ПВАМ": "1,6", "НВ-4": "1,8" }),
+  row("20", "0,5", "0,81", { "ПВАМ": "1,6", "НВ-4": "1,8", "МГТФ": "1,35", "МС 15-11": "1,5" }, "МГТФ, МС 15-11"),
   row("18", "0,75", "1,02", { "ПуГВ": "2,3" }),
   row("17", "1", "1,15", { "ПуГВ": "2,5" }),
 ];
@@ -107,4 +107,21 @@ it("terminal fit still sees the section of a mark outside the base, like the cri
   // «4x0,35» — не сечение (многожильный кабель), как у technology.wire_section
   const multi = data({ name: "КСПВГ 4x0,35", art: "КСПВГ 4x0,35" }, { terRecords: D.terRecords });
   expect(makeGen(multi, initState(multi)).validate().warnings.join("\n")).not.toContain("вне диапазона");
+});
+
+it("a Ø kept from the old СПР.КАБ table is used but flagged «по старой таблице, не подтверждено»", () => {
+  const wd = wireDiaFromRecords(ROWS)!;
+  expect(wd.byAwg["20"]).toMatchObject({ мгтф: 1.35, "old:мгтф": 1, "old:мс1511": 1, пвам: 1.6 });
+  expect(wd.byAwg["20"]["old:пвам"]).toBeUndefined();
+  const old = twisted(data({ name: "МГТФ 0,5", art: "МГТФ 0,5" }));
+  expect(old.twistDiaValue()).toBe("1,35");
+  expect(old.twistDiaOld_()).toEqual(["МГТФ 0,5"]);
+  expect(old.twistDiaMissing_()).toEqual([]);
+  expect(old.validate().warnings).toContain(`• Свивка: «МГТФ 0,5» — ${WIRE_DIA_OLD_} (поле «Ø провода»)`);
+  const sourced = twisted(data({ name: "ПВАМ 0,5", art: "ПВАМ 0,5" }));
+  expect(sourced.twistDiaValue()).toBe("1,6");
+  expect(sourced.twistDiaOld_()).toEqual([]);
+  expect(sourced.validate().warnings.join("\n")).not.toContain(WIRE_DIA_OLD_);
+  // ручной Ø снимает подсказку
+  expect(twisted(data({ name: "МГТФ 0,5", art: "МГТФ 0,5" }), "1,4").twistDiaOld_()).toEqual([]);
 });

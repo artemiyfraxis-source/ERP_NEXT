@@ -43,6 +43,7 @@ import {
   updateWire,
   wireDiaFromRecords,
   WIRE_DIA_MISSING_,
+  WIRE_DIA_OLD_,
   type Comp,
   type Connection,
   type Endpoint,
@@ -466,6 +467,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const crimpSideNote = crimpSides.length === 1 ? gen.crimpCutSideNote_(crimpSides[0] === "A" ? "B" : "A") : "";
   const note = gen.twistNote();
   const diaMissing = gen.twistDiaMissing_();
+  const diaOld = gen.twistDiaOld_();
 
   function selectComps(list: Comp[], value: string, onChange: (id: string) => void, label: string, empty = "— нет —") {
     return <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
@@ -866,6 +868,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, dia: event.target.value, diaManual: !!event.target.value.trim() } }))} /></Field>
     </div>
     {diaMissing.length > 0 && <small className="opt-note tone-danger">⚠ {WIRE_DIA_MISSING_}: {diaMissing.map((name) => `«${name}»`).join(", ")}</small>}
+    {diaOld.length > 0 && <small className="opt-note tone-warn">⚠ {WIRE_DIA_OLD_}: {diaOld.map((name) => `«${name}»`).join(", ")}</small>}
     {note.text && <small className={note.explicit ? "opt-note" : "opt-note tone-danger"}>{note.text}{note.warn && <><br /><span className="tone-danger">⚠ {note.warn}</span></>}</small>}
   </Toggle>;
 
