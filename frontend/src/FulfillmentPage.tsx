@@ -479,6 +479,9 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
   // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
   const [choosing, setChoosing] = useState(false);
   const canIssue = cardProps.canHandout && cardProps.showGive && requests.some(issuable);
+  const issuableRequests = requests.filter(issuable);
+  const issuableLines = issuableRequests.reduce((sum, request) => sum + request.lines.length, 0);
+  const issueLabel = `Выдать ${issuableRequests.length === 1 ? kbOf(issuableRequests[0]) : `${issuableRequests.length} КБ`} · ${issuableLines} поз.`;
   // A КБ sent again after its cancel shows only its live request; one cancelled request per КБ is enough of a trace.
   const liveKbs = new Set(requests.map((request) => kbOf(request)));
   const gone = [...new Map(cancelled.filter((request) => !liveKbs.has(kbOf(request))).map((request) => [kbOf(request), request])).values()]
@@ -488,8 +491,7 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
     <div className="procurement-title">
       <div><strong>Проект {project}</strong><small>КБ: {requests.length}{gone.length ? ` · отменено: ${gone.length}` : ""} · набрано {done} из {positions.length} поз. по заказу</small></div>
       <div className="fulfillment-head-actions">
-        {canIssue && <button className="primary small" aria-expanded={choosing} disabled={Boolean(busyId)} onClick={() => setChoosing((value) => !value)}>Выдать…</button>}
-        <button className="secondary small" onClick={onClose}>← К заявкам</button>
+        <button className="secondary" onClick={onClose}>← К заявкам</button>
       </div>
     </div>
     {choosing && canIssue && <IssueChooser
@@ -503,6 +505,7 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
         return result;
       })}
     />}
+    <div className="project-kb-bar">
     <div className="calendar-chips" role="tablist" aria-label="Заявки проекта">
       <button type="button" role="tab" aria-selected={tab === "all"} className={`calendar-chip${tab === "all" ? " active" : ""}`} onClick={() => setTab("all")}>Весь заказ</button>
       {requests.map((request) => {
@@ -514,6 +517,8 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
       {gone.map((request) => <span key={request.id} className="calendar-chip chip-cancelled" title={`Заявка ${request.number} отменена — КБ можно отправить на комплектацию заново из карточки проекта`}>
         {kbOf(request)} · отменена · {request.number}
       </span>)}
+    </div>
+    {canIssue && <button className="primary project-issue-btn" aria-expanded={choosing} disabled={Boolean(busyId)} onClick={() => setChoosing((value) => !value)}>{issueLabel}</button>}
     </div>
     {current
       ? <FulfillmentCard key={`${current.id}:${current.version}`} request={current} busy={busyId === current.id} {...cardProps} />
@@ -656,7 +661,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
       <div className="table-wrap fulfillment-lines"><table className="grid wide"><thead><tr><th>Позиция</th><th className="num">Потребность</th><th className="num">Резерв</th><th className="num">Выдано</th><th>Партия</th><th>Место</th><th /></tr></thead><tbody>
         {request.lines.map((line) => <FulfillmentLineRow key={line.id} request={request} line={line} lots={lots} canEdit={canPick} busy={busy} mutate={mutate} />)}
       </tbody></table></div>
-      <div className="fulfillment-actions">
+      <div className="fulfillment-actions fulfillment-card-actions">
         {canPick && ["Новая", "Недоукомплектован"].includes(request.status) && !waiting.length && <button className="secondary" disabled={busy} onClick={() => move("Укомплектован", "Комплект собран полностью. Отдать его в цех — отдельной кнопкой «Отправить на выдачу».", () => fulfillmentApi.complete(request.id, request.version))}>Укомплектован</button>}
         {canPick && request.status === "Укомплектован" && !sending && <>
           <span className="handout-offer">Место выдачи: <b>{offered}</b> <button className="link-button table-link" disabled={busy} onClick={() => setSending(true)}>Другое место</button></span>
@@ -666,10 +671,12 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
         {canHandout && showGive && request.status === "КБ Выдана" && <><label>Место возврата<input value={returnLocation} onChange={(event) => setReturnLocation(event.target.value)} /></label><button className="secondary" disabled={busy || !returnLocation.trim()} onClick={() => void mutate(request.id, () => fulfillmentApi.returned(request.id, request.version, returnLocation))}>Комплект вернулся</button><button className="secondary" disabled={busy} onClick={() => move("Готово", "Заявка закроется и уйдёт в архив.", () => fulfillmentApi.close(request.id, request.version))}>Готово</button></>}
         {canEdit && request.status === "Готов к выдаче" && <button className="secondary" disabled={busy} title="Снять комплект с выдачи — это не возврат материала из цеха" onClick={() => move(returnTarget(request), `Комплект снимут с выдачи${request.handout_location ? ` (${request.handout_location})` : ""} и вернут в комплектацию. Это не возврат материала («КБ Возвращена»): со склада ничего не списано и ничего не двигается, резерв остаётся на партиях. Отменить заявку можно будет после этого.`, () => fulfillmentApi.returnToKitting(request.id, request.version))}>Вернуть в комплектацию</button>}
         {canEdit && request.kind !== "extra" && ["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) && !adding && <button className="secondary" disabled={busy} onClick={() => setAdding(true)}>Довыдать</button>}
-        {canEdit && !closed && request.status !== "Готов к выдаче" && <button className="danger" disabled={busy} onClick={() => move("Отменена", cancelHint(request), () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
-        <button className="secondary small" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
-        {hasIssuedLines && <button className="secondary small" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
-        {isAdmin && <button className="danger" disabled={busy} onClick={remove}>Удалить заявку</button>}
+        <button className="secondary" onClick={() => void print(() => fulfillmentApi.printSheet(request.id))}>Печать заявки</button>
+        {hasIssuedLines && <button className="secondary" onClick={() => void print(() => fulfillmentApi.returnSheet(request.id))}>Печать листа возврата</button>}
+        {(canEdit && !closed && request.status !== "Готов к выдаче") || isAdmin ? <span className="fulfillment-danger-group">
+          {canEdit && !closed && request.status !== "Готов к выдаче" && <button className="secondary danger" disabled={busy} onClick={() => move("Отменена", cancelHint(request), () => fulfillmentApi.cancel(request.id, request.version))}>Отменить заявку</button>}
+          {isAdmin && <button className="secondary danger" disabled={busy} onClick={remove}>Удалить заявку</button>}
+        </span> : null}
       </div>
       {sending && <HandoutPlaceForm request={request} places={places} offered={offered} busy={busy} mutate={mutate} onCancel={() => setSending(false)} />}
       {adding && <ExtraIssueForm request={request} busy={busy} mutate={mutate} onClose={() => setAdding(false)} />}
