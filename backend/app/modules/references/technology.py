@@ -735,11 +735,17 @@ def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[
     def cell(row: Sequence[object], index: int) -> str:
         return str(row[index] if 0 <= index < len(row) and row[index] is not None else "").strip()
 
+    identity = [index for index, name in enumerate(header) if tab == "ob"
+                and _normalize_header(name) in ("инв. номер", "наменование", "наименование")]
     records = []
     for row in rows[header_row:]:
         values = {field.key: cell(row, resolved[field.key]) for field in fields}
         text = display(values)
         if not text:
+            continue
+        # БД.ОБ: a row dragged down with only «№» and the «Для базы» formula («/») is no equipment — it has neither
+        # an inventory number, nor a name, nor a type.
+        if tab == "ob" and not values["obType"] and not any(cell(row, index) for index in identity):
             continue
         record: dict[str, object] = {
             "tabKey": tab, "displayText": text,

@@ -133,7 +133,7 @@ def test_sheet_columns_edit_moves_the_schema_value_and_columns_hide_schema_keys(
 def test_created_row_gets_schema_values_from_sheet_columns(references_api):
     _seed_record(references_api, tab="ob", fields={"obType": "Инструмент", "Тип": "Инструмент", "Для базы": "A/Б"})
     response = references_api.post("/api/references/tech-operations", json={
-        "tab": "ob", "fields": {"Тип": "Станок", "Для базы": "EW-05F/Автомат"},
+        "tab": "ob", "fields": {"Тип": "Станок", "Наменование": "Автомат", "Для базы": "EW-05F/Автомат"},
     })
 
     assert response.status_code in (200, 201)
