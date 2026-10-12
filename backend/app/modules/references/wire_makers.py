@@ -13,6 +13,8 @@ from collections.abc import Mapping
 LEGACY_FIELD = "Стандарт / производитель"
 STANDARD_FIELD = "Стандарт"
 MAKERS_FIELD = "Производители"
+CATEGORY_FIELD = "Категория"  # manual category of a cable (screen «Кабели»); empty = the classifier decides
+NEW_CELLS = (STANDARD_FIELD, MAKERS_FIELD, CATEGORY_FIELD)
 MAKERS_SEPARATOR = ", "
 
 _STANDARD = re.compile(
@@ -75,9 +77,10 @@ def join_makers(names: list[str]) -> str:
 
 
 def split_fields(fields: Mapping[str, str]) -> dict[str, str]:
-    """The record's cells with the legacy one replaced by the two new ones (own non-empty values win, makers merge)."""
+    """The record's cells with the legacy one replaced by the two new ones (own non-empty values win, makers merge) and the
+    new cells present (the server refuses an edit of a cell the record has not)."""
     if LEGACY_FIELD not in fields:
-        return dict(fields)
+        return {**fields, **{name: "" for name in NEW_CELLS if name not in fields}}
     standard, makers = split_legacy(fields[LEGACY_FIELD])
     own_makers = parse_makers(fields.get(MAKERS_FIELD) or "")
     result: dict[str, str] = {}
@@ -87,4 +90,4 @@ def split_fields(fields: Mapping[str, str]) -> dict[str, str]:
             result[MAKERS_FIELD] = join_makers(own_makers + makers)
         elif name not in (STANDARD_FIELD, MAKERS_FIELD):
             result[name] = value
-    return result
+    return {**result, **{name: "" for name in NEW_CELLS if name not in result}}

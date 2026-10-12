@@ -46,10 +46,11 @@ def test_makers_list_round_trip():
 
 def test_split_fields_keeps_order_and_own_values():
     fields = {"Марка": "M", "Стандарт / производитель": "Cabeus, ГОСТ 1-2", "Цвета": "белый"}
-    assert split_fields(fields) == {"Марка": "M", "Стандарт": "ГОСТ 1-2", "Производители": "Cabeus", "Цвета": "белый"}
+    assert split_fields(fields) == {"Марка": "M", "Стандарт": "ГОСТ 1-2", "Производители": "Cabeus", "Цвета": "белый", "Категория": ""}
     kept = {"Марка": "M", "Стандарт / производитель": "Cabeus, ГОСТ 1-2", "Стандарт": "ТУ 5", "Производители": "LAPP"}
     assert split_fields(kept)["Стандарт"] == "ТУ 5" and split_fields(kept)["Производители"] == "LAPP, Cabeus"
-    assert split_fields({"Марка": "M"}) == {"Марка": "M"}
+    # the cells the record lacks are added empty (the server refuses an edit of a cell a record has not)
+    assert split_fields({"Марка": "M"}) == {"Марка": "M", "Стандарт": "", "Производители": "", "Категория": ""}
 
 
 def _wire(client, mark, **cells):
@@ -70,7 +71,7 @@ def test_command_dry_run_apply_and_idempotence(references_api):
 
     plan = run(uow_factory(), actor, now, apply=False)
     text = format_plan(plan, applied=False)
-    assert len(plan.rows) == 2 and "Стандарт «ГОСТ 7399-97» · Производители «Паритет (Подольск)»" in text
+    assert len(plan.rows) == 3 and "Стандарт «ГОСТ 7399-97» · Производители «Паритет (Подольск)»" in text
     assert "Стандарт / производитель" in _fields(references_api)["A"]  # a dry run writes nothing
 
     run(uow_factory(), actor, now, apply=True)

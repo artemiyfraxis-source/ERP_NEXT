@@ -10,6 +10,7 @@ import {
   type CablesResult,
   type TechOperationRecord,
 } from "./api";
+import { CATEGORIES, CATEGORY_CELL, cableCategory, cableGroup, compareCables } from "./cableCategory";
 import { MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
@@ -75,7 +76,13 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   toolbar?: ReactNode;
 }) {
   const [adding, setAdding] = useState(false);
-  const rows = useMemo(() => data.rows.filter((row) => row.kind === kind), [data.rows, kind]);
+  const grouped = kind === "multi" || kind === "other";
+  const cells = (row: CableRow): Record<string, string> => ({ "Марка": row.cable, ...(row.record?.fields ?? {}) });
+  // «Кабели»: groups by category and screen, natural order inside (series, cores, section as numbers).
+  const rows = useMemo(() => {
+    const own = data.rows.filter((row) => row.kind === kind);
+    return grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : own;
+  }, [data.rows, kind, grouped]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
@@ -133,6 +140,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
       storageKey={`db:cables:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
+      groupBy={grouped ? (row) => cableGroup(cells(row)).label : undefined}
       presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
       toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
@@ -218,9 +226,15 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
       {diaOnly && <span className="muted">{row?.dia ? "Кабеля нет в базе проводов, есть только его диаметры." : "Кабеля нет в базе проводов, есть только его карточка."}</span>}
     </div>}
     {!diaOnly && <div className="cable-form">
-      {Object.keys(draft.fields).filter((name) => name !== MAKERS).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name === STANDARD ? "Стандарт (ГОСТ / ТУ / UL)" : name}</small>
+      {Object.keys(draft.fields).filter((name) => name !== MAKERS && name !== CATEGORY_CELL).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name === STANDARD ? "Стандарт (ГОСТ / ТУ / UL)" : name}</small>
         <input aria-label={`Поле ${name}`} value={draft.fields[name] ?? ""} onChange={(event) => setField(name, event.target.value)} />
       </label>)}
+      {CATEGORY_CELL in draft.fields && <label><small>Категория</small>
+        <select aria-label="Категория" value={draft.fields[CATEGORY_CELL] ?? ""} onChange={(event) => setField(CATEGORY_CELL, event.target.value)}>
+          <option value="">по правилу: {cableCategory({ ...draft.fields, [CATEGORY_CELL]: "" }).category}</option>
+          {CATEGORIES.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>}
       {MAKERS in draft.fields && <MakersInput value={draft.fields[MAKERS] ?? ""} onChange={(value) => setField(MAKERS, value)} suggestions={makerNames} />}
     </div>}
     <div className="form-actions cable-actions">

@@ -38,9 +38,9 @@ class Plan:
 def build_plan(records: list[TechOperationRecord]) -> Plan:
     plan = Plan(total=len(records))
     for record in records:
-        if LEGACY_FIELD not in record.fields:
-            continue
         fields = split_fields(record.fields)
+        if fields == dict(record.fields):
+            continue
         plan.rows.append((record, fields))
         plan.to_standard += bool(fields.get(STANDARD_FIELD))
         plan.to_makers += bool(fields.get(MAKERS_FIELD))
@@ -48,10 +48,10 @@ def build_plan(records: list[TechOperationRecord]) -> Plan:
 
 
 def format_plan(plan: Plan, *, applied: bool) -> str:
-    lines = [f"БД.ПРОВ: записей {plan.total}, со старой ячейкой «{LEGACY_FIELD}» — {len(plan.rows)} "
+    lines = [f"БД.ПРОВ: записей {plan.total}, к записи: {len(plan.rows)} (из них со старой ячейкой «{LEGACY_FIELD}» — {sum(LEGACY_FIELD in r.fields for r, _ in plan.rows)}) "
              f"({'сделано' if applied else 'будет'})"]
     for record, fields in plan.rows:
-        lines.append(f"  {record.display_text}: «{record.fields[LEGACY_FIELD]}» → "
+        lines.append(f"  {record.display_text}: «{record.fields.get(LEGACY_FIELD, '')}» → "
                      f"Стандарт «{fields.get(STANDARD_FIELD, '')}» · Производители «{fields.get(MAKERS_FIELD, '')}»")
     lines.append(f"Итого: со стандартом {plan.to_standard}, с производителями {plan.to_makers}, "
                  f"без производителей {len(plan.rows) - plan.to_makers}, без стандарта {len(plan.rows) - plan.to_standard}")
@@ -72,7 +72,7 @@ def run(uow: UnitOfWork, actor: Actor, now: datetime, *, apply: bool) -> Plan:
             updated = replace(record, fields=fields, edited_in_erp=True)
             uow.tech_operations.save(replace(updated, normalized_search=_search_text(updated)))
             _audit("references.wire_standard_makers_split", actor, now, {
-                "record_id": str(record.id), "mark": record.display_text, "before": record.fields[LEGACY_FIELD],
+                "record_id": str(record.id), "mark": record.display_text, "before": record.fields.get(LEGACY_FIELD, ""),
                 "standard": fields.get(STANDARD_FIELD, ""), "makers": fields.get(MAKERS_FIELD, ""),
             }, uow)
         uow.commit()

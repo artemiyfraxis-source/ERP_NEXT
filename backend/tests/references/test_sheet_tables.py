@@ -82,7 +82,7 @@ def test_empty_tab_still_reports_columns_and_accepts_create(references_api):
         "tab": "prov", "fields": {name: "МГТФ" if name == "Марка" else "" for name in empty["columns"]},
     })
 
-    assert empty["records"] == [] and len(empty["columns"]) == 23
+    assert empty["records"] == [] and len(empty["columns"]) == 24
     assert created.status_code == 201 and len(_rows(references_api, "prov")["records"]) == 1
 
 
