@@ -1897,6 +1897,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-col-balance { width: 98px; }
 .stock-col-lots { width: 76px; }
 .stock-col-available { width: 96px; }
+.stock-col-reserved { width: 92px; }
+.stock-table td.stock-dim { color: var(--muted-foreground); }
 .stock-col-place { width: 12%; }
 .stock-col-warehouse { width: 92px; }
 .stock-col-purpose { width: 104px; }
