@@ -759,6 +759,14 @@ def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cove
         "43025-0400": ("20", "15", "3", "2", "Запрос · Новый"),
         "43030-0007": ("32", "0", "30", "2", "Закупка · В работе"),
     }
+    assert {art: (line["state"], line["state_label"], line["state_tone"]) for art, line in supply.items()} == {
+        "UL1007 22AWG": ("short", "Не хватает 15,75", "danger"),
+        "43025-0400": ("short", "Не хватает 2", "danger"),
+        "43030-0007": ("short", "Не хватает 2", "danger"),
+    }
+    assert supply["43025-0400"]["name_source"] == "ref"
+    assert supply["UL1007 22AWG"]["name_source"] == ""  # no БД.ПРОВ here, nothing on the shelf, no link
+    assert "Артикул неизвестен" in supply["UL1007 22AWG"]["name_hint"]
 
     ordered = client.post("/api/techcards/kitsets/708К.4/order-missing", json={})
     assert ordered.status_code == 200, ordered.text
@@ -774,8 +782,9 @@ def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cove
             for row in filed} == {
         ("UL1007 22AWG", "UL1007 22AWG", "708К.4", "Обеспечение производства", RAMENSKOE, "Нет",
          "2026-10-20", "2026-10-20", "Провод"),
-        ("43025-0400", "Корпус Molex", "708К.4", "Обеспечение производства", RAMENSKOE, "Нет",
-         "2026-10-20", "2026-10-20", "Разъём"),
+        # The name the supply list shows: ERP's housing family before the spec's «Корпус Molex».
+        ("43025-0400", "Корпус Molex Micro-Fit 3.0 4 конт., двухрядный", "708К.4", "Обеспечение производства",
+         RAMENSKOE, "Нет", "2026-10-20", "2026-10-20", "Разъём"),
         ("43030-0007", "43030-0007", "708К.4", "Обеспечение производства", RAMENSKOE, "Нет",
          "2026-10-20", "2026-10-20", "Контакт"),
     }

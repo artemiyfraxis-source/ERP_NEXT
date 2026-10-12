@@ -23,6 +23,8 @@ export type HousingBody = {
 
 export type Pt = [number, number];
 export type Box = { w: number; h: number; body: string };
+/** Гнездо на торце: центр и радиус зоны щелчка в тех же координатах, что и рисунок (для экрана «Соединения по распиновке»). */
+export type FaceHit = { pin: number; x: number; y: number; r: number };
 
 export const EDGE = "#17272b";
 const WIRE_COLORS: Array<[RegExp, string]> = [
@@ -237,15 +239,15 @@ function flatSmall(hs: ConnectorHousing, look: Look, s: number, byPin: Record<nu
 
 /** Торец разъёма со стороны проводов: корпус в масштабе серии, гнёзда, номера, цвета проводов, контакт 1 — красная
  *  метка. `s` — пикселей на шаг контактов. Отдаёт {w, h, body} от (x, y). */
-export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: number, byPin: Record<number, string> | null): Box {
+export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: number, byPin: Record<number, string> | null, hits?: FaceHit[]): Box {
   const look = connectorLook(hs);
   if (look.shape === "lug" || look.shape === "banana") {
     const g = flatSmall(hs, look, s, byPin);
     return { w: g.w, h: g.h, body: `<g transform="translate(${f(x)},${f(y)})">${g.body}</g>` };
   }
   const color = hs.color || "#efe6cf", dark = isDark(color), fs = Math.max(6.5, s * 0.34);
-  if (look.shape === "round" || look.shape === "barrel") return roundFace(hs, look, x, y, s, byPin);
-  if (hs.body) return bodyFace(hs, hs.body, x, y, s, byPin);
+  if (look.shape === "round" || look.shape === "barrel") return roundFace(hs, look, x, y, s, byPin, hits);
+  if (hs.body) return bodyFace(hs, hs.body, x, y, s, byPin, hits);
   const pitch = facePitch(hs, look), k = s / pitch;
   const [W, H] = faceSize(hs, look, pitch);
   const latchH = look.latch === "lever" || look.latch === "ramp" ? Math.max(4, s * 0.42) : 0, top = y + latchH;
@@ -275,6 +277,7 @@ export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: num
   const round = hs.cavity === "round" || look.shape === "xt" || look.shape === "dsub";
   holes.forEach((c) => {
     const cx = x + c.x * k, cy = top + c.y * k, wn = byPin && byPin[c.pin];
+    hits?.push({ pin: c.pin, x: cx, y: cy, r: look.shape === "dsub" ? s * 0.24 : s * 0.5 });
     body += round
       ? `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(hw)}" fill="${look.shape === "xt" || look.shape === "dsub" ? "#d8b454" : dark ? "#5d666b" : "#2f3336"}"/>`
       : `<rect x="${f(cx - hw)}" y="${f(cy - hw)}" width="${f(hw * 2)}" height="${f(hw * 2)}" rx="${f(s * 0.08)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
@@ -304,7 +307,7 @@ function pinOneMark(hs: ConnectorHousing, look: Look, c: { x: number; y: number 
   return `<path d="M${f(cx - tw)},${f(ty - dir * tw * 1.4)} L${f(cx + tw)},${f(ty - dir * tw * 1.4)} L${f(cx)},${f(ty)} z" fill="#d7322d"/>`;
 }
 
-function roundFace(hs: ConnectorHousing, look: Look, x: number, y: number, s: number, byPin: Record<number, string> | null): Box {
+function roundFace(hs: ConnectorHousing, look: Look, x: number, y: number, s: number, byPin: Record<number, string> | null, hits?: FaceHit[]): Box {
   const R = s * 2.2, cx = x + R + 2, cy = y + R + 2, pr = Math.max(2.5, s * 0.36), fs = Math.max(6.5, s * 0.34);
   if (look.shape === "barrel") {
     const lab = hs.labels || ["центр", "корпус"];
@@ -321,6 +324,7 @@ function roundFace(hs: ConnectorHousing, look: Look, x: number, y: number, s: nu
     `<rect x="${f(cx - s * 0.3)}" y="${f(cy - R - 1)}" width="${f(s * 0.6)}" height="${f(s * 0.45)}" fill="#fff" stroke="#000" stroke-width="1"/>`;
   (hs.round || []).forEach((c) => {
     const px = cx + c.x * R, py = cy + c.y * R, wn = byPin && byPin[c.pin], wc = wn ? wireColor(wn) : "#c8a24a";
+    hits?.push({ pin: c.pin, x: px, y: py, r: pr * 1.1 });
     body += `<circle cx="${f(px)}" cy="${f(py)}" r="${f(pr)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>`;
     if (s >= 12) body += `<text x="${f(px)}" y="${f(py - pr - 2)}" text-anchor="middle" font-size="${f(fs)}" fill="#e9eef0">${c.pin}</text>`;
   });
@@ -353,7 +357,7 @@ export function lockWidth(b: HousingBody, W: number): number {
 /** Торец корпуса по чертежу (JST SH, GH, XH, PH, ZH, Micro-Fit): прямоугольник B × h, выступы по бокам, защёлка на
  *  верхней грани, прямоугольные окна контактов по сетке, у PH/ZH — окна фиксаторов на нижней грани, у SH — метка ▽
  *  над контактом 1; красная стрелка у контакта 1. */
-function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s: number, byPin: Record<number, string> | null): Box {
+function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s: number, byPin: Record<number, string> | null, hits?: FaceHit[]): Box {
   const pitch = hs.pitch || 1, k = s / pitch, color = hs.color || "#efe6cf", dark = isDark(color);
   const W = bodyWidth(hs, b, pitch), H = b.h, ears = b.ears || 0, fs = Math.max(6.5, Math.min(s * 0.34, 15));
   const [winW, winH] = b.win && b.win.length === 2 ? b.win : [pitch * 0.6, H * 0.45];
@@ -384,6 +388,7 @@ function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
     const pin = row[c];
     if (!pin) return;
     const cx = X(cxMm), cy = Y(H / 2 + (r - (rows - 1) / 2) * pitch), wn = byPin && byPin[pin];
+    hits?.push({ pin, x: cx, y: cy, r: s * 0.5 });
     body += `<rect x="${f(cx - winW * k / 2)}" y="${f(cy - winH * k / 2)}" width="${f(winW * k)}" height="${f(winH * k)}" rx="${f(Math.min(2, k * 0.06))}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
     const rad = Math.min(winW, winH) * k * 0.46;
     if (wn) {

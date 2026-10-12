@@ -2822,6 +2822,11 @@ export const fulfillmentApi = {
   /** «Возможно есть»: the lots that may be each position of the project, one request for the whole card. */
   candidates: (project: string) =>
     api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`),
+  /** The same «Возможно есть» for positions the caller names (the project's «Снабжение», before any kit request). */
+  candidatesFor: (project: string, positions: Array<{ article: string; name: string; unit?: string }>) =>
+    api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`, {
+      method: "POST", body: JSON.stringify({ positions }),
+    }),
   printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
   returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
   bind: (requestId: string, lineId: string, version: number, lotId: string) =>
@@ -3896,6 +3901,16 @@ export interface KitsetLoadResult {
 export interface KitsetSupplyLine {
   art: string;
   name: string;
+  /** Where the name comes from: ref — справочник ERP, spec — спецификация, stock — склад, site — сайт, "" — not found. */
+  name_source?: "ref" | "spec" | "stock" | "site" | "";
+  /** Tooltip of the name: its source, or why the article is unknown. */
+  name_hint?: string;
+  /** «Стадия» in one word: short · kitting · procurement · received · outside · stock · none. */
+  state?: string;
+  state_label?: string;
+  state_tone?: "ok" | "warn" | "danger" | "info" | "neutral";
+  /** The numbers behind the state. */
+  state_hint?: string;
   kbs: string[];
   need: string;
   unit: string;
