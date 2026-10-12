@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import {
-  MIN_VISIBLE_DAYS, MIN_VISIBLE_WEEKS, autoHiddenColumns, groupSheetRows, markText, orderStatuses, periodWords, projectColor, sheetDays,
+  MIN_VISIBLE_DAYS, MIN_VISIBLE_WEEKS, autoHiddenColumns, deadlineSpan, groupSheetRows, markText, orderStatuses, periodWords, projectColor, sheetDays,
   sheetMonths, sheetWeeks, startLabels, statusColumnWidth, todayScrollLeft, weekMarks,
 } from "./PlanLoadSheet";
 import type { Principal, ProductionPlanResult } from "./api";
@@ -656,4 +656,23 @@ it("keeps calendar helpers: period in words, launch quantity on the first workin
   expect(marks.deadline).toBe(5 / 7);
   expect(marks.arrival).toBe(0);
   expect(marks.notes).toEqual(["08.10: П"]);
+});
+
+it("полоса «срок»: сегодня → дедлайн, просрочка — от дедлайна до сегодня, без дедлайна нет", () => {
+  expect(deadlineSpan({ deadline: "2026-10-16", calendar: { work: [], starts: {}, notes: {} } }, "2026-10-12")).toEqual({ from: "2026-10-12", to: "2026-10-16", late: false });
+  expect(deadlineSpan({ deadline: "2026-10-16", calendar: { work: ["2026-10-09", "2026-10-13"], starts: {}, notes: {} } }, "2026-10-12")).toEqual({ from: "2026-10-09", to: "2026-10-16", late: false });
+  expect(deadlineSpan({ deadline: "2026-10-12", calendar: undefined }, "2026-10-12")).toEqual({ from: "2026-10-12", to: "2026-10-12", late: false });
+  expect(deadlineSpan({ deadline: "2026-10-08", calendar: { work: ["2026-10-13"], starts: {}, notes: {} } }, "2026-10-12")).toEqual({ from: "2026-10-08", to: "2026-10-12", late: true });
+  expect(deadlineSpan({ deadline: null, calendar: { work: ["2026-10-13"], starts: {}, notes: {} } }, "2026-10-12")).toBeNull();
+  // Недели: доли недели 12–18.10 и 19–20.10 для полосы 12.10–21.10 не нужны; проверяем частичную неделю и пустую.
+  const weeks = sheetWeeks(sheetDays("2026-10-03", "2026-10-20"));
+  const row = { deadline: "2026-10-14", sheet: undefined as never, calendar: { work: [], starts: {}, notes: {} } };
+  const span = deadlineSpan(row, "2026-10-08");
+  expect(weekMarks(weeks[0], row, span).span).toBeNull();
+  expect(weekMarks(weeks[1], row, span).span).toEqual({ from: 3 / 7, to: 1, late: false });
+  expect(weekMarks(weeks[2], row, span).span).toEqual({ from: 0, to: 3 / 7, late: false });
+  expect(weekMarks(weeks[3], row, span).span).toBeNull();
+  expect(weekMarks(weeks[1], row).span).toBeNull();
+  const late = deadlineSpan({ ...row, deadline: "2026-10-06" }, "2026-10-14");
+  expect(weekMarks(weeks[1], { ...row, deadline: "2026-10-06" }, late).span).toEqual({ from: 1 / 7, to: 1, late: true });
 });

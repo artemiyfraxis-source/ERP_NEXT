@@ -91,6 +91,16 @@ export function sheetMonths(days: Pick<SheetDay, "iso">[]): Array<{ key: string;
 /** Неделя листа (пн–вс) внутри его периода; `days` — только дни, попавшие в период. */
 export interface SheetWeek { iso: string; days: SheetDay[]; from: string; to: string }
 
+/** Полоса «срок» строки: от более раннего из сегодня и первого рабочего дня до дедлайна включительно;
+ *  просрочка (дедлайн раньше сегодня) — от дедлайна до сегодня, `late`. Без дедлайна — null. */
+export function deadlineSpan(row: Pick<ProductionPlanRow, "deadline" | "calendar">, today: string): { from: string; to: string; late: boolean } | null {
+  const deadline = row.deadline;
+  if (!deadline) return null;
+  if (deadline < today) return { from: deadline, to: today, late: true };
+  const first = [...(row.calendar?.work ?? [])].sort()[0];
+  return { from: first && first < today ? first : today, to: deadline, late: false };
+}
+
 /** Номер дня недели с понедельника: пн — 0 … вс — 6. */
 function weekIndex(iso: string) {
   return (parseDay(iso).getDay() + 6) % 7;
@@ -415,6 +425,7 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, shopStatuses, s
       </div>
       <span className="zg-legend" role="list" aria-label="Обозначения">
         <span role="listitem" title="Плановые работы по проекту; цвет полосы — цвет проекта, как полоска у №"><i className="zg-key-bar" />работы, цвет — проект</span>
+        <span role="listitem" title="Срок: от сегодня (или первого рабочего дня) до дедлайна в цвете проекта; просрочка — красным от дедлайна до сегодня"><i className="zg-key-span" />срок до дедлайна</span>
         <span role="listitem" title="Количество запуска в штуках — на первом рабочем дне полосы"><i className="zg-key-qty">12</i>запуск, шт</span>
         <span role="listitem" title="День прихода комплектующих"><i className="zg-key-arrival" />приход</span>
         <span role="listitem" title="Дедлайн проекта — красная черта в конце дня"><i className="zg-key-deadline" />дедлайн</span>
@@ -517,6 +528,7 @@ function SheetGroupRows({ group, label, rows, layout, days, weeks, units, today,
   onOpenJournal: (row: ProductionPlanRow) => void;
   hasCard: (row: ProductionPlanRow) => boolean;
 }) {
+  const showSpan = group === "active" || group === "hold";
   return <>
     <tr className={`zg-group zg-group-${group}`}><td colSpan={layout.columns.length + units}><span className="zg-group-label">{label} · {rows.length}</span></td></tr>
     {rows.map((row) => <tr key={row.project} className={`zg-row zg-row-${group}`} data-project={row.project}
@@ -524,7 +536,7 @@ function SheetGroupRows({ group, label, rows, layout, days, weeks, units, today,
       {layout.columns.map((column, index) => <SheetCellView key={column.key} column={column} index={index} layout={layout} row={row}
         canEdit={canEdit} busy={busy} suppliedValues={suppliedValues} open={open} mark={mark}
         onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} hasCard={hasCard} />)}
-      {weeks ? <WeekCells row={row} weeks={weeks} today={today} /> : <CalendarCells row={row} days={days} today={today} canEdit={canEdit} open={open} />}
+      {weeks ? <WeekCells row={row} weeks={weeks} today={today} showSpan={showSpan} /> : <CalendarCells row={row} days={days} today={today} showSpan={showSpan} canEdit={canEdit} open={open} />}
     </tr>)}
   </>;
 }
@@ -654,10 +666,11 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   return td(<span className="zg-ellipsis">{value}</span>, editable, { title: value || undefined, ...click });
 }
 
-function CalendarCells({ row, days, today, canEdit, open }: {
+function CalendarCells({ row, days, today, showSpan, canEdit, open }: {
   row: ProductionPlanRow;
   days: SheetDay[];
   today: string;
+  showSpan: boolean;
   canEdit: boolean;
   open: (event: MouseEvent<HTMLElement>, project: string, field: string) => void;
 }) {
@@ -666,7 +679,9 @@ function CalendarCells({ row, days, today, canEdit, open }: {
   const labels = startLabels(days, work, starts);
   const notes = row.calendar?.notes ?? {};
   const arrival = row.sheet?.kit_arrival?.value ?? "";
+  const span = showSpan ? deadlineSpan(row, today) : null;
   return <>{days.map((day, index) => {
+    const inSpan = Boolean(span && day.iso >= span.from && day.iso <= span.to);
     const busy = work.has(day.iso);
     const classes = [dayClass(day, today, "zg-day")];
     if (busy) {
@@ -679,6 +694,7 @@ function CalendarCells({ row, days, today, canEdit, open }: {
     if (canEdit) classes.push("zg-edit");
     const titles = [
       `${row.project} · ${day.weekday} ${formatDate(day.iso)}${day.off ? " · выходной" : ""}`,
+      inSpan && row.deadline && `срок до ${formatDayMonth(row.deadline)}${span!.late ? " · просрочен" : ""}`,
       busy && "плановые работы", starts[day.iso] && `запуск ${starts[day.iso]} шт`,
       row.deadline === day.iso && "дедлайн", arrival === day.iso && "приход комплектующих", notes[day.iso],
     ].filter(Boolean);
@@ -686,6 +702,7 @@ function CalendarCells({ row, days, today, canEdit, open }: {
     const quantity = !note && labels[day.iso] ? String(labels[day.iso]) : "";
     return <td key={day.iso} className={classes.join(" ")} title={titles.join(" · ")}
       onClick={(event) => open(event, row.project, `day:${day.iso}`)}>
+      {inSpan && <i className={`zg-span-bar${span!.late ? " zg-span-late" : ""}`} />}
       {busy && <i className="zg-bar" />}
       {note && <span className="zg-day-text">{note}</span>}
       {quantity && <span className="zg-qty">{quantity}</span>}
@@ -694,7 +711,7 @@ function CalendarCells({ row, days, today, canEdit, open }: {
 }
 
 /** Полоса и метки недели в долях её семи дней: работы с первого по последний рабочий день, дедлайн — в конце дня. */
-export function weekMarks(week: SheetWeek, row: Pick<ProductionPlanRow, "deadline" | "calendar" | "sheet">) {
+export function weekMarks(week: SheetWeek, row: Pick<ProductionPlanRow, "deadline" | "calendar" | "sheet">, span: ReturnType<typeof deadlineSpan> = null) {
   const work = new Set(row.calendar?.work ?? []);
   const busy = week.days.filter((day) => work.has(day.iso)).map((day) => weekIndex(day.iso));
   const starts = row.calendar?.starts ?? {};
@@ -702,7 +719,9 @@ export function weekMarks(week: SheetWeek, row: Pick<ProductionPlanRow, "deadlin
   const notes = week.days.filter((day) => row.calendar?.notes[day.iso]).map((day) => `${formatDayMonth(day.iso)}: ${row.calendar!.notes[day.iso]}`);
   const arrival = row.sheet?.kit_arrival?.value ?? "";
   const inWeek = (iso: string | null) => Boolean(iso && week.days.some((day) => day.iso === iso));
+  const spanDays = span ? week.days.filter((day) => day.iso >= span.from && day.iso <= span.to).map((day) => weekIndex(day.iso)) : [];
   return {
+    span: spanDays.length ? { from: Math.min(...spanDays) / 7, to: (Math.max(...spanDays) + 1) / 7, late: span!.late } : null,
     bar: busy.length ? { from: Math.min(...busy) / 7, to: (Math.max(...busy) + 1) / 7 } : null,
     quantity, notes,
     deadline: inWeek(row.deadline) ? (weekIndex(row.deadline!) + 1) / 7 : null,
@@ -710,11 +729,12 @@ export function weekMarks(week: SheetWeek, row: Pick<ProductionPlanRow, "deadlin
   };
 }
 
-function WeekCells({ row, weeks, today }: { row: ProductionPlanRow; weeks: SheetWeek[]; today: string }) {
+function WeekCells({ row, weeks, today, showSpan }: { row: ProductionPlanRow; weeks: SheetWeek[]; today: string; showSpan: boolean }) {
+  const span = showSpan ? deadlineSpan(row, today) : null;
   const work = new Set(row.calendar?.work ?? []);
   const shift = (iso: string, by: number) => { const day = parseDay(iso); return isoDay(new Date(day.getFullYear(), day.getMonth(), day.getDate() + by)); };
   return <>{weeks.map((week, index) => {
-    const marks = weekMarks(week, row);
+    const marks = weekMarks(week, row, span);
     const current = week.days.some((day) => day.iso === today);
     const firstBusy = week.days.find((day) => work.has(day.iso));
     const lastBusy = [...week.days].reverse().find((day) => work.has(day.iso));
@@ -726,6 +746,7 @@ function WeekCells({ row, weeks, today }: { row: ProductionPlanRow; weeks: Sheet
     }
     const titles = [
       `${row.project} · неделя ${formatDayMonth(week.from)}–${formatDayMonth(week.to)}`,
+      marks.span && row.deadline && `срок до ${formatDayMonth(row.deadline)}${marks.span.late ? " · просрочен" : ""}`,
       marks.bar && `плановые работы ${formatDayMonth(firstBusy!.iso)}–${formatDayMonth(lastBusy!.iso)}`,
       marks.quantity > 0 && `запуск ${marks.quantity} шт`,
       marks.deadline !== null && `дедлайн ${formatDate(row.deadline)}`,
@@ -733,11 +754,13 @@ function WeekCells({ row, weeks, today }: { row: ProductionPlanRow; weeks: Sheet
       ...marks.notes,
     ].filter(Boolean);
     const style = {
+      ...(marks.span ? { "--zg-span-from": `${marks.span.from * 100}%`, "--zg-span-to": `${(1 - marks.span.to) * 100}%` } : {}),
       ...(marks.bar ? { "--zg-from": `${marks.bar.from * 100}%`, "--zg-to": `${(1 - marks.bar.to) * 100}%` } : {}),
       ...(marks.deadline !== null ? { "--zg-deadline-at": `${marks.deadline * 100}%` } : {}),
       ...(marks.arrival !== null ? { "--zg-arrival-at": `${marks.arrival * 100}%` } : {}),
     } as CSSProperties;
     return <td key={week.iso} className={classes.filter(Boolean).join(" ")} title={titles.join(" · ")} style={style}>
+      {marks.span && <i className={`zg-span-bar${marks.span.late ? " zg-span-late" : ""}`} />}
       {marks.bar && <i className="zg-bar" />}
       {marks.deadline !== null && <i className="zg-week-deadline" />}
       {marks.arrival !== null && <i className="zg-week-arrival" />}
