@@ -521,8 +521,21 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-card small { font-size: 11px; text-transform: none; }
 /* Structured cable reference (10.10.2026): the coax card a tester reads at the VNA, «разобрать позже». */
 .db-later { align-self: center; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; }
-.hookup-form { padding-bottom: 10px; border-bottom: 1px solid var(--sheet-line); }
 .hookup-form select { min-width: 0; }
+/* Wire form in short sections (12.10.2026): small heading, dense grid, list fields as swatches / chips. */
+.form-section { display: grid; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--sheet-line); }
+.form-section > h4, .form-section > summary { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted-foreground); letter-spacing: 0.02em; }
+.form-section > summary { cursor: pointer; }
+.field-group { display: grid; gap: 4px; min-width: 0; }
+.field-group > small { color: var(--muted-foreground); font-size: 11px; }
+.swatch-row, .chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.35); cursor: pointer; }
+.swatch[aria-pressed="true"] { outline: 2px solid var(--primary); outline-offset: 2px; }
+.swatch:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
+.swatch-row input, .makers-input .chip-row input { height: 28px; width: 160px; }
+.chip-item { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 999px; background: var(--accent); font-size: 12px; }
+.chip-item button { border: 0; background: transparent; cursor: pointer; padding: 0 4px; color: var(--muted-foreground); font-size: 14px; line-height: 1; }
+@media (pointer: coarse) { .swatch { width: 40px; height: 40px; } .chip-item button { min-width: 32px; min-height: 32px; } }
 .coax-card { display: grid; gap: 12px; min-width: 0; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--sheet-line); font-variant-numeric: tabular-nums; }
 .coax-card-head { display: grid; gap: 8px; }
 .coax-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
