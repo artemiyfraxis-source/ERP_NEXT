@@ -27,6 +27,7 @@ from app.workflows import issue_calc
 from app.shared.warehouse_location import SHELF_LETTERS, configured_rack_layout, place_code
 
 from .application import (
+    AbsentCommand,
     BindLotCommand,
     BindProjectLotsCommand,
     CompleteReturnCommand,
@@ -43,6 +44,7 @@ from .application import (
     VersionedFulfillmentCommand,
     bind_lot,
     bind_project_lots,
+    set_absent,
     set_off_book,
     build_issue_print_sheet,
     build_issue_return_sheet,
@@ -211,6 +213,8 @@ def _result(request: FulfillmentRequest) -> dict:
                 "defective_missing": _number(line.defective_missing),
                 "consumed": _number(line.consumed),
                 "off_book": line.off_book,
+                "absent_at": _stamp(line.absent_at),
+                "absent_by": line.absent_by or None,
                 "lot": None if line.lot is None else {
                     "id": str(line.lot.lot_id),
                     "warehouse": line.lot.warehouse,
@@ -471,6 +475,44 @@ def clear_off_book(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
 ) -> dict:
     return _off_book(request_id, line_id, payload, principal, now, uow_factory, False)
+
+
+def _absent(request_id: UUID, line_id: UUID, payload: VersionPayload, principal: Principal, now: datetime,
+            uow_factory: Callable[[], UnitOfWork], absent: bool) -> dict:
+    return _run(lambda: set_absent(AbsentCommand(
+        request_id=request_id,
+        expected_version=payload.version,
+        line_id=line_id,
+        absent=absent,
+        actor=principal.actor,
+        now=now,
+    ), uow_factory()))
+
+
+@router.post("/{request_id}/lines/{line_id}/absent")
+def mark_absent(
+    request_id: UUID,
+    line_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«нет на складе»: the storekeeper confirms the part is absent — the line stays open as a shortage, supply is told
+    once, «есть, но не заведено» on it is dropped. A repeat on a marked line changes nothing."""
+    return _absent(request_id, line_id, payload, principal, now, uow_factory, True)
+
+
+@router.delete("/{request_id}/lines/{line_id}/absent")
+def clear_absent(
+    request_id: UUID,
+    line_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    return _absent(request_id, line_id, payload, principal, now, uow_factory, False)
 
 
 @router.post("/projects/{project}/bind-lots")

@@ -14,7 +14,7 @@ import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 import { StatusChip } from "./StatusChip";
-import { BulkLotsPanel, bindPosition, bulkApi, isOffBook, type BulkPosition } from "./FulfillmentBulkLots";
+import { BulkLotsPanel, absentMark, bindPosition, bulkApi, isOffBook, type BulkPosition } from "./FulfillmentBulkLots";
 
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
    only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint: for
@@ -66,6 +66,11 @@ function closedLine(line: FulfillmentLine) {
 
 function openLines(request: FulfillmentRequest) {
   return (request.lines ?? []).filter((line) => !closedLine(line));
+}
+
+/** «Нет на складе» lines: open (a shortage), counted among the waiting ones. */
+function absentLines(request: FulfillmentRequest) {
+  return (request.lines ?? []).filter((line) => absentMark(line) !== null);
 }
 
 /* «Выдать комплект» (owner 06.10.2026): a fully picked kit, sent to the handout point or not yet — the server sends a
@@ -441,22 +446,25 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
   const [tab, setTab] = useState("all");
   const current = requests.find((request) => request.id === tab);
   const positions = useMemo(() => {
-    const groups = new Map<string, { article: string; name: string; unit: string; need: number; got: number; off: number; remaining: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number; off: number; remaining: number }> }>();
+    const groups = new Map<string, { article: string; name: string; unit: string; need: number; got: number; off: number; absent: number; remaining: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number; off: number; absent: number; remaining: number }> }>();
     for (const request of requests) {
       for (const line of request.lines ?? []) {
         const key = `${line.article}|${line.name}`.trim().toLocaleLowerCase("ru");
-        if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, unit: line.unit, need: 0, got: 0, off: 0, remaining: 0, kb: new Map() });
+        if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, unit: line.unit, need: 0, got: 0, off: 0, absent: 0, remaining: 0, kb: new Map() });
         const group = groups.get(key)!;
         const off = isOffBook(line) ? Math.max(Number(line.requirement) - picked(line), 0) : 0;
         const open = closedLine(line) ? 0 : Math.max(Number(line.requirement) - picked(line), 0);
+        const absent = absentMark(line) ? Number(line.requirement) : 0;
         group.need += Number(line.requirement);
         group.got += picked(line);
         group.off += off;
+        group.absent += absent;
         group.remaining += open;
-        const kb = group.kb.get(request.id) ?? { request, need: 0, got: 0, off: 0, remaining: 0 };
+        const kb = group.kb.get(request.id) ?? { request, need: 0, got: 0, off: 0, absent: 0, remaining: 0 };
         kb.need += Number(line.requirement);
         kb.got += picked(line);
         kb.off += off;
+        kb.absent += absent;
         kb.remaining += open;
         group.kb.set(request.id, kb);
       }
@@ -517,8 +525,9 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
       <button type="button" role="tab" aria-selected={tab === "all"} className={`calendar-chip${tab === "all" ? " active" : ""}`} onClick={() => setTab("all")}>Весь заказ</button>
       {requests.map((request) => {
         const waiting = openLines(request).length;
+        const absent = absentLines(request).length;
         return <button type="button" role="tab" key={request.id} aria-selected={tab === request.id} className={`calendar-chip${tab === request.id ? " active" : ""}`} onClick={() => setTab(request.id)}>
-          {kbOf(request)}{["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) ? " · выдан" : waiting ? ` · ждут ${waiting}` : " ✓"}
+          {kbOf(request)}{["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) ? " · выдан" : waiting ? ` · ждут ${waiting}` : " ✓"}{absent ? ` (нет ${absent})` : ""}
         </button>;
       })}
       {gone.map((request) => <span key={request.id} className="calendar-chip chip-cancelled" title={`Заявка ${request.number} отменена — КБ можно отправить на комплектацию заново из карточки проекта`}>
@@ -536,9 +545,9 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
           return <Fragment key={key}>
             <tr>
               <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
-              <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}{kb.off > 0 ? " · не заведено" : ""}</button>)}</td>
+              <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}{kb.off > 0 ? " · не заведено" : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
               <td className="num">{round(position.need)} {position.unit}</td>
-              <td className="num">{round(position.got)}{position.off > 0 && <small>{round(position.off)} есть, не заведено</small>}</td>
+              <td className="num">{round(position.got)}{position.off > 0 && <small>{round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
               {canBulk && <td>{open && <>
                 <button type="button" className="secondary small" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} onClick={() => setBulkKey(bulkKey === key ? null : key)}>ГРН на все КБ</button>{" "}
                 <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Есть, не заведено: ${position.name}`} onClick={() => runBulk(() => bindPosition(project, bulkOf(position), [], true))}>Есть, не заведено</button>
@@ -624,6 +633,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
   const closed = ["КБ Выдана", "КБ Возвращена", "Готово", "Отменена"].includes(request.status);
   const hasIssuedLines = request.lines.some((line) => Number(line.issued) > 0);
   const waiting = openLines(request);
+  const absent = absentLines(request).length;
   const canPick = canEdit && showPick && !closed && request.status !== "Готов к выдаче";
   // G1-T3: the server offers the last place used at the kit's site, else «Зона выдачи» — sending is one click.
   const offered = request.handout_place || DEFAULT_HANDOUT_PLACE;
@@ -663,7 +673,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
     <article className="panel fulfillment-card">
       <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><StatusChip status={request.status} /></div>
       {meta.length > 0 && <dl className="fulfillment-meta">{meta.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
-      <p className="fulfillment-progress">Набрано {request.lines.length - waiting.length} из {request.lines.length} поз.{waiting.length > 0 && !closed ? ` · ждут ГРН: ${waiting.length}` : ""}</p>
+      <p className="fulfillment-progress">Набрано {request.lines.length - waiting.length} из {request.lines.length} поз.{waiting.length - absent > 0 && !closed ? ` · ждут ГРН: ${waiting.length - absent}` : ""}{absent > 0 && !closed ? ` · нет на складе: ${absent}` : ""}</p>
       {request.shortfall && <details className="fulfillment-short"><summary>Недобор по составу</summary><div>{request.shortfall}</div></details>}
       <div className="table-wrap fulfillment-lines"><table className="grid wide"><thead><tr><th>Позиция</th><th className="num">Потребность</th><th className="num">Резерв</th><th className="num">Выдано</th><th>Партия</th><th>Место</th><th /></tr></thead><tbody>
         {request.lines.map((line) => <FulfillmentLineRow key={line.id} request={request} line={line} lots={lots} canEdit={canPick} busy={busy} mutate={mutate} />)}
@@ -815,19 +825,26 @@ function FulfillmentLineRow({ request, line, lots, canEdit, busy, mutate }: {
 }) {
   const [picking, setPicking] = useState(false);
   const off = isOffBook(line);
+  const absent = absentMark(line);
   return <>
     <tr>
       <td className="text"><strong>{line.article || "—"}</strong><small>{line.name}</small></td>
       <td className="num">{line.requirement} {line.unit}</td><td className="num">{line.reserved} {line.unit}</td><td className="num">{line.issued} {line.unit}</td>
-      <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}` : off ? <StatusChip tone="neutral">есть, не заведено</StatusChip> : "Ждём поставки"}</td>
+      <td>{line.lot ? `${line.lot.grn}${line.lot.package ? ` · ${line.lot.package}` : ""}`
+        : off ? <StatusChip tone="neutral">есть, не заведено</StatusChip>
+          : absent ? <span className="absent-mark"><StatusChip tone="danger">нет на складе</StatusChip><small>{[absent.by, stamp(absent.at)].filter(Boolean).join(" · ")}</small></span>
+            : "Ждём поставки"}</td>
       <td>{line.lot ? line.lot.storage_location || "без места" : "—"}</td>
       <td>{canEdit && Number(line.issued) <= 0 && (line.lot
         ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => fulfillmentApi.unbind(request.id, line.id, request.version))}>Снять резерв</button>
         : off
           ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, false))}>Снять отметку</button>
-          : <>
+          : absent
+            ? <button className="link-button table-link" disabled={busy} onClick={() => void mutate(request.id, () => bulkApi.absent(request.id, line.id, request.version, false))}>Снять отметку</button>
+            : <>
             <button className="secondary small" disabled={busy} aria-expanded={picking} onClick={() => setPicking((value) => !value)}>Выбрать ГРН</button>{" "}
-            <button className="secondary small" disabled={busy} title="Деталь физически есть, но ещё не заведена на склад: строка закроется без списания" onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, true))}>Есть, не заведено</button>
+            <button className="secondary small" disabled={busy} title="Деталь физически есть, но ещё не заведена на склад: строка закроется без списания" onClick={() => void mutate(request.id, () => bulkApi.offBook(request.id, line.id, request.version, true))}>Есть, не заведено</button>{" "}
+            <button className="secondary small" disabled={busy} title="Детали физически нет на складе: строка останется недобором, снабжение получит уведомление" onClick={() => void mutate(request.id, () => bulkApi.absent(request.id, line.id, request.version, true))}>Нет на складе</button>
           </>)}</td>
     </tr>
     {picking && !line.lot && <tr className="detail"><td colSpan={7}>

@@ -5,6 +5,7 @@
 export type NotificationTone = "ok" | "warn" | "danger" | "info" | "neutral";
 
 const KINDS: Record<string, { label: string; tone: NotificationTone }> = {
+  absent: { label: "Нет на складе", tone: "warn" },
   arrival: { label: "Приход под проект", tone: "ok" },
   digest: { label: "Сводка", tone: "info" },
   disposal: { label: "Утилизация", tone: "danger" },

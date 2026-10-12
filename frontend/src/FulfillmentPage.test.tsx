@@ -129,6 +129,8 @@ it("does not load lots or show editing actions to a view-only grant", async () =
   expect(await screen.findByText("Ждём поставки")).toBeInTheDocument();
   expect(paths).toEqual(["/api/issues"]);
   expect(screen.queryByRole("button", { name: "Выбрать ГРН" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Есть, не заведено" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Нет на складе" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Отменить заявку" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "+ Заявка" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Удалить заявку" })).not.toBeInTheDocument();
@@ -623,6 +625,25 @@ async function openWholeOrder() {
   fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
 }
 
+it("counts a line «нет на складе» as waiting on its КБ chip and names it in the order, never as «есть»", async () => {
+  const absentKb2 = { ...kb2, status: "Недоукомплектован", lines: [{ ...kb2.lines[0], absent_at: "2026-10-12T09:30:00", absent_by: "Кладовщик" }] };
+  const offKb1 = { ...kb1, status: "Укомплектован", lines: [{ ...kb1.lines[0], off_book: true }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [offKb1, absentKb2], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  await openWholeOrder();
+  const tabs = await screen.findByRole("tablist", { name: "Заявки проекта" });
+  expect(within(tabs).getByRole("tab", { name: "КБ1 ✓" })).toBeInTheDocument();
+  expect(within(tabs).getByRole("tab", { name: "КБ2 · ждут 1 (нет 1)" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "КБ2 0 / 4 · нет на складе" })).toBeInTheDocument();
+  expect(screen.getByText("4 нет на складе")).toBeInTheDocument();
+  expect(screen.getByText("4 есть, не заведено")).toBeInTheDocument();
+});
+
 it("picks several lots for every КБ at once, previews the FIFO split and reports what was assigned", async () => {
   let payload: any;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -750,6 +771,35 @@ it("marks one line «есть, не заведено», counts it as closed and 
   fireEvent.click(screen.getByRole("button", { name: "Есть, не заведено" }));
   expect(await screen.findByText("Набрано 1 из 1 поз.")).toBeInTheDocument();
   expect(screen.getByText("есть, не заведено")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Снять отметку" }));
+  expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
+  expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
+});
+
+it("marks one line «нет на складе»: it stays open, shows who and when, and the mark comes off", async () => {
+  const calls: Array<[string, string, unknown]> = [];
+  let marked = false;
+  const url = `/api/issues/${request.id}/lines/${request.lines[0].id}/absent`;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    const line = marked ? { ...request.lines[0], absent_at: "2026-10-12T09:30:00", absent_by: "Кладовщик" } : request.lines[0];
+    if (path === "/api/issues") return json({ requests: [{ ...request, version: marked ? 4 : 3, status: marked ? "Недоукомплектован" : "Новая", lines: [line] }], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path === url) {
+      calls.push([init?.method ?? "GET", path, JSON.parse(String(init?.body))]);
+      marked = init?.method === "POST";
+      return json({ request });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  await expand(request.number);
+  fireEvent.click(await screen.findByRole("button", { name: "Нет на складе" }));
+  expect(await screen.findByText("Набрано 0 из 1 поз. · нет на складе: 1")).toBeInTheDocument();
+  expect(screen.getByText("нет на складе")).toBeInTheDocument();
+  expect(screen.getByText("Кладовщик · 12.10.2026, 09:30")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Есть, не заведено" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Укомплектован" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Снять отметку" }));
   expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
   expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
