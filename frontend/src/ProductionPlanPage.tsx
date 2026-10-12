@@ -101,7 +101,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     const shift = (days: number) => iso(new Date(today.getFullYear(), today.getMonth(), today.getDate() + days));
     return { today: data.today ?? shift(0), from: data.calendar_from ?? shift(-7), to: data.calendar_to ?? shift(60) };
   }, [data.today, data.calendar_from, data.calendar_to]);
-  const activeCount = data.rows.filter((row) => (row.group ?? (row.terminal ? "closed" : "active")) !== "closed").length;
+  const activeCount = data.rows.filter((row) => (row.group ?? (row.terminal ? "closed" : "active")) !== "closed" && !row.terminal && row.stage !== "Отгружено").length;
   const selected = data.rows.find((row) => row.project === selectedProject) ?? null;
 
   const unassigned = useMemo(() => {
@@ -145,7 +145,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     <header className="page-head">
       <h1>Производственный план</h1>
       {/* Как в «Проектах»: счётчик только когда есть что считать — пустой план не показывает «0». */}
-      {activeCount > 0 && <span className="page-count" title="Проектов в плане, без закрытых">{activeCount}</span>}
+      {activeCount > 0 && <span className="page-count" title="Проектов в плане, без отгруженных и закрытых">{activeCount}</span>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
 

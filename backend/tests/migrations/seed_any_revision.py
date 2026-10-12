@@ -32,7 +32,7 @@ ROWS = 6
 # first word is the column, the first quoted literal an allowed value.
 _CHECK_IN = re.compile(r"(\w+).*?'([^']*)'", re.DOTALL)
 _IN_LIST = re.compile(r"\bIN\s*\(|=\s*ANY\s*\(", re.IGNORECASE)
-_CHECK_NULL_OR = re.compile(r"\s*\(?\s*(\w+)\s+IS\s+NULL\s+OR\b", re.IGNORECASE)
+_CHECK_NULL_OR = re.compile(r"\s*\(*\s*(\w+)\s+IS\s+NULL\s*\)?\s+OR\b", re.IGNORECASE)
 _WAREHOUSES = ("ЦАР", "ЖУК")
 # Stock quantities per lot row, and what each holder takes of one lot: 3 holders × 1 ≤ РЕЗЕРВ 20 ≤ balance.
 _LOT_QUANTITIES = {
@@ -123,6 +123,9 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
         if _database_assigns(table, column, dialect):
             continue
         name = column.name
+        if checks.get((table.name, name), "") is None:  # `col IS NULL OR …` wins over a parent to point at
+            row[name] = None
+            continue
         if name in parents:
             choices = parents[name]
             if not choices:

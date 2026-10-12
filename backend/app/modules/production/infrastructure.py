@@ -22,6 +22,7 @@ from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, Ope
 from .plan import (
     KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
     stage_alias,
+    terminal_alias,
 )
 from .genealogy import (
     BoxConsumptionSnapshot,
@@ -264,8 +265,9 @@ def _sql_in(column: str, values: tuple[str, ...]) -> str:
 
 
 # Migration 0101_production_stage_history added these checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
-# the journal only grows; DELETE stays for a deleted project); 0107_stage_ladder re-points them at the 8-stage ladder
-# (old «КБ на складе» rows stay as written — NOT VALID — and read as «Готово к отгрузке» via `stage_alias`).
+# the journal only grows; DELETE stays for a deleted project); 0110_stage_warehouse_accepted re-points them at the
+# 8-stage ladder and the one closed-project word «Отменён» (old rows stay as written — NOT VALID — and read as the
+# new words via `stage_alias` / `terminal_alias`).
 # The value column comes first in each check: the head-1 seeder (tests/migrations/seed_any_revision.py) fills a
 # checked column with the first literal.
 PLAN_EVENT_CHECKS = {
@@ -1012,6 +1014,13 @@ class SqlAlchemyPlanProjectRepository:
         ) for item in projects)
 
 
+def _read_word(kind: str, value: str) -> str:
+    """An old stage / closed-project word of an immutable journal row, as the current lists read it."""
+    if kind == PLAN_KINDS["stage"]:
+        return stage_alias(value)
+    return terminal_alias(value) if kind == PLAN_KINDS["status"] else value
+
+
 class SqlAlchemyPlanEventRepository:
     def __init__(self, session: Session):
         self.session = session
@@ -1024,8 +1033,8 @@ class SqlAlchemyPlanEventRepository:
             text=row.text, deadline=row.deadline, sequence=row.sequence,
             item_index=row.item_index, field=row.field, reason=row.reason,
             # Old «Этап КБ» rows keep their word (the journal is immutable); it reads as the current ladder stage.
-            value=stage_alias(row.value) if row.kind == PLAN_KINDS["stage"] else row.value,
-            from_value=stage_alias(row.from_value) if row.kind == PLAN_KINDS["stage"] else row.from_value,
+            value=_read_word(row.kind, row.value),
+            from_value=_read_word(row.kind, row.from_value),
         )
 
     def last_sequence(self, project: str) -> int:

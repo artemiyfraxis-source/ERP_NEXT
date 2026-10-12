@@ -505,14 +505,19 @@ class KitsetFacts:
     # Production boxes and the ids of the boxes ОТК inspected: the ladder's «ОТК» stage.
     boxes: tuple[ProductionBox, ...] = ()
     inspected: frozenset[UUID] = frozenset()
+    # Ids of the tasks with a work session: the ladder's «В работе».
+    worked: frozenset[UUID] = frozenset()
 
 
-def _qc_facts(uow) -> tuple[tuple[ProductionBox, ...], frozenset[UUID]]:
-    """Boxes and ОТК-inspected box ids through the production unit of work; a store without them reads empty."""
+def _qc_facts(uow, tasks=()) -> tuple[tuple[ProductionBox, ...], frozenset[UUID], frozenset[UUID]]:
+    """Boxes, ОТК-inspected box ids and ids of ``tasks`` someone worked on (the ladder's «В работе») through the
+    production unit of work; a store without them reads empty."""
     boxes, qc = getattr(uow, "boxes", None), getattr(uow, "qc", None)
+    worked_of = getattr(getattr(uow, "production", None), "worked", None)
+    worked = frozenset(worked_of([task.id for task in tasks])) if callable(worked_of) and tasks else frozenset()
     if boxes is None or qc is None:
-        return (), frozenset()
-    return tuple(boxes.list(limit=100_000)), frozenset(qc.inspected_box_ids())
+        return (), frozenset(), worked
+    return tuple(boxes.list(limit=100_000)), frozenset(qc.inspected_box_ids()), worked
 
 
 def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) -> KitsetFacts:
@@ -523,10 +528,11 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
         with factory() as uow:
             return reader(uow)
 
-    tasks, events, projects, (boxes, inspected) = read(production, lambda uow: (
-        tuple(uow.production.list(limit=10_000)), tuple(uow.plan_events.list()), tuple(uow.plan_projects.list()),
-        _qc_facts(uow),
-    ), ((), (), (), ((), frozenset())))
+    def read_production(uow):
+        listed = tuple(uow.production.list(limit=10_000))
+        return listed, tuple(uow.plan_events.list()), tuple(uow.plan_projects.list()), _qc_facts(uow, listed)
+
+    tasks, events, projects, (boxes, inspected, worked) = read(production, read_production, ((), (), (), ((), frozenset(), frozenset())))
     return KitsetFacts(
         cards=read(techcards, lambda uow: tuple(uow.techcards.list())),
         tasks=tasks,
@@ -536,6 +542,7 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
         projects=projects,
         boxes=boxes,
         inspected=inspected,
+        worked=worked,
     )
 
 
@@ -545,7 +552,7 @@ def _stage_marks(facts: KitsetFacts, events: Iterable[PlanEvent]):
     raw = summarize_kit_marks(events)
     stage_facts, marks = kit_stage_facts(
         cards=facts.cards, tasks=facts.tasks, fulfillment=facts.fulfillment, goods=facts.goods, marks=raw,
-        boxes=facts.boxes, inspected=facts.inspected,
+        boxes=facts.boxes, inspected=facts.inspected, worked=facts.worked,
     )
     marks = {key: replace(mark, skipped=raw[key].skipped) if key in raw else mark for key, mark in marks.items()}
     return stage_facts, marks

@@ -347,6 +347,7 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, stages, supplie
 }) {
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
+  const [showShipped, setShowShipped] = useState(false);
   const [collapsed, setCollapsed] = useState<string[]>(readCollapsed);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [choosing, setChoosing] = useState(false);
@@ -421,9 +422,21 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, stages, supplie
   }
 
   const closedCount = groups.find((group) => group.closed)?.rows.length ?? 0;
-  const visible = groups.filter((group) => !group.closed || showClosed);
-  const shown = visible.reduce((count, group) => count + group.rows.length, 0);
   const lastStage = stages[stages.length - 1];
+  // Отгруженные не мозолят глаза (владелец 12.10): группа последнего этапа скрыта, пока не включён переключатель.
+  const shippedCount = groups.find((group) => !group.closed && group.key === lastStage)?.rows.length ?? 0;
+  const visible = groups.filter((group) => group.closed ? showClosed : (group.key !== lastStage || showShipped));
+  const shown = visible.reduce((count, group) => count + group.rows.length, 0);
+
+  function pickShipped(on: boolean) {
+    setShowShipped(on);
+    // Показанная группа отгруженных открывается свёрнутой.
+    if (on && lastStage && !collapsed.includes(lastStage)) {
+      const next = [...collapsed, lastStage];
+      setCollapsed(next);
+      writeStored(COLLAPSED_KEY, next);
+    }
+  }
 
   function toggleGroup(key: string) {
     const next = collapsed.includes(key) ? collapsed.filter((item) => item !== key) : [...collapsed, key];
@@ -437,6 +450,7 @@ export function PlanLoadSheet({ rows, from, to, today, holidays, stages, supplie
   return <div className="zg">
     <div className="zg-toolbar">
       <input aria-label="Поиск проекта" placeholder="№ проекта или заказчик…" value={query} onChange={(event) => setQuery(event.target.value)} />
+      {shippedCount > 0 && <label className="zg-toggle"><input type="checkbox" checked={showShipped} onChange={(event) => pickShipped(event.target.checked)} />Показать отгруженные · {shippedCount}</label>}
       {closedCount > 0 && <label className="zg-toggle"><input type="checkbox" checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} />Закрытые проекты · {closedCount}</label>}
       <div className="zg-scale" role="group" aria-label="Масштаб календаря">
         <button type="button" className={scale === "day" ? "on" : undefined} aria-pressed={scale === "day"} onClick={() => pickScale("day")}>Дни</button>

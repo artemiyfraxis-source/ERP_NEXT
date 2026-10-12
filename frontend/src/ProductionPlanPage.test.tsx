@@ -296,7 +296,7 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
     row({ project: "702К.1", customer: "Бета", days_left: -2, deadline: "2026-09-20", stage: "В работе" }),
     row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", stage: "Новый", blocker: { type: "ХОЛД", text: "Ждём", since: "2026-09-22", who: "Мастер" } }),
     row({ project: "704К.1", customer: "Дельта", days_left: 1, deadline: "2026-09-23", stage: "В работе" }),
-    row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Отказ" }),
+    row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Отменён" }),
     row({ project: "706К.1", customer: "Зета", stage: "Отгружено" }),
   ] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input) === "/api/production/calendar"
@@ -304,19 +304,27 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   render(<ProductionPlanPage principal={principal} />);
   await screen.findByText("Альфа");
 
-  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1", "706К.1"]);
+  // Отгруженные скрыты по умолчанию (владелец 12.10), счётчик в шапке — видимые проекты.
+  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1"]);
   expect(Array.from(document.querySelectorAll(".zg-group-label")).map((item) => item.textContent)).toEqual([
-    "Новый · 1", "В работе · 3", "Отгружено · 1",
+    "Новый · 1", "В работе · 3",
   ]);
+  expect(document.querySelector(".page-count")?.textContent).toBe("4");
   // The blocked project keeps its stage group and its chip.
   expect(within(sheetRow("703К.1")).getByText("ХОЛД")).toBeInTheDocument();
   // A collapsed stage hides its rows and stays collapsed after a remount.
   fireEvent.click(screen.getByRole("button", { name: "В работе · 3" }));
-  expect(projects()).toEqual(["703К.1", "706К.1"]);
+  expect(projects()).toEqual(["703К.1"]);
   expect(JSON.parse(window.localStorage.getItem("erp-zg-collapsed") ?? "null")).toEqual(["В работе"]);
   fireEvent.click(screen.getByRole("button", { name: "В работе · 3" }));
-  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1", "706К.1"]);
+  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1"]);
   window.localStorage.removeItem("erp-zg-collapsed");
+  // «Показать отгруженные» adds the last group, folded.
+  fireEvent.click(screen.getByLabelText("Показать отгруженные · 1"));
+  expect(screen.getByRole("button", { name: "Отгружено · 1" })).toHaveAttribute("aria-expanded", "false");
+  expect(projects()).not.toContain("706К.1");
+  fireEvent.click(screen.getByRole("button", { name: "Отгружено · 1" }));
+  expect(projects()).toContain("706К.1");
   // A shop holiday (24.09) is grey like a weekend.
   await waitFor(() => expect(document.querySelectorAll(".zg-table thead th.zg-day-head")[9]?.className).toContain("zg-off"));
   fireEvent.click(screen.getByLabelText("Закрытые проекты · 1"));
@@ -327,13 +335,13 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   expect(screen.getByText("Под этот поиск проектов нет.")).toBeInTheDocument();
 });
 
-const STAGES = ["Новый", "ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено"];
+const STAGES = ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"];
 const names = (groups: ReturnType<typeof groupSheetRows>) => groups.map((group) => [group.label, group.rows.map((item) => item.project)]);
 
 it("groupSheetRows: groups follow the stage list, empty ones are hidden, closed go last", () => {
   const rows = [
     row({ project: "A", stage: "Отгружено" }), row({ project: "B", stage: "Новый" }), row({ project: "C", stage: "ОТК" }),
-    row({ project: "D", stage: "Отказ", terminal: true }), row({ project: "E", stage: "В работе" }),
+    row({ project: "D", stage: "Отменён", terminal: true }), row({ project: "E", stage: "В работе" }),
   ];
   expect(names(groupSheetRows(rows, STAGES))).toEqual([["Новый", ["B"]], ["В работе", ["E"]], ["ОТК", ["C"]], ["Отгружено", ["A"]], ["Закрытые", ["D"]]]);
   // The order comes from the passed list, not from the code.
@@ -599,8 +607,8 @@ it("changes the stage, blocks and closes a project without a card from the statu
 
   // Закрытие проекта — запись «Статус проекта».
   box = await menu();
-  fireEvent.click(within(box).getByRole("menuitemradio", { name: "Отказ" }));
-  await waitFor(() => expect(payloads[1]).toMatchObject({ project: "709К.1", kind: "status", value: "Отказ" }));
+  fireEvent.click(within(box).getByRole("menuitemradio", { name: "Отменён" }));
+  await waitFor(() => expect(payloads[1]).toMatchObject({ project: "709К.1", kind: "status", value: "Отменён" }));
 
   // Этап — то же окно подтверждения с предпросмотром плана, запись «Этап КБ» на весь проект.
   box = await menu();

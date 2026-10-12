@@ -26,7 +26,7 @@ export function tileFacts(item: KitsetTile, statuses: string[]): Fact[] {
   const index = statuses.indexOf(item.status);
   const shipped = statuses.indexOf("Отгружено");
   const late = index >= statuses.indexOf("В работе") && index < shipped;
-  // Отказ/Слился/Отменён стоят после «Отгружено»: у закрытого проекта факты не нужны.
+  // «Отменён» стоит после «Отгружено»: у закрытого проекта факты не нужны.
   if (!total || index > shipped) return [];
   const facts: Fact[] = [];
   facts.push(tc === total ? { text: "ТК на все КБ", tone: "success", title: "Техкарты выданы на все КБ" }

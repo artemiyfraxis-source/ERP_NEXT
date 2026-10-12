@@ -167,9 +167,15 @@ def kit_stage_facts(
     marks: dict[str, KitMark],
     boxes: Iterable[ProductionBox] = (),
     inspected: Collection[UUID] = (),
+    worked: Collection[UUID] = (),
 ) -> tuple[dict[str, set[str]], dict[str, KitMark]]:
-    """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, a running task, finished production (ОТК),
-    finished goods accepted, taken into a shipment, gone.
+    """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, tasks placed in the resource plan, work begun,
+    finished production (ОТК), finished goods accepted and packed, gone.
+
+    ``worked`` — ids of tasks that have a work session (any but a cancelled one): someone started work on them.
+    «Распланировано»: the КБ has running tasks and every one of them is placed (handed to a site, or every operation
+    has a planned window); a partly placed КБ stays below. «В работе»: a work session or a «взял» of a share on any
+    live task of the КБ — a launched task alone, or an issued kit, is no longer work (owner 12.10).
 
     ``boxes`` — production boxes, ``inspected`` — ids of the boxes ОТК inspected: a final-operation box confirmed by
     the master (the ОТК queue) or inspected means production of the КБ is over. Shared by the production plan and
@@ -177,8 +183,8 @@ def kit_stage_facts(
     """
     marks = dict(marks)
     facts: dict[str, set[str]] = {
-        "tc": set(), "tc_project": set(), "kit": set(), "work": set(),
-        "qc": set(), "stock": set(), "taken": set(), "shipped": set(),
+        "tc": set(), "tc_project": set(), "kit": set(), "planned": set(), "work": set(),
+        "qc": set(), "stock": set(), "packed": set(), "shipped": set(),
     }
     facts["tc_project"].update(MANUAL_TECHCARD_PROJECTS)
     for card in cards:
@@ -197,19 +203,23 @@ def kit_stage_facts(
         FulfillmentStatus.COMPLETE, FulfillmentStatus.READY, FulfillmentStatus.ISSUED,
         FulfillmentStatus.RETURNED, FulfillmentStatus.DONE,
     }
-    started = {FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE}
     for request in fulfillment:
         if request.status in picked:
             key = kit_key_from_purpose(request.purpose)
             if key:
                 facts["kit"].add(key)
-                # Комплект выдан монтажнику — работа началась (решено агентом 06.10, проект 33МФ.2): ISSUED и дальше = «В работе».
-                if request.status in started:
-                    facts["work"].add(key)
     tasks = tuple(tasks)
+    worked = frozenset(worked)
+    placed: dict[str, bool] = {}
     for task in tasks:
+        key = kit_stage_key(task.project, task.item)
+        if task.status is not ProductionStatus.CANCELLED and (
+            task.id in worked or any(share.started_at is not None for op in task.operations for share in op.shares)
+        ):
+            facts["work"].add(key)
         if task.status is ProductionStatus.RUNNING:
-            facts["work"].add(kit_stage_key(task.project, task.item))
+            is_placed = bool(task.handed_to) or all(op.planned_start is not None for op in task.operations)
+            placed[key] = placed.get(key, True) and is_placed
         # Выполненное задание — производство закончено, изделие у ОТК (владелец 12.10: лестница с «ОТК»).
         elif task.status is ProductionStatus.DONE:
             facts["qc"].add(kit_stage_key(task.project, task.item))
@@ -231,13 +241,14 @@ def kit_stage_facts(
         need = good.ordered or good.accepted
         if good.accepted > 0 and good.accepted >= need:
             facts["stock"].add(key)
-        # «На отгрузке» — отобрано в отправки (`shipped`), ещё не уехало.
+        # «Упаковано» - отобрано в отправки (`shipped`, растёт при «Упаковать»), ещё не уехало.
         if good.shipped > 0 and good.shipped >= need:
-            facts["taken"].add(key)
+            facts["packed"].add(key)
         # Этап «Отгружено» — по уехавшему (`sent`), не по отобранному: упакованное ещё на складе (решено агентом 30.09).
         if good.sent > 0 and good.sent >= need:
             facts["shipped"].add(key)
 
+    facts["planned"].update(key for key, value in placed.items() if value)
     return facts, marks
 
 
@@ -256,6 +267,7 @@ def build_production_plan(
     processed: Mapping[UUID, Decimal] | None = None,
     boxes: Iterable[ProductionBox] = (),
     inspected: Collection[UUID] = (),
+    worked: Collection[UUID] = (),
 ) -> tuple[ProductionPlanRow, ...]:
     cards = tuple(cards)
     tasks = tuple(tasks)
@@ -280,7 +292,7 @@ def build_production_plan(
 
     facts, marks = kit_stage_facts(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods, marks=marks,
-        boxes=boxes, inspected=inspected,
+        boxes=boxes, inspected=inspected, worked=worked,
     )
 
     # КБ проекта — из карточки набора (tcKitsetSyncErp_ → «Позиции проектов») и из карточек техкарт (`project_kits`).

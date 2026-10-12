@@ -8,7 +8,7 @@ const editor = {
 };
 const viewer = { ...editor, permissions: { projects: "view" as const } };
 
-const statuses = ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено", "Отказ", "Слился", "Отменён"];
+const statuses = ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено", "Отменён"];
 const tiles = [
   {
     project: "708К.4", customer: "ООО Заказчик", calc_source: "708К.4 Расчет.xlsx", updated_at: "2026-09-29T10:00:00",
@@ -118,9 +118,9 @@ describe("ProjectsPage", () => {
     expect(calls[1].body).toEqual({ action: "block", value: "ХОЛД", text: "ждём оплату" });
 
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "Отказ" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Отменён" }));
     await waitFor(() => expect(calls).toHaveLength(3));
-    expect(calls[2].body).toEqual({ action: "status", value: "Отказ" });
+    expect(calls[2].body).toEqual({ action: "status", value: "Отменён" });
     // У проекта с активным блокером в меню — «Снять ХОЛД».
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 591К.3: В работе, блокер ХОЛД" }));
     expect(screen.getByRole("menuitem", { name: "Снять ХОЛД" })).toBeTruthy();

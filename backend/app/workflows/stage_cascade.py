@@ -249,11 +249,11 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
                 continue
             label = _request_label(request)
             if request.status is FulfillmentStatus.ISSUED or any(line.issued > 0 for line in request.lines):
-                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "КБ выдана в цех — закрывается возвратом, не отменой."))
+                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "КБ уже выдана в цех — заявка остаётся выданной (не мешает переносу)."))
             elif request.status is FulfillmentStatus.READY:
-                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "Комплект собран и лежит в зоне выдачи — не отменяем."))
+                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "Комплект собран и лежит в зоне выдачи — остаётся, не мешает переносу."))
             elif request.status is FulfillmentStatus.COMPLETE:
-                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "Комплект собран («Укомплектован») — не отменяем."))
+                keep.append(KeepItem(CLOSE_KIT_REQUEST, label, "Комплект собран («Укомплектован») — остаётся, не мешает переносу."))
             elif request.status in _OPEN_REQUESTS and at_work:
                 positions = sum(1 for line in request.lines if line.lot is not None and line.reserved > 0)
                 close.append(CloseItem(
@@ -275,9 +275,9 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
                 continue
             label = _task_label(task)
             if not at_qc:
-                keep.append(KeepItem(CLOSE_TASK, label, f"Этап ниже «{QC_STAGE}» — задание остаётся в работе."))
+                keep.append(KeepItem(CLOSE_TASK, label, f"Этап ниже «{QC_STAGE}» — задание остаётся."))
             elif task.id in facts.busy:
-                keep.append(KeepItem(CLOSE_TASK, label, "По заданию идёт работа (смена открыта) — не отменяем."))
+                keep.append(KeepItem(CLOSE_TASK, label, "По заданию идёт работа (смена открыта) — остаётся, не мешает переносу."))
             else:
                 close.append(CloseItem(CLOSE_TASK, task.id, task.version, label, Decimal(task.quantity), "шт"))
         for good in facts.goods:
@@ -288,11 +288,11 @@ def plan_cascade(project: str, plan: StagePlan, facts: CascadeFacts, reason: str
             if waiting > 0:
                 keep.append(KeepItem(
                     KEEP_GOODS, label,
-                    f"Принято на склад ГП, не отгружено: {_quantity(waiting, good.unit)} — этап не отгружает.",
+                    f"Принято на склад ГП, не отгружено: {_quantity(waiting, good.unit)} — этап не отгружает, переносу не мешает.",
                 ))
             if good.sent > 0:
                 keep.append(KeepItem(
-                    KEEP_GOODS, label, f"Отгружено {_quantity(good.sent, good.unit)} — отгрузки не трогаем.",
+                    KEEP_GOODS, label, f"Отгружено {_quantity(good.sent, good.unit)} — отгрузки остаются, переносу не мешают.",
                 ))
         kbs.append(KbCascade(
             change.item_index, change.to_stage, skip_reason(reason, change.from_stage, change.to_stage),
