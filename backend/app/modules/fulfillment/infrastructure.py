@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -383,6 +384,33 @@ class SqlAlchemyFulfillmentRepository:
             statement.order_by(FulfillmentRequestRow.created_at, FulfillmentRequestRow.number)
         )
         return [self._domain(row) for row in rows if project_from_purpose(row.purpose) == key]
+
+    def issued_lots(self, kits: Sequence[tuple[str, str]]) -> list[tuple[str, str, str, str, str, str]]:
+        """Lots handed to the shop for kits of project + КБ (`kit_key` form: «180К.11», «КБ1»), the main request and
+        its «Довыдача» alike: (project_key, item_index, article, name, grn, package) of every line with issued > 0 on a
+        lot, in the order the requests were made. One query for all the kits; the ETK shows these ГРН."""
+        wanted = {(project, kb) for project, kb in kits if project and kb}
+        if not wanted:
+            return []
+        rows = self.session.execute(
+            select(
+                FulfillmentRequestRow.project_key, FulfillmentRequestRow.item_index, FulfillmentLineRow.article,
+                FulfillmentLineRow.name, FulfillmentLineRow.lot_grn, FulfillmentLineRow.lot_package,
+            )
+            .join(FulfillmentLineRow, FulfillmentLineRow.request_id == FulfillmentRequestRow.id)
+            .where(
+                FulfillmentRequestRow.project_key.in_({project for project, _ in wanted}),
+                FulfillmentRequestRow.item_index.in_({kb for _, kb in wanted}),
+                FulfillmentLineRow.issued > 0,
+                FulfillmentLineRow.lot_grn.is_not(None),
+                FulfillmentLineRow.lot_grn != "",
+            )
+            .order_by(FulfillmentRequestRow.created_at, FulfillmentRequestRow.number, FulfillmentLineRow.position)
+        )
+        return [
+            (row[0], row[1], row[2], row[3], row[4], row[5] or "")
+            for row in rows if (row[0], row[1]) in wanted
+        ]
 
     def add(self, request: FulfillmentRequest) -> None:
         row = self.session.get(FulfillmentRequestRow, request.id)

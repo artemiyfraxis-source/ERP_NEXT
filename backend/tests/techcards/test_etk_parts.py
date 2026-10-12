@@ -1,4 +1,4 @@
-from app.modules.techcards.etk_parts import attach_parts, kit_article, part_row, use_article
+from app.modules.techcards.etk_parts import EtkLot, EtkLots, attach_parts, kit_article, lots_text, part_row, use_article
 
 
 def _names(article: str) -> str:
@@ -91,3 +91,71 @@ def test_issued_etk_rows_keep_the_article_they_were_built_with():
     assert use_article("Силиконовый 28AWG черный", "Силиконовый 30AWG черный") == {
         "art": "Силиконовый 28AWG черный", "kd": "",
     }
+
+
+# ── ГРН by the current bindings (owner, 12.10.2026: «после того как Алексей привяжет к позиции ГРН, нужно чтобы это
+# синкалось в техкарте») ──
+
+
+def _etk(*rows: dict) -> dict:
+    return {"operations": [{"code": "CRIMP", "connector": "XS1", "components": [dict(row) for row in rows]}]}
+
+
+def _grn(document: dict) -> list[str]:
+    return [row["grn"] for row in document["operations"][0]["components"]]
+
+
+def test_grn_bound_in_the_kitset_after_the_etk_was_built_shows_on_read():
+    etk = _etk({"art": "43025-0400", "name": "Корпус Molex", "norm": "2"}, {"art": "UL1061 30AWG белый"})
+    lots = EtkLots(kitset=(EtkLot(article="43025-0400", name="Корпус Molex", grn="Г-101", package="1"),))
+
+    assert _grn(attach_parts(etk, None, lots)) == ["Г-101", ""]
+    assert _grn(attach_parts(etk)) == ["", ""]
+
+
+def test_issued_lots_beat_the_kitset_binding_and_the_snapshot():
+    etk = _etk({"art": "43025-0400", "grn": "Г-СНИМОК"}, {"art": "GHR-04V-S", "grn": "Г-СНИМОК"})
+    lots = EtkLots(
+        issued=(EtkLot(article="43025-0400", name="43025-0400", grn="Г-202"),),
+        kitset=(
+            EtkLot(article="43025-0400", name="", grn="Г-101"),
+            EtkLot(article="GHR-04V-S", name="Колодка 4pin", grn="Г-103"),
+        ),
+    )
+
+    assert _grn(attach_parts(etk, None, lots)) == ["Г-202", "Г-103"]
+
+
+def test_no_binding_for_the_article_keeps_the_snapshot():
+    etk = _etk({"art": "43025-0400", "grn": "Г-СНИМОК"}, {"name": "Термоусадка"})
+    lots = EtkLots(issued=(EtkLot(article="GHR-04V-S", name="", grn="Г-202"),))
+
+    assert _grn(attach_parts(etk, None, lots)) == ["Г-СНИМОК", ""]
+
+
+def test_several_lots_of_a_position_are_listed_once_each_in_binding_order():
+    etk = _etk({"art": "43025-0400"})
+    lots = EtkLots(issued=(
+        EtkLot(article="43025-0400", name="", grn="Г-7", package="1"),
+        EtkLot(article="43025-0400", name="", grn="Г-3", package="1"),
+        EtkLot(article="43025-0400", name="", grn="Г-7", package="1"),
+    ))
+
+    assert _grn(attach_parts(etk, None, lots)) == ["Г-7, Г-3"]
+
+
+def test_package_is_named_only_when_one_grn_came_in_different_packages():
+    lot = lambda grn, package: EtkLot(article="A", name="", grn=grn, package=package)  # noqa: E731
+
+    assert lots_text([lot("Г-7", "1"), lot("Г-7", "2"), lot("Г-3", "5")]) == "Г-7 · 1, Г-7 · 2, Г-3"
+    assert lots_text([lot("Г-7", ""), lot("Г-7", "2")]) == "Г-7, Г-7 · 2"
+    assert lots_text([lot("Г-7", "4"), lot("", "1")]) == "Г-7"
+
+
+def test_binding_matches_the_kd_article_and_the_article_to_apply_either_way_round():
+    """533К.11: the kit line is КД BL2018TS with the name SHF-001T-0.8BS (the article to apply); the ETK row shows the
+    applied one with «по КД» under it — both sides spaced and cased differently still meet."""
+    etk = _etk({"art": "BL2018TS", "name": "SHF-001T-0.8BS"}, {"art": "shf-001t-0.8bs"})
+    lots = EtkLots(kitset=(EtkLot(article="BL2018TS ", name="SHF-001T-0.8BS", grn="Г-55"),))
+
+    assert _grn(attach_parts(etk, None, lots)) == ["Г-55", "Г-55"]
