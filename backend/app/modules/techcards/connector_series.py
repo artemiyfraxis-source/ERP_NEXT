@@ -121,7 +121,6 @@ _LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
     ("molex-minilock", "Molex Mini-Lock", "Molex", WTB, "jst-ph", ("Mini-Lock",)),
     ("molex-igrid", "Molex iGrid", "Molex", WTB, "molex-picoclasp-1r", ("iGrid",)),
     ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",)),
-    ("molex-minispox", "Molex Mini-SPOX", "Molex", WTB, "jst-xh", ("Mini-SPOX",)),
     ("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, "molex-picoblade", ("Pico-EZmate", "Pico-EZmate Plus")),
     ("molex-boardin", "Molex Board-in", "Molex", WTB, "jst-xh", ("Board-in",)),
     ("jst-wp", "JST WP (JWPF)", "JST", AUTO, "te-superseal", ("WP (JWPF)",)),

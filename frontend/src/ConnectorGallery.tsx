@@ -138,6 +138,9 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
             : <span className="order-chip tone-warn" title="Каталога серии в ERP нет — показаны корпуса, которые ERP уже знает">диапазон не сверен</span>}
         </>}
       {series.wire && <span className="order-chip tone-info">провод {wireText(series.wire)}</span>}
+      {missing(series) > 0 && <button type="button" className="order-chip tone-warn conn-jump"
+        onClick={() => document.getElementById("conn-contacts")?.scrollIntoView?.({ block: "start" })}>
+        контактов нет в «Терминалы»: {missing(series)} ↓</button>}
       {series.housing_count > 0 && <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>}
     </div>
     {match?.series === series.id && !match.article && <div className="warning-inline">
@@ -157,7 +160,7 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
       <DataTable label={`Артикулы ${series.title}`} rows={series.catalog} columns={CATALOG_COLUMNS} rowKey={(c) => c.article}
         storageKey="db:conn-catalog" exportName={`Коакс ${series.title}`} hideSearch compactBelow={30} />
     </section>}
-    {series.contacts && series.contacts.length > 0 && <section className="conn-variant">
+    {series.contacts && series.contacts.length > 0 && <section className="conn-variant" id="conn-contacts">
       <h3>Контакты по каталогу <span className="muted">{series.contacts.length}
         {missing(series) ? ` · нет во вкладке «Терминалы»: ${missing(series)}` : " · все есть во вкладке «Терминалы»"}</span></h3>
       <DataTable label={`Контакты по каталогу ${series.title}`} rows={series.contacts} columns={CONTACT_COLUMNS} rowKey={(c) => c.article}

@@ -215,6 +215,8 @@ describe("ConnectorGallery — каталоги производителей (12
     expect(doc).toHaveAttribute("href", "https://datasheet.lcsc.com/df1b.pdf");
     expect(screen.queryByRole("link", { name: "Чертёж производителя (PDF)" })).toBeNull();
     expect(screen.getByText(/нет во вкладке «Терминалы»: 1/)).toBeInTheDocument();
+    // the long housing list pushes the table down: a chip at the top jumps to it
+    expect(screen.getByRole("button", { name: "контактов нет в «Терминалы»: 1 ↓" })).toBeInTheDocument();
     const missingRow = screen.getByText("DF1-PD2428SCFB").closest("tr")!;
     expect(within(missingRow).getByText("нет — добавить")).toBeInTheDocument();
   });
