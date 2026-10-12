@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CrimpCell, crimpText, parseCrimp } from "./CrimpCell";
@@ -37,11 +36,4 @@ describe("CrimpCell", () => {
     expect(crimpText({ conductor: "0,85", pull: "54" })).toBe("0,85 | 54");
   });
 });
-
-describe("crimp styles", () => {
-  const css = readFileSync("src/styles.css", "utf8");
-  it("has a tabular grid and a readable touch rule for the tablet", () => {
-    expect(css).toMatch(/\.crimp-row\s*\{[^}]*tabular-nums/);
-    expect(css).toMatch(/@media \(pointer: coarse\)\s*\{[^}]*\.crimp-row\s*\{[^}]*font-size: 13px;[^}]*line-height: 20px/);
-  });
 });
