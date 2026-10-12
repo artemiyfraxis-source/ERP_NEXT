@@ -210,14 +210,14 @@ def test_import_updates_in_place_creates_missing_sizes_and_a_second_run_changes_
     records = _records(uow)
     assert all(records[mark].id == record_id for mark, record_id in ids.items())  # nothing renamed or deleted
     mgtf = records["МГТФ 0,20"]
-    assert mgtf.edited_in_erp and mgtf.fields["Стандарт / производитель"] == "ТУ 16-505.185-71"
+    assert mgtf.edited_in_erp and mgtf.fields["Стандарт"] == "ТУ 16-505.185-71"
     assert mgtf.fields["Жила: проволок × диаметр, мм"] == "7×0,19"
     assert mgtf.fields["Цвета"] == "белый, красный, чёрный" and mgtf.fields["Изоляция"] == "фторопласт-4"
     assert (mgtf.fields["Наружный диаметр, мм"], mgtf.fields["Темп. от, °C"], mgtf.fields["Темп. до, °C"]) == ("0,97", "-60", "220")
     assert mgtf.fields["Сечение, мм2"] == "0,20"  # the same size: the cell stays as typed
     assert mgtf.fields["Источник данных"].startswith("Справочник; ТУ 16-505.185-71; ТУ 16-505.185-71, п. 1.2")
     changes = next(item["changes"] for item in report.updated if item["key"] == "МГТФ 0,20")
-    assert changes["Стандарт / производитель"] == ["ТУ (старое)", "ТУ 16-505.185-71"]
+    assert changes["Стандарт"] == ["ТУ (старое)", "ТУ 16-505.185-71"]
     assert changes["структура: материал жилы"] == ["", "медь посеребрённая"]
 
     ul = records["UL1061 28AWG"]
@@ -252,7 +252,7 @@ def test_import_updates_in_place_creates_missing_sizes_and_a_second_run_changes_
     # a mirror reload keeps what the import wrote
     load_mirror(_mirror(tmp_path / "again", prov=PROV), uow, dry_run=False, now=NOW)
     records = _records(uow)
-    assert records["МГТФ 0,20"].fields["Стандарт / производитель"] == "ТУ 16-505.185-71" and "МГТФ 0,07" in records
+    assert records["МГТФ 0,20"].fields["Стандарт"] == "ТУ 16-505.185-71" and "МГТФ 0,07" in records
     assert import_hookups(_factory(uow)(), _payload(), ACTOR, NOW).changed == 0
 
 

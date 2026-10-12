@@ -190,3 +190,34 @@ describe("connector series helpers", () => {
     expect(slotsBelow.h).toBeLessThanOrEqual(84 + 1);
   });
 });
+
+describe("ConnectorGallery — каталоги производителей (12.10.2026)", () => {
+  const DF1B: ConnectorSeries = {
+    ...GH, id: "hirose-df1b", title: "Hirose DF1B", maker: "Hirose", range_src: "Hirose DF1B, каталог 01.07.2020",
+    checked: false, datasheet: "https://datasheet.lcsc.com/df1b.pdf", terminals: [],
+    sources: [{ title: "Hirose DF1B, каталог 01.07.2020", url: "https://datasheet.lcsc.com/df1b.pdf" }],
+    contacts: [{ article: "DF1B-2428SCFA", wire: "гнездо, AWG 28–24, золото", in_base: true },
+      { article: "DF1-PD2428SCFB", wire: "штырь, AWG 28–24, золото", in_base: false }],
+  };
+
+  it("labels each maker inside a section, shows the documents and which catalogue contacts «Терминалы» lacks", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(
+      JSON.stringify({ series: [GH, MINIFIT, DF1B], match: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    render(<ConnectorGallery />);
+    await screen.findByRole("button", { name: "Серия Hirose DF1B" });
+    const makers = [...document.querySelectorAll(".conn-maker")].map((node) => node.textContent);
+    expect(makers).toEqual(["JST", "Molex", "Hirose"]);
+    // GH and DF1B share the article list of the fixture: a housing in two series is counted once
+    expect(screen.getByText("3 серий · 4 корпусов")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Серия Hirose DF1B" }));
+    const doc = await screen.findByRole("link", { name: "Hirose DF1B, каталог 01.07.2020" });
+    expect(doc).toHaveAttribute("href", "https://datasheet.lcsc.com/df1b.pdf");
+    expect(screen.queryByRole("link", { name: "Чертёж производителя (PDF)" })).toBeNull();
+    expect(screen.getByText(/нет во вкладке «Терминалы»: 1/)).toBeInTheDocument();
+    // the long housing list pushes the table down: a chip at the top jumps to it
+    expect(screen.getByRole("button", { name: "контактов нет в «Терминалы»: 1 ↓" })).toBeInTheDocument();
+    const missingRow = screen.getByText("DF1-PD2428SCFB").closest("tr")!;
+    expect(within(missingRow).getByText("нет — добавить")).toBeInTheDocument();
+  });
+});

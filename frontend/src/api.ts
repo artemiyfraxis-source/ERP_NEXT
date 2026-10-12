@@ -1323,6 +1323,45 @@ export interface CablesResult {
   gauges?: WireGauge[];
 }
 
+/** «Оболочки»: БД.МАТ rows that cover a harness, grouped and parsed by the server (`coverings.py`). */
+export type CoveringGroup = "tut" | "ttk" | "braid" | "corrugated" | "other";
+export interface CoveringRow {
+  id: string;
+  name: string;
+  group: CoveringGroup;
+  /** «вручную» — the override cell; otherwise how the classifier decided. */
+  group_source: string;
+  auto_group: CoveringGroup | null;
+  datasheet: string;
+  unit: string;
+  before_mm: number | null;
+  after_mm: number | null;
+  ratio: string;
+  wall_mm: number | null;
+  adhesive: string;
+  nominal_mm: number | null;
+  min_mm: number | null;
+  max_mm: number | null;
+  density: string;
+  inner_mm: number | null;
+  outer_mm: number | null;
+  split: boolean | null;
+  material: string;
+  material_short: string;
+  temp_min_c: number | null;
+  temp_max_c: number | null;
+  color: string;
+  maker: string;
+  series: string;
+  series_family: string;
+  notes: string[];
+}
+export interface CoveringsResult {
+  counts: Record<CoveringGroup, number>;
+  titles: Record<CoveringGroup, string>;
+  rows: CoveringRow[];
+}
+
 export interface HookupPayload {
   series: string;
   gauge_id: string;
@@ -1546,6 +1585,10 @@ export interface ConnectorSeries {
   category: string;
   /** Артикулы БД.КОАКС для ВЧ-серий. */
   catalog: Array<{ article: string; kind: string; maker: string; wire: string }>;
+  /** Документы производителя, по которым заполнен каталог серии (первый — основной). */
+  sources?: Array<{ title: string; url: string }>;
+  /** Контакты из каталога производителя; in_base — есть ли артикул (REEL или BAG) во вкладке «Терминалы». */
+  contacts?: Array<{ article: string; wire: string; in_base: boolean }>;
 }
 
 export interface ConnectorSeriesMatch {
@@ -2711,6 +2754,11 @@ export const fulfillmentApi = {
   /** «Возможно есть»: the lots that may be each position of the project, one request for the whole card. */
   candidates: (project: string) =>
     api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`),
+  /** The same «Возможно есть» for positions the caller names (the project's «Снабжение», before any kit request). */
+  candidatesFor: (project: string, positions: Array<{ article: string; name: string; unit?: string }>) =>
+    api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`, {
+      method: "POST", body: JSON.stringify({ positions }),
+    }),
   printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
   returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
   bind: (requestId: string, lineId: string, version: number, lotId: string) =>
@@ -3076,6 +3124,9 @@ export const shippingApi = {
 export const referencesApi = {
   bases: () => api<BasesResult>("/api/references/bases"),
   cables: () => api<CablesResult>("/api/references/cables"),
+  coverings: () => api<CoveringsResult>("/api/references/coverings"),
+  setCoveringGroup: (recordId: string, group: string) =>
+    api<TechOperationRecord>(`/api/references/coverings/${recordId}/group`, { method: "PUT", body: JSON.stringify({ group }) }),
   moveCable: (recordId: string, kind: CableKind) =>
     api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
   saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
@@ -3768,6 +3819,16 @@ export interface KitsetLoadResult {
 export interface KitsetSupplyLine {
   art: string;
   name: string;
+  /** Where the name comes from: ref — справочник ERP, spec — спецификация, stock — склад, site — сайт, "" — not found. */
+  name_source?: "ref" | "spec" | "stock" | "site" | "";
+  /** Tooltip of the name: its source, or why the article is unknown. */
+  name_hint?: string;
+  /** «Стадия» in one word: short · kitting · procurement · received · outside · stock · none. */
+  state?: string;
+  state_label?: string;
+  state_tone?: "ok" | "warn" | "danger" | "info" | "neutral";
+  /** The numbers behind the state. */
+  state_hint?: string;
   kbs: string[];
   need: string;
   unit: string;
@@ -3946,9 +4007,11 @@ export const harnessApi = {
   /** Чертёж позиции; `revision` — номер версии, с которым сохранять (чертежа нет — всё null). */
   drawing: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
   /** Сохранить чертёж новой версией: `revision` — из последнего чтения (null — чертежа ещё нет; иначе 409, если его
-   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`). */
-  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
-    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`).
+   *  `checkpoint` — записать версию сразу закрытой строкой истории (автосохранения в неё не сольются). */
+  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null, options: { checkpoint?: boolean } = {}) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT",
+      body: JSON.stringify({ design, revision, ...(options.checkpoint ? { checkpoint: true } : {}) }) }),
   /** «Сохранить версию»: текущая версия остаётся в истории отдельной строкой; `revision` — версия на экране (иначе 409). */
   checkpoint: (project: string, index: string, revision: number | null) =>
     api<{ revision: number | null; row: HarnessRevision | null }>(`${harnessPath(project, index)}/checkpoint`, { method: "POST", body: JSON.stringify({ revision }) }),

@@ -7,6 +7,8 @@ import math
 import re
 from typing import Any, Mapping
 
+from .connector_catalog_data import CATALOG_FAMILIES, CATALOG_FAMILY_SAMPLES
+
 
 IVORY = "#efe6cf"
 BLACK = "#2b2b2b"
@@ -149,7 +151,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
      "body": {"extra": 4.8, "h": 4.1, "len": 7.8, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}, "color_by": ((r"-SCB", BLACK),)},
     # DS1066 — Connfly 2.0 mm female housing «Гнездо на провод N конт. шаг 2,0» (warehouse lots I-DS1066-SCW02/03, type
     # «Соединитель»; pitch from the lot name). No maker drawing is read, so the numbering stays unchecked.
-    {"id": "connfly-ds1066", "title": "Connfly DS1066 (шаг 2,0)", "pattern": r"^I-DS1066-SC[BW]0*(\d+)", "pitch": 2.0, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": IVORY, "erp_only": True, "conf": "low",
+    {"id": "connfly-ds1066", "title": "Connfly DS1066 (шаг 2,0)", "pattern": r"^I-DS1066-SC[BWE]0*(\d+)", "pitch": 2.0, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": IVORY, "erp_only": True, "conf": "low",
      "color_by": ((r"-SCB", BLACK),), "note": "корпус Connfly DS1066: чертёж производителя не сверен — контакт 1 по ответной вилке"},
     # Amass XT / QS8: the Amass product specifications (XT60, XT60H 2021V1) show the faces without numbers or «+»/«−»,
     # so the contacts stay unlabelled and unchecked.
@@ -186,7 +188,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "molex-clikmate", "title": "Molex CLIK-Mate 1,5", "pattern": r"^502578-?0?(\d{1,2})00$", "pitch": 1.5, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
     {"id": "molex-picoclasp", "title": "Molex Pico-Clasp (2 ряда)", "pattern": r"^501189-?(\d{2})10$", "pitch": 1.0, "rows": 2, "order": "col", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
     {"id": "molex-picoclasp-1r", "title": "Molex Pico-Clasp", "pattern": r"^501330-?0?(\d{1,2})00$", "pitch": 1.0, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
-    {"id": "molex-milligrid", "title": "Molex Milli-Grid 2,0", "pattern": r"^51110-?(\d{2})\d1$", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "friction", "color": BLACK, "erp_only": True, "conf": "low"},
+    {"id": "molex-milligrid", "title": "Molex Milli-Grid 2,0", "pattern": r"^51110-?(\d{2})[56][01]$", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "friction", "color": BLACK, "erp_only": True, "conf": "low"},
     # Hirose drawings (third-angle; copies of the HRS PDFs from datasheet.lcsc.com — hirose.com blocks downloads): the
     # top view shows the mating face (square pin entries), the front view has the wire end DOWN, the view under it is the
     # wire end, the lowest view is the back face turned over. «CAVITY No.» there is the mould cavity mark, not a contact.
@@ -218,7 +220,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "dc-barrel", "title": "Штекер питания 5,5×2,1", "pattern": r"^DC-?5[.,]5", "kind": "barrel", "fixed": 2, "rows": 1, "color": BLACK, "labels": ("центр", "корпус"), "erp_only": True, "conf": "high"},
     {"id": "lug", "title": "Наконечник", "pattern": r"^(НКИ|НВИ|ПМ|РПИ|РППИ|НШВИ)", "kind": "lug", "conf": "high"},
     {"id": "banana", "title": "Штекер банан 4 мм", "pattern": r"^(BANANA|БАНАН)", "kind": "banana", "color": "#d7322d", "conf": "high"},
-)
+) + CATALOG_FAMILIES  # series added from the makers' catalogues (connector_catalog_data.py, 12.10.2026)
 
 
 def normalize_article(value: object) -> str:
@@ -280,7 +282,7 @@ def housing_of(article: object) -> dict[str, Any] | None:
             return _layout(article, family, alias, count, len(grid), len(grid[0]), grid, None, male)
         if family.get("table"):
             count = int(family["table"].get(match[1], 0))
-            columns = count
+            columns = (count + rows - 1) // rows
         elif family.get("grid"):
             rows, columns = int(match[1]), int(match[2])
             count = rows * columns
@@ -292,7 +294,9 @@ def housing_of(article: object) -> dict[str, Any] | None:
         else:
             groups = family.get("count_groups", (family.get("count_group", 1),))
             raw_count = next((match[index] for index in groups if match[index]), "0")
-            count = int(raw_count)
+            # `count_mul`: the part number gives contacts per row (Samtec ISD2-05-D — 2 × 5); `rows_by`: rows per count.
+            count = int(raw_count) * int(family.get("count_mul", 1))
+            rows = int(family.get("rows_by", {}).get(count, rows))
             columns = (count + rows - 1) // rows
         if count <= 0 or count > 200 or count > int(family.get("max", 200)):
             continue
@@ -393,6 +397,7 @@ CATALOG_SAMPLES: dict[str, str] = {
     "hirose-df14": "DF14-4S-1.25C", "hirose-df11": "DF11-8DS-2C", "jae-fix": "FI-X30HL", "dsub": "DS1033-09F",
     "deutsch-dt": "DT06-4S", "te-superseal": "282106-1", "aviation-gx": "GX12M-4", "dc-barrel": "DC5.5x2.1",
     "lug": "НКИ 1.5-4", "banana": "BANANA 4",
+    **CATALOG_FAMILY_SAMPLES,
 }
 
 

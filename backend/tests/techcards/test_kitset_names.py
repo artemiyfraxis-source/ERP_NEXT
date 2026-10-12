@@ -19,6 +19,7 @@ from app.modules.techcards.kitset_names import (
     USER_AGENT,
     HttpPageFetcher,
     apply_names,
+    clean_site_title,
     fetch_names,
     name_looks_real,
     page_text,
@@ -115,6 +116,60 @@ def test_fetch_names_only_empty_names_with_a_link_and_respects_the_cap():
     assert written == 1 and updated.version == kitset.version + 1
     assert [c.name for c in updated.assemblies[0].components][:2] == ["Провод A-1 красный", "Вписал человек"]
     assert (updated.updated_by, updated.updated_at) == (kitset.updated_by, kitset.updated_at)
+
+
+@pytest.mark.parametrize(("raw", "clean"), [
+    # The owner's examples (12.10.2026).
+    ("Автомобильный провод ПВАМ (медный). Продажа от 5 м!", "Автомобильный провод ПВАМ (медный)"),
+    (
+        "Трубка термоусадочная ТУТ нг 3,0/1,5 черная, термоусаживаемая трубка в метровой нарезке, не поддерживает "
+        "горение Rexant купить оптом и в розницу",
+        "Трубка термоусадочная ТУТ нг 3,0/1,5 черная (Rexant)",
+    ),
+    (
+        'Трубка 85205 ТТК "Flex" 6/2 термоусаживаемая с клеем чёрная L=1м (КВТ)',
+        'Трубка 85205 ТТК "Flex" 6/2 термоусаживаемая с клеем чёрная L=1м (КВТ)',
+    ),
+    ("ParLan Patch U/UTP Cat5e PVC 2x2x0,48-145 - кабель для СКС и IP-сетей", "ParLan Patch U/UTP Cat5e PVC 2x2x0,48-145"),
+    # Shops in brackets go, makers stay; prices and delivery go; whitespace collapses.
+    ("Корпус XHP-4 (Чип и Дип)", "Корпус XHP-4"),
+    ("Клемма ВК-1 (www.elitan.ru)", "Клемма ВК-1"),
+    ("  Провод   НВ-4  0,5 ,  цена за метр ", "Провод НВ-4 0,5"),
+    ("Разъём M12, в наличии, доставка по России", "Разъём M12"),
+    ("Провод МГТФ 0,12", "Провод МГТФ 0,12"),
+    ("", ""),
+    # Too long: cut at a word, marked with «…».
+    (
+        "Кабель монтажный многожильный экранированный с изоляцией из поливинилхлоридного пластиката для стационарной "
+        "прокладки",
+        "Кабель монтажный многожильный экранированный с изоляцией из…",
+    ),
+])
+def test_clean_site_title(raw, clean):
+    cleaned = clean_site_title(raw)
+    assert cleaned == clean
+    assert len(cleaned) <= 80
+    assert clean_site_title(cleaned) == cleaned  # a second pass changes nothing
+
+
+def test_fetch_names_does_not_write_a_title_that_reads_as_another_article():
+    """A Latin title in «Наименование» would be `kit_article`'s replacement code and the generator would build on it."""
+    kitset = _kitset(
+        KitComponent(article="XHP-4", link="https://shop.example/xhp"),
+        KitComponent(article="ПВАМ 0,35 красный", link="https://shop.example/pvam"),
+        KitComponent(article="SXH-001T-P0.6", link="https://shop.example/sxh"),
+    )
+    sites = FakeSites({
+        "https://shop.example/xhp": "JST XHP-4 housing",
+        "https://shop.example/pvam": "Провод ПВАМ красный",  # a short worded name over a worded КД article
+        "https://shop.example/sxh": "Контакт SXH-001T-P0.6 для корпусов XH",
+    })
+    result = fetch_names(kitset, sites)
+    assert [fill.article for fill in result.fills] == ["SXH-001T-P0.6"]
+    assert result.skipped == [
+        {"art": "XHP-4", "why": "название с сайта читается как другой артикул"},
+        {"art": "ПВАМ 0,35 красный", "why": "название с сайта читается как другой артикул"},
+    ]
 
 
 def test_fetch_names_by_assembly_index():

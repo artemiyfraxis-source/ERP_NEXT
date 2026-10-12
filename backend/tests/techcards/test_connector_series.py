@@ -1,5 +1,10 @@
-from app.modules.techcards.connector_housings import CATALOG_SAMPLES, FAMILIES
-from app.modules.techcards.connector_series import CATEGORIES, connector_series, find_in_series, terminals_for, wire_range
+import re
+
+from app.modules.techcards.connector_catalog_data import CATALOG_FAMILIES, CATALOG_SERIES
+from app.modules.techcards.connector_housings import CATALOG_SAMPLES, FAMILIES, housing_of
+from app.modules.techcards.connector_series import (
+    CATEGORIES, JST_SERIES, MAKERS, connector_series, find_in_series, terminals_for, wire_range,
+)
 
 from .test_project_cards import project_techcards_api  # noqa: F401 — the shared API fixture
 
@@ -63,14 +68,13 @@ def test_board_headers_are_attached_by_contact_count():
 
 def test_series_without_a_catalogue_table_keep_only_known_articles():
     series = _series()
+    catalogued = {spec["id"] for spec in CATALOG_SERIES} | {spec["id"] for spec in JST_SERIES}
     for item in series.values():
-        if item["maker"] == "JST":
+        if item["id"] in catalogued:
             continue
         assert not item["range_checked"], item["id"]
-    assert _articles(series["molex-minifit-jr"]) == ["39012080"]
     assert [h["n"] for h in series["te-superseal"]["variants"][0]["housings"]] == [2, 2, 3, 3, 4, 4, 5, 5, 6, 6]
-    assert series["connfly-ds1071"]["datasheet"].endswith("DS1071.pdf")
-    assert series["molex-minifit-jr"]["datasheet"] == ""
+    assert series["te-superseal"]["datasheet"] == "" and series["te-superseal"]["sources"] == []
 
 
 def test_no_family_with_a_sample_is_lost():
@@ -140,19 +144,21 @@ def test_series_ids_are_unique_and_the_warehouse_connector_has_its_series():
 
 def test_series_known_only_from_the_reference_data_have_no_invented_housings():
     series = _series(TERMINALS + [
-        {"terManufacturer": "Molex", "terSeries": "2695", "terComponent": "KK 254", "terType": "Female", "terArticle": "08-50-0114"},
+        {"terManufacturer": "TE", "terSeries": "MQS", "terComponent": "MQS", "terType": "Female", "terArticle": "929939-3"},
     ])
-    kk = series["molex-kk254"]
-    assert kk["variants"] == [] and kk["housing_count"] == 0 and kk["counts"] == [] and not kk["checked"]
-    assert [t["article"] for t in kk["terminals"]] == ["08-50-0114"]
-    assert kk["sample"] is not None and kk["sample"]["article"] == ""  # a picture of the closest shape, not a model number
-    assert kk["pitch"] is None and kk["category"] == "Провод — плата"
+    mqs = series["te-mqs"]
+    assert mqs["variants"] == [] and mqs["housing_count"] == 0 and mqs["counts"] == [] and not mqs["checked"]
+    assert [t["article"] for t in mqs["terminals"]] == ["929939-3"]
+    assert mqs["sample"] is not None and mqs["sample"]["article"] == ""  # a picture of the closest shape, not a model number
+    assert mqs["pitch"] is None and mqs["category"] == "Автомобильные" and mqs["sources"] == []
 
 
-def test_ds1066_housing_comes_from_the_warehouse_article():
+def test_ds1066_catalogue_range_and_the_warehouse_article_opens_it():
     series = _series()["connfly-ds1066"]
     sample = series["variants"][0]["housings"][0]
-    assert sample["article"] == "I-DS1066-SCW02" and sample["n"] == 2 and sample["housing"]["pitch"] == 2.0
+    # Connfly C-DS1066: «I-DS1066-SC X 0 X», 02~15 holes — SCW002 … SCW015; the warehouse writes SCW02.
+    assert sample["article"] == "I-DS1066-SCW002" and sample["n"] == 2 and sample["housing"]["pitch"] == 2.0
+    assert _articles(series)[-1] == "I-DS1066-SCW015" and series["range_checked"]
     assert find_in_series("I-DS1066-SCW03@CONNFLY", connector_series())["series"] == "connfly-ds1066"
 
 
@@ -185,3 +191,105 @@ def test_terminal_payload_carries_crimp_height_and_pull_force():
     assert (b["crimp_height"], b["pull_force"]) == ("26 AWG: 0,62; 28 AWG: 0,70", "26 AWG: 15; 28 AWG: 12")
     assert (c["crimp_height"], c["pull_force"]) == ("24 AWG: 0,76–0,81; 22 AWG: 0,84", "24 AWG: 29,3–35; 22 AWG: 44,1")
     assert (d["crimp_height"], d["pull_force"]) == ("", "")
+
+
+# --- housing catalogues from the makers' documents (connector_catalog_data, 12.10.2026) -------------------------------
+
+def test_every_catalogue_series_lists_each_housing_once_drawn_by_its_family_with_a_source():
+    series = _series()
+    for spec in CATALOG_SERIES:
+        item = series[spec["id"]]
+        catalogue = item["variants"][:len(spec["variants"])]  # after them: housings the ERP knows without a drawing
+        articles = [h["article"] for variant in catalogue for h in variant["housings"]]
+        listed = sum(len(variant[2]) if len(variant) == 3 else len(variant[3]) for variant in spec["variants"])
+        assert len(articles) == listed, spec["id"]  # no part number fell out of its family
+        assert len(articles) == len(set(articles)), spec["id"]
+        # «диапазон сверен» only when the whole series comes from the documents
+        assert item["range_checked"] == (spec["range_checked"] and len(item["variants"]) == len(spec["variants"])), spec["id"]
+        assert item["sources"] and all(s["url"].startswith("https://") for s in item["sources"])
+        assert item["datasheet"] == item["sources"][0]["url"]
+        for housing in (h for variant in item["variants"] for h in variant["housings"]):
+            headers = [header["article"] for header in housing["headers"]]
+            assert len(headers) == len(set(headers)), housing["article"]
+
+
+def test_catalogue_families_have_unique_ids_samples_and_no_python_only_regex():
+    ids = [family["id"] for family in FAMILIES]
+    assert len(ids) == len(set(ids))
+    for family in CATALOG_FAMILIES:
+        assert family["erp_only"] and family["id"] in CATALOG_SAMPLES, family["id"]
+        assert housing_of(CATALOG_SAMPLES[family["id"]])["family"] == family["id"]
+        assert "(?P" not in family["pattern"]  # the harness editor runs these patterns as JS RegExp
+        assert family["conf"] == "low" or family.get("src"), family["id"]  # a checked numbering names its drawing
+
+
+def test_df1b_catalogue_the_owner_uses_in_the_generator():
+    df1b = _series(TERMINALS + [
+        {"terManufacturer": "Hirose", "terSeries": "DF1B", "terComponent": "DF1B", "terType": "Female",
+         "terArticle": "DF1B-2428SCFA", "terArticleBag": "DF1B-2428SCA", "awgFrom": "28", "awgTo": "24"},
+    ])["hirose-df1b"]
+    by_title = {variant["title"]: variant for variant in df1b["variants"]}
+    double = [h["article"] for h in by_title["Гнездовой корпус, 2 ряда"]["housings"]]
+    assert double[:2] == ["DF1B-4DS-2.5RC", "DF1B-6DS-2.5RC"] and "DF1B-18DS-2.5RC" in double
+    assert [h["n"] for h in by_title["Гнездовой корпус, 2 ряда"]["housings"]][-4:] == [30, 34, 36, 40]  # no 32, 38
+    single = by_title["Гнездовой корпус, 1 ряд"]["housings"]
+    assert [h["n"] for h in single] == [*range(2, 17), 18, 20]
+    plug = [h["article"] for h in by_title["Штыревой корпус (полный замок), 1 ряд"]["housings"]]
+    assert "DF1B-5EP-2.5RC" in plug and plug[-1] == "DF1B-13EP-2.5RC"
+    eighteen = next(h for h in by_title["Гнездовой корпус, 2 ряда"]["housings"] if h["n"] == 18)
+    assert eighteen["housing"]["rows"] == 2 and eighteen["housing"]["cols"] == 9 and eighteen["housing"]["pitch"] == 2.5
+    assert {h["article"] for h in eighteen["headers"]} == {"DF1BZ-18DP-2.5DSA", "DF1BZ-18DP-2.5DS"}
+    contacts = {c["article"]: c["in_base"] for c in df1b["contacts"]}
+    assert contacts["DF1B-2428SCFA"] and not contacts["DF1-PD2428SCFB"]  # БД.ТЕР has the socket, not the pin
+    assert [t["article"] for t in df1b["terminals"]] == ["DF1B-2428SCFA"]
+    assert find_in_series("Hirose DF1B-18DS-2.5RC", connector_series())["article"] == "DF1B-18DS-2.5RC"
+
+
+def test_count_per_row_rows_by_count_and_te_tables():
+    isd2 = housing_of("ISD2-05-D-M")
+    assert (isd2["n"], isd2["rows"], isd2["cols"]) == (10, 2, 5)  # Samtec: positions per row × 2 rows
+    el = {article: housing_of(article) for article in ("ELR-03V", "ELR-06V", "ELR-12V", "ELR-04NV")}
+    assert [(h["n"], h["rows"], h["cols"]) for h in el.values()] == [(3, 1, 3), (6, 2, 3), (12, 3, 4), (4, 2, 2)]
+    assert housing_of("1-353908-0")["n"] == 10 and housing_of("8-353908-0")["n"] == 20 and housing_of("353908-1") is None
+    assert housing_of("2-770849-4")["n"] == 24 and housing_of("5-770849-2")["n"] == 2
+    assert housing_of("I-DS1071-SCB01X40")["n"] == 40 and housing_of("I-DS1071-SCB02X3")["rows"] == 2
+
+
+def test_gallery_runs_by_maker_then_pitch_inside_a_section():
+    series = connector_series()
+    for category in CATEGORIES:
+        items = [item for item in series if item["category"] == category]
+        makers = [item["maker"] for item in items]
+        ranks = [MAKERS.index(m) if m in MAKERS else len(MAKERS) + (1 if not m else 0) for m in makers]
+        assert ranks == sorted(ranks), category
+        for maker in set(makers):
+            pitches = [item["pitch"] if item["pitch"] is not None else 1e9 for item in items if item["maker"] == maker]
+            assert pitches == sorted(pitches), (category, maker)
+    wtb = [item["id"] for item in series if item["category"] == "Провод — плата"]
+    assert wtb.index("jst-sh") < wtb.index("jst-gh") < wtb.index("jst-vh")  # 1,0 < 1,25 < 3,96 mm
+
+
+def test_a_checked_catalogue_series_says_where_contact_one_is():
+    series = _series()
+    for series_id in ("jst-suh", "jst-shj", "jst-ra", "te-minict", "te-sl156", "hirose-df14", "hirose-df11"):
+        assert series[series_id]["checked"], series_id
+    for series_id in ("jst-el", "jst-pud", "hirose-df1b", "hirose-df19", "connfly-ds1072", "samtec-isd2"):
+        assert not series[series_id]["checked"], series_id  # no circuit-1 mark placed on the wire side: warning stays
+    assert re.search(r"контакт 1 справа", housing_of("RA-2011")["note"])
+
+
+def test_molex_sales_drawing_tables():
+    series = _series()
+    nano = {variant["title"]: [h["n"] for h in variant["housings"]] for variant in series["molex-nanofit"]["variants"]}
+    assert nano["Розетка, 1 ряд, чёрная"] == list(range(2, 9)) and nano["Розетка, 2 ряда, чёрная"] == list(range(4, 17, 2))
+    assert _articles(series["molex-nanofit"], 2)[0] == "105308-1204" and series["molex-nanofit"]["range_checked"]
+    minifit = series["molex-minifit-jr"]
+    assert _articles(minifit, 0)[:2] == ["39-01-2020", "39-01-2040"] and _articles(minifit, 2)[-1] == "39-03-9242"
+    assert minifit["checked"] and minifit["range_checked"]  # SD-5557-003 covers the black ones too
+    assert find_in_series("Molex 39012080", connector_series())["article"] == "39-01-2080"  # separators ignored
+    assert [h["n"] for h in series["molex-microfit"]["variants"][0]["housings"]] == list(range(2, 25, 2))
+    # A family whose drawing was not found keeps the ERP's own housing, and the series says «диапазон не сверен».
+    clik = series["molex-clikmate"]
+    assert [variant["family"] for variant in clik["variants"]] == ["molex-clikmate-20", "molex-clikmate"]
+    assert not clik["range_checked"] and _articles(clik, 1) == ["5025780600"]
+    assert [h["n"] for h in series["molex-clikmate"]["variants"][0]["housings"]] == [*range(2, 11), 12, 13, 14, 15]

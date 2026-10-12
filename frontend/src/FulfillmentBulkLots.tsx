@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, failureText, type FulfillmentCandidate, type FulfillmentLine, type FulfillmentLot, type FulfillmentRequest } from "./api";
 import { matchesWords } from "./DataTable";
 import { fifoOrder, fifoPick } from "./FulfillmentPage";
+import { matchText } from "./stockCandidates";
 
 /* Комплектация: «ГРН на все КБ» и «Есть, не заведено» (owner 05.10.2026). One position of a project is closed for every
    КБ at once: the person ticks several lots, the server spreads them over the КБ in natural order, lots by ГРН (FIFO).
@@ -38,28 +39,8 @@ export function absentMark(line: FulfillmentLine): { by: string; at: string } | 
   return mark.absent_at ? { by: mark.absent_by ?? "", at: mark.absent_at } : null;
 }
 
-/* «Возможно есть» (owner 12.10.2026): the row of a position is coloured by what the warehouse may hold for it.
-   done — nothing left to pick · ok — an exact article with enough free quantity · maybe — only lookalikes, or exact but
-   too little · none — nothing found. The articles on the warehouse are not normalized yet, hence «maybe». */
-export type CandidateTone = "done" | "ok" | "maybe" | "none";
-
-export function candidateTone(remaining: number, candidates: FulfillmentCandidate[]): CandidateTone {
-  if (remaining <= 0.0001) return "done";
-  if (!candidates.length) return "none";
-  const exact = candidates.filter((candidate) => candidate.kind === "exact");
-  return exact.reduce((sum, candidate) => sum + Number(candidate.available), 0) >= remaining - 0.0001 ? "ok" : "maybe";
-}
-
-export const CANDIDATE_LEGEND: Array<{ tone: CandidateTone; text: string }> = [
-  { tone: "ok", text: "есть, хватает" },
-  { tone: "maybe", text: "возможно есть: похожий артикул или не хватает" },
-  { tone: "none", text: "на складе не найдено" },
-  { tone: "done", text: "уже набрано" },
-];
-
-export function matchText(candidate: FulfillmentCandidate) {
-  return candidate.kind === "exact" ? "тот же артикул" : "похожий артикул";
-}
+// «Возможно есть»: the tones, legend and wording live in stockCandidates.ts (the project's «Снабжение» uses them too).
+export { CANDIDATE_LEGEND, candidateTone, matchText, type CandidateTone } from "./stockCandidates";
 
 export const STALE_TEXT = "Заявки изменились, пока выбирали ГРН. Список обновлён — повторите.";
 

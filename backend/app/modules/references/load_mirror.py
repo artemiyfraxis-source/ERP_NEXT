@@ -35,7 +35,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -44,6 +44,7 @@ from app.shared.identity import Actor
 
 from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot_detailed
 from .domain import ReferenceValidationError, TechOperationTab
+from .wire_makers import split_fields
 from .technology import (
     TER_CARD_KEYS, KAB_TABLES, SHEET_TABLES, SPR_KAB_SHEET, TECH_SHEETS, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table,
     import_supplymap_snapshot, parse_mirror_rows, parse_mirror_tsv, parse_spr_kab_tsv, sheet_snapshot_records,
@@ -156,6 +157,9 @@ def read_mirror(source: Path) -> MirrorSnapshot:
             tables[tab] = _inputs(import_sheet_table(tab, table))
         except ValueError as error:
             raise MirrorLoadError(f"{path.name}: {error}") from error
+        if tab == TechOperationTab.WIRE.value:
+            # БД.ПРОВ: the sheet's «Стандарт / производитель» arrives as two cells (the mirror file itself stays frozen).
+            tables[tab] = [replace(item, fields=split_fields(item.fields)) for item in tables[tab]]
     kab_path = db / f"{SPR_KAB_SHEET}.tsv"
     if kab_path.is_file():
         try:
