@@ -67,7 +67,7 @@ import { MarkTable, markTotal } from "./GenMarkTable";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
 import {
   addBranch, assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
-  setBranchMode, swapPins, syncRoutes, unassignPin,
+  setBranchMode, setCoreColor, swapPins, syncRoutes, unassignPin,
 } from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
@@ -1033,6 +1033,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onBranch={(from, toEpId, toPin, mode) => update((current) => addBranch(D, current, from, toEpId, toPin, mode))}
         onBranchMode={(extra, mode) => update((current) => setBranchMode(D, current, extra, mode))}
         onRemoveBranch={(extra) => update((current) => removeBranch(D, current, extra))}
+        onCoreColor={(idx, unit, color) => update((current) => setCoreColor(D, current, idx, unit, color))}
         onAssign={(epId, idx, unit, pin) => update((current) => assignPin(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}

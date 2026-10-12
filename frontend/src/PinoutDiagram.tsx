@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
+import { PALETTE } from "./wireColors";
 import { techcardsApi } from "./api";
 import { connectorFace, connectorFaceUnits, isDark, type ConnectorHousing, type FaceHit } from "./connectorArt";
 import type { AutoFill, FreeSide, PinoutEnd, PinUnit } from "./pinoutCheck";
@@ -116,7 +117,7 @@ export function PinoutAsk({ ends, onCheck, onCreate, onCancel }: {
 const MIN_STEP = 28, MAX_STEP = 44, FACE_WIDTH = 420, ROUND_STEP = 40, PAD = 10;
 const NEUTRAL = "#8a94a6", OUTLINE = "#3b4652";
 
-const unitText = (u: PinUnit) => `${u.num} · ${u.name || "провод"}`;
+const unitText = (u: PinUnit) => `${u.num} · ${u.name || "провод"}${u.colorName ? ` · ${u.colorName}` : ""}`;
 
 /** Торец разъёма со стороны проводов — тот же рисунок, что в «База данных → Разъёмы»; гнёзда с координатами для щелчка. */
 function housingFace(hs: ConnectorHousing | null, byPin: Record<number, string>) {
@@ -183,7 +184,7 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
     const byPin: Record<number, PinUnit[]> = {};
     mine.forEach((u) => { const p = u.at[end.id]; if (p != null) (byPin[p] = byPin[p] || []).push(u); });
     const cellOf = (pin: number): Cell => ({ pin, units: byPin[pin] || [], dup: end.dups.includes(pin) });
-    const face = end.conn ? housingFace(hs, Object.fromEntries(Object.entries(byPin).map(([p, list]) => [p, list[0].name]))) : null;
+    const face = end.conn ? housingFace(hs, Object.fromEntries(Object.entries(byPin).map(([p, list]) => [p, list[0].baseName ?? list[0].name]))) : null;
     const target = !!handUnit && (end.id in handUnit.at || end.multi);
     const head = <div className="pin-end-head"><span className="pin-end-key">{end.key}</span><span className="pin-end-conn">{end.conn || "разъём не выбран"}</span></div>;
     if (face) {
@@ -244,7 +245,7 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
         const fe = free.ends.find((e) => e.idx === u.idx);
         const kind = fe?.kind ?? "none";
         return <li className="pin-free" key={u.key} data-free={kind}>
-          <Swatch color={u.color} />
+          <Swatch color={u.color} stripe={u.stripe} />
           <span className="pin-free-name">{`${unitText(u)}${u.length ? ` · длина ${u.length} мм` : ""}`}</span>
           <span className="muted pin-free-at">{Object.entries(u.at).map(([id, p]) => `${ends.find((e) => e.id === id)?.key ?? ""}·${p ?? "—"}`).join(" ")}</span>
           <span className={`pin-free-label is-${kind}`}>{fe?.text ?? "без обработки"}</span>
@@ -252,10 +253,10 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
       })}</ul>
     </div>}
     {!free && routes.length > 0 && <ul className="pin-routes" aria-label="Соединения">{routes.map((r) => <li className="pin-route" key={r.unit.key} data-wire={r.unit.num} data-from={r.source}>
-      <Swatch color={r.unit.color} />
+      <Swatch color={r.unit.color} stripe={r.unit.stripe} />
       <span className="pin-route-name">{unitText(r.unit)}</span>
       <span className="pin-route-from">{r.source}</span>
-      <RouteGlyph color={r.unit.color} count={r.targets.length} />
+      <RouteGlyph color={r.unit.color} stripe={r.unit.stripe} count={r.targets.length} />
       <span className="pin-route-targets">{r.targets.map((t) => <span className="pin-route-to" key={t} data-to={t}>{t}</span>)}</span>
       {r.branches.map((b) => <span className="pin-route-mode" key={b.extra}>
         <span className="muted">ответвление:</span>
@@ -269,25 +270,63 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
 }
 
 /** Линия провода от источника к одному или нескольким выводам: прямая или «Y». */
-function RouteGlyph({ color, count }: { color: string | null; count: number }) {
+function RouteGlyph({ color, stripe, count }: { color: string | null; stripe: string | null; count: number }) {
   const H = 20, h = Math.max(1, count) * H, mid = h / 2, c = color ?? NEUTRAL;
   const paths = Array.from({ length: Math.max(1, count) }, (_, i) => `M0,${mid} C20,${mid} 20,${H * i + H / 2} 40,${H * i + H / 2}`);
   return <svg className="pin-glyph" width={40} height={h} viewBox={`0 0 40 ${h}`} aria-hidden="true">
     {paths.map((d, i) => <g key={i}>
       {(c === NEUTRAL || !isDark(c)) && <path d={d} fill="none" stroke={OUTLINE} strokeWidth={4.5} strokeLinecap="round" opacity={0.75} />}
       <path className="pin-line" d={d} fill="none" stroke={c} strokeWidth={2.5} strokeLinecap="round" strokeDasharray={c === NEUTRAL ? "5 3" : undefined} />
+      {stripe && <path className="pin-stripe" d={d} fill="none" stroke={stripe} strokeWidth={2.5} strokeDasharray="4 4" />}
     </g>)}
   </svg>;
 }
 
 // ── Редактор распиновки над схемой ─────────────────────────────────────────────────────────────────────────────
-const Swatch = ({ color }: { color: string | null }) =>
-  <span className={color ? "pin-swatch" : "pin-swatch is-unknown"} style={color ? { background: color } : undefined} aria-hidden="true" />;
+const Swatch = ({ color, stripe = null }: { color: string | null; stripe?: string | null }) =>
+  <span className={color ? "pin-swatch" : "pin-swatch is-unknown"} style={color ? { background: stripe ? `linear-gradient(135deg, ${color} 50%, ${stripe} 50%)` : color } : undefined} aria-hidden="true" />;
+
+/** Цвет жилы с палитры магазина (wireColors.ts): один цвет — щелчок по кружку; два цвета — основной и полоса, название
+ *  вида «бело-синий». «Сбросить цвет» возвращает цвет из наименования кабеля. */
+function CoreColorPopover({ unit, onPick, onClose }: { unit: PinUnit; onPick: (color: string | null) => void; onClose: () => void }) {
+  const [two, setTwo] = useState(!!unit.stripe);
+  const [first, setFirst] = useState(unit.baseName ?? "");
+  const [second, setSecond] = useState("");
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const down = (event: MouseEvent) => { if (box.current && !box.current.contains(event.target as Node) && !(event.target as Element).closest?.(".pin-color-dot")) onClose(); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("mousedown", down);
+    window.addEventListener("keydown", key);
+    return () => { window.removeEventListener("mousedown", down); window.removeEventListener("keydown", key); };
+  }, [onClose]);
+  const apply = (a: string, b: string) => {
+    const head = PALETTE.find((color) => color.name === a), tail = PALETTE.find((color) => color.name === b);
+    if (head && tail && head !== tail) onPick(`${head.stem}-${tail.name}`);
+  };
+  const row = (title: string, value: string, set: (name: string) => void) => <div className="pin-color-row" role="group" aria-label={title}>
+    <small>{title}</small>
+    <div className="swatch-row">{PALETTE.map((color) => <button type="button" key={color.name} className="swatch" aria-pressed={value === color.name} aria-label={`${title}: ${color.name}`}
+      title={color.name} style={{ background: color.hex }} onClick={() => set(color.name)} />)}</div>
+  </div>;
+  return <div className="pin-color-pop" role="dialog" aria-label={`Цвет жилы ${unit.num}`} ref={box}>
+    <label className="pin-color-two"><input type="checkbox" checked={two} onChange={(event) => setTwo(event.target.checked)} /> Два цвета</label>
+    {two ? <>
+      {row("Основной", first, (name) => { setFirst(name); if (second) apply(name, second); })}
+      {row("Полоса", second, (name) => { setSecond(name); if (first) apply(first, name); })}
+    </> : row("Цвет", unit.stripe ? "" : unit.baseName ?? "", (name) => { onPick(name); onClose(); })}
+    <div className="pin-color-foot">
+      <span className="muted">{unit.colorName || "как в наименовании кабеля"}</span>
+      <button type="button" className="btn-link" onClick={() => { onPick(null); onClose(); }}>Сбросить цвет</button>
+      <button type="button" className="btn-link" onClick={onClose}>Закрыть</button>
+    </div>
+  </div>;
+}
 
 /** Палитра проводов, рука и схема: щелчок по проводу берёт его, щелчок по контакту ставит; щелчок по занятому
  *  контакту берёт его провод — следующий щелчок по контакту того же разъёма меняет их местами (свободный — перенос).
  *  Перетаскивание провода или занятого контакта делает то же. Esc или повторный щелчок — отпустить. */
-export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch }: {
+export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -307,10 +346,13 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
   onBranch?: (from: { epId: string; idx: number; pin: number }, toEpId: string, toPin: number, mode: Branch["mode"]) => void;
   onBranchMode?: (extra: number, mode: Branch["mode"]) => void;
   onRemoveBranch?: (extra: number) => void;
+  /** Цвет жилы с палитры: кабель, жила, название цвета (null — сбросить). */
+  onCoreColor?: (idx: number, unit: number, color: string | null) => void;
 }) {
   const [hand, setHand] = useState<PinHand | null>(null);
   const [fill, setFill] = useState<{ notes: string[]; warnings: string[] } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [palette, setPalette] = useState<string | null>(null);
   const [branch, setBranch] = useState<{ from: PinHand; toEp: string; toPin: number; mode: Branch["mode"] } | null>(null);
   const handUnit = hand ? units.find((u) => u.key === hand.key) ?? null : null;
   const keyOf = (epId: string) => ends.find((end) => end.id === epId)?.key ?? "";
@@ -416,19 +458,23 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
           const open = Object.values(u.at).some((p) => p == null);
           const free_ = unassigned(u);
           const held = hand?.key === u.key;
-          return <button type="button" key={u.key} className={["pin-chip-wire", held && "is-held", (open || free_.length > 0) && "is-open"].filter(Boolean).join(" ")} aria-pressed={held}
+          return <span className="pin-chip-wrap" key={u.key}><button type="button" className={["pin-chip-wire", held && "is-held", (open || free_.length > 0) && "is-open"].filter(Boolean).join(" ")} aria-pressed={held}
             title={`${unitText(u)}: ${place_(u) || "не заведён в разъём"}`}
             onClick={() => { if (!suppress.current) { setFill(null); setHand(held && !hand?.epId ? null : { key: u.key }); } }}
             onPointerDown={(event) => grab({ key: u.key }, event)}>
-            <Swatch color={u.color} /><span className="pin-num">{u.num}</span><span className="pin-chip-name">{u.name || "провод"}</span>
+            <span className="pin-swatch is-spacer" aria-hidden="true" /><span className="pin-num">{u.num}</span><span className="pin-chip-name">{u.name || "провод"}{u.colorName ? ` · ${u.colorName}` : ""}</span>
             <small>{[place_(u) || (free_.length ? "" : "без разъёма"), free_.length ? `не назначен: сторона ${free_.join(", ")}` : ""].filter(Boolean).join(" · ")}</small>
-          </button>;
+          </button>
+          <button type="button" className="pin-color-dot" aria-label={`Цвет жилы ${u.num}`} aria-expanded={palette === u.key} title={u.colorName || "выбрать цвет жилы"}
+            onClick={() => setPalette(palette === u.key ? null : u.key)}><Swatch color={u.color} stripe={u.stripe} /></button>
+          {palette === u.key && <CoreColorPopover unit={u} onClose={() => setPalette(null)} onPick={(color) => onCoreColor?.(u.idx, u.unit, color)} />}
+          </span>;
         })}
       </div>
       <button type="button" className="secondary small" onClick={autoFill}>Заполнить автоматически</button>
     </div>
     {handUnit ? <div className="pin-hand" role="status">
-      <span className="pin-hand-what"><Swatch color={handUnit.color} /><span className="pin-num">{handUnit.num}</span> {handUnit.name || "провод"}
+      <span className="pin-hand-what"><Swatch color={handUnit.color} stripe={handUnit.stripe} /><span className="pin-num">{handUnit.num}</span> {handUnit.name || "провод"}{handUnit.colorName ? ` · ${handUnit.colorName}` : ""}
         {hand?.epId && hand.pin != null && <span className="muted"> · {keyOf(hand.epId)}, конт. {hand.pin}</span>}</span>
       <span className="muted">{hand?.epId ? `другой контакт ${keyOf(hand.epId)} — поменять местами; другой разъём — добавить ответвление` : "щёлкните контакт"} · Esc — отпустить</span>
       <label className="pin-hand-color">Провод
@@ -441,7 +487,7 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
       <button type="button" className="btn-link" onClick={() => setHand(null)}>Отпустить</button>
     </div> : <small className="muted pin-hint">Щёлкните провод, затем контакт (или перетащите). Щелчок по занятому контакту — перенести или поменять местами.</small>}
     {handUnit && branch && hand?.epId && hand.pin != null && <div className="pin-branch" role="group" aria-label="Ответвление">
-      <span className="pin-hand-what">Ответвление: <Swatch color={handUnit.color} /><span className="pin-num">{handUnit.num}</span> {keyOf(hand.epId)}, конт. {hand.pin} → {keyOf(branch.toEp)}, конт. {branch.toPin}</span>
+      <span className="pin-hand-what">Ответвление: <Swatch color={handUnit.color} stripe={handUnit.stripe} /><span className="pin-num">{handUnit.num}</span> {keyOf(hand.epId)}, конт. {hand.pin} → {keyOf(branch.toEp)}, конт. {branch.toPin}</span>
       <span className="pin-mode-seg" role="group" aria-label="Как разветвить">
         {(["splice", "double"] as const).map((mode) => <button type="button" key={mode} className={branch.mode === mode ? "pin-mode is-on" : "pin-mode"} aria-pressed={branch.mode === mode}
           onClick={() => setBranch({ ...branch, mode })}>{mode === "splice" ? "сросток" : "двойной обжим"}</button>)}

@@ -136,3 +136,18 @@
 .pin-mode.is-on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 14%, var(--card)); font-weight: 600; }
 .pin-mode:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 @media (pointer: coarse) { .pin-mode { min-height: 40px; } }
+
+/* Цвет жилы: кружок на чипе открывает палитру магазина; двухцветный — основной и полоса. */
+.tcgen .pin-chip-wrap { position: relative; display: inline-flex; }
+.tcgen .pin-chip-wrap .pin-chip-wire { flex: 1; }
+.tcgen .pin-swatch.is-spacer { visibility: hidden; }
+.tcgen .pin-color-dot { position: absolute; left: 4px; top: 50%; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; transform: translateY(-50%); cursor: pointer; }
+.tcgen .pin-color-dot:hover .pin-swatch { box-shadow: 0 0 0 2px var(--primary); }
+.tcgen .pin-color-dot:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.pin-color-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 6px; width: 300px; max-width: 80vw; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); font-size: 12.5px; }
+.pin-color-pop .pin-color-row { display: grid; gap: 4px; }
+.pin-color-pop .swatch { width: 24px; height: 24px; }
+.pin-color-pop .pin-color-two { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.pin-color-pop .pin-color-foot { display: flex; align-items: center; gap: 12px; }
+.pin-color-pop .pin-color-foot .muted { margin-right: auto; }
+@media (pointer: coarse) { .pin-color-pop .swatch, .tcgen .pin-color-dot { width: 40px; height: 40px; } }

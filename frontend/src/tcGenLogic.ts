@@ -63,7 +63,8 @@ export type Endpoint = {
 /** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
 export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };
 export type Connection = { wire: string; from: ConnectionEnd; to: ConnectionEnd };
-export type WireEntry = { idx: number; compId: string; length: number; qty: number; cores?: number; jacket?: string };
+/** `coreColors[k]` — цвет k-й жилы кабеля (канонические названия палитры wireColors.ts: «красный», «бело-синий»); пусто — как в наименовании. */
+export type WireEntry = { idx: number; compId: string; length: number; qty: number; cores?: number; jacket?: string; coreColors?: string[] };
 export type WrapKind = "tape" | "braid" | "under";
 export type WrapSlot = { mat: string; kind: WrapKind; len: string };
 export type CoaxSide = { art: string; name: string } | null;
@@ -1511,6 +1512,7 @@ export function makeGen(D: GenData, S: GenState) {
       return {
         name: comp ? comp.name : "", art: comp ? comp.art : "", qty: w.qty || 1, length: len,
         ...(wireCores_(w) > 1 && !allRjEndpoints_() ? { cores: wireCores_(w) } : {}),
+        ...(w.coreColors?.some(Boolean) ? { coreColors: Array.from({ length: Math.max(1, Math.round(Number(w.qty) || 1)) * Math.max(1, wireCores_(w)) }, (_, k) => w.coreColors![k] || "") } : {}),
       };
     });
     const epOrder: Record<string, number> = {};

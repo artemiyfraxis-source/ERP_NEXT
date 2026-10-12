@@ -346,3 +346,35 @@ it("click a connected pin, then a cavity of the second B connector: «Добав
   expect(chip("НВ4 0,2 белый")).toHaveTextContent("А1·3 → В1·2");
   expect(chip("НВ4 0,2 белый")).not.toHaveTextContent("В2");
 });
+
+it("a core colour is picked on the palette: single, two-colour (base + stripe), reset; it reaches the chip, the cavity and the config", async () => {
+  const cable: KitsetBom = { ...kit, name: "Кабель Helukabel", components: [
+    { type: "Провод", name: "Helukabel 15201", art: "Helukabel 15201", qty: 3 },
+    { type: "Провод", name: "Helukabel 15202", art: "Helukabel 15202", qty: 3 },
+    { type: "Соед", name: "Колодка PH 8", art: "PHR-8", qty: 1 },
+    { type: "Соед", name: "Колодка XH 4", art: "XHP-4", qty: 1 },
+  ].map((item, i) => ({ id: `kit-${i}`, kd: "", ...item })) };
+  const onBuild = mount({ kit: cable });
+  const dot = (num: string) => screen.getByRole("button", { name: `Цвет жилы ${num}` });
+  await screen.findByRole("group", { name: "Провода" });
+  expect(screen.getByRole("group", { name: "Провода" })).toHaveTextContent("Helukabel 15202");
+  // Один цвет: щелчок по кружку, затем по цвету палитры — палитра закрывается, цвет в чипе.
+  fireEvent.click(dot("1"));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Цвет жилы 1" })).getByRole("button", { name: "Цвет: красный" }));
+  expect(screen.queryByRole("dialog", { name: "Цвет жилы 1" })).not.toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "Провода" })).toHaveTextContent("Helukabel 15201 · красный");
+  expect(dot("1").querySelector(".pin-swatch")).toHaveStyle({ background: "#d93a32" });
+  // Два цвета: основной белый, полоса синяя — «бело-синий».
+  fireEvent.click(dot("2"));
+  const pop = screen.getByRole("dialog", { name: "Цвет жилы 2" });
+  fireEvent.click(within(pop).getByRole("checkbox", { name: "Два цвета" }));
+  fireEvent.click(within(pop).getByRole("button", { name: "Основной: белый" }));
+  fireEvent.click(within(pop).getByRole("button", { name: "Полоса: синий" }));
+  expect(screen.getByRole("group", { name: "Провода" })).toHaveTextContent("Helukabel 15202 · бело-синий");
+  expect(dot("2").querySelector(".pin-swatch")).toHaveStyle({ background: "linear-gradient(135deg, #ffffff 50%, #2b5fd9 50%)" });
+  // Сброс возвращает цвет из наименования.
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Цвет жилы 2" })).getByRole("button", { name: "Сбросить цвет" }));
+  expect(screen.getByRole("group", { name: "Провода" })).not.toHaveTextContent("бело-синий");
+  expect(screen.getByRole("group", { name: "Провода" })).toHaveTextContent("Helukabel 15201 · красный");
+  void onBuild;
+});

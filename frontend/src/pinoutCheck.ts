@@ -6,7 +6,39 @@
  * следующем открытии.
  */
 import { wireColorKnown } from "./connectorArt";
+import { PALETTE, canonicalColor } from "./wireColors";
 import { makeGen, NO_WIRES, parsePinList_, sideRu_, updateWire, type Branch, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side } from "./tcGenLogic";
+
+/** Цвет жилы по названию палитры: одноцветная или двухцветная («бело-синий» — основной белый, полоса синяя). */
+export function coreColor(text: string | undefined): { name: string; baseName: string; hex: string; stripe: string | null } | null {
+  const name = text ? canonicalColor(text) : null;
+  if (!name) return null;
+  const single = PALETTE.find((color) => color.name === name);
+  if (single) return { name, baseName: single.name, hex: single.hex, stripe: null };
+  const [head, tail] = name.split("-");
+  const first = PALETTE.find((color) => color.stem === head), second = PALETTE.find((color) => color.name === tail);
+  return first && second ? { name, baseName: first.name, hex: first.hex, stripe: second.hex } : null;
+}
+
+/** Жил в проводе: кабелей × жил в кабеле — каждая жила отдельно разводится по контактам и красится (владелец 12.10:
+ *  «многожильный кабель — жилы отдельно, а сам кабель — оболочка»). Провод без оболочки — одна жила на штуку. */
+export const coreCount = (gen: Gen, w: { qty: number | string; cores?: number }) =>
+  Math.max(1, Math.round(Number(w.qty) || 1)) * Math.max(1, gen.wireCores_(w as never) || 1);
+
+/** Цвет жилы `unit` кабеля `idx` с палитры (одно название или двухцветное); null — вернуть цвет из наименования. */
+export function setCoreColor(D: GenData, S: GenState, idx: number, unit: number, color: string | null): GenState {
+  const canon = color ? coreColor(color)?.name ?? null : null;
+  if (color && !canon) return S;
+  const gen = makeGen(D, S);
+  return { ...S, wires: S.wires.map((w) => {
+    if (w.idx !== idx) return w;
+    const qty = coreCount(gen, w);
+    const list = Array.from({ length: Math.max(qty, unit + 1) }, (_, k) => w.coreColors?.[k] || "");
+    list[unit] = canon ?? "";
+    const { coreColors: _old, ...rest } = w;
+    return list.some(Boolean) ? { ...rest, coreColors: list.slice(0, qty) } : rest;
+  }) };
+}
 
 export type PinoutWire = { idx: number; name: string; qty: number; text: string; pins: number[]; color: string | null };
 export type PinoutEnd = {
@@ -96,7 +128,7 @@ export function pinoutEnds(gen: Gen, S: GenState): PinoutEnd[] {
     const wires = active.filter((w) => routed.has(w.idx)).map((w): PinoutWire => {
       const name = compName(gen, w.compId);
       const text = ep.pins?.[w.idx] || "";
-      return { idx: w.idx, name, qty: w.qty || 1, text, pins: parsePinList_(text), color: wireColorKnown(name) };
+      return { idx: w.idx, name, qty: coreCount(gen, w), text, pins: parsePinList_(text), color: wireColorKnown(name) };
     });
     if (!wires.length && !multi) return [];
     const key = endKey(gen, ep);
@@ -123,18 +155,21 @@ export type PinoutRecord = {
   ends: Array<{ end: string; conn: string; checked: boolean; sig: string; wires: Array<{ pos: number; art: string; pins: string }> }>;
   /** Ответвления: провод (позиция в списке кабелей), разъёмы и контакты по ключам «А1»/«В2». */
   branches?: Array<{ pos: number; mode: Branch["mode"]; from: string; pin: number; to: string; toPin: number }>;
+  /** Цвета жил, выбранные на палитре: кабель (позиция), жила и название цвета. */
+  cores?: Array<{ pos: number; unit: number; color: string }>;
 };
 
 /** build_config.pinout: контакты по разъёмам и флаг проверки — чтобы пережить перезагрузку формы. Ни контактов, ни
  *  проверки — ключа нет (конфиг как раньше, как у пакетной сборки tcGenBatch). */
 export function pinoutRecord(gen: Gen, S: GenState): PinoutRecord | null {
   const ends = pinoutEnds(gen, S);
-  if (!ends.some((end) => end.checked || end.wires.some((w) => w.text))) return null;
+  const colored = gen.activeWires_().flatMap((w, pos) => (w.coreColors || []).flatMap((color, unit) => (color ? [{ pos, unit, color }] : [])));
+  if (!colored.length && !ends.some((end) => end.checked || end.wires.some((w) => w.text))) return null;
   const pos = new Map(gen.activeWires_().map((w, i) => [w.idx, i]));
   const keyOf = new Map(S.endpoints.map((ep) => [ep.id, endKey(gen, ep)]));
   const branches = (S.branches || []).filter((b) => pos.has(b.main) && pos.has(b.extra) && keyOf.has(b.from) && keyOf.has(b.to))
     .map((b) => ({ pos: pos.get(b.main)!, mode: b.mode, from: keyOf.get(b.from)!, pin: b.pin, to: keyOf.get(b.to)!, toPin: b.toPin }));
-  return { ...(branches.length ? { branches } : {}), ends: ends.map((end) => ({
+  return { ...(branches.length ? { branches } : {}), ...(colored.length ? { cores: colored } : {}), ends: ends.map((end) => ({
     end: end.key, conn: end.conn, checked: end.checked, sig: end.sig,
     wires: end.wires.filter((w) => w.text).map((w) => ({ pos: pos.get(w.idx) ?? -1, art: w.name, pins: w.text })),
   })) };
@@ -150,6 +185,10 @@ export function restorePinout(D: GenData, S: GenState, config: unknown): GenStat
   (Array.isArray(saved.branches) ? saved.branches : []).forEach((b) => {
     const main = gen0.activeWires_()[b.pos], from = keys.get(b.from), to = keys.get(b.to);
     if (main && from && to) next = addBranch(D, next, { epId: from, idx: main.idx, pin: b.pin }, to, b.toPin, b.mode);
+  });
+  (Array.isArray(saved.cores) ? saved.cores : []).forEach((item) => {
+    const wire = makeGen(D, next).activeWires_()[item.pos];
+    if (wire && typeof item.color === "string") next = setCoreColor(D, next, wire.idx, item.unit, item.color);
   });
   const gen = makeGen(D, next);
   const active = gen.activeWires_();
@@ -182,6 +221,12 @@ export function restorePinout(D: GenData, S: GenState, config: unknown): GenStat
 /** Один провод для палитры: номер в списке кабелей («2», у провода ×N — «2.1», «2.2»), цвет и контакт на каждом разъёме. */
 export type PinUnit = {
   key: string; idx: number; unit: number; num: string; compId: string; name: string; color: string | null;
+  /** Вторая краска двухцветной жилы (цвет полосы), иначе null. */
+  stripe: string | null;
+  /** Цвет, выбранный на жиле, каноническим названием («красный», «бело-синий»); "" — цвет из наименования. */
+  colorName: string;
+  /** Название основного цвета выбранной жилы — по нему рисуется торец разъёма. */
+  baseName: string | null;
   /** Длина по чертежу, мм (0 — не задана). */
   length: number;
   /** Разъём (id) → контакт этого провода; null — провод заведён в разъём, контакт не задан. */
@@ -191,7 +236,7 @@ export type PinUnit = {
 export function pinUnits(gen: Gen, S: GenState): PinUnit[] {
   const ends = pinoutEnds(gen, S);
   return gen.activeWires_().flatMap((w, pos) => {
-    const qty = Math.max(1, Math.round(Number(w.qty) || 1));
+    const qty = coreCount(gen, w);
     const name = compName(gen, w.compId);
     const length = S.advancedLength ? Number(w.length) || 0 : Number(S.drawingLength) || 0;
     return Array.from({ length: qty }, (_, k) => {
@@ -200,7 +245,9 @@ export function pinUnits(gen: Gen, S: GenState): PinUnit[] {
         const wire = end.wires.find((x) => x.idx === w.idx);
         if (wire) at[end.id] = wire.pins[k] ?? null;
       });
-      return { key: `${w.idx}.${k}`, idx: w.idx, unit: k, num: qty > 1 ? `${pos + 1}.${k + 1}` : `${pos + 1}`, compId: w.compId, name, color: wireColorKnown(name), length, at };
+      const own = coreColor(w.coreColors?.[k]);
+      return { key: `${w.idx}.${k}`, idx: w.idx, unit: k, num: qty > 1 ? `${pos + 1}.${k + 1}` : `${pos + 1}`, compId: w.compId, name,
+        color: own ? own.hex : wireColorKnown(name), stripe: own?.stripe ?? null, colorName: own?.name ?? "", baseName: own?.baseName ?? null, length, at };
     });
   });
 }
@@ -303,7 +350,7 @@ export function autoFillPinout(D: GenData, S: GenState, counts: Record<string, n
       warnings.push(`${title}: число контактов разъёмов неизвестно — раздайте провода по разъёмам на схеме.`);
       return;
     }
-    let rest = active.map((w) => ({ w, n: Math.max(1, Math.round(Number(w.qty) || 1)) }));
+    let rest = active.map((w) => ({ w, n: coreCount(gen, w) }));
     const parts: string[] = [];
     eps.forEach((ep) => {
       const slots = (counts[ep.id] || 0) * (ep.double ? gen.epPer_(ep) : 1);
@@ -366,7 +413,9 @@ export function addBranch(D: GenData, S: GenState, from: { epId: string; idx: nu
   const extra = S.nextWireIdx;
   const before = makeGen(D, S);
   const keep = new Map(S.endpoints.map((e) => [e.id, before.routedWireIdxs_(e)]));
-  let next: GenState = { ...S, wires: [...S.wires, { ...wire, idx: extra, qty: 1 }], nextWireIdx: extra + 1 };
+  const core = Math.max(0, parsePinList_(src.pins?.[from.idx]).indexOf(from.pin));
+  const { coreColors, ...plain } = wire;
+  let next: GenState = { ...S, wires: [...S.wires, { ...plain, idx: extra, qty: 1, cores: 1, ...(coreColors?.[core] ? { coreColors: [coreColors[core]] } : {}) }], nextWireIdx: extra + 1 };
   const all = makeGen(D, next).activeWires_().map((w) => w.idx);
   const endpoints = next.endpoints.map((e) => {
     const has = new Set(keep.get(e.id) || []);
@@ -433,6 +482,12 @@ export function routingWarnings(D: GenData, S: GenState): string[] {
     const names = [...new Set(units.filter((u) => !extras.has(u.idx) && !eps.some((ep) => ep.id in u.at)).map((u) => `${u.num} · ${u.name}`))];
     if (names.length) out.push(`${title}: не назначены на разъём — ${names.join(", ")}.`);
   });
+  // Кабель в оболочке: жила без контакта ни на одном разъёме — не задействована (подрезать и изолировать или назначить контакт).
+  const jacketed = new Set(S.wires.filter((w) => gen.wireCores_(w) > 1).map((w) => w.idx));
+  const idle = units.filter((u) => jacketed.has(u.idx) && Object.values(u.at).every((p) => p == null));
+  if (idle.length && idle.length < units.filter((u) => jacketed.has(u.idx)).length) {
+    out.push(`Не задействованы жилы: ${idle.map((u) => `${u.num} · ${u.name}`).join(", ")} — назначьте контакт или подрежьте и заизолируйте.`);
+  }
   const branched = units.filter((u) => !extras.has(u.idx) && (["A", "B"] as Side[]).some((side) => gen.endpointsOnSide_(side).filter((ep) => ep.id in u.at && u.at[ep.id] != null).length > 1));
   if (branched.length) out.push(`Разветвление: ${[...new Set(branched.map((u) => u.name))].join(", ")} — нужен сросток или перемычка (щёлкните контакт и второй разъём — «Добавить ответвление»).`);
   return out;
