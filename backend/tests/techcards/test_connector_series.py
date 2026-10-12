@@ -276,3 +276,20 @@ def test_a_checked_catalogue_series_says_where_contact_one_is():
     for series_id in ("jst-el", "jst-pud", "hirose-df1b", "hirose-df19", "connfly-ds1072", "samtec-isd2"):
         assert not series[series_id]["checked"], series_id  # no circuit-1 mark placed on the wire side: warning stays
     assert re.search(r"контакт 1 справа", housing_of("RA-2011")["note"])
+
+
+def test_molex_sales_drawing_tables():
+    series = _series()
+    nano = {variant["title"]: [h["n"] for h in variant["housings"]] for variant in series["molex-nanofit"]["variants"]}
+    assert nano["Розетка, 1 ряд, чёрная"] == list(range(2, 9)) and nano["Розетка, 2 ряда, чёрная"] == list(range(4, 17, 2))
+    assert _articles(series["molex-nanofit"], 2)[0] == "105308-1204" and series["molex-nanofit"]["range_checked"]
+    minifit = series["molex-minifit-jr"]
+    assert _articles(minifit, 0)[:2] == ["39-01-2020", "39-01-2040"] and _articles(minifit, 2)[-1] == "39-03-9242"
+    assert minifit["checked"] and minifit["range_checked"]  # SD-5557-003 covers the black ones too
+    assert find_in_series("Molex 39012080", connector_series())["article"] == "39-01-2080"  # separators ignored
+    assert [h["n"] for h in series["molex-microfit"]["variants"][0]["housings"]] == list(range(2, 25, 2))
+    # A family whose drawing was not found keeps the ERP's own housing, and the series says «диапазон не сверен».
+    clik = series["molex-clikmate"]
+    assert [variant["family"] for variant in clik["variants"]] == ["molex-clikmate-20", "molex-clikmate"]
+    assert not clik["range_checked"] and _articles(clik, 1) == ["5025780600"]
+    assert [h["n"] for h in series["molex-clikmate"]["variants"][0]["housings"]] == [*range(2, 11), 12, 13, 14, 15]
