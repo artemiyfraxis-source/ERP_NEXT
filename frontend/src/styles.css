@@ -3874,3 +3874,11 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rfq-suggest-list input[type="checkbox"] { width: auto; margin: 0; }
 .rfq-add-supplier { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .rfq-add-supplier input { width: min(360px, 100%); }
+/* «Назначения заявок» row: stacked, full width (the generic 3-column setting row squeezed the hint into a word column). */
+.purchasing-setting.purchasing-setting-list { grid-template-columns: minmax(0, 1fr); align-items: start; gap: 8px; padding: 14px 20px; }
+.purchasing-setting.purchasing-setting-list > span:first-child { font-weight: 600; }
+.purchasing-setting.purchasing-setting-list .page-sub { max-width: 760px; line-height: 1.45; }
+.purchasing-setting.purchasing-setting-list .purpose-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0; padding: 0; list-style: none; }
+.purchasing-setting.purchasing-setting-list .purpose-add { display: flex; gap: 8px; align-items: center; max-width: 520px; }
+.purchasing-setting.purchasing-setting-list .purpose-add input { flex: 1 1 auto; }
+.purchasing-setting.purchasing-setting-list .purchasing-setting-default { white-space: normal; }
