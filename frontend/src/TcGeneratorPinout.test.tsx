@@ -145,3 +145,130 @@ it("confirmed pinout collapses to a summary, builds without asking, survives a r
   expect(screen.getAllByRole("button", { name: "Подтвердить распиновку" })).toHaveLength(2);
   expect(within(screen.getByRole("region", { name: "Соединения по распиновке" })).getByText("Распиновка не проверена: А1, В1")).toBeInTheDocument();
 });
+
+// ── Редактор на схеме (владелец 12.10) ──
+const chip = (wire: string) => within(screen.getByRole("group", { name: "Провода" })).getByRole("button", { name: new RegExp(wire) });
+const cell = (end: string, pin: number) => screen.getByRole("button", { name: new RegExp(`^${end}, контакт ${pin}:`) });
+const pins = (end: string, wire: string) => (screen.getByLabelText(`Контакты ${end}: ${wire}`) as HTMLInputElement).value;
+/** Ответы API теста + корпуса разъёмов из базы разъёмов. */
+function withHousings(extra: Record<string, unknown>) {
+  const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    const m = /connector-families\?article=([^&]+)/.exec(String(input));
+    const hs = m && extra[decodeURIComponent(m[1])];
+    return hs ? json({ items: [], match: hs }) : base(input, init);
+  });
+}
+
+it("click a wire, then a pin: the wire goes there, stays in hand for the other connector, Esc drops it", async () => {
+  mount();
+  await screen.findByLabelText("Контакты А1: НВ4 0,2 белый");
+  fireEvent.click(chip("НВ4 0,2 белый"));
+  expect(chip("НВ4 0,2 белый")).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(cell("А1", 3));
+  expect(pins("А1", "НВ4 0,2 белый")).toBe("3");
+  // На В1 контакта ещё нет — провод в руке; клавиатурой: Enter на контакте.
+  expect(chip("НВ4 0,2 белый")).toHaveAttribute("aria-pressed", "true");
+  fireEvent.keyDown(cell("В1", 2), { key: "Enter" });
+  expect(pins("В1", "НВ4 0,2 белый")).toBe("2");
+  expect(line("А1.3", "В1.2")).not.toBeNull();
+  expect(chip("НВ4 0,2 белый")).toHaveAttribute("aria-pressed", "false");
+  expect(cell("А1", 3)).toHaveAccessibleName("А1, контакт 3: 1 · НВ4 0,2 белый");
+
+  fireEvent.click(chip("НВ4 0,2 красный"));
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(chip("НВ4 0,2 красный")).toHaveAttribute("aria-pressed", "false");
+  fireEvent.click(chip("НВ4 0,2 красный"));
+  fireEvent.click(chip("НВ4 0,2 красный"));
+  expect(chip("НВ4 0,2 красный")).toHaveAttribute("aria-pressed", "false");
+});
+
+it("click an occupied pin, then another pin of the same connector: the wires swap; «Снять с контакта» frees it", async () => {
+  mount();
+  await fillUsb();
+  // А1: красный 1, белый 3 → поменять местами.
+  fireEvent.click(cell("А1", 1));
+  expect(screen.getByRole("status")).toHaveTextContent("НВ4 0,2 красный · А1, конт. 1");
+  fireEvent.click(cell("А1", 3));
+  expect([pins("А1", "НВ4 0,2 красный"), pins("А1", "НВ4 0,2 белый")]).toEqual(["3", "1"]);
+  expect(line("А1.3", "В1.1")).not.toBeNull();
+  // Свободный контакт — перенос.
+  fireEvent.click(cell("А1", 7));
+  fireEvent.click(cell("А1", 8));
+  expect(pins("А1", "НВ4 0,2 черный")).toBe("8");
+  fireEvent.click(cell("А1", 8));
+  fireEvent.click(screen.getByRole("button", { name: "Снять с контакта" }));
+  expect(pins("А1", "НВ4 0,2 черный")).toBe("");
+});
+
+it("changes the wire colour from the pin: the cables trade colours, the pins stay", async () => {
+  mount();
+  await fillUsb();
+  fireEvent.click(cell("А1", 3));
+  fireEvent.change(screen.getByLabelText("Провод на контакте"), { target: { value: "kit-1" } });
+  // Белый кабель стал зелёным, зелёный — белым: на А1 3 теперь зелёный провод.
+  expect(cell("А1", 3)).toHaveAccessibleName(/НВ4 0,2 зеленый/);
+  expect(cell("А1", 5)).toHaveAccessibleName(/НВ4 0,2 белый/);
+  expect(screen.getByLabelText("Кабель 1")).toHaveValue("kit-1");
+});
+
+it("«Заполнить автоматически»: pin to pin, asks before overwriting; fills by itself when both housings are known", async () => {
+  mount();
+  await fillUsb();
+  vi.mocked(window.confirm).mockReturnValueOnce(false);
+  fireEvent.click(screen.getByRole("button", { name: "Заполнить автоматически" }));
+  expect(pins("А1", "НВ4 0,2 белый")).toBe("3");
+  fireEvent.click(screen.getByRole("button", { name: "Заполнить автоматически" }));
+  expect(window.confirm).toHaveBeenLastCalledWith(expect.stringContaining("Заменить распиновку автоматической"));
+  expect(["белый", "зеленый", "красный", "черный"].map((c) => [pins("А1", `НВ4 0,2 ${c}`), pins("В1", `НВ4 0,2 ${c}`)])).toEqual([["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"]]);
+  expect(screen.getByText("А1 (PHR-8): 4 провода на 8 контактов, свободны 5–8.")).toBeInTheDocument();
+  expect(screen.getByText("В1 (XHP-4): число контактов разъёма неизвестно — 4 провода по порядку на 1–4.")).toBeInTheDocument();
+
+  // Оба корпуса в базе: пустая распиновка заполняется сама, но остаётся «не проверена».
+  cleanup();
+  resetPinoutHousings();
+  withHousings({ "XHP-4": { ...PHR8, art: "XHP-4", family: "jst-xh", cols: 3, n: 3, grid: [[1, 2, 3]] } });
+  mount();
+  // В XHP-3 4 провода не помещаются — само не заполняет, говорит почему.
+  expect(await screen.findByText("В1 (XHP-4): 3 контакта, а 4 провода — всем контакта не хватит.")).toBeInTheDocument();
+  expect(pins("А1", "НВ4 0,2 белый")).toBe("");
+  cleanup();
+  resetPinoutHousings();
+  withHousings({ "XHP-4": { ...PHR8, art: "XHP-4", family: "jst-xh", cols: 4, n: 4, grid: [[1, 2, 3, 4]] } });
+  mount();
+  await waitFor(() => expect(pins("В1", "НВ4 0,2 черный")).toBe("4"));
+  expect(pins("А1", "НВ4 0,2 черный")).toBe("4");
+  expect(within(screen.getByRole("region", { name: "Соединения по распиновке" })).getByText("Распиновка не проверена: А1, В1")).toBeInTheDocument();
+});
+
+it("one connector: each wire runs to its free end, which shows tinning, stripping or no processing live", async () => {
+  const SHR = { ...PHR8, art: "SHR-02V-S-B", family: "jst-sh", cols: 2, n: 2, grid: [[2, 1]] };
+  withHousings({ "SHR-02V-S-B": SHR });
+  const openEnd: KitsetBom = { ...kit, name: "Кабельная сборка SHR-02V-S-B to Open-End 30AWG 100mm", components: [
+    { type: "Провод", name: "Силиконовый 30AWG черный", art: "Силиконовый 30AWG черный", qty: 0.2 },
+    { type: "Соед", name: "Колодка SH 2", art: "SHR-02V-S-B", qty: 1 },
+    { type: "Терминал", name: "Контакт SH", art: "SSH-003T-P0.2-H", qty: 2 },
+  ].map((item, i) => ({ id: `kit-${i}`, kd: "", ...item })) };
+  mount({ kit: openEnd });
+  const figure = await screen.findByRole("figure", { name: "Схема соединений" });
+  // Провод ×2 сам встал на контакты 1 и 2.
+  await waitFor(() => expect(figure.querySelectorAll(".pin-free")).toHaveLength(2));
+  expect(pins("А1", "Силиконовый 30AWG черный")).toBe("1, 2");
+  expect(figure).toHaveTextContent("Сторона В — свободные концы");
+  expect(figure).toHaveTextContent("1.1 · Силиконовый 30AWG черный · длина 100 мм");
+  expect(figure).not.toHaveTextContent("Линии появятся");
+  const kinds = () => [...figure.querySelectorAll(".pin-free")].map((g) => `${g.getAttribute("data-free")}: ${g.querySelector(".pin-free-label")!.textContent}`);
+  const toggle = (name: RegExp, on: boolean) => {
+    const sw = screen.getByRole("switch", { name });
+    if ((sw as HTMLInputElement).checked !== on) fireEvent.click(sw);
+  };
+  toggle(/Лужение свободных концов/, false);
+  toggle(/Зачистка свободных концов/, false);
+  expect(kinds()).toEqual(["none: без обработки", "none: без обработки"]);
+  toggle(/Зачистка свободных концов/, true);
+  fireEvent.change(screen.getByLabelText("Длина зачистки"), { target: { value: "4" } });
+  expect(kinds()).toEqual(["strip: зачистка L=4 мм", "strip: зачистка L=4 мм"]);
+  toggle(/Лужение свободных концов/, true);
+  fireEvent.change(screen.getByLabelText("Зачистка под лужение"), { target: { value: "5" } });
+  expect(kinds()).toEqual(["tin: лужение L=5 мм", "tin: лужение L=5 мм"]);
+});

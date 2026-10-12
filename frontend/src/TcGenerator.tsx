@@ -65,8 +65,10 @@ import {
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { MarkTable, markTotal } from "./GenMarkTable";
-import { PinoutAsk, PinoutChip, PinoutDiagram, PinoutEditor } from "./PinoutDiagram";
-import { confirmPinout, pinoutEnds, pinoutRecord, restorePinout } from "./pinoutCheck";
+import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
+import {
+  assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinUnits, recolorWire, restorePinout, swapPins, unassignPin,
+} from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
@@ -459,6 +461,25 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const links = gen.connections_();
   const pinEnds = pinoutEnds(gen, S);
   const pinOpenEnds = pinEnds.filter((end) => !end.checked);
+  const pinUnitList = pinUnits(gen, S);
+  const pinFree = freeSide(gen, S);
+  const pinHousings = usePinHousings(pinEnds.map((end) => end.conn));
+  const pinCounts = Object.fromEntries(pinEnds.map((end) => [end.id, pinHousings[end.conn]?.n || null]));
+  // Автозаполнение (владелец 12.10): распиновка пустая, а число контактов каждого разъёма известно из базы разъёмов —
+  // провода встают по порядку сами (одна сторона — 1…N, две — пин-в-пин). Один раз на набор разъёмов и проводов:
+  // очищенную вручную распиновку не перезаполняет; не помещается — не трогает, предупреждение под схемой.
+  const pinAutoKey = pinEnds.map((end) => `${end.id}:${end.conn}:${end.wires.map((w) => `${w.idx}x${w.qty}`).join(".")}`).join("|");
+  const pinCountsKey = pinEnds.map((end) => pinCounts[end.id] ?? "?").join(",");
+  const pinAutoDone = useRef(new Set<string>());
+  useEffect(() => {
+    if (!pinAutoKey || pinAutoDone.current.has(pinAutoKey)) return;
+    if (pinEnds.some((end) => end.wires.some((w) => w.text))) { pinAutoDone.current.add(pinAutoKey); return; }
+    if (pinEnds.some((end) => !pinCounts[end.id])) return;
+    pinAutoDone.current.add(pinAutoKey);
+    const plan = autoFillPinout(D, S, pinCounts);
+    if (!plan.warnings.length) update(() => plan.state);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinAutoKey, pinCountsKey]);
   const cut = gen.cutLengthInfo();
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
@@ -1014,7 +1035,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {sideSection("B")}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
       <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} /></div>
-      <PinoutDiagram ends={pinEnds} links={links.list} />
+      <PinoutBoard ends={pinEnds} links={links.list} units={pinUnitList} housings={pinHousings} free={pinFree}
+        wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={pinFitWarnings(pinEnds, pinCounts)}
+        onAssign={(epId, idx, unit, pin) => update((current) => assignPin(D, current, epId, idx, unit, pin))}
+        onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
+        onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
+        onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}
+        onAutoFill={() => { const plan = autoFillPinout(D, S, pinCounts); update(() => plan.state); return plan; }} />
       {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
         <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
       {links.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
