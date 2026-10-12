@@ -36,7 +36,6 @@ import {
   syncHsWithBraid_,
   terFromFields,
   toggleLengthMode,
-  toggleRoute,
   twistPitchForZ0_,
   twistZ0_,
   updateEndpoint,
@@ -67,7 +66,8 @@ import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOp
 import { MarkTable, markTotal } from "./GenMarkTable";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
 import {
-  assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinUnits, recolorWire, restorePinout, swapPins, unassignPin,
+  addBranch, assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
+  setBranchMode, swapPins, syncRoutes, unassignPin,
 } from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
@@ -685,16 +685,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const ord = gen.endpointOrdinal_(ep);
     const name = sideRu_(ep.side) + ord;
     const crimp = ep.method === "crimp";
-    const routedList = gen.routedWireIdxs_(ep);
-    const routed = new Set(routedList);
+    const routedList = pinRouted(gen, S, ep);
     const conn = gen.getCompById(ep.connId);
     const term = gen.getCompById(ep.termId);
     const ter = term ? gen.findTerRecord_(term.art) : null;
     const set = (patch: Partial<Endpoint>) => update((current) => updateEndpoint(D, current, ep.id, patch));
-    const single = gen.endpointsOnSide_(ep.side).length < 2;
-    const showRouting = complex && active.length > 0 && !(single && !S.endpoints.some((e) => e.side !== ep.side));
-    const chips = active.map((w, pos) => <Chip key={w.idx} checked={routed.has(w.idx)} onChange={() => update((current) => toggleRoute(current, makeGen(D, current), ep.id, w.idx))}>
-      {`Кабель ${pos + 1} · ${compLabel(w.compId)}`}</Chip>);
     const terValues = { lPlus: ter?.lPlus || "", lMinus: ter?.lMinus || "", step: ter?.step || "", applicator: ter?.applicator || "", ...(terEdits[ep.id] || {}) };
     const terDirty = !!terEdits[ep.id] && Object.entries(terEdits[ep.id]).some(([key, value]) => value !== ((ter as unknown as Record<string, string>)?.[key] || ""));
     const setTer = (key: string, value: string) => setTerEdits((current) => ({ ...current, [ep.id]: { ...(current[ep.id] || {}), [key]: value } }));
@@ -702,7 +697,6 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // «Применить» подставляет аппликатор подбора в поле БД.ТЕР, когда подбор однозначен и отличается от записанного.
     const picks = norm ? norm.by_section.filter((item) => item.found && item.applicator) : [];
     const pickApplicator = picks.length && picks.every((item) => item.applicator === picks[0].applicator) ? picks[0].applicator : "";
-    const allRouted = active.every((w) => routed.has(w.idx));
     const pinEnd = pinEnds.find((end) => end.id === ep.id);
     return <div className="ep-card" key={ep.id}>
       <div className="ep-head">
@@ -750,15 +744,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <Chip checked={!ep.tutOff} onChange={(on) => set({ tutOff: !on })}>ТУТ на каждый провод</Chip>
         </div>
       </>}
-      {showRouting && (single
-        ? <details className="ep-more" open={!allRouted}><summary>Провода в этот разъём — {allRouted ? "все" : "не все: остальные — свободные концы"}</summary><div className="chip-row">{chips}</div></details>
-        : <div className="gfield"><span className="gfield-label">Провода в этот разъём</span><div className="chip-row">{chips}</div></div>)}
       {pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
         onConfirm={() => { setS((current) => confirmPinout(D, current, ep.id)); setPinOpen((current) => ({ ...current, [ep.id]: false })); }}
         onPins={(wireIdx, value) => {
           const pins = { ...(ep.pins || {}) };
           if (value) pins[wireIdx] = value; else delete pins[wireIdx];
-          set({ pins });
+          update((current) => syncRoutes(D, updateEndpoint(D, current, ep.id, { pins })));
         }}
         hint={ep.side === "B" && S.endpoints.some((e) => e.side === "A") ? "Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2…" : undefined} />}
     </div>;
@@ -1036,7 +1027,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
       <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} /></div>
       <PinoutBoard ends={pinEnds} links={links.list} units={pinUnitList} housings={pinHousings} free={pinFree}
-        wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={pinFitWarnings(pinEnds, pinCounts)}
+        wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={[...pinFitWarnings(pinEnds, pinCounts), ...routingWarnings(D, S)]}
+        branches={S.branches || []} complex={complex}
+        onBranch={(from, toEpId, toPin, mode) => update((current) => addBranch(D, current, from, toEpId, toPin, mode))}
+        onBranchMode={(extra, mode) => update((current) => setBranchMode(D, current, extra, mode))}
+        onRemoveBranch={(extra) => update((current) => removeBranch(D, current, extra))}
         onAssign={(epId, idx, unit, pin) => update((current) => assignPin(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}

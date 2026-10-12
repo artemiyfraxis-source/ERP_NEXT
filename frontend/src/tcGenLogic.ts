@@ -67,10 +67,16 @@ export type WrapSlot = { mat: string; kind: WrapKind; len: string };
 export type CoaxSide = { art: string; name: string } | null;
 export type OpTimes = { tmpl: string; tPrep: string; tOp: string; tMachine: string };
 
+/** Ответвление провода (владелец 12.10: «с одного контакта в два вывести»): на контакт `pin` разъёма `from` пришёл провод `main`,
+ *  второй конец идёт на контакт `toPin` разъёма `to` отдельным проводом `extra` — через сросток или двойной обжим. */
+export type Branch = { main: number; extra: number; mode: "splice" | "double"; from: string; pin: number; to: string; toPin: number };
+
 export type GenState = {
   tab: Tab;
   wires: WireEntry[];
   nextWireIdx: number;
+  /** Ответвления проводов (pinoutCheck.addBranch); нет ключа — ответвлений нет. */
+  branches?: Branch[];
   endpoints: Endpoint[];
   nextEndpointId: number;
   advancedLength: boolean;
@@ -405,6 +411,12 @@ export function makeGen(D: GenData, S: GenState) {
       const comp = getCompById(w.compId);
       const wire = comp ? (comp.art || comp.name || "") : "";
       const [from, ...rest] = ends;
+      // Ветвь: провод идёт с первого разъёма на два и больше следующих, и на каждом столько же контактов, сколько у него
+      // на первом — каждый получает своё соединение (на «Y» провод разветвляется), а не продолжение списка контактов.
+      if (rest.length > 1 && rest.every((x) => x.pins.length === from.pins.length)) {
+        rest.forEach((x) => x.pins.forEach((pin, i) => list.push({ wire, from: end(from.ep, from.pins[i]), to: end(x.ep, pin) })));
+        return;
+      }
       let k = 0;
       rest.forEach((x) => x.pins.forEach((pin) => {
         if (k < from.pins.length) list.push({ wire, from: end(from.ep, from.pins[k]), to: end(x.ep, pin) });
@@ -1883,6 +1895,9 @@ export function updateEndpoint(D: GenData, S: GenState, id: string, patch: Parti
   return { ...S, selectedTemplates, endpoints: S.endpoints.map((e) => (e.id === id ? next : e)) };
 }
 
+/** wireIdxs разъёма, на который не заведён ни один провод. */
+export const NO_WIRES = -1;
+
 export function toggleRoute(S: GenState, gen: Gen, id: string, wIdx: number): GenState {
   const ep = S.endpoints.find((e) => e.id === id);
   if (!ep) return S;
@@ -1890,7 +1905,9 @@ export function toggleRoute(S: GenState, gen: Gen, id: string, wIdx: number): Ge
   if (routed.has(wIdx)) routed.delete(wIdx); else routed.add(wIdx);
   const allIdx = gen.activeWires_().map((w) => w.idx);
   const allOn = allIdx.length === routed.size && allIdx.every((i) => routed.has(i));
-  return { ...S, endpoints: S.endpoints.map((e) => (e.id === id ? { ...e, wireIdxs: allOn ? [] : allIdx.filter((i) => routed.has(i)) } : e)) };
+  // Пустой список значит «все провода»; разъём без проводов хранится как [NO_WIRES] — такого номера у провода нет.
+  const list = allIdx.filter((i) => routed.has(i));
+  return { ...S, endpoints: S.endpoints.map((e) => (e.id === id ? { ...e, wireIdxs: allOn ? [] : list.length ? list : [NO_WIRES] } : e)) };
 }
 
 /** Смена кабеля в строке: число жил снова из наименования (onWireChange). */
