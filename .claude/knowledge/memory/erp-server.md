@@ -14,3 +14,6 @@ metadata:
 - Owner's manual part: erp-server key on GitHub, Ubuntu from USB with Import SSH identity, BIOS Power On, sudoers + Tailscale line, send the IP.
 
 Related: [[google-wiring]], [[erp-local-demo]], [[staff-and-sites]]. Hub: [[erp-next-hub]].
+- Network (09.10.2026): shop router replaced by a Keenetic after a building outage (server offline 06.10 22:30 → 09.10). LAN stays 192.168.1.0/24; server registered as erp-server, 192.168.1.85, port 2. prepare-host.sh pins a STATIC netplan (/etc/netplan/60-erp-static.yaml, dhcp4 false) — a router with another subnet/gateway takes the server offline; fix on console: move that file to /root/ + 
+etplan apply, then reserve the IP on the router instead.
+- SSH from Git Bash (11.10.2026): `/usr/bin/ssh` (OpenSSH 10.5, MSYS) mangles the Cyrillic home path, can't open `~/.ssh/known_hosts` and fails with «Host key verification failed» — the server key did NOT change (ED25519 `SHA256:lUUSKgGD1eJ/eGuNBf9TV7vXtRB5KS/L8xNUeSsuRAA`). Use Windows OpenSSH: `& "C:\Windows\System32\OpenSSH\ssh.exe" -i "$HOME\.ssh\erp_server" erp@100.96.49.68 …` from PowerShell. Never bypass host-key checking.
