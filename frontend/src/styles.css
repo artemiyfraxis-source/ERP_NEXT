@@ -36,6 +36,11 @@
   --table-head-fg: #3d4a5c;
   --table-zebra: #f3f6f7;
   --panel-soft: #f4f7f7;
+  /* Сквозные статусы готовой продукции: в производстве · принято складом · упаковано · отгружено. */
+  --goods-production: #a9b3b1;
+  --goods-accepted: #5b8def;
+  --goods-packed: #d9a440;
+  --goods-shipped: #3f9f6e;
   /* Токены, на которые уже ссылались правила, но которых не было (аудит 10.10, Общ-9). */
   --danger: var(--tone-danger);
   --muted: var(--panel-soft);
@@ -474,6 +479,45 @@ table.ship-lines td:first-child { width: 1%; }
 .ship-handoff { margin-bottom: 16px; }
 .ship-handoff > h2 { display: flex; gap: 8px; align-items: center; margin: 0 0 8px; font-size: 16px; }
 @media (max-width: 1100px) { .ship-docs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ship-accept { grid-template-columns: 1fr 1fr; } .ship-accept > strong { grid-column: 1 / -1; } }
+/* Приёмка «Из производства» (12.10): отметка и количество в одной ячейке, ошибка строки под ними. */
+.ship-tab-count.is-zero { background: transparent; color: var(--muted-foreground); font-weight: 500; }
+.ship-take { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; justify-content: flex-end; }
+.ship-take .ship-qty { width: 84px; padding: 3px 8px; }
+.ship-row-error { flex-basis: 100%; max-width: 280px; font-size: 12px; line-height: 1.3; text-align: right; white-space: normal; }
+.data-table tr.ship-row-picked > td { background: var(--sheet-selected); }
+.ship-accept-bar { display: inline-flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.ship-accept-bar input[type="date"] { width: 140px; padding: 4px 8px; }
+.ship-accept-bar .primary { min-height: var(--control-h); padding: 6px 14px; font-variant-numeric: tabular-nums; }
+.ship-open-note { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 0; color: var(--muted-foreground); font-size: 13px; }
+.ship-open-note > span { display: inline-flex; gap: 6px; align-items: center; color: var(--foreground); }
+.ship-rollback { display: grid; grid-template-columns: minmax(260px, 1fr) auto auto; gap: 8px; align-items: end; padding: 12px; border: 1px solid var(--chip-danger-bg); border-radius: 8px; background: var(--danger-soft); }
+.ship-rollback label { gap: 4px; }
+.ship-rollback input { padding: 7px 10px; }
+/* Сквозной статус готовой продукции: полоска долей и подписи с точкой того же цвета (подпись — легенда). */
+.goods-states { display: inline-flex; flex-direction: column; gap: 4px; min-width: 0; vertical-align: middle; }
+.goods-bar { display: flex; width: 100%; min-width: 120px; height: 6px; overflow: hidden; border-radius: 3px; background: var(--accent); }
+.goods-seg { min-width: 3px; }
+.goods-seg + .goods-seg { margin-left: 1px; }
+.goods-seg.is-production, .goods-count.is-production .goods-dot { background: var(--goods-production); }
+.goods-seg.is-accepted, .goods-count.is-accepted .goods-dot { background: var(--goods-accepted); }
+.goods-seg.is-packed, .goods-count.is-packed .goods-dot { background: var(--goods-packed); }
+.goods-seg.is-shipped, .goods-count.is-shipped .goods-dot { background: var(--goods-shipped); }
+.goods-seg.is-empty { flex-grow: 1; }
+.goods-counts { display: flex; flex-wrap: wrap; gap: 0 10px; color: var(--muted-foreground); font-size: 12px; line-height: 1.35; white-space: nowrap; }
+.goods-count { display: inline-flex; gap: 4px; align-items: center; }
+.goods-count b { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
+.goods-count.is-zero b { color: var(--muted-foreground); font-weight: 400; }
+.goods-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }
+.goods-panel { display: grid; gap: 8px; }
+.goods-panel-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin: 0; color: var(--muted-foreground); font-size: 13px; }
+.goods-panel-head .link-button { padding: 0; font-size: 13px; }
+/* ГРН — цифрами одной ширины, без моноширинного шрифта: у него нет кириллицы и «ГП» выглядит строчными. */
+.goods-grn { font-variant-numeric: tabular-nums slashed-zero; white-space: nowrap; }
+.kit-sostav td.kit-goods .goods-counts { display: grid; grid-template-columns: auto auto; gap: 0 12px; justify-content: start; }
+@media (pointer: coarse) {
+  .shipping-page .ship-take .ship-qty, .shipping-page .ship-accept-bar .primary, .shipping-page .ship-accept-bar input, .shipping-page .ship-rollback input, .shipping-page .ship-rollback button { min-height: 40px; }
+  .shipping-page .ship-take input[type="checkbox"], .shipping-page .ship-accept-bar input[type="checkbox"] { width: 22px; height: 22px; }
+}
 @media (pointer: coarse) {
   .shipping-page .small, .shipping-page .ship-actions button, .shipping-page .ship-actions .link-button, .shipping-page .ship-docs button, .shipping-page .ship-actions .file-button, .shipping-page .ship-file .secondary, .shipping-page table.ship-lines td .link-button, .shipping-page .ship-qty, .shipping-page .ship-form input, .shipping-page .ship-form select, .shipping-page .ship-docs input, .shipping-page .ship-docs select, .shipping-page .ship-accept input, .shipping-page .ship-accept select, .shipping-page .ship-accept button { min-height: 40px; }
   .data-table table.ship-lines td, table.ship-lines td { height: 44px; }

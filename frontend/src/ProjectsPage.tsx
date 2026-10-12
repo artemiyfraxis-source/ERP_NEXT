@@ -7,6 +7,7 @@ import {
   harnessApi,
   kitsetsApi,
   requestsApi,
+  shippingApi,
   type KitsetAssembly,
   type KitsetDocument,
   type KitsetCard,
@@ -21,7 +22,10 @@ import {
   type KitsetTile,
   type FulfillmentCandidate,
   type Principal,
+  type ProjectGoodsStatus,
 } from "./api";
+import { canSee } from "./navigation";
+import { GoodsStateBar, movesHint, piecesOf } from "./FinishedGoodsStates";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
@@ -29,7 +33,6 @@ import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { AutoTextarea } from "./AutoTextarea";
 import { formatDate, formatDateTime, formatDay, formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
-import { canSee } from "./navigation";
 import { CANDIDATE_LEGEND, candidateTone, matchText } from "./stockCandidates";
 // Редактор чертежа жгута — отдельным куском, вкладкой карточки проекта («Чертёж КБn»).
 const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
@@ -483,7 +486,7 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
     <div className="seg-tabs" role="tablist">
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
-    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} openDrawing={(index) => setTab(`hn:${index}`)} />}
+    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} goodsVisible={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} openDrawing={(index) => setTab(`hn:${index}`)} />}
     {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline}
       canSeeStock={canSee(principal, "warehouse") || canSee(principal, "fulfillment", "edit")} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} setWarning={setWarning} reload={load} />}
@@ -616,13 +619,32 @@ function JournalTab({ card, canEdit, changed }: { card: KitsetCard; canEdit: boo
 
 const REVIEW_TONE: Record<string, string> = { "проверена": "ok", "с погрешностями": "danger", "не проверена": "neutral" };
 
-function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, openDrawing }: {
-  card: KitsetCard; canEdit: boolean; reload: () => Promise<void>; setNote: (text: string) => void;
+function SostavTab({ card, canEdit, goodsVisible = false, reload, setNote, setError, openGen, openTc, openDrawing }: {
+  card: KitsetCard; canEdit: boolean; goodsVisible?: boolean; reload: () => Promise<void>; setNote: (text: string) => void;
   setError: (text: string) => void; openGen: (index: string) => void; openTc: (index: string) => void; openDrawing: (index: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kdIndex, setKdIndex] = useState("");
   const [stagePick, setStagePick] = useState<{ assembly: KitsetAssembly; value: string } | null>(null);
+  // Сквозной статус готовой продукции по КБ (владелец 12.10): В производстве → Принято складом → Упаковано → Отгружено.
+  const [goods, setGoods] = useState<{ status: ProjectGoodsStatus | null; error: string }>({ status: null, error: "" });
+  useEffect(() => {
+    if (!goodsVisible) return;
+    let live = true;
+    shippingApi.projectGoods(card.project)
+      .then((status) => { if (live) setGoods({ status, error: "" }); })
+      .catch((reason) => { if (live) setGoods({ status: null, error: failureText(reason, "Статус готовой продукции не загружен") }); });
+    return () => { live = false; };
+  }, [goodsVisible, card.project]);
+  const goodsCell = (assembly: KitsetAssembly) => {
+    if (goods.error) return <span className="muted" title={goods.error}>не загружено</span>;
+    if (!goods.status) return <span className="muted">…</span>;
+    const wanted = assembly.index.trim().toUpperCase();
+    const kb = (goods.status.kbs ?? []).find((item) => item.item_index.trim().toUpperCase() === wanted);
+    if (!kb) return <span className="muted">—</span>;
+    const moves = (goods.status.moves ?? []).filter((move) => move.item_index.trim().toUpperCase() === wanted);
+    return <GoodsStateBar pieces={piecesOf(kb.pieces)} unit={kb.unit} title={movesHint(moves)} />;
+  };
 
   async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string, previewToken: string) {
     const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason, preview_token: previewToken });
@@ -737,7 +759,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
   return <div className="kit-pane">
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
     {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table className="grid" aria-label="Состав проекта">
-      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
+      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th>{goodsVisible && <th title="Штуки КБ: в производстве · принято складом · упаковано · отгружено">Готовая продукция</th>}</tr></thead>
       <tbody>{card.assemblies.map((assembly) => <tr key={assembly.index} title={`Открыть генератор ${assembly.index}`} onClick={(event) => {
         // Внутри строки свои кликабельные вещи — ссылка на КД, «＋ файл», выпадающие списки.
         if ((event.target as HTMLElement).closest("a, button, input, select, label")) return;
@@ -753,6 +775,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
           : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
         <td>{stageCell(assembly)}</td>
         <td>{reviewCell(assembly)}</td>
+        {goodsVisible && <td className="kit-goods">{goodsCell(assembly)}</td>}
       </tr>)}</tbody>
     </table></div>}
     {stagePick && <StageChangeDialog project={card.project} kb={stagePick.assembly.index}
