@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { UpdateBanner } from "./UpdateBanner";
 import "./styles.css";
+import "./responsive.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
