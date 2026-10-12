@@ -2928,6 +2928,7 @@ export const productionPlanApi = {
     value?: string;
     field?: string;
     reason?: string;
+    preview_token?: string;
   }) => api<{ event: ProductionPlanEvent }>("/api/production/plan/events", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -3415,7 +3416,15 @@ export interface StagePreviewKb {
   change: boolean;
   note: string;
   warnings: string[];
+  /** Что смена закроет в этой КБ и что оставит (с причиной). */
+  close?: StageCloseItem[];
+  keep?: StageKeepItem[];
 }
+
+/** Закрываемое ручной сменой вперёд: задание цеха, заявка на комплектацию, резерв техкарты. */
+export interface StageCloseItem { kind: "task" | "kit_request" | "reserve" | string; id: string; label: string; qty: string; unit: string }
+export interface StageKeepItem { kind: string; label: string; reason: string }
+export interface StageCascadeTotals { tasks: number; kit_requests: number; reserves: number; close: number; keep: number }
 
 export interface StagePreview {
   project: string;
@@ -3429,6 +3438,13 @@ export interface StagePreview {
   blocker: string;
   kbs: StagePreviewKb[];
   warnings: string[];
+  close?: StageCloseItem[];
+  keep?: StageKeepItem[];
+  totals?: StageCascadeTotals;
+  /** «Назад ничего не открывается» — для хода назад и «авто». */
+  cascade_note?: string;
+  /** Уходит с записью: изменилось закрываемое с момента предпросмотра — сервер ответит 409. */
+  preview_token?: string;
 }
 
 export interface KitsetTile {
@@ -3630,7 +3646,7 @@ export interface KitsetJournalEvent {
 }
 
 /** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
-export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string }
+export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string; preview_token?: string }
   | { action: "block"; value: string; text: string }
   | { action: "unblock"; text?: string };
 
@@ -3766,7 +3782,7 @@ export const kitsetsApi = {
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
     ),
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
-  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string }) =>
+  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string; preview_token?: string }) =>
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
   stagePreview: (project: string, value: string, kb = "") =>
     api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),

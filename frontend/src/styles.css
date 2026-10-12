@@ -3361,3 +3361,17 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .crimp-val { text-align: right; }
 .crimp-unit { font-style: normal; color: var(--muted-foreground); }
 @media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }
+
+.stage-dialog-body { display: grid; gap: 10px; max-height: calc(100vh - 240px); overflow-y: auto; overflow-x: hidden; padding-right: 2px; min-width: 0; }
+.stage-dialog-kbs { table-layout: auto; }
+.stage-dialog-kbs td, .stage-dialog-kbs th { overflow-wrap: anywhere; }
+.stage-cascade { display: grid; gap: 6px; font-size: 13px; }
+.stage-cascade h3 { margin: 0 0 2px; font-size: 13px; font-weight: 600; }
+.stage-cascade ul { margin: 2px 0 0; padding-left: 18px; }
+.stage-cascade > section > .stage-cascade-list { padding-left: 0; list-style: none; }
+.stage-cascade summary { cursor: pointer; padding: 2px 0; color: var(--foreground); font-weight: 400; }
+.stage-cascade summary b { font-weight: 600; }
+.stage-cascade-keep > summary, .stage-cascade section.muted summary { color: var(--muted-foreground); font-weight: 500; }
+.stage-cascade li { overflow-wrap: anywhere; }
+.stage-cascade .muted, .stage-cascade section.muted { color: var(--muted-foreground); }
+@media (pointer: coarse) { .stage-cascade summary { padding: 10px 0; } }

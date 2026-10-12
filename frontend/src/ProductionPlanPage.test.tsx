@@ -44,7 +44,7 @@ const plan: ProductionPlanResult = {
 
 const stagePreview = (over: Record<string, unknown> = {}) => ({
   project: "70К.26.13", value: "Отгружено", kb: "", direction: "forward", reason_required: false, error: "", message: "",
-  terminal: "", blocker: "", warnings: [],
+  terminal: "", blocker: "", warnings: [], preview_token: "tok-plan",
   kbs: [{ kb: "КБ1", label: "КБ1", from: "Новый", to: "Отгружено", skipped: [], change: true, note: "", warnings: [] }],
   ...over,
 });
@@ -214,7 +214,7 @@ it("sets the stage of a project without KBs through a journal mark with an empty
   fireEvent.change(screen.getByLabelText("Этап проекта"), { target: { value: "Отгружено" } });
   fireEvent.click(await screen.findByRole("button", { name: "Сменить этап" }));
   await waitFor(() => expect(payload).toMatchObject({
-    project: "70К.26.13", kind: "stage", item_index: "", value: "Отгружено", reason: "",
+    project: "70К.26.13", kind: "stage", item_index: "", value: "Отгружено", reason: "", preview_token: "tok-plan",
   }));
 });
 

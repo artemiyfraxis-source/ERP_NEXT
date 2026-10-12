@@ -125,8 +125,8 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   }
 
   /** Ручной этап — после подтверждения в окне смены этапа; ошибка уходит в само окно (409, причина назад). */
-  async function applyStage(project: string, kb: string, value: string, reason: string) {
-    await productionPlanApi.addEvent({ project, kind: "stage", blocker: "", text: "", deadline: null, item_index: kb, value, reason });
+  async function applyStage(project: string, kb: string, value: string, reason: string, previewToken: string) {
+    await productionPlanApi.addEvent({ project, kind: "stage", blocker: "", text: "", deadline: null, item_index: kb, value, reason, preview_token: previewToken });
     await reload();
   }
 
@@ -192,7 +192,7 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
   canEdit: boolean;
   busy: boolean;
   addEvent: (payload: Parameters<typeof productionPlanApi.addEvent>[0]) => Promise<void>;
-  applyStage: (project: string, kb: string, value: string, reason: string) => Promise<void>;
+  applyStage: (project: string, kb: string, value: string, reason: string, previewToken: string) => Promise<void>;
 }) {
   const [stagePick, setStagePick] = useState<{ kb: string; current: string; value: string } | null>(null);
   const [kind, setKind] = useState<"note" | "block" | "unblock" | "deadline">("note");
@@ -239,7 +239,7 @@ function PlanDetails({ row, blockers, stages, reviewValues, canEdit, busy, addEv
     </div>
     {stagePick && <StageChangeDialog project={row.project} kb={stagePick.kb} current={stagePick.current} value={stagePick.value}
       loadPreview={() => productionPlanApi.stagePreview(row.project, stagePick.value, stagePick.kb)}
-      apply={async (reason) => { await applyStage(row.project, stagePick.kb, stagePick.value, reason); setStagePick(null); }}
+      apply={async (reason, token) => { await applyStage(row.project, stagePick.kb, stagePick.value, reason, token); setStagePick(null); }}
       onClose={() => setStagePick(null)} />}
     {row.supply ? <section><h3>Снабжение</h3><p>Всего {row.supply.total}: склад {row.supply.stock}, в пути {row.supply.transit}, в закупке {row.supply.buying}, в заявках {row.supply.request}.</p>
       <p>Давальческое: {row.supply.customer_supplied ? `${row.supply.customer_supplied_stock} из ${row.supply.customer_supplied} пришло` : "нет"}</p>
