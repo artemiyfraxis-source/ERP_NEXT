@@ -36,6 +36,7 @@ from .application import (
     MoveLocationCommand,
     MoveLotCommand,
     ReturnWriteOffCommand,
+    UndoLastCommand,
     UnitOfWork,
     shelf_occupancy,
     WriteOffCommand,
@@ -49,6 +50,8 @@ from .application import (
     lot_destinations,
     return_writeoff,
     scan_stock,
+    undo_last_movement,
+    undo_preview,
     warehouse_lots,
     write_off,
 )
@@ -632,6 +635,46 @@ def move(
             uow_factory(),
         )
     )
+
+
+class UndoPayload(BaseModel):
+    version: int = Field(ge=1)
+
+
+@router.get("/batches/{lot_id}/undo")
+def undo_last_preview(
+    lot_id: UUID,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """Stage option warehouse.undo: what «Отменить последнее» would take back, or why nothing can be."""
+    _require_option("warehouse.undo")
+    try:
+        preview = undo_preview(lot_id, principal.actor, now, uow_factory())
+    except WarehouseValidationError as error:
+        return {"undo": None, "reason": str(error)}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"undo": {"label": preview.label, "occurred_at": preview.occurred_at.isoformat()}, "reason": ""}
+
+
+@router.post("/batches/{lot_id}/undo")
+def undo_last(
+    lot_id: UUID,
+    payload: UndoPayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """Stage option warehouse.undo: own write-off / return / move of the last 10 minutes, taken back by a
+    compensating entry (the journal keeps both)."""
+    _require_option("warehouse.undo")
+    lot, label = _guarded(lambda: undo_last_movement(
+        UndoLastCommand(lot_id=lot_id, expected_version=payload.version, actor=principal.actor, now=now),
+        uow_factory(),
+    ))
+    return {"lot": _result(lot), "undone": label}
 
 
 @router.put("/batches/{lot_id}/location")

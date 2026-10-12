@@ -512,6 +512,12 @@ export interface WarehouseScan {
   lots: WarehouseLot[];
 }
 
+/** Stage option warehouse.undo: what «Отменить последнее» would take back (null — and why not). */
+export interface WarehouseUndoPreview {
+  undo: { label: string; occurred_at: string } | null;
+  reason: string;
+}
+
 export interface WarehouseArticleInfo {
   series: string;
   name: string;
@@ -2136,6 +2142,11 @@ export const warehouseApi = {
     return api<{ lots: WarehouseLot[]; total: number; truncated: number; next_cursor: string | null }>(`/api/stock${suffix}`);
   },
   scan: (code: string) => api<WarehouseScan>(`/api/stock/scan?code=${encodeURIComponent(code)}`),
+  undoPreview: (lotId: string) => api<WarehouseUndoPreview>(`/api/stock/batches/${lotId}/undo`),
+  undo: (lotId: string, version: number) => api<{ lot: WarehouseLot; undone: string }>(`/api/stock/batches/${lotId}/undo`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  }),
   shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
     `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,
   ),

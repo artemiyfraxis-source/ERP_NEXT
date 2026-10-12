@@ -6,7 +6,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
@@ -35,6 +35,7 @@ from .domain import (
     normalize_location_code,
 )
 from .item_types import canonical_item_type
+from .journal import WRITEOFF_KIND_LABELS, event_text
 from .scan import lot_matches, parse_scan, place_matches
 from .stock_export import LegacyStockRow, LegacyWriteOffRow, parse_quantity
 
@@ -1312,3 +1313,164 @@ def scan_stock(uow: UnitOfWork, code: str) -> ScanResult:
                     if place_matches(scanned.place, lot.storage_location)]
             return ScanResult("place", scanned.text, scanned.place, lots)
     raise KeyError(f"Не найдено: {scanned.text or '—'}")
+
+
+# ── Stage option warehouse.undo: the last movement of a lot, taken back by a compensating entry ──────────────────
+UNDO_WINDOW = timedelta(minutes=10)
+UNDOABLE_EVENTS = frozenset({
+    "warehouse.written_off", "warehouse.writeoff_returned", "warehouse.moved", "warehouse.transferred",
+})
+UNDO_WRITEOFF_REASON = "Возврат: отмена списания"
+UNDO_RETURN_REASON = "Отмена возврата"
+
+
+@dataclass(frozen=True)
+class UndoLastCommand:
+    lot_id: UUID
+    expected_version: int
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class UndoPreview:
+    label: str  # «Списание 2 шт · FRX.001»
+    occurred_at: datetime
+
+
+def _age(now: datetime, then: datetime) -> timedelta:
+    # SQLite keeps the wall time without a zone (Moscow, as written); PostgreSQL gives aware values.
+    if then.tzinfo is None and now.tzinfo is not None:
+        then = then.replace(tzinfo=now.tzinfo)
+    elif now.tzinfo is None and then.tzinfo is not None:
+        now = now.replace(tzinfo=then.tzinfo)
+    return now - then
+
+
+def _last_event(events: list[AuditEvent]) -> AuditEvent | None:
+    """Newest first; of events written at the same instant a compensating one comes after the one it undoes."""
+    if not events:
+        return None
+    tied = [event for event in events if event.occurred_at == events[0].occurred_at]
+    undone = {str(event.details.get("undo_of")) for event in tied if event.details.get("undo_of")}
+    return next((event for event in tied if str(event.id) not in undone), tied[0])
+
+
+def _number_text(value: object) -> str:
+    try:
+        return format(Decimal(str(value)).normalize(), "f")
+    except (ArithmeticError, ValueError):
+        return str(value or "")
+
+
+def _place_text(value: object) -> str:
+    return str(value or "") or "без места"
+
+
+def _undo_label(event: AuditEvent, lot: StockLot) -> str:
+    details = event.details
+    unit = f" {lot.unit}" if lot.unit else ""
+    if event.event_type == "warehouse.written_off":
+        return f"Списание {_number_text(details.get('quantity'))}{unit} · {details.get('purpose') or '—'}"
+    if event.event_type == "warehouse.writeoff_returned":
+        return f"Возврат {_number_text(details.get('quantity'))}{unit} · {details.get('purpose') or '—'}"
+    if event.event_type == "warehouse.moved":
+        return f"Перемещение {_place_text(details.get('from'))} → {_place_text(details.get('to'))}"
+    return (f"Перемещение {details.get('from_warehouse')} → {details.get('to_warehouse')}, "
+            f"место {_place_text(details.get('from'))} → {_place_text(details.get('to'))}")
+
+
+def _undoable(lot: StockLot, actor: Actor, now: datetime, uow: UnitOfWork) -> AuditEvent:
+    """The lot's last movement if the actor may take it back now; else WarehouseValidationError with the reason."""
+    event = _last_event(list(uow.warehouse.recent_events(lot.id)))
+    if event is None:
+        raise WarehouseValidationError("По этой партии нечего отменять.")
+    if event.details.get("undo_of"):
+        raise WarehouseValidationError("Последнее движение — уже отмена. Если нужно, сделай действие заново.")
+    if event.event_type not in UNDOABLE_EVENTS:
+        raise WarehouseValidationError(
+            f"Последнее по партии — «{event_text(event.event_type, event.details)}»: отменить можно только списание, "
+            "возврат или перемещение, сделанные в ERP."
+        )
+    # A kitting issue (and other journal rows) has no audit event on the lot: it must not hide behind the last one.
+    later = [
+        entry for entry in uow.writeoffs.for_lot(lot.id)
+        if entry.kind not in ("writeoff", "return") and _age(entry.occurred_at, event.occurred_at) > timedelta(0)
+    ]
+    if later:
+        kind = WRITEOFF_KIND_LABELS.get(later[-1].kind, later[-1].kind)
+        raise WarehouseValidationError(f"После этого движения по партии уже была строка «{kind}» — отмена невозможна.")
+    if event.actor.id != actor.id:
+        raise WarehouseValidationError(f"Отменить может только тот, кто сделал движение: {event.actor.name}.")
+    age = _age(now, event.occurred_at)
+    if age > UNDO_WINDOW:
+        minutes = int(age.total_seconds() // 60)
+        raise WarehouseValidationError(
+            f"Отменить можно в течение 10 минут — прошло {minutes} мин. Дальше — обычным списанием, возвратом или "
+            "перемещением."
+        )
+    return event
+
+
+def undo_preview(lot_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> UndoPreview:
+    """What «Отменить последнее» would take back; WarehouseValidationError says why nothing can be."""
+    with uow:
+        lot = uow.warehouse.get(lot_id)
+        if lot is None:
+            raise KeyError(f"Warehouse lot not found: {lot_id}")
+        event = _undoable(lot, actor, now, uow)
+        return UndoPreview(_undo_label(event, lot), event.occurred_at)
+
+
+def undo_last_movement(command: UndoLastCommand, uow: UnitOfWork) -> tuple[StockLot, str]:
+    """Takes back the lot's last write-off, return or move (Roller_Buyer undoLastMove) with a compensating entry:
+    the journal stays append-only, both rows are there, the compensating audit event names the one it undoes."""
+    with uow:
+        current = _versioned(command.lot_id, command.expected_version, uow)
+        event = _undoable(current, command.actor, command.now, uow)
+        label = _undo_label(event, current)
+        details: dict = {"undo_of": str(event.id)}
+        if event.event_type in ("warehouse.written_off", "warehouse.writeoff_returned"):
+            quantity = Decimal(str(event.details.get("quantity")))
+            purpose = str(event.details.get("purpose") or "")
+            if event.event_type == "warehouse.written_off":
+                if quantity > current.written_off:
+                    raise WarehouseValidationError("Списанное уже изменилось — отмена невозможна.")
+                updated = current.return_writeoff(quantity)
+                kind, reason, event_type = "return", UNDO_WRITEOFF_REASON, "warehouse.writeoff_returned"
+            else:
+                updated = current.write_off(quantity)
+                kind, reason, event_type = "writeoff", UNDO_RETURN_REASON, "warehouse.written_off"
+            uow.writeoffs.add(WriteOffEntry.for_lot(
+                updated, kind=kind, quantity=quantity, reason=reason, purpose=purpose,
+                author=command.actor.name, actor_id=command.actor.id, actor_name=command.actor.name,
+                occurred_at=command.now, remaining_after=updated.balance,
+            ))
+            details.update({"quantity": str(quantity), "reason": reason, "purpose": purpose})
+        else:
+            source_warehouse = str(event.details.get("from_warehouse") or current.warehouse)
+            target_warehouse = str(event.details.get("to_warehouse") or current.warehouse)
+            if current.warehouse != target_warehouse or current.storage_location != str(event.details.get("to") or ""):
+                raise WarehouseValidationError("Партия уже не там, куда её переместили, — отмена невозможна.")
+            updated = current.restore_place(source_warehouse, str(event.details.get("from") or ""))
+            if updated.warehouse != current.warehouse:
+                occupied = uow.warehouse.by_key(updated.warehouse, updated.grn, updated.package)
+                if occupied is not None and occupied.id != updated.id:
+                    raise WarehouseValidationError(
+                        f"На складе {updated.warehouse} уже есть партия {updated.grn}: вернуть её туда нельзя."
+                    )
+            event_type = event.event_type
+            details.update({"from": current.storage_location, "to": updated.storage_location})
+            if event_type == "warehouse.transferred":
+                details.update({
+                    "from_warehouse": current.warehouse, "to_warehouse": updated.warehouse,
+                    "grn": updated.grn, "package": updated.package, "inbound": str(updated.inbound),
+                    "written_off": str(updated.written_off), "balance": str(updated.balance),
+                })
+        uow.warehouse.add(updated)
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=updated.id, event_type=event_type, actor=command.actor,
+            occurred_at=command.now, details=details,
+        ))
+        uow.commit()
+        return updated, label

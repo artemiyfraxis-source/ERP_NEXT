@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { warehouseApi, type WarehouseLot, type WarehouseScan as ScanAnswer } from "./api";
+import { warehouseApi, type WarehouseLot, type WarehouseScan as ScanAnswer, type WarehouseUndoPreview } from "./api";
+import { useStageOption } from "./StageOptions";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -134,6 +135,7 @@ function ScanLotCard({ lot, readOnly, disabled, mutate, who, setWho, onChanged, 
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
   const quantityRef = useRef<HTMLInputElement>(null);
+  const undoOn = useStageOption("warehouse.undo");
   useEffect(() => { setError(""); setDone(""); }, [lot.id]);
 
   async function run(action: string, operation: () => Promise<{ lot: WarehouseLot }>, message: (updated: WarehouseLot) => string) {
@@ -203,9 +205,71 @@ function ScanLotCard({ lot, readOnly, disabled, mutate, who, setWho, onChanged, 
         <label>Новое место<input aria-label="Новое место" autoComplete="off" placeholder="12C7" value={place} onChange={(event) => setPlace(event.target.value)} /></label>
         <button className="secondary" disabled={disabled}>Переместить</button>
       </form>
+      {undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} eager onUndone={(updated, label) => {
+        setError("");
+        setDone(`Отменено: ${label}`);
+        onChanged(updated);
+      }} />}
       <p className="page-sub">Enter в количестве — списать · Enter в месте — переместить · Esc — закрыть</p>
     </>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {done && <div className="success-banner" role="status">{done}</div>}
+  </div>;
+}
+
+function shortTime(iso: string) {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? "" : at.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Stage option warehouse.undo: «Отменить последнее» with what it will take back (own write-off, return or move of
+ *  the last 10 minutes; the server appends a compensating entry). `eager` — the line is read at once and after every
+ *  change of the lot (scan card); otherwise the first click reads it and the second one undoes (lot cards in the table). */
+export function UndoLast({ lot, disabled, mutate, eager = false, onUndone }: {
+  lot: WarehouseLot;
+  disabled: boolean;
+  mutate: Mutate;
+  eager?: boolean;
+  onUndone?: (lot: WarehouseLot, label: string) => void;
+}) {
+  const [preview, setPreview] = useState<WarehouseUndoPreview | null>(null);
+  const [error, setError] = useState("");
+
+  function load() {
+    setError("");
+    warehouseApi.undoPreview(lot.id).then(setPreview, () => setPreview(null));
+  }
+
+  useEffect(() => {
+    setPreview(null);
+    if (eager) load();
+  }, [lot.id, lot.version]);
+
+  async function undo() {
+    setError("");
+    const box: { lot?: WarehouseLot; label?: string } = {};
+    try {
+      await mutate(lot.id, async () => {
+        const answer = await warehouseApi.undo(lot.id, lot.version);
+        box.lot = answer.lot;
+        box.label = answer.undone;
+      });
+    } catch (reason) {
+      setError(failure(reason, "Отмена не выполнена"));
+      return;
+    }
+    if (box.lot) onUndone?.(box.lot, box.label ?? "");
+  }
+
+  if (!preview) {
+    return eager ? null : <button type="button" className="secondary small" disabled={disabled} onClick={load}>Отменить последнее…</button>;
+  }
+  return <div className="scan-undo" role="group" aria-label="Отмена последнего движения">
+    {preview.undo ? <>
+      <span>Последнее: <strong>{preview.undo.label}</strong>{shortTime(preview.undo.occurred_at) ? ` в ${shortTime(preview.undo.occurred_at)}` : ""}</span>
+      <button type="button" className="secondary small" disabled={disabled} onClick={() => void undo()}>Отменить последнее</button>
+    </> : <span>{preview.reason}</span>}
+    {!eager && <button type="button" className="link-button" onClick={() => setPreview(null)}>Скрыть</button>}
+    {error && <span className="danger-text" role="alert">{error}</span>}
   </div>;
 }

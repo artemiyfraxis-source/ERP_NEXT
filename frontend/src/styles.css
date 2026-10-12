@@ -1984,6 +1984,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .scan-actions input { width: 180px; height: 36px; }
 .scan-actions button { height: 36px; }
 .scan-card .error-banner, .scan-card .success-banner { margin-bottom: 0; }
+.scan-undo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted-foreground); font-size: 12px; }
+.scan-undo strong { color: var(--foreground); }
+.scan-undo .link-button { padding: 0; }
 .mb-tiles { margin-top: 4px; }
 .mb-tile-extra { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; }
 .mb-tile-extra .mb-free, .mb-tile-extra .mb-done, .mb-launch { padding: 1px 7px; border-radius: 6px; background: var(--accent); }

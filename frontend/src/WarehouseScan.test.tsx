@@ -34,13 +34,15 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); 
 
 type Call = { method: string; path: string; body?: unknown };
 
-function stage(on: boolean, routes: Record<string, (call: Call) => Response> = {}) {
+function stage(on: boolean | string[], routes: Record<string, (call: Call) => Response> = {}) {
+  const enabled = Array.isArray(on) ? on : on ? ["warehouse.scan"] : [];
   const calls: Call[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const call = { method: init?.method ?? "GET", path: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined };
     calls.push(call);
     if (call.path === "/api/stage-options") {
-      return json({ available: true, options: [{ key: "warehouse.scan", block: "Склад", title: "t", before: "", after: "", enabled: on }] });
+      return json({ available: true, options: ["warehouse.scan", "warehouse.undo"].map((key) => (
+        { key, block: "Склад", title: "t", before: "", after: "", enabled: enabled.includes(key) })) });
     }
     if (call.path === "/api/stock" && call.method === "GET") return json({ lots: [lot, other], total: 2, truncated: 0, next_cursor: null });
     const route = routes[`${call.method} ${call.path}`];
@@ -130,4 +132,42 @@ it("an unknown code shows the server's «Не найдено»", async () => {
   render(<WarehousePage />);
   await scan("zzz");
   expect(await screen.findByRole("alert")).toHaveTextContent("Не найдено: zzz");
+});
+
+it("«Отменить последнее» in the scan card shows what it takes back and undoes it (option warehouse.undo)", async () => {
+  let undone = false;
+  const calls = stage(["warehouse.scan", "warehouse.undo"], {
+    "GET /api/stock/scan?code=FRX.26.0000001": () => json({ kind: "lot", code: "FRX.26.0000001", place: "", lots: [lot] }),
+    [`GET /api/stock/batches/${lot.id}/undo`]: () => json(undone
+      ? { undo: null, reason: "Последнее движение — уже отмена. Если нужно, сделай действие заново." }
+      : { undo: { label: "Списание 2 шт · FRX.001", occurred_at: "2026-09-21T12:00:00" }, reason: "" }),
+    [`POST /api/stock/batches/${lot.id}/undo`]: () => {
+      undone = true;
+      return json({ lot: { ...lot, version: 5, written_off: "0", balance: "10" }, undone: "Списание 2 шт · FRX.001" });
+    },
+  });
+  render(<WarehousePage />);
+  await scan("FRX.26.0000001");
+  const card = within(await screen.findByRole("region", { name: "Карточка FRX.26.0000001" }));
+  const line = within(await card.findByRole("group", { name: "Отмена последнего движения" }));
+  expect(await line.findByText("Списание 2 шт · FRX.001")).toBeInTheDocument();
+
+  fireEvent.click(line.getByRole("button", { name: "Отменить последнее" }));
+  expect(await card.findByRole("status")).toHaveTextContent("Отменено: Списание 2 шт · FRX.001");
+  expect(calls.find((call) => call.method === "POST")).toEqual({
+    method: "POST", path: `/api/stock/batches/${lot.id}/undo`, body: { version: 4 },
+  });
+  expect(await card.findByText("Последнее движение — уже отмена. Если нужно, сделай действие заново.")).toBeInTheDocument();
+});
+
+it("a lot card in the table reads the undo line only on the first click", async () => {
+  const calls = stage(["warehouse.undo"], {
+    [`GET /api/stock/batches/${lot.id}/undo`]: () => json({ undo: null, reason: "По этой партии нечего отменять." }),
+  });
+  render(<WarehousePage />);
+  fireEvent.click((await screen.findAllByRole("button", { name: /Показать партии/ }))[0]);
+  const cards = await screen.findAllByRole("button", { name: "Отменить последнее…" });
+  expect(calls.some((call) => call.path.endsWith("/undo"))).toBe(false);
+  fireEvent.click(cards[0]);
+  expect(await screen.findByText("По этой партии нечего отменять.")).toBeInTheDocument();
 });

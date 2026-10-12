@@ -19,7 +19,7 @@ import {
 import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
-import { WarehouseScanBar } from "./WarehouseScan";
+import { UndoLast, WarehouseScanBar } from "./WarehouseScan";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
   chooserColumns, ColumnChooser, columnTitle, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
@@ -1331,6 +1331,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
   const passport = passportLine(lot);
   const itemsCtx = useContext(LotItems);
   const brief = itemsCtx.items[lot.id];
+  const undoOn = useStageOption("warehouse.undo");
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1355,6 +1356,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
         {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
       </div>}
+      {!readOnly && undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}

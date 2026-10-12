@@ -306,6 +306,22 @@ class StockLot:
         place = self.move(storage_location).storage_location if str(storage_location or "").strip() else self.storage_location
         return replace(self, warehouse=target, storage_location=place, version=self.version + 1)
 
+    def restore_place(self, warehouse: str, storage_location: str) -> StockLot:
+        """Undo of a move (stage option warehouse.undo): back to the warehouse and place it came from, the place as
+        it was (an old address or no place too). Leaving for the other warehouse needs no reserve, as `transfer`."""
+        target = str(warehouse or "").strip()
+        if target not in WAREHOUSES:
+            raise WarehouseValidationError(f"Неизвестный склад «{target}».")
+        if target != self.warehouse and self.reserved > 0:
+            raise WarehouseValidationError(
+                f"Партия {self.grn} в резерве ({format(self.reserved.normalize(), 'f')}): "
+                "сначала сними резерв, потом перемещай на другой склад."
+            )
+        place = normalize_location_as_is(storage_location)
+        if target == self.warehouse and place == self.storage_location:
+            return self
+        return replace(self, warehouse=target, storage_location=place, version=self.version + 1)
+
     def correct_location(self, storage_location: str) -> StockLot:
         """Manual correction «as it really is»: any text, an old address or no place at all."""
         corrected = normalize_location_as_is(storage_location)

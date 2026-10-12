@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared import stage_options
 from app.shared.events import AuditEvent
+from app.shared.identity import Actor
 from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
 
 from .domain import WAREHOUSES, StockLot, WriteOffEntry
@@ -500,6 +501,23 @@ class SqlAlchemyWarehouseRepository:
     @staticmethod
     def _matches(lot: StockLot, query: str) -> bool:
         return lot_matcher(query)(lot)
+
+    def recent_events(self, lot_id: UUID, limit: int = 20) -> list[AuditEvent]:
+        """The lot's newest warehouse audit events, newest first (stage option warehouse.undo)."""
+        self.session.flush()
+        rows = self.session.scalars(
+            select(AuditEventRow).where(
+                AuditEventRow.aggregate_id == lot_id, AuditEventRow.event_type.like("warehouse.%"),
+            ).order_by(AuditEventRow.occurred_at.desc(), AuditEventRow.id.desc()).limit(limit)
+        )
+        return [
+            AuditEvent(
+                id=row.id, aggregate_id=row.aggregate_id, event_type=row.event_type,
+                actor=Actor(id=row.actor_id, name=row.actor_name, department=row.actor_department),
+                occurred_at=row.occurred_at, details=dict(row.details or {}),
+            )
+            for row in rows
+        ]
 
     def audit_trail(self, lot_id: UUID) -> list[tuple[str, dict]]:
         """(event_type, details) of every audit event on the lot, oldest first."""
