@@ -53,6 +53,7 @@ from .cable_structure import (
     shown, validate_gauges,
 )
 from .cables import CableKind, cable_mark, diameter_index, hookup_series, left_hookups
+from .wire_makers import STANDARD_FIELD
 from .domain import (
     BASE_COLUMNS, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceEntry, ReferenceKind, ReferenceValidationError,
     TechOperationRecord, TechOperationTab, cable_key, normalized_manufacturer_key, normalized_section_key,
@@ -66,7 +67,6 @@ from .technology import (
 
 HOOKUP_SEED_VERSION = 1
 TYPE_FIELD = "Тип провода"
-STANDARD_FIELD = "Стандарт / производитель"
 STRANDS_FIELD = "Жила: проволок × диаметр, мм"
 CORES_FIELD = "Число жил"
 COLORS_FIELD = "Цвета"

@@ -740,6 +740,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           : "Тип не распознан — карточку пайки выберите в операциях"}</div>
         <div className="ep-ter">
           <Field label="Зачистка под пайку" className="mid"><UnitInput unit="мм" value={ep.solderStrip} placeholder="5" onChange={(event) => set({ solderStrip: event.target.value })} /></Field>
+          <Field label="Припуск на пайку" className="mid"><UnitInput unit="мм" value={ep.solderAllow ?? ""} placeholder="0" onChange={(event) => set({ solderAllow: event.target.value })} /></Field>
           {!ep.tutOff && <Field label="Длина ТУТ" className="mid"><UnitInput unit="мм" value={ep.tutLen} placeholder="20" onChange={(event) => set({ tutLen: event.target.value })} /></Field>}
           <Chip checked={!ep.tutOff} onChange={(on) => set({ tutOff: !on })}>ТУТ на каждый провод</Chip>
         </div>
@@ -830,7 +831,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const sheet = <section className={manualTab ? "gsec full" : "gsec"} aria-label="Данные из листа">
     <div className="gsec-head"><h3>Данные из листа</h3>
       <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span></div>
-    <div className="gtable-wrap"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
+    <div className="gtable-wrap is-full"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
       {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td>{c.name}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td><td className="num">{String(c.qty)}</td></tr>)}
       {!components.length && <tr><td colSpan={4} className="gtable-empty">СПЯ не найдена</td></tr>}
     </tbody></table></div>

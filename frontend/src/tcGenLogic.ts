@@ -54,6 +54,8 @@ export type Endpoint = {
   id: string; side: Side; connId: string; method: "crimp" | "solder"; methodAuto: boolean;
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
   label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
+  /** Припуск на пайку, мм: сколько провода уходит в чашку/на лепесток паяльного разъёма — прибавляется к длине реза. */
+  solderAllow?: string;
   pins?: Record<number, string>;
   /** «Распиновка проверена»: подпись проверенной распиновки (pinoutCheck.ts); другая подпись — флаг снят. */
   pinChecked?: string;
@@ -714,16 +716,22 @@ export function makeGen(D: GenData, S: GenState) {
     const mode = S.measureMode;
     const hasTermSelected = !!(termA || termB);
     if (mode === "cut") return { total: 0, noData: false, parts: [] as string[] };
+    // Припуск на пайку (владелец 12.10.2026): у паяльного конца — то, что ввели в разъёме; в «длине реза по КД» он уже учтён.
+    const solderEp = (side: Side) => endpointsOnSide_(side).find((e) => e.method === "solder"
+      && (!byWire || routedWireIdxs_(e).indexOf(wIdx as number) >= 0)) || null;
+    const saA = parseLengthVal_(solderEp("A")?.solderAllow || "");
+    const saB = parseLengthVal_(solderEp("B")?.solderAllow || "");
+    const solderParts = [saA ? `пайка ст.А: +${saA}` : null, saB ? `пайка ст.В: +${saB}` : null];
     if (mode === "inner") {
       const lpA = terA ? parseLengthVal_(terA.lPlus) : 0;
       const lpB = terB ? parseLengthVal_(terB.lPlus) : 0;
-      return { total: lpA + lpB, noData: hasTermSelected && !terA && !terB,
-        parts: [lpA ? `L+ ст.А: ${lpA}` : null, lpB ? `L+ ст.В: ${lpB}` : null].filter(Boolean) as string[] };
+      return { total: lpA + lpB + saA + saB, noData: hasTermSelected && !terA && !terB,
+        parts: [lpA ? `L+ ст.А: ${lpA}` : null, lpB ? `L+ ст.В: ${lpB}` : null, ...solderParts].filter(Boolean) as string[] };
     }
     const lmA = terA ? parseLengthVal_(terA.lMinus) : 0;
     const lmB = terB ? parseLengthVal_(terB.lMinus) : 0;
-    return { total: -(lmA + lmB), noData: hasTermSelected && !terA && !terB,
-      parts: [lmA ? `L− ст.А: ${lmA}` : null, lmB ? `L− ст.В: ${lmB}` : null].filter(Boolean) as string[] };
+    return { total: -(lmA + lmB) + saA + saB, noData: hasTermSelected && !terA && !terB,
+      parts: [lmA ? `L− ст.А: ${lmA}` : null, lmB ? `L− ст.В: ${lmB}` : null, ...solderParts].filter(Boolean) as string[] };
   }
   /** updateCutLength_: длина реза при общей длине + подпись формулы. */
   function cutLengthInfo() {
@@ -1241,6 +1249,15 @@ export function makeGen(D: GenData, S: GenState) {
         }
       }
     }));
+
+    // ТУТ «на пайку» надевается прямо перед пайкой — после обжима и монтажа другой стороны, с той стороны, где паяют
+    // (владелец 12.10.2026: «обычно сначала обжим, вставляем, потом одеть трубки и паять»). Режется она по-прежнему с проводами.
+    const insTutAt = ops.findIndex((o) => o.opKey === "insTut");
+    const solderAt = ops.findIndex((o) => o.type === "stripCable" || o.type === "solderConn");
+    if (insTutAt >= 0 && solderAt > insTutAt) {
+      const [insTut] = ops.splice(insTutAt, 1);
+      ops.splice(solderAt - 1, 0, insTut);
+    }
 
     const splOps = spliceOps_();
     if (splOps.length) {
