@@ -169,6 +169,13 @@ class IdentityUserLevelAccessRow(Base):
 
 class IdentitySessionRow(Base):
     __tablename__ = "identity_sessions"
+    __table_args__ = (
+        # «Смотреть как сотрудник» (0108): a viewed employee always comes with an end, and never the session's own user.
+        CheckConstraint("view_as_user_id IS NULL OR view_as_until IS NOT NULL", name="ck_identity_sessions_view_as_until"),
+        CheckConstraint(
+            "view_as_user_id IS NULL OR view_as_user_id <> user_id", name="ck_identity_sessions_view_as_not_self",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(
@@ -186,6 +193,12 @@ class IdentitySessionRow(Base):
     revoked_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True), index=True)
     # portal_admin_<token>: «Режим админа» of this session is on until this moment.
     admin_mode_until: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+    # «Смотреть как сотрудник»: this session reads as that employee (writes refused) until `view_as_until`.
+    view_as_user_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="SET NULL", name="fk_identity_sessions_view_as_user_id"),
+    )
+    view_as_until: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityApiTokenRow(Base):
@@ -496,6 +509,8 @@ def _session_domain(row: IdentitySessionRow) -> IdentitySession:
         absolute_expires_at=as_utc(row.absolute_expires_at),
         revoked_at=as_utc(row.revoked_at) if row.revoked_at is not None else None,
         admin_mode_until=as_utc(row.admin_mode_until) if row.admin_mode_until is not None else None,
+        view_as_user_id=row.view_as_user_id,
+        view_as_until=as_utc(row.view_as_until) if row.view_as_until is not None else None,
     )
 
 
@@ -722,6 +737,12 @@ class SqlAlchemyIdentityRepository:
         self.session.execute(
             update(IdentityDepartmentRow).where(IdentityDepartmentRow.head_user_id == user_id).values(head_user_id=None)
         )
+        # Sessions viewing this person stop viewing (ON DELETE SET NULL, by hand for SQLite).
+        self.session.execute(
+            update(IdentitySessionRow)
+            .where(IdentitySessionRow.view_as_user_id == user_id)
+            .values(view_as_user_id=None, view_as_until=None)
+        )
         # API tokens keep their row; a token whose creator is gone stops working (resolve_api_token).
         for column in (IdentityApiTokenRow.created_by, IdentityApiTokenRow.revoked_by):
             self.session.execute(update(IdentityApiTokenRow).where(column == user_id).values({column.key: None}))
@@ -872,6 +893,18 @@ class SqlAlchemyIdentityRepository:
             self.session.add(IdentitySettingRow(key=key, value=value))
         else:
             row.value = value
+
+    def set_view_as(self, session_id: UUID, target_id: UUID | None, until) -> bool:
+        result = self.session.execute(
+            update(IdentitySessionRow)
+            .where(IdentitySessionRow.id == session_id, IdentitySessionRow.revoked_at.is_(None))
+            .values(view_as_user_id=target_id, view_as_until=until)
+        )
+        return result.rowcount == 1
+
+    def user_by_id(self, user_id: UUID) -> IdentityUser | None:
+        row = self.session.get(IdentityUserRow, user_id)
+        return None if row is None else _user_domain(row)
 
     def set_admin_mode(self, session_id: UUID, until) -> bool:
         result = self.session.execute(
