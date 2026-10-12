@@ -91,6 +91,8 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     const setOperation = (op: TechOperationRecord, column: string, value: string) =>
       referencesApi.editRecord(op.id, [{ field: column, old: op.fields[column] ?? "", value }]);
 
+    // Коды терминалов есть только у обжимного инструмента и матриц (owner 12.10.2026).
+    const withCodes = open.type === CRIMP_TOOL_TYPE || open.type === MATRIX_TYPE;
     return <article className="panel template-detail tr-paper eq-card">
       <div className="form-actions"><button className="secondary" onClick={() => { setOpenId(""); setOpQuery(""); }}>← Всё оборудование</button>
         {canEdit && <button className="secondary" onClick={() => onEdit(open.items[0])}>Править{open.items.length > 1 ? ` ${invOf(open.items[0])}` : ""}</button>}
@@ -106,10 +108,10 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
       {pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
 
       <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
-        <table className="eq-table"><thead><tr><th>Инв. номер</th><th>№</th><th>Расположение</th><th>Код терминалов</th><th /></tr></thead>
+        <table className="eq-table"><thead><tr><th>Инв. номер</th><th>№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}<th /></tr></thead>
           <tbody>{open.items.map((item) => <tr key={item.id} className={canEdit ? "eq-row" : undefined} onClick={canEdit ? () => onEdit(item) : undefined}>
             <td className="tnum"><b>{invOf(item) || "—"}</b></td><td className="tnum">{pick(item.fields, "№") || "—"}</td>
-            <td>{valueLabel("Расположение", placeOf(item)) || "—"}</td><td className="tnum">{pick(item.fields, CODE_KEY) || "—"}</td>
+            <td>{valueLabel("Расположение", placeOf(item)) || "—"}</td>{withCodes && <td className="tnum">{pick(item.fields, CODE_KEY) || "—"}</td>}
             <td className="eq-act">{canEdit && <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); onEdit(item); }}>Править</button>}</td>
           </tr>)}</tbody></table>
       </div>
