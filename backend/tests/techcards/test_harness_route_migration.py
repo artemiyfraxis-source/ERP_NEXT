@@ -1,4 +1,4 @@
-"""Миграция 0111: таблица маршрутов v3 позиций. Ничего существующего не меняется; правила таблицы держит база — один
+"""Миграция 0112: таблица маршрутов v3 позиций. Ничего существующего не меняется; правила таблицы держит база — один
 маршрут на позицию, версия ≥ 1, версия чертежа ≥ 0, чертёж — существующая строка КД (не удалить, пока есть маршрут)."""
 
 import sqlite3
@@ -8,8 +8,8 @@ from uuid import UUID
 from alembic import command
 from alembic.config import Config
 
-BEFORE = "0110_stage_warehouse_accepted"
-AFTER = "0111_harness_route_v3"
+BEFORE = "0111_finished_goods_register"
+AFTER = "0112_harness_route_v3"
 LINKED = "application/vnd.fraxis.harness+json"
 
 

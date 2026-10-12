@@ -22,8 +22,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0111_harness_route_v3"
-down_revision: str | None = "0110_stage_warehouse_accepted"
+revision: str = "0112_harness_route_v3"
+down_revision: str | None = "0111_finished_goods_register"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -55,7 +55,7 @@ def upgrade() -> None:
                            name="ck_techcard_harness_routes_position"),
         sa.CheckConstraint("length(trim(updated_by)) > 0", name="ck_techcard_harness_routes_updated_by"),
     )
-    print(f"0111_harness_route_v3: создана таблица {TABLE} (пустая)")
+    print(f"0112_harness_route_v3: создана таблица {TABLE} (пустая)")
 
 
 def downgrade() -> None:
