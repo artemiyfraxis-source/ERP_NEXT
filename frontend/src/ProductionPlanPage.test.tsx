@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import {
@@ -85,10 +85,9 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   ]);
   expect(screen.getByText("1", { selector: ".page-count" })).toBeInTheDocument();
   const row = sheetRow("708К.4");
-  // Статус — главный (самый тревожный) чип целым словом и «+N», полный список словами ERP — в подсказке.
-  expect(Array.from(row.querySelectorAll(".zg-col-status .status-chip")).map((item) => item.textContent)).toEqual(["СТОП"]);
-  expect(row.querySelector(".zg-more")?.getAttribute("title")).toBe("СТОП, В работе");
-  expect(row.querySelector(".zg-more")?.textContent).toBe("+1");
+  // Статус — тот же чип проекта, что в «Проектах»: этап со стрелкой меню и активный блокер рядом.
+  expect(Array.from(row.querySelectorAll(".zg-col-status .status-chip")).map((item) => item.textContent)).toEqual(["В работе▾", "СТОП"]);
+  expect(row.querySelector(".zg-col-status .proj-status-btn")).not.toBeNull();
   expect(row.querySelector(".zg-col-ready")?.textContent).toBe("40%");
   expect(row.querySelector<HTMLElement>(".zg-ready i")?.style.getPropertyValue("--zg-ready")).toBe("40%");
   expect(row.querySelector(".zg-col-kit_arrival")?.textContent).toBe("28.09");
@@ -319,7 +318,7 @@ it("groups the sheet: on hold on top, active by deadline, finished at the bottom
   expect(screen.getByText("Под этот поиск проектов нет.")).toBeInTheDocument();
 });
 
-it("edits sheet cells inline: a checkbox, back to the ERP value, the status, a day note and the deadline", async () => {
+it("edits sheet cells inline: a checkbox, back to the ERP value, a day note and the deadline", async () => {
   const payloads: Record<string, unknown>[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     if (String(input) === "/api/production/plan/events") {
@@ -339,26 +338,18 @@ it("edits sheet cells inline: a checkbox, back to the ERP value, the status, a d
   await waitFor(() => expect(payloads[1]).toMatchObject({ field: "test_sb", value: "авто" }));
 
   await waitFor(() => expect(screen.getByLabelText("Тест С/Б · 708К.4")).not.toBeDisabled());
-  fireEvent.click(sheetRow("708К.4").querySelector(".zg-col-status")!);
-  const dialog = await screen.findByRole("dialog", { name: "Правка: 708К.4" });
-  // Выбор статуса — теми же чипами и словами ERP, что в листе; в журнал уходит слово листа.
-  expect(dialog.querySelector('label[data-status="В РАБОТЕ"]')?.textContent).toBe("В работе");
-  fireEvent.click(dialog.querySelector('label[data-status="ПАУЗА"] input')!);
-  fireEvent.click(screen.getByRole("button", { name: "Поставить статус" }));
-  await waitFor(() => expect(payloads[2]).toMatchObject({ field: "status", value: "СТОП, В РАБОТЕ, ПАУЗА" }));
-
   await waitFor(() => expect(screen.getByLabelText("Тест С/Б · 708К.4")).not.toBeDisabled());
   const day = Array.from(sheetRow("708К.4").querySelectorAll(".zg-day"))[10];
   expect(day.textContent).toBe("П");
   fireEvent.click(day);
   fireEvent.click(await screen.findByRole("button", { name: "Убрать отметку" }));
-  await waitFor(() => expect(payloads[3]).toMatchObject({ field: "day:2026-09-25", value: "" }));
+  await waitFor(() => expect(payloads[2]).toMatchObject({ field: "day:2026-09-25", value: "" }));
 
   await waitFor(() => expect(screen.getByLabelText("Тест С/Б · 708К.4")).not.toBeDisabled());
   fireEvent.click(sheetRow("708К.4").querySelector(".zg-col-deadline")!);
   fireEvent.change(await screen.findByLabelText("Дата дедлайна"), { target: { value: "2026-10-03" } });
   fireEvent.click(screen.getByRole("button", { name: "Поставить дедлайн 03.10.2026" }));
-  await waitFor(() => expect(payloads[4]).toEqual({ project: "708К.4", kind: "deadline", blocker: "", text: "", deadline: "2026-10-03" }));
+  await waitFor(() => expect(payloads[3]).toEqual({ project: "708К.4", kind: "deadline", blocker: "", text: "", deadline: "2026-10-03" }));
 });
 
 it("draws the calendar: work days in the project colour, quantity on the first day, deadline and arrival marks", async () => {
@@ -517,41 +508,69 @@ it("opens the project card from the project number, not a panel under the list",
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
-it("shows the main status as a whole word in the shared chip and sizes the column to the longest word (ПП-1, ПП-3)", async () => {
+it("shows the project stage in the shared chip with the blocker beside it and sizes the column to the longest pair", async () => {
   const mixed: ProductionPlanResult = { ...plan, rows: [
-    row({ project: "621К.2", group: "active", sheet: { ...sheet, status: cell("К ЗАПУСК, ОЖИД КОМПЛ") } }),
-    row({ project: "708К.2", group: "active", sheet: { ...sheet, status: cell("Новый") } }),
-    row({ project: "614К.1", group: "active", sheet: { ...sheet, status: cell("В РАБОТЕ") } }),
+    row({ project: "621К.2", group: "active", stage: "КБ на складе", blocker: { type: "ОЖИД КОМПЛ", text: "Ждём", since: "2026-09-22T09:00:00+03:00", who: "Мастер" } }),
+    row({ project: "708К.2", group: "active", stage: "Новый", blocker: null }),
+    row({ project: "614К.1", group: "active", stage: "В работе", blocker: null }),
   ] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(mixed));
   render(<ProductionPlanPage principal={principal} />);
   await screen.findByRole("button", { name: "621К.2" });
 
-  const chip = (project: string) => sheetRow(project).querySelector(".zg-col-status .status-chip")!;
-  // Блокер — первым и целиком, без многоточия; второй статус — «+1» со списком в подсказке.
-  expect(chip("621К.2").textContent).toBe("ОЖИД КОМПЛ");
-  expect(chip("621К.2").getAttribute("data-tone")).toBe("warning");
-  expect(sheetRow("621К.2").querySelector(".zg-more")?.textContent).toBe("+1");
-  expect(sheetRow("621К.2").querySelector(".zg-more")?.getAttribute("title")).toBe("ОЖИД КОМПЛ, К запуску");
-  // Один словарь: слова листа — словами этапов ERP, тем же чипом, что «Новый».
-  expect(chip("614К.1").textContent).toBe("В работе");
-  expect(chip("708К.2").textContent).toBe("Новый");
-  expect(new Set([chip("614К.1"), chip("708К.2"), chip("621К.2")].map((item) => item.className))).toEqual(new Set(["status-chip"]));
-  // Ширина колонки — по самому длинному главному слову с местом под «+N».
+  const chips = (project: string) => Array.from(sheetRow(project).querySelectorAll(".zg-col-status .status-chip"));
+  expect(chips("621К.2").map((item) => item.textContent)).toEqual(["КБ на складе▾", "ОЖИД КОМПЛ"]);
+  expect(chips("621К.2")[1].getAttribute("data-tone")).toBe("warning");
+  expect(chips("614К.1").map((item) => item.textContent)).toEqual(["В работе▾"]);
+  expect(chips("708К.2").map((item) => item.textContent)).toEqual(["Новый▾"]);
   const width = Number.parseInt(document.querySelector<HTMLElement>(".zg-table col")!.style.width, 10);
   expect(width).toBe(statusColumnWidth(mixed.rows));
   expect(width).toBeGreaterThan(statusColumnWidth([mixed.rows[1]]));
 });
 
-it("orders statuses by alarm and estimates a column wide enough for each whole word", () => {
+it("sizes the status column by the stage chip and the blocker chip beside it", () => {
   expect(orderStatuses("В РАБОТЕ, СТОП")).toEqual(["СТОП", "В РАБОТЕ"]);
   expect(orderStatuses("К ЗАПУСК, ОЖИД КОМПЛ, ХОЛД")).toEqual(["ОЖИД КОМПЛ", "ХОЛД", "К ЗАПУСК"]);
-  const one = statusColumnWidth([{ sheet: { status: cell("ОЖИД КОМПЛ") } }]);
-  const two = statusColumnWidth([{ sheet: { status: cell("ОЖИД КОМПЛ, К ЗАПУСК") } }]);
-  expect(one).toBeGreaterThanOrEqual(104);
-  expect(two - one).toBe(26);
+  const blocker = { type: "ОЖИД КОМПЛ", text: "", since: "", who: "" };
+  const plain = statusColumnWidth([{ stage: "КБ на складе", blocker: null }]);
+  const held = statusColumnWidth([{ stage: "КБ на складе", blocker }]);
+  expect(plain).toBeGreaterThanOrEqual(84);
+  expect(held).toBeGreaterThan(plain);
   expect(statusColumnWidth([])).toBe(84);
-  expect(statusColumnWidth([{ sheet: { status: cell("Проверка комплекта, ОЖИД ИНФ") } }])).toBeLessThanOrEqual(200);
+  expect(held).toBeLessThanOrEqual(260);
+});
+
+it("changes the stage, blocks and closes a project without a card from the status chip, through the plan journal (one status everywhere)", async () => {
+  const bare = row({ project: "709К.1", group: "active", stage: "Новый", blocker: null });
+  const payloads: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/production/plan/stage-preview")) return json(stagePreview({ project: "709К.1", value: "В работе" }));
+    if (url === "/api/production/plan/events") { payloads.push(JSON.parse(String(init?.body))); return json({ event: plan.rows[0].events[0] }, 201); }
+    return json({ ...plan, rows: [bare] });
+  });
+  render(<ProductionPlanPage principal={principal} />);
+  await screen.findByRole("button", { name: "709К.1" });
+  const menu = async () => { fireEvent.click(sheetRow("709К.1").querySelector(".proj-status-btn")!); return screen.findByRole("menu", { name: "Статус проекта 709К.1" }); };
+
+  // Блокер — с причиной, записью «Блокер» плана.
+  let box = await menu();
+  fireEvent.click(within(box).getByRole("menuitem", { name: "ХОЛД" }));
+  fireEvent.change(screen.getByLabelText("Причина ХОЛД"), { target: { value: "ждём разъёмы" } });
+  fireEvent.click(screen.getByRole("button", { name: "Поставить" }));
+  await waitFor(() => expect(payloads[0]).toMatchObject({ project: "709К.1", kind: "block", blocker: "ХОЛД", text: "ждём разъёмы" }));
+
+  // Закрытие проекта — запись «Статус проекта».
+  box = await menu();
+  fireEvent.click(within(box).getByRole("menuitemradio", { name: "Отказ" }));
+  await waitFor(() => expect(payloads[1]).toMatchObject({ project: "709К.1", kind: "status", value: "Отказ" }));
+
+  // Этап — то же окно подтверждения с предпросмотром плана, запись «Этап КБ» на весь проект.
+  box = await menu();
+  fireEvent.click(within(box).getByRole("menuitemradio", { name: "В работе" }));
+  expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("button", { name: "Сменить этап" }));
+  await waitFor(() => expect(payloads[2]).toMatchObject({ project: "709К.1", kind: "stage", item_index: "", value: "В работе" }));
 });
 
 it("opens the project journal with an honest «no card» line when the project has no card in «Проекты» (ПП-5)", async () => {
@@ -629,9 +648,9 @@ it("opens a sheet cell editor from the keyboard and shows «—» in empty cells
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ ...plan, rows: [bare] }));
   render(<ProductionPlanPage principal={principal} />);
   await screen.findByRole("button", { name: "709К.1" });
-  const status = sheetRow("709К.1").querySelector<HTMLElement>(".zg-col-status")!;
-  expect(status.tabIndex).toBe(0);
-  fireEvent.keyDown(status, { key: "Enter" });
+  const ready = sheetRow("709К.1").querySelector<HTMLElement>(".zg-col-ready")!;
+  expect(ready.tabIndex).toBe(0);
+  fireEvent.keyDown(ready, { key: "Enter" });
   expect(await screen.findByRole("dialog", { name: "Правка: 709К.1" })).toBeInTheDocument();
   expect(["ready", "kit_arrival", "deadline"].map((key) => sheetRow("709К.1").querySelector(`.zg-col-${key}`)?.textContent)).toEqual(["—", "—", "—"]);
 });
