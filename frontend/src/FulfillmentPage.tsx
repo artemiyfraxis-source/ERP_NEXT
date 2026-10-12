@@ -561,7 +561,8 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
   const issuableRequests = requests.filter(issuable);
   const issuableLines = issuableRequests.reduce((sum, request) => sum + request.lines.length, 0);
   const issueLabel = issuableRequests.length
-    ? `Выдать ${issuableRequests.length === 1 ? kbOf(issuableRequests[0]) : `${issuableRequests.length} КБ`} · ${issuableLines} поз.`
+    // Перечень КБ, а не «2 КБ» — «Выдать 2 КБ» читалось как «выдать КБ2» (владелец 12.10.2026).
+    ? `Выдать: ${issuableRequests.length <= 4 ? issuableRequests.map(kbOf).join(", ") : `${issuableRequests.length} готовых КБ`} · ${issuableLines} поз.`
     : "Выдать комплекты";
   // Disabled, not hidden, when nothing is ready: the title says why (the first КБ that is not).
   const issueWhy = issuableRequests.length ? undefined
