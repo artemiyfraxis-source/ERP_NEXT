@@ -265,7 +265,7 @@ def _sql_in(column: str, values: tuple[str, ...]) -> str:
 
 
 # Migration 0101_production_stage_history added these checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
-# the journal only grows; DELETE stays for a deleted project); 0108_stage_warehouse_accepted re-points them at the
+# the journal only grows; DELETE stays for a deleted project); 0110_stage_warehouse_accepted re-points them at the
 # 8-stage ladder and the one closed-project word «Отменён» (old rows stay as written — NOT VALID — and read as the
 # new words via `stage_alias` / `terminal_alias`).
 # The value column comes first in each check: the head-1 seeder (tests/migrations/seed_any_revision.py) fills a

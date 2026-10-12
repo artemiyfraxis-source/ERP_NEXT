@@ -29,8 +29,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0108_stage_warehouse_accepted"
-down_revision: str | None = "0107_stage_ladder"
+revision: str = "0110_stage_warehouse_accepted"
+down_revision: str | None = "0109_session_view_as"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -167,7 +167,7 @@ def _close_legacy_projects(bind) -> None:
     now = datetime.now(timezone.utc)
     for project, word in sorted(todo.items()):
         bind.execute(sa.insert(events).values(
-            id=uuid4(), project=project, sequence=last.get(project, 0) + 1, occurred_at=now, who="миграция 0108",
+            id=uuid4(), project=project, sequence=last.get(project, 0) + 1, occurred_at=now, who="миграция 0110",
             kind=STATUS_KIND, blocker="", text=f"было «{word}», теперь «Отменён»: закрыть проект можно только так",
             value="Отменён", reason=f"было «{word}»", item_index="", field="", from_value="",
         ))

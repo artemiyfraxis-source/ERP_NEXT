@@ -1,4 +1,4 @@
-"""Миграция 0108 (владелец 12.10.2026): проверки журнала на новую лестницу, «Отказ» / «Слился» → «Отменён» с прежним
+"""Миграция 0110 (владелец 12.10.2026): проверки журнала на новую лестницу, «Отказ» / «Слился» → «Отменён» с прежним
 словом в причине, этапы КБ в журнале не переписываются (читаются через псевдонимы)."""
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from app.modules.production.infrastructure import PLAN_EVENT_CHECKS, SqlAlchemyP
 from app.modules.production.plan import PlanProjectSnapshot, project_terminal, summarize_journal
 
 BACKEND = Path(__file__).resolve().parents[2]
-BEFORE = "0107_stage_ladder"
-AFTER = "0108_stage_warehouse_accepted"
+BEFORE = "0109_session_view_as"
+AFTER = "0110_stage_warehouse_accepted"
 
 
 def _config(path: Path) -> Config:
@@ -29,8 +29,8 @@ def _config(path: Path) -> Config:
 
 
 @pytest.fixture(scope="module")
-def at_0107(tmp_path_factory) -> Path:
-    path = tmp_path_factory.mktemp("stage-accepted") / "0107.db"
+def at_0109(tmp_path_factory) -> Path:
+    path = tmp_path_factory.mktemp("stage-accepted") / "0109.db"
     with pytest.MonkeyPatch.context() as patch:
         patch.delenv("ERP_DATABASE_URL", raising=False)
         command.upgrade(_config(path), BEFORE)
@@ -38,10 +38,10 @@ def at_0107(tmp_path_factory) -> Path:
 
 
 @pytest.fixture()
-def database(at_0107, tmp_path, monkeypatch) -> Path:
+def database(at_0109, tmp_path, monkeypatch) -> Path:
     monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
     path = tmp_path / "erp.db"
-    shutil.copyfile(at_0107, path)
+    shutil.copyfile(at_0109, path)
     return path
 
 
@@ -94,8 +94,8 @@ def test_closed_projects_get_one_cancelled_row_with_the_old_word_and_stage_rows_
     after = _rows(database)
     added = [row for row in after if row not in before]
     assert added == [
-        ("10К.1", 2, "Статус проекта", "Отменён", "", "было «Отказ»", "миграция 0108"),
-        ("12К.1", 1, "Статус проекта", "Отменён", "", "было «Слился»", "миграция 0108"),
+        ("10К.1", 2, "Статус проекта", "Отменён", "", "было «Отказ»", "миграция 0110"),
+        ("12К.1", 1, "Статус проекта", "Отменён", "", "было «Слился»", "миграция 0110"),
     ]
     assert [row for row in before if row in after] == before  # журнал дополнен, не переписан
     with sqlite3.connect(database) as connection:

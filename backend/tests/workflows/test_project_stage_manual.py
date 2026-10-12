@@ -64,7 +64,7 @@ NOW = datetime(2026, 10, 10, 12, 0)
 BACKEND = Path(__file__).resolve().parents[2]
 MIGRATION = BACKEND / "migrations" / "versions" / "0101_production_stage_history.py"
 LADDER_MIGRATION = BACKEND / "migrations" / "versions" / "0107_stage_ladder.py"
-ACCEPTED_MIGRATION = BACKEND / "migrations" / "versions" / "0108_stage_warehouse_accepted.py"
+ACCEPTED_MIGRATION = BACKEND / "migrations" / "versions" / "0110_stage_warehouse_accepted.py"
 
 
 def _kit(index, status, *, manual=False, auto=None, shipped=False):
@@ -720,7 +720,7 @@ def test_migration_checks_match_the_model():
     ladder = _migration(LADDER_MIGRATION, "stage_ladder_migration")
     accepted = _migration(ACCEPTED_MIGRATION, "stage_accepted_migration")
 
-    # 0101 поставил проверку вида, 0108 перевела три проверки (этап, статус проекта, «было») на лестницу из 8 этапов
+    # 0101 поставил проверку вида, 0110 перевела три проверки (этап, статус проекта, «было») на лестницу из 8 этапов
     # и один способ закрыть проект.
     assert {**module.CHECKS, **accepted.CHECKS} == PLAN_EVENT_CHECKS
     assert module.KINDS == tuple(PLAN_KINDS.values())
