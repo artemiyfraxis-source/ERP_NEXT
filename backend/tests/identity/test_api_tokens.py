@@ -119,7 +119,7 @@ def test_admin_issues_lists_and_revokes_a_token_and_only_the_hash_is_stored(toke
     [row] = listed["tokens"]
     assert row["id"] == issued["id"] and row["name"] == "Claude Code"
     assert "token" not in row and secret not in str(listed)
-    assert set(listed["scopes"]) == {"tcgen", "assembly"}
+    assert set(listed["scopes"]) == {"tcgen", "assembly", "refs:read", "refs:write"}
 
     with sessions() as session:
         stored = session.scalar(select(IdentityApiTokenRow))
@@ -286,6 +286,15 @@ def test_gates_admit_a_service_principal_only_with_a_named_scope():
     assert not passes(http_auth.warehouse_view_principal, _service("tcgen", "assembly"))
     assert not passes(require_full_access(), _service("tcgen", "assembly"))
     assert passes(require_section("tcgen", "edit", scopes=("assembly",)), _service("assembly"))
+    # «Справочник»: refs:read reads, refs:write reads and edits; the snapshot load never takes a token.
+    assert passes(http_auth.references_view_principal, _service("refs:read"))
+    assert passes(http_auth.references_view_principal, _service("refs:write"))
+    assert passes(http_auth.references_edit_principal, _service("refs:write"))
+    assert not passes(http_auth.references_edit_principal, _service("refs:read"))
+    assert not passes(http_auth.references_edit_principal, _service("tcgen", "assembly"))
+    assert not passes(http_auth.references_import_principal, _service("refs:read", "refs:write"))
+    assert not passes(http_auth.references_maps_view_principal, _service("refs:read", "refs:write"))
+    assert not passes(http_auth.references_maps_edit_principal, _service("refs:write"))
 
 
 def test_a_route_accepting_a_scope_admits_the_token_and_a_plain_route_does_not(tokens_api):
@@ -377,8 +386,10 @@ def _route_calls(route, inherited) -> list:
 
 def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
     admin = _login("admin")
-    tcgen = _bearer(_issue(admin, scopes=("tcgen",))["token"])
-    assembly = _bearer(_issue(admin, scopes=("assembly",))["token"])
+    tokens = [
+        (_bearer(_issue(admin, scopes=(scope,), name=f"Токен {scope}")["token"]), scope)
+        for scope in ("tcgen", "assembly", "refs:read", "refs:write")
+    ]
     service = TestClient(app, raise_server_exceptions=False)
     accepting, checked = [], 0
     for route, inherited in _api_routes(app.routes):
@@ -388,7 +399,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         named = set().union(*(getattr(call, "token_scopes", frozenset()) for call in calls))
         method = sorted(route.methods - {"HEAD"})[0]
         url = PATH_PARAM.sub("00000000-0000-0000-0000-000000000001", route.path)
-        for headers, scope in ((tcgen, "tcgen"), (assembly, "assembly")):
+        for headers, scope in tokens:
             status = service.request(method, url, headers=headers).status_code
             if scope in named and (method, route.path) not in TOKEN_REFUSED_IN_ENDPOINT:
                 assert status not in (401, 403), (method, route.path, scope, status)
@@ -396,10 +407,29 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
             else:
                 assert status in (401, 403), (method, route.path, scope, status)
             checked += 1
-    assert checked > 200
+    assert checked > 400
     # Only the generator's own routes take a tcgen token; an `assembly` token — only the assembly drafts API. Both take
-    # the generator → «Ручная сборка» conversion (pure computation, nothing stored).
-    assert sorted(accepting) == [
+    # the generator → «Ручная сборка» conversion (pure computation, nothing stored). `refs:read` reads «Справочник»,
+    # `refs:write` also edits its rows; neither replaces a snapshot, loads coax cards or touches the maps.
+    reads = [
+        ("GET", "/api/references/bases"),
+        ("GET", "/api/references/cables"),
+        ("GET", "/api/references/tech-operations"),
+        ("POST", "/api/references/technology/resolve-terminal"),
+    ]
+    writes = [
+        ("DELETE", "/api/references/wire-gauges/{gauge_id}"),
+        ("PATCH", "/api/references/tech-operations/{record_id}"),
+        ("POST", "/api/references/tech-operations"),
+        ("POST", "/api/references/wire-gauges"),
+        ("PUT", "/api/references/cables/diameters"),
+        ("PUT", "/api/references/cables/{record_id}/hookup"),
+        ("PUT", "/api/references/cables/{record_id}/kind"),
+        ("PUT", "/api/references/wire-gauges/{gauge_id}"),
+    ]
+    refs = [(method, path, "refs:read") for method, path in reads]
+    refs += [(method, path, "refs:write") for method, path in reads + writes]
+    assert sorted(accepting) == sorted(refs + [
         ("GET", "/api/techcards/assembly/corpus", "assembly"),
         ("GET", "/api/techcards/assembly/drafts", "assembly"),
         ("GET", "/api/techcards/assembly/drafts/{draft_id}", "assembly"),
@@ -413,4 +443,4 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("POST", "/api/techcards/assembly/from-generator", "tcgen"),
         ("POST", "/api/techcards/grapher/import", "tcgen"),
         ("PUT", "/api/techcards/assembly/drafts/{draft_id}/lesson", "assembly"),
-    ]
+    ])

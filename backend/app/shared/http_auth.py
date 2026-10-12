@@ -214,11 +214,16 @@ shipping_warehouse_principal = require_section(
     "shipping_goods", "edit", detail="Раздел «Отгрузка — склад» вам не открыт на правку.",
 )
 # «Справочник» (SUPPLYMAP PortalRef.gs): portalErpGuard_(token, 'erpref') reads, portalSectionEditGuard_ writes.
-references_view_principal = require_section("erpref", "view", detail="Раздел «Справочник» вам не открыт.")
-references_edit_principal = require_section(
-    "erpref", "edit", detail="Раздел «Справочник» открыт вам только на просмотр.",
+# API tokens (owner 12.10.2026): `refs:read` reads the tables, `refs:write` also edits rows and loads them through the
+# per-table import (shared/bulk_import.py). Neither replaces a whole snapshot nor the maps: those gates below name no
+# scope, so a token never passes them.
+references_view_principal = require_section(
+    "erpref", "view", detail="Раздел «Справочник» вам не открыт.", scopes=("refs:read", "refs:write"),
 )
-# Whole-base snapshot loads (SUPPLYMAP mirror / snapshot scripts): an administrator's tool.
+references_edit_principal = require_section(
+    "erpref", "edit", detail="Раздел «Справочник» открыт вам только на просмотр.", scopes=("refs:write",),
+)
+# Whole-base snapshot loads (SUPPLYMAP mirror / snapshot scripts): an administrator's tool, never a token.
 references_import_principal = require_full_access("Загрузка снимка баз — только администратору.")
 # Maps «ссылка→поставщик» / «изготовитель→страна» (Portal.gs portalGet/SaveReferences): portalCanWork_ — the
 # purchase card with «взять в работу», i.e. `procurement` edit. Reading also opens from «Справочник».
