@@ -95,7 +95,7 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   expect(row.querySelector(".zg-col-deadline")?.textContent).toBe("30.09");
   expect(row.querySelector(".zg-col-deadline")?.getAttribute("title")).toBe("Дедлайн 30.09.2026 · дней до дедлайна: 8");
   expect(row.querySelector(".zg-col-test_sb")?.className).toContain("zg-manual");
-  expect(screen.getByText("На паузе · 1")).toBeInTheDocument();
+  expect(screen.getByText("В работе · 1")).toBeInTheDocument();
   await openProject("708К.4");
   expect(screen.getAllByText("Ждём разъёмы").length).toBeGreaterThan(0);
   expect(screen.getByText("Всего 5: склад 2, в пути 1, в закупке 1, в заявках 1.")).toBeInTheDocument();
@@ -290,14 +290,14 @@ function projects() {
   return Array.from(document.querySelectorAll(".zg-row")).map((item) => item.getAttribute("data-project"));
 }
 
-it("groups the sheet: on hold on top, active by deadline, finished at the bottom, closed on demand; searches", async () => {
+it("groups the sheet by stage in the plan order, overdue first, closed last on demand; collapses per stage; searches", async () => {
   const groupedBoard: ProductionPlanResult = { ...board, rows: [
-    row({ project: "701К.1", customer: "Альфа", days_left: null, deadline: null, group: "active" }),
-    row({ project: "702К.1", customer: "Бета", days_left: -2, deadline: "2026-09-20", group: "active" }),
-    row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", group: "hold" }),
-    row({ project: "704К.1", customer: "Дельта", days_left: 1, deadline: "2026-09-23", group: "active" }),
-    row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Отказ", group: "closed" }),
-    row({ project: "706К.1", customer: "Зета", stage: "Отгружено", group: "done" }),
+    row({ project: "701К.1", customer: "Альфа", days_left: null, deadline: null, stage: "В работе" }),
+    row({ project: "702К.1", customer: "Бета", days_left: -2, deadline: "2026-09-20", stage: "В работе" }),
+    row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", stage: "Новый", blocker: { type: "ХОЛД", text: "Ждём", since: "2026-09-22", who: "Мастер" } }),
+    row({ project: "704К.1", customer: "Дельта", days_left: 1, deadline: "2026-09-23", stage: "В работе" }),
+    row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Отказ" }),
+    row({ project: "706К.1", customer: "Зета", stage: "Отгружено" }),
   ] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input) === "/api/production/calendar"
     ? json({ holidays: ["2026-09-24"], absences: [], shift: {} }) : json(groupedBoard));
@@ -306,8 +306,17 @@ it("groups the sheet: on hold on top, active by deadline, finished at the bottom
 
   expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1", "706К.1"]);
   expect(Array.from(document.querySelectorAll(".zg-group-label")).map((item) => item.textContent)).toEqual([
-    "На паузе · 1", "В работе · 3", "ОТК, отгрузка, готово · 1",
+    "Новый · 1", "В работе · 3", "Отгружено · 1",
   ]);
+  // The blocked project keeps its stage group and its chip.
+  expect(within(sheetRow("703К.1")).getByText("ХОЛД")).toBeInTheDocument();
+  // A collapsed stage hides its rows and stays collapsed after a remount.
+  fireEvent.click(screen.getByRole("button", { name: "В работе · 3" }));
+  expect(projects()).toEqual(["703К.1", "706К.1"]);
+  expect(JSON.parse(window.localStorage.getItem("erp-zg-collapsed") ?? "null")).toEqual(["В работе"]);
+  fireEvent.click(screen.getByRole("button", { name: "В работе · 3" }));
+  expect(projects()).toEqual(["703К.1", "702К.1", "704К.1", "701К.1", "706К.1"]);
+  window.localStorage.removeItem("erp-zg-collapsed");
   // A shop holiday (24.09) is grey like a weekend.
   await waitFor(() => expect(document.querySelectorAll(".zg-table thead th.zg-day-head")[9]?.className).toContain("zg-off"));
   fireEvent.click(screen.getByLabelText("Закрытые проекты · 1"));
@@ -316,6 +325,35 @@ it("groups the sheet: on hold on top, active by deadline, finished at the bottom
   expect(projects()).toEqual(["705К.1"]);
   fireEvent.change(screen.getByLabelText("Поиск проекта"), { target: { value: "нет такого" } });
   expect(screen.getByText("Под этот поиск проектов нет.")).toBeInTheDocument();
+});
+
+const STAGES = ["Новый", "ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено"];
+const names = (groups: ReturnType<typeof groupSheetRows>) => groups.map((group) => [group.label, group.rows.map((item) => item.project)]);
+
+it("groupSheetRows: groups follow the stage list, empty ones are hidden, closed go last", () => {
+  const rows = [
+    row({ project: "A", stage: "Отгружено" }), row({ project: "B", stage: "Новый" }), row({ project: "C", stage: "ОТК" }),
+    row({ project: "D", stage: "Отказ", terminal: true }), row({ project: "E", stage: "В работе" }),
+  ];
+  expect(names(groupSheetRows(rows, STAGES))).toEqual([["Новый", ["B"]], ["В работе", ["E"]], ["ОТК", ["C"]], ["Отгружено", ["A"]], ["Закрытые", ["D"]]]);
+  // The order comes from the passed list, not from the code.
+  expect(groupSheetRows(rows, ["Отгружено", "Новый"]).map((group) => group.label)).toEqual(["Отгружено", "Новый", "ОТК", "В работе", "Закрытые"]);
+  expect(groupSheetRows(rows, STAGES, "нет такого")).toEqual([]);
+});
+
+it("groupSheetRows: overdue first, no deadline last, project numbers compare numerically", () => {
+  const rows = [
+    row({ project: "КБ10", stage: "В работе", days_left: 3 }), row({ project: "КБ9", stage: "В работе", days_left: 3 }),
+    row({ project: "97К.10", stage: "В работе", days_left: null }), row({ project: "97К.9", stage: "В работе", days_left: null }),
+    row({ project: "Z", stage: "В работе", days_left: -5 }), row({ project: "Y", stage: "В работе", days_left: 0 }),
+  ];
+  expect(groupSheetRows(rows, STAGES)[0].rows.map((item) => item.project)).toEqual(["Z", "Y", "КБ9", "КБ10", "97К.9", "97К.10"]);
+});
+
+it("groupSheetRows: a blocked project stays in its stage; an unknown stage goes after the known ones", () => {
+  const blocked = row({ project: "H", stage: "ОТК", blocker: { type: "ХОЛД", text: "", since: "2026-09-22", who: "" } });
+  const groups = groupSheetRows([blocked, row({ project: "X", stage: "Новый" }), row({ project: "W", stage: "Неизвестный" })], STAGES);
+  expect(names(groups)).toEqual([["Новый", ["X"]], ["ОТК", ["H"]], ["Неизвестный", ["W"]]]);
 });
 
 it("edits sheet cells inline: a checkbox, back to the ERP value, a day note and the deadline", async () => {
@@ -397,7 +435,6 @@ it("keeps sheet helpers stable", () => {
   expect(autoHiddenColumns(1192, 46, false, 104, MIN_VISIBLE_WEEKS)).toEqual(["comment", "days_left"]);
   expect(autoHiddenColumns(600, 24)).toEqual(["comment", "days_left", "zkp", "in_plan", "customer_supplied", "test_sb", "kit_checked"]);
   expect(autoHiddenColumns(0, 24)).toEqual([]);
-  expect(groupSheetRows([row({ project: "1", terminal: true, group: undefined }), row({ project: "2", group: undefined })]).closed.map((item) => item.project)).toEqual(["1"]);
   expect(markText({ field: "status", value: "ХОЛД", text: "" })).toBe("Статус: ХОЛД");
   expect(markText({ field: "kit_arrival", value: "2026-10-09", text: "" })).toBe("Приход комплектующих: 09.10.2026");
   expect(markText({ field: "status", value: "К ЗАПУСК, ОЖИД ИНФ", text: "" })).toBe("Статус: К запуску, ОЖИД ИНФ");

@@ -153,7 +153,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
       <div className="plan-section-head"><h2>Загрузка цеха</h2>
         <span className="zg-span" title={`Период листа ${shortDate(sheetSpan.from)} – ${shortDate(sheetSpan.to)}`}><b>{periodWords(sheetSpan.from, sheetSpan.to)}</b> · сегодня {WEEKDAYS[new Date(`${sheetSpan.today}T00:00:00`).getDay()]} {formatDayMonth(sheetSpan.today)}</span></div>
       {!loaded ? <div className="empty">Загрузка…</div>
-        : <PlanLoadSheet rows={data.rows} from={sheetSpan.from} to={sheetSpan.to} today={sheetSpan.today} holidays={holidays}
+        : <PlanLoadSheet rows={data.rows} from={sheetSpan.from} to={sheetSpan.to} today={sheetSpan.today} holidays={holidays} stages={data.stages}
           suppliedValues={data.supplied_values ?? ["НЕТ", "ДА", "Ч/Т"]}
           arrivalValues={data.arrival_values ?? ["Склад", "Ждем", "???"]} canEdit={canEdit} busy={busy}
           onStatusChanged={() => void reload()} onMark={addMark}

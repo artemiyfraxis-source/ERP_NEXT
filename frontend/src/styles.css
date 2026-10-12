@@ -2677,7 +2677,9 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-row-closed > td { color: var(--muted-foreground); }
 .zg-table .zg-group td { height: 22px; padding: 0; background: var(--accent); overflow: visible; }
 .zg-group-label { position: sticky; left: 0; display: inline-block; padding: 0 10px; font-size: var(--zg-font-sm); font-weight: 700; color: var(--foreground); line-height: 22px; }
-.zg-group-hold .zg-group-label { color: #5f6368; }
+.zg-group-label { border: 0; background: none; cursor: pointer; font-family: inherit; text-align: left; }
+.zg-group-label::before { content: "▾ "; color: var(--muted-foreground); }
+.zg-group-label[aria-expanded="false"]::before { content: "▸ "; }
 .zg-edit { cursor: pointer; }
 .zg-edit:hover { outline: 1px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
 .zg-edit:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
