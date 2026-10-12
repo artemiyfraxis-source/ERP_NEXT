@@ -420,6 +420,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("GET", "/api/references/bases"),
         ("GET", "/api/references/cables"),
         ("GET", "/api/references/coax-dia"),
+        ("GET", "/api/references/coverings"),
         ("GET", "/api/references/import/{table}/schema"),
         ("GET", "/api/references/tech-operations"),
         ("GET", "/api/references/tech-operations/crimp-codes"),
@@ -440,6 +441,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("PUT", "/api/references/cables/diameters"),
         ("PUT", "/api/references/cables/{record_id}/hookup"),
         ("PUT", "/api/references/cables/{record_id}/kind"),
+        ("PUT", "/api/references/coverings/{record_id}/group"),
         ("PUT", "/api/references/wire-gauges/{gauge_id}"),
     ]
     refs = [(method, path, "refs:read") for method, path in reads]

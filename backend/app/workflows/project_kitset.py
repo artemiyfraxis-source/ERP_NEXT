@@ -43,6 +43,7 @@ from app.modules.procurement.application import (
     remove_untouched_request_lines,
 )
 from app.modules.procurement.domain import ProcurementLine
+from app.workflows.item_names import ReferenceNames, StockNames, reference_records, resolve_name
 from app.modules.production.domain import ProductionTask
 from app.modules.production.traceability import ProductionBox
 from app.modules.production.plan import (
@@ -932,11 +933,20 @@ def supply_off_book(
 def supply_stock(project: str, fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None) -> list[SupplyStock]:
     """«Свободно»: what a kit of the project can take from each lot (ДОСТУПНО + the project's own reserves on it —
     «Со склада» covers and techcard reserves, the same number the spec's lot picker shows)."""
+    return _free_stock(*_stock_lots(project, fulfillment_uow))
+
+
+def _stock_lots(project: str, fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None) -> tuple[list, dict]:
+    """Every lot with a balance and the project's own reserves on them; no factory → nothing."""
     if fulfillment_uow is None:
-        return []
+        return [], {}
     with fulfillment_uow() as uow:
         lots = list(uow.warehouse.list(limit=10_000, query="", include_zero=False))
         held = project_reserve_by_lot(uow, lots, project)
+    return lots, held
+
+
+def _free_stock(lots: list, held: dict) -> list[SupplyStock]:
     stock = []
     for lot in lots:
         free = free_for_project(lot, held)
@@ -987,8 +997,10 @@ def project_supply(
     requests_uow: Callable[[], RequestsUnitOfWork] | None,
     procurement_uow: Callable[[], ProcurementUnitOfWork] | None,
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None,
+    references_uow: Callable[[], Any] | None = None,
 ) -> tuple[tuple[SupplyLine, ...], tuple[Request, ...]]:
-    """The «Снабжение» tab: every spec position with Нужно / Свободно / Без ГРН / В закупке / Не хватает, its stage.
+    """The «Снабжение» tab: every spec position with Нужно / Свободно / Без ГРН / В закупке / Не хватает, its stage
+    and the name it shows (`item_names.resolve_name`: references, the spec, the warehouse, the supplier site).
     A module without a factory reads empty. Also returns the project's requests (the order reads their point)."""
     def read(factory, reader):
         if factory is None:
@@ -1006,11 +1018,18 @@ def project_supply(
     kits = read(fulfillment_uow, lambda uow: uow.fulfillment.for_project(project))
     off_book = supply_off_book(kitset.project, requests, procurement, procurement_uow)
     rows = supply_rows(kitset.project, requests, procurement, lotless=[line_id for line_id, _item in off_book])
+    lots, held = _stock_lots(kitset.project, fulfillment_uow)
     lines = supply_lines(
-        kitset, rows, supply_stock(kitset.project, fulfillment_uow), supply_kitting(kitset.project, kits),
+        kitset, rows, _free_stock(lots, held), supply_kitting(kitset.project, kits),
         off_book=[item for _line_id, item in off_book], absent=supply_absent(kitset.project, kits),
     )
-    return lines, requests
+    references = ReferenceNames(reference_records(references_uow))
+    stock_names = StockNames(lots)
+    named = []
+    for line in lines:
+        shown = resolve_name(line.article, line.name, line.link, references, stock_names)
+        named.append(replace(line, name=shown.name, name_source=shown.source, name_hint=shown.hint))
+    return tuple(named), requests
 
 
 # ── Заказать недостающее (Снабжение → заявки на закупку) ────────────────
@@ -1083,6 +1102,7 @@ def order_missing(
     procurement_uow: Callable[[], ProcurementUnitOfWork] | None = None,
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
     production_uow: Callable[[], PlanUnitOfWork] | None = None,
+    references_uow: Callable[[], Any] | None = None,
 ) -> OrderMissingResult:
     """Purchase requests for what the project lacks: per position Нужно − Свободно − В закупке − в комплектации −
     на складе без ГРН.
@@ -1098,7 +1118,7 @@ def order_missing(
         raise KitsetValidationError(
             f"Номер проекта «{kitset.project}» не в формате 591К.3 — заявку к нему не привязать"
         )
-    lines, requests = project_supply(kitset, requests_uow, procurement_uow, fulfillment_uow)
+    lines, requests = project_supply(kitset, requests_uow, procurement_uow, fulfillment_uow, references_uow)
     by_key = {_supply_key(line.article): line for line in lines}
     wanted = [_supply_key(article) for article in command.articles if _supply_key(article)]
     result = OrderMissingResult()
