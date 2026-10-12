@@ -29,6 +29,7 @@ PURE_FILES = frozenset(
         "app.modules.production.genealogy",
         "app.modules.production.plan",
         "app.modules.production.scheduling",
+        "app.modules.production.worklog",
         "app.modules.techcards.grapher_import",
         "app.modules.references.technology",
     }
