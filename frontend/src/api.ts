@@ -514,6 +514,20 @@ export interface WarehouseShelfPlaces {
   next_number: number | null;
 }
 
+/** Stage option warehouse.scan: «lot» — the scanned ГРН's lots, «place» — what lies on the scanned place. */
+export interface WarehouseScan {
+  kind: "lot" | "place";
+  code: string;
+  place: string;
+  lots: WarehouseLot[];
+}
+
+/** Stage option warehouse.undo: what «Отменить последнее» would take back (null — and why not). */
+export interface WarehouseUndoPreview {
+  undo: { label: string; occurred_at: string } | null;
+  reason: string;
+}
+
 export interface WarehouseArticleInfo {
   series: string;
   name: string;
@@ -2581,6 +2595,12 @@ export const warehouseApi = {
     const suffix = params.size ? `?${params}` : "";
     return api<WarehouseTotals>(`/api/stock/totals${suffix}`);
   },
+  scan: (code: string) => api<WarehouseScan>(`/api/stock/scan?code=${encodeURIComponent(code)}`),
+  undoPreview: (lotId: string) => api<WarehouseUndoPreview>(`/api/stock/batches/${lotId}/undo`),
+  undo: (lotId: string, version: number) => api<{ lot: WarehouseLot; undone: string }>(`/api/stock/batches/${lotId}/undo`, {
+    method: "POST",
+    body: JSON.stringify({ version }),
+  }),
   shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
     `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,
   ),

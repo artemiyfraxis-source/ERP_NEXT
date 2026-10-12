@@ -24,6 +24,7 @@ import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
+import { UndoLast, WarehouseScanBar } from "./WarehouseScan";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
   chooserColumns, ColumnChooser, columnTitle, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
@@ -78,6 +79,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
   const [query, setQuery] = useState(() => urlParam("q"));
   const wordSearch = useStageOption("warehouse.word_search");
   const itemsOn = useStageOption("references.items");
+  const scanOn = useStageOption("warehouse.scan");
   const [lotItems, setLotItems] = useState<Record<string, ItemBrief>>({});
   const [itemsTick, setItemsTick] = useState(0);
   const [warehouse, setWarehouse] = useState("");
@@ -274,6 +276,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {putawayError && <div className="error-banner" role="alert">{putawayError}</div>}
+      {scanOn && <WarehouseScanBar readOnly={readOnly} disabled={Boolean(busy) || loading} mutate={mutate} />}
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}
       {readOnly && <p className="page-sub">Склад открыт вам только на просмотр.</p>}
       <div className="filters table-toolbar stock-toolbar">
@@ -1433,6 +1436,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
   const passport = passportLine(lot);
   const itemsCtx = useContext(LotItems);
   const brief = itemsCtx.items[lot.id];
+  const undoOn = useStageOption("warehouse.undo");
 
   return (
     <article className={busy ? "lot-card busy" : "lot-card"} aria-label={`Партия ${lot.grn}`}>
@@ -1458,6 +1462,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
         {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
       </div>}
+      {!readOnly && undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}

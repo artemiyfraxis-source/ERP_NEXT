@@ -11,6 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -35,6 +36,7 @@ from .application import (
     MoveLocationCommand,
     MoveLotCommand,
     ReturnWriteOffCommand,
+    UndoLastCommand,
     UnitOfWork,
     shelf_occupancy,
     WriteOffCommand,
@@ -47,6 +49,9 @@ from .application import (
     move_lot,
     lot_destinations,
     return_writeoff,
+    scan_stock,
+    undo_last_movement,
+    undo_preview,
     warehouse_lots,
     warehouse_totals,
     write_off,
@@ -394,6 +399,39 @@ def totals(
     }
 
 
+def _require_option(key: str) -> None:
+    """A stage option that is off hides its route: 404, checked after the gate (an unknown caller still gets 401/403)."""
+    if not stage_options.enabled(key):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+@router.get("/scan")
+def scan(
+    request: Request,
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+    code: Annotated[str, Query(max_length=255)] = "",
+) -> dict:
+    """Stage option warehouse.scan: ГРН (with or without «-П2», any case, look-alikes, Russian layout) → its lot(s);
+    a place code → the lots with a balance lying there (both warehouses); else 404 «Не найдено: …»."""
+    _require_option("warehouse.scan")
+    try:
+        result = scan_stock(uow_factory(), code)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=error.args[0]) from error
+    holders = _reserve_holders(request, [lot for lot in result.lots if lot.reserved > 0])
+    return {
+        "kind": result.kind,
+        "code": result.code,
+        "place": result.place,
+        "lots": [
+            {**_result(lot), "reserve_holders": holders.get(lot.id, []),
+             "reserve_note": _reserve_note(holders.get(lot.id, []))}
+            for lot in result.lots
+        ],
+    }
+
+
 @router.get("/journal")
 def journal(
     _principal: Annotated[Principal, Depends(warehouse_journal_principal)],
@@ -652,6 +690,46 @@ def move(
             uow_factory(),
         )
     )
+
+
+class UndoPayload(BaseModel):
+    version: int = Field(ge=1)
+
+
+@router.get("/batches/{lot_id}/undo")
+def undo_last_preview(
+    lot_id: UUID,
+    principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """Stage option warehouse.undo: what «Отменить последнее» would take back, or why nothing can be."""
+    _require_option("warehouse.undo")
+    try:
+        preview = undo_preview(lot_id, principal.actor, now, uow_factory())
+    except WarehouseValidationError as error:
+        return {"undo": None, "reason": str(error)}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"undo": {"label": preview.label, "occurred_at": preview.occurred_at.isoformat()}, "reason": ""}
+
+
+@router.post("/batches/{lot_id}/undo")
+def undo_last(
+    lot_id: UUID,
+    payload: UndoPayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    """Stage option warehouse.undo: own write-off / return / move of the last 10 minutes, taken back by a
+    compensating entry (the journal keeps both)."""
+    _require_option("warehouse.undo")
+    lot, label = _guarded(lambda: undo_last_movement(
+        UndoLastCommand(lot_id=lot_id, expected_version=payload.version, actor=principal.actor, now=now),
+        uow_factory(),
+    ))
+    return {"lot": _result(lot), "undone": label}
 
 
 @router.put("/batches/{lot_id}/location")

@@ -190,4 +190,14 @@ def journal_page(
 
 def warehouse_journal(uow, query: str = "", limit: int = JOURNAL_LIMIT) -> JournalPage:
     with uow:
-        return journal_page(uow.journal.audit_events(), uow.journal.writeoff_entries(), query, limit)
+        reader = uow.journal
+        if not hasattr(reader, "writeoff_lines"):
+            return journal_page(reader.audit_events(), reader.writeoff_entries(), query, limit)
+        if str(query or "").split():
+            # A search matches the rendered row text, so every row is read; light rows, no entities.
+            return journal_page(reader.audit_events(), reader.writeoff_lines(), query, limit)
+        # No search: the newest `limit` rows of the merged list come from the newest `limit` of each stream (both
+        # already newest first, the sort is stable), and the total is two counts.
+        page = journal_page(reader.audit_events(limit), reader.writeoff_lines(limit), "", limit)
+        total = reader.totals()
+        return JournalPage(rows=page.rows, total=total, truncated=max(0, total - limit))
