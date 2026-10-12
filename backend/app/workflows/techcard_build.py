@@ -7,9 +7,10 @@ from copy import deepcopy
 from typing import Any, Iterable, Mapping
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
+from app.modules.references.cable_structure import gauge_gost_awg
 from app.modules.references.domain import TechOperationTab, gost_awg_map
 from app.modules.references.technology import (
-    TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, gost_awg_from_wire_table, resolve_terminal,
+    TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, resolve_terminal,
     wire_section,
 )
 
@@ -26,10 +27,9 @@ def with_technology(
         if not metadata or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
             return dict(config), None
         records = references_uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)
-        # SUPPLYMAP gostAwgMap_: the map comes from the СПР.КАБ AWG table; the stored map only when it is not loaded.
-        gost_awg = gost_awg_from_wire_table(record.fields for record in references_uow.tech_operations.list(
-            tab=TechOperationTab.KAB_AWG, query="", limit=1_000,
-        )) or gost_awg_map(references_uow.references.list())
+        # ГОСТ section → AWG from «Сечения AWG ↔ мм²» of the база монтажных проводов (the old СПР.КАБ AWG table is
+        # retired, owner 12.10.2026); the stored map only when the sizes table is empty.
+        gost_awg = gauge_gost_awg(references_uow.cable_structure.gauges()) or gost_awg_map(references_uow.references.list())
     enriched = enrich_terminal_norms(config, (TerminalRecord.from_fields(record.fields) for record in records), gost_awg)
     return enriched, {
         "schema_version": metadata["schema_version"],
@@ -44,7 +44,7 @@ def enrich_terminal_norms(
 ) -> dict[str, Any]:
     """Return a copied generator config with terminal norms resolved per wire section.
 
-    `gost_awg` is the workshop ГОСТ section → AWG map (SUPPLYMAP СПР.КАБ).
+    `gost_awg` is the workshop ГОСТ section → AWG map («Сечения AWG ↔ мм²»).
     """
     enriched = deepcopy(dict(config))
     terminal_records = tuple(records)

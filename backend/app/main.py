@@ -30,6 +30,7 @@ from .modules.production import plan_api as production_plan_api
 from .modules.production import autoplan_api as production_autoplan_api
 from .modules.shipping import api as shipping_api
 from .modules.references import api as references_api
+from .modules.references import wire_dia_api as references_wire_dia_api
 from .modules.operations import api as operations_api
 from .modules.requests import api as requests_api
 from .modules.techcards import api as techcards_api
@@ -83,6 +84,7 @@ app.include_router(assembly_api.router)
 app.include_router(harness_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
+app.include_router(references_wire_dia_api.router)
 app.include_router(operations_api.router)
 app.include_router(employee_card_api.router)
 app.include_router(leave_api.router)
