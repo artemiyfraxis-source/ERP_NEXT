@@ -56,6 +56,9 @@ export type Endpoint = {
   label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
   /** Припуск на пайку, мм: сколько провода уходит в чашку/на лепесток паяльного разъёма — прибавляется к длине реза. */
   solderAllow?: string;
+  /** «Термоусадка поверх разъёма»: рукав на тыльной части разъёма (корпус + выход проводов). Поля необязательны — старые
+      сохранённые состояния грузятся без них. shrinkMat пуст — строка ТТК листа (иначе первая ТУТ); shrinkLen пуст — 20 мм. */
+  shrinkOn?: boolean; shrinkMat?: string; shrinkLen?: string;
   pins?: Record<number, string>;
   /** «Распиновка проверена»: подпись проверенной распиновки (pinoutCheck.ts); другая подпись — флаг снят. */
   pinChecked?: string;
@@ -125,6 +128,8 @@ export type OpSpec = {
 
 // ── Константы TcGenInline ─────────────────────────────────────────────────
 export const JACKET_STRIP_MM_ = "20";
+/** Длина рукава «Термоусадка поверх разъёма» по умолчанию, мм. */
+export const SHRINK_LEN_MM_ = "20";
 export const DIODE_RE_ = /tvs|диод|\d[.,]\d\s*ke\d|\bsmbj\d/i;
 export const LUG_RE_ = /^\s*(?:нки|нви|нвки|ншви|нши|рпи|тмл)(?![а-яa-z])/i;
 export const FOLD_STRIP_MM_ = "10";
@@ -462,6 +467,22 @@ export function makeGen(D: GenData, S: GenState) {
     const plain = all.filter((c) => !/ттк/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`));
     return plain[0] || all[0] || null;
   }
+  /** Строки листа, годные в термоусадку поверх разъёма: ТТК и ТУТ (без защитных трубок). */
+  function shrinkCandidates_() {
+    return comps().filter((c) => /тут|ттк|термоусад|shrink/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`)
+      && !PROTECT_TUBE_RE_.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`));
+  }
+  const isGlueSleeve_ = (c: Comp) => /ттк|клеев/i.test(`${c.name || ""} ${c.art || ""}`);
+  function defaultShrinkComp_() {
+    const all = shrinkCandidates_();
+    return all.find(isGlueSleeve_) || all[0] || null;
+  }
+  /** Рукав поверх разъёма этого конца или null, если опция выключена или в листе нет ТУТ/ТТК. */
+  function shrinkOf_(e: Endpoint): { comp: Comp; len: string } | null {
+    if (!e.shrinkOn || !e.connId) return null;
+    const comp = (e.shrinkMat ? getCompById(e.shrinkMat) : null) || defaultShrinkComp_();
+    return comp ? { comp, len: (e.shrinkLen || "").trim() || SHRINK_LEN_MM_ } : null;
+  }
   function lugTmplHint_(art: string) {
     const s = String(art || "");
     if (!LUG_RE_.test(s)) return "";
@@ -481,9 +502,10 @@ export function makeGen(D: GenData, S: GenState) {
   const markComps_ = () => comps().filter((c) => /маркир/i.test(`${c.type || ""} ${c.name || ""}`));
   function harnessSleeveComps_() {
     const solderTut = S.endpoints.some((e) => e.method === "solder" && !e.tutOff) ? bomTut_() : null;
+    const connSleeves = new Set(S.endpoints.map((e) => shrinkOf_(e)?.comp).filter(Boolean));
     return comps().filter((c) => {
       const s = `${c.type || ""} ${c.name || ""} ${c.art || ""}`;
-      return c !== solderTut && /ттк|тут|термоусад|трубк|shrink/i.test(s) && !PROTECT_TUBE_RE_.test(s);
+      return c !== solderTut && !connSleeves.has(c) && /ттк|тут|термоусад|трубк|shrink/i.test(s) && !PROTECT_TUBE_RE_.test(s);
     });
   }
   const rjEndsInBom_ = () => comps().filter((c) => /^соед/i.test(c.type || "") && isRjConn_(c))
@@ -1084,6 +1106,43 @@ export function makeGen(D: GenData, S: GenState) {
   function getActiveOps(): OpSpec[] {
     return applyOpOrder(autoOps(), S.opOrder || []);
   }
+  /** «Термоусадка поверх разъёма»: резка рукавов (вместе с прочей резкой трубок), «надеть» до терминирования своего конца
+   *  (после монтажа корпус не пролезет), «усадка» после монтажа/пайки этого конца. Количество — на изделие, как tutCount. */
+  function shrinkOverConnectors_(ops: OpSpec[]) {
+    const items: Array<{ ep: Endpoint; tag: string; comp: Comp; len: string }> = [];
+    (["A", "B"] as Side[]).forEach((side) => endpointsOnSide_(side).forEach((ep) => {
+      const sh = shrinkOf_(ep);
+      if (sh) items.push({ ep, tag: sideRu_(side) + endpointOrdinal_(ep), ...sh });
+    }));
+    if (!items.length) return;
+    const kindOf = (c: Comp) => (isGlueSleeve_(c) ? "ТТК" : "ТУТ");
+    const groups: Record<string, typeof items> = {};
+    items.forEach((it) => { (groups[it.comp.id + "|" + it.len] || (groups[it.comp.id + "|" + it.len] = [])).push(it); });
+    const cuts: OpSpec[] = Object.keys(groups).map((k, i) => {
+      const g = groups[k], c = g[0].comp;
+      return { type: "cutTut", opKey: "cutShr" + (i + 1), tmplHint: "CUT_TUT_short", cat: "Резка",
+        label: `Резка ${kindOf(c)} поверх разъёма ${g.map((x) => x.tag).join(", ")} — ${g.length}×${g[0].len} мм`,
+        tutArt: c.art || c.name || "", tutName: c.name || c.art || "", tutCount: g.length, tutSegs: [{ len: g[0].len, count: g.length }] };
+    });
+    let lastCut = -1;
+    ops.forEach((o, i) => { if (o.type === "cutTut" || /^cutWire/.test(o.type)) lastCut = i; });
+    ops.splice(lastCut + 1, 0, ...cuts);
+    items.forEach((it) => {
+      const side = it.ep.side, ord = endpointOrdinal_(it.ep);
+      const own = (o: OpSpec) => o.epId === it.ep.id || o.opKey === "stripCable" + side + ord;
+      const first = ops.findIndex(own);
+      const kind = kindOf(it.comp);
+      const put: OpSpec = { type: "insTut", opKey: "insShr" + side + ord, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: 1,
+        label: `Надеть ${kind} на кабель (${it.tag}) — 1 шт` };
+      ops.splice(first >= 0 ? first : ops.length, 0, put);
+      let last = -1;
+      ops.forEach((o, i) => { if (own(o)) last = i; });
+      if (it.ep.method === "solder") ops.forEach((o, i) => { if (o.type === "insHousing") last = Math.max(last, i); });
+      const shrink: OpSpec = { type: "heatTut", opKey: "heatShr" + side + ord, tmplHint: isGlueSleeve_(it.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short",
+        cat: "Усадка", tutCount: 1, label: `Усадка ${kind} поверх разъёма ${it.tag}` };
+      ops.splice(last >= 0 ? last + 1 : ops.length, 0, shrink);
+    });
+  }
   function autoOps(): OpSpec[] {
     if (S.tab === "coax") return getActiveOpsCoax_();
     const ops: OpSpec[] = [];
@@ -1100,7 +1159,10 @@ export function makeGen(D: GenData, S: GenState) {
       tutByLen[len] = (tutByLen[len] || 0) + n;
     });
     if (tutByLen[""] && solderEnds > 0) {
-      const t = bomTut_(), m = t ? qtyNum(t) : 0;
+      const t = bomTut_();
+      // Тот же материал уходит и на рукава поверх разъёмов — на пайку остаётся то, что за вычетом их длины.
+      const shrinkM = t ? S.endpoints.reduce((sum, e) => { const sh = shrinkOf_(e); return sh && sh.comp === t ? sum + (parseLengthVal_(sh.len) || 0) / 1000 : sum; }, 0) : 0;
+      const m = t ? Math.max(0, qtyNum(t) - shrinkM) : 0;
       if (m > 0) {
         const auto = String(Math.round(m * 1000 / solderEnds));
         tutByLen[auto] = (tutByLen[auto] || 0) + tutByLen[""];
@@ -1263,6 +1325,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (ops.some((o) => o.opKey === "insTut")) {
       ops.push({ type: "heatTut", opKey: "heatTut", label: `Усадка ТУТ — ${solderEnds} шт`, tmplHint: "HEAT_TYT_short", cat: "Усадка", tutCount: solderEnds });
     }
+    shrinkOverConnectors_(ops);
     const seal = sealOp_();
     if (seal) { const h = ops.findIndex((o) => o.type === "insHousing"); ops.splice(h >= 0 ? h : ops.length, 0, seal); }
     if (S.twist.enabled && getTwistSelectionCount() > 0) {
@@ -1626,7 +1689,7 @@ export function makeGen(D: GenData, S: GenState) {
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
-    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_,
+    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
     markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
       const conn = getCompById(e.connId);
