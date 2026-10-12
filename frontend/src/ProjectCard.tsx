@@ -53,7 +53,7 @@ export function reviewLine(item: KitsetTile): Array<{ label: string; kbs: string
   return groups.filter((group) => group.kbs.length);
 }
 
-// `extra` — строка экрана мастера (ДЛ, операции без исполнителя, к запуску).
+// `extra` — строка экрана мастера (ДЛ, операции без исполнителя, КБ без задания).
 export function KitTile({ item, statuses, canEdit, open, extra, statusChanged, lists }: {
   item: KitsetTile; statuses: string[]; canEdit: boolean; open: () => void; extra?: ReactNode;
   /** Есть — статус меняется прямо на плитке в один клик (меню); нет — только чип. */

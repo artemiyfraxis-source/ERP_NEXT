@@ -160,7 +160,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {mine && viewAs && <div className={`view-strip${acting ? " acting" : ""}`} role="status"><span>{acting ? `Работаете за сотрудника ${viewedName}` : `Вид сотрудника ${viewedName} — только просмотр`}</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
-    {showAutoplan && canEdit && <AutoplanPanel tasks={tasks} close={() => setShowAutoplan(false)} onApplied={(count) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций`); void reload(); }} />}
+    {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
     {showLaunch && canEdit && <LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
