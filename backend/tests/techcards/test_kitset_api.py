@@ -513,8 +513,8 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_closes_the_s
     body = preview.json()
     assert (body["direction"], body["reason_required"], body["error"]) == ("forward", False, "")
     assert [(kb["kb"], kb["from"], kb["to"], kb["skipped"]) for kb in body["kbs"]] == [
-        ("КБ1", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
-        ("КБ2", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
+        ("КБ1", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке"]),
+        ("КБ2", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке"]),
     ]
     assert body["kbs"][0]["warnings"] == [
         "Закроется (пропущено вручную: Новый → Отгружено): заявок на комплектацию — 1.",
@@ -524,17 +524,17 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_closes_the_s
     # Предпросмотр ничего не пишет.
     assert client.get("/api/techcards/kitsets/708К.4").json()["status"] == "Новый"
 
-    # КБ2 руками вперёд, затем проект на «КБ на складе»: КБ1 поднимается, КБ2 (уже выше) не понижается.
+    # КБ2 руками вперёд, затем проект на «Готово к отгрузке»: КБ1 поднимается, КБ2 (уже выше) не понижается.
     kb2 = client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ2", "kind": "stage", "value": "Отгружено"})
     assert kb2.status_code == 200, kb2.text
-    staged = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "КБ на складе"})
+    staged = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "Готово к отгрузке"})
     assert staged.status_code == 200, staged.text
     assert staged.json()["change"]["kbs"][1]["note"] == "Выше выбранного этапа — не понижаем."
     card = staged.json()["card"]
     stages = {item["index"]: item["stage"] for item in card["assemblies"]}
-    assert (stages["КБ1"]["status"], stages["КБ2"]["status"]) == ("КБ на складе", "Отгружено")
-    assert stages["КБ1"]["skipped"] == ["ТК готова", "КБ набрана", "В работе"]
-    assert card["journal"][0]["from_value"] == "Новый" and card["journal"][0]["value"] == "КБ на складе"
+    assert (stages["КБ1"]["status"], stages["КБ2"]["status"]) == ("Готово к отгрузке", "Отгружено")
+    assert stages["КБ1"]["skipped"] == ["ТК готова", "КБ набрана", "В работе", "ОТК"]
+    assert card["journal"][0]["from_value"] == "Новый" and card["journal"][0]["value"] == "Готово к отгрузке"
 
     # Назад — только с причиной (и для проекта, и для КБ).
     refused = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "В работе"})
@@ -576,9 +576,34 @@ def test_stage_apply_with_a_stale_preview_token_is_409_and_writes_nothing(kitset
     assert applied.json()["change"]["totals"]["kit_requests"] == 2
     # «Производственный план» — тот же ответ.
     app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
-    plan_preview = client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "КБ на складе"})
+    plan_preview = client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "ОТК"})
     assert plan_preview.status_code == 200, plan_preview.text
     assert plan_preview.json()["preview_token"] and plan_preview.json()["kbs"][0]["close"] == []
+
+
+def test_the_old_stage_word_is_refused_on_every_write_route(kitset_api):
+    """«КБ на складе» — слово прежней лестницы (до 12.10): новая запись с ним — 422 с подсказкой нового этапа."""
+    client, _lot = kitset_api
+    _load(client)
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
+    hint = "Этапа «КБ на складе» больше нет — теперь «Готово к отгрузке»."
+
+    responses = [
+        client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "КБ на складе"}),
+        client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ1", "kind": "stage", "value": "КБ на складе"}),
+        client.get("/api/techcards/kitsets/708К.4/status/preview", params={"value": "КБ на складе"}),
+        client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "КБ на складе"}),
+        client.post("/api/production/plan/events", json={
+            "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "КБ на складе",
+        }),
+    ]
+
+    assert [(item.status_code, item.json()["detail"]) for item in responses] == [(422, hint)] * len(responses)
+    assert client.get("/api/techcards/kitsets/708К.4").json()["journal"] == []
+    # Лестница в ответе — 8 этапов по порядку.
+    assert client.get("/api/techcards/kitsets").json()["stages"] == [
+        "Новый", "ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено",
+    ]
 
 
 def test_plan_page_stage_goes_through_the_same_service(kitset_api):

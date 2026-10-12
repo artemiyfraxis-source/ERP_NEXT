@@ -437,7 +437,7 @@ it("keeps sheet helpers stable", () => {
   expect(autoHiddenColumns(0, 24)).toEqual([]);
   expect(markText({ field: "status", value: "ХОЛД", text: "" })).toBe("Статус: ХОЛД");
   expect(markText({ field: "kit_arrival", value: "2026-10-09", text: "" })).toBe("Приход комплектующих: 09.10.2026");
-  expect(markText({ field: "status", value: "К ЗАПУСК, ОЖИД ИНФ", text: "" })).toBe("Статус: К запуску, ОЖИД ИНФ");
+  expect(markText({ field: "status", value: "К ЗАПУСК, ОЖИД ИНФ", text: "" })).toBe("Статус: КБ набрана, ОЖИД ИНФ");
   expect(markText({ field: "in_plan", value: "авто", text: "" })).toBe("В плане: расчёт ERP");
   expect(markText({ field: "day:2026-10-06", value: "П", text: "" })).toBe("Отметка 06.10.2026: П");
   expect(markText({ field: "comment", value: "", text: "" })).toBe("Комментарий: очищено");

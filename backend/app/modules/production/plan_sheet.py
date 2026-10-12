@@ -29,11 +29,16 @@ from .plan import (
 STAGE_SHOP_STATUS = {
     "КБ набрана": "К ЗАПУСК",
     "В работе": "В РАБОТЕ",
-    "КБ на складе": "ГОТОВО",
+    "ОТК": "ОТК",
+    "Готово к отгрузке": "ГОТОВО",
+    "На отгрузке": "НА ОТГР",
     "Отгружено": "ОТГРУЖЕН",
 }
 SHOP_HOLD = frozenset(("ХОЛД", "СТОП", "ПАУЗА"))
-SHOP_DONE_STAGES = frozenset(("КБ на складе", "Отгружено"))
+# Работа цеха закончена: изделие принято на склад ГП и дальше (ОТК ещё у цеха — строка активная).
+SHOP_DONE_STAGES = frozenset(("Готово к отгрузке", "На отгрузке", "Отгружено"))
+# Производство закончено (ОТК и дальше): готовность 100.
+SHOP_PRODUCED_STAGES = frozenset(("ОТК", *SHOP_DONE_STAGES))
 SHEET_GROUPS = ("hold", "active", "done", "closed")
 CALENDAR_BEFORE_DAYS = 7
 CALENDAR_AFTER_DAYS = 60
@@ -59,7 +64,8 @@ def shop_status_auto(stage: str, blocker: str = "") -> str:
 
 
 def sheet_group(stage: str, blocker: str = "", terminal: bool = False) -> str:
-    """Rows on hold go on top, finished ones (КБ на складе, Отгружено) to the bottom, refused projects last."""
+    """Rows on hold go on top, finished ones (Готово к отгрузке, На отгрузке, Отгружено) to the bottom, refused
+    projects last."""
     if blocker in SHOP_HOLD:
         return "hold"
     if terminal:
@@ -72,8 +78,8 @@ def sheet_group(stage: str, blocker: str = "", terminal: bool = False) -> str:
 def ready_percent(
     stage: str, tasks: Iterable[ProductionTask], processed: Mapping[UUID, Decimal],
 ) -> str:
-    """Output against the task quantity, weighted by the operation norm; a KB on stock is 100."""
-    if stage in ("КБ на складе", "Отгружено"):
+    """Output against the task quantity, weighted by the operation norm; production finished (ОТК and on) is 100."""
+    if stage in SHOP_PRODUCED_STAGES:
         return "100"
     total = Decimal(0)
     done = Decimal(0)
@@ -193,7 +199,8 @@ def calendar_span(today: date) -> tuple[date, date]:
 
 
 __all__ = [
-    "CALENDAR_AFTER_DAYS", "CALENDAR_BEFORE_DAYS", "SHEET_GROUPS", "SHOP_DONE_STAGES", "SHOP_HOLD", "SHOP_STATUSES",
+    "CALENDAR_AFTER_DAYS", "CALENDAR_BEFORE_DAYS", "SHEET_GROUPS", "SHOP_DONE_STAGES", "SHOP_HOLD", "SHOP_PRODUCED_STAGES",
+    "SHOP_STATUSES",
     "STAGE_SHOP_STATUS", "SheetCalendar", "SheetCell", "calendar_span", "ready_percent", "sheet_calendar",
     "sheet_cells", "sheet_group", "shop_status_auto",
 ]

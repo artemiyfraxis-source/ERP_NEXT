@@ -44,11 +44,13 @@ from app.modules.procurement.application import (
 )
 from app.modules.procurement.domain import ProcurementLine
 from app.modules.production.domain import ProductionTask
+from app.modules.production.traceability import ProductionBox
 from app.modules.production.plan import (
     KIT_STAGES,
     PLAN_KINDS,
     PLAN_STAGE_AUTO,
     TC_REVIEW_VALUES,
+    legacy_stage_refusal,
     ActiveBlocker,
     KitStageNow,
     PlanEvent,
@@ -136,7 +138,7 @@ from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 from app.shared.events import AuditEvent
 from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
-from app.workflows.production_plan import kit_stage_facts
+from app.workflows.production_plan import kit_stage_facts, project_kits
 
 
 # Терминальные статусы реестра перекрывают вычисленный этап — решение человека (ERP_PROJ_TERMINALS_).
@@ -500,6 +502,17 @@ class KitsetFacts:
     goods: tuple[FinishedGood, ...] = ()
     events: tuple[PlanEvent, ...] = ()
     projects: tuple[PlanProjectSnapshot, ...] = ()
+    # Production boxes and the ids of the boxes ОТК inspected: the ladder's «ОТК» stage.
+    boxes: tuple[ProductionBox, ...] = ()
+    inspected: frozenset[UUID] = frozenset()
+
+
+def _qc_facts(uow) -> tuple[tuple[ProductionBox, ...], frozenset[UUID]]:
+    """Boxes and ОТК-inspected box ids through the production unit of work; a store without them reads empty."""
+    boxes, qc = getattr(uow, "boxes", None), getattr(uow, "qc", None)
+    if boxes is None or qc is None:
+        return (), frozenset()
+    return tuple(boxes.list(limit=100_000)), frozenset(qc.inspected_box_ids())
 
 
 def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) -> KitsetFacts:
@@ -510,9 +523,10 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
         with factory() as uow:
             return reader(uow)
 
-    tasks, events, projects = read(production, lambda uow: (
+    tasks, events, projects, (boxes, inspected) = read(production, lambda uow: (
         tuple(uow.production.list(limit=10_000)), tuple(uow.plan_events.list()), tuple(uow.plan_projects.list()),
-    ), ((), (), ()))
+        _qc_facts(uow),
+    ), ((), (), (), ((), frozenset())))
     return KitsetFacts(
         cards=read(techcards, lambda uow: tuple(uow.techcards.list())),
         tasks=tasks,
@@ -520,6 +534,8 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
         goods=read(shipping, lambda uow: tuple(uow.goods.list(limit=10_000))),
         events=events,
         projects=projects,
+        boxes=boxes,
+        inspected=inspected,
     )
 
 
@@ -529,13 +545,15 @@ def _stage_marks(facts: KitsetFacts, events: Iterable[PlanEvent]):
     raw = summarize_kit_marks(events)
     stage_facts, marks = kit_stage_facts(
         cards=facts.cards, tasks=facts.tasks, fulfillment=facts.fulfillment, goods=facts.goods, marks=raw,
+        boxes=facts.boxes, inspected=facts.inspected,
     )
     marks = {key: replace(mark, skipped=raw[key].skipped) if key in raw else mark for key, mark in marks.items()}
     return stage_facts, marks
 
 
 def kitset_stages(kitsets: Iterable[Kitset], facts: KitsetFacts) -> dict[str, tuple[ProjectStage, str]]:
-    """{project: (stage, active blocker type)} — the same ladder the production plan uses."""
+    """{project: (stage, active blocker type)} — the same ladder and the same КБ (`project_kits`: the kitset's
+    assemblies plus the project's techcard КБ) the production plan uses."""
     stage_facts, marks = _stage_marks(facts, facts.events)
     journal = summarize_journal(facts.events)
     snapshots = {normalize_project_number(item.project): item for item in facts.projects}
@@ -543,7 +561,7 @@ def kitset_stages(kitsets: Iterable[Kitset], facts: KitsetFacts) -> dict[str, tu
     for kitset in kitsets:
         canon = normalize_project_number(kitset.project)
         stage = project_stage(
-            kitset.project, [assembly.index for assembly in kitset.assemblies],
+            kitset.project, project_kits(kitset.project, (assembly.index for assembly in kitset.assemblies), facts.cards),
             stage_facts, project_terminal(snapshots.get(canon), journal.get(canon)), marks,
         )
         entry = journal.get(canon)
@@ -582,11 +600,7 @@ def project_stage_state(
     in one session (sessions, techcard reserves); without it they come from ``facts`` (no work sessions, no
     techcard reserves)."""
     canon = normalize_project_number(project)
-    indexes = [
-        *item_indexes,
-        *(card.item_index for card in facts.cards if normalize_project_number(card.project) == canon),
-        *([kb] if str(kb or "").strip() else []),
-    ]
+    indexes = [*project_kits(project, item_indexes, facts.cards), *([kb] if str(kb or "").strip() else [])]
     events = tuple(event for event in facts.events if normalize_project_number(event.project) == canon)
     stage_facts, marks = _stage_marks(facts, events)
     journal = summarize_journal(events).get(canon)
@@ -762,6 +776,8 @@ def change_project_status(
         raise KitsetValidationError("Неизвестное действие со статусом проекта.")
     if value in PROJECT_TERMINALS:
         return [add("status", event_value=value, text=command.text)]
+    if legacy_stage_refusal(value):
+        raise KitsetValidationError(legacy_stage_refusal(value))
     if value not in (*KIT_STAGES, PLAN_STAGE_AUTO):
         raise KitsetValidationError(f"Неизвестный статус проекта: {value}")
     state = load_project_stage_state(

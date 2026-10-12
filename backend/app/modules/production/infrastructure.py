@@ -21,6 +21,7 @@ from .application import Absence, Operator
 from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
+    stage_alias,
 )
 from .genealogy import (
     BoxConsumptionSnapshot,
@@ -262,9 +263,11 @@ def _sql_in(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN ({', '.join(chr(39) + value.replace(chr(39), chr(39) * 2) + chr(39) for value in values)})"
 
 
-# Migration 0101_production_stage_history adds the same checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
-# the journal only grows; DELETE stays for a deleted project). The value column comes first in each check: the
-# head-1 seeder (tests/migrations/seed_any_revision.py) fills a checked column with the first literal.
+# Migration 0101_production_stage_history added these checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
+# the journal only grows; DELETE stays for a deleted project); 0107_stage_ladder re-points them at the 8-stage ladder
+# (old «КБ на складе» rows stay as written — NOT VALID — and read as «Готово к отгрузке» via `stage_alias`).
+# The value column comes first in each check: the head-1 seeder (tests/migrations/seed_any_revision.py) fills a
+# checked column with the first literal.
 PLAN_EVENT_CHECKS = {
     "ck_production_plan_events_kind": _sql_in("kind", tuple(PLAN_KINDS.values())),
     "ck_production_plan_events_stage_value": (
@@ -1019,8 +1022,10 @@ class SqlAlchemyPlanEventRepository:
             id=row.id, project=row.project, occurred_at=row.occurred_at,
             who=row.who, kind=row.kind, blocker=row.blocker,
             text=row.text, deadline=row.deadline, sequence=row.sequence,
-            item_index=row.item_index, value=row.value, field=row.field,
-            from_value=row.from_value, reason=row.reason,
+            item_index=row.item_index, field=row.field, reason=row.reason,
+            # Old «Этап КБ» rows keep their word (the journal is immutable); it reads as the current ladder stage.
+            value=stage_alias(row.value) if row.kind == PLAN_KINDS["stage"] else row.value,
+            from_value=stage_alias(row.from_value) if row.kind == PLAN_KINDS["stage"] else row.from_value,
         )
 
     def last_sequence(self, project: str) -> int:
@@ -1610,6 +1615,10 @@ class SqlAlchemyQcRepository:
     def get(self, inspection_id: UUID) -> QcInspection | None:
         row = self.session.get(ProductionQcInspectionRow, inspection_id)
         return self._domain(row) if row is not None else None
+
+    def inspected_box_ids(self) -> set[UUID]:
+        """Boxes ОТК has inspected (the stage ladder: a final-operation box inspected → «ОТК»)."""
+        return set(self.session.scalars(select(ProductionQcInspectionRow.box_id)))
 
     def list_rejections(self) -> list[QcInspection]:
         rows = self.session.scalars(select(ProductionQcInspectionRow).where(
