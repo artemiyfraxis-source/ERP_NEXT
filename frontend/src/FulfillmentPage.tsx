@@ -4,6 +4,7 @@ import {
   ApiError,
   fulfillmentApi,
   type FulfillmentCalcLine,
+  type FulfillmentCandidate,
   type FulfillmentLine,
   type FulfillmentLot,
   type FulfillmentPlaces,
@@ -14,7 +15,10 @@ import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 import { StatusChip } from "./StatusChip";
-import { BulkLotsPanel, absentMark, bindPosition, bulkApi, isOffBook, type BulkPosition } from "./FulfillmentBulkLots";
+import { BulkLotsPanel, CANDIDATE_LEGEND, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
+
+/** One position of a project card: article + name, the same key for the groups and for the candidates. */
+const positionKey = (article: string, name: string) => `${article}|${name}`.trim().toLocaleLowerCase("ru");
 
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
    only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint: for
@@ -490,7 +494,7 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
     const groups = new Map<string, { article: string; name: string; unit: string; need: number; got: number; off: number; absent: number; remaining: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number; off: number; absent: number; remaining: number }> }>();
     for (const request of requests) {
       for (const line of request.lines ?? []) {
-        const key = `${line.article}|${line.name}`.trim().toLocaleLowerCase("ru");
+        const key = positionKey(line.article, line.name);
         if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, unit: line.unit, need: 0, got: 0, off: 0, absent: 0, remaining: 0, kb: new Map() });
         const group = groups.get(key)!;
         const off = isOffBook(line) ? Math.max(Number(line.requirement) - picked(line), 0) : 0;
@@ -523,6 +527,17 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
       .map((kb) => ({ request: kb.request, label: kbOf(kb.request), remaining: round(kb.remaining) }))
       .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true })),
   });
+  // «Возможно есть»: one request for the whole card, again after every change of the requests; a failure leaves the
+  // column empty — the binding itself works without it.
+  const [maybe, setMaybe] = useState<Map<string, { items: FulfillmentCandidate[]; more: number }>>(new Map());
+  useEffect(() => {
+    if (!canBulk) return;
+    let alive = true;
+    fulfillmentApi.candidates(project)
+      .then((result) => { if (alive) setMaybe(new Map(result.positions.map((item) => [positionKey(item.article, item.name), { items: item.candidates, more: item.more }]))); })
+      .catch(() => { if (alive) setMaybe(new Map()); });
+    return () => { alive = false; };
+  }, [project, versionKey, canBulk]);
   // Both actions go through the page's mutate: one busy lock, the banner, the reload; a 409 reloads and says so.
   const runBulk = (operation: () => Promise<{ message: string }>) => void cardProps.mutate(`project:${project}`, operation);
   // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
@@ -579,28 +594,44 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
     </div>
     {current
       ? <FulfillmentCard key={`${current.id}:${current.version}`} request={current} busy={busyId === current.id} {...cardProps} />
-      : <div className="table-wrap"><table className="grid wide"><thead><tr><th>Артикул КД</th><th>Наименование</th><th>По КБ (набрано / нужно)</th><th className="num">Нужно</th><th className="num">Набрано</th>{canBulk && <th />}</tr></thead><tbody>
+      : <>
+      {canBulk && <div className="cand-legend" aria-label="Цвета строк">
+        <span>Возможно есть на складе:</span>
+        {CANDIDATE_LEGEND.map((item) => <span key={item.tone} className={`cand-key cand-${item.tone}`}>{item.text}</span>)}
+      </div>}
+      <div className="table-wrap"><table className="grid wide"><thead><tr><th>Артикул КД</th><th>Наименование</th><th>По КБ (набрано / нужно)</th><th className="num">Нужно</th><th className="num">Набрано</th>{canBulk && <th>Возможно есть</th>}{canBulk && <th />}</tr></thead><tbody>
         {positions.map((position) => {
           const key = `${position.article}|${position.name}`;
           const open = canBulk && position.remaining > 0.0001;
+          const offered = maybe.get(positionKey(position.article, position.name));
+          const tone = candidateTone(position.remaining, offered?.items ?? []);
+          const best = offered?.items[0];
+          const others = offered ? offered.items.length - 1 + offered.more : 0;
           return <Fragment key={key}>
-            <tr>
+            <tr className={canBulk && offered ? `cand-row cand-${tone}` : undefined}>
               <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
               <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}{kb.off > 0 ? " · не заведено" : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
               <td className="num">{round(position.need)} {position.unit}</td>
               <td className="num">{round(position.got)}{position.off > 0 && <small>{round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
+              {canBulk && <td className="cand-cell">{tone === "done" ? <span className="t-sub">—</span>
+                : !offered ? <span className="t-sub">…</span>
+                : best ? <button type="button" className="link-button" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} title={`${matchText(best)} · ${best.name}`} onClick={() => setBulkKey(bulkKey === key ? null : key)}>
+                  <span>ГРН {best.grn}{best.package ? ` · пакет ${best.package}` : ""} · {best.available} {best.unit} · {best.warehouse}</span>
+                  <small>{matchText(best)}{others > 0 ? ` · ещё ${others}` : ""}</small>
+                </button>
+                : <span className="cand-none-text">не найдено</span>}</td>}
               {canBulk && <td>{open && <>
                 <button type="button" className="secondary small" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} onClick={() => setBulkKey(bulkKey === key ? null : key)}>ГРН на все КБ</button>{" "}
                 <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Есть, не заведено: ${position.name}`} onClick={() => runBulk(() => bindPosition(project, bulkOf(position), [], true))}>Есть, не заведено</button>
               </>}</td>}
             </tr>
-            {open && bulkKey === key && <tr className="detail"><td colSpan={6}>
-              <BulkLotsPanel project={project} position={bulkOf(position)} versionKey={versionKey} busy={Boolean(busyId)} run={runBulk} onClose={() => setBulkKey(null)} />
+            {open && bulkKey === key && <tr className="detail"><td colSpan={7}>
+              <BulkLotsPanel project={project} position={bulkOf(position)} versionKey={versionKey} busy={Boolean(busyId)} run={runBulk} onClose={() => setBulkKey(null)} suggested={offered?.items} />
             </td></tr>}
           </Fragment>;
         })}
-        {!positions.length && <tr><td colSpan={canBulk ? 6 : 5} className="empty">Позиций нет.</td></tr>}
-      </tbody></table></div>}
+        {!positions.length && <tr><td colSpan={canBulk ? 7 : 5} className="empty">Позиций нет.</td></tr>}
+      </tbody></table></div></>}
   </div>;
 }
 

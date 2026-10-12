@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FulfillmentPage } from "./FulfillmentPage";
+import { candidateTone } from "./FulfillmentBulkLots";
 import type { FulfillmentRequest, Principal } from "./api";
 import { capturePrintFrames } from "./testPrintFrames";
 
@@ -679,6 +680,75 @@ async function openWholeOrder() {
   await showAll();
   fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
 }
+
+/* «Возможно есть» (owner 12.10.2026): the column, the row colour and the legend of the project card. */
+const candidateOf = (lot: (typeof projectLots)[number], kind: "exact" | "fuzzy", available = lot.available) =>
+  ({ ...lot, lot_id: lot.id, kind, match: kind === "exact" ? "exact" : "fuzzy-separators", available });
+
+async function openWithCandidates(candidates: ReturnType<typeof candidateOf>[], more = 0) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [{ ...kb1, status: "Недоукомплектован" }, { ...kb2, status: "Недоукомплектован" }], next_cursor: null });
+    if (path.startsWith("/api/issues/lots")) return json({ lots: projectLots });
+    if (path === "/api/issues/projects/728%D0%9A.2/candidates") return json({ positions: [{ article: "CON-001", name: "Разъём", unit: "шт", candidates, more }] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
+}
+
+const positionRow = () => screen.getByRole("cell", { name: "CON-001" }).closest("tr")!;
+
+it("candidateTone: green exact and enough, yellow lookalike or too little, red nothing, neutral picked", () => {
+  const exact = (available: string) => candidateOf(projectLots[0], "exact", available);
+  expect(candidateTone(8, [exact("10")])).toBe("ok");
+  expect(candidateTone(8, [exact("5"), candidateOf(projectLots[1], "exact", "3")])).toBe("ok");
+  expect(candidateTone(8, [exact("5")])).toBe("maybe");
+  expect(candidateTone(8, [candidateOf(projectLots[0], "fuzzy", "100")])).toBe("maybe");
+  expect(candidateTone(8, [])).toBe("none");
+  expect(candidateTone(0, [])).toBe("done");
+});
+
+it("shows the best lot of «Возможно есть» with «ещё N», a green row and the legend; a click opens the lot list with it marked", async () => {
+  await openWithCandidates([candidateOf(projectLots[0], "exact"), candidateOf(projectLots[1], "fuzzy")], 3);
+
+  expect(await screen.findByText("ГРН FRX.26.0000002 · 10 шт · ЦАР")).toBeInTheDocument();
+  expect(screen.getByText("тот же артикул · ещё 4")).toBeInTheDocument();
+  expect(positionRow()).toHaveClass("cand-ok");
+  expect(screen.getByLabelText("Цвета строк")).toHaveTextContent("на складе не найдено");
+
+  fireEvent.click(screen.getByText("ГРН FRX.26.0000002 · 10 шт · ЦАР"));
+  expect(await screen.findByRole("group", { name: "ГРН на все КБ: Разъём" })).toBeInTheDocument();
+  expect(screen.getByText("возможно есть · тот же артикул")).toBeInTheDocument();
+  expect(screen.getByText("возможно есть · похожий артикул")).toBeInTheDocument();
+});
+
+it("paints the row yellow for lookalikes only or too little exact, red when nothing is found", async () => {
+  await openWithCandidates([candidateOf(projectLots[1], "fuzzy")]);
+  expect(await screen.findByText("похожий артикул")).toBeInTheDocument();
+  expect(positionRow()).toHaveClass("cand-maybe");
+  cleanup();
+  vi.restoreAllMocks();
+
+  await openWithCandidates([]);
+  expect(await screen.findByText("не найдено")).toBeInTheDocument();
+  expect(positionRow()).toHaveClass("cand-none");
+});
+
+it("«Возможно есть» is for those who can pick: the viewer gets neither the column nor the request", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/issues") return json({ requests: [{ ...kb1, status: "Недоукомплектован" }], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { fulfillment: "view" } }} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
+  await screen.findByRole("cell", { name: "CON-001" });
+  expect(screen.queryByText("Возможно есть")).not.toBeInTheDocument();
+  expect(paths.some((path) => path.includes("candidates"))).toBe(false);
+});
 
 it("counts a line «нет на складе» as waiting on its КБ chip and names it in the order, never as «есть»", async () => {
   const absentKb2 = { ...kb2, status: "Недоукомплектован", lines: [{ ...kb2.lines[0], absent_at: "2026-10-12T09:30:00", absent_by: "Кладовщик" }] };
