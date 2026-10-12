@@ -3946,9 +3946,11 @@ export const harnessApi = {
   /** Чертёж позиции; `revision` — номер версии, с которым сохранять (чертежа нет — всё null). */
   drawing: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
   /** Сохранить чертёж новой версией: `revision` — из последнего чтения (null — чертежа ещё нет; иначе 409, если его
-   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`). */
-  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
-    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`).
+   *  `checkpoint` — записать версию сразу закрытой строкой истории (автосохранения в неё не сольются). */
+  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null, options: { checkpoint?: boolean } = {}) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT",
+      body: JSON.stringify({ design, revision, ...(options.checkpoint ? { checkpoint: true } : {}) }) }),
   /** «Сохранить версию»: текущая версия остаётся в истории отдельной строкой; `revision` — версия на экране (иначе 409). */
   checkpoint: (project: string, index: string, revision: number | null) =>
     api<{ revision: number | null; row: HarnessRevision | null }>(`${harnessPath(project, index)}/checkpoint`, { method: "POST", body: JSON.stringify({ revision }) }),
