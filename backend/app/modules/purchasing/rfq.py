@@ -111,6 +111,8 @@ class LineView:
     hint: str = ""  # ТИП / КАТЕГОРИЯ / name — for the category guess
     actual_quantity: Decimal | None = None
     actual_unit: str | None = None
+    project: str | None = None  # ПРОЕКТ as written (the client shows an internal project by its label)
+    item_type: str | None = None  # ТИП — the nomenclature category guess falls back to it
 
 
 class ProcurementLines(Protocol):
@@ -218,12 +220,18 @@ def _line_result(view: LineView) -> dict:
     }
 
 
-def candidates(uow: UnitOfWork, lines: ProcurementLines, actor: Actor) -> list[dict]:
-    """My lines «В работе»/«Готов к запросу» with something to buy and in no live request."""
+def candidate_views(session: Session, lines: ProcurementLines, actor: Actor) -> list[LineView]:
+    """My lines «В работе»/«Готов к запросу» with something to buy and in no live request (the list and the pool)."""
     mine = [view for view in lines.mine(actor) if view.to_buy > 0]
+    taken = set(session.scalars(
+        select(RfqLineRow.procurement_line_id).where(RfqLineRow.removed_at.is_(None))
+    )) if mine else set()
+    return [view for view in mine if view.id not in taken]
+
+
+def candidates(uow: UnitOfWork, lines: ProcurementLines, actor: Actor) -> list[dict]:
     with uow:
-        taken = _in_live_rfq(_session(uow), [view.id for view in mine])
-    return [_line_result(view) for view in mine if view.id not in taken]
+        return [_line_result(view) for view in candidate_views(_session(uow), lines, actor)]
 
 
 def next_number(session: Session, now: datetime) -> str:
@@ -233,9 +241,32 @@ def next_number(session: Session, now: datetime) -> str:
     return f"{prefix}{max(used, default=0) + 1:03d}"
 
 
+@dataclass(frozen=True)
+class SupplierPick:
+    """A supplier for a new request: from the directory (`supplier_id`) or by name (found or quick-added)."""
+
+    supplier_id: UUID | None = None
+    name: str | None = None
+    reason: str = "manual"
+
+
+# The suggestion's reasons beyond the five the table stores (no schema change): what a supplier delivered before is
+# a category-level reason, the supplier written in the line is the plan.
+RFQ_REASON_OF = {"items": "category", "category_history": "category", "original": "plan"}
+
+
+def stored_reason(reason: str) -> str:
+    stored = RFQ_REASON_OF.get(reason, reason)
+    if stored not in RFQ_SUPPLIER_REASONS:
+        raise Refused("Неизвестная причина выбора поставщика")
+    return stored
+
+
 def create_rfq(
     uow: UnitOfWork, lines: ProcurementLines, actor: Actor, now: datetime, line_ids: Sequence[UUID], title: str | None,
+    suppliers: Sequence[SupplierPick] = (),
 ) -> dict:
+    """The request with its lines and, in the same transaction, the suppliers picked from the suggestion."""
     ids = list(dict.fromkeys(line_ids))
     if not ids:
         raise Refused("Выберите строки для запроса")
@@ -271,9 +302,17 @@ def create_rfq(
                 name=view.name[:512], article=(view.article or None) and view.article[:255], quantity=view.to_buy,
                 unit=view.unit or "шт", need_by=view.need_by, budget_unit_gross=view.budget_unit_gross, created_at=now,
             ))
-        _audit(uow, rfq.id, "purchasing.rfq_created", actor, now, {"number": rfq.number, "lines": str(len(ids))})
+        added: set[UUID] = set()
+        for pick in suppliers:
+            reason = stored_reason(pick.reason)
+            supplier = _resolve_supplier(session, uow, actor, now, pick.supplier_id, pick.name)
+            if supplier.id not in added:
+                added.add(supplier.id)
+                session.add(RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier.id, reason=reason, created_at=now))
+        _audit(uow, rfq.id, "purchasing.rfq_created", actor, now,
+               {"number": rfq.number, "lines": str(len(ids)), "suppliers": str(len(added))})
         uow.commit()
-        return {"id": str(rfq.id), "number": rfq.number}
+        return {"id": str(rfq.id), "number": rfq.number, "suppliers": len(added)}
 
 
 def list_rfqs(uow: UnitOfWork, actor: Actor, all_buyers: bool = False) -> list[dict]:
@@ -439,37 +478,44 @@ def suggest_suppliers(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rf
         }
 
 
+def _resolve_supplier(
+    session: Session, uow: UnitOfWork, actor: Actor, now: datetime, supplier_id: UUID | None, name: str | None,
+) -> SupplierRow:
+    """A directory supplier by id (not archived), or by name — found in the directory or quick-added (just a name)."""
+    if supplier_id is not None:
+        supplier = session.get(SupplierRow, supplier_id)
+        if supplier is None:
+            raise NotFound("Поставщик не найден")
+        if supplier.archived_at is not None:
+            raise Refused(f"Поставщик «{supplier.name}» в архиве")
+        return supplier
+    clean = " ".join((name or "").split())
+    if not clean:
+        raise Refused("Укажите поставщика")
+    if len(clean) > 255:
+        raise Refused("Название поставщика длиннее 255 знаков")
+    supplier = _supplier_by_name(session, clean)
+    if supplier is None:
+        supplier = SupplierRow(
+            id=uuid4(), name=clean, name_key=name_key(clean), categories=[], is_key=False, domains=[],
+            created_at=now, created_by=actor.id, version=1,
+        )
+        session.add(supplier)
+        session.flush()
+        _audit(uow, supplier.id, "purchasing.supplier_quick_added", actor, now, {"name": clean})
+    return supplier
+
+
 def add_supplier(
     uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, *, supplier_id: UUID | None, name: str | None,
     reason: str,
 ) -> dict:
     """Adds a supplier to the request; by name — finds it in the directory or quick-adds it (just a name)."""
-    if reason not in RFQ_SUPPLIER_REASONS:
-        raise Refused("Неизвестная причина выбора поставщика")
+    reason = stored_reason(reason)
     with uow:
         session = _session(uow)
         rfq = _open(_own(_rfq(session, rfq_id), actor))
-        if supplier_id is not None:
-            supplier = session.get(SupplierRow, supplier_id)
-            if supplier is None:
-                raise NotFound("Поставщик не найден")
-            if supplier.archived_at is not None:
-                raise Refused(f"Поставщик «{supplier.name}» в архиве")
-        else:
-            clean = " ".join((name or "").split())
-            if not clean:
-                raise Refused("Укажите поставщика")
-            if len(clean) > 255:
-                raise Refused("Название поставщика длиннее 255 знаков")
-            supplier = _supplier_by_name(session, clean)
-            if supplier is None:
-                supplier = SupplierRow(
-                    id=uuid4(), name=clean, name_key=name_key(clean), categories=[], is_key=False, domains=[],
-                    created_at=now, created_by=actor.id, version=1,
-                )
-                session.add(supplier)
-                session.flush()
-                _audit(uow, supplier.id, "purchasing.supplier_quick_added", actor, now, {"name": clean})
+        supplier = _resolve_supplier(session, uow, actor, now, supplier_id, name)
         existing = session.scalar(select(RfqSupplierRow).where(
             RfqSupplierRow.rfq_id == rfq.id, RfqSupplierRow.supplier_id == supplier.id))
         if existing is None:
