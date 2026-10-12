@@ -8,7 +8,21 @@ TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permiss
   (`InfoHint`, `AnchoredPopover`) на коммите `e63befb` (ветка `codex/integration-m5-22`).
 - Первый коммит ветки переноса содержит эти файлы без изменений; все правки ERP — следующими коммитами.
 - Не перенесено: сетевые клиенты (сеть редактора — `harnessApi` в `api.ts`, чертёж — `drawing.ts`, библиотека — `library/`), фото/HEIC, аварийные черновики в localStorage и
-  журнал восстановления, маршрут изготовления (Route V2) и панели производства, UML, модель времени.
+  журнал восстановления, маршрут изготовления (Route V2) и панели производства.
+
+## Маршрут v3 (`route/`)
+
+TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permission, коммит `0a456d2` (ветка
+`codex/integration-m5-22`).
+
+- Источник: `src/Techmap.Client/src/manufacturing-v3/route-v3-model.ts`, `route-v3-graph.ts`, `uml/uml-model.ts`
+  (модель времени), `manufacturing/route-source.ts`, `manufacturing/route-drawing-copy.ts` и их тесты.
+- Первый коммит переноса содержит эти файлы без изменений (только заголовок с путём источника); правки ERP — следующим.
+- Правки ERP: импорты — на порт чертежа ERP; слепок в режиме «источник» хранит только скрытые объекты (чертёж —
+  тот, на версии которого построен маршрут), изолированный — свою геометрию; `parseRouteV3` отклоняет слепок с копией
+  всего чертежа; из Route V2 взят только тип рисунка карточки; UML принимает любой граф маршрута.
+- Не перенесено: экраны маршрута (`RouteV3Panel`, `RouteV3Graph`, рисунок провода), миграция старых копий из
+  localStorage (`migrateLegacyRouteDrawingCopy`), Route V2.
 
 ## Редактор шаблонов библиотеки компонентов (экран «Библиотека компонентов»)
 

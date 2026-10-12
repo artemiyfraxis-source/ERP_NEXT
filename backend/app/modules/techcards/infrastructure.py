@@ -11,7 +11,9 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validat
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 from app.shared.project_number import normalize_project_number
 
-from .harness_infrastructure import SqlAlchemyHarnessComponentRepository, SqlAlchemyHarnessRevisionRepository
+from .harness_infrastructure import (
+    SqlAlchemyHarnessComponentRepository, SqlAlchemyHarnessRevisionRepository, SqlAlchemyHarnessRouteRepository,
+)
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
@@ -546,6 +548,7 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.kitsets = SqlAlchemyKitsetRepository(self.session)
         self.harness_revisions = SqlAlchemyHarnessRevisionRepository(self.session)
         self.harness_components = SqlAlchemyHarnessComponentRepository(self.session)
+        self.harness_routes = SqlAlchemyHarnessRouteRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 

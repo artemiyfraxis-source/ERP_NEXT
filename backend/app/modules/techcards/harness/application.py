@@ -70,6 +70,7 @@ class TechcardsUnitOfWork(Protocol):
     kitsets: Any
     harness_revisions: Any
     harness_components: Any
+    harness_routes: Any  # «Маршрут v3» (route_application)
     audit: Any
 
     def __enter__(self) -> "TechcardsUnitOfWork": ...
