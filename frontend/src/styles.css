@@ -3466,3 +3466,10 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 /* «Чертёж КБn» — редактор жгута внутри карточки проекта: высота окна за вычетом шапки карточки, не весь экран. */
 .kit-pane-harness .harness-page { height: calc(100vh - 168px); min-height: 520px; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
 .kit-kd-delete { color: var(--tone-danger); }
+
+/* «Оболочки»: a table per kind under its own heading; «Прочее» collapsed at the bottom */
+.coverings { display: grid; gap: 16px; }
+.cov-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
+.cov-other { display: grid; gap: 8px; justify-items: start; }
+.cov-other > .cov-group { justify-self: stretch; }

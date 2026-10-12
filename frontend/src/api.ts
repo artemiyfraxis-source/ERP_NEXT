@@ -1323,6 +1323,45 @@ export interface CablesResult {
   gauges?: WireGauge[];
 }
 
+/** «Оболочки»: БД.МАТ rows that cover a harness, grouped and parsed by the server (`coverings.py`). */
+export type CoveringGroup = "tut" | "ttk" | "braid" | "corrugated" | "other";
+export interface CoveringRow {
+  id: string;
+  name: string;
+  group: CoveringGroup;
+  /** «вручную» — the override cell; otherwise how the classifier decided. */
+  group_source: string;
+  auto_group: CoveringGroup | null;
+  datasheet: string;
+  unit: string;
+  before_mm: number | null;
+  after_mm: number | null;
+  ratio: string;
+  wall_mm: number | null;
+  adhesive: string;
+  nominal_mm: number | null;
+  min_mm: number | null;
+  max_mm: number | null;
+  density: string;
+  inner_mm: number | null;
+  outer_mm: number | null;
+  split: boolean | null;
+  material: string;
+  material_short: string;
+  temp_min_c: number | null;
+  temp_max_c: number | null;
+  color: string;
+  maker: string;
+  series: string;
+  series_family: string;
+  notes: string[];
+}
+export interface CoveringsResult {
+  counts: Record<CoveringGroup, number>;
+  titles: Record<CoveringGroup, string>;
+  rows: CoveringRow[];
+}
+
 export interface HookupPayload {
   series: string;
   gauge_id: string;
@@ -3053,6 +3092,9 @@ export const shippingApi = {
 export const referencesApi = {
   bases: () => api<BasesResult>("/api/references/bases"),
   cables: () => api<CablesResult>("/api/references/cables"),
+  coverings: () => api<CoveringsResult>("/api/references/coverings"),
+  setCoveringGroup: (recordId: string, group: string) =>
+    api<TechOperationRecord>(`/api/references/coverings/${recordId}/group`, { method: "PUT", body: JSON.stringify({ group }) }),
   moveCable: (recordId: string, kind: CableKind) =>
     api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
   saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
