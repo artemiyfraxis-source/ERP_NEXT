@@ -1585,6 +1585,10 @@ export interface ConnectorSeries {
   category: string;
   /** Артикулы БД.КОАКС для ВЧ-серий. */
   catalog: Array<{ article: string; kind: string; maker: string; wire: string }>;
+  /** Документы производителя, по которым заполнен каталог серии (первый — основной). */
+  sources?: Array<{ title: string; url: string }>;
+  /** Контакты из каталога производителя; in_base — есть ли артикул (REEL или BAG) во вкладке «Терминалы». */
+  contacts?: Array<{ article: string; wire: string; in_base: boolean }>;
 }
 
 export interface ConnectorSeriesMatch {
