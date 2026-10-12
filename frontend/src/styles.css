@@ -2969,7 +2969,7 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 
 /* Автоплан */
 .autoplan-dialog { display: flex; flex-direction: column; gap: 10px; width: min(880px, 100%); height: auto; max-height: calc(100vh - 32px); overflow: hidden; padding: 16px 20px; outline: none; }
-.autoplan-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.autoplan-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .autoplan-head h2 { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
 .autoplan-scroll { display: grid; gap: 10px; align-content: start; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
 .autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
@@ -2995,7 +2995,7 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-batch { border-left: 3px solid var(--primary); padding-left: 8px; margin-bottom: 6px; }
 .autoplan-batch-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; padding: 2px 0; }
 .autoplan-batch-head small { color: var(--muted-foreground); font-weight: 400; }
-.autoplan-row { display: grid; grid-template-columns: 24px 70px minmax(0, 1fr) 160px 150px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; border-top: 1px solid var(--border); }
+.autoplan-row { display: grid; grid-template-columns: 24px 120px minmax(0, 1fr) 160px 150px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; border-top: 1px solid var(--border); }
 .autoplan-row input { width: auto; margin: 0; }
 .autoplan-op small { display: block; color: var(--muted-foreground); font-size: 11px; }
 .autoplan-slot { white-space: nowrap; }
@@ -3003,9 +3003,25 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-unplaced { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--card); }
 .autoplan-unplaced h3 { margin: 0 0 4px; font-size: 14px; }
 .autoplan-unplaced-row { font-size: 13px; padding: 2px 0; }
+.autoplan-head .seg-tabs.autoplan-modes { margin: 0; }
+.autoplan-period { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+.autoplan-period label { display: flex; align-items: center; gap: 6px; }
+.autoplan-period .link-button { padding: 0; margin: 0; }
+.autoplan-scope { display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.autoplan-scope small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+.autoplan-exclude summary { padding: 6px 10px; cursor: pointer; font-weight: 600; }
+.autoplan-exclude[open] summary { border-bottom: 1px solid var(--border); }
+.autoplan-new { display: inline-block; justify-self: start; padding: 0 6px; border-radius: 6px; background: color-mix(in srgb, var(--primary) 14%, white); color: var(--primary); font-size: 11px; font-style: normal; font-weight: 600; line-height: 18px; white-space: nowrap; }
+.autoplan-new.off { background: var(--accent); color: var(--muted-foreground); }
+.autoplan-task .autoplan-new { display: block; width: fit-content; margin-top: 1px; }
+.autoplan-skipped { display: grid; grid-template-columns: 20px 84px minmax(110px, 190px) minmax(0, 1fr); gap: 8px; align-items: center; min-height: 28px; font-size: 13px; }
+.autoplan-project { display: grid; gap: 3px; font-size: 12px; max-width: 520px; }
+.autoplan-check.autoplan-person { display: grid; grid-template-columns: 20px minmax(140px, 220px) 60px minmax(0, 1fr); gap: 8px; min-height: 28px; font-variant-numeric: tabular-nums; }
+.autoplan-free { color: var(--muted-foreground); }
+.autoplan-created { font-size: 13px; padding: 6px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--primary) 35%, white); }
 .autoplan-dialog .autoplan-actions { margin: 0; padding: 10px 0 0; border-top: 1px solid var(--border); flex-wrap: nowrap; }
 @media (max-width: 700px) { .autoplan-task-line { grid-template-columns: 20px 76px minmax(0, 1fr); } .autoplan-task-name { grid-column: 3; } .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
-@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"] { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
+@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"], .autoplan-person, .autoplan-exclude summary, .autoplan-dialog select { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
 
 /* Вид сотрудника: выбор рядом с заголовком, заметная полоса «только просмотр» */
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
