@@ -215,11 +215,12 @@ th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align:
 .manual-stock-head h2 { font-size: 16px; font-weight: 600; }
 details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; font-weight: 600; }
 .manual-stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; align-items: end; margin-bottom: 14px; }
-/* «Быстрый ввод»: плотная форма как в остальных — поля 32 px, на 16" и шире четыре в ряд без дыр (2+2 / 1+1+1+1 / 1+2+1). */
+/* «Быстрый ввод»: плотная форма как в остальных — поля 32 px, на 16" и шире четыре в ряд без дыр (1+1+1+1 / 2+1+1 / 1+3). */
 .manual-stock-form label { gap: 4px; }
 .manual-stock-form input, .manual-stock-form select { height: 32px; padding: 5px 9px; font-size: 13px; }
 @media (min-width: 1500px) {
   .manual-stock-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: dense; gap: 8px 12px; }
+  .manual-stock-grid .span-3 { grid-column: span 3; }
 }
 @media (pointer: coarse) { .manual-stock-form input, .manual-stock-form select { height: 40px; } }
 .place-busy { background: #fff4d1; border-color: #e0a800; }
