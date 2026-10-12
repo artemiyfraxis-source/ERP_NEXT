@@ -1477,6 +1477,7 @@ export interface ConnectorSeriesHousing {
 export interface ConnectorTerminal {
   article: string; maker: string; product: string; series: string; kind: string;
   awg_from: string; awg_to: string; mm2_from: string; mm2_to: string; strip: string; applicator: string; crimp_height: string;
+  pull_force: string;
 }
 
 export interface ConnectorSeries {

@@ -3,7 +3,10 @@
 // (1 Вход · 2 Оснастка · 3 Ход операции · 4 Типовые дефекты · 5 Эскиз · 6 Результат), подписи. Через общий print.ts.
 // Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
 import type { ProjectTechcard, TechcardRevision } from "./api";
-import { ETK_CONNECTION_COLUMNS, etkConnectionRows, etkDrawHarness, etkFigure, etkTolerance, type EtkTopologyData } from "./etkDraw";
+import {
+  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkCrimpChips, etkDrawHarness, etkFigure, etkTolerance,
+  type EtkTopologyData,
+} from "./etkDraw";
 import { ETK_TOOLING_SECTIONS, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
 import { etkRouteLine, etkRouteOf } from "./etkRoute";
@@ -49,9 +52,8 @@ function head(kit: Row, revision: number, code: string): PrintBlock[] {
 function facts(fields: Row): string {
   const twist = object(fields.twist);
   return [
-    fields.applicator && `Аппликатор: ${text(fields.applicator)}`,
-    "crimpHeight" in fields && `Высота обжима: ${fields.crimpHeight ? `${text(fields.crimpHeight)} мм` : "⚠ нет данных"}`,
-    fields.pullForce && `Отрыв: ${text(fields.pullForce)} Н`,
+    // Аппликатор, высота обжима, отрыв — как чипы экрана: два разных контакта — по концам с именем контакта.
+    ...etkCrimpChips(fields).map(([label, value]) => `${label}: ${value}`),
     fields.lengthKd && `L по КД: ${text(fields.lengthKd)}`,
     fields.cutTolerance && `Допуск реза: ${etkTolerance(fields.cutTolerance)}`,
     fields.twist && `Шаг свивки: ${twist.pitch ? `${text(twist.pitch)} мм` : "по КД"}`,
@@ -160,7 +162,9 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     let shown = 0;
     const section = (title: string): PrintBlock => ({ heading: `${++shown}. ${title}` });
     const components = numbered(rows(operation.components), (item) => [
-      text(item.art) + (item.kd ? ` (по КД: ${text(item.kd)}, аналог)` : ""), text(item.name), text(item.grn),
+      text(item.art) + (item.kd ? ` (по КД: ${text(item.kd)}, аналог)` : ""),
+      // Обжимаемый контакт: под наименованием — спецификация обжима своего конца (как на экране).
+      [text(item.name), ...etkContactSpecs(object(operation.fields), item.art)].filter(Boolean).join("\n"), text(item.grn),
       text(item.norm), "", unitLabel(text(item.unit)),
     ]);
     const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);

@@ -9,8 +9,8 @@ from typing import Any, Iterable, Mapping
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab, gost_awg_map
 from app.modules.references.technology import (
-    TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, gost_awg_from_wire_table, resolve_terminal,
-    wire_section,
+    TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, gost_awg_from_wire_table, matching_terminal_records,
+    resolve_terminal, terminal_record_for_section, wire_section,
 )
 
 
@@ -72,14 +72,19 @@ def _enrich_side(
     wires = operation.get("wires")
     if not article or not isinstance(wires, list):
         return
-    sections = tuple(
-        wire_section(str(wire.get("art") or wire.get("name") or ""), gost_awg)
-        for wire in wires if isinstance(wire, Mapping)
-    )
+    labels = tuple(str(wire.get("art") or wire.get("name") or "") for wire in wires if isinstance(wire, Mapping))
+    sections = tuple(wire_section(label, gost_awg) for label in labels)
     if endpoint.get("fold"):
         # A core folded under the contact is crimped as a doubled cross-section.
         sections = tuple(fold_wire_section(section) for section in sections)
     resolution = resolve_terminal(terminal_records, article, sections)
+    # The ETK names each contact's norms per end: which wires a section row crimps and the contact's strip length.
+    candidates = matching_terminal_records(terminal_records, article)
+    by_label = {section.label: section for section in sections if section.label}
+
+    def section_strip(label: str) -> str:
+        record = terminal_record_for_section(candidates, by_label[label]) if label in by_label else None
+        return record.strip.strip() if record else ""
     operation[norm_key] = {
         "applicator": resolution.applicator,
         "crimpHeight": resolution.crimp_height,
@@ -92,6 +97,10 @@ def _enrich_side(
                 "applicator": item.applicator,
                 "rangeOnly": item.range_only,
                 "found": item.found,
+                "wires": list(dict.fromkeys(
+                    label for label, section in zip(labels, sections) if label and section.label == item.section
+                )),
+                "strip": section_strip(item.section),
             }
             for item in resolution.by_section
         ],
