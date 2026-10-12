@@ -848,6 +848,20 @@ it("keeps the chooser open and names the КБ when the server refuses the batch"
   expect(screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" })).toBeInTheDocument();
 });
 
+it("keeps the issue button visible but disabled, with the reason, when no КБ is ready; an issued КБ says so on its chip", async () => {
+  issueFetch(order([
+    { status: "КБ Выдана", at_issued: "2026-10-05T15:20:00", lines: [{ ...boundLine, reserved: "0", issued: "4" }] },
+    { status: "Недоукомплектован", lines: [boundLine, { ...request.lines[0], id: "waiting" }] },
+  ]), []);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  expect(screen.getByRole("tab", { name: "КБ1 · выдан" })).toBeInTheDocument();
+  const issue = screen.getByRole("button", { name: "Выдать комплекты" });
+  expect(issue).toBeDisabled();
+  expect(issue).toHaveAttribute("title", expect.stringContaining("Нет КБ, готовых к выдаче"));
+});
+
 it("gives no issue action without the handout right or on the picking screen", async () => {
   issueFetch(order([{ status: "Укомплектован" }, { status: "Готов к выдаче" }]), []);
   const picker: Principal = { ...principal, permissions: { fulfillment: "edit", handout: "view" } };

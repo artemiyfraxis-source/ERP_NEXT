@@ -478,10 +478,17 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
   const runBulk = (operation: () => Promise<{ message: string }>) => void cardProps.mutate(`project:${project}`, operation);
   // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
   const [choosing, setChoosing] = useState(false);
-  const canIssue = cardProps.canHandout && cardProps.showGive && requests.some(issuable);
+  const canGive = cardProps.canHandout && cardProps.showGive;
+  const canIssue = canGive && requests.some(issuable);
   const issuableRequests = requests.filter(issuable);
   const issuableLines = issuableRequests.reduce((sum, request) => sum + request.lines.length, 0);
-  const issueLabel = `Выдать ${issuableRequests.length === 1 ? kbOf(issuableRequests[0]) : `${issuableRequests.length} КБ`} · ${issuableLines} поз.`;
+  const issueLabel = issuableRequests.length
+    ? `Выдать ${issuableRequests.length === 1 ? kbOf(issuableRequests[0]) : `${issuableRequests.length} КБ`} · ${issuableLines} поз.`
+    : "Выдать комплекты";
+  // Disabled, not hidden, when nothing is ready: the title says why (the first КБ that is not).
+  const issueWhy = issuableRequests.length ? undefined
+    : requests.length && requests.every((request) => ["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status)) ? "Все КБ проекта уже выданы"
+    : `Нет КБ, готовых к выдаче${requests[0] ? `: ${kbOf(requests[0])} — ${notIssuable(requests[0])}` : ""}`;
   // A КБ sent again after its cancel shows only its live request; one cancelled request per КБ is enough of a trace.
   const liveKbs = new Set(requests.map((request) => kbOf(request)));
   const gone = [...new Map(cancelled.filter((request) => !liveKbs.has(kbOf(request))).map((request) => [kbOf(request), request])).values()]
@@ -511,14 +518,14 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
       {requests.map((request) => {
         const waiting = openLines(request).length;
         return <button type="button" role="tab" key={request.id} aria-selected={tab === request.id} className={`calendar-chip${tab === request.id ? " active" : ""}`} onClick={() => setTab(request.id)}>
-          {kbOf(request)}{waiting ? ` · ждут ${waiting}` : " ✓"}
+          {kbOf(request)}{["КБ Выдана", "КБ Возвращена", "Готово"].includes(request.status) ? " · выдан" : waiting ? ` · ждут ${waiting}` : " ✓"}
         </button>;
       })}
       {gone.map((request) => <span key={request.id} className="calendar-chip chip-cancelled" title={`Заявка ${request.number} отменена — КБ можно отправить на комплектацию заново из карточки проекта`}>
         {kbOf(request)} · отменена · {request.number}
       </span>)}
     </div>
-    {canIssue && <button className="primary project-issue-btn" aria-expanded={choosing} disabled={Boolean(busyId)} onClick={() => setChoosing((value) => !value)}>{issueLabel}</button>}
+    {canGive && <button className="primary project-issue-btn" aria-expanded={choosing && canIssue} disabled={!canIssue || Boolean(busyId)} title={issueWhy} onClick={() => setChoosing((value) => !value)}>{issueLabel}</button>}
     </div>
     {current
       ? <FulfillmentCard key={`${current.id}:${current.version}`} request={current} busy={busyId === current.id} {...cardProps} />

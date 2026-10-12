@@ -284,9 +284,9 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-card-actions { justify-content: flex-start; align-items: center; }
 .fulfillment-card-actions > .handout-offer { margin-left: auto; }
 .fulfillment-danger-group { display: flex; flex-wrap: wrap; gap: 10px; margin-left: auto; padding-left: 16px; border-left: 1px solid var(--border); }
-.project-kb-bar { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; margin-bottom: 16px; }
-.project-kb-bar .calendar-chips { margin-bottom: 0; flex: 1 1 320px; }
-.project-issue-btn { flex: none; margin-left: auto; white-space: nowrap; }
+.project-kb-bar { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 16px; }
+.project-kb-bar .calendar-chips { margin-bottom: 0; flex: 0 1 auto; }
+.project-issue-btn { flex: none; white-space: nowrap; }
 .issue-chooser { margin: 12px 0 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 12px 0; }
 .issue-chooser h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
 .issue-chooser th.check, .issue-chooser td.check { width: 36px; text-align: center; }
