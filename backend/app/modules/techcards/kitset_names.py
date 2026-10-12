@@ -22,6 +22,7 @@ from typing import Protocol
 import httpcore
 import httpx
 
+from .etk_parts import kit_article
 from .kitsets import Kitset
 
 
@@ -77,6 +78,78 @@ def clean_title(title: object) -> str:
     t = re.sub(r"\s+", " ", str(title)).strip()
     t = re.sub(r"^[^0-9A-Za-zА-Яа-яЁё(]+", "", t)
     return re.split(r"\s[|–—•·»]\s", t)[0].strip()
+
+
+# Site titles as shown to people (owner, 12.10.2026: «как-то плохо работает подтягивание с сайтов»): the stored name
+# stays the raw title (it is the reference, and `kit_article` reads the stored name), the screens show it cleaned.
+SITE_TITLE_LIMIT = 80
+# A clause or sentence with one of these is shop talk, not the name of the item.
+_SEO_MARKERS = re.compile(
+    r"купить|продажа\s+от|оптом|в\s+розницу|в\s+наличии|доставк|цена\b|интернет[- ]магазин|в\s+метровой\s+нарезке"
+    r"|не\s+поддерживает\s+горение|скидк|распродаж",
+    re.I,
+)
+# Makers worth keeping when they only stand in a dropped clause («… не поддерживает горение Rexant купить …»).
+SITE_MAKERS = (
+    "Rexant", "КВТ", "ParLan", "Паритет", "JST", "Molex", "Hirose", "Amphenol", "Weipu", "CNLINKO", "Connfly",
+    "DKC", "ДКС", "Fortisflex", "Cabeus", "Hyperline", "Proconnect", "TE Connectivity", "Phoenix Contact", "Wago",
+)
+# Shops, not makers: a «(…)» with one of them, or a domain, is dropped.
+_SHOP_MARKERS = re.compile(
+    r"чип\s*и\s*дип|chipdip|элитан|elitan|платан|platan|компэл|промэлектроника|электро-?мпо|electro-mpo|ozon|озон"
+    r"|wildberries|леруа|всеинструменты|\bэтм\b|lcsc|\.(?:ru|com|net|su|рф)\b",
+    re.I,
+)
+
+
+def _maker_in(text: str) -> str:
+    return next((maker for maker in SITE_MAKERS if re.search(rf"(?<!\w){re.escape(maker)}(?!\w)", text, re.I)), "")
+
+
+def clean_site_title(title: object, limit: int = SITE_TITLE_LIMIT) -> str:
+    """A supplier-page title as a name: shop talk out (sentences and comma clauses with «купить», «Продажа от 5 м!»,
+    «в метровой нарезке», «не поддерживает горение» — the «нг» marking itself stays), « - кабель для …» descriptions
+    and «(shop)» suffixes out, a maker that stood only in a dropped part kept in brackets, whitespace collapsed, at most
+    `limit` characters cut at a word. Deterministic: the same title always gives the same name."""
+    text = re.sub(r"\s+", " ", decode_entities(str(title or ""))).strip()
+    if not text:
+        return ""
+    dropped: list[str] = []
+    sentences = [part for part in re.split(r"(?<=[.!?])\s+", text) if part]
+    kept_sentences = []
+    for index, sentence in enumerate(sentences):
+        if index and (sentence.endswith("!") or _SEO_MARKERS.search(sentence)):
+            dropped.append(sentence)
+            continue
+        kept_sentences.append(sentence)
+    text = " ".join(kept_sentences)
+    clauses = text.split(", ")
+    kept = [clauses[0]]
+    for clause in clauses[1:]:
+        if _SEO_MARKERS.search(clause):
+            dropped.append(clause)
+        else:
+            kept.append(clause)
+    text = ", ".join(kept)
+    # A marker inside the first clause: cut from it to the end («… Rexant купить оптом и в розницу»).
+    marker = _SEO_MARKERS.search(text)
+    if marker and marker.start() > 0:
+        dropped.append(text[marker.start():])
+        text = text[:marker.start()]
+    # « - кабель для СКС …»: a lowercase description after a spaced hyphen.
+    parts = text.split(" - ")
+    text = parts[0] + "".join(f" - {part}" for part in parts[1:] if not part[:1].islower())
+    dropped.extend(part for part in parts[1:] if part[:1].islower())
+    text = re.sub(r"\s*\(([^()]*)\)", lambda m: "" if _SHOP_MARKERS.search(m[1]) else m[0], text)
+    text = re.sub(r"\s+", " ", text).strip(" ,.;:!-–—")
+    maker = next((found for part in dropped if (found := _maker_in(part))), "")
+    if maker and not _maker_in(text):
+        text = f"{text} ({maker})"
+    if len(text) > limit:
+        cut = text[:limit - 1]
+        space = cut.rfind(" ")
+        text = (cut[:space] if space > limit // 2 else cut).rstrip(" ,.;:-–—") + "…"
+    return text
 
 
 def page_title(html: object) -> str:
@@ -381,6 +454,11 @@ def fetch_names(kitset: Kitset, fetcher: PageFetcher, *, index: str = "", cap: i
                 continue
             if not name_looks_real(title, article):
                 result.skipped.append({"art": article, "why": "на странице только артикул (ссылка на поиск)"})
+                continue
+            if kit_article(component.article, title)["kd"]:
+                # Written into «Наименование», a title without Russian words («XHP-4 JST housing») would read as the
+                # article the estimator replaced the КД one with (`kit_article`), and the generator would build on it.
+                result.skipped.append({"art": article, "why": "название с сайта читается как другой артикул"})
                 continue
             result.fills.append(NameFill(
                 index=assembly.index, position=position, article=component.article, link=component.link, name=title,

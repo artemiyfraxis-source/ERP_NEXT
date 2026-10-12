@@ -16,6 +16,8 @@ from app.shared import article_match
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
+    authenticated_principal,
+    section_allowed,
     fulfillment_admin_principal,
     fulfillment_edit_principal,
     fulfillment_handout_principal,
@@ -365,8 +367,50 @@ def project_candidates(
             if len(page) < 200:
                 break
             after = page[-1].id
-        lots = uow.warehouse.list(limit=5000, include_zero=False) if positions else []
-        held = project_reserve_by_lot(uow, lots, project)
+        return _candidates(uow, project, positions)
+
+
+class CandidatePosition(BaseModel):
+    article: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=512)
+    unit: str = Field(default="", max_length=32)
+
+
+class CandidatesPayload(BaseModel):
+    positions: list[CandidatePosition] = Field(default_factory=list, max_length=1000)
+
+
+def stock_candidates_principal(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+) -> Principal:
+    """Who may see what the warehouse holds: «Склад» (view) or the kitting desk («Комплектация», edit)."""
+    if principal.service or not (
+        section_allowed(principal, ("warehouse",), "view") or section_allowed(principal, ("fulfillment",), "edit")
+    ):
+        raise HTTPException(status_code=403, detail="Остатки склада вам не открыты")
+    return principal
+
+
+@router.post("/projects/{project}/candidates")
+def positions_candidates(
+    project: str,
+    payload: CandidatesPayload,
+    _principal: Annotated[Principal, Depends(stock_candidates_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Возможно есть» for the positions the caller names — the project's «Снабжение» lists its spec positions before
+    any kit request exists. The same lots, matcher and answer as the GET; the project's own reserves count as free."""
+    positions: dict[tuple[str, str], str] = {}
+    for item in payload.positions:
+        positions.setdefault((item.article.strip(), item.name.strip()), item.unit.strip())
+    with uow_factory() as uow:
+        return _candidates(uow, project.strip(), positions)
+
+
+def _candidates(uow, project: str, positions: dict[tuple[str, str], str]) -> dict:
+    """One pass over the stock for every (article, name) position: exact article first, then fuzzy."""
+    lots = uow.warehouse.list(limit=5000, include_zero=False) if positions else []
+    held = project_reserve_by_lot(uow, lots, project)
     free = [lot for lot in lots if free_for_project(lot, held) > 0]
     result = []
     for (article, name), unit in positions.items():

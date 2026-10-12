@@ -45,6 +45,7 @@ from .kitsets import (
     document_kind,
     item_id,
     sort_kitsets,
+    supply_state,
 )
 from .project_cards import TechcardValidationError
 
@@ -91,6 +92,10 @@ def procurement_factory(request: Request):
 
 def receiving_factory(request: Request):
     return _factory(request, "receiving_uow_factory")
+
+
+def references_factory(request: Request):
+    return _factory(request, "references_uow_factory")
 
 
 def _name_queue(request: Request):
@@ -423,9 +428,12 @@ def supply(
     kitset = _kitset(request, project)
     lines, _requests = flow.project_supply(
         kitset, requests_factory(request), procurement_factory(request), fulfillment_factory(request),
+        references_factory(request),
     )
     return {"project": kitset.project, "lines": [{
-        "art": line.article, "name": line.name, "kbs": list(line.kbs), "need": _number(line.need),
+        "art": line.article, "name": line.name, "name_source": line.name_source, "name_hint": line.name_hint,
+        **_state_json(supply_state(line)),
+        "kbs": list(line.kbs), "need": _number(line.need),
         "unit": unit_for_type(line.item_type),
         "free": _number(line.free), "off_book": _number(line.off_book), "ordered": _number(line.ordered),
         "kitted": _number(line.kitted),
@@ -433,6 +441,11 @@ def supply(
         "grn": line.grn, "stage": line.stage, "received": line.received,
         "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
     } for line in lines]}
+
+
+def _state_json(state) -> dict[str, str]:
+    """«Стадия» of a supply position: one word, its tone and the numbers behind it (`supply_state`)."""
+    return {"state": state.key, "state_label": state.label, "state_tone": state.tone, "state_hint": state.hint}
 
 
 class OrderMissingPayload(BaseModel):
@@ -467,6 +480,7 @@ def order_missing(
             return flow.order_missing(
                 command, techcards_factory(request), factory, procurement_uow=procurement_factory(request),
                 fulfillment_uow=fulfillment_factory(request), production_uow=production_factory(request),
+                references_uow=references_factory(request),
             )
         except RequestValidationError as error:
             raise KitsetValidationError(str(error)) from error

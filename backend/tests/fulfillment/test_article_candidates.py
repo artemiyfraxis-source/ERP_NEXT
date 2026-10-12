@@ -137,6 +137,41 @@ def test_project_candidates_in_one_pass_exact_before_fuzzy_and_only_lots_with_a_
     assert positions["QQQ-777"]["candidates"] == [] and positions["QQQ-777"]["more"] == 0
 
 
+def test_candidates_for_named_positions_without_any_kit_request(api):
+    """«Снабжение» asks for its spec positions before anything went to kitting: the same matcher, the same answer."""
+    client, factory, _ = api
+    put(factory, lot("FRX.26.0000001", "10", "ghr-04v-s", "Колодка"), lot("FRX.26.0000002", "5", "GHR04VS", "Колодка"))
+
+    response = client.post("/api/issues/projects/728К.2/candidates", json={"positions": [
+        {"article": "GHR-04V-S", "name": "Колодка 4pin", "unit": "шт"}, {"article": "QQQ-777", "name": ""},
+        {"article": "GHR-04V-S", "name": "Колодка 4pin"},  # a repeat is answered once
+    ]})
+
+    assert response.status_code == 200, response.text
+    positions = response.json()["positions"]
+    assert [item["article"] for item in positions] == ["GHR-04V-S", "QQQ-777"]
+    assert [(c["grn"], c["kind"]) for c in positions[0]["candidates"]] == [
+        ("FRX.26.0000001", "exact"), ("FRX.26.0000002", "fuzzy"),
+    ]
+    assert positions[1]["candidates"] == []
+
+
+@pytest.mark.parametrize(("permissions", "status"), [
+    ({"warehouse": "view"}, 200),
+    ({"fulfillment": "edit"}, 200),
+    ({"fulfillment": "view", "projects": "edit"}, 403),
+    ({"projects": "view"}, 403),
+])
+def test_named_candidates_only_for_who_may_see_stock(api, permissions, status):
+    client, _factory, _ = api
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(name="Технолог", department="КБ"), email="t@example.test", roles=frozenset({"engineer"}),
+        permissions=permissions,
+    )
+    response = client.post("/api/issues/projects/728К.2/candidates", json={"positions": [{"article": "A-1"}]})
+    assert response.status_code == status, response.text
+
+
 def test_binding_writes_what_was_bound_to_what_into_the_audit_and_the_report_counts_the_pairs(api):
     client, factory, sessions = api
     exact, near = lot("FRX.26.0000001", "10", "GHR-04V-S", "Колодка"), lot("FRX.26.0000002", "10", "ghr04vs", "Колодка 4pin")
