@@ -2944,15 +2944,25 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .data-table.order-list .table-wrap { max-height: none; }
 
 /* Автоплан */
-.autoplan-body { width: min(780px, 100vw); }
-.autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+.autoplan-dialog { display: flex; flex-direction: column; gap: 10px; width: min(880px, 100%); height: auto; max-height: calc(100vh - 32px); overflow: hidden; padding: 16px 20px; outline: none; }
+.autoplan-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.autoplan-head h2 { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
+.autoplan-scroll { display: grid; gap: 10px; align-content: start; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
+.autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .autoplan-form label { display: grid; gap: 3px; font-size: 12px; }
-.autoplan-tasks { margin-bottom: 8px; font-size: 13px; }
-.autoplan-tasks summary { cursor: pointer; padding: 4px 0; }
-.autoplan-task-list { display: grid; gap: 2px; max-height: 180px; overflow: auto; padding: 4px 0; }
+.autoplan-tasks { font-size: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.autoplan-tasks-bar { display: flex; align-items: center; gap: 14px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.autoplan-tasks-bar .link-button { padding: 0; margin: 0; }
+.autoplan-tasks-bar .link-button:disabled { color: var(--muted-foreground); }
+.autoplan-count { margin-right: auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.autoplan-task-list { display: grid; max-height: 240px; overflow: auto; padding: 2px 10px; }
+.autoplan-check.autoplan-task-line { display: grid; grid-template-columns: 20px 84px minmax(110px, 190px) minmax(0, 1fr); gap: 8px; min-height: 28px; font-variant-numeric: tabular-nums; }
+.autoplan-task-line b { font-weight: 600; white-space: nowrap; }
+.autoplan-task-item, .autoplan-task-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autoplan-task-name { color: var(--muted-foreground); }
 .autoplan-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
-.autoplan-check input { width: auto; margin: 0; }
-.autoplan-result { display: grid; gap: 8px; margin-top: 8px; }
+.autoplan-check input { width: auto; margin: 0; justify-self: start; }
+.autoplan-result { display: grid; gap: 8px; }
 .autoplan-summary { font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 8px; background: var(--accent); }
 .autoplan-fitter { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 8px 10px; }
 .autoplan-fitter h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 14px; }
@@ -2969,9 +2979,9 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-unplaced { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--card); }
 .autoplan-unplaced h3 { margin: 0 0 4px; font-size: 14px; }
 .autoplan-unplaced-row { font-size: 13px; padding: 2px 0; }
-.autoplan-actions { position: sticky; bottom: 0; background: var(--background, #f6f8f8); padding: 8px 0; }
-@media (max-width: 700px) { .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
-@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-body button { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
+.autoplan-dialog .autoplan-actions { margin: 0; padding: 10px 0 0; border-top: 1px solid var(--border); flex-wrap: nowrap; }
+@media (max-width: 700px) { .autoplan-task-line { grid-template-columns: 20px 76px minmax(0, 1fr); } .autoplan-task-name { grid-column: 3; } .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
+@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"] { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
 
 /* Вид сотрудника: выбор рядом с заголовком, заметная полоса «только просмотр» */
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }

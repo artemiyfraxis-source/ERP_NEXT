@@ -81,9 +81,10 @@ it("shows the period in the button and groups the preview by fitter and setup ba
 it("leaves unticked batches out of the apply payload and sends the preview's scope and fingerprint", async () => {
   const calls = mockApi(() => json({ applied: 1, tasks: [] }));
   const applied = vi.fn();
-  render(<AutoplanPanel tasks={tasks} close={() => undefined} onApplied={applied} />);
+  const two = [...tasks, { ...tasks[0], id: "70000000-0000-0000-0000-000000000002", number: "ПЗ-0002" }] as ProductionTask[];
+  render(<AutoplanPanel tasks={two} close={() => undefined} onApplied={applied} />);
   fireEvent.click(screen.getByLabelText("Пересчитать прежний автоплан"));
-  fireEvent.click(screen.getByText(/Задания:/));
+  fireEvent.click(screen.getByRole("button", { name: "Снять все" }));
   fireEvent.click(screen.getByLabelText(/ПЗ-0001/));
   await openPreview();
   fireEvent.click(screen.getByLabelText("Наладка: Терминал T1"));
@@ -96,6 +97,33 @@ it("leaves unticked batches out of the apply payload and sends the preview's sco
   expect(apply.replan_auto).toBe(true);
   expect(apply.task_ids).toEqual([tasks[0].id]);
   expect(calls[0].body.task_ids).toEqual([tasks[0].id]);
+});
+
+it("is a centred modal dialog: counter, select all / clear all, Escape and Отмена close it", () => {
+  mockApi(() => json({ applied: 0, tasks: [] }));
+  const close = vi.fn();
+  render(<AutoplanPanel tasks={tasks} close={close} onApplied={() => undefined} />);
+  const dialog = screen.getByRole("dialog", { name: "Автоплан" });
+  expect(dialog).toHaveAttribute("aria-modal", "true");
+  expect(screen.getByText("выбрано 1 из 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Снять все" }));
+  expect(screen.getByText("выбрано 0 из 1")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Предложить план на/ })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Выбрать все" }));
+  expect(screen.getByText("выбрано 1 из 1")).toBeInTheDocument();
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(close).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  expect(close).toHaveBeenCalledTimes(2);
+  fireEvent.mouseDown(dialog.parentElement!);
+  expect(close).toHaveBeenCalledTimes(3);
+});
+
+it("sends no task_ids while every task is ticked", async () => {
+  const calls = mockApi(() => json({ applied: 0, tasks: [] }));
+  render(<AutoplanPanel tasks={tasks} close={() => undefined} onApplied={() => undefined} />);
+  await openPreview();
+  expect(calls[0].body.task_ids).toBeUndefined();
 });
 
 it("shows the stale message on 409 and recalculates the preview", async () => {
