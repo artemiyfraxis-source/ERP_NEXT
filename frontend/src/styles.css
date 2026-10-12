@@ -1970,6 +1970,20 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .lot-card-main small, .lot-card-meta { color: var(--muted-foreground); font-size: 12px; }
 .lot-card-meta { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; }
 .lot-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Stage option warehouse.scan: the scan field and its lot card / place list (Roller_Buyer /tsd). */
+.scan-zone { display: grid; gap: 8px; margin-bottom: 10px; }
+.scan-bar { display: flex; gap: 8px; }
+.scan-bar .scan-input { flex: 1 1 auto; max-width: 640px; height: 44px; padding: 0 14px; font-size: 18px; font-weight: 600; letter-spacing: .02em; }
+.scan-bar button { height: 44px; padding: 0 18px; }
+.scan-panel, .scan-card { display: grid; gap: 8px; padding: 12px 14px; }
+.scan-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.scan-panel-head h2 { margin: 0; font-size: 16px; }
+.scan-panel-head .link-button { padding: 0; }
+.scan-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.scan-actions label { display: grid; gap: 3px; color: var(--muted-foreground); font-size: 12px; }
+.scan-actions input { width: 180px; height: 36px; }
+.scan-actions button { height: 36px; }
+.scan-card .error-banner, .scan-card .success-banner { margin-bottom: 0; }
 .mb-tiles { margin-top: 4px; }
 .mb-tile-extra { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 12px; }
 .mb-tile-extra .mb-free, .mb-tile-extra .mb-done, .mb-launch { padding: 1px 7px; border-radius: 6px; background: var(--accent); }

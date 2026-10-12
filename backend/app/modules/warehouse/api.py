@@ -11,6 +11,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.shared import stage_options
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -47,6 +48,7 @@ from .application import (
     move_lot,
     lot_destinations,
     return_writeoff,
+    scan_stock,
     warehouse_lots,
     write_off,
 )
@@ -336,6 +338,39 @@ def lots(
         "total": total,
         "truncated": max(0, total - len(page)),
         "next_cursor": str(page[-1].id) if len(lots) > limit else None,
+    }
+
+
+def _require_option(key: str) -> None:
+    """A stage option that is off hides its route: 404, checked after the gate (an unknown caller still gets 401/403)."""
+    if not stage_options.enabled(key):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+@router.get("/scan")
+def scan(
+    request: Request,
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+    code: Annotated[str, Query(max_length=255)] = "",
+) -> dict:
+    """Stage option warehouse.scan: ГРН (with or without «-П2», any case, look-alikes, Russian layout) → its lot(s);
+    a place code → the lots with a balance lying there (both warehouses); else 404 «Не найдено: …»."""
+    _require_option("warehouse.scan")
+    try:
+        result = scan_stock(uow_factory(), code)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=error.args[0]) from error
+    holders = _reserve_holders(request, [lot for lot in result.lots if lot.reserved > 0])
+    return {
+        "kind": result.kind,
+        "code": result.code,
+        "place": result.place,
+        "lots": [
+            {**_result(lot), "reserve_holders": holders.get(lot.id, []),
+             "reserve_note": _reserve_note(holders.get(lot.id, []))}
+            for lot in result.lots
+        ],
     }
 
 

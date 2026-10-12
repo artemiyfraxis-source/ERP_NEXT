@@ -504,6 +504,14 @@ export interface WarehouseShelfPlaces {
   next_number: number | null;
 }
 
+/** Stage option warehouse.scan: «lot» — the scanned ГРН's lots, «place» — what lies on the scanned place. */
+export interface WarehouseScan {
+  kind: "lot" | "place";
+  code: string;
+  place: string;
+  lots: WarehouseLot[];
+}
+
 export interface WarehouseArticleInfo {
   series: string;
   name: string;
@@ -2127,6 +2135,7 @@ export const warehouseApi = {
     const suffix = params.size ? `?${params}` : "";
     return api<{ lots: WarehouseLot[]; total: number; truncated: number; next_cursor: string | null }>(`/api/stock${suffix}`);
   },
+  scan: (code: string) => api<WarehouseScan>(`/api/stock/scan?code=${encodeURIComponent(code)}`),
   shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
     `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,
   ),

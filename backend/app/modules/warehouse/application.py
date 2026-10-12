@@ -35,6 +35,7 @@ from .domain import (
     normalize_location_code,
 )
 from .item_types import canonical_item_type
+from .scan import lot_matches, parse_scan, place_matches
 from .stock_export import LegacyStockRow, LegacyWriteOffRow, parse_quantity
 
 
@@ -1282,3 +1283,32 @@ def shelf_occupancy(uow: UnitOfWork, warehouse: str, shelf: str) -> ShelfOccupan
     with uow:
         used = list(uow.warehouse.occupied_locations(warehouse))
     return ShelfOccupancy(warehouse, code, places_on_shelf(used, code), next_free_number(used, code))
+
+
+@dataclass(frozen=True)
+class ScanResult:
+    """kind «lot»: the lots of the scanned ГРН (one, or every package); «place»: what lies on the place."""
+
+    kind: str
+    code: str
+    place: str
+    lots: list[StockLot]
+
+
+def scan_stock(uow: UnitOfWork, code: str) -> ScanResult:
+    """Stage option warehouse.scan (Roller_Buyer /api/stock/scan): a ГРН → its lot(s), a place → the lots there.
+    Nothing found → KeyError with the text for the storekeeper."""
+    scanned = parse_scan(code)
+    with uow:
+        if scanned.grn is not None:
+            lots = [
+                lot for lot in uow.warehouse.with_grn_ending(scanned.grn.tail)
+                if lot_matches(scanned.grn, lot.grn, lot.package)
+            ]
+            if lots:
+                return ScanResult("lot", scanned.text, "", lots)
+        elif scanned.place is not None:
+            lots = [lot for lot in uow.warehouse.with_balance_near(scanned.place)
+                    if place_matches(scanned.place, lot.storage_location)]
+            return ScanResult("place", scanned.text, scanned.place, lots)
+    raise KeyError(f"Не найдено: {scanned.text or '—'}")

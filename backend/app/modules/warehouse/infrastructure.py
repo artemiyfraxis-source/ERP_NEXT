@@ -462,6 +462,24 @@ class SqlAlchemyWarehouseRepository:
         ).order_by(StockLotRow.grn, StockLotRow.package).with_for_update())
         return [_domain(row) for row in rows]
 
+    def with_grn_ending(self, tail: str) -> list[StockLot]:
+        """Lots whose ГРН ends with «.26.0000001» (zero balance too): the scan narrows them by prefix and package."""
+        rows = self.session.scalars(
+            select(StockLotRow).where(StockLotRow.grn.like(f"%{tail}"))
+            .order_by(StockLotRow.grn, StockLotRow.package, StockLotRow.warehouse)
+        )
+        return [_domain(row) for row in rows]
+
+    def with_balance_near(self, place: str) -> list[StockLot]:
+        """Lots with a balance whose place starts with the rack code (both warehouses); the scan keeps the place."""
+        rows = self.session.scalars(
+            select(StockLotRow).where(
+                StockLotRow.storage_location.like(f"{place}%"),
+                StockLotRow.inbound - StockLotRow.written_off > 0,
+            ).order_by(StockLotRow.warehouse, StockLotRow.storage_location, StockLotRow.grn, StockLotRow.package)
+        )
+        return [_domain(row) for row in rows]
+
     def occupied_locations(self, warehouse: str) -> list[str]:
         """Places of the lots that still have a balance: an emptied lot frees its place (SK-15)."""
         return list(self.session.scalars(select(StockLotRow.storage_location).where(
