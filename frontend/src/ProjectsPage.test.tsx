@@ -665,8 +665,11 @@ describe("ProjectsPage", () => {
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       if (decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4/supply") {
         return json({ project: "708К.4", lines: [
-          { art: "43025-0400", name: "Корпус Molex", kbs: ["КБ1"], need: "20", unit: "шт", free: "0", off_book: "20", ordered: "0", kitted: "0", short: "0", grn: "", stage: "Закупка · Готово · без ГРН", received: false, rows: [] },
-          { art: "43030-0007", name: "Контакт", kbs: ["КБ2"], need: "32", unit: "шт", free: "0", off_book: "12", ordered: "18", kitted: "0", short: "2", grn: "", stage: "Закупка · В работе", received: false, rows: [] },
+          { art: "43025-0400", name: "Корпус Molex", kbs: ["КБ1"], need: "20", unit: "шт", free: "0", off_book: "20", ordered: "0", kitted: "0", short: "0", grn: "", stage: "Закупка · Готово · без ГРН", received: false,
+            rows: [{ where: "Закупка", status: "Готово · без ГРН", source_id: "ЗК-2" }],
+            state: "stock", state_label: "Со склада", state_tone: "info", state_hint: "Закупка отметила «Есть на складе, без ГРН»: 20" },
+          { art: "43030-0007", name: "Контакт", kbs: ["КБ2"], need: "32", unit: "шт", free: "0", off_book: "12", ordered: "18", kitted: "0", short: "2", grn: "", stage: "Закупка · В работе", received: false, rows: [],
+            state: "short", state_label: "Не хватает 2", state_tone: "danger", state_hint: "Нужно 32 → не хватает 2" },
         ] });
       }
       return base(input, init);
@@ -677,12 +680,78 @@ describe("ProjectsPage", () => {
 
     expect(await screen.findByRole("columnheader", { name: /Без ГРН/ })).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
-    expect(screen.getAllByText("Закупка · Готово · без ГРН").some((node) => node.className === "tone-info")).toBe(true);
-    const fromStock = screen.getByText("Со склада, без закупки").parentElement!;
+    const stage = screen.getAllByText("Со склада").find((node) => node.className === "tone-info")!;
+    // The chain and where to bind the ГРН stay in the tooltip.
+    expect(stage.getAttribute("title")).toContain("Цепочка: Закупка · Готово · без ГРН");
+    expect(stage.getAttribute("title")).toContain("ЗК-2 → «Привязать ГРН»");
+    expect(screen.getAllByText("Не хватает 2").some((node) => node.className === "tone-danger")).toBe(true);
+    const fromStock = screen.getAllByText("Со склада").find((node) => node.tagName === "DT")!.parentElement!;
     expect(fromStock.querySelector("dd")!.textContent).toBe("1");
+    expect(screen.queryByText("не заведено")).toBeNull();
     expect(screen.queryByLabelText("Заказать 43025-0400")).toBeNull();  // covered without a ГРН: nothing to order
     expect(screen.getByLabelText("Заказать 43030-0007")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Заказать недостающее (1)" })).toBeTruthy();
+  });
+
+  it("shows where a name comes from, and «—» with the reason for an unknown article", async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4/supply") {
+        return json({ project: "708К.4", lines: [
+          { art: "XHP-4", name: "Корпус JST XH 4 конт.", name_source: "ref", name_hint: "Из справочника ERP", kbs: ["КБ1"], need: "20", unit: "шт", free: "20", ordered: "0", kitted: "0", short: "0", grn: "", stage: "со склада", received: false, rows: [], state: "stock", state_label: "Со склада", state_tone: "info" },
+          { art: "QWE-1", name: "", name_source: "", name_hint: "Артикул неизвестен: нет в справочниках ERP, на складе не найдено, сайт elitan.ru не отдал название", kbs: ["КБ1"], need: "1", unit: "шт", free: "0", ordered: "0", kitted: "0", short: "1", grn: "", stage: "не заведено", received: false, rows: [], state: "short", state_label: "Не хватает 1", state_tone: "danger" },
+        ] });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Снабжение" }));
+    expect((await screen.findByText("Корпус JST XH 4 конт.")).getAttribute("title")).toBe("Из справочника ERP");
+    const unknown = screen.getByText("артикул неизвестен").parentElement!;
+    expect(unknown.getAttribute("title")).toContain("сайт elitan.ru не отдал название");
+    // No stock rights: no «Возможно есть» column and no request for it.
+    expect(screen.queryByRole("columnheader", { name: /Возможно есть/ })).toBeNull();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/candidates"))).toBe(false);
+  });
+
+  it("colours the rows short of stock by «Возможно есть» for whoever may see the warehouse", async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    const asked: unknown[] = [];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/supply") {
+        return json({ project: "708К.4", lines: [
+          { art: "SXH-001T-P0.6", name: "Контакт обжимной JST XH гнездо", kbs: ["КБ1"], need: "80", unit: "шт", free: "0", ordered: "0", kitted: "0", short: "80", grn: "", stage: "не заведено", received: false, rows: [], state: "short", state_label: "Не хватает 80", state_tone: "danger" },
+          { art: "QWE-1", name: "", kbs: ["КБ1"], need: "1", unit: "шт", free: "0", ordered: "0", kitted: "0", short: "1", grn: "", stage: "не заведено", received: false, rows: [], state: "short", state_label: "Не хватает 1", state_tone: "danger" },
+          { art: "LP-12-C04PE-02-001", name: "Разъём CNLINKO LP-12 вилка 4 конт.", kbs: ["КБ1"], need: "20", unit: "шт", free: "25", ordered: "0", kitted: "0", short: "0", grn: "", stage: "со склада", received: false, rows: [], state: "stock", state_label: "Со склада", state_tone: "info" },
+        ] });
+      }
+      if (url === "/api/issues/projects/708К.4/candidates") {
+        asked.push(JSON.parse(String(init?.body)));
+        return json({ positions: [
+          { article: "SXH-001T-P0.6", name: "Контакт обжимной JST XH гнездо", unit: "шт", more: 0, candidates: [
+            { id: "l1", lot_id: "l1", warehouse: "ЦАР", grn: "OLD.26.0000002", package: "", article: "SXH001TP06", name: "Контакт SXH 0,6", unit: "шт", storage_location: "1F4", available: "40", kind: "fuzzy", match: "fuzzy-separators" },
+          ] },
+          { article: "QWE-1", name: "", unit: "шт", more: 0, candidates: [] },
+        ] });
+      }
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "view", warehouse: "view" } }} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("tab", { name: "Снабжение" }));
+
+    expect(await screen.findByText("ГРН OLD.26.0000002 · 40 шт")).toBeTruthy();
+    expect(screen.getByText("похожий артикул · ЦАР")).toBeTruthy();
+    // Only the positions short of stock are asked about, with the names the list shows.
+    expect(asked).toEqual([{ positions: [
+      { article: "SXH-001T-P0.6", name: "Контакт обжимной JST XH гнездо", unit: "шт" }, { article: "QWE-1", name: "", unit: "шт" },
+    ] }]);
+    expect(screen.getByText("ГРН OLD.26.0000002 · 40 шт").closest("tr")!.className).toContain("cand-maybe");
+    expect(screen.getByText("не найдено").closest("tr")!.className).toContain("cand-none");
+    expect(screen.getByText("Разъём CNLINKO LP-12 вилка 4 конт.").closest("tr")!.className).not.toContain("cand-");
+    expect(screen.getByLabelText("Цвета строк").textContent).toContain("возможно есть: похожий артикул или не хватает");
   });
 
   it("shows «Снабжение» without the order button to whoever cannot file requests", async () => {

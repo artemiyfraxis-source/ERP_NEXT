@@ -201,7 +201,7 @@ def _wires(rows: Iterable[Mapping[str, Any]], out: _Collector) -> None:
         out.record(entity, mark, _payload(
             **{"Марка": mark},
             wireType=_text(fields, "Тип провода"),
-            manufacturer=_text(fields, "Стандарт / производитель"),
+            manufacturer=_text(fields, "Производители", "Стандарт / производитель"),
             # Multi-core: the editor shows «4x0,35» from Core + «Сечение C»; a single wire shows its section alone.
             sectionMm2=size if entity == "wire" else "",
             Core=str(cores) if entity == "cable" else "",

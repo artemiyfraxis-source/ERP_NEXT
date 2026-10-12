@@ -18,8 +18,8 @@ from app.shared.http_auth import (
 
 from .application import (
     CreateRecordCommand, EditRecordCommand, FieldEdit, ReferencePair, ReplaceMapsCommand, ReplaceSnapshotCommand, TechRecordInput,
-    SetCableKindCommand, SetCoaxDiametersCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
-    replace_maps, replace_snapshot, set_cable_kind, set_coax_diameters,
+    SetCableKindCommand, SetCoaxDiametersCommand, SetCoveringGroupCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
+    replace_maps, replace_snapshot, set_cable_kind, set_coax_diameters, set_covering_group, coverings_catalog,
 )
 from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
@@ -615,6 +615,33 @@ def save_cable_diameters(
         cable=payload.cable, dia_id=payload.dia_id, old=payload.old, value=payload.value, actor=principal.actor, now=now,
     ), uow_factory()))
     return _dia_json(record)
+
+
+@router.get("/coverings")
+def coverings(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«Оболочки»: БД.МАТ rows that cover a harness, split into ТУТ / ТТК / Оплётки / Гофра / Прочее, parsed per group
+    and sorted by series, then Ø (`coverings.py`)."""
+    return coverings_catalog(uow_factory())
+
+
+class CoveringGroupPayload(BaseModel):
+    group: str = Field(default="", max_length=32)
+
+
+@router.put("/coverings/{record_id}/group")
+def put_covering_group(
+    record_id: UUID,
+    payload: CoveringGroupPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    record = _run_edit(lambda: set_covering_group(SetCoveringGroupCommand(
+        record_id=record_id, group=payload.group, actor=principal.actor, now=now), uow_factory()))
+    return _record_json(record)
 
 
 @router.patch("/tech-operations/{record_id}")
