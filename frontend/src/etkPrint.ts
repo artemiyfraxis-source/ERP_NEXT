@@ -168,10 +168,14 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       text(item.norm), "", unitLabel(text(item.unit)),
     ]);
     const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
-    const marks = numbered(rows(object(operation.fields).marks), (mark) => [
-      text(mark.target), text(mark.text), text(mark.material), text(mark.place), text(mark.qty), text(mark.batch),
+    const markRows = rows(object(operation.fields).marks);
+    const withLength = markRows.some((mark) => text(mark.length));
+    const marks = numbered(markRows, (mark) => [
+      text(mark.target), text(mark.text), text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
     ]);
-    const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text), text(step.tolerance)]);
+    // Допуска нет в данных («длина не задана») — со знаком внимания, как «нет данных» у высоты обжима.
+    const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text),
+      /не задан/i.test(text(step.tolerance)) ? `⚠ ${text(step.tolerance)}` : text(step.tolerance)]);
     const defects = text(opCard.defects);
     const figure = etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]);
     const result = numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
@@ -191,7 +195,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           [...solderRows(operation), ...toolingRows(rows(opCard.tooling))]),
         ...(marks.length || steps.length ? [
           section("Ход операции"),
-          ...table(["№", "Что маркируем", "Надпись", "Материал", "Где", "На изделие", "На партию"], marks),
+          ...table(["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
           ...table(["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"], steps),
         ] : []),
         ...(defects ? [section("Типовые дефекты"), { text: defects }] : []),

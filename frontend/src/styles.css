@@ -606,6 +606,7 @@ table.ship-lines td:first-child { width: 1%; }
 .etk-steps li { padding-left: 4px; white-space: pre-line; font-size: 12px; }
 .etk-steps li > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
 .etk-steps li > small { display: block; margin-top: 3px; color: var(--muted-foreground); }
+.etk-steps li > small.tone-danger { color: var(--tone-danger); font-weight: 600; }
 .housing-view { display: grid; justify-items: center; gap: 6px; margin-top: 14px; padding: 12px; border-radius: 10px; background: #f0f3f0; }
 .housing-view > small { color: var(--muted-foreground); text-align: center; }
 .housing-grid { display: grid; gap: 5px; padding: 12px; border: 2px solid #17272b; border-radius: 8px; }
@@ -1281,6 +1282,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks col.c-mat { width: 13%; }
 .tcgen .gen-marks col.c-place { width: 20%; }
 .tcgen .gen-marks col.c-qty { width: 64px; }
+.tcgen .gen-marks col.c-len { width: 84px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
 .tcgen .gen-marks-place { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 4px; }
 .tcgen .gen-marks-place > select:only-child { grid-column: 1 / -1; }

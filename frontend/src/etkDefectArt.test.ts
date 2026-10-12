@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFECT_SCENES, defectArt, defectContext, defectGroupCode, defectSceneArt, defectSceneId } from "./etkDefectArt";
+import markingCatalog from "../../backend/data/etk-marking.json";
 
 describe("defect picture library", () => {
   it("picks the picture by defect name and operation", () => {
@@ -70,6 +71,31 @@ describe("defect picture library", () => {
     expect(defectGroupCode("CUT_WIRE+1crimp+tin", "Лужение — дефекты покрытия (смачиваемости)")).toBe("SDR_tin");
     expect(defectGroupCode("CUT_WIRE+1crimp+tin", "Опрессовка — нарушение геометрии зоны обжатия жилы")).toBe("CUT_WIRE+1crimp+tin");
     expect(defectSceneId("Затекание припоя (Wicking)", "", "SDR_DB")).toBe("wicking");
+  });
+
+  it("draws every marking defect by the mark kind of its group, never the warning sign", () => {
+    // Дефекты «Маркировки» по видам меток собирает backend (etk_marking) из этого каталога; рисунок — по группе.
+    for (const kind of markingCatalog.types) {
+      const code = defectGroupCode("INS_MARK", kind.title);
+      for (const [name, cause] of kind.defects) {
+        expect([kind.title, name, defectSceneId(name, cause, code)]).not.toEqual([kind.title, name, "generic"]);
+        expect(defectArt(name, cause, code)).not.toContain('data-scene="generic"');
+      }
+    }
+    const scene = (title: string, name: string) => defectSceneId(name, "", defectGroupCode("INS_MARK", title));
+    expect(scene("Хлястик", "Хлястик плохо закреплён, болтается")).toBe("flagLoose");
+    expect(scene("Хлястик", "Текст хлястика не соответствует КД")).toBe("flagText");
+    expect(scene("Термоусадочная трубка", "Неверная длина отрезка трубки")).toBe("tubeLen");
+    expect(scene("Термоусадочная трубка", "Трубка не усажена или усажена не полностью")).toBe("tubeLoose");
+    expect(scene("ПВХ-трубка", "Трубка сползает с провода")).toBe("tubeSlide");
+    expect(scene("Бирка", "Бирка не в позиции по КД")).toBe("tagShift");
+    expect(scene("Маркировочные кольца", "Пропущено кольцо")).toBe("ringMissing");
+    // Хлястик и трубка — разные рисунки одного и того же дефекта.
+    expect(scene("Хлястик", "Текст хлястика нечитаем или смазан")).not.toBe(scene("Термоусадочная трубка", "Текст на трубке нечитаем"));
+    // Группа вида — только в маркировке; «Прочие метки» и чужие операции — по коду операции.
+    expect(defectGroupCode("INS_MARK", "Прочие метки")).toBe("INS_MARK");
+    expect(defectGroupCode("SDR_DB", "Хлястик")).toBe("SDR_DB");
+    expect(defectContext("MARK:markFlag")).toBe("markFlag");
   });
 
   it("falls back to the explanation, then to a warning sign", () => {

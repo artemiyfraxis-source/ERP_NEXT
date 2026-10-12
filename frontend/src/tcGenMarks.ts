@@ -7,12 +7,16 @@
 
 /** Где метка: у разъёма, на обоих концах провода, на расстоянии от конца, по КД, своё место. */
 export type MarkPlace = "conn" | "ends" | "dist" | "kd" | "item" | "free";
-export type MarkRow = { target: string; text: string; material: string; place: MarkPlace; mm: string; where: string; qty: string };
+export type MarkRow = { target: string; text: string; material: string; place: MarkPlace; mm: string; where: string; qty: string;
+  /** Длина отрезка трубки, мм (только для термоусадочной и ПВХ-трубки); пусто — не задана. */
+  len?: string };
 /** Материал маркировки из БД.МАТ: наименование (оно же ключ строки), группа, единица. */
 export type MarkMat = { name: string; group: string; unit: string };
 /** Метка в конфиге операции insMark: art/name/qty — как у бирок из состава (комплектующие), остальное — для ЭТК. */
 export type MarkSpec = {
   art: string; name: string; qty: number; target: string; text: string; place: string; placeKind: MarkPlace; placeMm: string;
+  /** Длина отрезка трубки, мм — только у трубок и только если задана. */
+  lengthMm?: number;
 };
 
 export const MARK_PLACES: ReadonlyArray<readonly [MarkPlace, string]> = [
@@ -40,6 +44,19 @@ export function markPlaceText(row: Pick<MarkRow, "place" | "mm" | "where">): str
   if (row.place === "kd") return "по КД";
   if (row.place === "item") return "на изделии";
   return row.where.trim() || "по КД";
+}
+
+/** Метка-трубка (термоусадочная или ПВХ): у неё есть длина отрезка. Те же признаки, что `mark_kind` в etk_marking.py. */
+export function markIsTube(material: string): boolean {
+  const text = String(material || "");
+  if (/хляст|флаж|флаш/i.test(text)) return false;
+  return /термо|\bтут|\bттк|усаж|tms-?sce/i.test(text) || /кембрик|пвх|трубк/i.test(text);
+}
+
+/** Длина из поля: «25», «25,5» → число > 0; пусто или мусор → undefined (не задана). */
+export function markLength(value: string | undefined): number | undefined {
+  const number = Number(String(value ?? "").trim().replace(",", "."));
+  return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
 function qtyOf(value: string): number {
@@ -78,9 +95,11 @@ export function markSpecs(rows: MarkRow[], comps: CompLike[]): MarkSpec[] {
   return rows.filter(markRowActive).map((row) => {
     const material = row.material.trim();
     const comp = material ? comps.find((item) => norm(item.art || "") === norm(material) || norm(item.name || "") === norm(material)) : undefined;
+    const lengthMm = markIsTube(comp ? (comp.name || comp.art || material) : material) ? markLength(row.len) : undefined;
     return {
       art: comp ? (comp.art || comp.name || material) : material, name: comp ? (comp.name || comp.art || material) : material,
       qty: qtyOf(row.qty), target: row.target.trim(), text: row.text.trim(), place: markPlaceText(row), placeKind: row.place, placeMm: row.mm.trim(),
+      ...(lengthMm !== undefined ? { lengthMm } : {}),
     };
   });
 }
@@ -105,6 +124,7 @@ export function markRowsFromConfig(config: unknown): MarkRow[] {
     return newMarkRow({
       target: str(mark.target), text: str(mark.text), material: str(mark.art || mark.name), place: kind,
       mm: str(mark.placeMm), where: kind === "free" ? str(mark.place) : "", qty: str(mark.qty) || "1",
+      ...(markLength(str(mark.lengthMm)) !== undefined ? { len: str(mark.lengthMm).replace(".", ",") } : {}),
     });
   });
 }

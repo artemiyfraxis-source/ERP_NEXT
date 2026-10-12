@@ -12,7 +12,15 @@ const PLAST = "#efe6cf", PLAST_E = "#8a7d5c";
 const TUBE = "#3b4147";
 const RED = "#d93025", GREEN = "#188038", MUTED = "#5f7470";
 
-type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "tin" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "assembly" | "mold" | "weld" | "other";
+type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "tin" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "assembly" | "mold" | "weld" | "other"
+  | MarkCtx;
+/** Маркировка по видам меток (etk_marking, владелец 12.10): своя группа дефектов на вид — свои рисунки. */
+type MarkCtx = "markFlag" | "markHeat" | "markPvc" | "markTag" | "markRing" | "markPrint";
+/** Заголовок группы дефектов маркировки (backend/data/etk-marking.json `title`) → вид. «Прочие метки» — общие рисунки. */
+const MARK_GROUPS: Record<string, MarkCtx> = {
+  "Хлястик": "markFlag", "Термоусадочная трубка": "markHeat", "ПВХ-трубка": "markPvc", "Бирка": "markTag",
+  "Маркировочные кольца": "markRing", "Печать на изоляции": "markPrint",
+};
 
 // ── примитивы ────────────────────────────────────────────────────────────────────────────────────────────
 const rect = (x: number, y: number, w: number, h: number, fill: string, extra = "") =>
@@ -201,6 +209,146 @@ export const wireEndArt = {
   crimp: (y: number) => cond(26, 52, y, 6) + terminal(0, y),
   tin: (x1: number, x2: number, y: number, h = 6) => tinEnd(x1, x2, y, h),
   copper: (x1: number, x2: number, y: number, h = 6) => cond(x1, x2, y, h),
+};
+
+// ── маркировка по видам: хлястик, трубка-маркер, бирка, кольца, надпись на изоляции ─────────────────────────────
+const LABEL = "#fbfaf5", LABEL_E = "#8a8f94";
+type Ink = { text?: string; ink?: string; blur?: boolean };
+/** Надпись метки; blur — смазана: бледная, с мазком поверх. */
+function inscription(x: number, y: number, o: Ink, size = 8.5): string {
+  const value = o.text ?? "X1";
+  if (!o.blur) return text(x, y, value, o.ink || E, size, "middle", 700);
+  return text(x, y, value, "#b0b6ba", size, "middle", 700) + path(`M${x - 10},${y - 2} q5,-5 10,0 t10,0`, "none", "#9aa0a6", 2.2);
+}
+/** Хлястик на проводе (провод по y = 34): петля-шейка вокруг провода и флажок над ним с надписью. loose — петля
+ *  шире провода и флажок завалился; tear — надрыв и залом флажка. */
+function flagTag(x: number, o: Ink & { loose?: boolean; tear?: boolean } = {}): string {
+  const neck = o.loose ? rect(x - 1, 22, 11, 24, "none", ` rx="3" stroke="${LABEL_E}" stroke-width="1.3"`)
+    : rect(x, 27, 9, 14, LABEL, ` rx="1.5" stroke="${LABEL_E}" stroke-width=".7"`);
+  let flag = rect(x + 1, 22, 7, 6, LABEL) + rect(x - 12, 5, 34, 18, LABEL, ` rx="2" stroke="${LABEL_E}" stroke-width=".7"`) +
+    inscription(x + 5, 17.5, o);
+  if (o.tear) flag += path(`M${x + 22},9 l-7,3 l6,3`, "#fdf3f2", RED, 1) + line(x - 12, 21, x + 2, 6, LABEL_E, 0.8, ' stroke-dasharray="2 2"');
+  return neck + (o.loose ? `<g transform="rotate(26 ${x + 4.5} 24)">${flag}</g>` : flag);
+}
+/** Трубка-маркер с надписью на проводе x1..x2; h — диаметр (не усажена — шире провода); burn — прожог при усадке. */
+function markTube(x1: number, x2: number, o: Ink & { h?: number; burn?: boolean } = {}): string {
+  const h = o.h ?? 15;
+  let out = rect(x1, 34 - h / 2, x2 - x1, h, LABEL, ` rx="3" stroke="${LABEL_E}" stroke-width=".8"`) +
+    rect(x1 + 2, 34 - h / 2 + 1.6, x2 - x1 - 4, 1.8, "#fff", ` rx="1" opacity=".7"`) + inscription((x1 + x2) / 2, 37.2, o);
+  if (o.burn) out += `<ellipse cx="${x1 + 9}" cy="31" rx="6" ry="3.6" fill="#3a2a1e"/>` + circle(x2 - 9, 37, 1.8, "#c9b184", "#8a6d3b", 0.5) +
+    circle(x2 - 14, 30, 1.4, "#c9b184", "#8a6d3b", 0.5);
+  return out;
+}
+/** Пучок проводов (y 12…26) со стяжкой и биркой на нити под ним; loose — стяжка не затянута, бирка висит косо. */
+function bundleTag(x: number, o: Ink & { loose?: boolean } = {}): string {
+  const bundle = [12, 19, 26].map((y) => line(4, y, 112, y, INS, 5.5)).join("");
+  const tie = o.loose ? rect(x - 1, 4, 9, 30, "none", ` rx="3" stroke="#2a2e33" stroke-width="2"`) : rect(x, 7, 7, 24, "#2a2e33", ` rx="2"`);
+  const tag = line(x + 3.5, 30, x + 3.5, 38, "#2a2e33", 1.2) + rect(x - 13.5, 38, 34, 19, LABEL, ` rx="2" stroke="${LABEL_E}" stroke-width=".7"`) +
+    circle(x + 3.5, 41.5, 1.2, "#fff", LABEL_E, 0.5) + inscription(x + 3.5, 52, o);
+  return bundle + tie + (o.loose ? `<g transform="rotate(24 ${x + 3.5} 30)">${tag}</g>` : tag);
+}
+/** Маркировочные кольца на проводе: по знаку на кольцо, «?» — кольца нет (пустое место пунктиром). */
+function markRings(x: number, chars: string[], h = 15, step = 11): string {
+  return chars.map((char, index) => {
+    const left = x + index * step;
+    return char === "?"
+      ? rect(left, 34 - h / 2, 10, h, "none", ` rx="2" stroke="${RED}" stroke-dasharray="2 2" stroke-width="1.1"`) + text(left + 5, 37.5, "?", RED, 9, "middle", 700)
+      : rect(left, 34 - h / 2, 10, h, LABEL, ` rx="2" stroke="${LABEL_E}" stroke-width=".7"`) + text(left + 5, 37.5, char, E, 8.5, "middle", 700);
+  }).join("");
+}
+const flagWire = () => ins(4, 112);
+const endWire = () => ins(4, 100) + cond(100, 112);
+
+const MARK_SCENES: Record<string, () => Scene> = {
+  flagText: () => ({
+    ok: flagWire() + flagTag(52, { text: "КБ1" }) + text(58, 62, "надпись по КД", GREEN),
+    ng: flagWire() + flagTag(52, { text: "КБ2", ink: RED }) + mark(57, 14, 20, 11) + text(58, 62, "по КД: КБ1", RED),
+  }),
+  flagBlur: () => ({
+    ok: flagWire() + flagTag(52, { text: "КБ1" }),
+    ng: flagWire() + flagTag(52, { text: "КБ1", blur: true }) + mark(57, 14, 20, 11) + text(58, 62, "смазано", RED),
+  }),
+  flagShift: () => ({
+    ok: endWire() + flagTag(78) + dim(87, 100, 50, "", GREEN) + text(82, 64, "по КД", GREEN),
+    ng: endWire() + flagTag(22) + arrow(40, 54, 76, 54) + mark(27, 22, 22, 18),
+  }),
+  flagLoose: () => ({
+    ok: flagWire() + flagTag(52) + text(58, 62, "сидит плотно", GREEN),
+    ng: flagWire() + flagTag(52, { loose: true }) + mark(58, 26, 24, 20) + text(58, 64, "болтается", RED),
+  }),
+  flagTear: () => ({
+    ok: flagWire() + flagTag(52),
+    ng: flagWire() + flagTag(52, { tear: true }) + mark(70, 12, 9, 8) + text(58, 62, "надрыв, залом", RED),
+  }),
+  tubeLen: () => ({
+    ok: flagWire() + markTube(42, 76) + dim(42, 76, 54, "L по КД", GREEN),
+    ng: flagWire() + markTube(42, 100) + dim(42, 100, 54, "L ≠ КД", RED),
+  }),
+  tubeText: () => ({
+    ok: flagWire() + markTube(40, 80, { text: "X1" }) + text(60, 62, "надпись по КД", GREEN),
+    ng: flagWire() + markTube(40, 80, { text: "X2", ink: RED }) + mark(60, 34, 24, 12) + text(60, 62, "по КД: X1", RED),
+  }),
+  tubeBlur: () => ({
+    ok: flagWire() + markTube(40, 80),
+    ng: flagWire() + markTube(40, 80, { blur: true }) + mark(60, 34, 24, 12) + text(60, 62, "смазано", RED),
+  }),
+  tubeLoose: () => ({
+    ok: flagWire() + markTube(40, 80, { h: 14 }) + text(60, 62, "усажена плотно", GREEN),
+    ng: flagWire() + markTube(36, 84, { h: 24 }) + mark(60, 21, 26, 5) + text(60, 62, "не усажена", RED),
+  }),
+  tubeSlide: () => ({
+    ok: endWire() + markTube(58, 88) + text(58, 60, "на своём месте", GREEN),
+    ng: endWire() + markTube(84, 112) + arrow(56, 54, 82, 54) + mark(98, 34, 16, 12) + text(36, 62, "сползла", RED),
+  }),
+  tubeHeat: () => ({
+    ok: flagWire() + markTube(40, 80),
+    ng: flagWire() + markTube(40, 80, { burn: true }) + mark(56, 33, 22, 12) + text(60, 62, "перегрев", RED),
+  }),
+  tubeShift: () => ({
+    ok: endWire() + markTube(66, 92) + text(58, 62, "позиция по КД", GREEN),
+    ng: endWire() + markTube(16, 42) + arrow(48, 54, 80, 54) + mark(29, 34, 18, 12),
+  }),
+  tagText: () => ({
+    ok: bundleTag(52, { text: "W1" }),
+    ng: bundleTag(52, { text: "W2", ink: RED }) + mark(56, 48, 20, 11),
+  }),
+  tagBlur: () => ({
+    ok: bundleTag(52, { text: "W1" }),
+    ng: bundleTag(52, { text: "W1", blur: true }) + mark(56, 48, 20, 11),
+  }),
+  tagShift: () => ({
+    ok: bundleTag(84) + text(30, 62, "по КД", GREEN),
+    ng: bundleTag(22) + arrow(48, 64, 82, 64) + mark(26, 46, 21, 13),
+  }),
+  tagLoose: () => ({
+    ok: bundleTag(52),
+    ng: bundleTag(52, { loose: true }) + mark(56, 32, 24, 26),
+  }),
+  ringOrder: () => ({
+    ok: flagWire() + markRings(42, ["X", "1", "2"]) + text(58, 62, "порядок по КД", GREEN),
+    ng: flagWire() + markRings(42, ["X", "2", "1"]) + mark(64, 34, 14, 12) + text(58, 62, "по КД: X12", RED),
+  }),
+  ringMissing: () => ({
+    ok: flagWire() + markRings(42, ["X", "1", "2"]),
+    ng: flagWire() + markRings(42, ["X", "?", "2"]) + text(58, 62, "нет кольца", RED),
+  }),
+  ringShift: () => ({
+    ok: endWire() + markRings(64, ["X", "1", "2"]) + text(58, 62, "позиция по КД", GREEN),
+    ng: endWire() + markRings(12, ["X", "1", "2"]) + arrow(50, 54, 80, 54) + mark(28, 34, 20, 12),
+  }),
+  ringSlide: () => ({
+    ok: endWire() + markRings(52, ["X", "1", "2"], 14),
+    ng: endWire() + markRings(78, ["X", "1", "2"], 22, 12) + arrow(48, 56, 74, 56) + mark(97, 34, 18, 14) + text(36, 64, "сползли", RED),
+  }),
+  printText: () => ({
+    ok: ins(4, 112, 34, 14) + text(58, 37.5, "X1-3", "#fff", 9, "middle", 700),
+    ng: ins(4, 112, 34, 14) + text(58, 37.5, "X1-8", RED, 9, "middle", 700) + mark(58, 34, 18, 10) + text(58, 62, "по КД: X1-3", RED),
+  }),
+  printBlur: () => ({
+    ok: ins(4, 112, 34, 14) + text(58, 37.5, "X1-3", "#fff", 9, "middle", 700),
+    ng: ins(4, 112, 34, 14) + text(58, 37.5, "X1-3", "#a9b4ba", 9, "middle", 700) + path("M44,36 q7,-6 14,0 t14,0", "none", "#c3cbd0", 2.4) +
+      mark(58, 34, 18, 10) + text(58, 62, "стёрлась", RED),
+  }),
 };
 
 // ── сцены: каждая — рисунок «норма» и «брак» в поле 116×70 ─────────────────────────────────────────────
@@ -648,13 +796,38 @@ const SCENES: Record<string, () => Scene> = {
       ng: plug + [22, 34, 46, 58, 70, 82, 94].map((x, i) => rect(x - 4, i === 3 || i === 4 ? 12 : 22, 5, 10, "#d4a537", ` stroke="${E}" stroke-width=".5"`)).join("") + mark(64, 16, 14, 7),
     };
   },
+  ...MARK_SCENES,
   generic: () => ({ ok: "", ng: "" }),
 };
 
 // ── выбор рисунка: по названию дефекта (затем по пояснению) с учётом вида операции ───────────────────────
 type Rule = [string, RegExp, Ctx[]?];
 
+const MARK_TUBES: Ctx[] = ["markHeat", "markPvc"];
 const RULES: Rule[] = [
+  ["flagText", /не соответств/i, ["markFlag"]],
+  ["flagBlur", /нечитаем|смазан/i, ["markFlag"]],
+  ["flagShift", /позици|смещ/i, ["markFlag"]],
+  ["flagLoose", /закреп|болта/i, ["markFlag"]],
+  ["flagTear", /надрыв|перегиб|залом/i, ["markFlag"]],
+  ["tubeLen", /длин/i, MARK_TUBES],
+  ["tubeText", /не соответств/i, MARK_TUBES],
+  ["tubeBlur", /нечитаем|смазан/i, MARK_TUBES],
+  ["tubeLoose", /не усажен|усажена не полностью|недоусадк/i, ["markHeat"]],
+  ["tubeSlide", /сполза/i, MARK_TUBES],
+  ["tubeHeat", /перегрев|прож[оё]г/i, ["markHeat"]],
+  ["tubeShift", /позици|смещ/i, MARK_TUBES],
+  ["tagText", /не соответств/i, ["markTag"]],
+  ["tagBlur", /нечитаем|смазан/i, ["markTag"]],
+  ["tagShift", /позици|смещ/i, ["markTag"]],
+  ["tagLoose", /закреп|болта/i, ["markTag"]],
+  ["ringOrder", /порядок|не соответств/i, ["markRing"]],
+  ["ringMissing", /пропущ|нет кольц/i, ["markRing"]],
+  ["ringShift", /позици|смещ/i, ["markRing"]],
+  ["ringSlide", /сполза/i, ["markRing"]],
+  ["printText", /не соответств/i, ["markPrint"]],
+  ["printBlur", /нечитаем|стира/i, ["markPrint"]],
+  ["insDamage", /поврежд/i, ["markPrint"]],
   ["tnWick", /затекан|wicking|капилляр|зазор/i, ["tin"]],
   ["tnExcess", /избыт|наплыв|сосульк|капл/i, ["tin"]],
   ["tnLack", /недостат|непропай|открыт[а-яё]* мед|несмачив|раковин|пор[ыа]/i, ["tin"]],
@@ -764,6 +937,8 @@ const RULES: Rule[] = [
 
 /** Вид операции по коду карты (CUT_/STRIP_/PRS_/SDR_/HEAT_/INS_/MOLD_…). */
 export function defectContext(code: string): Ctx {
+  const group = /^MARK:(\w+)$/.exec(String(code || ""));
+  if (group && (Object.values(MARK_GROUPS) as string[]).includes(group[1])) return group[1] as MarkCtx;
   const c = String(code || "").toUpperCase();
   if (/^PRS_(НШВИ|HKИ|НКИ|ТМЛ|SLEEVE|CAP|COPPER)/.test(c) || /НШВИ|ТМЛ|НВИ/.test(c)) return "lug";
   if (/COAX/.test(c) && /^(STRIP|CUT)/.test(c)) return "coax";
@@ -785,7 +960,10 @@ export function defectContext(code: string): Ctx {
 /** Код для рисунков группы дефектов комбинированной операции: группа «Лужение — …» из карты SDR_tin
  *  (CUT_WIRE+1crimp+tin) рисуется как лужение, остальные — по коду самой операции. */
 export function defectGroupCode(code: string, groupTitle: string): string {
-  return /^Лужение\s+—/i.test(groupTitle || "") ? "SDR_tin" : code;
+  if (/^Лужение\s+—/i.test(groupTitle || "")) return "SDR_tin";
+  // Маркировка по КД: группа вида метки («Хлястик», «Термоусадочная трубка»…) рисуется своими рисунками.
+  const kind = MARK_GROUPS[String(groupTitle || "").trim()];
+  return kind && defectContext(code) === "mark" ? `MARK:${kind}` : code;
 }
 
 /** Какой рисунок библиотеки подходит дефекту; «generic» — подходящего нет. */
