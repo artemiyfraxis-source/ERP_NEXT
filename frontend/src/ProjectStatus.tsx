@@ -28,7 +28,7 @@ export const planStatusApi: ProjectStatusApi = {
     if (payload.action === "block") await productionPlanApi.addEvent({ project, kind: "block", blocker: payload.value, text: payload.text });
     else if (payload.action === "unblock") await productionPlanApi.addEvent({ project, kind: "unblock", text: payload.text ?? "" });
     else if (PROJECT_TERMINALS.includes(payload.value)) await productionPlanApi.addEvent({ project, kind: "status", value: payload.value, text: payload.text ?? "" });
-    else await productionPlanApi.addEvent({ project, kind: "stage", item_index: "", value: payload.value, reason: payload.reason ?? "" });
+    else await productionPlanApi.addEvent({ project, kind: "stage", item_index: "", value: payload.value, reason: payload.reason ?? "", preview_token: payload.preview_token ?? "" });
     return null;
   },
 };
@@ -107,8 +107,8 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
   }
 
   /** Этап проекта — через окно подтверждения с предпросмотром (пропущенные этапы, предупреждения, причина назад). */
-  async function applyStage(value: string, reason: string) {
-    const card = await api.setStatus(project, { action: "status", value, reason });
+  async function applyStage(value: string, reason: string, previewToken: string) {
+    const card = await api.setStatus(project, { action: "status", value, reason, preview_token: previewToken });
     setPendingStage(null);
     onChanged(card);
   }
@@ -156,6 +156,6 @@ export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJ
     </div>}
     {pendingStage !== null && <StageChangeDialog project={project} current={status} value={pendingStage}
       loadPreview={() => api.stagePreview(project, pendingStage)}
-      apply={(why) => applyStage(pendingStage, why)} onClose={() => setPendingStage(null)} />}
+      apply={(why, token) => applyStage(pendingStage, why, token)} onClose={() => setPendingStage(null)} />}
   </span>;
 }

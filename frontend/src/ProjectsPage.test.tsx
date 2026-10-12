@@ -41,7 +41,7 @@ const card = {
 
 const preview = (over: Record<string, unknown> = {}) => ({
   project: "708К.4", value: "В работе", kb: "", direction: "forward", reason_required: false, error: "", message: "",
-  terminal: "", blocker: "", warnings: [],
+  terminal: "", blocker: "", warnings: [], preview_token: "tok-kit",
   kbs: [{ kb: "КБ1", label: "КБ1", from: "Новый", to: "В работе", skipped: ["ТК готова", "КБ набрана"], change: true, note: "", warnings: [] }],
   ...over,
 });
@@ -105,7 +105,7 @@ describe("ProjectsPage", () => {
     expect(calls).toHaveLength(0);
     fireEvent.click(within(dialog).getByRole("button", { name: "Сменить этап" }));
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(calls[0].body).toEqual({ action: "status", value: "В работе", reason: "" });
+    expect(calls[0].body).toEqual({ action: "status", value: "В работе", reason: "", preview_token: "tok-kit" });
     expect(screen.queryByText("Жгут питания")).toBeNull(); // клик по статусу не открыл карточку
 
     fireEvent.click(screen.getByRole("button", { name: "Статус проекта 708К.4: Новый" }));
@@ -178,7 +178,7 @@ describe("ProjectsPage", () => {
     expect(confirm).toBeDisabled();
     fireEvent.change(within(dialog).getByLabelText("Причина смены этапа"), { target: { value: "ошибка" } });
     fireEvent.click(confirm);
-    await waitFor(() => expect(marks).toEqual([{ kb: "КБ1", kind: "stage", value: "Новый", text: "", reason: "ошибка" }]));
+    await waitFor(() => expect(marks).toEqual([{ kb: "КБ1", kind: "stage", value: "Новый", text: "", reason: "ошибка", preview_token: "tok-kit" }]));
 
     fireEvent.click(screen.getByRole("tab", { name: "Журнал · 1" }));
     expect(screen.getByText("В работе → Отгружено · пропущены: КБ на складе · причина: сделали вживую")).toBeTruthy();

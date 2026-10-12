@@ -605,8 +605,8 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   const [kdIndex, setKdIndex] = useState("");
   const [stagePick, setStagePick] = useState<{ assembly: KitsetAssembly; value: string } | null>(null);
 
-  async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string) {
-    const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason });
+  async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string, previewToken: string) {
+    const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason, preview_token: previewToken });
     setStagePick(null);
     setNote(result.msg || `${assembly.index}: этап — ${value === STAGE_AUTO ? "по фактам" : value}`);
     await reload();
@@ -730,7 +730,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
     {stagePick && <StageChangeDialog project={card.project} kb={stagePick.assembly.index}
       current={stagePick.assembly.stage?.status || "—"} value={stagePick.value}
       loadPreview={() => kitsetsApi.stagePreview(card.project, stagePick.value, stagePick.assembly.index)}
-      apply={(reason) => applyKbStage(stagePick.assembly, stagePick.value, reason)} onClose={() => setStagePick(null)} />}
+      apply={(reason, token) => applyKbStage(stagePick.assembly, stagePick.value, reason, token)} onClose={() => setStagePick(null)} />}
   </div>;
 }
 

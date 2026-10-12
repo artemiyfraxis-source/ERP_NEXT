@@ -4,7 +4,7 @@ import { ProjectStatus, type ProjectStatusApi } from "./ProjectStatus";
 
 const preview = {
   project: "709К.1", value: "В работе", kb: "", direction: "forward" as const, reason_required: false, error: "", message: "",
-  terminal: "", blocker: "", warnings: [], kbs: [],
+  terminal: "", blocker: "", warnings: [], kbs: [], preview_token: "tok-1",
 };
 
 it("writes through the given adapter for a project without a card and reports no card back", async () => {
@@ -27,7 +27,7 @@ it("writes through the given adapter for a project without a card and reports no
   fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitemradio", { name: "В работе" }));
   await waitFor(() => expect(api.stagePreview).toHaveBeenCalledWith("709К.1", "В работе"));
   fireEvent.click(await screen.findByRole("button", { name: "Сменить этап" }));
-  await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("709К.1", { action: "status", value: "В работе", reason: "" }));
+  await waitFor(() => expect(api.setStatus).toHaveBeenCalledWith("709К.1", { action: "status", value: "В работе", reason: "", preview_token: "tok-1" }));
 });
 
 it("shows plain chips without the menu when editing is not allowed", () => {

@@ -561,6 +561,8 @@ class MarkPayload(BaseModel):
     text: str = Field(default="", max_length=5000)
     # Ручной этап назад — причина обязательна (для этапа годится и `text`).
     reason: str = Field(default="", max_length=2000)
+    # Из предпросмотра: изменилось закрываемое (задания, заявки, резервы) или этапы — 409.
+    preview_token: str = Field(default="", max_length=64)
 
 
 def _stage_state(request: Request, kitset: Kitset, kb: str = "") -> flow.ProjectStageState:
@@ -583,7 +585,8 @@ def status_preview(
     kb: Annotated[str, Query(max_length=64)] = "",
 ) -> dict:
     """Что сделает ручная смена этапа (проекта или одной КБ) — до записи: по КБ «было → станет», пропущенные этапы,
-    что смена не трогает (задания цеха, заявки на комплектацию, непоставленная ГП, блокер), нужна ли причина."""
+    что закроется (`close`: задания цеха, заявки на комплектацию, резервы) и что останется с причиной (`keep`),
+    итоги, `preview_token` для записи, нужна ли причина."""
     kitset = _kitset(request, project)
     return _run(lambda: flow.preview_project_stage(_stage_state(request, kitset, kb), value, kb))
 
@@ -606,7 +609,7 @@ def mark(
     if payload.kind == "stage":
         change = _run(lambda: flow.change_project_stage(flow.ChangeProjectStageCommand(
             project=kitset.project, value=payload.value, kb=payload.kb, reason=payload.reason or payload.text,
-            actor=principal.actor, now=now,
+            actor=principal.actor, now=now, preview_token=payload.preview_token,
         ), _stage_state(request, kitset, payload.kb), factory))
         last = change.events[-1] if change.events else None
         return {
@@ -627,6 +630,8 @@ class StatusPayload(BaseModel):
     text: str = Field(default="", max_length=5000)
     # Этап назад — причина обязательна (для этапа годится и `text`).
     reason: str = Field(default="", max_length=2000)
+    # Этап — из предпросмотра: изменилось закрываемое или этапы — 409.
+    preview_token: str = Field(default="", max_length=64)
 
 
 @router.post("/{project}/status")
@@ -648,6 +653,7 @@ def change_status(
         project=kitset.project, item_indexes=tuple(assembly.index for assembly in kitset.assemblies),
         action=payload.action, value=payload.value,
         text=(payload.reason or payload.text) if stage else payload.text, actor=principal.actor, now=now,
+        preview_token=payload.preview_token if stage else "",
     ), factory, techcards=techcards_factory(request), fulfillment=fulfillment_factory(request),
         shipping=shipping_factory(request)))
     if isinstance(result, flow.ProjectStageChange):

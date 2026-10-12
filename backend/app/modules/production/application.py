@@ -851,6 +851,15 @@ def set_production_cancelled(command: SetProductionCancelledCommand, uow: UnitOf
         return updated
 
 
+def cancel_task_in(task: ProductionTask, actor: Actor, now: datetime, uow, details: dict | None = None) -> ProductionTask:
+    """«Отменено» inside the caller's transaction (the caller commits) — the same transition and audit event as
+    `set_production_cancelled`, with the caller's ``details`` (why it was cancelled)."""
+    updated = task.set_cancelled(True)
+    uow.production.add(updated)
+    _audit(updated, "production.cancelled", actor, now, dict(details or {}), uow)
+    return updated
+
+
 def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: UnitOfWork) -> None:
     with uow:
         operators = {operator.id for operator in uow.operators.list() if operator.active}

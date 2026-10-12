@@ -436,10 +436,12 @@ def _reserve_details(reserve: KitReserve, quantity: Decimal) -> dict:
 
 def release_kit_reserves(
     reserves: Sequence[KitReserve], actor: Actor, now: datetime, uow, lots: dict[UUID, StockLot] | None = None,
+    reason: str = "",
 ) -> dict[UUID, StockLot]:
     """Give the reserves back to their lots: РЕЗЕРВ goes down by what each still holds, the reserve keeps its trace
     (`released_at`). The lot is saved under its version, so a concurrent move of the lot refuses the whole step.
-    → the lots as saved (a caller reserving next on one of them goes on from that version)."""
+    ``reason`` — why, into the audit events. → the lots as saved (a caller reserving next on one of them goes on
+    from that version)."""
     lots = {} if lots is None else lots
     for reserve in reserves:
         if not reserve.active:
@@ -449,7 +451,7 @@ def release_kit_reserves(
             lot = lot.release_reserve(reserve.quantity)
             lots[lot.id] = lot
             uow.warehouse.add(lot)
-        details = _reserve_details(reserve, reserve.quantity)
+        details = _reserve_details(reserve, reserve.quantity) | ({"reason": reason} if reason else {})
         uow.kit_reserves.add(reserve.release(now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=reserve.lot_id, event_type="warehouse.kit_reserve_released",
@@ -1391,21 +1393,38 @@ def cancel_fulfillment(
 ) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.cancel()
-        if updated == request:
+        updated = cancel_request_in(request, command.actor, command.now, uow)
+        if updated is request:
             return request
-        updated = updated.stamped(command.now)
-        for line in request.lines:
-            if line.lot is None or line.reserved <= 0:
-                continue
-            lot = uow.warehouse.get(line.lot.lot_id)
-            if lot is None:
-                raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
-            uow.warehouse.add(lot.release_reserve(line.reserved))
-        uow.fulfillment.add(updated)
-        _audit(updated, "fulfillment.cancelled", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
+
+
+def cancel_request_in(
+    request: FulfillmentRequest, actor: Actor, now: datetime, uow, details: dict | None = None,
+    lots: dict[UUID, StockLot] | None = None,
+) -> FulfillmentRequest:
+    """The body of `cancel_fulfillment` inside the caller's transaction (the caller commits): the request goes to
+    «Отменена», each line's РЕЗЕРВ goes back to its lot (stock itself does not move), one audit event. ``lots`` —
+    lots already changed in this transaction (two requests on one lot go on from its saved version). An already
+    closed request comes back as it is."""
+    updated = request.cancel()
+    if updated == request:
+        return request
+    updated = updated.stamped(now)
+    lots = {} if lots is None else lots
+    for line in request.lines:
+        if line.lot is None or line.reserved <= 0:
+            continue
+        lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
+        if lot is None:
+            raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
+        lot = lot.release_reserve(line.reserved)
+        lots[lot.id] = lot
+        uow.warehouse.add(lot)
+    uow.fulfillment.add(updated)
+    _audit(updated, "fulfillment.cancelled", actor, now, dict(details or {}), uow)
+    return updated
 
 
 def return_to_kitting(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> FulfillmentRequest:
