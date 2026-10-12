@@ -95,6 +95,9 @@ export interface DataTableProps<T> {
   compactBelow?: number;
   /** Прячет только форму поиска (фильтры/колонки/Excel остаются): поиск есть у раздела выше. */
   hideSearch?: boolean;
+  /** На телефоне (≤ 720 px, `responsive.css`) строки идут карточками «колонка: значение» вместо таблицы, которую
+      пришлось бы листать вбок. `false` — таблица остаётся таблицей и на телефоне (сетки с правкой в ячейках). */
+  phoneCards?: boolean;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -234,6 +237,7 @@ export function DataTable<T>({
   searchPlaceholder,
   compactBelow = 0,
   hideSearch = false,
+  phoneCards = true,
 }: DataTableProps<T>) {
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
@@ -408,7 +412,7 @@ export function DataTable<T>({
           {visible.map((column, index) => {
             const content = column.render ? column.render(row) : cellContent(column, column.value(row));
             return (
-              <td key={column.key} className={columnClass(column, index, sized)}>
+              <td key={column.key} className={columnClass(column, index, sized)} data-label={column.title}>
                 {column.wrap ? <div className="cell-wrap" style={wrapStyle(column)}>{content}</div> : content}
               </td>
             );
@@ -427,7 +431,7 @@ export function DataTable<T>({
   const activeFilters = filterColumns.filter((column) => (filters[column.key] ?? "") !== "");
 
   return (
-    <section className="data-table" aria-label={label}>
+    <section className={phoneCards ? "data-table dt-cards" : "data-table"} aria-label={label}>
       {!compact && <div className="filters table-toolbar">
         {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? searchHint(visible)} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />

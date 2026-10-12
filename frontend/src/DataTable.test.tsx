@@ -285,3 +285,14 @@ it("opens a clickable row from the keyboard", () => {
   fireEvent.keyDown(row, { key: "a" });
   expect(onRowClick).toHaveBeenCalledTimes(1);
 });
+
+it("labels every cell with its column for the phone card layout, unless the screen keeps a table", () => {
+  const { container, unmount } = render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Склад" />);
+  expect(screen.getByRole("region", { name: "Склад" })).toHaveClass("data-table", "dt-cards");
+  const cells = within(screen.getByText("Разъём Molex").closest("tr")!).getAllByRole("cell").filter((cell) => !cell.classList.contains("dt-fill"));
+  expect(cells.map((cell) => cell.getAttribute("data-label"))).toEqual(["Наименование", "Поставщик", "Кол-во"]);
+  expect(container.querySelector("td.dt-fill")).not.toHaveAttribute("data-label");
+  unmount();
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Лист" phoneCards={false} />);
+  expect(screen.getByRole("region", { name: "Лист" })).not.toHaveClass("dt-cards");
+});
