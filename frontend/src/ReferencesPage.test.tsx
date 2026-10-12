@@ -1,3 +1,4 @@
+import { CRIMP_COLUMN_TITLE } from "./CrimpCell";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
@@ -317,10 +318,10 @@ it("БД-1: terminals show Russian headers and «гнездо/штырь» inste
     if (path === "/api/references/bases") return json({ bases: [] });
     if (path.startsWith("/api/references/tech-operations?")) return json({
       metadata: null,
-      columns: ["Product Name", "Series", "Тип\n контакта", "Артикул\n контакта (REEL)", "Усилие обрыва контакта, N", "Максисмальная сила тока, А", "Ссылка на DATASHEET на сайте производителя"],
+      columns: ["Product Name", "Series", "Тип\n контакта", "Артикул\n контакта (REEL)", "Высота обжима проводника , мм", "Усилие обрыва контакта, N", "От AWG", "До AWG", "Максисмальная сила тока, А", "Ссылка на DATASHEET на сайте производителя"],
       records: [
-        { id: "t1", tab: "ter", display_text: "DS1070", source_sheet: "БД.ТЕР", fields: { "Product Name": "DS1070", "Series": "I-DS1070", "Тип\n контакта": "Female", "Артикул\n контакта (REEL)": "T-DS1070-SC600", "Усилие обрыва контакта, N": "30", "Максисмальная сила тока, А": "3", "Ссылка на DATASHEET на сайте производителя": "https://example.test/ds1070-datasheet-with-a-very-long-address.pdf" } },
-        { id: "t2", tab: "ter", display_text: "DS1073", source_sheet: "БД.ТЕР", fields: { "Product Name": "DS1073", "Series": "I-DS1073", "Тип\n контакта": "Male (Pin)", "Артикул\n контакта (REEL)": "T-DS1073-PC800", "Усилие обрыва контакта, N": "31", "Максисмальная сила тока, А": "3", "Ссылка на DATASHEET на сайте производителя": "" } },
+        { id: "t1", tab: "ter", display_text: "DS1070", source_sheet: "БД.ТЕР", fields: { "Product Name": "DS1070", "Series": "I-DS1070", "Тип\n контакта": "Female", "Артикул\n контакта (REEL)": "T-DS1070-SC600", "Высота обжима проводника , мм": "28 AWG: 0,52–0,58; 26 AWG: 0,56–0,62", "Усилие обрыва контакта, N": "28 AWG: 10\n26 AWG: 20", "От AWG": "30", "До AWG": "26", "Максисмальная сила тока, А": "3", "Ссылка на DATASHEET на сайте производителя": "https://example.test/ds1070-datasheet-with-a-very-long-address.pdf" } },
+        { id: "t2", tab: "ter", display_text: "DS1073", source_sheet: "БД.ТЕР", fields: { "Product Name": "DS1073", "Series": "I-DS1073", "Тип\n контакта": "Male (Pin)", "Артикул\n контакта (REEL)": "T-DS1073-PC800", "Высота обжима проводника , мм": "", "Усилие обрыва контакта, N": "", "От AWG": "22", "До AWG": "22", "Максисмальная сила тока, А": "3", "Ссылка на DATASHEET на сайте производителя": "" } },
       ],
     });
     throw new Error(`Unexpected request: ${path}`);
@@ -329,8 +330,13 @@ it("БД-1: terminals show Russian headers and «гнездо/штырь» inste
   render(<ReferencesPage principal={admin} initialTab="ter" />);
   expect(await screen.findByText("T-DS1070-SC600")).toBeInTheDocument();
   const headers = screen.getAllByRole("columnheader").map((header) => header.textContent?.trim());
-  for (const russian of ["Наименование", "Серия", "Тип контакта", "Артикул контакта (катушка)", "Усилие обрыва контакта, Н", "Максимальная сила тока, А"]) expect(headers).toContain(russian);
+  for (const russian of ["Наименование", "Серия", "Тип контакта", "Артикул контакта (катушка)", CRIMP_COLUMN_TITLE, "AWG", "Максимальная сила тока, А"]) expect(headers).toContain(russian);
   expect(headers.join("|")).not.toMatch(/Product|Series|REEL|DATASHEET|, N/);
+  // Обжим: по строке на сечение, сечение один раз; пустой обжим — одно «—»; «От/До AWG» — одна колонка «30–26».
+  const crimpRows = Array.from(document.querySelectorAll(".crimp-row")).map((row) => row.textContent);
+  expect(crimpRows).toEqual(["28 AWG0,52–0,5810 Н", "26 AWG0,56–0,6220 Н"]);
+  expect(screen.getByText("30–26")).toBeInTheDocument();
+  expect(headers).not.toContain("От AWG");
   // Female/Male → гнездо/штырь (значение в форме правки остаётся как на листе).
   expect(screen.getByText("гнездо")).toBeInTheDocument();
   expect(screen.getByText("штырь")).toBeInTheDocument();

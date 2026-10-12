@@ -5,6 +5,7 @@ import { EquipmentCards } from "./EquipmentCards";
 import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
+import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { operationCardCount } from "./TechcardsPage";
@@ -91,6 +92,47 @@ const FIELD_TITLES: Record<string, string> = {
   terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, Н", terPullForceMax: "Усилие обрыва до, Н",
   coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
 };
+const headerKey = (field: string) => cleanHeader(field).toLocaleLowerCase("ru-RU");
+
+function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields: string[]): DataColumn<TechOperationRecord>[] {
+  // Колонки бывают под заголовком листа («Высота обжима проводника , мм») или под ключом схемы (terCrimpHeight).
+  const find = (test: (key: string) => boolean) => fields.find((field) => test(headerKey(fieldTitle(field))) || test(field.toLowerCase()));
+  const conductor = find((key) => key.startsWith("высота обжима проводника"));
+  const insulation = find((key) => key.startsWith("высота обжима изоляции"));
+  const pull = find((key) => key.startsWith("усилие обрыва") && !key.startsWith("усилие обрыва до"));
+  const pullMax = find((key) => key.startsWith("усилие обрыва до") || key === "terpullforcemax");
+  const awgFrom = find((key) => key === "от awg" || key === "awgfrom");
+  const awgTo = find((key) => key === "до awg" || key === "awgto");
+  const crimpFields = [conductor, insulation, pull, pullMax].filter((field): field is string => Boolean(field));
+  const get = (record: TechOperationRecord, field?: string) => (field ? record.fields[field] ?? "" : "");
+  const pullText = (record: TechOperationRecord) => {
+    const low = get(record, pull).trim();
+    const high = get(record, pullMax).trim();
+    return high && low && high !== low && !low.includes(":") ? `${low}–${high}` : low || high;
+  };
+  const crimpValues = (record: TechOperationRecord) => ({ conductor: get(record, conductor), insulation: get(record, insulation), pull: pullText(record) });
+  const awgText = (record: TechOperationRecord) => {
+    const from = get(record, awgFrom).trim();
+    const to = get(record, awgTo).trim();
+    return from && to && from !== to ? `${from}–${to}` : from || to;
+  };
+  const merged: Record<string, DataColumn<TechOperationRecord>> = {};
+  if (crimpFields.length > 0) merged[crimpFields[0]] = {
+    key: "__crimp", title: CRIMP_COLUMN_TITLE, value: (record) => crimpText(crimpValues(record)),
+    render: (record) => <CrimpCell values={crimpValues(record)} />,
+  };
+  if (awgFrom || awgTo) merged[(awgFrom ?? awgTo) as string] = { key: "__awg", title: "AWG", value: awgText, render: (record) => awgText(record) || "—" };
+  const folded = new Set([...crimpFields, awgFrom, awgTo].filter(Boolean) as string[]);
+  // Обжим и AWG стоят сразу за артикулом контакта: на планшете (~1400 px) таблица шире экрана, и всё, что правее
+  // «Длины зачистки», уходит за край.
+  const moved = Object.values(merged);
+  const rest = columns.map((column) => (folded.has(column.key) ? { ...column, hidden: true } : column));
+  const anchor = rest.findIndex((column) => headerKey(column.title).startsWith("артикул контакта"));
+  if (moved.length === 0) return rest;
+  if (anchor < 0) return [...moved, ...rest];
+  return [...rest.slice(0, anchor + 1), ...moved, ...rest.slice(anchor + 1)];
+}
+
 // Заголовки листа, которых нет в карте: без переносов строк, русские слова вместо английских (referenceLabels.ts).
 const fieldTitle = (field: string) => FIELD_TITLES[field] ?? headerLabel(field);
 // Столбцы БД.ТЕР, нужные редко (ссылка, источник, материал, диаметры изоляции, пневма): в «Колонках», по умолчанию скрыты —
@@ -278,7 +320,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns
     .filter((key) => key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
     .map((key) => [key, record.fields[key]]));
-  const techColumns: DataColumn<TechOperationRecord>[] = [
+  const sheetColumns: DataColumn<TechOperationRecord>[] = [
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
     ...fieldColumns.map((field): DataColumn<TechOperationRecord> => {
       if (coaxTab && CABLE_DIAMETERS.includes(field)) return {
@@ -303,6 +345,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     }),
     { key: "__source", title: "Источник", value: (record) => record.source_sheet || "", hidden: true },
   ];
+  // БД.ТЕР: обжим одной колонкой «по сечениям» и «От AWG / До AWG» одной колонкой «AWG» (владелец 12.10); исходные
+  // колонки остаются в «Колонках» и в выгрузке, но скрыты.
+  const techColumns = techTab === "ter" ? mergeTerminalColumns(sheetColumns, fieldColumns) : sheetColumns;
   function startEdit(record: TechOperationRecord) {
     setEditing({ id: record.id, values: editValues(record) });
     window.scrollTo?.({ top: 0, behavior: "smooth" });

@@ -3327,3 +3327,12 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .quality-page .danger-text { color: var(--tone-danger); }
 
 .ec-legend { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+
+/* Обжим по сечениям (вкладка «Терминалы», карточка серии): сечение написано один раз, значения — столбиками. */
+.crimp { display: grid; gap: 1px; }
+.crimp-row { display: grid; grid-template-columns: repeat(var(--crimp-n, 1), minmax(11ch, auto)); gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crimp-row.has-awg { grid-template-columns: 9ch repeat(var(--crimp-n, 1), minmax(11ch, auto)); }
+.crimp-awg { color: var(--muted-foreground); font-weight: 600; border-right: 1px solid var(--border); padding-right: 8px; }
+.crimp-val { text-align: right; }
+.crimp-unit { font-style: normal; color: var(--muted-foreground); }
+@media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }

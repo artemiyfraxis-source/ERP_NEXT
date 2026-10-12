@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
   failureText, techcardsApi,
@@ -85,6 +86,8 @@ const TERMINAL_COLUMNS: DataColumn<ConnectorTerminal>[] = [
   { key: "awg", title: "AWG", value: (t) => (t.awg_from && t.awg_to && t.awg_from !== t.awg_to ? `${t.awg_from}–${t.awg_to}` : t.awg_from || t.awg_to) },
   { key: "mm2", title: "Сечение, мм²", value: (t) => (t.mm2_from && t.mm2_to && t.mm2_from !== t.mm2_to ? `${t.mm2_from}–${t.mm2_to}` : t.mm2_from || t.mm2_to) },
   { key: "strip", title: "Зачистка, мм", value: (t) => t.strip, numeric: true },
+  { key: "crimp", title: CRIMP_COLUMN_TITLE, value: (t) => crimpText({ conductor: t.crimp_height, pull: t.pull_force }),
+    render: (t) => <CrimpCell values={{ conductor: t.crimp_height, pull: t.pull_force }} /> },
   { key: "applicator", title: "Аппликатор", value: (t) => t.applicator },
 ];
 
