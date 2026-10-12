@@ -143,6 +143,43 @@ def parse_crimp_profiles(value: str) -> tuple[CrimpProfile, ...]:
     return tuple(profiles)
 
 
+_PROFILE_START = re.compile(r"(?<=\s)(?=\d+(?:\s*[–—-]\s*\d+)?\s*AWG\s*:)", re.IGNORECASE)
+_AWG_LABEL = re.compile(r"^(\d+)\s*[–—-]\s*(\d+)(\s*AWG)", re.IGNORECASE)
+
+
+def normalize_crimp_text(value: object) -> str:
+    """One canonical text for a crimp height / pull force cell: «28 AWG: 0,52–0,58; 26 AWG: 0,56–0,62».
+    Russian decimal comma, en dash in ranges, «; » between AWG profiles (also when the sheet glued them with a
+    space or a line break), no stray spaces. The meaning is untouched: `parse_crimp_profiles` reads the result as the
+    source with its ranges written the same way. Display-time only; stored rows are not rewritten here."""
+    text = str(value or "").replace("\\n", "\n")
+    text = re.sub(r"(\d)\.(\d)", r"\1,\2", text)
+    text = _PROFILE_START.sub("\n", text)
+    parts = []
+    for part in re.split(r"\n|;", text):
+        part = re.sub(r"\s+", " ", part).strip()
+        if not part:
+            continue
+        part = _AWG_LABEL.sub(lambda m: f"{m.group(1)}–{m.group(2)}{m.group(3)}", part)
+        part = re.sub(r"(\d)\s*AWG\s*:", r"\1 AWG:", part, flags=re.IGNORECASE)
+        part = re.sub(r"(\d)\s+[-–—]\s+(?=\d)", r"\1–", part)
+        part = re.sub(r"(\d,\d+)\s*-\s*(?=\d,\d)", r"\1–", part)
+        parts.append(part)
+    return "; ".join(parts)
+
+
+_CRIMP_COLUMN = re.compile(r"^(высота обжима|усилие обрыва)")
+
+
+def normalize_terminal_fields(fields: Mapping[str, str]) -> dict[str, str]:
+    """БД.ТЕР fields for display: the crimp height and pull force cells in the canonical text (see above)."""
+    out = dict(fields)
+    for key, value in fields.items():
+        if key in ("terCrimpHeight", "terPullForceMin", "terPullForceMax") or _CRIMP_COLUMN.match(re.sub(r"\s+", " ", key).strip().lower()):
+            out[key] = normalize_crimp_text(value)
+    return out
+
+
 def crimp_entry(value: str, awg: int) -> CrimpEntry:
     profiles = parse_crimp_profiles(value)
     if not profiles:

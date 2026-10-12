@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "gauges": [
+    {"awg": "24", "section_mm2": 0.2, "conductor_dia_mm": {"value": 0.51, "source": "ГОСТ 22483-2012"}, "source": "ГОСТ 22483-2012"},
+    {"awg": 28, "section_mm2": 0.08, "conductor_dia_mm": {"value": 0.32, "source": "ГОСТ 22483-2012"}, "source": "ГОСТ 22483-2012"},
+    {"awg": "26", "section_mm2": "0,13", "conductor_dia_mm": null, "source": "UL AWM 1571"},
+    {"awg": null, "section_mm2": 0.07, "conductor_dia_mm": null, "source": "ТУ 16-505.185-71"},
+    {"awg": "99", "section_mm2": 0.01, "conductor_dia_mm": null, "source": "опечатка"}
+  ],
+  "series": [
+    {
+      "key": "МГТФ", "aliases": ["MGTF"],
+      "standard": {"value": "ТУ 16-505.185-71", "source": "ТУ 16-505.185-71"},
+      "conductor_material": {"value": "медь посеребрённая", "source": "ТУ 16-505.185-71, п. 1.2"},
+      "insulation_material": {"value": "фторопласт-4", "source": "ТУ 16-505.185-71, п. 1.3"},
+      "voltage_v": {"value": 250, "source": "ТУ 16-505.185-71, п. 2.1"},
+      "temp_min_c": {"value": -60, "source": "ТУ 16-505.185-71, п. 2.4"},
+      "temp_max_c": {"value": 220, "source": "ТУ 16-505.185-71, п. 2.4"},
+      "colors": {"value": ["white", "red", "black"], "source": "каталог Спецкабель"},
+      "sizes": [
+        {"mark": "МГТФ 0,2", "awg": null, "section_mm2": 0.2,
+         "strands": {"value": "7×0,19", "source": "ТУ 16-505.185-71, табл. 1"},
+         "conductor_dia_mm": {"value": 0.57, "source": "ТУ 16-505.185-71, табл. 1"},
+         "insulation_thickness_mm": {"value": 0.2, "source": "ТУ 16-505.185-71, табл. 1"},
+         "outer_dia_mm": {"value": 0.97, "source": "ТУ 16-505.185-71, табл. 1"}},
+        {"mark": "МГТФ 0,07", "awg": null, "section_mm2": 0.07,
+         "strands": {"value": "7×0,12", "source": "ТУ 16-505.185-71, табл. 1"},
+         "conductor_dia_mm": null,
+         "insulation_thickness_mm": {"value": "0,15", "source": "ТУ 16-505.185-71, табл. 1"},
+         "outer_dia_mm": {"value": 0.66, "source": "ТУ 16-505.185-71, табл. 1"},
+         "colors": {"value": "белый", "source": "склад"}},
+        {"mark": "МГТФ 0,6", "awg": null, "section_mm2": 0.6,
+         "strands": null, "conductor_dia_mm": null, "insulation_thickness_mm": null, "outer_dia_mm": null}
+      ]
+    },
+    {
+      "key": "UL1061", "aliases": [],
+      "standard": {"value": "UL AWM Style 1061", "source": "UL iQ, style 1061"},
+      "conductor_material": {"value": "медь луженая", "source": "UL iQ, style 1061"},
+      "insulation_material": null,
+      "voltage_v": {"value": 300, "source": "UL iQ, style 1061"},
+      "temp_min_c": null,
+      "temp_max_c": {"value": 80, "source": "UL iQ, style 1061"},
+      "colors": null,
+      "sizes": [
+        {"mark": "UL1061 28AWG", "awg": "28", "section_mm2": 0.08,
+         "strands": {"value": "7×0,127", "source": "UL iQ, style 1061"},
+         "conductor_dia_mm": null, "insulation_thickness_mm": {"value": 0.23, "source": "UL iQ, style 1061"},
+         "outer_dia_mm": null},
+        {"mark": "UL1007 26AWG", "awg": "26", "section_mm2": 0.13,
+         "strands": null, "conductor_dia_mm": null, "insulation_thickness_mm": null, "outer_dia_mm": null},
+        {"mark": "UL1061 30AWG", "awg": "30", "section_mm2": 0.05,
+         "strands": null, "conductor_dia_mm": null, "insulation_thickness_mm": null, "outer_dia_mm": null,
+         "temp_min_c": {"value": 90, "source": "опечатка"}}
+      ]
+    },
+    {
+      "key": "МС16-13", "aliases": [],
+      "standard": null, "conductor_material": null, "insulation_material": null,
+      "voltage_v": null, "temp_min_c": null, "temp_max_c": null, "colors": null,
+      "sizes": [
+        {"mark": "МС 16-13 0,08", "awg": null, "section_mm2": 0.08,
+         "strands": null, "conductor_dia_mm": null, "insulation_thickness_mm": null,
+         "outer_dia_mm": {"value": 0.62, "source": "ТУ 16-505.083-78"}}
+      ]
+    },
+    {
+      "key": "UL1015", "aliases": [],
+      "standard": null, "conductor_material": null, "insulation_material": null,
+      "voltage_v": null, "temp_min_c": null, "temp_max_c": null, "colors": null,
+      "sizes": [
+        {"mark": "UL1015 22AWG", "awg": "22", "section_mm2": 0.35,
+         "strands": null, "conductor_dia_mm": null, "insulation_thickness_mm": null, "outer_dia_mm": null}
+      ]
+    },
+    {
+      "key": "ПВАМ", "aliases": [],
+      "standard": null, "conductor_material": null, "insulation_material": null,
+      "voltage_v": {"value": 48, "source": "ТУ 16.К19-12-2003"}, "temp_min_c": null, "temp_max_c": null, "colors": null,
+      "sizes": [
+        {"mark": "ПВАМ 0,50", "awg": null, "section_mm2": 0.5,
+         "strands": null, "conductor_dia_mm": null, "insulation_thickness_mm": null, "outer_dia_mm": null}
+      ]
+    }
+  ],
+  "was": [{"note": "черновик для тестов, не данные цеха"}]
+}

@@ -164,6 +164,8 @@ class HookupWireRow(Base):
         CheckConstraint("outer_d_mm IS NULL OR outer_d_mm > 0", name="ck_hookup_wires_outer_positive"),
         CheckConstraint("voltage_v IS NULL OR voltage_v > 0", name="ck_hookup_wires_voltage_positive"),
         CheckConstraint("temp_min_c IS NULL OR temp_max_c IS NULL OR temp_min_c < temp_max_c", name="ck_hookup_wires_temp_range"),
+        CheckConstraint("insulation_thickness_mm IS NULL OR insulation_thickness_mm > 0",
+                        name="ck_hookup_wires_insulation_thickness_positive"),
         Index("ix_hookup_wires_gauge_id", "gauge_id"),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -176,6 +178,8 @@ class HookupWireRow(Base):
     voltage_v: Mapped[int | None] = mapped_column(Integer, nullable=True)
     temp_min_c: Mapped[int | None] = mapped_column(Integer, nullable=True)
     temp_max_c: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    conductor_material: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    insulation_thickness_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -349,7 +353,8 @@ class SqlAlchemyCableStructureRepository:
     @staticmethod
     def _hookup(row: HookupWireRow) -> HookupWire:
         return HookupWire(row.id, row.mark, row.mark_key, row.series, row.gauge_id, row.insulation, _dec(row.outer_d_mm),
-                          row.voltage_v, row.temp_min_c, row.temp_max_c)
+                          row.voltage_v, row.temp_min_c, row.temp_max_c, row.conductor_material or "",
+                          _dec(row.insulation_thickness_mm))
 
     def save_hookup(self, wire: HookupWire, now: datetime) -> None:
         row = self.session.get(HookupWireRow, wire.id)
@@ -357,6 +362,7 @@ class SqlAlchemyCableStructureRepository:
         row.mark = wire.mark; row.mark_key = wire.mark_key; row.series = wire.series; row.gauge_id = wire.gauge_id
         row.insulation = wire.insulation; row.outer_d_mm = wire.outer_d_mm; row.voltage_v = wire.voltage_v
         row.temp_min_c = wire.temp_min_c; row.temp_max_c = wire.temp_max_c; row.updated_at = now
+        row.conductor_material = wire.conductor_material; row.insulation_thickness_mm = wire.insulation_thickness_mm
         self.session.flush()
 
     def cards(self) -> list[CoaxCard]:
