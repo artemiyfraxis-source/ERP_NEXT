@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { PrintSheet } from "./api";
-import { buildPrintDocumentHtml, buildPrintSheetHtml, printStoredDocument } from "./print";
+import { buildPrintDocumentHtml, buildPrintSheetHtml, openPrintHtml, openPrintSheet, printStoredDocument } from "./print";
 
 const sheet: PrintSheet = {
   title: "ЗАЯВКА НА ВЫДАЧУ REQ.26.001",
@@ -54,4 +54,25 @@ it("prints a stored ERP document through a hidden same-origin frame", () => {
   frame!.onload?.(new Event("load"));
   expect(print).toHaveBeenCalledOnce();
   frame!.remove();
+});
+
+it("prints through a hidden iframe, never window.open (noopener made it return null and print nothing)", () => {
+  const open = vi.spyOn(window, "open");
+  openPrintSheet({ title: "Заявка REQ.1", subtitle: "", columns: ["A"], rows: [["x"]], note: "", sign: "" });
+
+  const frame = document.body.querySelector("iframe");
+  expect(frame?.srcdoc).toContain("Заявка REQ.1");
+  expect(open).not.toHaveBeenCalled();
+  const print = vi.fn();
+  Object.defineProperty(frame!, "contentWindow", { value: { print, focus: vi.fn(), addEventListener: vi.fn() } });
+  frame!.onload?.(new Event("load"));
+  expect(print).toHaveBeenCalledOnce();
+  frame!.remove();
+  open.mockRestore();
+});
+
+it("prints synchronously inside the call: the frame exists as soon as openPrintHtml returns", () => {
+  openPrintHtml("<p>x</p>");
+  expect(document.body.querySelectorAll("iframe")).toHaveLength(1);
+  document.body.querySelector("iframe")!.remove();
 });

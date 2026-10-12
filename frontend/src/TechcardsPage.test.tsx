@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { TechcardsPage } from "./TechcardsPage";
 import type { Principal, ProjectTechcard } from "./api";
+import { capturePrintFrames } from "./testPrintFrames";
 
 const engineer: Principal = {
   user: {
@@ -343,9 +344,8 @@ it("shows per-wire times beside their rows and no «— Шт.» for a missing no
 });
 
 it("prints the ETK through the shared print contract (etkPrint_)", async () => {
-  const written: string[] = [];
-  const win = { document: { open: vi.fn(), write: (html: string) => written.push(html), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(win as unknown as Window);
+  const win = capturePrintFrames();
+  const written = win.html;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/techcards/projects") return json({ items: [issuedEtk] });
@@ -358,7 +358,7 @@ it("prints the ETK through the shared print contract (etkPrint_)", async () => {
   await waitFor(() => expect(screen.getByText(/Первая выдача/)).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: /Печать \/ PDF/ }));
 
-  expect(win.print).toHaveBeenCalled();
+  await waitFor(() => expect(win.print).toHaveBeenCalled());
   const html = written.join("");
   expect(html).toContain("Технологическая карта сборки");
   expect(html).toContain("ТК.P-100.CUT_WIRE_auto");

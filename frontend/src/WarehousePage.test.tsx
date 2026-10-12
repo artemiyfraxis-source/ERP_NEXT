@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { WarehousePage } from "./WarehousePage";
 import type { WarehouseLot } from "./api";
+import { capturePrintFrames } from "./testPrintFrames";
 
 const lot: WarehouseLot = {
   id: "40000000-0000-0000-0000-000000000001",
@@ -63,8 +64,7 @@ it("warns instead of printing when nothing is waiting to be put away", async () 
 });
 
 it("prints a putaway sheet for accepted lots waiting for a shelf — same mechanism as FF-8", async () => {
-  const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(printWindow as unknown as Window);
+  const printed = capturePrintFrames();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/stock") return json({ lots: [], total: 0, truncated: 0, next_cursor: null });
@@ -84,8 +84,8 @@ it("prints a putaway sheet for accepted lots waiting for a shelf — same mechan
   render(<WarehousePage />);
   fireEvent.click(await screen.findByRole("button", { name: "Лист перемещения" }));
 
-  await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
-  const written = printWindow.document.write.mock.calls[0][0] as string;
+  await waitFor(() => expect(printed.print).toHaveBeenCalled());
+  const written = printed.html[0];
   expect(written).toContain("ЛИСТ ПЕРЕМЕЩЕНИЯ НА СКЛАД");
   expect(written).toContain("Разъём");
   expect(written).toContain("FRX.26.0000001");

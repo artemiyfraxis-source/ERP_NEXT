@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { FulfillmentPage } from "./FulfillmentPage";
 import type { FulfillmentRequest, Principal } from "./api";
+import { capturePrintFrames } from "./testPrintFrames";
 
 const principal: Principal = {
   user: {
@@ -178,8 +179,8 @@ it("lets a technical lead with edit on handout hand a kit out", async () => {
 
 it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
   const printedPaths: string[] = [];
-  const printWindow = { document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() };
-  vi.spyOn(window, "open").mockReturnValue(printWindow as unknown as Window);
+  const open = vi.spyOn(window, "open");
+  const printed = capturePrintFrames();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     printedPaths.push(path);
@@ -199,8 +200,10 @@ it("prints the issue sheet and, once something is issued, offers the return shee
   fireEvent.click(screen.getByRole("button", { name: "Печать заявки" }));
 
   await waitFor(() => expect(printedPaths).toContain(`/api/issues/${request.id}/print`));
-  await waitFor(() => expect(printWindow.print).toHaveBeenCalled());
-  expect(printWindow.document.write.mock.calls[0][0]).toContain("ЗАЯВКА НА ВЫДАЧУ FRX-ISS-26-0001");
+  await waitFor(() => expect(printed.print).toHaveBeenCalled());
+  expect(printed.html[0]).toContain("ЗАЯВКА НА ВЫДАЧУ FRX-ISS-26-0001");
+  expect(open).not.toHaveBeenCalled();
+  printed.restore();
 });
 
 it("records good return and both defect quantities for every issued line", async () => {
@@ -806,7 +809,7 @@ it("issues the ticked КБ of the whole order in one call; a КБ not picked is 
 
   render(<FulfillmentPage principal={principal} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ }));
 
   const chooser = screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" });
   expect(within(chooser).getByLabelText("Выдать КБ1")).toBeChecked();
@@ -838,11 +841,25 @@ it("keeps the chooser open and names the КБ when the server refuses the batch"
 
   render(<FulfillmentPage principal={principal} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ }));
   fireEvent.click(screen.getByRole("button", { name: "Выдать выбранные (2)" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("КБ2 (REQ.26.0000020): заявка изменилась после загрузки");
   expect(screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" })).toBeInTheDocument();
+});
+
+it("keeps the issue button visible but disabled, with the reason, when no КБ is ready; an issued КБ says so on its chip", async () => {
+  issueFetch(order([
+    { status: "КБ Выдана", at_issued: "2026-10-05T15:20:00", lines: [{ ...boundLine, reserved: "0", issued: "4" }] },
+    { status: "Недоукомплектован", lines: [boundLine, { ...request.lines[0], id: "waiting" }] },
+  ]), []);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  expect(screen.getByRole("tab", { name: "КБ1 · выдан" })).toBeInTheDocument();
+  const issue = screen.getByRole("button", { name: "Выдать комплекты" });
+  expect(issue).toBeDisabled();
+  expect(issue).toHaveAttribute("title", expect.stringContaining("Нет КБ, готовых к выдаче"));
 });
 
 it("gives no issue action without the handout right or on the picking screen", async () => {
@@ -851,14 +868,14 @@ it("gives no issue action without the handout right or on the picking screen", a
 
   const { unmount } = render(<FulfillmentPage principal={picker} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
   expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
   unmount();
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
   expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();
@@ -893,7 +910,9 @@ it("draws «Отменить заявку» as a danger button and asks before c
   render(<FulfillmentPage principal={principal} mode="pick" />);
   await expand(request.number);
   const cancel = await screen.findByRole("button", { name: "Отменить заявку" });
-  expect(cancel).toHaveClass("danger");
+  expect(cancel).toHaveClass("secondary", "danger");
+  expect(screen.getByRole("button", { name: "Печать заявки" })).toHaveClass("secondary");
+  expect(screen.getByRole("button", { name: "Печать заявки" })).not.toHaveClass("small");
   fireEvent.click(cancel);
   expect(confirm).toHaveBeenCalledTimes(1);
 });

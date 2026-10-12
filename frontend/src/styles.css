@@ -280,6 +280,13 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-progress { margin: 8px 0 0; font-size: 13px; color: var(--muted-foreground); }
 .fulfillment-create, .fulfillment-project { padding: 18px 20px; margin-bottom: 16px; }
 .fulfillment-head-actions { display: flex; gap: 8px; align-items: center; }
+/* Card footer: the main action first, secondary after it, destructive ones apart on the far side; one height for all. */
+.fulfillment-card-actions { justify-content: flex-start; align-items: center; }
+.fulfillment-card-actions > .handout-offer { margin-left: auto; }
+.fulfillment-danger-group { display: flex; flex-wrap: wrap; gap: 10px; margin-left: auto; padding-left: 16px; border-left: 1px solid var(--border); }
+.project-kb-bar { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 16px; }
+.project-kb-bar .calendar-chips { margin-bottom: 0; flex: 0 1 auto; }
+.project-issue-btn { flex: none; white-space: nowrap; }
 .issue-chooser { margin: 12px 0 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 12px 0; }
 .issue-chooser h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
 .issue-chooser th.check, .issue-chooser td.check { width: 36px; text-align: center; }
@@ -945,6 +952,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .manual-stock-grid { grid-template-columns: 1fr; }
   .manual-stock-grid .span-2 { grid-column: auto; }
   .fulfillment-actions { align-items: stretch; flex-direction: column; }
+  .fulfillment-danger-group { margin-left: 0; padding-left: 0; border-left: 0; flex-direction: column; }
   .fulfillment-actions label { width: 100%; }
   .return-line { grid-template-columns: 1fr; }
   .production-launch-grid, .route-draft, .production-operation, .operation-assign, .ship-form, .ship-docs, .ship-accept, .reference-columns, .reference-map-head, .reference-row, .box-grid { grid-template-columns: 1fr; }

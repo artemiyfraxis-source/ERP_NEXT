@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShippingPage } from "./ShippingPage";
+import { capturePrintFrames } from "./testPrintFrames";
 
 const principal = {
   user: { id: "u1", email: "admin@example.test", name: "Admin", department: "ERP" },
@@ -234,8 +235,7 @@ describe("ShippingPage", () => {
 
   it("edits requested quantity, lays out boxes, prints and ships from the registry", async () => {
     stub([shipment]);
-    const open = vi.fn(() => ({ document: { open: vi.fn(), write: vi.fn(), close: vi.fn() }, focus: vi.fn(), print: vi.fn() }));
-    vi.stubGlobal("open", open);
+    const printed = capturePrintFrames();
     render(<ShippingPage principal={principal} />);
     await screen.findByText("591К.3", { selector: "strong" });
     tab(/^Отправки/);
@@ -255,7 +255,7 @@ describe("ShippingPage", () => {
     }));
 
     fireEvent.click(screen.getByRole("button", { name: "Печать PL" }));
-    await waitFor(() => expect(open).toHaveBeenCalled());
+    await waitFor(() => expect(printed.print).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("button", { name: "Отгрузить" }));
     expect(await screen.findByText("Отгружено и закрыто: ОТГ-20260922-01")).toBeInTheDocument();
