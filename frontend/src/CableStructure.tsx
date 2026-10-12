@@ -13,6 +13,9 @@ import {
   type TechOperationRecord,
   type WireGauge,
 } from "./api";
+import { colorBackground, normalizeColors, parseColors } from "./wireColors";
+import { ColorPicker, MakersInput } from "./WireFieldWidgets";
+import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
 /* Structured cable reference (owner 10.10.2026: «наведи порядок в базах коаксиалов, монтажных проводов и сечений»):
    «Сечения AWG ↔ мм²» (one row per conductor size), «Монтажные провода» (series + conductor as a size row + insulation,
@@ -44,6 +47,8 @@ function gaugeOption(gauge: WireGauge): string {
 
 // --- «Сечения AWG ↔ мм²» ---
 
+// The stranding is a property of each wire (owner 12.10.2026), not of the size: the gauge form no longer shows it, and
+// `strands` only rides along so a save does not wipe what the table still holds.
 type GaugeDraft = { awg: string; section_mm2: string; conductor_d_mm: string; strands: string };
 const gaugeDraft = (gauge: WireGauge | null): GaugeDraft => ({
   awg: gauge?.awg ?? "", section_mm2: num(gauge?.section_mm2), conductor_d_mm: num(gauge?.conductor_d_mm), strands: gauge?.strands ?? "",
@@ -60,7 +65,6 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
     { key: "awg", title: "AWG", value: (gauge) => gauge.awg, render: (gauge) => gauge.awg ? <strong>{gauge.awg}</strong> : <span className="muted">только ГОСТ</span> },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (gauge) => gauge.section_mm2, render: (gauge) => num(gauge.section_mm2) },
     { key: "dia", title: "Ø жилы, мм", numeric: true, value: (gauge) => gauge.conductor_d_mm ?? "", render: (gauge) => num(gauge.conductor_d_mm) || <span className="muted">—</span> },
-    { key: "strands", title: "Скрутка, проволок × Ø", value: (gauge) => gauge.strands },
     { key: "wires", title: "Монтажных проводов", numeric: true, value: (gauge) => gauge.wires, render: (gauge) => gauge.wires || <span className="muted">—</span> },
   ];
   return <>
@@ -75,7 +79,7 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
       rowKey={(gauge) => gauge.id}
       storageKey="db:gauges"
       exportName="Сечения AWG - мм2"
-      renderDetail={canEdit ? (gauge) => <GaugeEditor key={`${gauge.id}:${gaugeOption(gauge)}:${gauge.strands}`} gauge={gauge} onSaved={onSaved} onError={onError} /> : undefined}
+      renderDetail={canEdit ? (gauge) => <GaugeEditor key={`${gauge.id}:${gaugeOption(gauge)}`} gauge={gauge} onSaved={onSaved} onError={onError} /> : undefined}
       emptyText="Таблица сечений пуста — добавьте сечение."
       toolbar={canEdit && !adding ? <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Сечение</button> : undefined}
     />
@@ -111,7 +115,6 @@ function GaugeEditor({ gauge, onSaved, onError, onCancel }: {
       {field("awg", "AWG")}
       {field("section_mm2", "Сечение, мм²", true)}
       {field("conductor_d_mm", "Ø жилы, мм", true)}
-      {field("strands", "Скрутка, проволок × Ø")}
     </div>
     <div className="form-actions cable-actions">
       {gauge && gauge.wires === 0 && <button type="button" className="link-button danger-link" disabled={busy}
@@ -133,23 +136,16 @@ const hookupPayload = (wire: Partial<HookupWire> | null | undefined): HookupPayl
   outer_d_mm: num(wire?.outer_d_mm), voltage_v: num(wire?.voltage_v), temp_min_c: num(wire?.temp_min_c), temp_max_c: num(wire?.temp_max_c),
 });
 
-// Wire colours as the shop names them → a dot. Data names, not design tokens; a name not listed is shown as text.
-const WIRE_COLORS: Record<string, string> = {
-  "белый": "#ffffff", "чёрный": "#222222", "черный": "#222222", "красный": "#d93a32", "синий": "#2b5fd9", "голубой": "#4aa8e0",
-  "зелёный": "#2e9e4f", "зеленый": "#2e9e4f", "жёлтый": "#f2c200", "желтый": "#f2c200", "коричневый": "#7a4a21",
-  "оранжевый": "#f08a1c", "фиолетовый": "#7b3fa0", "серый": "#8a8f98", "розовый": "#f08fb0", "натуральный": "#e6d9b8",
-  "красно-чёрный": "linear-gradient(135deg, #d93a32 50%, #222222 50%)", "коричнево-серый": "linear-gradient(135deg, #7a4a21 50%, #8a8f98 50%)",
-  "жёлто-зелёный": "linear-gradient(135deg, #f2c200 50%, #2e9e4f 50%)", "желто-зеленый": "linear-gradient(135deg, #f2c200 50%, #2e9e4f 50%)",
-};
-const colorNames = (text: string): string[] => text.split(/[,;]/).map((name) => name.trim()).filter(Boolean);
-
 function WireColors({ text }: { text: string }) {
-  const names = colorNames(text);
+  const names = parseColors(text);
   if (!names.length) return <span className="muted">—</span>;
   return <span className="wire-dots" title={names.join(", ")}>
-    {names.map((name) => WIRE_COLORS[name.toLowerCase()]
-      ? <i key={name} className="wire-dot" style={{ background: WIRE_COLORS[name.toLowerCase()] }} role="img" aria-label={name} title={name} />
-      : <span key={name} className="wire-dot-name">{name}</span>)}
+    {names.map((name) => {
+      const background = colorBackground(name);
+      return background
+        ? <i key={name} className="wire-dot" style={{ background }} role="img" aria-label={name} title={name} />
+        : <span key={name} className="wire-dot-name">{name}</span>;
+    })}
   </span>;
 }
 
@@ -195,6 +191,9 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     return result;
   }, [rows]);
   const sharedOf = (row: CableRow) => row.hookup ? shared.get(row.hookup.series) : undefined;
+  const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
+  const seriesColors = (series: string) => [...new Set(rows.filter((item) => item.hookup?.series === series.trim())
+    .flatMap((item) => parseColors(item.record?.fields["Цвета"] ?? "")))].join(", ");
   // The table itself appends « · N» — the number of sizes in the group.
   const groupLabel = (name: string) => {
     const own = name === UNPARSED ? undefined : shared.get(name);
@@ -212,25 +211,26 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
     { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
+    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) || <span className="muted">—</span> },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm) },
     { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? "") },
     { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "" },
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
     { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
-    ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
+    ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: true, render: (row) => clip(field(row, name)),
     })),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
-      row={row} columns={data.columns} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} />
+      row={row} columns={data.columns} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
     : <HookupCard row={row} gauge={gaugeOf(row)} columns={data.columns} />;
   const unparsed = rows.filter((row) => !row.hookup).length;
   return <>
     {adding && <div className="panel db-edit">
       <div className="manual-stock-head"><h2>Новый монтажный провод</h2></div>
-      <HookupEditor row={null} columns={data.columns} gauges={gauges} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} kindSelect={kindSelect} />
+      <HookupEditor row={null} columns={data.columns} gauges={gauges} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
     </div>}
     <DataTable
       label="Монтажные провода"
@@ -257,7 +257,20 @@ function HookupCard({ row, gauge, columns }: { row: CableRow; gauge: WireGauge |
   </div>;
 }
 
-function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSelect }: {
+const COLORS = "Цвета";
+const STRANDS = "Жила: проволок × диаметр, мм";
+// Short labels of the form; the cell keeps its column name.
+const CELL_LABELS: Record<string, string> = {
+  [STRANDS]: "Скрутка: проволок × Ø, мм", "Цена посл., ₽/м без НДС": "Цена посл., ₽/м", "Ссылка на datasheet": "Datasheet",
+  "Источник данных": "Источник", "Волновое сопротивление, Ом": "Волновое, Ом", [STANDARD]: "Стандарт (ГОСТ / ТУ / UL)",
+  "Сечение, мм2": "Сечение, мм²",
+};
+const SECTION_CELLS = [[MARK, TYPE, "Число жил", STRANDS], ["Ток, А"], ["Экран", "Волновое сопротивление, Ом", "Масса, г/м"],
+  ["Поставщик", "Цена посл., ₽/м без НДС", "Закупок", "Ссылка на datasheet", "Источник данных"]];
+
+function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSelect, seriesColors, makerNames }: {
+  seriesColors: (series: string) => string;
+  makerNames: string[];
   row: CableRow | null;
   columns: string[];
   gauges: WireGauge[];
@@ -307,27 +320,63 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
   const input = (name: keyof HookupPayload, label: string, decimal = false) => <label key={name}><small>{label}</small>
     <input aria-label={label} inputMode={decimal ? "decimal" : undefined} value={wire[name]} onChange={(event) => setWire({ ...wire, [name]: event.target.value })} />
   </label>;
+  const setCell = (name: string, value: string) => setFields({ ...fields, [name]: value });
+  const cell = (name: string) => name in fields && <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{CELL_LABELS[name] ?? name}</small>
+    <input aria-label={CELL_LABELS[name] ?? name} value={fields[name] ?? ""} onChange={(event) => setCell(name, event.target.value)} />
+  </label>;
+  const grouped = new Set([...SECTION_CELLS.flat(), COLORS, STANDARD, MAKERS]);
+  const rest = Object.keys(fields).filter((name) => !grouped.has(name));
   return <div className="cable-editor">
     {row && !row.hookup && <div className="warning-inline">Не разобран: {row.hookup_problem || "жила не выбрана"}. Поля заполнены по строке БД.ПРОВ — проверьте и сохраните.</div>}
-    <div className="cable-form hookup-form">
-      {input("series", "Серия (ПВАМ, МГТФ, UL1007…)")}
-      <label className="wide"><small>Жила — сечение из таблицы</small>
-        <select aria-label="Жила — сечение из таблицы" value={wire.gauge_id} onChange={(event) => setWire({ ...wire, gauge_id: event.target.value })}>
-          <option value="">— выберите сечение —</option>
-          {sorted.map((gauge) => <option key={gauge.id} value={gauge.id}>{gaugeOption(gauge)}</option>)}
-        </select>
-      </label>
-      {input("outer_d_mm", "Ø наружный, мм", true)}
-      {input("insulation", "Изоляция")}
-      {input("voltage_v", "Напряжение, В", true)}
-      {input("temp_min_c", "Темп. от, °C", true)}
-      {input("temp_max_c", "Темп. до, °C", true)}
-    </div>
-    <div className="cable-form">
-      {Object.keys(fields).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name}</small>
-        <input aria-label={`Поле ${name}`} value={fields[name] ?? ""} onChange={(event) => setFields({ ...fields, [name]: event.target.value })} />
-      </label>)}
-    </div>
+    <section className="form-section"><h4>Основное</h4>
+      <div className="cable-form hookup-form">
+        {input("series", "Серия")}
+        {cell(MARK)}
+        {cell(TYPE)}
+        <label className="wide"><small>Сечение</small>
+          <select aria-label="Жила — сечение из таблицы" value={wire.gauge_id} onChange={(event) => setWire({ ...wire, gauge_id: event.target.value })}>
+            <option value="">— выберите сечение —</option>
+            {sorted.map((gauge) => <option key={gauge.id} value={gauge.id}>{gaugeOption(gauge)}</option>)}
+          </select>
+        </label>
+        {cell("Число жил")}
+        {cell(STRANDS)}
+        {input("outer_d_mm", "Ø наружный, мм", true)}
+      </div>
+    </section>
+    <section className="form-section"><h4>Изоляция и режим</h4>
+      <div className="cable-form">
+        {input("insulation", "Изоляция")}
+        {input("voltage_v", "Напряжение, В", true)}
+        {input("temp_min_c", "Темп. от, °C", true)}
+        {input("temp_max_c", "Темп. до, °C", true)}
+        {cell("Ток, А")}
+      </div>
+    </section>
+    <section className="form-section"><h4>Доп. параметры</h4>
+      <div className="cable-form">
+        {cell("Экран")}
+        {cell("Волновое сопротивление, Ом")}
+        {cell("Масса, г/м")}
+      </div>
+      {COLORS in fields && <ColorPicker value={fields[COLORS] ?? ""} onChange={(value) => setCell(COLORS, value)} seriesColors={seriesColors(wire.series)} />}
+    </section>
+    <section className="form-section"><h4>Закупка и источник</h4>
+      <div className="cable-form">
+        {cell(STANDARD)}
+        {cell("Поставщик")}
+        {cell("Цена посл., ₽/м без НДС")}
+        {cell("Закупок")}
+        {cell("Ссылка на datasheet")}
+        {cell("Источник данных")}
+      </div>
+      {MAKERS in fields && <MakersInput value={fields[MAKERS] ?? ""} onChange={(value) => setCell(MAKERS, value)} suggestions={makerNames} />}
+    </section>
+    {rest.length > 0 && <details className="form-section"><summary>Ещё параметры</summary>
+      <div className="cable-form">{rest.map((name) => <label key={name}><small>{name}</small>
+        <input aria-label={`Поле ${name}`} value={fields[name] ?? ""} onChange={(event) => setCell(name, event.target.value)} />
+      </label>)}</div>
+    </details>}
     <div className="form-actions cable-actions">
       {row?.record && kindSelect(row, kind, setKind)}
       <button type="button" className="primary" disabled={busy || (kind === "wire" && (!wire.gauge_id || !wire.series.trim())) || (!row && !(fields[MARK] ?? "").trim())} onClick={() => void save()}>

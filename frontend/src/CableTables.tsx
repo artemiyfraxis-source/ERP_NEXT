@@ -10,6 +10,8 @@ import {
   type CablesResult,
   type TechOperationRecord,
 } from "./api";
+import { MakersInput } from "./WireFieldWidgets";
+import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
 /* «Кабели и провода» (owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»). One row per cable:
    a БД.ПРОВ row with the parameters, a coax cable joined with the D1·D2·D3 the ETK generator uses for its name. The
@@ -35,10 +37,10 @@ const MARK = "Марка";
 const TYPE = "Тип провода";
 // The columns a technologist reads per list, in this order; every other БД.ПРОВ column is in «Колонки».
 const SHOWN: Record<CableKind, string[]> = {
-  coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт / производитель"],
+  coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт", "Производители"],
   wire: [TYPE, "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Изоляция", "Цвета", "Темп. от, °C", "Темп. до, °C", "Напряжение, В"],
-  multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт / производитель"],
-  other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В", "Стандарт / производитель"],
+  multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт", "Производители"],
+  other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В", "Стандарт", "Производители"],
 };
 // A new row starts in the list it was added from.
 const NEW_TYPE: Record<CableKind, Record<string, string>> = {
@@ -157,6 +159,7 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
   onCancel?: () => void;
 }) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(row, data.columns, kind));
+  const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
   const [busy, setBusy] = useState(false);
   const isCoax = row ? row.kind === "coax" || Boolean(row.dia) : kind === "coax";
   const diaOnly = Boolean(row && !row.record);
@@ -215,9 +218,10 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
       {diaOnly && <span className="muted">{row?.dia ? "Кабеля нет в базе проводов, есть только его диаметры." : "Кабеля нет в базе проводов, есть только его карточка."}</span>}
     </div>}
     {!diaOnly && <div className="cable-form">
-      {Object.keys(draft.fields).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name}</small>
+      {Object.keys(draft.fields).filter((name) => name !== MAKERS).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name === STANDARD ? "Стандарт (ГОСТ / ТУ / UL)" : name}</small>
         <input aria-label={`Поле ${name}`} value={draft.fields[name] ?? ""} onChange={(event) => setField(name, event.target.value)} />
       </label>)}
+      {MAKERS in draft.fields && <MakersInput value={draft.fields[MAKERS] ?? ""} onChange={(value) => setField(MAKERS, value)} suggestions={makerNames} />}
     </div>}
     <div className="form-actions cable-actions">
       {row?.record && kindSelect(row, draft.kind, (next) => setDraft({ ...draft, kind: next }))}
