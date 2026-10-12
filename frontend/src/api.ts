@@ -512,6 +512,21 @@ export interface FulfillmentLot {
   available: string;
 }
 
+/** «Возможно есть»: a warehouse lot that may be a КД position; `kind` exact — the same article, fuzzy — a lookalike. */
+export interface FulfillmentCandidate extends FulfillmentLot {
+  lot_id: string;
+  kind: "exact" | "fuzzy";
+  match: string;
+}
+
+export interface FulfillmentPositionCandidates {
+  article: string;
+  name: string;
+  unit: string;
+  candidates: FulfillmentCandidate[];
+  more: number;
+}
+
 export interface FulfillmentLine {
   id: string;
   requirement_id: string;
@@ -2693,6 +2708,9 @@ export const fulfillmentApi = {
   remove: (requestId: string) =>
     api<{ message: string }>(`/api/issues/${requestId}`, { method: "DELETE" }),
   lots: () => api<{ lots: FulfillmentLot[] }>("/api/issues/lots"),
+  /** «Возможно есть»: the lots that may be each position of the project, one request for the whole card. */
+  candidates: (project: string) =>
+    api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`),
   printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
   returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
   bind: (requestId: string, lineId: string, version: number, lotId: string) =>

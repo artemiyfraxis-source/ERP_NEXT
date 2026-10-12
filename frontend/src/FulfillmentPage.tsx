@@ -4,6 +4,7 @@ import {
   ApiError,
   fulfillmentApi,
   type FulfillmentCalcLine,
+  type FulfillmentCandidate,
   type FulfillmentLine,
   type FulfillmentLot,
   type FulfillmentPlaces,
@@ -14,17 +15,18 @@ import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 import { StatusChip } from "./StatusChip";
-import { BulkLotsPanel, absentMark, bindPosition, bulkApi, isOffBook, type BulkPosition } from "./FulfillmentBulkLots";
+import { BulkLotsPanel, CANDIDATE_LEGEND, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
+
+/** One position of a project card: article + name, the same key for the groups and for the candidates. */
+const positionKey = (article: string, name: string) => `${article}|${name}`.trim().toLocaleLowerCase("ru");
 
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
-   only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint: for
-   picking it is done (hidden unless «показать» is ticked), for handout it is the input. Closed requests live in the
-   archive of either screen. */
+   only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint and reads as
+   «Укомплектован» on both. Closed requests live in the archive of either screen. */
 const MODES = {
   pick: {
     title: "Запросы на комплектацию",
     stages: ["Новая", "Недоукомплектован", "Укомплектован", "Готов к выдаче"],
-    hidden: ["Готов к выдаче"],
     empty: "Заявок на комплектацию нет. Они появятся из состава производственного комплекта.",
   },
   give: {
@@ -32,11 +34,53 @@ const MODES = {
     // «Укомплектован» too (owner 06.10.2026): a fully picked kit is handed out from here, sent to the handout point
     // on the way — otherwise an order whose КБ were all only picked would not show on the screen at all.
     stages: ["Укомплектован", "Готов к выдаче", "КБ Выдана", "КБ Возвращена"],
-    hidden: [] as string[],
     empty: "Заявок к выдаче нет. Сюда приходят укомплектованные заявки.",
   },
 };
 const ARCHIVE = ["Готово", "Отменена"];
+
+/* «Запросы на комплектацию» opens on what is still to be picked (owner, 12.10.2026): «Новая» + «Недоукомплектован».
+   «Новая» reads «Не начата» on these screens — the stored status value stays «Новая». */
+export const TO_PICK_LABEL = "К набору";
+export const TO_PICK_STAGES = ["Новая", "Недоукомплектован"];
+const NOT_STARTED_HINT = "заявка пришла, комплектовщик ещё ничего не набрал";
+
+/* «Укомплектован» and «Готов к выдаче» are one stage for the person (owner, 12.10.2026: «в чём разница … сводить в
+   одно»): the kit is picked in full; «Готов к выдаче» only adds that it was sent to a handout point (place, message to
+   the requester, closed for re-binding). The stored status stays; the screens show «Укомплектован» and the place. */
+const PICKED = "Укомплектован";
+const AT_HANDOUT = "Готов к выдаче";
+export const PICKED_STAGES = [PICKED, AT_HANDOUT];
+
+export function stageLabel(status: string) {
+  if (status === "Новая") return "Не начата";
+  return status === AT_HANDOUT ? PICKED : status;
+}
+
+function RequestStatus({ status, place }: { status: string; place?: string | null }) {
+  if (status === "Новая") return <StatusChip status={status} title={NOT_STARTED_HINT}>{stageLabel(status)}</StatusChip>;
+  if (status === AT_HANDOUT) {
+    return <StatusChip status={PICKED} title={place ? `Лежит в зоне выдачи: ${place}` : "Отправлен на выдачу"}>{place ? `${PICKED} · ${place}` : PICKED}</StatusChip>;
+  }
+  return <StatusChip status={status} />;
+}
+
+type StageChip = { label: string; stages: string[]; hint?: string };
+
+/* The chips of the screen: on the picking screen «К набору» first and «Все» last, a chip per stage between;
+   «Укомплектован» counts both of its stored statuses. */
+function stageChips(mode: keyof typeof MODES | undefined, stages: string[]): StageChip[] {
+  const single = stages.filter((stage) => stage !== AT_HANDOUT || !stages.includes(PICKED)).map((stage) => ({
+    label: stageLabel(stage),
+    stages: stage === PICKED ? PICKED_STAGES : [stage],
+    hint: stage === "Новая" ? NOT_STARTED_HINT : undefined,
+  }));
+  return mode === "pick" ? [{ label: TO_PICK_LABEL, stages: TO_PICK_STAGES, hint: "Не начата и недоукомплектован" }, ...single] : single;
+}
+
+function sameStages(a: string[], b: string[]) {
+  return a.length === b.length && a.every((item) => b.includes(item));
+}
 const ALL_STAGES = ["Новая", "Недоукомплектован", "Укомплектован", "Готов к выдаче", "КБ Выдана", "КБ Возвращена"];
 
 type Mutate = (requestId: string, operation: () => Promise<unknown>) => Promise<void>;
@@ -125,14 +169,16 @@ function saveView(view: "tiles" | "table") {
 
 // «Выдача со списанием» opens on what is to be handed out or taken back (owner, 10.10.2026), not on «Все»; the chips
 // there pick several stages at once, and the choice is remembered per browser like the view.
-export const GIVE_DEFAULT_STAGES = ["Укомплектован", "КБ Возвращена"];
+export const GIVE_DEFAULT_STAGES = [...PICKED_STAGES, "КБ Возвращена"];
 const GIVE_STAGES_KEY = "erp.fulfillment.give.stages";
 
 function savedGiveStages(): string[] {
   try {
     const raw = window.localStorage.getItem(GIVE_STAGES_KEY);
     const parsed: unknown = raw === null ? null : JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string") ? parsed : GIVE_DEFAULT_STAGES;
+    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) return GIVE_DEFAULT_STAGES;
+    // Saved before the two stages became one: a chip ticked on one of them is ticked on both.
+    return parsed.some((item) => PICKED_STAGES.includes(item)) ? [...new Set([...parsed, ...PICKED_STAGES])] : parsed;
   } catch {
     return GIVE_DEFAULT_STAGES;
   }
@@ -148,7 +194,7 @@ function saveGiveStages(stages: string[]) {
 
 /** issMatch_: every word of the search is found in the number, purpose, requester or stage. */
 function issMatch(request: FulfillmentRequest, query: string) {
-  return matchesWords([request.number, request.purpose, request.requester, request.status], query);
+  return matchesWords([request.number, request.purpose, request.requester, request.status, stageLabel(request.status)], query);
 }
 
 function createdDay(value?: string | null) {
@@ -156,9 +202,16 @@ function createdDay(value?: string | null) {
   return Number.isNaN(date.getTime()) ? day(value) : date.toLocaleDateString("ru-RU");
 }
 
-function StageChips({ counts }: { counts: Map<string, number> }) {
-  return <div className="kit-chips">{[...counts].map(([status, count]) => <span key={status} className="iss-chip-wrap">
-    <StatusChip status={status} />
+/** The stage chips of a tile with their counts; the two «Укомплектован» statuses are one chip, the place — of a single request. */
+function StageChips({ counts, place }: { counts: Map<string, number>; place?: string | null }) {
+  const merged = new Map<string, number>();
+  for (const [status, count] of counts) {
+    const key = status === AT_HANDOUT ? PICKED : status;
+    merged.set(key, (merged.get(key) ?? 0) + count);
+  }
+  const only = counts.size === 1 ? [...counts.keys()][0] : "";
+  return <div className="kit-chips">{[...merged].map(([status, count]) => <span key={status} className="iss-chip-wrap">
+    <RequestStatus status={only || status} place={only ? place : null} />
     {count > 1 && <small className="t-sub">×{count}</small>}
   </span>)}</div>;
 }
@@ -194,7 +247,7 @@ function RequestTiles({ requests, openProject, openRequest }: {
       const count = (request.lines ?? []).length;
       return tile(request.id, `Открыть заявку ${request.number}`, () => openRequest(request.id), <>
         <div className="t-row"><strong className="t-h">{request.number}</strong><span className="t-sub">{createdDay(request.created_at)}</span></div>
-        <StageChips counts={new Map([[request.status, 1]])} />
+        <StageChips counts={new Map([[request.status, 1]])} place={request.handout_location} />
         <div className="t-in">{request.purpose || "—"}</div>
         {request.shortfall && <div className="t-warn">недобор: {request.shortfall}</div>}
         <div className="t-sub">{request.requester}{request.deadline ? ` · до ${day(request.deadline)}` : ""}{count ? ` · позиций ${count}` : ""}</div>
@@ -224,21 +277,22 @@ function RequestTiles({ requests, openProject, openRequest }: {
 
 export function FulfillmentPage({ principal, mode }: { principal: Principal; mode?: keyof typeof MODES }) {
   const [archive, setArchive] = useState(false);
-  const [showReady, setShowReady] = useState(false);
   const [byProject, setByProject] = useState(false);
   const [project, setProject] = useState<string | null>(null);
   const [view, setView] = useState(savedView);
   const [query, setQuery] = useState("");
   // The chosen stage chips; empty — «Все». The handout screen picks several, the others one.
-  const [picked, setPicked] = useState<string[]>(() => (mode === "give" ? savedGiveStages() : []));
+  const [picked, setPicked] = useState<string[]>(() => (mode === "give" ? savedGiveStages() : mode === "pick" ? TO_PICK_STAGES : []));
   const multi = mode === "give";
   function choose(next: string[]) {
     setPicked(next);
     if (multi) saveGiveStages(next);
   }
-  function toggle(item: string) {
-    if (!multi) return choose(picked.length === 1 && picked[0] === item ? [] : [item]);
-    choose(picked.includes(item) ? picked.filter((value) => value !== item) : [...picked, item]);
+  // The picking screen always opens on «К набору»; its chips are exclusive, «Все» clears them.
+  function toggle(item: StageChip) {
+    if (!multi) return choose(sameStages(picked, item.stages) ? [] : item.stages);
+    const on = item.stages.some((stage) => picked.includes(stage));
+    choose(on ? picked.filter((value) => !item.stages.includes(value)) : [...picked, ...item.stages]);
   }
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -258,7 +312,7 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   const isAdmin = hasFullAccess(principal);
 
   const screen = mode ? MODES[mode] : null;
-  const stages = screen ? screen.stages.filter((stage) => showReady || !screen.hidden.includes(stage)) : null;
+  const stages = screen ? screen.stages : null;
   const inScreen = (request: FulfillmentRequest) => archive
     ? ARCHIVE.includes(request.status)
     : stages ? stages.includes(request.status) : true;
@@ -292,7 +346,8 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
     const stagesIn = MODES.give.stages;
     const have = stagesIn.filter((stage) => requests.some((request) => request.status === stage));
     if (!have.length || picked.some((stage) => have.includes(stage))) return;
-    setPicked([...have].sort((a, b) => Number(b === "Готов к выдаче") - Number(a === "Готов к выдаче")));
+    // One chip for both «Укомплектован» statuses: a kit of either brings both along.
+    setPicked(have.some((stage) => PICKED_STAGES.includes(stage)) ? [...new Set([...have, ...PICKED_STAGES])] : have);
   }, [loaded, multi, requests, picked]);
 
   const mutate: Mutate = async (requestId, operation) => {
@@ -321,10 +376,12 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   };
 
   // issFilterRender_: one chip per stage of the screen with its count; the archive splits into its two closings.
-  const presets = (archive ? ARCHIVE : stages ?? ALL_STAGES).map((stage) => ({
-    label: stage,
-    test: (request: FulfillmentRequest) => request.status === stage,
+  const chips: StageChip[] = archive ? ARCHIVE.map((stage) => ({ label: stage, stages: [stage] })) : stageChips(mode, stages ?? ALL_STAGES);
+  const presets = chips.map((chip) => ({
+    label: chip.label,
+    test: (request: FulfillmentRequest) => chip.stages.includes(request.status),
   }));
+  const defaultPreset = mode === "pick" && !archive ? TO_PICK_LABEL : "";
 
   const columns: DataColumn<FulfillmentRequest>[] = [
     { key: "number", title: "№", value: (request) => request.number, render: (request) => <strong>{request.number}</strong> },
@@ -338,13 +395,14 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
     },
     { key: "purpose", title: "Назначение", value: (request) => request.purpose, wrap: true, grow: true },
     { key: "requester", title: "Заявитель", value: (request) => request.requester },
-    { key: "status", title: "Статус", value: (request) => request.status, filter: true, render: (request) => <StatusChip status={request.status} /> },
+    { key: "status", title: "Статус", value: (request) => stageLabel(request.status), filter: true, render: (request) => <RequestStatus status={request.status} place={request.handout_location} /> },
     { key: "deadline", title: "Дедлайн", value: (request) => request.deadline ?? "", render: (request) => day(request.deadline) || "—" },
     { key: "count", title: "Позиций", numeric: true, value: (request) => (request.lines ?? []).length },
     { key: "waiting", title: "Ждут ГРН", numeric: true, value: (request) => openLines(request).length },
   ];
 
-  const projectRequests = project ? requests.filter((request) => projectOf(request) === project && inScreenIgnoringStage(request)) : [];
+  // The project card shows the requests of the chosen chip only, like its tile does.
+  const projectRequests = project ? requests.filter((request) => projectOf(request) === project && inScreenIgnoringStage(request) && (archive || mode !== "pick" || !picked.length || picked.includes(request.status))) : [];
   // Прод 719К.2: отменённая КБ пропадала из карточки проекта без следа — в активной карточке она остаётся серой плашкой.
   const projectCancelled = project && !archive ? requests.filter((request) => projectOf(request) === project && request.status === "Отменена") : [];
   function inScreenIgnoringStage(request: FulfillmentRequest) {
@@ -358,23 +416,19 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
   }
 
   // issFilterRender_: the chips count what the search left, not what the chip itself narrows to.
-  const chipStages = presets.map((item) => item.label);
   const found = shown.filter((request) => issMatch(request, query));
   const tiled = picked.length ? found.filter((request) => picked.includes(request.status)) : found;
   const opened = openId ? requests.find((request) => request.id === openId) : undefined;
+  const allLast = mode === "pick" && !archive;
+  const allChip = <button type="button" className={`calendar-chip${picked.length ? "" : " active"}`} aria-pressed={!picked.length} onClick={() => choose([])}>Все · {found.length}</button>;
   const emptyText = archive ? "В архиве пусто." : screen?.empty ?? "Заявок на выдачу нет. Они появятся из состава производственного комплекта.";
-  const readyToggle = screen && screen.hidden.length > 0 && !archive && <label className="check-inline"><input type="checkbox" checked={showReady} onChange={(event) => {
-    setShowReady(event.target.checked);
-    // A chip pointing at the stage that was just hidden would show an empty screen.
-    if (!event.target.checked && picked.some((item) => screen.hidden.includes(item))) choose(picked.filter((item) => !screen.hidden.includes(item)));
-  }} /> показать «{screen.hidden[0]}»</label>;
 
   return (
     <section className="page">
       <header className="page-head">
-        <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{shown.length}</span>
+        <h1>{screen?.title ?? "Выдача в цех"}</h1><span className="page-count">{mode === "pick" && view === "tiles" ? tiled.length : shown.length}</span>
         <div className="page-actions">
-        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setPicked([]); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
+        {mode && <button className={archive ? "secondary small active" : "secondary small"} onClick={() => { setArchive((value) => !value); setPicked(archive && mode === "pick" ? TO_PICK_STAGES : []); setOpenId(null); }}>{archive ? "Активные" : "Архив"}</button>}
         {canEdit && mode !== "give" && !archive && <button className="primary small" onClick={() => { setCreating((value) => !value); setFromCalc(false); }}>+ Заявка</button>}
         {canEdit && mode !== "give" && !archive && <button className="secondary small" onClick={() => { setFromCalc((value) => !value); setCreating(false); }}>Заявка по расчёту</button>}
         <button className="secondary small" onClick={() => switchView(view === "tiles" ? "table" : "tiles")}>{view === "tiles" ? "Таблицей" : "Плитками"}</button>
@@ -393,18 +447,24 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         : <>
           <div className="filters table-toolbar">
             <div className="table-search"><input className="search" type="search" aria-label={`Поиск: ${screen?.title ?? "Заявки на выдачу"}`} placeholder="Поиск: проект, КБ, заявка, заявитель…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
-            {readyToggle}
           </div>
           <div className="calendar-chips" role="group" aria-label="Стадии">
-            <button type="button" className={`calendar-chip${picked.length ? "" : " active"}`} aria-pressed={!picked.length} onClick={() => choose([])}>Все · {found.length}</button>
-            {chipStages.map((item) => <button type="button" key={item} className={`calendar-chip${picked.includes(item) ? " active" : ""}`} aria-pressed={picked.includes(item)} onClick={() => toggle(item)}>{item} · {found.filter((request) => request.status === item).length}</button>)}
+            {!allLast && allChip}
+            {chips.map((item) => {
+              const on = multi ? item.stages.some((stage) => picked.includes(stage)) : sameStages(picked, item.stages);
+              return <button type="button" key={item.label} title={item.hint} className={`calendar-chip${on ? " active" : ""}`} aria-pressed={on} onClick={() => toggle(item)}>{item.label} · {found.filter((request) => item.stages.includes(request.status)).length}</button>;
+            })}
+            {allLast && allChip}
           </div>
           {tiled.length
             ? <RequestTiles requests={tiled} openProject={setProject} openRequest={setOpenId} />
-            : <div className="empty">{!loaded ? "Загружаю…" : query ? "Ничего не нашлось." : picked.length ? `На ${picked.length > 1 ? "стадиях" : "стадии"} ${picked.map((item) => `«${item}»`).join(", ")} заявок нет.` : emptyText}</div>}
+            : <div className="empty">{!loaded ? "Загружаю…" : query ? "Ничего не нашлось." : !shown.length ? emptyText : allLast && sameStages(picked, TO_PICK_STAGES) ? "Набирать нечего: заявок «Не начата» и «Недоукомплектован» нет." : picked.length ? `На ${picked.length > 1 ? "стадиях" : "стадии"} ${picked.map((item) => `«${stageLabel(item)}»`).join(", ")} заявок нет.` : emptyText}</div>}
         </>)}
       {!project && view === "table" && <DataTable
+        key={archive ? "archive" : "active"}
         rows={shown}
+        defaultPreset={defaultPreset}
+        allLast={allLast}
         columns={columns}
         rowKey={(request) => request.id}
         label={screen?.title ?? "Заявки на выдачу"}
@@ -415,7 +475,6 @@ export function FulfillmentPage({ principal, mode }: { principal: Principal; mod
         exportName={mode === "give" ? "vydacha" : "komplektaciya"}
         toolbar={<>
           <label className="check-inline"><input type="checkbox" checked={byProject} onChange={(event) => setByProject(event.target.checked)} /> По проектам</label>
-          {readyToggle}
         </>}
         renderDetail={(request) => <FulfillmentCard key={`${request.id}:${request.version}`} request={request} busy={busy === request.id} {...cardProps} />}
       />}
@@ -449,7 +508,7 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
     const groups = new Map<string, { article: string; name: string; unit: string; need: number; got: number; off: number; absent: number; remaining: number; kb: Map<string, { request: FulfillmentRequest; need: number; got: number; off: number; absent: number; remaining: number }> }>();
     for (const request of requests) {
       for (const line of request.lines ?? []) {
-        const key = `${line.article}|${line.name}`.trim().toLocaleLowerCase("ru");
+        const key = positionKey(line.article, line.name);
         if (!groups.has(key)) groups.set(key, { article: line.article, name: line.name, unit: line.unit, need: 0, got: 0, off: 0, absent: 0, remaining: 0, kb: new Map() });
         const group = groups.get(key)!;
         const off = isOffBook(line) ? Math.max(Number(line.requirement) - picked(line), 0) : 0;
@@ -482,6 +541,17 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
       .map((kb) => ({ request: kb.request, label: kbOf(kb.request), remaining: round(kb.remaining) }))
       .sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true })),
   });
+  // «Возможно есть»: one request for the whole card, again after every change of the requests; a failure leaves the
+  // column empty — the binding itself works without it.
+  const [maybe, setMaybe] = useState<Map<string, { items: FulfillmentCandidate[]; more: number }>>(new Map());
+  useEffect(() => {
+    if (!canBulk) return;
+    let alive = true;
+    fulfillmentApi.candidates(project)
+      .then((result) => { if (alive) setMaybe(new Map(result.positions.map((item) => [positionKey(item.article, item.name), { items: item.candidates, more: item.more }]))); })
+      .catch(() => { if (alive) setMaybe(new Map()); });
+    return () => { alive = false; };
+  }, [project, versionKey, canBulk]);
   // Both actions go through the page's mutate: one busy lock, the banner, the reload; a 409 reloads and says so.
   const runBulk = (operation: () => Promise<{ message: string }>) => void cardProps.mutate(`project:${project}`, operation);
   // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
@@ -538,28 +608,44 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
     </div>
     {current
       ? <FulfillmentCard key={`${current.id}:${current.version}`} request={current} busy={busyId === current.id} {...cardProps} />
-      : <div className="table-wrap"><table className="grid wide"><thead><tr><th>Артикул КД</th><th>Наименование</th><th>По КБ (набрано / нужно)</th><th className="num">Нужно</th><th className="num">Набрано</th>{canBulk && <th />}</tr></thead><tbody>
+      : <>
+      {canBulk && <div className="cand-legend" aria-label="Цвета строк">
+        <span>Возможно есть на складе:</span>
+        {CANDIDATE_LEGEND.map((item) => <span key={item.tone} className={`cand-key cand-${item.tone}`}>{item.text}</span>)}
+      </div>}
+      <div className="table-wrap"><table className="grid wide"><thead><tr><th>Артикул КД</th><th>Наименование</th><th>По КБ (набрано / нужно)</th><th className="num">Нужно</th><th className="num">Набрано</th>{canBulk && <th>Возможно есть</th>}{canBulk && <th />}</tr></thead><tbody>
         {positions.map((position) => {
           const key = `${position.article}|${position.name}`;
           const open = canBulk && position.remaining > 0.0001;
+          const offered = maybe.get(positionKey(position.article, position.name));
+          const tone = candidateTone(position.remaining, offered?.items ?? []);
+          const best = offered?.items[0];
+          const others = offered ? offered.items.length - 1 + offered.more : 0;
           return <Fragment key={key}>
-            <tr>
+            <tr className={canBulk && offered ? `cand-row cand-${tone}` : undefined}>
               <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
               <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}{kb.off > 0 ? " · не заведено" : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
               <td className="num">{round(position.need)} {position.unit}</td>
               <td className="num">{round(position.got)}{position.off > 0 && <small>{round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
+              {canBulk && <td className="cand-cell">{tone === "done" ? <span className="t-sub">—</span>
+                : !offered ? <span className="t-sub">…</span>
+                : best ? <button type="button" className="link-button" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} title={`${matchText(best)} · ${best.name}`} onClick={() => setBulkKey(bulkKey === key ? null : key)}>
+                  <span>ГРН {best.grn}{best.package ? ` · пакет ${best.package}` : ""} · {best.available} {best.unit} · {best.warehouse}</span>
+                  <small>{matchText(best)}{others > 0 ? ` · ещё ${others}` : ""}</small>
+                </button>
+                : <span className="cand-none-text">не найдено</span>}</td>}
               {canBulk && <td>{open && <>
                 <button type="button" className="secondary small" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} onClick={() => setBulkKey(bulkKey === key ? null : key)}>ГРН на все КБ</button>{" "}
                 <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Есть, не заведено: ${position.name}`} onClick={() => runBulk(() => bindPosition(project, bulkOf(position), [], true))}>Есть, не заведено</button>
               </>}</td>}
             </tr>
-            {open && bulkKey === key && <tr className="detail"><td colSpan={6}>
-              <BulkLotsPanel project={project} position={bulkOf(position)} versionKey={versionKey} busy={Boolean(busyId)} run={runBulk} onClose={() => setBulkKey(null)} />
+            {open && bulkKey === key && <tr className="detail"><td colSpan={7}>
+              <BulkLotsPanel project={project} position={bulkOf(position)} versionKey={versionKey} busy={Boolean(busyId)} run={runBulk} onClose={() => setBulkKey(null)} suggested={offered?.items} />
             </td></tr>}
           </Fragment>;
         })}
-        {!positions.length && <tr><td colSpan={canBulk ? 6 : 5} className="empty">Позиций нет.</td></tr>}
-      </tbody></table></div>}
+        {!positions.length && <tr><td colSpan={canBulk ? 7 : 5} className="empty">Позиций нет.</td></tr>}
+      </tbody></table></div></>}
   </div>;
 }
 
@@ -602,7 +688,7 @@ function IssueChooser({ project, requests, busy, onCancel, onIssue }: {
           <td className="check"><input type="checkbox" aria-label={`Выдать ${kbOf(request)}`} disabled={!can || busy} checked={can && picked.has(request.id)} onChange={() => toggle(request.id)} /></td>
           <td><strong>{kbOf(request)}</strong></td>
           <td>{request.number}</td>
-          <td><StatusChip status={request.status} /></td>
+          <td><RequestStatus status={request.status} place={request.handout_location} /></td>
           <td className="num">{request.lines.length}</td>
           <td>{request.at_picked ? `${stamp(request.at_picked)}${request.handout_location ? ` · ${request.handout_location}` : ""}` : can ? `сейчас · ${request.handout_place || DEFAULT_HANDOUT_PLACE}` : "—"}</td>
           <td>{can ? "" : notIssuable(request)}</td>
@@ -671,7 +757,7 @@ function FulfillmentCard({ request, lots, places, canEdit, canHandout, isAdmin, 
 
   return (
     <article className="panel fulfillment-card">
-      <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><StatusChip status={request.status} /></div>
+      <div className="procurement-title"><div><strong>{request.number}</strong><small>{request.purpose} · {request.requester}</small></div><RequestStatus status={request.status} place={request.handout_location} /></div>
       {meta.length > 0 && <dl className="fulfillment-meta">{meta.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
       <p className="fulfillment-progress">Набрано {request.lines.length - waiting.length} из {request.lines.length} поз.{waiting.length - absent > 0 && !closed ? ` · ждут ГРН: ${waiting.length - absent}` : ""}{absent > 0 && !closed ? ` · нет на складе: ${absent}` : ""}</p>
       {request.shortfall && <details className="fulfillment-short"><summary>Недобор по составу</summary><div>{request.shortfall}</div></details>}
