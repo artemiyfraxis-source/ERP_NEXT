@@ -32,6 +32,7 @@ import (`app/shared/bulk_import.py`): БД.ТЕР / БД.КОАКС / БД.ПР�
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
@@ -58,8 +59,9 @@ from .domain import (
     normalized_supplier_key, validate_entries,
 )
 from .technology import (
-    _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, schema_display_text, schema_keys,
-    sync_schema_fields,
+    _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, contact_gender, normalize_material,
+    pull_force_newtons, schema_display_text, schema_keys, sync_schema_fields, terminal_card_fields,
+    terminal_card_indexes,
 )
 
 HOOKUP_SEED_VERSION = 1
@@ -631,6 +633,36 @@ def _folded(value: str) -> str:
     return " ".join(str(value or "").casefold().split())
 
 
+# БД.ТЕР by the contact protocol v5.2 (owner 12.10.2026): the applicator, pneumatics, ОТР, «С зачисткой» and mm² are
+# the technologist's — a load never writes them (and mm² is never computed from AWG); the rest is kept as the maker
+# writes it, only the units are brought to the base's: pull force in N, AWG without «#», «Металл / Покрытие».
+_TECHNOLOGIST_KEYS = frozenset({"terApplicator", "mm2From", "mm2To"})
+_TECHNOLOGIST_COLUMN = re.compile(r"^(аппликатор|applicator|пневм|отр$|с зачисткой)|мм2|мм²|mm2|mm²")
+TECHNOLOGIST_REASON = "заполняет технолог в «Базе данных» — загрузка контактов это поле не пишет"
+
+
+def technologist_field(name: str) -> bool:
+    return name in _TECHNOLOGIST_KEYS or bool(_TECHNOLOGIST_COLUMN.search(_folded(name)))
+
+
+def _ter_cell(name: str, value: Any) -> Any:
+    text = _cell(name, value)
+    if text is None:
+        return None
+    if technologist_field(name):
+        raise RowRefused(f"{name}: {TECHNOLOGIST_REASON}")
+    folded = _folded(name)
+    if name in ("terPullForceMin", "terPullForceMax") or folded.startswith("усилие обрыва"):
+        return pull_force_newtons(text)
+    if name in ("awgFrom", "awgTo") or (folded.startswith(("от", "до")) and folded.endswith("awg")):
+        return text.replace("#", "").strip()
+    if name == "terMaterial" or folded.startswith("материал"):
+        return normalize_material(text)
+    if name == "terGender":
+        return contact_gender(text)
+    return text
+
+
 class _Target:
     """Writes through the unit of work the import runs in; what is not committed is dropped when it closes (a dry
     run, or nothing changed), so `rollback` has nothing to do. The audit event carries the load's `source`."""
@@ -663,6 +695,7 @@ class _TechTable:
     # Match forms of a key, strictest first: a row matches the stored rows of the first form any of them shares.
     forms: Callable[[tuple[str, ...]], tuple[tuple[str, object], ...]]
     virtual: str = ""  # a key that is the record's display text, not a field (БД.ОБ «Для базы» = baseValue)
+    cell: Callable[[str, Any], Any] = _cell  # a row value as stored (БД.ТЕР: units of the base, technologist's fields)
 
     @property
     def sheet_columns(self) -> bool:
@@ -679,14 +712,16 @@ class _TechTable:
 
 
 def _ter_forms(values: tuple[str, ...]) -> tuple[tuple[str, object], ...]:
-    # The generator's terminal lookup (technology.matching_terminal_records): exact, then without spaces . / ( ) _ -.
+    # The generator's terminal lookup (technology.matching_terminal_records): exact, then without spaces . / ( ) _ -;
+    # a stored row is found by its REEL article or by its BAG one (`_TechTarget` indexes both).
     article = values[0]
     normalized = _normalized_article(article)
     return (("exact", article.casefold().strip()),) + ((("normalized", normalized),) if len(normalized) >= 3 else ())
 
 
 TECH_TABLES: dict[str, _TechTable] = {
-    "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms),
+    "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms,
+                      cell=_ter_cell),
     "coax": _TechTable(TechOperationTab.COAX, "БД.КОАКС — коаксиальные разъёмы", ("coaxArticle", "coaxWire"),
                        lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),)),
     "prov": _TechTable(TechOperationTab.WIRE, "БД.ПРОВ — кабели и провода", ("Марка",),
@@ -723,9 +758,16 @@ class _TechTarget(_Target):
         self.index: dict[tuple[str, object], list[TechOperationRecord]] = {}
         for record in records:
             values = tuple(str(self._current(record).get(name) or "") for name in table.key_fields)
-            if all(values):
-                for form in table.forms(values):
-                    self.index.setdefault(form, []).append(record)
+            keyed = [values] if all(values) else []
+            if table.tab == TechOperationTab.TERMINAL:  # the same terminal in BAG packaging is the same row
+                bag = str(record.fields.get("terArticleBag") or terminal_card_fields(record.fields).get("terArticleBag")
+                          or "")
+                keyed += [(bag,)] if bag.strip() else []
+            for key_values_of_row in keyed:
+                for form in table.forms(key_values_of_row):
+                    rows = self.index.setdefault(form, [])
+                    if all(item.id != record.id for item in rows):
+                        rows.append(record)
         self.matched: dict[str, TechOperationRecord] = {}
         self.ambiguous: set[str] = set()
         self.duplicates: set[str] = set()
@@ -766,9 +808,11 @@ class _TechTarget(_Target):
         keys = schema_keys(tab)
         columns = [name for name in fields if name not in keys]
         resolved = _resolve_schema(_TECH_SCHEMA[tab][0], columns)
+        result = dict(fields)
         if self.table.tab == TechOperationTab.TERMINAL:
             resolved.update(_range_indexes(columns))
-        result = dict(fields)
+            resolved.update(terminal_card_indexes(columns))
+            self._gender(result, given, columns, resolved)
         for name in sorted(given & keys):
             index = resolved.get(name, -1)
             if index < 0:
@@ -778,6 +822,24 @@ class _TechTarget(_Target):
                 raise RowRefused(f"{name} и «{column}» — одно и то же поле, а значения разные")
             result[column] = fields[name]
         return sync_schema_fields(tab, result)
+
+    @staticmethod
+    def _gender(fields: dict[str, str], given: set[str], columns: list[str], resolved: Mapping[str, int]) -> None:
+        """terGender is read from «Тип контакта» (terType): a gender given alone becomes the type when the type says
+        otherwise; given with a type that says otherwise, the row is refused."""
+        if "terGender" not in given:
+            return
+        index = resolved.get("terType", -1)
+        column = columns[index] if index >= 0 else ""
+        # the type as this row leaves it: given here (the key or its column), else the stored one
+        current = fields.get("terType") if "terType" in given or not column else fields.get(column)
+        if contact_gender(current) == fields["terGender"]:
+            return
+        if "terType" in given or column in given:
+            raise RowRefused(f"terGender и «{column or 'terType'}» расходятся: {fields['terGender']} ≠ {current}")
+        fields["terType"] = fields["terGender"]
+        if column:
+            fields[column] = fields["terGender"]
 
     def create(self, key, fields):
         if key in self.ambiguous:
@@ -1061,7 +1123,8 @@ def import_rows(table: str, uow: UnitOfWork, rows: Sequence[ImportRowIn], actor:
         if table in TECH_TABLES:
             spec = TECH_TABLES[table]
             records = uow.tech_operations.list(tab=spec.tab, query="", limit=100_000)
-            import_table = _table(table, spec.key_fields, [*spec.schema_fields(), *_sheet_columns(spec, records)], _cell)
+            import_table = _table(table, spec.key_fields, [*spec.schema_fields(), *_sheet_columns(spec, records)],
+                                  spec.cell)
             target: _Target = _TechTarget(uow, source, spec, records, _key_values(import_table, rows), now)
         elif table in _MAPS:
             kind, normalize, _label = _MAPS[table]
