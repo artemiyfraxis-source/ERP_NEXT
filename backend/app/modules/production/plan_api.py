@@ -76,6 +76,8 @@ class PlanEventPayload(BaseModel):
     field: str = Field(default="", max_length=32)
     # «Этап КБ» назад — причина обязательна (годится и `text`).
     reason: str = Field(default="", max_length=2000)
+    # «Этап КБ»: `preview_token` из `/stage-preview` — изменилось закрываемое с тех пор → 409.
+    preview_token: str = Field(default="", max_length=64)
 
 
 def _factory(request: Request, name: str, *, required: bool = False):
@@ -294,7 +296,8 @@ def stage_preview(
     value: Annotated[str, Query(min_length=1, max_length=64)],
     kb: Annotated[str, Query(max_length=64)] = "",
 ) -> dict:
-    """Предпросмотр ручной смены этапа с «Производственного плана» — тот же ответ, что у карточки проекта."""
+    """Предпросмотр ручной смены этапа с «Производственного плана» — тот же ответ, что у карточки проекта: по КБ что
+    закроется (`close`) и что останется с причиной (`keep`), итоги, `preview_token` для записи."""
     try:
         state = _stage_state(project, kb, uow_factory, techcards_uow_factory, fulfillment_uow_factory, shipping_uow_factory)
         return stage_flow.preview_project_stage(state, value, kb)
@@ -322,6 +325,7 @@ def save_plan_event(
             change = stage_flow.change_project_stage(stage_flow.ChangeProjectStageCommand(
                 project=payload.project, value=payload.value, kb=payload.item_index,
                 reason=payload.reason or payload.text, actor=principal.actor, now=now,
+                preview_token=payload.preview_token,
             ), state, uow_factory)
         except StageChangeConflict as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

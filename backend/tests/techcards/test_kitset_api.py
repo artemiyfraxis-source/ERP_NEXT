@@ -502,7 +502,7 @@ def _side_effects(lot):
     return requests, (stock.balance, stock.reserved, stock.version), tasks, goods
 
 
-def test_manual_stage_change_previews_skips_needs_a_reason_back_and_touches_nothing_else(kitset_api):
+def test_manual_stage_change_previews_skips_needs_a_reason_back_and_closes_the_skipped_kits(kitset_api):
     client, lot = kitset_api
     _load(client)
     assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
@@ -516,7 +516,11 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_touches_noth
         ("КБ1", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
         ("КБ2", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
     ]
-    assert body["kbs"][0]["warnings"] == ["Живых заявок на комплектацию: 1 — смена этапа их не трогает."]
+    assert body["kbs"][0]["warnings"] == [
+        "Закроется (пропущено вручную: Новый → Отгружено): заявок на комплектацию — 1.",
+    ]
+    assert [item["kind"] for item in body["kbs"][0]["close"]] == ["kit_request"]
+    assert body["totals"]["kit_requests"] == 2 and body["preview_token"]
     # Предпросмотр ничего не пишет.
     assert client.get("/api/techcards/kitsets/708К.4").json()["status"] == "Новый"
 
@@ -544,7 +548,37 @@ def test_manual_stage_change_previews_skips_needs_a_reason_back_and_touches_noth
     assert back.json()["change"]["direction"] == "back" and back.json()["events"] == 2
     assert back.json()["card"]["journal"][0]["reason"] == "вернули на доработку"
 
+    # Вперёд пропущенное закрыто (владелец 12.10): заявки «Новая» отменены, РЕЗЕРВ партии вернулся, остаток тот же;
+    # назад ничего не открылось.
+    requests, (balance, reserved, _version), tasks, goods = _side_effects(lot)
+    assert {status for _id, status, _v in requests} == {"Отменена"}
+    assert (balance, reserved, tasks, goods) == (before[1][0], 0, before[2], before[3])
+
+
+def test_stage_apply_with_a_stale_preview_token_is_409_and_writes_nothing(kitset_api):
+    client, lot = kitset_api
+    _load(client)
+    assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
+    preview = client.get("/api/techcards/kitsets/708К.4/status/preview", params={"value": "В работе"}).json()
+    before = _side_effects(lot)
+
+    stale = client.post("/api/techcards/kitsets/708К.4/status", json={
+        "action": "status", "value": "В работе", "preview_token": "0" * 32,
+    })
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "Этапы проекта или связанные задания изменились — обновите и повторите"
     assert _side_effects(lot) == before
+
+    applied = client.post("/api/techcards/kitsets/708К.4/marks", json={
+        "kb": "", "kind": "stage", "value": "В работе", "preview_token": preview["preview_token"],
+    })
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["change"]["totals"]["kit_requests"] == 2
+    # «Производственный план» — тот же ответ.
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
+    plan_preview = client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "КБ на складе"})
+    assert plan_preview.status_code == 200, plan_preview.text
+    assert plan_preview.json()["preview_token"] and plan_preview.json()["kbs"][0]["close"] == []
 
 
 def test_plan_page_stage_goes_through_the_same_service(kitset_api):

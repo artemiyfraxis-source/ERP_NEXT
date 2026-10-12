@@ -6,6 +6,7 @@ import argparse
 import importlib.util
 import shutil
 import sqlite3
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -19,8 +20,22 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.modules.fulfillment.domain import FulfillmentStatus
-from app.modules.production.domain import ProductionStatus, ProductionValidationError
+from app.modules.fulfillment.application import (
+    CreateFulfillmentCommand,
+    HoldKitReserveCommand,
+    create_fulfillment,
+    hold_kit_reserve,
+)
+from app.modules.fulfillment.domain import FulfillmentKind, FulfillmentLine, FulfillmentStatus
+from app.modules.fulfillment.infrastructure import SqlAlchemyFulfillmentUnitOfWork
+from app.modules.production.domain import (
+    ProductionOperation,
+    ProductionStatus,
+    ProductionTask,
+    ProductionValidationError,
+)
+from app.modules.production.traceability import WorkSession
+from app.modules.warehouse.domain import StockLot
 from app.modules.production.infrastructure import (
     PLAN_EVENT_CHECKS,
     ProductionPlanEventRow,
@@ -39,6 +54,7 @@ from app.modules.production.plan import (
 from app.modules.production.plan_application import ChangeStageCommand, StageChangeConflict, change_stage
 from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows import project_kitset as flow
+from app.workflows import stage_cascade
 from tests.factories import Actor
 
 ACTOR = Actor(name="Мастер", department="Производство")
@@ -256,14 +272,22 @@ def _facts(**extra) -> flow.KitsetFacts:
     return flow.KitsetFacts(**extra)
 
 
-def test_preview_lists_from_to_skipped_and_what_the_change_does_not_touch():
+def _task_fact(status, number="П-1"):
+    return SimpleNamespace(id=uuid4(), version=1, number=number, name="Жгут", quantity=10, status=status,
+                           project="708К.4", item="КБ1")
+
+
+def _request_fact(status, number="К-1"):
+    return SimpleNamespace(id=uuid4(), version=1, number=number, kind=FulfillmentKind.MAIN, lines=(), status=status,
+                           purpose="708К.4 · КБ1 · Жгут")
+
+
+def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
     facts = _facts(
-        tasks=(SimpleNamespace(status=ProductionStatus.RUNNING, project="708К.4", item="КБ1"),
-               SimpleNamespace(status=ProductionStatus.DONE, project="708К.4", item="КБ1")),
-        fulfillment=(SimpleNamespace(status=FulfillmentStatus.NEW, purpose="708К.4 КБ1"),
-                     SimpleNamespace(status=FulfillmentStatus.CANCELLED, purpose="708К.4 КБ1")),
+        tasks=(_task_fact(ProductionStatus.RUNNING), _task_fact(ProductionStatus.DONE, "П-2")),
+        fulfillment=(_request_fact(FulfillmentStatus.NEW), _request_fact(FulfillmentStatus.CANCELLED, "К-2")),
         goods=(SimpleNamespace(project="708К.4", item_index="КБ1", ordered=Decimal("10"), accepted=Decimal("4"),
-                               sent=Decimal("1"), unit="шт"),),
+                               sent=Decimal("1"), unit="шт", name="Жгут", article="708К.4.01"),),
         events=(PlanEvent("708К.4", NOW, "РП", PLAN_KINDS["block"], blocker="ХОЛД", text="ждём оплату"),),
     )
     state = flow.project_stage_state("708К.4", ("КБ1", "КБ2"), facts, sequence=1)
@@ -272,16 +296,29 @@ def test_preview_lists_from_to_skipped_and_what_the_change_does_not_touch():
 
     # Выполненное задание цеха — факт работы: КБ1 «В работе».
     assert preview["direction"] == "forward" and preview["reason_required"] is False and preview["error"] == ""
-    assert preview["kbs"] == [
-        {"kb": "КБ1", "label": "КБ1", "from": "В работе", "to": "Отгружено", "skipped": ["КБ на складе"],
-         "change": True, "note": "", "warnings": [
-             "Открыто заданий цеха: 1 — смена этапа их не закрывает.",
-             "Живых заявок на комплектацию: 1 — смена этапа их не трогает.",
-             "Готовая продукция принята, не отгружена: 3 шт — смена этапа не отгружает.",
-         ]},
-        {"kb": "КБ2", "label": "КБ2", "from": "Новый", "to": "Отгружено",
-         "skipped": ["ТК готова", "КБ набрана", "В работе", "КБ на складе"], "change": True, "note": "", "warnings": []},
+    kb1, kb2 = preview["kbs"]
+    assert {key: kb1[key] for key in ("kb", "from", "to", "skipped", "change", "note")} == {
+        "kb": "КБ1", "from": "В работе", "to": "Отгружено", "skipped": ["КБ на складе"], "change": True, "note": "",
+    }
+    # Пропущенное закрывается, готовая продукция остаётся — с причиной.
+    assert [(item["kind"], item["label"], item["qty"], item["unit"]) for item in kb1["close"]] == [
+        ("kit_request", "Заявка на комплектацию К-1", "0", "поз."), ("task", "Задание П-1 · Жгут", "10", "шт"),
     ]
+    assert kb1["keep"] == [
+        {"kind": "goods", "label": "Готовая продукция Жгут",
+         "reason": "Принято на склад ГП, не отгружено: 3 шт — этап не отгружает."},
+        {"kind": "goods", "label": "Готовая продукция Жгут", "reason": "Отгружено 1 шт — отгрузки не трогаем."},
+    ]
+    assert kb1["warnings"] == [
+        "Закроется (пропущено вручную: В работе → Отгружено): заданий цеха — 1, заявок на комплектацию — 1.",
+        "Готовая продукция Жгут: Принято на склад ГП, не отгружено: 3 шт — этап не отгружает.",
+        "Готовая продукция Жгут: Отгружено 1 шт — отгрузки не трогаем.",
+    ]
+    assert (kb2["skipped"], kb2["close"], kb2["keep"], kb2["warnings"]) == (
+        ["ТК готова", "КБ набрана", "В работе", "КБ на складе"], [], [], [],
+    )
+    assert preview["totals"] == {"tasks": 1, "kit_requests": 1, "reserves": 0, "close": 2, "keep": 2}
+    assert len(preview["preview_token"]) == 32
     assert preview["warnings"] == ["Активный блокер «ХОЛД»: ждём оплату — смена этапа его не снимает."]
     assert preview["message"].startswith("КБ1: В работе → Отгружено (пропущены: КБ на складе); КБ2: Новый → Отгружено")
 
@@ -294,6 +331,8 @@ def test_preview_of_a_backward_pick_says_a_reason_is_needed():
 
     assert (preview["direction"], preview["reason_required"]) == ("back", True)
     assert [(kb["from"], kb["to"], kb["skipped"]) for kb in preview["kbs"]] == [("КБ на складе", "В работе", [])]
+    assert (preview["close"], preview["keep"], preview["cascade_note"]) == ([], [], "Назад ничего не открывается")
+    assert preview["warnings"] == ["Назад ничего не открывается"]
 
 
 def test_project_without_kbs_changes_its_own_stage(production):
@@ -309,6 +348,265 @@ def test_project_without_kbs_changes_its_own_stage(production):
 
     assert [(e.item_index, e.from_value, e.value) for e in change.events] == [("", "Новый", "Отгружено")]
     assert change.payload()["kbs"][0]["label"] == "Проект"
+
+
+# ── Вперёд закрывает пропущенное (workflows.stage_cascade, владелец 12.10.2026) ─────────────────────────────────
+
+
+PROJECT = "708К.4"
+KBS = ("КБ1", "КБ2", "КБ3")
+
+
+def _lot(sessions, grn: str, article: str, quantity: str = "20") -> StockLot:
+    lot = StockLot.create(
+        warehouse="ЦАР", grn=grn, package="", name=f"Деталь {article}", item_type="Комплектующие", purpose="Склад",
+        unit="шт", quantity=Decimal(quantity), storage_location="1F4", source_receiving_ids=(f"r-{grn}",),
+        article=article,
+    )
+    with SqlAlchemyFulfillmentUnitOfWork(sessions) as uow:
+        uow.warehouse.add(lot)
+        uow.commit()
+    return lot
+
+
+def _request(sessions, kb: str, lot: StockLot, quantity: str, *, status=None, kind=FulfillmentKind.MAIN):
+    request = create_fulfillment(CreateFulfillmentCommand(
+        idempotency_key=f"{kb}-{kind.value}-{uuid4()}", purpose=f"{PROJECT} · {kb} · Жгут", deadline=NOW.date(),
+        lines=(FulfillmentLine.create(article=lot.article, name=lot.name, unit="шт", requirement=Decimal(quantity)),),
+        actor=ACTOR, now=NOW, lot_ids=(lot.id,), kind=kind,
+    ), SqlAlchemyFulfillmentUnitOfWork(sessions))
+    if status is not None:
+        with SqlAlchemyFulfillmentUnitOfWork(sessions) as uow:
+            request = replace(request, status=status, version=request.version + 1)
+            uow.fulfillment.add(request)
+            uow.commit()
+    return request
+
+
+def _reserve(sessions, kb: str, lot: StockLot, quantity: str):
+    with SqlAlchemyFulfillmentUnitOfWork(sessions) as uow:
+        reserve = hold_kit_reserve(HoldKitReserveCommand(
+            project=PROJECT, item_index=kb, article=lot.article, lot_id=lot.id, quantity=Decimal(quantity), unit="шт",
+            actor=ACTOR, now=NOW,
+        ), uow)
+        uow.commit()
+    return reserve
+
+
+def _task(factory, kb: str, number: str, *, working: bool = False) -> ProductionTask:
+    task = ProductionTask.create(
+        number=number, source_idempotency_key=f"task-{number}", source_fingerprint="fp", project=PROJECT, item=kb,
+        name="Жгут", quantity=10, fulfillment_request_id=None, deadline=None, launched_by="Мастер",
+        operations=(ProductionOperation.create(
+            position=1, code="OP-01", stage="Разделка", description="Кабель", seconds_per_unit=Decimal("60"),
+            setup_seconds=Decimal("0"), quantity=10,
+        ),),
+        created_at=NOW,
+    )
+    with factory() as uow:
+        uow.production.add(task)
+        if working:
+            uow.work.save(WorkSession.start(task.id, task.operations[0].id, uuid4(), NOW))
+        uow.commit()
+    return task
+
+
+def _state(factory, sessions, kb: str = ""):
+    return flow.load_project_stage_state(
+        PROJECT, production=factory, fulfillment=lambda: SqlAlchemyFulfillmentUnitOfWork(sessions),
+        item_indexes=KBS, kb=kb,
+    )
+
+
+def _move(factory, sessions, value: str, *, kb: str = "", token: str = "", reason: str = ""):
+    return flow.change_project_stage(flow.ChangeProjectStageCommand(
+        project=PROJECT, value=value, kb=kb, reason=reason, actor=ACTOR, now=NOW, preview_token=token,
+    ), _state(factory, sessions, kb), factory)
+
+
+def _world(sessions):
+    """Everything the cascade may touch: request statuses, lots (balance, reserve), techcard reserves, tasks."""
+    with SqlAlchemyFulfillmentUnitOfWork(sessions) as uow:
+        requests = {item.number: item.status.value for item in uow.fulfillment.list(limit=100)}
+        lots = {lot.grn: (lot.balance, lot.reserved) for lot in uow.warehouse.list(limit=100, include_zero=True)}
+        reserves = {(item.item_index, item.article): item.quantity for item in uow.kit_reserves.for_project(PROJECT)}
+    with SqlAlchemyProductionUnitOfWork(sessions) as uow:
+        tasks = {task.number: task.status.value for task in uow.production.list(limit=100)}
+    return requests, lots, reserves, tasks
+
+
+def test_forward_to_work_cancels_new_and_underfilled_kits_and_gives_every_reserve_back(production):
+    factory, sessions = production
+    lot, other, picked_lot = _lot(sessions, "G-1", "A-1"), _lot(sessions, "G-2", "B-2"), _lot(sessions, "G-3", "C-3")
+    new = _request(sessions, "КБ1", lot, "5")
+    extra = _request(sessions, "КБ1", lot, "2", kind=FulfillmentKind.EXTRA)
+    under = _request(sessions, "КБ2", lot, "4", status=FulfillmentStatus.UNDERFILLED)
+    picked = _request(sessions, "КБ3", picked_lot, "3", status=FulfillmentStatus.COMPLETE)
+    _reserve(sessions, "КБ1", other, "3")
+    requests, lots, _reserves, _tasks = _world(sessions)
+    assert lots == {"G-1": (20, 11), "G-2": (20, 3), "G-3": (20, 3)}
+
+    preview = flow.preview_project_stage(_state(factory, sessions), "В работе")
+
+    kb1, kb2, kb3 = preview["kbs"]
+    assert [(item["kind"], item["label"]) for item in kb1["close"]] == [
+        ("kit_request", f"Заявка на комплектацию {new.number} · снимается резерв с 1 поз."),
+        ("kit_request", f"Заявка на комплектацию {extra.number} (довыдача) · снимается резерв с 1 поз."),
+        ("reserve", "Резерв техкарты B-2 · G-2"),
+    ]
+    assert kb1["close"][2]["qty"] == "3" and kb1["close"][2]["unit"] == "шт"
+    assert [item["label"] for item in kb2["close"]] == [f"Заявка на комплектацию {under.number} · снимается резерв с 1 поз."]
+    assert kb3["close"] == [] and kb3["keep"] == [{
+        "kind": "kit_request", "label": f"Заявка на комплектацию {picked.number}",
+        "reason": "Комплект собран («Укомплектован») — не отменяем.",
+    }]
+    assert preview["totals"] == {"tasks": 0, "kit_requests": 3, "reserves": 1, "close": 4, "keep": 1}
+    assert _world(sessions)[:2] == (requests, lots)  # предпросмотр ничего не пишет
+
+    change = _move(factory, sessions, "В работе", token=preview["preview_token"])
+
+    requests, lots, reserves, _tasks = _world(sessions)
+    assert requests == {new.number: "Отменена", extra.number: "Отменена", under.number: "Отменена",
+                        picked.number: "Укомплектован"}
+    # РЕЗЕРВ партий и резерв техкарты — в ноль; остатки (БАЛАНС) не двигались, собранный комплект держит своё.
+    assert lots == {"G-1": (20, 0), "G-2": (20, 0), "G-3": (20, 3)}
+    assert reserves == {("КБ1", "B-2"): 0}
+    assert [item["kind"] for item in change.payload()["close"]] == ["kit_request", "kit_request", "reserve", "kit_request"]
+    # Причина — в журнале проекта и в журнале действий.
+    rows = {row.item_index: row for row in _rows(sessions)}
+    assert rows["КБ1"].text.startswith("Новый → В работе · пропущены: ТК готова, КБ набрана · пропущено вручную: "
+                                       "Новый → В работе — закрыто: Заявка на комплектацию")
+    assert "пропущено вручную" not in rows["КБ3"].text
+    with sessions() as session:
+        audit = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type.in_((
+            "fulfillment.cancelled", "fulfillment.kit_reserve_released", "warehouse.kit_reserve_released",
+        )))).all()
+    assert len(audit) == 5
+    assert {item.details["reason"] for item in audit} == {"пропущено вручную: Новый → В работе"}
+    [stage_audit] = _audit(sessions)
+    assert sorted(stage_audit.details["closed"]) == ["КБ1", "КБ2"]
+
+
+def test_forward_to_stock_cancels_idle_running_tasks_and_keeps_the_one_being_worked_on(production):
+    factory, sessions = production
+    idle = _task(factory, "КБ1", "П-1")
+    busy = _task(factory, "КБ1", "П-2", working=True)
+    other_kb = _task(factory, "КБ2", "П-3")
+
+    preview = flow.preview_project_stage(_state(factory, sessions, "КБ1"), "КБ на складе", "КБ1")
+    [kb1] = [kb for kb in preview["kbs"] if kb["kb"] == "КБ1"]
+    assert [(item["kind"], item["label"], item["qty"]) for item in kb1["close"]] == [("task", "Задание П-1 · Жгут", "10")]
+    assert kb1["keep"] == [{"kind": "task", "label": "Задание П-2 · Жгут",
+                            "reason": "По заданию идёт работа (смена открыта) — не отменяем."}]
+
+    _move(factory, sessions, "КБ на складе", kb="КБ1", token=preview["preview_token"], reason="собрали на ЖУК")
+
+    tasks = _world(sessions)[3]
+    assert tasks == {idle.number: "Отменено", busy.number: "Запущено", other_kb.number: "Запущено"}
+    with sessions() as session:
+        [cancelled] = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "production.cancelled")).all()
+    assert cancelled.details == {"project": PROJECT, "kb": "КБ1", "stage": "КБ на складе",
+                                 "reason": "пропущено вручную: собрали на ЖУК"}
+
+
+def test_a_target_below_the_rule_keeps_the_work_and_says_why(production):
+    factory, sessions = production
+    lot = _lot(sessions, "G-1", "A-1")
+    new = _request(sessions, "КБ1", lot, "5")
+    task = _task(factory, "КБ2", "П-1")
+
+    preview = flow.preview_project_stage(_state(factory, sessions), "КБ набрана")
+
+    assert preview["close"] == []
+    assert preview["keep"] == [
+        {"kind": "kit_request", "label": f"Заявка на комплектацию {new.number}",
+         "reason": "Этап ниже «В работе» — заявка остаётся."},
+    ]
+    # КБ2 уже «В работе» по факту задания — на «КБ набрана» не опускается и ничего не закрывает.
+    assert [kb["change"] for kb in preview["kbs"]] == [True, False, True]
+    assert task.number not in str(preview["keep"])
+
+
+def test_a_second_identical_apply_changes_nothing(production):
+    factory, sessions = production
+    lot = _lot(sessions, "G-1", "A-1")
+    _request(sessions, "КБ1", lot, "5")
+    preview = flow.preview_project_stage(_state(factory, sessions), "В работе")
+    _move(factory, sessions, "В работе", token=preview["preview_token"])
+    after, rows, audit = _world(sessions), len(_rows(sessions)), len(_audit(sessions))
+
+    again = _move(factory, sessions, "В работе", token=preview["preview_token"])  # двойной клик тем же токеном
+    fresh = _move(factory, sessions, "В работе")
+
+    assert again.events == () and fresh.events == ()
+    assert again.payload()["close"] == [] and fresh.payload()["close"] == []
+    assert (_world(sessions), len(_rows(sessions)), len(_audit(sessions))) == (after, rows, audit)
+
+
+def test_a_stale_token_is_refused_and_writes_nothing(production):
+    factory, sessions = production
+    lot = _lot(sessions, "G-1", "A-1")
+    _request(sessions, "КБ1", lot, "5")
+    task = _task(factory, "КБ1", "П-1")
+    preview = flow.preview_project_stage(_state(factory, sessions), "КБ на складе")
+    # Пока окно открыто, по заданию начали работу: закрываемое изменилось.
+    with factory() as uow:
+        uow.work.save(WorkSession.start(task.id, task.operations[0].id, uuid4(), NOW))
+        uow.commit()
+    before = _world(sessions)
+
+    with pytest.raises(StageChangeConflict) as refused:
+        _move(factory, sessions, "КБ на складе", token=preview["preview_token"])
+
+    assert str(refused.value) == "Этапы проекта или связанные задания изменились — обновите и повторите"
+    assert _world(sessions) == before and _rows(sessions) == [] and _audit(sessions) == []
+
+
+def test_a_failure_mid_cascade_writes_nothing(production, monkeypatch):
+    factory, sessions = production
+    lot, other = _lot(sessions, "G-1", "A-1"), _lot(sessions, "G-2", "B-2")
+    _request(sessions, "КБ1", lot, "5")
+    _reserve(sessions, "КБ1", other, "3")
+    _task(factory, "КБ1", "П-1")
+    before = _world(sessions)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("сбой на отмене задания")
+
+    monkeypatch.setattr(stage_cascade, "cancel_task_in", broken)
+    with pytest.raises(RuntimeError, match="сбой на отмене задания"):
+        _move(factory, sessions, "КБ на складе")
+
+    # Заявка уже была отменена и резервы сняты в этой транзакции — откатилось всё, вместе со строками журнала.
+    assert _world(sessions) == before and _rows(sessions) == [] and _audit(sessions) == []
+    with sessions() as session:
+        written = set(session.scalars(select(AuditEventRow.event_type)))
+    assert not written & {"fulfillment.cancelled", "fulfillment.kit_reserve_released", "production.cancelled"}
+
+
+def test_backward_and_auto_close_nothing_and_reopen_nothing(production):
+    factory, sessions = production
+    lot = _lot(sessions, "G-1", "A-1")
+    _request(sessions, "КБ1", lot, "5")
+    _move(factory, sessions, "КБ на складе", kb="КБ1")
+    _task(factory, "КБ1", "П-1")
+    lot2 = _lot(sessions, "G-2", "B-2")
+    fresh = _request(sessions, "КБ1", lot2, "2", kind=FulfillmentKind.EXTRA)
+    before = _world(sessions)
+
+    back_preview = flow.preview_project_stage(_state(factory, sessions, "КБ1"), "Новый", "КБ1")
+    assert (back_preview["direction"], back_preview["close"], back_preview["cascade_note"]) == (
+        "back", [], "Назад ничего не открывается",
+    )
+    back = _move(factory, sessions, "Новый", kb="КБ1", reason="ошиблись проектом")
+    auto_preview = flow.preview_project_stage(_state(factory, sessions, "КБ1"), "авто", "КБ1")
+    auto = _move(factory, sessions, "авто", kb="КБ1")
+
+    assert back.events and auto.events
+    assert (auto_preview["close"], auto_preview["cascade_note"]) == ([], "Назад ничего не открывается")
+    # Отменённая заявка не воскресла, новая довыдача и задание не тронуты.
+    assert _world(sessions) == before
+    assert before[0][fresh.number] == "Новая"
 
 
 # ── Миграция 0100 ───────────────────────────────────────────────────────

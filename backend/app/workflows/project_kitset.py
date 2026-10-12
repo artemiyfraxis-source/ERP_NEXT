@@ -43,7 +43,7 @@ from app.modules.procurement.application import (
     remove_untouched_request_lines,
 )
 from app.modules.procurement.domain import ProcurementLine
-from app.modules.production.domain import ProductionStatus, ProductionTask
+from app.modules.production.domain import ProductionTask
 from app.modules.production.plan import (
     KIT_STAGES,
     PLAN_KINDS,
@@ -55,9 +55,7 @@ from app.modules.production.plan import (
     PlanProjectSnapshot,
     PROJECT_TERMINALS,
     StagePlan,
-    kit_key_from_purpose,
     kit_label,
-    kit_stage_key,
     project_terminal,
     ProjectStage,
     normalize_project_number,
@@ -114,6 +112,7 @@ from app.modules.shipping.application import (
 )
 from app.modules.shipping.domain import FinishedGood, ProjectAssembly
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
+from app.workflows import stage_cascade
 from app.modules.techcards.etk_parts import kit_article
 from app.modules.techcards.kitset_calc import PROJECT_SHEET, SPEC_SHEET, parse_calc_sheets
 from app.modules.techcards.kitsets import (
@@ -560,13 +559,6 @@ PROJECT_STATUS = "status"
 
 # ── Ручная смена этапа: одна служба за всеми выборами этапа (карточка, КБ, «Производственный план») ──────────
 
-# Заявка на комплектацию ещё живёт: не закрыта, не отменена и не возвращена.
-_LIVE_KIT_REQUESTS = {
-    FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED, FulfillmentStatus.COMPLETE, FulfillmentStatus.READY,
-    FulfillmentStatus.ISSUED,
-}
-
-
 @dataclass(frozen=True)
 class ProjectStageState:
     """The stages of one project right now, read for a manual change or its preview."""
@@ -577,59 +569,18 @@ class ProjectStageState:
     blocker: ActiveBlocker | None = None
     # The project's last journal sequence at read time: the change is refused if the journal moved since.
     sequence: int = 0
-    # Per КБ: what the change leaves as it is (open shop tasks, live kit requests, goods not sent).
-    warnings: dict[str, tuple[str, ...]] = field(default_factory=dict)
-
-
-def _stage_warnings(project: str, kits: tuple[KitStageNow, ...], facts: KitsetFacts) -> dict[str, tuple[str, ...]]:
-    canon = normalize_project_number(project)
-    by_key = {kit_stage_key(project, kit.item_index): kit.item_index for kit in kits}
-    whole = "" in by_key.values()  # a project without KBs takes everything of the project
-
-    def owner(key: str) -> str | None:
-        if key in by_key:
-            return by_key[key]
-        return "" if whole and key.split("|", 1)[0] == canon else None
-
-    tasks: dict[str, int] = {}
-    requests: dict[str, int] = {}
-    goods: dict[str, tuple[Decimal, str]] = {}
-    for task in facts.tasks:
-        item = owner(kit_stage_key(task.project, task.item)) if task.status is ProductionStatus.RUNNING else None
-        if item is not None:
-            tasks[item] = tasks.get(item, 0) + 1
-    for request in facts.fulfillment:
-        item = owner(kit_key_from_purpose(request.purpose)) if request.status in _LIVE_KIT_REQUESTS else None
-        if item is not None:
-            requests[item] = requests.get(item, 0) + 1
-    for good in facts.goods:
-        item = owner(kit_stage_key(good.project, good.item_index))
-        waiting = good.accepted - good.sent
-        if item is not None and waiting > 0:
-            total, _unit = goods.get(item, (Decimal("0"), good.unit))
-            goods[item] = (total + waiting, good.unit)
-    result: dict[str, tuple[str, ...]] = {}
-    for kit in kits:
-        texts = []
-        if tasks.get(kit.item_index):
-            texts.append(f"Открыто заданий цеха: {tasks[kit.item_index]} — смена этапа их не закрывает.")
-        if requests.get(kit.item_index):
-            texts.append(f"Живых заявок на комплектацию: {requests[kit.item_index]} — смена этапа их не трогает.")
-        if kit.item_index in goods:
-            quantity, unit = goods[kit.item_index]
-            texts.append(
-                f"Готовая продукция принята, не отгружена: {kit_number_payload(quantity)} {unit}".rstrip()
-                + " — смена этапа не отгружает."
-            )
-        result[kit.item_index] = tuple(texts)
-    return result
+    # What a forward move may close or must keep (`stage_cascade`): tasks, kit requests, reserves, goods.
+    cascade: stage_cascade.CascadeFacts = field(default_factory=stage_cascade.CascadeFacts)
 
 
 def project_stage_state(
     project: str, item_indexes: Iterable[str], facts: KitsetFacts, *, sequence: int = 0, kb: str = "",
+    cascade: stage_cascade.CascadeFacts | None = None,
 ) -> ProjectStageState:
     """КБ of the project — the kitset's assemblies plus the КБ of its techcards (as the production plan lists them),
-    plus ``kb`` when a single КБ is picked — with their stages now."""
+    plus ``kb`` when a single КБ is picked — with their stages now. ``cascade`` — the project's closable items read
+    in one session (sessions, techcard reserves); without it they come from ``facts`` (no work sessions, no
+    techcard reserves)."""
     canon = normalize_project_number(project)
     indexes = [
         *item_indexes,
@@ -641,10 +592,11 @@ def project_stage_state(
     journal = summarize_journal(events).get(canon)
     snapshot = next((item for item in facts.projects if normalize_project_number(item.project) == canon), None)
     kits = project_stage_now(project, indexes, stage_facts, marks)
+    if cascade is None:
+        cascade = stage_cascade.CascadeFacts(tasks=facts.tasks, requests=facts.fulfillment, goods=facts.goods)
     return ProjectStageState(
         project=canon, kits=kits, terminal=project_terminal(snapshot, journal),
-        blocker=journal.blocker if journal is not None else None, sequence=sequence,
-        warnings=_stage_warnings(project, kits, facts),
+        blocker=journal.blocker if journal is not None else None, sequence=sequence, cascade=cascade,
     )
 
 
@@ -665,30 +617,38 @@ def load_project_stage_state(
                 kitset = kitsets.get(project) if kitsets is not None else None
         item_indexes = [assembly.index for assembly in kitset.assemblies] if kitset is not None else []
     facts = kitset_facts(techcards, production, fulfillment, shipping)
-    return project_stage_state(project, item_indexes, facts, sequence=sequence, kb=kb)
+    cascade = stage_cascade.load_cascade_facts(stage_cascade.cascade_uow_factory(production), project)
+    return project_stage_state(project, item_indexes, facts, sequence=sequence, kb=kb, cascade=cascade)
 
 
-def stage_change_payload(state: ProjectStageState, plan: StagePlan) -> dict[str, Any]:
+def stage_change_payload(
+    state: ProjectStageState, plan: StagePlan, cascade: stage_cascade.StageCascade | None = None,
+) -> dict[str, Any]:
     """Preview (and the applied change) for the screens: per КБ from → to, skipped stages in ladder order, what the
-    change does not touch; Russian texts."""
+    move closes (`close`) and keeps with the reason (`keep`), totals; `preview_token` — the version the apply is
+    checked against. ``cascade`` — what an apply actually closed (the preview plans it over ``state``)."""
+    if cascade is None:
+        cascade = stage_cascade.plan_cascade(state.project, plan, state.cascade)
     changed = {change.item_index: change for change in plan.changes}
     kept = {item.item_index: item for item in plan.kept}
     kbs = []
     for kit in state.kits:
+        closing = stage_cascade.kb_payload(cascade, kit.item_index)
         if kit.item_index in changed:
             change = changed[kit.item_index]
+            of_kb = cascade.of(kit.item_index)
             kbs.append({
                 "kb": kit.item_index, "label": kit_label(kit.item_index), "from": change.from_stage,
                 "to": change.to_stage, "skipped": list(change.skipped), "change": True, "note": "",
-                "warnings": list(state.warnings.get(kit.item_index, ())),
+                "warnings": of_kb.warnings() if of_kb is not None else [], **closing,
             })
         elif kit.item_index in kept:
             item = kept[kit.item_index]
             kbs.append({
                 "kb": kit.item_index, "label": kit_label(kit.item_index), "from": item.stage, "to": item.stage,
-                "skipped": [], "change": False, "note": item.note, "warnings": [],
+                "skipped": [], "change": False, "note": item.note, "warnings": [], **closing,
             })
-    warnings = []
+    warnings = [cascade.note] if cascade.note else []
     if state.terminal and not plan.error:
         warnings.append(f"Проект закрыт («{state.terminal}») — смена этапа вернёт его в работу.")
     if state.blocker is not None:
@@ -701,13 +661,16 @@ def stage_change_payload(state: ProjectStageState, plan: StagePlan) -> dict[str,
         "reason_required": plan.reason_required, "error": plan.error, "message": stage_plan_message(plan),
         "terminal": state.terminal, "blocker": state.blocker.type if state.blocker is not None else "",
         "kbs": kbs, "warnings": warnings,
+        **stage_cascade.cascade_payload(cascade),
+        "preview_token": stage_cascade.cascade_token(state.project, state.sequence, plan, cascade),
     }
 
 
 @dataclass(frozen=True)
 class ChangeProjectStageCommand:
     """Ручная смена этапа: ``kb`` "" — весь проект (без КБ — запись с пустым КБ), иначе одна КБ; ``value`` — этап
-    лестницы или «авто». Назад — только с ``reason``."""
+    лестницы или «авто». Назад — только с ``reason``. ``preview_token`` — из предпросмотра: изменилось с тех пор
+    что-то из закрываемого — отказ 409; пусто — без сверки с предпросмотром (старый экран)."""
 
     project: str
     value: str
@@ -715,6 +678,7 @@ class ChangeProjectStageCommand:
     now: datetime
     kb: str = ""
     reason: str = ""
+    preview_token: str = ""
 
 
 @dataclass(frozen=True)
@@ -722,9 +686,11 @@ class ProjectStageChange:
     events: tuple[PlanEvent, ...]
     plan: StagePlan
     state: ProjectStageState
+    # What the change closed (None — journal rows only, no shared session).
+    cascade: stage_cascade.StageCascade | None = None
 
     def payload(self) -> dict[str, Any]:
-        return stage_change_payload(self.state, self.plan)
+        return stage_change_payload(self.state, self.plan, self.cascade)
 
 
 def preview_project_stage(state: ProjectStageState, value: str, kb: str = "") -> dict[str, Any]:
@@ -734,14 +700,21 @@ def preview_project_stage(state: ProjectStageState, value: str, kb: str = "") ->
 def change_project_stage(
     command: ChangeProjectStageCommand, state: ProjectStageState, uow_factory: Callable[[], PlanUnitOfWork],
 ) -> ProjectStageChange:
-    """The one stage service: plans the pick over ``state`` (read just before) and writes it in one transaction.
-    A stage pick on a closed project first returns it to work (as before)."""
+    """The one stage service: plans the pick over ``state`` (read just before) and writes it — with everything a
+    forward move closes (`stage_cascade`) — in one transaction. A stage pick on a closed project first returns it to
+    work (as before)."""
     plan = plan_stage_change(state.kits, command.value, command.kb)
-    events = change_stage(ChangeStageCommand(
+    change = ChangeStageCommand(
         project=command.project, plan=plan, actor=command.actor, now=command.now, reason=command.reason,
         reopen_from=state.terminal, expected_sequence=state.sequence,
-    ), uow_factory())
-    return ProjectStageChange(events, plan, state)
+    )
+    cascade_factory = stage_cascade.cascade_uow_factory(uow_factory)
+    if cascade_factory is None:
+        return ProjectStageChange(change_stage(change, uow_factory()), plan, state)
+    events, cascade = stage_cascade.apply_stage_change(
+        change, cascade_factory(), preview_token=str(command.preview_token or "").strip(),
+    )
+    return ProjectStageChange(events, plan, state, cascade)
 
 
 @dataclass(frozen=True)
@@ -760,6 +733,7 @@ class ChangeProjectStatusCommand:
     actor: Actor
     now: datetime
     text: str = ""
+    preview_token: str = ""
 
 
 def change_project_status(
@@ -796,6 +770,7 @@ def change_project_status(
     )
     return change_project_stage(ChangeProjectStageCommand(
         project=project, value=value, actor=command.actor, now=command.now, reason=command.text,
+        preview_token=command.preview_token,
     ), state, uow_factory)
 
 
