@@ -21,7 +21,8 @@ const refs: BatchRefs = {
   ],
   op: [{ opNumber: "CUT_WIRE_auto", opName: "Резка", tOp: "12", tPrep: "60", tMachine: "3" }],
   ter: [{ id: "t1", fields: { terArticle: "SXH-001T-P0.6", terLPlus: "5", terStep: "2.50", terApplicator: "S12" } }],
-  coax: [], kab_awg: [], kab_coax: [],
+  coax: [], kab_coax: [],
+  wire_dia: [{ AWG: "26", "ГОСТ": "0,12", "Ø жилы": "0,41", UL1061: "—", "МГТФ": "0,9" }],
 };
 
 const kit: KitsetBom = {
@@ -49,6 +50,9 @@ it("gives the same config as opening the generator and pressing «Создать
       const tab = new URLSearchParams(path.split("?")[1]).get("tab") as keyof BatchRefs;
       const rows = tab === "ter" ? refs.ter : ((refs[tab] || []) as Array<Record<string, string>>).map((fields, i) => ({ id: `${tab}${i}`, fields }));
       return json({ metadata: null, columns: [], records: rows.map((row) => ({ tab, display_text: "", source_sheet: "", ...row })) });
+    }
+    if (path === "/api/references/wire-dia") {
+      return json({ columns: [], series: [], records: refs.wire_dia.map((fields, i) => ({ id: `wire-dia-${i}`, display_text: "", source_sheet: "", fields })) });
     }
     if (path === "/api/references/technology/resolve-terminal") return json({ applicator: "S12", crimp_height: "", pull_force: "", by_section: [] });
     throw new Error(`Unexpected request: ${path}`);
