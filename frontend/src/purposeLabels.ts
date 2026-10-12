@@ -5,6 +5,7 @@ const LABELS: Record<string, string> = {
   RND: "НИОКР (опытный образец)",
   FRX: "Собственные нужды компании",
   "Хоз деятельность": "Хозяйственная деятельность",
+  "Коммерческий проект": "Коммерческий проект (заказ клиента)",
 };
 
 /** Full words for a stored purpose; a text that is not a purpose (a project number) comes back as written.

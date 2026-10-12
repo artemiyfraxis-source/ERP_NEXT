@@ -5,7 +5,10 @@ import { purchasingItemsApi, type ItemRow } from "./purchasingItemsApi";
 import {
   GRID_COLUMNS, GRID_LIMIT, LABEL_BY_KEY, positionsWord, submitLabel, type Draft, type GridKey, type RowErrors,
 } from "./requestGridLogic";
-import { DEFAULT_CATEGORY, ownFields, type Header } from "./requestFormV2Logic";
+import { ownFields, type Header } from "./requestFormV2Logic";
+
+/** The new form has no категория column. */
+const COLUMNS = GRID_COLUMNS.filter((column) => column.key !== "category");
 
 type Props = {
   positions: Draft[];
@@ -70,7 +73,7 @@ function NameCell({ value, enabled, onText, onPick, ...rest }: {
   />;
 }
 
-/** The grid of the new form: header values are the default, an empty cell of категория / док. качества / план. дата
+/** The grid of the new form: header values are the default, an empty cell of док. качества / план. дата
  *  takes the header, a typed value is the line's own. Unit is a list-only select, type a searchable list. */
 export function RequestGridV2({
   positions, header, schema, errors, sendCount, busy, itemsOn,
@@ -80,8 +83,6 @@ export function RequestGridV2({
   const pendingFocus = useRef<{ row: number; key: GridKey } | null>(null);
   const atLimit = positions.length >= GRID_LIMIT;
   const badRows = errors ? errors.map((rowErrors, index) => (Object.keys(rowErrors).length ? index : -1)).filter((i) => i >= 0) : [];
-  const headerCategory = header.category || DEFAULT_CATEGORY;
-  const headerQuality = header.category === "ОП" ? "Да" : header.quality_document;
 
   const cell = (row: number, key: GridKey) => root.current?.querySelector<HTMLElement>(`[data-cell="${row}:${key}"]`) ?? null;
 
@@ -133,7 +134,7 @@ export function RequestGridV2({
   function firstError() {
     if (!badRows.length || !errors) return;
     const row = badRows[0];
-    const key = GRID_COLUMNS.find((column) => errors[row][column.key])?.key ?? GRID_COLUMNS[0].key;
+    const key = COLUMNS.find((column) => errors[row][column.key])?.key ?? COLUMNS[0].key;
     const element = cell(row, key);
     element?.scrollIntoView({ block: "center" });
     element?.focus();
@@ -163,21 +164,10 @@ export function RequestGridV2({
       const options = (schema?.item_types ?? []).map((type) => ({ value: type, label: type }));
       return <ComboBox {...common} options={options} value={value} placeholder="Комплектующие" onChange={set} />;
     }
-    if (key === "category") {
-      const options = schema?.categories ?? [];
+    if (key === "quality_document") {
       return (
         <select {...common} value={value} onChange={(e) => set(e.target.value)}>
-          <option value="" title={`Из шапки: ${headerCategory}`}>как в шапке</option>
-          {value && !options.includes(value) && <option>{value}</option>}
-          {options.map((item) => <option key={item}>{item}</option>)}
-        </select>
-      );
-    }
-    if (key === "quality_document") {
-      const category = draft.category || header.category;
-      return (
-        <select {...common} value={category === "ОП" ? "Да" : value} disabled={category === "ОП"} onChange={(e) => set(e.target.value)}>
-          <option value="">{draft.category ? "по категории" : "как в шапке"}</option>
+          <option value="">как в шапке</option>
           <option>Да</option><option>Нет</option>
         </select>
       );
@@ -205,7 +195,7 @@ export function RequestGridV2({
           <thead>
             <tr>
               <th className="rg-no">№</th>
-              {GRID_COLUMNS.map((column) => (
+              {COLUMNS.map((column) => (
                 <th key={column.key} className={`rg-col-${column.key}`}>{column.label}{column.required ? " *" : ""}</th>
               ))}
               <th className="rg-act" />
@@ -223,7 +213,7 @@ export function RequestGridV2({
                       <span className="rg-own" title={`Своё у позиции: ${own.map((key) => `${LABEL_BY_KEY[key]} — ${draft[key]}`).join("; ")}`}>своё</span>
                     )}
                   </td>
-                  {GRID_COLUMNS.map((column) => (
+                  {COLUMNS.map((column) => (
                     <td key={column.key} className={`rg-col-${column.key}`}>{control(row, column.key, draft, rowErrors[column.key])}</td>
                   ))}
                   <td className="rg-act">

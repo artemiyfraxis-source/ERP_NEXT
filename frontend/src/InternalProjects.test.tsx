@@ -109,6 +109,9 @@ describe("«Проекты»: Коммерческие · Внутренние",
     fireEvent.change(screen.getByLabelText("Название"), { target: { value: "Ремонт цеха" } });
     fireEvent.click(screen.getByRole("button", { name: "Создать проект" }));
     expect(await screen.findByText("Выберите назначение")).toBeInTheDocument();
+    // the purposes come from the directory (request schema), shown in full words
+    const choices = within(screen.getByLabelText("Назначение")).getAllByRole("option").map((o) => o.textContent);
+    expect(choices).toEqual(expect.arrayContaining(["НИОКР (опытный образец)", "Хозяйственная деятельность"]));
     fireEvent.change(screen.getByLabelText("Назначение"), { target: { value: "Хоз деятельность" } });
     fireEvent.change(screen.getByLabelText("Ответственный"), { target: { value: "s1" } });
     fireEvent.click(screen.getByRole("button", { name: "Создать проект" }));
@@ -138,9 +141,9 @@ describe("request form: internal projects group", () => {
     expect(within(list).getByText("Внутренние проекты")).toBeInTheDocument();
     expect(within(list).queryByRole("option", { name: "НИОКР (опытный образец)" })).not.toBeInTheDocument();
     fireEvent.mouseDown(within(list).getByRole("option", { name: "ВП-001 · Стенд испытаний" }));
-    const purpose = screen.getByLabelText("Назначение") as HTMLSelectElement;
-    expect(purpose.value).toBe("RND");
-    expect(purpose).toBeDisabled();
+    // the purpose is the project's, shown read-only: there is no control for it
+    expect(screen.queryByLabelText("Назначение")).not.toBeInTheDocument();
+    expect(screen.getByText("Назначение: НИОКР (опытный образец)")).toBeInTheDocument();
   });
 
   it("offers «Создать внутренний проект…» when there is none and opens the Projects section", async () => {
@@ -160,7 +163,7 @@ describe("request form: internal projects group", () => {
   });
 
   it("chooseProject takes the number and the purpose of an internal project", () => {
-    const header = chooseProject(emptyHeader(), internalProjectKey("ВП-001"), schema.purposes, schema.internal_projects);
+    const header = chooseProject(emptyHeader(), internalProjectKey("ВП-001"), schema.internal_projects);
     expect(header).toMatchObject({ project_reference: "ВП-001", purpose: "RND" });
     expect(projectKind(header)).toBe("internal");
   });

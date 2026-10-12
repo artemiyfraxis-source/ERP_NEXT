@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal, procurement_view_principal
+from app.workflows.purchasing_internal_projects import purposes_in_use
 from app.workflows.stage_options_api import admin_principal
 
 from . import settings
@@ -29,6 +30,8 @@ class SettingsChange(BaseModel):
 
 
 def _json(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return list(value)
     return str(value) if isinstance(value, Decimal) else value
 
 
@@ -63,7 +66,7 @@ def save_settings(
     with factory() as uow:
         before = settings.load(uow.session)
         try:
-            after = settings.save(uow.session, payload.changes, principal.actor.id, now)
+            after = settings.save(uow.session, payload.changes, principal.actor.id, now, purposes_in_use)
         except settings.InvalidSetting as error:
             raise HTTPException(status_code=422, detail=str(error)) from None
         changed = {key: f"{_json(before[key])} → {_json(after[key])}" for key in payload.changes if before[key] != after[key]}

@@ -1,16 +1,16 @@
 /* Stage option `requests.form`: logic of the reworked «Оформить заявку» form. No React here.
-   Idea: nothing is pre-filled. The header («Общее для всех позиций») is the default, a line value is the override;
-   an empty line value means «as in the header». The server fills what is omitted (apply_draft_defaults). */
+   Idea: nothing is pre-filled except док. качества «Нет». The header («Общее для всех позиций») is the default, a line
+   value is the override; an empty line value means «as in the header». The server fills what is omitted
+   (apply_draft_defaults). The purpose is a property of the PROJECT, never chosen here; there is no категория. */
 import type { InternalProjectBrief } from "./api";
 import {
   isBlankRow, validateRow, type Common, type Draft, type RowErrors,
 } from "./requestGridLogic";
 
-export const DEFAULT_PURPOSE = "Обеспечение производства";
-export const CATEGORY_HINT = "Определяет документ качества: ОП — обязателен, ИП — по умолчанию да, Общепром — по умолчанию нет";
+/** The purpose of every commercial (customer) project; the stored value, shown as «Коммерческий проект (заказ клиента)». */
+export const COMMERCIAL_PURPOSE = "Коммерческий проект";
 export const PROJECT_ERROR = "Выберите проект: заказчика или внутренний";
 export const POINT_ERROR = "Выберите склад";
-export const DEFAULT_CATEGORY = "Общепром";
 
 /** Short names of the two warehouses; the stored value stays the address. */
 const POINT_CODES: Record<string, string> = {
@@ -29,7 +29,7 @@ export type Header = Common & { project: string };
 export function emptyHeader(): Header {
   return {
     project: "", purpose: "", project_reference: "", delivery_point: "",
-    category: "", quality_document: "", procurement_deadline: "", planned_date: "",
+    category: "", quality_document: "Нет", procurement_deadline: "", planned_date: "",
   };
 }
 
@@ -49,38 +49,26 @@ export const CREATE_INTERNAL_KEY = "new:";
 export const projectKind = (header: Header): "customer" | "internal" | "" =>
   header.project.startsWith("c:") ? "customer" : header.project.startsWith("i:") || header.project.startsWith("p:") ? "internal" : "";
 
-/** A customer project sets the number and leaves Назначение editable (default «Обеспечение производства»);
- *  an internal purpose clears the number and sets Назначение; an internal project «ВП-001» sets its number and its own
- *  purpose (the form locks it). */
-export function chooseProject(header: Header, key: string, purposes: string[], internal: InternalProjectBrief[] = []): Header {
+/** A customer project sets the number and the purpose «Коммерческий проект»; an internal purpose clears the number and
+ *  sets the purpose (option projects.internal off); an internal project «ВП-001» sets its number and its own purpose.
+ *  The purpose is shown read-only. */
+export function chooseProject(header: Header, key: string, internal: InternalProjectBrief[] = []): Header {
   if (key.startsWith("p:")) {
     const project = internal.find((item) => item.number === key.slice(2));
     return { ...header, project: key, project_reference: key.slice(2), purpose: project?.purpose ?? "" };
   }
   if (key.startsWith("i:")) return { ...header, project: key, project_reference: "", purpose: key.slice(2) };
-  if (key.startsWith("c:")) {
-    const wasInternal = projectKind(header) === "internal";
-    const fallback = purposes.includes(DEFAULT_PURPOSE) ? DEFAULT_PURPOSE : "";
-    return { ...header, project: key, project_reference: key.slice(2), purpose: wasInternal || !header.purpose ? fallback : header.purpose };
-  }
+  if (key.startsWith("c:")) return { ...header, project: key, project_reference: key.slice(2), purpose: COMMERCIAL_PURPOSE };
   return { ...header, project: "", project_reference: "", purpose: "" };
 }
 
-/** Header category changed: ОП forces the quality document to «Да». */
-export function setHeaderCategory(header: Header, category: string): Header {
-  return { ...header, category, quality_document: category === "ОП" ? "Да" : header.quality_document };
-}
-
-/** «Применить ко всем строкам»: the lines forget their own категория / док. качества / план. дату and follow the header. */
+/** «Применить ко всем строкам»: the lines forget their own док. качества / план. дату and follow the header. */
 export function applyHeaderToAll(lines: Draft[]): Draft[] {
-  return lines.map((line) => ({ ...line, category: "", quality_document: "", planned_date: "" }));
+  return lines.map((line) => ({ ...line, quality_document: "", planned_date: "" }));
 }
 
-/** The line as it will be sent: its own value, else the header's. */
+/** The line as it will be sent: its own value, else the header's. No категория: the server default stays. */
 export function resolveLine(line: Draft, header: Header): Draft {
-  const category = line.category || header.category;
-  let quality = line.quality_document || (line.category ? "" : header.quality_document);
-  if (category === "ОП") quality = "Да";
   return {
     ...line,
     purpose: line.purpose || header.purpose,
@@ -88,27 +76,25 @@ export function resolveLine(line: Draft, header: Header): Draft {
     delivery_point: line.delivery_point || header.delivery_point,
     procurement_deadline: line.procurement_deadline || header.procurement_deadline,
     planned_date: line.planned_date || header.planned_date,
-    category,
-    quality_document: quality,
+    category: "",
+    quality_document: line.quality_document || header.quality_document,
   };
 }
 
 /** Which line fields hold their own value that differs from the header (shown as «своё»). */
-export function ownFields(line: Draft, header: Header): Array<"category" | "quality_document" | "planned_date"> {
-  const keys = ["category", "quality_document", "planned_date"] as const;
+export function ownFields(line: Draft, header: Header): Array<"quality_document" | "planned_date"> {
+  const keys = ["quality_document", "planned_date"] as const;
   return keys.filter((key) => line[key] && line[key] !== header[key]);
 }
 
 export type FormErrors = { project?: string; delivery_point?: string; rows: RowErrors[] };
 
 /** Errors of the whole form as the server will judge it, plus the form-level rules: project and warehouse. */
-export function validateForm(
-  lines: Draft[], header: Header, categories: string[], units: string[],
-): FormErrors {
+export function validateForm(lines: Draft[], header: Header, units: string[]): FormErrors {
   const rows = lines.map((line) => {
     if (isBlankRow(line)) return {} as RowErrors;
     const resolved = resolveLine(line, header);
-    const errors = validateRow(resolved, categories);
+    const errors = validateRow(resolved, []);
     delete errors.purpose; // a missing purpose is the form-level «Выберите проект»
     if (resolved.unit.trim() && units.length && !units.includes(resolved.unit)) errors.unit = "Выберите единицу из списка";
     return errors;

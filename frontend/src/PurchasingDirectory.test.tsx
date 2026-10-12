@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { PurchasingSettings } from "./PurchasingSettings";
 import { PurchasingSuppliers } from "./PurchasingSuppliers";
@@ -100,4 +100,29 @@ it("lets an admin change and save a setting", async () => {
   expect(await screen.findByText("Настройки сохранены")).toBeInTheDocument();
   const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
   expect(JSON.parse(String(put[1]!.body))).toEqual({ changes: { gate_min_quotes: "2" } });
+});
+
+it("edits the purposes directory: add, remove, protected RND / FRX stay", async () => {
+  const purposes = {
+    key: "purposes", label: "Назначения заявок", hint: "…", kind: "list", value: ["RND", "FRX", "Склад"],
+    default: ["RND", "FRX", "Склад"], minimum: null, maximum: null,
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input) === "/api/auth/me") return json(principal("admin"));
+    if (init?.method === "PUT") return json([{ ...purposes, value: JSON.parse(String(init.body)).changes.purposes }]);
+    return json([purposes]);
+  });
+  render(<PurchasingSettings />);
+  const list = await screen.findByRole("list", { name: "Назначения заявок" });
+  expect(within(list).getByText("НИОКР (опытный образец)")).toBeInTheDocument();
+  expect(within(list).getByText("Собственные нужды компании")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByLabelText("Новое назначение")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: /Убрать назначение НИОКР/ })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Новое назначение"), { target: { value: "Оснастка и инструмент" } });
+  fireEvent.click(screen.getByRole("button", { name: "Добавить" }));
+  fireEvent.click(screen.getByRole("button", { name: "Убрать назначение Склад" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  expect(await screen.findByText("Настройки сохранены")).toBeInTheDocument();
+  const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
+  expect(JSON.parse(String(put[1]!.body))).toEqual({ changes: { purposes: ["RND", "FRX", "Оснастка и инструмент"] } });
 });

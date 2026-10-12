@@ -14,9 +14,9 @@ export interface PurchasingSetting {
   key: string;
   label: string;
   hint: string;
-  kind: "int" | "decimal" | "bool";
-  value: number | string | boolean;
-  default: number | string | boolean;
+  kind: "int" | "decimal" | "bool" | "list";
+  value: number | string | boolean | string[];
+  default: number | string | boolean | string[];
   minimum: string | number | null;
   maximum: string | number | null;
 }
@@ -94,7 +94,7 @@ const post = (body: unknown) => ({ method: "POST", body: JSON.stringify(body) })
 
 export const purchasingDirectoryApi = {
   settings: () => api<PurchasingSetting[]>("/api/purchasing/settings"),
-  saveSettings: (changes: Record<string, number | string | boolean>) =>
+  saveSettings: (changes: Record<string, number | string | boolean | string[]>) =>
     api<PurchasingSetting[]>("/api/purchasing/settings", { method: "PUT", body: JSON.stringify({ changes }) }),
   suppliers: (filters: SupplierFilters) => {
     const params = new URLSearchParams();

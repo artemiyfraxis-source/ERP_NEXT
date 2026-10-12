@@ -15,6 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.requests.domain import PURPOSE_ALIASES, STATIC_PURPOSES
 
+from app.shared import stage_options
+
+from . import settings as purchasing_settings
 from .infrastructure import InternalProjectRow
 
 PREFIX = "ВП-"
@@ -34,12 +37,19 @@ def _clean(value: Any) -> str | None:
     return text or None
 
 
-def normalize_purpose(value: Any) -> str:
+def allowed_purposes(session: Session) -> tuple[str, ...]:
+    """With the option requests.form on the purposes directory decides; off, the fixed list as before."""
+    if not stage_options.enabled("requests.form"):
+        return STATIC_PURPOSES
+    return tuple(purchasing_settings.load(session)["purposes"])
+
+
+def normalize_purpose(value: Any, allowed: tuple[str, ...] = STATIC_PURPOSES) -> str:
     text = " ".join(str(value or "").split())
     if not text:
         raise InternalProjectError("Назначение обязательно")
     text = PURPOSE_ALIASES.get(text.casefold(), text)
-    by_key = {item.casefold(): item for item in STATIC_PURPOSES}
+    by_key = {item.casefold(): item for item in allowed}
     if text.casefold() not in by_key:
         raise InternalProjectError(f"Назначение «{text}» не из списка")
     return by_key[text.casefold()]
@@ -90,7 +100,7 @@ def open_rows(session: Session) -> list[InternalProjectRow]:
 def create(session: Session, data: dict[str, Any], actor_id: UUID | None, now: datetime) -> InternalProjectRow:
     row = InternalProjectRow(
         id=uuid4(), number=next_number(session), name=_name(data.get("name")),
-        purpose=normalize_purpose(data.get("purpose")), responsible_id=data.get("responsible_id"),
+        purpose=normalize_purpose(data.get("purpose"), allowed_purposes(session)), responsible_id=data.get("responsible_id"),
         note=_clean(data.get("note")), version=1, created_at=now, created_by=actor_id,
     )
     session.add(row)
@@ -107,7 +117,7 @@ def update(
     if "name" in data:
         row.name = _name(data["name"])
     if "purpose" in data:
-        row.purpose = normalize_purpose(data["purpose"])
+        row.purpose = normalize_purpose(data["purpose"], allowed_purposes(session))
     if "responsible_id" in data:
         row.responsible_id = data["responsible_id"]
     if "note" in data:

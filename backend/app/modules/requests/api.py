@@ -32,6 +32,7 @@ from .application import (
     ProcurementDetails,
     ProcurementStageLookup,
     ProjectRegistry,
+    directory_purposes,
     UnitOfWork,
     create_requests as create_requests_use_case,
     extract_from_calc,
@@ -212,7 +213,7 @@ def request_schema(
         "projects": list(open_projects or []),
         "internal_projects": internal_projects(projects),
         "required": list(REQUIRED_FIELDS),
-        "purposes": list(STATIC_PURPOSES),
+        "purposes": directory_purposes(projects) or list(STATIC_PURPOSES),
         "delivery_points": list(DELIVERY_POINTS),
         "units": list(UNITS),
         "categories": list(CATEGORIES),
@@ -230,9 +231,10 @@ def validate_request(
     payload: ValidateRequestInput,
     _principal: Annotated[Principal, Depends(requests_form_principal)],
     today: Annotated[date, Depends(moscow_today)],
+    projects: Annotated[ProjectRegistry | None, Depends(project_registry)],
 ) -> dict:
     try:
-        normalized = validate_draft(payload.request.to_domain(), today)
+        normalized = validate_draft(payload.request.to_domain(), today, directory_purposes(projects))
         line_sum = calculate_line_sum(normalized.price_with_vat, normalized.quantity)
     except ValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

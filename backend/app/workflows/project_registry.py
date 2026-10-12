@@ -58,6 +58,14 @@ class InternalAwareProjectRegistry:
             return projects
         return [*projects, *(item["number"] for item in self.internal_projects())]
 
+    def purposes(self) -> list[str] | None:
+        """The purposes directory («Настройки закупки») while the option requests.form is on; None = old behaviour."""
+        if not stage_options.enabled("requests.form"):
+            return None
+        from app.workflows.purchasing_internal_projects import directory_purposes
+
+        return directory_purposes(self.purchasing_uow_factory)
+
     def internal_projects(self) -> list[dict[str, str]]:
         if not stage_options.enabled("projects.internal"):
             return []

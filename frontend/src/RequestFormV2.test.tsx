@@ -108,21 +108,28 @@ describe("requests.form on", () => {
     expect(posts).toHaveLength(0);
   });
 
-  it("a customer project sets the number and keeps Назначение editable; an internal one locks it", async () => {
+  it("has no Назначение control and no Категория; shows the project's purpose read-only", async () => {
     await openForm({ form: true });
-    const purpose = screen.getByLabelText("Назначение") as HTMLSelectElement;
-    expect(purpose).toBeDisabled();
-    await chooseOption(screen.getByLabelText("Проект"), "591К.3");
-    expect(purpose).toBeEnabled();
-    expect(purpose.value).toBe("Обеспечение производства");
-    fireEvent.change(purpose, { target: { value: "Хоз деятельность" } });
-    expect(purpose.value).toBe("Хоз деятельность");
+    expect(screen.queryByLabelText("Назначение")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Категория")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Категория, строка 1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Категория")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Назначение:/)).not.toBeInTheDocument();
 
+    await chooseOption(screen.getByLabelText("Проект"), "591К.3");
+    expect(screen.getByText("Назначение: Коммерческий проект (заказ клиента)")).toBeInTheDocument();
     await chooseOption(screen.getByLabelText("Проект"), "НИОКР (опытный образец)");
-    expect(purpose.value).toBe("RND");
-    expect(purpose).toBeDisabled();
-    expect(within(purpose).getByRole("option", { name: "Собственные нужды компании" })).toBeInTheDocument();
+    expect(screen.getByText("Назначение: НИОКР (опытный образец)")).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "RND" })).not.toBeInTheDocument();
+  });
+
+  it("док. качества: header Нет / Да (default Нет), a line как в шапке / Да / Нет", async () => {
+    await openForm({ form: true });
+    const header = screen.getByLabelText("Док. качества") as HTMLSelectElement;
+    expect(header.value).toBe("Нет");
+    expect(within(header).getAllByRole("option").map((o) => o.textContent)).toEqual(["Нет", "Да"]);
+    const line = screen.getByLabelText("Док. качества, строка 1");
+    expect(within(line).getAllByRole("option").map((o) => o.textContent)).toEqual(["как в шапке", "Да", "Нет"]);
   });
 
   it("shows warehouses with codes, no preselected value, and sends the address", async () => {
@@ -139,31 +146,25 @@ describe("requests.form on", () => {
     await waitFor(() => expect(posts).toHaveLength(1));
     // empty optional fields are omitted, not sent blank: the server applies its defaults
     expect(posts[0][0]).toEqual({
-      purpose: "Обеспечение производства", project_reference: "591К.3", delivery_point: MOSCOW,
-      name: "Кабель", quantity: "2", unit: "шт",
+      purpose: "Коммерческий проект", project_reference: "591К.3", delivery_point: MOSCOW,
+      name: "Кабель", quantity: "2", unit: "шт", quality_document: "Нет",
     });
+    expect(posts[0][0]).not.toHaveProperty("category");
   });
 
-  it("header «Применить ко всем строкам» overwrites the lines' own категория, док. качества and план. дата", async () => {
+  it("header «Применить ко всем строкам» overwrites the lines' own док. качества and план. дата", async () => {
     await openForm({ form: true });
     fireEvent.click(screen.getByRole("button", { name: "+ Добавить строку" }));
-    fireEvent.change(screen.getByLabelText("Категория, строка 1"), { target: { value: "ИП" } });
+    fireEvent.change(screen.getByLabelText("Док. качества, строка 1"), { target: { value: "Да" } });
     fireEvent.change(screen.getByLabelText("План. дата, строка 2"), { target: { value: "2026-12-01" } });
-    expect(screen.getByLabelText("Категория, строка 1")).toHaveValue("ИП");
-
-    fireEvent.change(screen.getByLabelText("Категория"), { target: { value: "ОП" } });
     fireEvent.change(screen.getByLabelText("План. дата"), { target: { value: "2026-11-05" } });
     // the line edited by hand keeps its own value until the header is applied
-    expect(screen.getByLabelText("Категория, строка 1")).toHaveValue("ИП");
-    expect(screen.getByLabelText("Категория, строка 2")).toHaveValue("");
-    expect(screen.getByLabelText("Док. качества")).toBeDisabled();
+    expect(screen.getByLabelText("Док. качества, строка 1")).toHaveValue("Да");
+    expect(screen.getByLabelText("План. дата, строка 2")).toHaveValue("2026-12-01");
 
     fireEvent.click(screen.getByRole("button", { name: "Применить ко всем строкам" }));
-    expect(screen.getByLabelText("Категория, строка 1")).toHaveValue("");
+    expect(screen.getByLabelText("Док. качества, строка 1")).toHaveValue("");
     expect(screen.getByLabelText("План. дата, строка 2")).toHaveValue("");
-    const inherited = screen.getByLabelText("Категория, строка 1").querySelector("option");
-    expect(inherited).toHaveTextContent("как в шапке");
-    expect(inherited).toHaveAttribute("title", "Из шапки: ОП");
   });
 
   it("nomenclature autocomplete fills name, article, unit and type", async () => {
@@ -219,26 +220,30 @@ describe("logic", () => {
     expect(purposeLabel("FRX.26.0000001")).toBe("FRX.26.0000001");
   });
 
-  it("a line value wins over the header; empty takes the header; ОП forces «Да»", () => {
-    const header = { ...emptyHeader(), category: "ИП", planned_date: "2026-11-05" };
-    const own = resolveLine({ ...emptyLine(), planned_date: "2026-12-01" }, header);
+  it("a line value wins over the header; empty takes the header; category is never sent", () => {
+    const header = { ...emptyHeader(), quality_document: "Да", planned_date: "2026-11-05" };
+    const own = resolveLine({ ...emptyLine(), planned_date: "2026-12-01", quality_document: "Нет", category: "ОП" }, header);
     expect(own.planned_date).toBe("2026-12-01");
-    expect(own.category).toBe("ИП");
+    expect(own.quality_document).toBe("Нет");
+    expect(own.category).toBe("");
     expect(resolveLine(emptyLine(), header).planned_date).toBe("2026-11-05");
-    expect(resolveLine({ ...emptyLine(), category: "ОП" }, header).quality_document).toBe("Да");
-    expect(applyHeaderToAll([{ ...emptyLine(), category: "ОП", planned_date: "2026-12-01" }])[0].category).toBe("");
+    expect(resolveLine(emptyLine(), header).quality_document).toBe("Да");
+    expect(applyHeaderToAll([{ ...emptyLine(), quality_document: "Да", planned_date: "2026-12-01" }])[0].quality_document).toBe("");
+    expect(emptyHeader().quality_document).toBe("Нет");
   });
 
   it("validates project, warehouse and unit; payload leaves empty fields out", () => {
     const line = { ...emptyLine(), name: "Х", quantity: "1", unit: "ящик" };
-    const errors = validateForm([line], emptyHeader(), ["Общепром"], ["шт"]);
+    const errors = validateForm([line], emptyHeader(), ["шт"]);
     expect(errors.project).toBeTruthy();
     expect(errors.delivery_point).toBeTruthy();
     expect(errors.rows[0].unit).toBeTruthy();
-    const header = { ...chooseProject(emptyHeader(), "i:FRX", ["FRX"]), delivery_point: MOSCOW };
+    const header = { ...chooseProject(emptyHeader(), "i:FRX"), delivery_point: MOSCOW };
     expect(header.project_reference).toBe("");
     expect(payloadV2({ ...line, unit: "шт" }, header)).toEqual({
-      purpose: "FRX", delivery_point: MOSCOW, name: "Х", quantity: "1", unit: "шт",
+      purpose: "FRX", delivery_point: MOSCOW, name: "Х", quantity: "1", unit: "шт", quality_document: "Нет",
     });
+    expect(chooseProject(emptyHeader(), "c:591К.3").purpose).toBe("Коммерческий проект");
+    expect(purposeLabel("Коммерческий проект")).toBe("Коммерческий проект (заказ клиента)");
   });
 });

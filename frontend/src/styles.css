@@ -2702,6 +2702,12 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .suggest-list .suggest-group { padding: 6px 10px 2px; color: var(--muted-foreground); font-size: 11px; font-weight: 700; text-transform: uppercase; cursor: default; }
 .rg-common-v2 .rg-project { grid-column: span 2; }
 .rg-common-v2 small { display: block; margin-top: 2px; color: var(--muted-foreground); font-size: 11px; }
+.rg-common-v2 .rg-purpose { margin-top: 4px; }
+.purchasing-setting-list { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.purpose-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.purpose-list li { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 999px; font-size: 13px; }
+.purpose-add { display: flex; gap: 8px; max-width: 420px; }
+.purpose-add input { flex: 1 1 auto; }
 .rg-common-v2 .rg-field-error { color: var(--tone-danger); }
 .rg-common-v2 select:disabled { color: var(--muted-foreground); background: var(--accent); }
 .rg-common-v2 .rg-bad { border-color: var(--tone-danger); }

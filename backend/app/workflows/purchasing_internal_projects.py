@@ -54,6 +54,21 @@ def responsible_names(session: Session, ids: Iterable[UUID | None]) -> dict[UUID
     }
 
 
+def directory_purposes(uow_factory: Callable[[], Any]) -> list[str]:
+    """The editable purposes directory (settings key `purposes`)."""
+    from app.modules.purchasing import settings
+
+    with uow_factory() as uow:
+        return list(settings.load(uow.session)["purposes"])
+
+
+def purposes_in_use(session: Session) -> set[str]:
+    """Purposes that stored requests or internal projects already carry (case-folded): such a purpose cannot be removed."""
+    used = {value for (value,) in session.execute(select(RequestRow.purpose).distinct()) if value}
+    used |= {row.purpose for row in service.list_rows(session)}
+    return {" ".join(str(value).split()).casefold() for value in used}
+
+
 def listing(session: Session) -> list[dict[str, Any]]:
     rows = service.list_rows(session)
     counts = usage(session, [row.number for row in rows])

@@ -10,8 +10,8 @@ import {
   GRID_LIMIT, applyPaste, isBlankRow, positionsWord, type Draft, type GridKey,
 } from "./requestGridLogic";
 import {
-  CATEGORY_HINT, CREATE_INTERNAL_KEY, DEFAULT_CATEGORY, applyHeaderToAll, chooseProject, customerKey, emptyHeader, emptyLine,
-  hasErrors, internalKey, internalProjectKey, payloadV2, pointLabel, projectKind, setHeaderCategory, validateForm, type Header,
+  CREATE_INTERNAL_KEY, applyHeaderToAll, chooseProject, customerKey, emptyHeader, emptyLine,
+  hasErrors, internalKey, internalProjectKey, payloadV2, pointLabel, validateForm, type Header,
 } from "./requestFormV2Logic";
 
 type Props = {
@@ -34,9 +34,7 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
   const [busy, setBusy] = useState(false);
   const lastSeed = useRef(0);
 
-  const kind = projectKind(header);
   const purposes = schema?.purposes ?? [];
-  const categories = schema?.categories ?? [];
   const units = schema?.units ?? [];
 
   const internalOn = useStageOption("projects.internal");
@@ -55,10 +53,10 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
 
   function pickProject(key: string) {
     if (key === CREATE_INTERNAL_KEY) { openSection("projects", { tab: "internal" }); return; }
-    setHeader((current) => chooseProject(current, key, purposes, internal));
+    setHeader((current) => chooseProject(current, key, internal));
   }
 
-  const errors = useMemo(() => validateForm(lines, header, categories, units), [lines, header, categories, units]);
+  const errors = useMemo(() => validateForm(lines, header, units), [lines, header, units]);
   const sendRows = lines.filter((line) => !isBlankRow(line));
 
   function paste(index: number, key: GridKey, text: string) {
@@ -83,9 +81,7 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
   function setLineField(index: number, key: GridKey, value: string) {
     setLines((current) => current.map((line, i) => {
       if (i !== index) return line;
-      const next = { ...line, [key]: value };
-      if (key === "category" && value === "ОП") next.quality_document = "Да";
-      return next;
+      return { ...line, [key]: value };
     }));
   }
 
@@ -124,7 +120,6 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
     }
   }
 
-  const qualityLocked = header.category === "ОП";
   return (
     <div className="rg-form">
       <div className="rg-common rg-common-v2">
@@ -140,21 +135,10 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
               value={header.project}
               placeholder="Номер проекта заказчика или внутренний проект"
               onChange={pickProject}
-              onClear={() => setHeader((current) => chooseProject(current, "", purposes))}
+              onClear={() => setHeader((current) => chooseProject(current, ""))}
             />
+            {header.purpose && <small className="rg-purpose muted">Назначение: {purposeLabel(header.purpose)}</small>}
             {showErrors && errors.project && <small className="rg-field-error" role="alert">{errors.project}</small>}
-          </label>
-          <label>Назначение
-            <select
-              aria-label="Назначение"
-              value={header.purpose}
-              disabled={kind !== "customer"}
-              title={kind === "internal" ? "Задано внутренним проектом" : undefined}
-              onChange={(e) => setH({ purpose: e.target.value })}
-            >
-              {!header.purpose && <option value="">{kind ? "—" : "Сначала проект"}</option>}
-              {purposes.map((purpose) => <option key={purpose} value={purpose}>{purposeLabel(purpose)}</option>)}
-            </select>
           </label>
           <label className="rg-point">Склад (куда доставить) *
             <select
@@ -169,16 +153,9 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
             </select>
             {showErrors && errors.delivery_point && <small className="rg-field-error" role="alert">{errors.delivery_point}</small>}
           </label>
-          <label><span>Категория <span className="rg-info" title={CATEGORY_HINT} aria-label={CATEGORY_HINT}>ⓘ</span></span>
-            <select aria-label="Категория" title={CATEGORY_HINT} value={header.category} onChange={(e) => setHeader((current) => setHeaderCategory(current, e.target.value))}>
-              <option value="">{DEFAULT_CATEGORY}</option>
-              {categories.map((item) => <option key={item}>{item}</option>)}
-            </select>
-          </label>
           <label>Док. качества
-            <select aria-label="Док. качества" value={qualityLocked ? "Да" : header.quality_document} disabled={qualityLocked} onChange={(e) => setH({ quality_document: e.target.value })}>
-              <option value="">по категории</option>
-              <option>Да</option><option>Нет</option>
+            <select aria-label="Док. качества" value={header.quality_document} onChange={(e) => setH({ quality_document: e.target.value })}>
+              <option>Нет</option><option>Да</option>
             </select>
           </label>
           <label>План. дата
@@ -194,7 +171,7 @@ export function RequestFormV2({ schema, seed, onCreated, onError, onNotice }: Pr
           </div>
         </div>
       </div>
-      <p className="rg-hint">Вставьте блок из Excel или Таблиц прямо в таблицу (Ctrl+V в любую ячейку) · Enter — вниз, Tab — вправо, на последней строке Enter добавляет строку · пустая категория, док. качества и план. дата в строке берутся из шапки · в одной заявке до {GRID_LIMIT} позиций</p>
+      <p className="rg-hint">Вставьте блок из Excel или Таблиц прямо в таблицу (Ctrl+V в любую ячейку) · Enter — вниз, Tab — вправо, на последней строке Enter добавляет строку · пустые док. качества и план. дата в строке берутся из шапки · в одной заявке до {GRID_LIMIT} позиций</p>
       <RequestGridV2
         positions={lines}
         header={header}
