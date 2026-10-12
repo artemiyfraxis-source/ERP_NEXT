@@ -282,6 +282,36 @@ def test_cut_crimping_both_sides_carries_both_terminals_once_and_no_manual_crimp
         "НВ4 0,2 160мм; ст. А: обжат терм. SXH-001T-P0.6N; ст. В: обжат терм. SPH-002T-P0.5S")
 
 
+def test_cut_crimping_two_contacts_names_each_ends_crimp_spec_and_missing_norms():
+    """Owner 12.10: the fitter must see which contact is end A / B and whose applicator, height and pull force it is."""
+    records = (TerminalRecord(
+        article="SXH-001T-P0.6N", applicator="S5/M5/A2", crimp_height="0,60 - 0,75", pull_force_min="9,8",
+        pull_force_max="39,2", strip="2,5", awg_from="28", awg_to="22",
+    ),)
+    config = _both_sides_config("T-DS1071-SC600")
+    config["ops"][0]["strip"] = {"a": True, "lenA": "", "b": True, "lenB": "3,5"}
+    for wire in (config["wires"][0], config["ops"][0]["wires"][0]):
+        wire.update(art="НВ4 0,2 белый")
+    config["ops"][0]["wires"].append({**config["ops"][0]["wires"][0], "art": "НВ4 0,2 зелёный"})
+    cut = build_etk(enrich_terminal_norms(config, records), CARDS, operation_library_commit="x")["operations"][0]
+
+    assert cut["fields"]["crimpEnds"] == [
+        {"ends": ["A"], "art": "SXH-001T-P0.6N", "name": "Контакт XH", "wire": "НВ4 0,2", "section": "24 AWG",
+         "applicator": "A2", "crimpHeight": "0,60 - 0,75", "pullForce": "9,8 - 39,2", "strip": "2,5"},
+        {"ends": ["B"], "art": "T-DS1071-SC600", "name": "Контакт", "wire": "НВ4 0,2", "section": "24 AWG",
+         "applicator": "", "crimpHeight": "", "pullForce": "", "strip": "3,5"},
+    ]
+    # Шапка старого вида (шаг ход операции, допуски) — без «?»: нет нормы — «не задано».
+    assert cut["fields"]["crimpHeight"] == "0,60 - 0,75 (А) / не задано (В)"
+
+    same = build_etk(enrich_terminal_norms(_both_sides_config("SXH-001T-P0.6N"), records), CARDS, operation_library_commit="x")
+    assert [(item["ends"], item["art"], item["strip"]) for item in same["operations"][0]["fields"]["crimpEnds"]] == [
+        (["A", "B"], "SXH-001T-P0.6N", "2")]
+    # Без снимка БД.ТЕР норм нет — и строк спецификации нет (выданные ЭТК показываются как были).
+    plain = build_etk(_both_sides_config("SXH-001T-P0.6N"), CARDS, operation_library_commit="x")
+    assert "crimpEnds" not in plain["operations"][0]["fields"]
+
+
 def test_one_side_cut_crimp_ignores_side_b_norms_and_keeps_its_etk():
     """An op without `epB` (old configs, «Сторона А/В») builds exactly as before even if a stray `terminalNormB` sits on it."""
     config = _both_sides_config("SXH-001T-P0.6N")
