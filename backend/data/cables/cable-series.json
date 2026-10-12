@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "notes": "Серии многожильных кабелей («Кабели»): общие значения серии и размеры. Каждое значение — {value, source: URL}; чего нет в источнике, того здесь нет. Строки БД.ПРОВ наследуют только в ПУСТЫЕ ячейки (python -m app.workflows.cable_series --dry-run). Заполнено 12.10.2026 по тому, что нашлось: LiYCY — листинги RS Components по товару LAPP UNITRONIC LiYCY (не листок LAPP: официальной страницы с таблицей найти не удалось); H05RN-F — страницы Faber Kabel и Nassau National Cable. CCC/CCCU, PAAR-TRONIC-CY, Cat5e (Cabeus, ParLan, Teldor, Klotz, REXANT), DS1057, КДВВГ, FLEXICORE ещё не разобраны: их строки в базе уже несут значения со своими источниками.",
+  "series": [
+    {
+      "key": "LiYCY",
+      "aliases": ["UNITRONIC LiYCY", "LiYCY"],
+      "standard": null,
+      "insulation": {"value": "ПВХ", "source": "https://uk.rs-online.com/web/p/cy-cable/4918719"},
+      "voltage_v": {"value": 250, "source": "https://uk.rs-online.com/web/p/cy-cable/4918719"},
+      "temp_min_c": {"value": -40, "source": "https://uk.rs-online.com/web/p/cy-cable/4918719"},
+      "temp_max_c": {"value": 80, "source": "https://uk.rs-online.com/web/p/cy-cable/4918719"},
+      "screen": {"value": "оплётка из лужёной меди", "source": "https://befr.rs-online.com/web/p/twisted-pair-multicore-data-cable/4451654"},
+      "makers": [{"value": "LAPP", "source": "https://uk.rs-online.com/web/p/cy-cable/4918719"}],
+      "sizes": [
+        {"cores": 2, "section_mm2": "0,34", "awg": "22", "outer_dia_mm": {"value": "4,9", "source": "https://nl.rs-online.com/web/p/twisted-pair-multicore-data-cable/4451755"}},
+        {"cores": 3, "section_mm2": "0,25", "awg": "24", "outer_dia_mm": {"value": "4,7", "source": "https://befr.rs-online.com/web/p/twisted-pair-multicore-data-cable/4451654"}},
+        {"cores": 7, "section_mm2": "0,5", "awg": "20", "outer_dia_mm": {"value": "7,6", "source": "https://befr.rs-online.com/web/p/twisted-pair-multicore-data-cable/4918747"}},
+        {"cores": 14, "section_mm2": "0,34", "awg": "22", "outer_dia_mm": {"value": "8,9", "source": "https://benl.rs-online.com/web/p/twisted-pair-multicore-data-cable/4918775"}},
+        {"cores": 25, "section_mm2": "0,34", "awg": "22", "outer_dia_mm": {"value": "11,9", "source": "https://uk.rs-online.com/web/p/cy-cable/4918719"}}
+      ]
+    },
+    {
+      "key": "H05RN-F",
+      "aliases": ["H05RN-F"],
+      "standard": {"value": "EN 50525-2-21", "source": "https://shop.faberkabel.de/en/Flexible-wires/Rubber-insulated-cables/H05RN-F/050166.html"},
+      "insulation": {"value": "резина", "source": "https://shop.faberkabel.de/en/Flexible-wires/Rubber-insulated-cables/H05RN-F/050166.html"},
+      "voltage_v": {"value": "300/500", "source": "https://nassaunationalcable.com/products/3g0-75-mm-bare-copper-unshielded-rubber-pcp-h05rn-f-300-500v-harmonized-cable"},
+      "temp_min_c": null,
+      "temp_max_c": null,
+      "screen": null,
+      "makers": [],
+      "sizes": []
+    }
+  ]
+}
