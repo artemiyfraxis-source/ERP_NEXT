@@ -2081,10 +2081,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-solder > div { display: grid; gap: 2px; padding: 8px 12px; border-radius: 10px; border: 1px solid #f0b8a8; background: #fff4f0; font-size: 13px; min-width: 220px; }
 .etk-solder small { font-size: 11px; color: #9a3412; }
 .etk-assumed { justify-self: start; padding: 1px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 11px; cursor: help; }
-.etk-defects > summary { cursor: pointer; list-style: none; }
-.etk-defects > summary::-webkit-details-marker { display: none; }
-.etk-defects > summary h4::after { content: "▾"; color: var(--muted-foreground); font-weight: 400; }
-.etk-defects:not([open]) > summary h4::after { content: "▸"; }
+/* Любой блок ЭТК сворачивается по заголовку: ▾ открыт, ▸ свёрнут. */
+.etk-fold > summary { cursor: pointer; list-style: none; }
+.etk-fold > summary::-webkit-details-marker { display: none; }
+.etk-fold > summary h4::after { content: "▾"; color: var(--muted-foreground); font-weight: 400; }
+.etk-fold:not([open]) > summary h4::after { content: "▸"; }
+.etk-fold:not([open]) > summary h4 { margin-bottom: 0; }
 .etk-def-intro { display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 11.5px; }
 .etk-def-group { display: grid; gap: 6px; margin-bottom: 10px; }
 .etk-def-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }

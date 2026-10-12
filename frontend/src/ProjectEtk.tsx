@@ -238,36 +238,31 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
       <span key={label}><small>{label}</small>{value}</span>)}</div>}
     {safety && <details className="etk-safety"><summary>Требование безопасности</summary><div>{safety}</div></details>}
     {!operation.card && <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
-    <section className="etk-sec" aria-label="Вход">
-      <h4><span className="etk-sec-n">{next()}</span>Вход</h4>
+    <EtkSection label="Вход" number={next()}>
       {hasInput ? <div className="etk-flow">
         <PartRows rows={operation.components} />
         <Rows title="Полуфабрикат на входе" rows={operation.semis} />
       </div> : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
-    </section>
-    <section className="etk-sec" aria-label="Оснастка">
-      <h4><span className="etk-sec-n">{next()}</span>Оснастка</h4>
+    </EtkSection>
+    <EtkSection label="Оснастка" number={next()}>
       {solder && <SolderPanel mode={solder} />}
       <ToolingBySection tooling={tooling} fixed />
-    </section>
-    {operation.card?.steps?.length || marks.length ? <section className="etk-sec" aria-label="Ход операции">
-      <h4><span className="etk-sec-n">{next()}</span>Ход операции</h4>
+    </EtkSection>
+    {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>
       {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
       {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
         <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small>Допуск: {step.tolerance}</small>}</li>
-      )}</ol> : null}</section> : null}
+      )}</ol> : null}</EtkSection> : null}
     {operation.card?.defects && <DefectsView text={operation.card.defects} code={operation.code || ""} number={next()} />}
-    {(figure || sketch) && <section className="etk-sec" aria-label="Эскиз">
-      <h4><span className="etk-sec-n">{next()}</span>Эскиз</h4>
+    {(figure || sketch) && <EtkSection label="Эскиз" number={next()}>
       <div className="etk-fig-row">
         {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
         {sketch}
       </div>
-    </section>}
-    {hasResult && <section className="etk-sec" aria-label="Результат">
-      <h4><span className="etk-sec-n">{next()}</span>Результат</h4>
+    </EtkSection>}
+    {hasResult && <EtkSection label="Результат" number={next()}>
       <ResultView label={resultLabel} result={operation.result} time={operation.time} batch={batch} />
-    </section>}
+    </EtkSection>}
   </article>;
 }
 
@@ -281,12 +276,23 @@ function SolderPanel({ mode }: { mode: SolderMode }) {
   </div>;
 }
 
+/** Блок ЭТК, который сворачивается щелчком по заголовку, как «Типовые дефекты» (владелец, 12.10: «не могу скрыть»).
+ *  Открыт по умолчанию; печать (etkPrint.ts) печатает все блоки. */
+function EtkSection({ label, number, children }: { label: string; number: number; children: ReactNode }) {
+  return <section className="etk-sec" aria-label={label}>
+    <details className="etk-fold" open>
+      <summary><h4><span className="etk-sec-n">{number}</span>{label}</h4></summary>
+      {children}
+    </details>
+  </section>;
+}
+
 /** Типовые дефекты карточками: на каждый дефект рисунок «Норма | Брак» из общей библиотеки (в Google — сплошной
  *  текст). Рисунок выбирается при показе по названию дефекта и коду операции. */
 function DefectsView({ text, code, number }: { text: string; code: string; number: number }) {
   const parsed = parseDefects(text);
   const count = parsed.groups.reduce((sum, group) => sum + group.items.length, 0);
-  return <details className="etk-sec etk-defects" open aria-label="Типовые дефекты">
+  return <details className="etk-sec etk-defects etk-fold" open aria-label="Типовые дефекты">
     <summary><h4><span className="etk-sec-n">{number}</span>Типовые дефекты{count ? ` · ${count}` : ""}</h4></summary>
     {count ? <>
       {parsed.intro.length > 0 && <small className="etk-def-intro">{parsed.intro.join(" · ")}</small>}
