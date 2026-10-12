@@ -1,6 +1,12 @@
 // Ported from TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permission (THIRD_PARTY_NOTICES.md).
 // Original: src/Techmap.Client/src/uml/uml-model.ts @ 0a456d2f7bd23288111e871058ebf55bf14426cd (branch codex/integration-m5-22).
-import type { RouteV2Document } from "../manufacturing-v2/route-v2-model";
+// ERP changes: Route V2 is not ported, so createUmlFromRouteV2 takes any route graph of that shape (Route v3 fits).
+/** ERP: the part of a Route V2 / v3 document the UML import reads. */
+export interface UmlRouteSource {
+  readonly nodes: readonly { readonly id: string; readonly title: string; readonly x: number; readonly y: number }[];
+  readonly edges: readonly { readonly id: string; readonly from: string; readonly to: string }[];
+}
+type RouteV2Document = UmlRouteSource;
 
 export type UmlOperationKind = "running" | "static";
 export interface UmlOperation {

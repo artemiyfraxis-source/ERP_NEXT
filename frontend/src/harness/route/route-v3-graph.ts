@@ -1,6 +1,7 @@
 // Ported from TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permission (THIRD_PARTY_NOTICES.md).
 // Original: src/Techmap.Client/src/manufacturing-v3/route-v3-graph.ts @ 0a456d2f7bd23288111e871058ebf55bf14426cd (branch codex/integration-m5-22).
-import type { RouteSourceRef } from "../manufacturing/route-source";
+// ERP changes: imports only.
+import type { RouteSourceRef } from "./route-source";
 import { refKey, routeV3NodeSize, type RouteV3Document, type RouteV3Node } from "./route-v3-model";
 
 const unique = (refs: readonly RouteSourceRef[]) => [...new Map(refs.map(ref => [refKey(ref), ref])).values()];

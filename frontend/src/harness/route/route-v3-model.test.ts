@@ -2,7 +2,8 @@
 // Original: src/Techmap.Client/src/manufacturing-v3/route-v3-model.test.ts @ 0a456d2f7bd23288111e871058ebf55bf14426cd (branch codex/integration-m5-22).
 import { describe, expect, it } from "vitest";
 import { appendRouteV3Fragment, captureRouteV3Selection, createInitialRouteV3, generateRouteV3, parseRouteV3, revealedRouteV3Ids, removeRouteV3Fragment, type RouteV3Fragment } from "./route-v3-model";
-import { createRouteDrawingCopy } from "../manufacturing/route-drawing-copy";
+// ERP changes: imports; a snapshot holds hidden IDs instead of a drawing copy (the last case is ERP's own).
+import { createIndependentIsolatedDocument, createIsolatedRouteDrawingCopy, createRouteDrawingCopy } from "./route-drawing-copy";
 import { physicalFixture } from "../editor/physical-topology-fixture";
 import { designToScene } from "../editor/HarnessDesignEditor";
 const source = physicalFixture();
@@ -39,7 +40,7 @@ describe("Route v3 snapshot workflow", () => {
     expect(copy.objectIds).toContain("W1");
     expect(copy.drawingCopy.hiddenObjectIds).toContain("W2");
     expect(JSON.stringify(source)).toBe(before);
-    expect(copy.drawingCopy.document).not.toBe(source);
+    expect(copy.drawingCopy.document).toBeUndefined();
   });
   it("resolves physical pipe selections into wires and includes no neighbouring material", () => {
     const copy = fragment("pipe", ["S0"]);
@@ -87,6 +88,15 @@ describe("Route v3 snapshot workflow", () => {
     const capture=captureRouteV3Selection(source,[...scene,extra],["graphic"]);
     expect(capture.objectIds).toEqual(["graphic"]);
     expect(capture.refs).toEqual([]);
-    expect(()=>createRouteDrawingCopy(source)).not.toThrow();
+    expect(()=>createIsolatedRouteDrawingCopy(source)).not.toThrow();
+  });
+  it("ERP: refuses a source snapshot carrying a full drawing and an isolated one without its geometry",()=>{
+    const route=appendRouteV3Fragment(createInitialRouteV3(source),fragment("a",["W1"]));
+    const f=route.fragments[0]!;
+    expect(JSON.stringify(f.drawingCopy)).not.toContain("connectors");
+    expect(parseRouteV3({...route,fragments:[{...f,drawingCopy:createIsolatedRouteDrawingCopy(source)}]})).toBeNull();
+    const isolated=createIsolatedRouteDrawingCopy(createIndependentIsolatedDocument(source,scene,["W1"])!);
+    expect(parseRouteV3({...route,fragments:[{...f,mode:"isolated",isolatedDrawingCopy:isolated}]})).not.toBeNull();
+    expect(parseRouteV3({...route,fragments:[{...f,mode:"isolated",isolatedDrawingCopy:createRouteDrawingCopy([])}]})).toBeNull();
   });
 });

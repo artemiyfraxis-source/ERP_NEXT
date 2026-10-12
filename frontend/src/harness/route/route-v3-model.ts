@@ -1,11 +1,21 @@
 // Ported from TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permission (THIRD_PARTY_NOTICES.md).
 // Original: src/Techmap.Client/src/manufacturing-v3/route-v3-model.ts @ 0a456d2f7bd23288111e871058ebf55bf14426cd (branch codex/integration-m5-22).
+// ERP changes: imports point at the ERP harness port; Route V2 is not ported (its card drawing type is declared here);
+// a source-mode snapshot keeps hidden object IDs only — never a full copy of the drawing (see route-drawing-copy.ts),
+// and parseRouteV3 refuses one that carries it. The server mirrors parseRouteV3 in
+// backend/app/modules/techcards/harness/route_v3.py and stores the document per КБ position.
 import type { HarnessDesignDocument } from "../editor/model";
 import type { EditorSceneObject } from "../editor/editor-types";
-import { buildRouteSourceItems, type RouteSourceRef } from "../manufacturing/route-source";
-import { createRouteDrawingCopy, parseRouteDrawingCopy, type RouteDrawingCopy } from "../manufacturing/route-drawing-copy";
-import type { UmlOperation } from "../uml/uml-model";
-import type { RouteV2Drawing } from "../manufacturing-v2/route-v2-model";
+import { buildRouteSourceItems, type RouteSourceRef } from "./route-source";
+import { createRouteDrawingCopy, parseRouteDrawingCopy, type RouteDrawingCopy } from "./route-drawing-copy";
+import type { UmlOperation } from "./uml-model";
+
+/** ERP: Route V2's per-card drawing (manufacturing-v2/route-v2-model.ts), the only part of V2 Route v3 reads. */
+export interface RouteV2Drawing {
+  readonly backgroundOpacity: number;
+  readonly drawingCopy?: RouteDrawingCopy;
+  readonly isolatedDrawingCopy?: RouteDrawingCopy;
+}
 
 export const ROUTE_V3_NODE_DEFAULT_WIDTH = 280;
 export const ROUTE_V3_NODE_DEFAULT_HEIGHT = 264;
@@ -112,7 +122,7 @@ export function captureRouteV3Selection(source: HarnessDesignDocument, scene: re
   // Index labels are part of the same visual object and must follow its visibility.
   for (const object of scene) if (object.metadata?.indexObjectId && ids.has(object.metadata.indexObjectId)) ids.add(object.id);
   const refs = buildRouteSourceItems(source).filter(item => ids.has(item.ref.id) || item.ref.kind === "cable" && source.cables.find(cable => cable.id === item.ref.id)?.memberWireIds.some(wireId => ids.has(wireId))).map(item => item.ref);
-  return { objectIds: [...ids], refs, drawingCopy: createRouteDrawingCopy(source, scene.filter(object => !ids.has(object.id)).map(object => object.id)) };
+  return { objectIds: [...ids], refs, drawingCopy: createRouteDrawingCopy(scene.filter(object => !ids.has(object.id)).map(object => object.id)) };
 }
 
 /** Every selected source object depends on its latest earlier saved state. */
@@ -179,6 +189,8 @@ export function parseRouteV3(value: unknown): RouteV3Document | null {
       const drawingCopy = parseRouteDrawingCopy(f.drawingCopy);
       const isolatedDrawingCopy = f.isolatedDrawingCopy === undefined ? undefined : parseRouteDrawingCopy(f.isolatedDrawingCopy);
       if (f.mode === "isolated" && !isolatedDrawingCopy) return null;
+      // ERP: a source copy never carries the drawing; an isolated one carries its own geometry.
+      if (drawingCopy.document || isolatedDrawingCopy && !isolatedDrawingCopy.document) return null;
       fragments.push({ ...f, objectIds: [...new Set(f.objectIds)], drawingCopy, ...(isolatedDrawingCopy ? { isolatedDrawingCopy } : {}) }); ids.add(f.id);
     }
     const nodeIds = new Set<string>();
@@ -187,7 +199,7 @@ export function parseRouteV3(value: unknown): RouteV3Document | null {
       nodeIds.add(node.id);
       if (node.rawRefs !== undefined && !refs(node.rawRefs)) return null;
       if (node.operatorConfirmed !== undefined && typeof node.operatorConfirmed !== "boolean") return null;
-      if (node.drawing) { if (!opacity(node.drawing.backgroundOpacity)) return null; if (node.drawing.drawingCopy) parseRouteDrawingCopy(node.drawing.drawingCopy); if (node.drawing.isolatedDrawingCopy) parseRouteDrawingCopy(node.drawing.isolatedDrawingCopy); }
+      if (node.drawing) { if (!opacity(node.drawing.backgroundOpacity)) return null; if (node.drawing.drawingCopy && parseRouteDrawingCopy(node.drawing.drawingCopy).document) return null; if (node.drawing.isolatedDrawingCopy && !parseRouteDrawingCopy(node.drawing.isolatedDrawingCopy).document) return null; }
       if ([node.width, node.height, node.quantity].some(n => n !== undefined && (typeof n !== "number" || !Number.isFinite(n) || n <= 0))) return null;
       if (node.inputNodeIds !== undefined && (!Array.isArray(node.inputNodeIds) || node.inputNodeIds.some((id: unknown) => !text(id)))) return null;
       if (node.operations !== undefined && (!Array.isArray(node.operations) || node.operations.some((op: UmlOperation) => !op || !text(op.id) || typeof op.title !== "string" || !["running", "static"].includes(op.kind) || [op.lengthMm,op.speedMmPerMinute,op.employees,op.quantity,op.minutesEach].some(n => !Number.isFinite(n) || n < 0)))) return null;

@@ -1,12 +1,19 @@
 // Ported from TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permission (THIRD_PARTY_NOTICES.md).
 // Original: src/Techmap.Client/src/manufacturing/route-drawing-copy.ts @ 0a456d2f7bd23288111e871058ebf55bf14426cd (branch codex/integration-m5-22).
+// ERP changes: the route is stored on the server next to the drawing (techcard_harness_routes), so a snapshot no
+// longer copies the whole drawing. A source-mode copy keeps only the hidden object IDs and is drawn over the position's
+// drawing at the route's drawing revision; only an isolated copy carries its own (small) geometry document.
+// Not ported: the localStorage legacy migration (migrateLegacyRouteDrawingCopy, legacyRouteDrawingCopyWarnings).
 import { parseHarnessDesignDocument, type HarnessDesignDocument } from "../editor/model";
 import type { EditorSceneObject } from "../editor/editor-types";
 import type { WireBlankEnd } from "../WireBlankCatalog";
 import { dimensionRouteKey, type DrawingDimension } from "../editor/drawing-dimensions";
 
+export type RouteDrawingDocument = Omit<HarnessDesignDocument, "manufacturingRoute">;
+
 export interface RouteDrawingCopy {
-  readonly document: Omit<HarnessDesignDocument, "manufacturingRoute">;
+  /** ERP: only an isolated copy has its own geometry; absent — the position's drawing (see resolveRouteDrawingCopy). */
+  readonly document?: RouteDrawingDocument;
   readonly hiddenObjectIds: readonly string[];
 }
 
@@ -145,70 +152,42 @@ function inspect(value: unknown, depth = 0, count = { value: 0 }): void {
   }
 }
 
-/** A bounded, independent snapshot. Route state is never copied back into the design. */
+/** A bounded, independent snapshot. Route state is never copied back into the design.
+ * ERP: `document` is present only in an isolated copy; a source copy is the hidden IDs alone. */
 export function parseRouteDrawingCopy(value: unknown): RouteDrawingCopy {
   if (!value || typeof value !== "object" || Array.isArray(value)) return fail();
   const candidate = value as Record<string, unknown>;
-  if (Object.keys(candidate).length !== 2 || !("document" in candidate) || !("hiddenObjectIds" in candidate)) return fail();
+  if (!("hiddenObjectIds" in candidate) || Object.keys(candidate).some(key => key !== "document" && key !== "hiddenObjectIds")) return fail();
   if (!Array.isArray(candidate.hiddenObjectIds) || candidate.hiddenObjectIds.length > 10_000 ||
     candidate.hiddenObjectIds.some(id => typeof id !== "string" || !id.trim() || id.length > 128) ||
     new Set(candidate.hiddenObjectIds).size !== candidate.hiddenObjectIds.length) return fail();
+  const hiddenObjectIds = [...candidate.hiddenObjectIds] as string[];
+  if (candidate.document === undefined) return { hiddenObjectIds };
   inspect(candidate.document);
   let serialized: string;
   try { serialized = JSON.stringify(candidate.document); } catch { return fail(); }
   if (new TextEncoder().encode(serialized).length > maximumCopyBytes) return fail();
   const document = parseHarnessDesignDocument(JSON.parse(serialized));
   const { manufacturingRoute: _route, ...copy } = document;
-  return { document: copy, hiddenObjectIds: [...candidate.hiddenObjectIds] };
+  return { document: copy, hiddenObjectIds };
 }
 
-export function createRouteDrawingCopy(document: HarnessDesignDocument, hiddenObjectIds: readonly string[] = []): RouteDrawingCopy {
+/** ERP: a source-mode copy — what to hide on the position's drawing; the drawing itself is not copied. */
+export function createRouteDrawingCopy(hiddenObjectIds: readonly string[] = []): RouteDrawingCopy {
+  return parseRouteDrawingCopy({ hiddenObjectIds });
+}
+
+/** ERP: an isolated copy — its own bounded geometry (from createIndependentIsolatedDocument) plus hidden IDs. */
+export function createIsolatedRouteDrawingCopy(document: HarnessDesignDocument, hiddenObjectIds: readonly string[] = []): RouteDrawingCopy {
   const { manufacturingRoute: _route, ...source } = document;
   return parseRouteDrawingCopy({ document: source, hiddenObjectIds });
 }
 
-/** Legacy migration keeps visibility by stable IDs; old overlay geometry remains a preview fallback. */
-export function migrateLegacyRouteDrawingCopy(document: HarnessDesignDocument, drawingObjects: readonly { readonly id: string; readonly hidden: boolean; readonly points: readonly { readonly x: number; readonly y: number }[] }[]): RouteDrawingCopy {
-  const base = createRouteDrawingCopy(document, drawingObjects.filter(item => item.hidden).map(item => item.id));
-  const states = new Map(drawingObjects.map(item => [item.id, item]));
-  const connectors = base.document.connectors.map(connector => {
-    const state = states.get(connector.id), point = state?.points[0];
-    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return connector;
-    return { ...connector, positions: { ...connector.positions, drawing: { ...point } } };
-  });
-  const wires = base.document.wires.map(wire => {
-    const state = states.get(wire.id);
-    if (!state || state.points.length !== wire.drawingRoute.length + 2 || state.points.some(point => !Number.isFinite(point.x) || !Number.isFinite(point.y))) return wire;
-    return { ...wire, drawingRoute: state.points.slice(1, -1).map(point => ({ ...point })) };
-  });
-  const topology = base.document.physicalTopology;
-  const physicalTopology = topology && { ...topology,
-    nodes: topology.nodes.map(node => {
-      const state = states.get(node.id), point = state?.points[0];
-      return !node.connectorId && point && Number.isFinite(point.x) && Number.isFinite(point.y) ? { ...node, position: { ...point } } : node;
-    }),
-    segments: topology.segments.map(segment => {
-      const state = states.get(segment.id);
-      return state && state.points.length === segment.path.points.length + 2 && state.points.slice(1, -1).every(point => Number.isFinite(point.x) && Number.isFinite(point.y))
-        ? { ...segment, path: { ...segment.path, points: state.points.slice(1, -1).map(point => ({ ...point })) } } : segment;
-    }),
-    joiningPipes: topology.joiningPipes?.map(pipe => {
-      const state = states.get(pipe.id);
-      return state && state.points.length === pipe.path.points.length + 2 && state.points.every(point => Number.isFinite(point.x) && Number.isFinite(point.y))
-        ? { ...pipe, start: { ...state.points[0]! }, end: { ...state.points.at(-1)! }, path: { ...pipe.path, points: state.points.slice(1, -1).map(point => ({ ...point })) } } : pipe;
-    }),
-  };
-  try { return createRouteDrawingCopy({ ...base.document, connectors, wires, ...(physicalTopology ? { physicalTopology } : {}) }, base.hiddenObjectIds); }
-  catch { return base; }
+/** ERP: the drawing a copy is shown on — its own geometry, or the position's drawing (the revision the route was
+ * built on). */
+export function resolveRouteDrawingCopy(copy: RouteDrawingCopy, drawing: HarnessDesignDocument): RouteDrawingDocument {
+  if (copy.document) return copy.document;
+  const { manufacturingRoute: _route, ...source } = drawing;
+  return source;
 }
 
-/** IDs whose legacy overlay geometry has no lossless persisted-model mapping. */
-export function legacyRouteDrawingCopyWarnings(document: HarnessDesignDocument, drawingObjects: readonly { readonly id: string; readonly points: readonly { readonly x: number; readonly y: number }[] }[]): readonly string[] {
-  const migratable = new Map<string, (count: number) => boolean>();
-  for (const connector of document.connectors) migratable.set(connector.id, count => count === 1);
-  for (const wire of document.wires) migratable.set(wire.id, count => count === wire.drawingRoute.length + 2);
-  for (const node of document.physicalTopology?.nodes ?? []) if (!node.connectorId) migratable.set(node.id, count => count === 1);
-  for (const segment of document.physicalTopology?.segments ?? []) migratable.set(segment.id, count => count === segment.path.points.length + 2);
-  for (const pipe of document.physicalTopology?.joiningPipes ?? []) migratable.set(pipe.id, count => count === pipe.path.points.length + 2);
-  return drawingObjects.filter(item => item.points.length > 0 && !migratable.get(item.id)?.(item.points.length)).map(item => item.id);
-}

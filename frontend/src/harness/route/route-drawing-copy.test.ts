@@ -2,10 +2,26 @@
 // Original: src/Techmap.Client/src/manufacturing/route-drawing-copy.test.ts @ 0a456d2f7bd23288111e871058ebf55bf14426cd (branch codex/integration-m5-22).
 import { expect, it } from "vitest";
 import { physicalFixture } from "../editor/physical-topology-fixture";
-import { createIndependentIsolatedDocument, createRouteDrawingCopy, legacyRouteDrawingCopyWarnings, migrateLegacyRouteDrawingCopy, parseRouteDrawingCopy } from "./route-drawing-copy";
+// ERP changes: an isolated copy is made by createIsolatedRouteDrawingCopy (a source copy holds hidden IDs only); the
+// legacy localStorage migration test is not ported; the source-copy and resolve cases are ERP's own.
+import { createIndependentIsolatedDocument, createIsolatedRouteDrawingCopy, createRouteDrawingCopy, parseRouteDrawingCopy, resolveRouteDrawingCopy } from "./route-drawing-copy";
 import { designToScene } from "../editor/HarnessDesignEditor";
 import { dimensionRouteKey } from "../editor/drawing-dimensions";
 import { applyEditorCommand } from "../editor/commands";
+
+it("ERP: a source copy keeps only hidden IDs and is shown on the position's drawing", () => {
+  const source = physicalFixture();
+  const copy = createRouteDrawingCopy(["W2", "S0"]);
+  expect(copy).toEqual({ hiddenObjectIds: ["W2", "S0"] });
+  expect(JSON.stringify(copy)).not.toContain("connectors");
+  expect(resolveRouteDrawingCopy(copy, source).wires).toEqual(source.wires);
+  expect(parseRouteDrawingCopy(JSON.parse(JSON.stringify(copy)))).toEqual(copy);
+  expect(() => parseRouteDrawingCopy({ hiddenObjectIds: ["W2", "W2"] })).toThrow();
+  expect(() => parseRouteDrawingCopy({ hiddenObjectIds: [], extra: 1 })).toThrow();
+  expect(() => parseRouteDrawingCopy({ document: {} })).toThrow();
+  const isolated = createIsolatedRouteDrawingCopy(createIndependentIsolatedDocument(source, designToScene(source, "drawing"), ["W1"])!);
+  expect(resolveRouteDrawingCopy(isolated, source).wires.map(wire => wire.id)).toEqual(["W1"]);
+});
 
 it("keeps complete pairs and rebinds dimensions through bends, free end movement and reopen", () => {
   const base = physicalFixture();
@@ -18,7 +34,7 @@ it("keeps complete pairs and rebinds dimensions through bends, free end movement
   expect(designToScene(isolated, "drawing").find(o => o.id === "W1")!.visibleWireStrokes!.length).toBeGreaterThan(2);
   const bent = applyEditorCommand(isolated, { type: "edit-detached-wire-bend", wireId: "W1", index: 0, position: { x: 300, y: 190 }, insert: true });
   const moved = applyEditorCommand(bent, { type: "set-wire-drawing-endpoint", wireId: "W1", end: "to", position: { x: 800, y: 40 } });
-  const reopened = parseRouteDrawingCopy(JSON.parse(JSON.stringify(createRouteDrawingCopy(moved)))).document;
+  const reopened = parseRouteDrawingCopy(JSON.parse(JSON.stringify(createIsolatedRouteDrawingCopy(moved)))).document!;
   expect(reopened.diffPairs).toEqual(source.diffPairs);
   expect(reopened.drawingDocuments!.dimensions![0]).toMatchObject({ pointCount: 3, to: 2, routeKey: dimensionRouteKey(reopened, reopened.wires[0]!), lengthMm: 385 });
   expect(designToScene(reopened, "drawing").filter(o => o.kind === "dimension")).toHaveLength(2);
@@ -26,26 +42,6 @@ it("keeps complete pairs and rebinds dimensions through bends, free end movement
   expect(reopened.wires.map(w => w.lengthMm)).toEqual([385, 385]);
   expect(createIndependentIsolatedDocument(source, designToScene(source, "drawing"), ["W1"])!.diffPairs).toEqual([]);
   expect(source).toEqual(before);
-});
-
-it("migrates legacy visibility and authored P geometry without changing source lengths", () => {
-  const source = physicalFixture();
-  const before = structuredClone(source);
-  const copy = migrateLegacyRouteDrawingCopy(source, [
-    { id: "S0", hidden: true, points: [{ x: 150, y: 40 }, { x: 190, y: 120 }, { x: 210, y: 200 }] },
-    { id: "NA", hidden: false, points: [{ x: 999, y: 999 }] },
-  ]);
-  expect(copy.hiddenObjectIds).toEqual(["S0"]);
-  expect(copy.document.physicalTopology!.segments[0]!.path.points).toEqual([{ x: 190, y: 120 }]);
-  expect(copy.document.physicalTopology!.nodes[0]!.position).toEqual(source.physicalTopology!.nodes[0]!.position);
-  expect(copy.document.wires.map(wire => wire.lengthMm)).toEqual(source.wires.map(wire => wire.lengthMm));
-  expect(source).toEqual(before);
-  expect(legacyRouteDrawingCopyWarnings(source, [{ id: "cover", points: [{ x: 1, y: 2 }] }])).toEqual(["cover"]);
-  expect(legacyRouteDrawingCopyWarnings(source, [
-    { id: "S0", points: [{ x: 1, y: 2 }] },
-    { id: "NA", points: [{ x: 999, y: 999 }] },
-    { id: "S1", points: [{ x: 1, y: 2 }, { x: 3, y: 4 }] },
-  ])).toEqual(["S0", "NA"]);
 });
 
 it("creates a detached drawing model from selected material and drops physical routing", () => {
@@ -80,11 +76,11 @@ it("round-trips the isolated snapshot through route Save/reopen parsing", () => 
   const source = physicalFixture();
   const scene = designToScene(source, "drawing");
   const isolated = createIndependentIsolatedDocument(source, scene, ["W1"]);
-  const saved = createRouteDrawingCopy(isolated!, []);
+  const saved = createIsolatedRouteDrawingCopy(isolated!, []);
   const reopened = parseRouteDrawingCopy(JSON.parse(JSON.stringify(saved)));
-  expect(reopened.document.physicalTopology).toBeUndefined();
-  expect(reopened.document.wires[0]!.drawingRoute).toEqual([]);
-  expect(reopened.document.wires[0]!.id).toBe("W1");
+  expect(reopened.document!.physicalTopology).toBeUndefined();
+  expect(reopened.document!.wires[0]!.drawingRoute).toEqual([]);
+  expect(reopened.document!.wires[0]!.id).toBe("W1");
 });
 
 it("retains selected connector identity and assigns deterministic parallel lanes", () => {
@@ -119,7 +115,7 @@ it("creates distinct horizontal lanes without connectors and inherits end treatm
   expect(ends.every(e => e.from.y === e.to.y)).toBe(true);
   expect(isolated.wires[0]!.drawingEndStyles).toEqual(inherited.get("W1"));
   expect(source).toEqual(before);
-  expect(parseRouteDrawingCopy(createRouteDrawingCopy(isolated)).document.wires).toEqual(isolated.wires);
+  expect(parseRouteDrawingCopy(createIsolatedRouteDrawingCopy(isolated)).document!.wires).toEqual(isolated.wires);
 });
 
 it("preserves explicit end edits over inherited styles and both selected attachments", () => {
