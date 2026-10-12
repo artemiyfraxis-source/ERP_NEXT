@@ -34,7 +34,10 @@ from .application import (
     deactivate_user,
     release_login_locks,
     revoke_api_token,
+    ViewAsRefused,
     role_label,
+    start_view_as,
+    stop_view_as,
     toggle_admin_mode,
 )
 from .access import access_overview, save_level_matrix, save_user_access
@@ -103,6 +106,11 @@ def _principal_result(principal: Principal) -> dict:
         "role_label": role_label(principal),
         "can_admin_mode": principal.can_admin_mode,
         "admin_mode": principal.admin_mode,
+        # «Смотреть как сотрудник»: `user` above is the viewed employee; who really looks and until when.
+        "viewing": None if principal.viewer is None else {
+            "viewer": {"id": str(principal.viewer.id), "name": principal.viewer.name},
+            "until": principal.view_as_until.isoformat() if principal.view_as_until else None,
+        },
     }
 
 
@@ -232,6 +240,56 @@ def admin_mode_route(
     return _principal_result(updated)
 
 
+class ViewAsInput(BaseModel):
+    user_id: UUID
+
+
+def _identity_session(request: Request):
+    session = getattr(request.state, "identity_session", None)
+    if session is None:
+        raise HTTPException(status_code=401, detail="Требуется вход в ERP")
+    return session
+
+
+@router.post("/view-as")
+def start_view_as_route(
+    payload: ViewAsInput,
+    request: Request,
+    principal: Annotated[Principal, Depends(access_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """«Смотреть как сотрудник»: from now on this session reads as that employee (2 h, writes refused)."""
+    session = _identity_session(request)
+    try:
+        viewed = start_view_as(session, principal, payload.user_id, now, uow_factory())
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден.") from error
+    except ViewAsRefused as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except AuthenticationError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    return _principal_result(viewed)
+
+
+@router.delete("/view-as")
+def stop_view_as_route(
+    request: Request,
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(identity_uow_factory)],
+) -> dict:
+    """«Вернуться к себе» — the one write a viewing session may make besides the logout."""
+    session = _identity_session(request)
+    try:
+        own = stop_view_as(session, principal, now, uow_factory())
+    except AuthenticationError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    return _principal_result(own)
+
+
 @router.get("/me")
 def me(principal: Annotated[Principal, Depends(authenticated_principal)]) -> dict:
     return _principal_result(principal)
@@ -290,11 +348,13 @@ def logout_route(
 ) -> None:
     secure = bool(getattr(request.app.state, "cookie_secure", True))
     session_cookie, csrf_cookie = cookie_names(secure)
+    # While viewing as someone, the person signing out is the viewer; the view ends with the session.
     logout(
         security_cookie(request, session_cookie),
-        principal.actor,
+        principal.viewer or principal.actor,
         now,
         uow_factory(),
+        viewed=principal.actor if principal.viewer is not None else None,
     )
     response.delete_cookie(session_cookie, path="/", secure=secure, samesite="strict")
     response.delete_cookie(csrf_cookie, path="/", secure=secure, samesite="strict")

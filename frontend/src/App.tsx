@@ -48,6 +48,7 @@ import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
 import { ProfilePanel } from "./ProfilePanel";
+import { ViewAsBanner } from "./ViewAs";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
 type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean } };
@@ -164,6 +165,19 @@ export function App() {
     }
   }
 
+  // «Смотреть как сотрудник» (из своей карточки): весь ERP глазами выбранного — с главного экрана, как у него.
+  async function startViewAs(employee: { id: string }) {
+    const viewed = await identityApi.viewAs(employee.id);
+    setPrincipal(viewed);
+    go({ section: "cabinet", block: null });
+  }
+  // «Вернуться к себе» — туда, откуда начали: своя карточка.
+  async function exitViewAs() {
+    const own = await identityApi.stopViewAs();
+    setPrincipal(own);
+    go({ section: "card", block: null });
+  }
+
   async function signOut() {
     setShellError("");
     const leaving = principal;
@@ -213,6 +227,7 @@ export function App() {
   if (place.harness && visibleNav.some(({ id }) => id === "projects")) {
     return <>
       <div key={principal.user.id} className="harness-host" inert={expired}>
+        <ViewAsBanner principal={principal} onExit={exitViewAs} />
         <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
           {place.harness.library
             ? <ComponentLibraryPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
@@ -271,6 +286,7 @@ export function App() {
         </div>
       </aside>
       <main className="workspace main">
+        <ViewAsBanner principal={principal} onExit={exitViewAs} />
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
         {runsTheSystem(principal) && <UpdateFailure />}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
@@ -304,6 +320,7 @@ export function App() {
           openStaffEdit={openStaffEdit}
           openCard={openCard}
           openStaff={() => navigate("staff")}
+          startViewAs={startViewAs}
         />}
         {activeSection === "access" && <AccessPage />}
       </main>

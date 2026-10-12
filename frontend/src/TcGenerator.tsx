@@ -42,6 +42,8 @@ import {
   updateEndpoint,
   updateWire,
   wireDiaFromRecords,
+  WIRE_DIA_MISSING_,
+  WIRE_DIA_OLD_,
   type Comp,
   type Connection,
   type Endpoint,
@@ -63,8 +65,10 @@ import {
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { MarkTable, markTotal } from "./GenMarkTable";
-import { PinoutAsk, PinoutChip, PinoutDiagram, PinoutEditor } from "./PinoutDiagram";
-import { confirmPinout, pinoutEnds, pinoutRecord, restorePinout } from "./pinoutCheck";
+import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
+import {
+  assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinUnits, recolorWire, restorePinout, swapPins, unassignPin,
+} from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
@@ -120,13 +124,13 @@ function loadRefs(force = false): Promise<Refs> {
 async function readRefs(): Promise<Refs> {
   const safe = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
   const noRecords = { metadata: null, columns: [], records: [] };
-  const [templates, op, ter, coax, kabAwg, kabCoax, mat] = await Promise.all([
+  const [templates, op, ter, coax, wireDia, kabCoax, mat] = await Promise.all([
     safe(techcardsApi.templates(), { metadata: null, items: [] }),
     safe(referencesApi.techOperations("op", "", 5000), noRecords),
     safe(referencesApi.techOperations("ter", "", 5000), noRecords),
     safe(referencesApi.techOperations("coax", "", 5000), noRecords),
-    safe(referencesApi.techOperations("kab_awg", "", 5000), noRecords),
-    safe(referencesApi.techOperations("kab_coax", "", 5000), noRecords),
+    safe(referencesApi.wireDia(), { columns: [], series: [], records: [] }),
+    safe(referencesApi.coaxDia(), noRecords),
     safe(referencesApi.techOperations("mat", "", 5000), noRecords),
   ]);
   return {
@@ -138,7 +142,7 @@ async function readRefs(): Promise<Refs> {
     ops: (op?.records || []).map((record) => opFromFields(record.fields)),
     terRecords: (ter?.records || []).map((record) => terFromFields(record.id, record.fields)).filter((record) => record.article),
     coaxRecords: (coax?.records || []).map((record) => coaxFromFields(record.fields)),
-    wireDia: wireDiaFromRecords((kabAwg?.records || []).map((record) => record.fields)),
+    wireDia: wireDiaFromRecords((wireDia?.records || []).map((record) => record.fields)),
     coaxCableDia: coaxDiaFromRecords((kabCoax?.records || []).map((record) => record.fields)),
     markMats: markMatsFromRecords((mat?.records || []).map((record) => record.fields)),
   };
@@ -457,6 +461,25 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const links = gen.connections_();
   const pinEnds = pinoutEnds(gen, S);
   const pinOpenEnds = pinEnds.filter((end) => !end.checked);
+  const pinUnitList = pinUnits(gen, S);
+  const pinFree = freeSide(gen, S);
+  const pinHousings = usePinHousings(pinEnds.map((end) => end.conn));
+  const pinCounts = Object.fromEntries(pinEnds.map((end) => [end.id, pinHousings[end.conn]?.n || null]));
+  // Автозаполнение (владелец 12.10): распиновка пустая, а число контактов каждого разъёма известно из базы разъёмов —
+  // провода встают по порядку сами (одна сторона — 1…N, две — пин-в-пин). Один раз на набор разъёмов и проводов:
+  // очищенную вручную распиновку не перезаполняет; не помещается — не трогает, предупреждение под схемой.
+  const pinAutoKey = pinEnds.map((end) => `${end.id}:${end.conn}:${end.wires.map((w) => `${w.idx}x${w.qty}`).join(".")}`).join("|");
+  const pinCountsKey = pinEnds.map((end) => pinCounts[end.id] ?? "?").join(",");
+  const pinAutoDone = useRef(new Set<string>());
+  useEffect(() => {
+    if (!pinAutoKey || pinAutoDone.current.has(pinAutoKey)) return;
+    if (pinEnds.some((end) => end.wires.some((w) => w.text))) { pinAutoDone.current.add(pinAutoKey); return; }
+    if (pinEnds.some((end) => !pinCounts[end.id])) return;
+    pinAutoDone.current.add(pinAutoKey);
+    const plan = autoFillPinout(D, S, pinCounts);
+    if (!plan.warnings.length) update(() => plan.state);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinAutoKey, pinCountsKey]);
   const cut = gen.cutLengthInfo();
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
@@ -464,6 +487,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Одну сторону автомат обжать может, другую — нет: почему другая остаётся ручной.
   const crimpSideNote = crimpSides.length === 1 ? gen.crimpCutSideNote_(crimpSides[0] === "A" ? "B" : "A") : "";
   const note = gen.twistNote();
+  const diaMissing = gen.twistDiaMissing_();
+  const diaOld = gen.twistDiaOld_();
 
   function selectComps(list: Comp[], value: string, onChange: (id: string) => void, label: string, empty = "— нет —") {
     return <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
@@ -860,9 +885,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     <div className="opt-grid">
       <Field label="Шаг свивки"><UnitInput unit="мм" aria-label="Шаг свивки" value={S.twist.pitch} placeholder="—" onChange={(event) => twistPitchInput(event.target.value)} /></Field>
       <Field label="Z₀"><UnitInput unit="Ом" aria-label="Z0" value={S.twist.z0} placeholder="по шагу" onChange={(event) => twistZ0Input(event.target.value)} /></Field>
-      <Field label="Ø провода"><UnitInput unit="мм" aria-label="Ø провода" className={gen.twistDiaValue().trim() ? undefined : "is-warn"} value={gen.twistDiaValue()} placeholder="из СПР.КАБ"
+      <Field label="Ø провода"><UnitInput unit="мм" aria-label="Ø провода" className={gen.twistDiaValue().trim() ? undefined : "is-warn"} value={gen.twistDiaValue()} placeholder="из базы монтажных"
         onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, dia: event.target.value, diaManual: !!event.target.value.trim() } }))} /></Field>
     </div>
+    {diaMissing.length > 0 && <small className="opt-note tone-danger">⚠ {WIRE_DIA_MISSING_}: {diaMissing.map((name) => `«${name}»`).join(", ")}</small>}
+    {diaOld.length > 0 && <small className="opt-note tone-warn">⚠ {WIRE_DIA_OLD_}: {diaOld.map((name) => `«${name}»`).join(", ")}</small>}
     {note.text && <small className={note.explicit ? "opt-note" : "opt-note tone-danger"}>{note.text}{note.warn && <><br /><span className="tone-danger">⚠ {note.warn}</span></>}</small>}
   </Toggle>;
 
@@ -1008,7 +1035,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {sideSection("B")}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
       <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} /></div>
-      <PinoutDiagram ends={pinEnds} links={links.list} />
+      <PinoutBoard ends={pinEnds} links={links.list} units={pinUnitList} housings={pinHousings} free={pinFree}
+        wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={pinFitWarnings(pinEnds, pinCounts)}
+        onAssign={(epId, idx, unit, pin) => update((current) => assignPin(D, current, epId, idx, unit, pin))}
+        onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
+        onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
+        onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}
+        onAutoFill={() => { const plan = autoFillPinout(D, S, pinCounts); update(() => plan.state); return plan; }} />
       {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
         <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
       {links.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}

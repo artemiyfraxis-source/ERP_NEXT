@@ -115,7 +115,19 @@ echo "== restore drill on $PGHOST:${PGPORT:-5432}"
 drop_all
 q postgres -c "CREATE DATABASE erp" >/dev/null
 head=$(alembic heads | awk 'NR == 1 { print $1 }')
-previous=$(cd "$repo/backend" && python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; print(ScriptDirectory.from_config(Config('alembic.ini')).get_revision('head').down_revision)")
+down_of() { (cd "$repo/backend" && python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; print(ScriptDirectory.from_config(Config('alembic.ini')).get_revision('$1').down_revision)"); }
+# The drill needs a dump older than the code in schema, not only in data: a data-only head (0107_stage_ladder) leaves
+# the objects as they were, so step back to the nearest revision the head's schema differs from.
+previous=$(down_of head)
+for _ in 1 2 3 4 5 6 7 8; do
+  alembic upgrade "$previous" >/dev/null 2>&1 || { echo "alembic upgrade $previous failed" >&2; exit 1; }
+  objects erp > "$work/objects-probe.txt"
+  alembic upgrade head >/dev/null 2>&1 || { echo "alembic upgrade head failed" >&2; exit 1; }
+  cmp -s "$work/objects-probe.txt" <(objects erp) || break
+  previous=$(down_of "$previous")
+  q postgres -c "DROP DATABASE erp" >/dev/null && q postgres -c "CREATE DATABASE erp" >/dev/null
+done
+q postgres -c "DROP DATABASE erp" >/dev/null && q postgres -c "CREATE DATABASE erp" >/dev/null
 alembic upgrade "$previous" >/dev/null 2>&1 || { echo "alembic upgrade $previous failed" >&2; exit 1; }
 (cd "$repo/backend" && ERP_DATABASE_URL="$DRILL_URL_BASE/erp" python -m tests.migrations.seed_any_revision >/dev/null) \
   || { echo "seed failed" >&2; exit 1; }

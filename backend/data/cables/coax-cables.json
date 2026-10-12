@@ -10,15 +10,15 @@
    "family": ".047\" полужёсткий (Micro-Coax UT-047C / EZ-47-SP / Smiths 0.047)",
    "construction": {
     "core": {
-     "material": "SPCW (медь посеребрённая)",
+     "material": "медь посеребрённая",
      "d_mm": 0.287
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 0.94
     },
     "shield": {
-     "type": "медная трубка, посеребрённая (вар. луж. / Al-TP)",
+     "type": "трубка медная посеребрённая",
      "d_mm": 1.19
     },
     "jacket": null
@@ -325,15 +325,15 @@
    "family": ".086\" полужёсткий, M17/133 (UT-085C, H+S SR_86, EZ M17/133). Hand-formable/«оплётка с заливкой» — другие кабели (напр. SUCOFORM 86), их параметры сюда не входят",
    "construction": {
     "core": {
-     "material": "SPCW (у Smiths/H+S — SPCCS)",
+     "material": "медь посеребрённая",
      "d_mm": 0.511
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 1.676
     },
     "shield": {
-     "type": "медная трубка (H+S: лужёная)",
+     "type": "трубка медная",
      "d_mm": 2.197
     },
     "jacket": null
@@ -665,15 +665,15 @@
    "family": ".141\" полужёсткий, M17/130 (UT-141C, H+S SR_141, EZ M17/130)",
    "construction": {
     "core": {
-     "material": "SPCW (у Smiths — SPCCS)",
+     "material": "медь посеребрённая",
      "d_mm": 0.92
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 2.985
     },
     "shield": {
-     "type": "медная трубка (H+S: лужёная)",
+     "type": "трубка медная",
      "d_mm": 3.581
     },
     "jacket": null
@@ -975,15 +975,15 @@
      "d_mm": 0.47
     },
     "dielectric": {
-     "material": "PTFE",
+     "material": "ПТФЭ",
      "d_mm": 1.48
     },
     "shield": {
-     "type": "посеребрённая медная фольга 100 % (1.71) + лужёная медная оплётка 99.4 %",
+     "type": "фольга медная посеребрённая + оплётка медь лужёная",
      "d_mm": 2.11
     },
     "jacket": {
-     "material": "FEP",
+     "material": "оболочка ФЭП",
      "d_mm": 2.65
     }
    },
@@ -1196,19 +1196,19 @@
    "family": "Harbour Industries (Marmon) Rock SStable, спирально-ленточный гибкий .086",
    "construction": {
     "core": {
-     "material": "SPCCS сплошная",
+     "material": "сталь омеднённая посеребрённая сплошная",
      "d_mm": 0.508
     },
     "dielectric": {
-     "material": "PTFE",
+     "material": "ПТФЭ",
      "d_mm": 1.63
     },
     "shield": {
-     "type": "спиральная посеребрённая медная лента (1.80) + посеребрённая медная оплётка",
+     "type": "лента медная посеребрённая + оплётка медь посеребрённая",
      "d_mm": 2.13
     },
     "jacket": {
-     "material": "FEP синий",
+     "material": "оболочка ФЭП",
      "d_mm": 2.64
     }
    },
@@ -1441,15 +1441,15 @@
    "family": ".250\" полужёсткий, M17/129 (UT-250C, H+S SR_250_M17)",
    "construction": {
     "core": {
-     "material": "SPC сплошная",
+     "material": "медь посеребрённая сплошная",
      "d_mm": 1.628
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 5.309
     },
     "shield": {
-     "type": "медная трубка",
+     "type": "трубка медная",
      "d_mm": 6.35
     },
     "jacket": null
@@ -1695,19 +1695,19 @@
    "family": "M17/60, гибкий PTFE, двойная оплётка, моножила",
    "construction": {
     "core": {
-     "material": "SPCCS сплошная (медь-сталь посеребр.)",
+     "material": "сталь омеднённая посеребрённая сплошная",
      "d_mm": 0.94
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 2.95
     },
     "shield": {
-     "type": "двойная посеребрённая медная оплётка (3.5 / 4.06)",
+     "type": "оплётка медь посеребрённая двойная",
      "d_mm": 4.06
     },
     "jacket": {
-     "material": "FEP коричневый",
+     "material": "оболочка ФЭП",
      "d_mm": 4.95
     }
    },
@@ -1977,19 +1977,19 @@
    "family": "M17/128, гибкий PTFE, двойная оплётка, витая жила",
    "construction": {
     "core": {
-     "material": "SPC витая 19×0.203",
+     "material": "медь посеребрённая витая",
      "d_mm": 0.97
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 2.95
     },
     "shield": {
-     "type": "двойная посеребрённая медная оплётка (3.5 / 3.96)",
+     "type": "оплётка медь посеребрённая двойная",
      "d_mm": 3.96
     },
     "jacket": {
-     "material": "FEP коричневый",
+     "material": "оболочка ФЭП",
      "d_mm": 4.95
     }
    },
@@ -2239,19 +2239,19 @@
    "family": "M17/113, одинарная оплётка",
    "construction": {
     "core": {
-     "material": "SPCCS 7×0.17",
+     "material": "сталь омеднённая посеребрённая витая",
      "d_mm": 0.51
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 1.52
     },
     "shield": {
-     "type": "посеребрённая медная оплётка (H+S 95 %)",
+     "type": "оплётка медь посеребрённая",
      "d_mm": 1.98
     },
     "jacket": {
-     "material": "FEP",
+     "material": "оболочка ФЭП",
      "d_mm": 2.49
     }
    },
@@ -2478,19 +2478,19 @@
    "family": "M17/152, двойная оплётка (RG-316DS, H+S Enviroflex 316 D)",
    "construction": {
     "core": {
-     "material": "SPCCS 7×0.17",
+     "material": "сталь омеднённая посеребрённая витая",
      "d_mm": 0.51
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 1.52
     },
     "shield": {
-     "type": "две посеребрённые медные оплётки",
+     "type": "оплётка медь посеребрённая двойная",
      "d_mm": 2.44
     },
     "jacket": {
-     "material": "FEP",
+     "material": "оболочка ФЭП",
      "d_mm": 2.9
     }
    },
@@ -2708,19 +2708,19 @@
    "family": "M17/93, сверхтонкий PTFE",
    "construction": {
     "core": {
-     "material": "SPCCS 7×0.102",
+     "material": "сталь омеднённая посеребрённая витая",
      "d_mm": 0.3
     },
     "dielectric": {
-     "material": "PTFE сплошной",
+     "material": "ПТФЭ сплошной",
      "d_mm": 0.86
     },
     "shield": {
-     "type": "посеребрённая медная оплётка (Lapp 96 %)",
+     "type": "оплётка медь посеребрённая",
      "d_mm": 1.3
     },
     "jacket": {
-     "material": "FEP",
+     "material": "оболочка ФЭП",
      "d_mm": 1.8
     }
    },
@@ -2968,19 +2968,19 @@
    "family": "Микрокоаксиал 0.81 мм — под U.FL-LP-040 / MHF 4; производитель кабеля не идентифицирован",
    "construction": {
     "core": {
-     "material": "посеребрённая медь 7×0.05",
+     "material": "медь посеребрённая витая",
      "d_mm": 0.15
     },
     "dielectric": {
-     "material": "FEP",
+     "material": "ФЭП",
      "d_mm": 0.4
     },
     "shield": {
-     "type": "посеребрённая медная оплётка",
+     "type": "оплётка медь посеребрённая",
      "d_mm": 0.65
     },
     "jacket": {
-     "material": "FEP",
+     "material": "оболочка ФЭП",
      "d_mm": 0.81
     }
    },
@@ -3123,19 +3123,19 @@
    "family": "Микрокоаксиал 1.13 мм — Taoglas 300115B000098A (под U.FL-LP-068 / MHF I)",
    "construction": {
     "core": {
-     "material": "посеребрённая медь (7×0.08 по Multicomp)",
+     "material": "медь посеребрённая витая",
      "d_mm": 0.24
     },
     "dielectric": {
-     "material": "FEP",
+     "material": "ФЭП",
      "d_mm": 0.68
     },
     "shield": {
-     "type": "лужёная медная оплётка 90 %",
+     "type": "оплётка медь лужёная 90 %",
      "d_mm": 0.9
     },
     "jacket": {
-     "material": "FEP серый",
+     "material": "оболочка ФЭП",
      "d_mm": 1.13
     }
    },
@@ -3322,19 +3322,19 @@
    "family": "Микрокоаксиал 1.37 мм — Taoglas PRT.001221 (двойной экран) / I-PEX MHF I кабель 1.37 — разные конструкции",
    "construction": {
     "core": {
-     "material": "посеребрённая медь 7×0.102",
+     "material": "медь посеребрённая витая",
      "d_mm": 0.31
     },
     "dielectric": {
-     "material": "FEP / фторопласт",
+     "material": "ФЭП",
      "d_mm": 0.88
     },
     "shield": {
-     "type": "I-PEX: лужёная медная оплётка 1.13; Taoglas: Cu-лавсан лента 0.95 + посеребр. оплётка 90 %",
+     "type": "оплётка медь лужёная",
      "d_mm": 1.15
     },
     "jacket": {
-     "material": "FEP / фторопласт",
+     "material": "оболочка ФЭП",
      "d_mm": 1.37
     }
    },
@@ -3558,19 +3558,19 @@
    "family": "Times Microwave LMR, вспененный PE",
    "construction": {
     "core": {
-     "material": "медь сплошная (BC)",
+     "material": "медь сплошная",
      "d_mm": 0.94
     },
     "dielectric": {
-     "material": "вспененный PE",
+     "material": "ПЭ вспененный",
      "d_mm": 2.79
     },
     "shield": {
-     "type": "Al-лента 100 % (2.95) + лужёная медная оплётка",
+     "type": "фольга алюминиевая + оплётка медь лужёная",
      "d_mm": 3.53
     },
     "jacket": {
-     "material": "PE",
+     "material": "оболочка ПЭ",
      "d_mm": 4.95
     }
    },
@@ -3808,19 +3808,19 @@
    "family": "Times Microwave LMR, вспененный PE",
    "construction": {
     "core": {
-     "material": "медь сплошная (BC)",
+     "material": "медь сплошная",
      "d_mm": 1.42
     },
     "dielectric": {
-     "material": "вспененный PE",
+     "material": "ПЭ вспененный",
      "d_mm": 3.81
     },
     "shield": {
-     "type": "Al-лента 100 % (3.94) + лужёная медная оплётка",
+     "type": "фольга алюминиевая + оплётка медь лужёная",
      "d_mm": 4.52
     },
     "jacket": {
-     "material": "PE",
+     "material": "оболочка ПЭ",
      "d_mm": 6.1
     }
    },
@@ -4063,19 +4063,19 @@
    "family": "Times Microwave LMR, вспененный PE",
    "construction": {
     "core": {
-     "material": "медь-алюминий (BCCAl) сплошная",
+     "material": "алюминий омеднённый сплошной",
      "d_mm": 2.74
     },
     "dielectric": {
-     "material": "вспененный PE",
+     "material": "ПЭ вспененный",
      "d_mm": 7.24
     },
     "shield": {
-     "type": "Al-лента 100 % (7.39) + лужёная медная оплётка",
+     "type": "фольга алюминиевая + оплётка медь лужёная",
      "d_mm": 8.13
     },
     "jacket": {
-     "material": "PE чёрный",
+     "material": "оболочка ПЭ",
      "d_mm": 10.29
     }
    },
@@ -4324,19 +4324,19 @@
    "family": "японский фидер D-FB (JIS-тип), вспененный PE",
    "construction": {
     "core": {
-     "material": "отожжённая медь сплошная",
+     "material": "медь отожжённая сплошная",
      "d_mm": 1.8
     },
     "dielectric": {
-     "material": "вспененный PE",
+     "material": "ПЭ вспененный",
      "d_mm": 5.0
     },
     "shield": {
-     "type": "Al-ламинированная лента (5.1) + оплётка луж. медь",
+     "type": "фольга алюминиевая + оплётка медь лужёная",
      "d_mm": 5.8
     },
     "jacket": {
-     "material": "PVC",
+     "material": "оболочка ПВХ",
      "d_mm": 7.7
     }
    },
@@ -4536,19 +4536,19 @@
    "family": "японский фидер D-FB (JIS-тип), вспененный PE",
    "construction": {
     "core": {
-     "material": "отожжённая медь сплошная",
+     "material": "медь отожжённая сплошная",
      "d_mm": 2.8
     },
     "dielectric": {
-     "material": "вспененный PE",
+     "material": "ПЭ вспененный",
      "d_mm": 7.8
     },
     "shield": {
-     "type": "Al-лента (7.9) + оплётка луж. медь",
+     "type": "фольга алюминиевая + оплётка медь лужёная",
      "d_mm": 8.8
     },
     "jacket": {
-     "material": "PVC",
+     "material": "оболочка ПВХ",
      "d_mm": 11.0
     }
    },
@@ -4750,19 +4750,19 @@
    "family": "японский фидер D-FB (JIS-тип), вспененный PE",
    "construction": {
     "core": {
-     "material": "отожжённая медь сплошная",
+     "material": "медь отожжённая сплошная",
      "d_mm": 3.5
     },
     "dielectric": {
-     "material": "вспененный PE",
+     "material": "ПЭ вспененный",
      "d_mm": 10.0
     },
     "shield": {
-     "type": "Al-лента (10.1) + оплётка луж. медь",
+     "type": "фольга алюминиевая + оплётка медь лужёная",
      "d_mm": 11.1
     },
     "jacket": {
-     "material": "PVC",
+     "material": "оболочка ПВХ",
      "d_mm": 13.1
     }
    },
@@ -4958,19 +4958,19 @@
    "family": "RG-58C/U (Belden 8262, витая луж. жила); RG-58/U — моножила 0.81 мм, отдельного паспорта не найдено",
    "construction": {
     "core": {
-     "material": "луженая медь витая 19×0.18 (AWG20)",
+     "material": "медь лужёная витая",
      "d_mm": 0.889
     },
     "dielectric": {
-     "material": "PE сплошной",
+     "material": "ПЭ сплошной",
      "d_mm": 2.92
     },
     "shield": {
-     "type": "луженая медная оплётка 95 %",
+     "type": "оплётка медь лужёная 95 %",
      "d_mm": null
     },
     "jacket": {
-     "material": "PVC (non-contaminating)",
+     "material": "оболочка ПВХ",
      "d_mm": 4.95
     }
    },
@@ -5205,19 +5205,19 @@
    "family": "M17/119, Belden 8216 (H+S RG_174_/U — близкий, но другой кабель)",
    "construction": {
     "core": {
-     "material": "CCS витая 7×0.16",
+     "material": "сталь омеднённая витая",
      "d_mm": 0.48
     },
     "dielectric": {
-     "material": "PE сплошной",
+     "material": "ПЭ сплошной",
      "d_mm": 1.52
     },
     "shield": {
-     "type": "луженая медная оплётка 90 % (H+S 87 %, Ø2.0)",
+     "type": "оплётка медь лужёная 90 %",
      "d_mm": null
     },
     "jacket": {
-     "material": "PVC",
+     "material": "оболочка ПВХ",
      "d_mm": 2.79
     }
    },
@@ -5433,19 +5433,19 @@
    "family": "M17/84, двойная посеребрённая оплётка (Prysmian/Draka hf29e, Belden MRG223)",
    "construction": {
     "core": {
-     "material": "SPC сплошная",
+     "material": "медь посеребрённая сплошная",
      "d_mm": 0.9
     },
     "dielectric": {
-     "material": "PE сплошной",
+     "material": "ПЭ сплошной",
      "d_mm": 2.95
     },
     "shield": {
-     "type": "две посеребрённые медные оплётки по 96 %",
+     "type": "оплётка медь посеребрённая двойная",
      "d_mm": null
     },
     "jacket": {
-     "material": "PVC",
+     "material": "оболочка ПВХ",
      "d_mm": 5.4
     }
    },

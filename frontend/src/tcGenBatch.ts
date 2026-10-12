@@ -21,13 +21,14 @@ import {
 
 type Fields = Record<string, string>;
 
-/** Справочники генератора в виде ответов API: шаблоны техкарт и записи БД.ОП / БД.ТЕР / БД.КОАКС / СПР.КАБ. */
+/** Справочники генератора в виде ответов API: шаблоны техкарт, записи БД.ОП / БД.ТЕР / БД.КОАКС / СПР.КАБ · коаксиал и
+ *  строки «Ø изоляции по маркам» из базы монтажных проводов (GET /api/references/wire-dia, backend references.wire_dia). */
 export type BatchRefs = {
   templates: Array<{ id: string; title: string; category: string }>;
   op: Fields[];
   ter: Array<{ id: string; fields: Fields }>;
   coax: Fields[];
-  kab_awg: Fields[];
+  wire_dia: Fields[];
   kab_coax: Fields[];
 };
 
@@ -53,7 +54,7 @@ export function refsFromRecords(refs: BatchRefs): Refs {
     ops: refs.op.map(opFromFields),
     terRecords: refs.ter.map((record) => terFromFields(record.id, record.fields)).filter((record) => record.article),
     coaxRecords: refs.coax.map(coaxFromFields),
-    wireDia: wireDiaFromRecords(refs.kab_awg),
+    wireDia: wireDiaFromRecords(refs.wire_dia),
     coaxCableDia: coaxDiaFromRecords(refs.kab_coax),
   };
 }

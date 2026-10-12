@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyGrapherGroups, applyOpOrder, grapherLengthText, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -386,4 +386,20 @@ it("applyOpOrder keeps new operations where the generator put them and moves «f
   expect(sorted.map((item) => item.opKey)).toEqual(["cut", "prsB", "new", "prsA"]);
   expect(sorted.map((item) => item.firstTerm)).toEqual([undefined, true, undefined, false]);
   expect(applyOpOrder(ops, [])).toBe(ops);
+});
+
+it("finds a terminal by its BAG article too, spelled any way (protocol v5.2, owner 12.10)", () => {
+  const card = terFromFields("t1", { terArticle: "39000038", terArticleBag: "39000039", terStep: "4.20", terApplicator: "M5" });
+  const legacy = terFromFields("t2", { terArticle: "5556-T", "Артикул контакта (BAG)": "5556-TL ", terStep: "4.20" });
+  const gen = makeGen({ ...data(interboard), terRecords: [card, legacy] }, initState(data(interboard)));
+  expect(gen.findTerRecord_("39000039")?.id).toBe("t1");
+  expect(gen.findTerRecord_("Molex 39000039")?.id).toBe("t1");
+  expect(gen.findTerRecord_("39000038")?.id).toBe("t1");
+  expect(gen.findTerRecord_("5556 tl")?.id).toBe("t2"); // a row stored before terArticleBag: the sheet column
+  expect(legacy.articleBag).toBe("5556-TL"); // the stored spelling is kept
+  expect(gen.findTerRecord_("39000040")).toBeNull();
+});
+
+it("зачистка под лужение по умолчанию — 5 мм (владелец 12.10.2026)", () => {
+  expect(emptyState().tin.stripLen).toBe("5");
 });

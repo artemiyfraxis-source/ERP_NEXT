@@ -2994,6 +2994,24 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .view-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; padding: 10px 14px; border: 1px solid var(--warn-border); border-radius: 8px; background: var(--warn-soft); font-size: 14px; font-weight: 600; }
 @media (pointer: coarse) { .view-strip button { min-height: 40px; } }
+/* «Смотреть как сотрудник»: полоса во всю ширину рабочей области, прилипает к верху экрана на каждой странице.
+   Липкое считается от края содержимого .workspace — отрицательный top и поля снимают её отступ (30 px; 20 px на планшете). */
+.view-as-banner { position: sticky; top: -30px; z-index: 30; display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin: -30px -34px 20px; padding: 8px 34px; border-bottom: 1px solid var(--warn-border); background: var(--warn-soft); font-size: 14px; }
+.view-as-banner > span:first-child { flex: 1 1 auto; min-width: 0; }
+.view-as-until { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.view-as-error { color: var(--tone-danger); font-size: 13px; }
+.harness-host > .view-as-banner { position: static; margin: 0; padding: 8px 16px; }
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) { .view-as-banner { top: -20px; margin: -20px -18px 16px; padding: 8px 18px; } }
+@media (max-width: 720px) { .view-as-banner { top: 0; margin: -24px -14px 16px; padding: 8px 14px; } }
+@media (pointer: coarse) { .view-as-banner button, .view-as-person { min-height: 44px; } }
+.view-as-dialog { width: min(720px, 100%); }
+.view-as-list { margin: 0; padding: 0; list-style: none; max-height: min(60vh, 520px); overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.view-as-list > li + li { border-top: 1px solid var(--border); }
+.view-as-person { width: 100%; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; align-items: center; gap: 12px; min-height: 34px; padding: 6px 12px; border: 0; border-radius: 0; background: transparent; color: var(--foreground); text-align: left; font-size: 13px; cursor: pointer; }
+.view-as-person:hover:not(:disabled), .view-as-person:focus-visible { background: var(--accent); }
+.view-as-person > span { color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-as-person > .view-as-opening { color: var(--primary); }
+@media (max-width: 720px) { .view-as-person { grid-template-columns: 1fr; gap: 2px; } }
 /* Производственный план → Загрузка по людям: сетка «часы/смена» на языке «Монтажников». */
 .pl-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
 .pl-period { font-size: 13px; color: var(--muted-foreground); }
@@ -3396,3 +3414,34 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .stage-cascade li { overflow-wrap: anywhere; }
 .stage-cascade .muted, .stage-cascade section.muted { color: var(--muted-foreground); }
 @media (pointer: coarse) { .stage-cascade summary { padding: 10px 0; } }
+
+/* Оборудование (БД.ОБ): карточка станка, форма «Новая запись», «что обжимает» (владелец 12.10.2026) */
+.tnum { font-variant-numeric: tabular-nums slashed-zero; }
+.eq-card { padding: 16px 20px; }
+.eq-card .tr-head { grid-template-columns: minmax(0, 2fr) repeat(4, minmax(0, auto)); }
+.eq-line { margin: 0; font-size: 13px; }
+.eq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.eq-table th { padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; font-weight: 500; text-align: left; }
+.eq-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.eq-table tbody tr:nth-child(even) { background: var(--accent); }
+.eq-table tr.eq-row { cursor: pointer; }
+.eq-table tr.eq-row:hover { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
+.eq-table .eq-act { width: 1%; text-align: right; white-space: nowrap; }
+.eq-add { display: grid; gap: 4px; margin-top: 8px; }
+.eq-add input { max-width: 560px; }
+.eq-hit { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 760px; padding: 2px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.eq-doubt { margin-left: 8px; font-size: 12px; }
+.eq-op { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); font-size: 12.5px; }
+.eq-x { border: 0; padding: 0 2px; color: var(--muted-foreground); background: transparent; font-size: 14px; line-height: 1; cursor: pointer; }
+.eq-x:hover { color: var(--foreground); }
+.eq-link { border: 0; padding: 0; color: var(--primary); background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+.eq-rest > summary { margin: 8px 0; }
+.eq-form .form-grid { padding: 0; }
+.eq-form .eq-rest .form-grid { margin-top: 8px; }
+.eq-missing { margin: 0 0 8px; font-size: 13px; }
+.eq-missing-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.eq-crimp h5 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
+@media (max-width: 900px) { .eq-card .tr-head { grid-template-columns: 1fr 1fr; } }
+@media (pointer: coarse) { .eq-table td, .eq-hit { padding-top: 8px; padding-bottom: 8px; } .eq-x { padding: 8px; } }
+.eq-chip-btn { cursor: pointer; color: var(--foreground); }
+.eq-chip-btn:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }

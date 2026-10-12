@@ -4,6 +4,7 @@ import {
   failureText,
   documentsApi,
   leaveApi,
+  type Employee,
   type EmployeeCard,
   type EmployeeCardAbsence,
   type EmployeeCardSkill,
@@ -16,6 +17,7 @@ import { EmployeeDocuments } from "./EmployeeDocuments";
 import { EmployeeSkills } from "./EmployeeSkills";
 import { StatusChip } from "./StatusChip";
 import { WorkTime } from "./WorkTime";
+import { ViewAsPicker } from "./ViewAs";
 
 /** «Личная карточка» сотрудника (концепт владельца, 04.10): одна страница про человека из данных всех модулей, только
  *  чтение. Вкладка «Обзор» — карточки в порядке концепта: Основные данные · Подчинённость · Проекты · Отпуска · Рабочее
@@ -42,9 +44,11 @@ type Props = {
   openCard?: (id: string) => void;
   /** Назад в список сотрудников (с чужой карточки). */
   openStaff?: () => void;
+  /** «Смотреть как сотрудник»: весь ERP глазами выбранного, только просмотр (кнопка — на своей карточке администратора). */
+  startViewAs?: (employee: Employee) => Promise<void>;
 };
 
-export function EmployeeCardPage({ principal, userId, openProject, openMyRequests, openStaffEdit, openCard, openStaff }: Props) {
+export function EmployeeCardPage({ principal, userId, openProject, openMyRequests, openStaffEdit, openCard, openStaff, startViewAs }: Props) {
   const own = !userId || userId === principal.user.id;
   const [card, setCard] = useState<EmployeeCard | null>(null);
   const [error, setError] = useState("");
@@ -56,6 +60,7 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
   });
   const [waiting, setWaiting] = useState(0);
   const [unread, setUnread] = useState(0);
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -84,6 +89,8 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
   // «Сотрудники» — только superadmin / admin (backend staffdir_principal): правка карточки и чужие карточки.
   const canEdit = Boolean(openStaffEdit) && hasFullAccess(principal);
   const canOpenOthers = hasFullAccess(principal);
+  // Только со своей карточки и не изнутри чужого вида (сервер всё равно пустит лишь администратора).
+  const canViewAs = own && Boolean(startViewAs) && hasFullAccess(principal) && !principal.viewing;
 
   if (error) return <section className="page ec-page"><div className="error-banner" role="alert">{error}</div></section>;
   if (!card) return <section className="page ec-page"><div className="empty">Загрузка…</div></section>;
@@ -113,7 +120,9 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
       </div>
       <span className={header.active ? "ec-badge on" : "ec-badge"}>{header.active ? "Карточка активна" : "Не работает"}</span>
       {canEdit && <button className="secondary" onClick={() => openStaffEdit?.(header.id)}>Редактировать</button>}
+      {canViewAs && <button className="secondary" onClick={() => setPicking(true)}>Смотреть как сотрудник</button>}
     </header>
+    {picking && startViewAs && <ViewAsPicker selfId={principal.user.id} onPick={startViewAs} onClose={() => setPicking(false)} />}
     <div className="ec-tabs">
       <div className="seg-tabs" role="tablist" aria-label="Разделы карточки">
         <button role="tab" aria-selected={tab === "overview"} className={tab === "overview" ? "on" : undefined} onClick={() => setTab("overview")}>Обзор</button>

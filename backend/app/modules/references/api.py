@@ -21,9 +21,11 @@ from .application import (
     SetCableKindCommand, SetCoaxDiametersCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
     replace_maps, replace_snapshot, set_cable_kind, set_coax_diameters,
 )
+from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
+from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import (
-    CableCatalog, SaveGaugeCommand, SaveHookupCommand, cable_catalog, delete_gauge, import_coax_cards, save_gauge,
-    save_hookup,
+    CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
+    import_coax_cards, import_coax_names, save_gauge, save_hookup,
 )
 from .cable_structure import (
     LAYER_LABELS, CoaxCard, HookupWire, WireGauge, parse_hookup,
@@ -181,6 +183,8 @@ def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord
     keys = schema_keys(tab.value)
     richest = max(records, key=lambda item: sum(1 for key in item.fields if key not in keys))
     sheet = [key for key in richest.fields if key not in keys]
+    if tab == TechOperationTab.EQUIPMENT:  # the fields ERP adds to the sheet's columns (code, tool, links)
+        sheet += [key for key in EXTRA_KEYS if key not in sheet]
     return sheet or list(richest.fields)
 
 
@@ -402,6 +406,9 @@ def _card_json(card: CoaxCard | None) -> dict | None:
         "max_operating_note": card.max_operating_note, "notes": card.notes, "sources": list(card.sources),
         "confidence": card.confidence, "verified": card.verified, "changes": list(card.changes),
         "params": {key: _num(value) for key, value in card.params.items()}, "param_notes": dict(card.param_notes),
+        "full_name": card.full_name,
+        "aliases": [{"alias": item.alias, "kind": item.kind, "supplier": item.supplier, "url": item.url}
+                    for item in card.aliases],
     }
 
 
@@ -548,14 +555,30 @@ def import_coax(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """Reloads the coax cards from the committed file (`load_cables`), as the server does on every update."""
-    from .load_cables import read_seed
+    """Reloads the coax cards, then their full names and aliases, from the committed files (`load_cables`), as the
+    server does on every update."""
+    from .load_cables import ARTICLES_FILE, read_seed
 
     try:
-        document = read_seed()
+        document, articles = read_seed(), read_seed(ARTICLES_FILE)
     except (OSError, ValueError) as error:
         raise HTTPException(status_code=422, detail=f"Файл карточек не прочитан: {error}") from error
-    return _run(lambda: import_coax_cards(document, principal.actor, now, uow_factory()))
+    cards = _run(lambda: import_coax_cards(document, principal.actor, now, uow_factory()))
+    return {**cards, "names": _run(lambda: import_coax_names(articles, principal.actor, now, uow_factory()))}
+
+
+@router.get("/coax-dia")
+def coax_dia(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """СПР.КАБ · коаксиал as the ETK generator reads it: the D1·D2·D3 rows, then one row per other name of a cable
+    (full name, supplier article, another spelling of the mark) with that cable's D1–D3 (`coax_dia_rows`)."""
+    with uow_factory() as uow:
+        rows = coax_dia_rows(uow)
+    return {"metadata": None, "columns": ["Кабель", *DIAMETERS], "records": [
+        {"id": "", "tab": TechOperationTab.KAB_COAX.value, "display_text": str(row.get("Кабель") or ""),
+         "source_sheet": "", "fields": row} for row in rows]}
 
 
 class CableKindPayload(BaseModel):
@@ -625,3 +648,93 @@ def create_tech_record(
         tab=tab, fields=payload.fields, actor=principal.actor, now=now,
     ), uow_factory()))
     return _record_json(record)
+
+
+# --- БД.ОБ: numbering, «Ещё такой же», «что обжимает» ---
+
+class TargetPayload(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    key: str = Field(min_length=1, max_length=255)
+    label: str = Field(default="", max_length=255)
+
+
+@router.get("/tech-operations/equipment-number")
+def equipment_number(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+    type: Annotated[str, Query(max_length=255)] = "",
+) -> dict:
+    """The number a new record of this type gets if «Инв. номер» is left empty, and its row number."""
+    with uow_factory() as uow:
+        rows = [item.fields for item in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10_000)]
+    return {"inventory": next_model_inventory(type.strip(), rows), "row": next_row_number(rows)}
+
+
+@router.post("/tech-operations/{record_id}/duplicate", status_code=201)
+def duplicate_tech_record(
+    record_id: UUID,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _record_json(_run_edit(lambda: duplicate_equipment(record_id, principal.actor, now, uow_factory())))
+
+
+@router.get("/tech-operations/crimp-codes")
+def crimp_code_list(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _run_edit(lambda: crimp_codes(uow_factory()))
+
+
+@router.get("/tech-operations/{record_id}/crimps")
+def crimp_list(
+    record_id: UUID,
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _run_edit(lambda: crimp_overview(record_id, uow_factory()))
+
+
+@router.post("/tech-operations/{record_id}/crimps/terminals/{terminal_id}")
+def crimp_add_terminal(
+    record_id: UUID, terminal_id: UUID,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _run_edit(lambda: change_terminal(record_id, terminal_id, add=True, actor=principal.actor, now=now, uow=uow_factory()))
+
+
+@router.delete("/tech-operations/{record_id}/crimps/terminals/{terminal_id}",
+               dependencies=[Depends(refuse_api_tokens("Токен API не снимает связи инструмента с контактами."))])
+def crimp_remove_terminal(
+    record_id: UUID, terminal_id: UUID,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _run_edit(lambda: change_terminal(record_id, terminal_id, add=False, actor=principal.actor, now=now, uow=uow_factory()))
+
+
+@router.post("/tech-operations/{record_id}/crimps/targets")
+def crimp_add_target(
+    record_id: UUID, payload: TargetPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    items = _run_edit(lambda: change_target(record_id, payload.model_dump(), add=True, actor=principal.actor, now=now, uow=uow_factory()))
+    return {"targets": items}
+
+
+@router.post("/tech-operations/{record_id}/crimps/targets/remove")
+def crimp_remove_target(
+    record_id: UUID, payload: TargetPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    items = _run_edit(lambda: change_target(record_id, payload.model_dump(), add=False, actor=principal.actor, now=now, uow=uow_factory()))
+    return {"targets": items}

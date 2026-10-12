@@ -35,6 +35,9 @@ export interface Principal {
   /** «Режим админа» (portalToggleAdmin): the account may switch it / it is on for this session. */
   can_admin_mode?: boolean;
   admin_mode?: boolean;
+  /** «Смотреть как сотрудник»: `user` and the rights above are the viewed employee's; who really looks and until when.
+   *  The server refuses every change while it is on, except «Вернуться к себе» and «Выйти». */
+  viewing?: { viewer: { id: string; name: string }; until: string | null } | null;
 }
 
 /** The login list (portalStaffLite_): active employees, no e-mails. */
@@ -1323,6 +1326,15 @@ export interface TechOperationRecord {
   fields: Record<string, string>;
 }
 
+/** GET /api/references/wire-dia — «Ø изоляции по маркам» из базы монтажных проводов: строка на размер «Сечения AWG ↔
+ *  мм²», поля по порядку «По старой таблице» · AWG · ГОСТ · Ø жилы · Ø наружный по каждой из 12 серий («—» — нет).
+ *  «По старой таблице» — серии, чей Ø в строке взят из старой СПР.КАБ (в базе его ещё нет). Читает генератор ЭТК. */
+export interface WireDiaResult {
+  columns: string[];
+  series: string[];
+  records: Array<{ id: string; display_text: string; source_sheet: string; fields: Record<string, string> }>;
+}
+
 export interface TechOperationResult {
   metadata: null | {
     schema_version: number;
@@ -1871,7 +1883,12 @@ export const identityApi = {
   adminMode: (on: boolean) =>
     api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }), safe: true }),
   logout: () => api<void>("/api/auth/logout", { method: "POST", safe: true }),
-  profile: () => api<OwnProfile>("/api/auth/profile"),
+  /** «Смотреть как сотрудник» (administrator only): the answer is the viewed employee's principal. */
+  viewAs: (userId: string) =>
+    api<Principal>("/api/auth/view-as", { method: "POST", body: JSON.stringify({ user_id: userId }) }),
+  /** «Вернуться к себе»: the own principal again. */
+  stopViewAs: () => api<Principal>("/api/auth/view-as", { method: "DELETE", safe: true }),
+  profile:() => api<OwnProfile>("/api/auth/profile"),
   changePassword: (current: string, next: string) =>
     api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
 };
@@ -3038,13 +3055,37 @@ export const referencesApi = {
     if (limit) params.set("limit", String(limit));
     return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
+  wireDia: () => api<WireDiaResult>("/api/references/wire-dia"),
+  /** СПР.КАБ · коаксиал для генератора ЭТК: строки D1·D2·D3 и по строке на каждое другое имя кабеля (полное название,
+   *  артикул поставщика, другое написание марки) с D1–D3 этого кабеля. */
+  coaxDia: () => api<TechOperationResult>("/api/references/coax-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
+  equipmentNumber: (type: string) =>
+    api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
+  duplicateRecord: (id: string) =>
+    api<TechOperationRecord>(`/api/references/tech-operations/${id}/duplicate`, { method: "POST" }),
+  crimps: (id: string) => api<CrimpOverview>(`/api/references/tech-operations/${id}/crimps`),
+  crimpCodes: () => api<CrimpCodes>("/api/references/tech-operations/crimp-codes"),
+  crimpTerminal: (toolId: string, terminalId: string, add: boolean) =>
+    api<CrimpTerminal>(`/api/references/tech-operations/${toolId}/crimps/terminals/${terminalId}`, { method: add ? "POST" : "DELETE" }),
+  crimpTarget: (toolId: string, target: CrimpTarget, add: boolean) =>
+    api<{ targets: CrimpTarget[] }>(`/api/references/tech-operations/${toolId}/crimps/targets${add ? "" : "/remove"}`, {
+      method: "POST", body: JSON.stringify(target),
+    }),
   resolveTerminal: (payload: { article: string; wires: string[]; folded?: boolean; gost_awg?: Record<string, number> }) =>
     api<TerminalResolution>("/api/references/technology/resolve-terminal", { method: "POST", body: JSON.stringify(payload) }),
 };
+
+export interface CrimpTerminal {
+  id: string; display_text: string; article: string; series: string; maker: string; kind: string;
+  applicator: string; doubtful: boolean;
+}
+export interface CrimpTarget { kind: string; key: string; label: string }
+export interface CrimpOverview { code: string; terminals: CrimpTerminal[]; targets: CrimpTarget[] }
+export interface CrimpCodes { owners: Record<string, string>; missing: Array<{ code: string; count: number }> }
 
 export interface TerminalResolution {
   applicator: string;

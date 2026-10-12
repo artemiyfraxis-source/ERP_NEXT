@@ -15,6 +15,7 @@ elsewhere on the same route is resolved on its own and still refuses the token. 
 (`require_full_access`) never accept a token."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request, Security
@@ -38,6 +39,11 @@ class Principal:
     # A service principal (an API token): acts with these scopes only, never with the creator's rights.
     service: bool = False
     scopes: frozenset[str] = frozenset()
+    # «Смотреть как сотрудник» (owner 12.10.2026): this principal is the viewed employee for reads — their level,
+    # exceptions and identity; `viewer` is the administrator really at the keyboard. The session middleware refuses
+    # every write of such a request (identity/middleware.py VIEW_ONLY_DETAIL) except the exit and the logout.
+    viewer: Actor | None = None
+    view_as_until: datetime | None = None
 
     @property
     def level(self) -> str:
