@@ -81,7 +81,7 @@ class FulfillmentRequestCounterRow(Base):
     last_number: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
-# «нет на складе» (migration 0104): who and when together, and only on a line without «есть, но не заведено», a lot,
+# «нет на складе» (migration 0106): who and when together, and only on a line without «есть, но не заведено», a lot,
 # a reserve or an issue — the database refuses any other combination.
 ABSENT_WHO_WHEN_CHECK = "(absent_at IS NULL AND absent_by IS NULL) OR (absent_at IS NOT NULL AND absent_by IS NOT NULL)"
 ABSENT_ALONE_CHECK = "absent_at IS NULL OR (NOT off_book AND lot_id IS NULL AND reserved = 0 AND issued = 0)"
@@ -119,7 +119,7 @@ class FulfillmentLineRow(Base):
     lot_storage_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # «есть, но не заведено»: passes without a lot and without a stock movement (migration 0087).
     off_book: Mapped[bool] = mapped_column(Boolean(), nullable=False, default=False, server_default=false())
-    # «нет на складе»: when and who confirmed the part is physically absent (migration 0104).
+    # «нет на складе»: when and who confirmed the part is physically absent (migration 0106).
     absent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     absent_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

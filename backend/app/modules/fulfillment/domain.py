@@ -121,7 +121,7 @@ class FulfillmentLine:
     off_book: bool = False
     # «нет на складе» (owner 12.10.2026): the storekeeper confirmed the part is physically absent — the line is a
     # shortage, it keeps waiting for a delivery and the project's «Снабжение» stops counting book stock for it. Who and
-    # when; never together with «есть, но не заведено», a lot, a reserve or an issue (CHECK in migration 0104).
+    # when; never together with «есть, но не заведено», a lot, a reserve or an issue (CHECK in migration 0106).
     absent_at: datetime | None = None
     absent_by: str = ""
 

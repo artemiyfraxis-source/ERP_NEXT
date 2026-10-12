@@ -74,7 +74,7 @@ def database(tmp_path, monkeypatch):
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN stage_key VARCHAR(128)"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
-        # 0104: «нет на складе» on a kit line.
+        # 0106: «нет на складе» on a kit line.
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN absent_at DATETIME"))
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN absent_by VARCHAR(255)"))
         Base.metadata.tables["fulfillment_kit_reserves"].create(connection)

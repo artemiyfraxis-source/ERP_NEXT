@@ -1,4 +1,4 @@
-"""Миграция 0104: отметка «нет на складе» на строке комплектации — кто/когда и CHECK на сочетания."""
+"""Миграция 0106: отметка «нет на складе» на строке комплектации — кто/когда и CHECK на сочетания."""
 
 import sqlite3
 from pathlib import Path
@@ -8,7 +8,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
-AFTER = "0104_fulfillment_line_absent"
+AFTER = "0106_fulfillment_line_absent"
 
 
 def _config(database_path: Path) -> Config:
