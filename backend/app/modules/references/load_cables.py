@@ -2,13 +2,20 @@
 
     ERP_DATABASE_URL=... python -m app.modules.references.load_cables [--file путь] [--dry-run]
     ERP_DATABASE_URL=... python -m app.modules.references.load_cables --hookups [--file путь] [--dry-run]
+    ERP_DATABASE_URL=... python -m app.modules.references.load_cables --coax-vocabulary [--file путь] [--dry-run]
 
-Оба шага идемпотентны (сервер запускает их при каждом обновлении, `deploy/update.sh`):
+Все шаги идемпотентны (сервер запускает их при каждом обновлении, `deploy/update.sh`):
 1. Монтажные провода БД.ПРОВ без структуры получают её, если их сечение есть в «Сечения AWG ↔ мм²» (то же правило,
    что применила миграция 0089); провод со структурой не трогается. Остальные печатаются — их разбирает владелец.
 2. Карточки коаксиальных кабелей из `backend/data/cables/coax-cables.json`: карточка с тем же названием (ключ
-   генератора: без регистра, пробелов и дефисов) переписывается из файла, новая добавляется, карточка, которой в
-   файле больше нет, удаляется. Исправили данные — положили новый файл и запустили снова; новой миграции не нужно.
+   генератора: без регистра, пробелов и дефисов) переписывается из файла, если он говорит другое, новая добавляется,
+   карточка, которой в файле больше нет, удаляется. Исправили данные — положили новый файл и запустили снова; новой
+   миграции не нужно.
+3. Полные названия и алиасы карточек из `backend/data/cables/coax-articles.json` (`--articles путь`): марка и её
+   написания, полное название и артикул каждого предложения поставщика с этим самым кабелем (не «по семейству»).
+   Генератор ЭТК и каталог редактора жгута находят по любому из них те же D1–D3. Имя, которое уже у другого кабеля
+   или которое в файле у двух кабелей, не загружается — печатается с причиной; марка без карточки — тоже.
+Второй запуск с теми же файлами ничего не меняет.
 
 Формат файла: {"verified": bool, "cables": [{name, construction{core,dielectric,shield,jacket: {material, d_mm}},
 connectors[{family, max_ghz, note}], vna_span{from_mhz, to_ghz, narrowing[{connector, to_ghz}], note},
@@ -21,6 +28,11 @@ weight_g_m)}]}. Одна запись — один кабель. КСВН в ф�
 формат там же): недостающие сечения добавляются, размеры серий сопоставляются со строками БД.ПРОВ по серии и
 сечению, ячейки и структура обновляются на месте, недостающие размеры создаются; ничего не переименовывается и не
 удаляется. Запускается руками (в `deploy/update.sh` не входит); второй запуск ничего не меняет.
+
+`--coax-vocabulary` — один раз, руками (в `deploy/update.sh` не входит): ячейки «Тип провода», «Изоляция», «Экран»
+коаксиальных строк БД.ПРОВ получают слова словаря `backend/data/cables/coax-vocabulary.json` (записи «БД.ПРОВ» его
+`map`). Переписывается только ячейка, в которой ещё старый текст; строка помечается правленной в ERP (перезагрузка
+зеркала её не трогает). Ячейка, которую успели поменять, печатается и остаётся как есть; второй запуск ничего не меняет.
 """
 
 from __future__ import annotations
@@ -35,13 +47,15 @@ from uuid import UUID
 
 from app.shared.identity import Actor
 
-from .application import import_coax_cards, structure_hookups
+from .application import apply_coax_vocabulary, import_coax_cards, import_coax_names, structure_hookups
 from .domain import ReferenceValidationError
 from .importers import ImportReport, import_hookups
 
 ACTOR = Actor(id=UUID(int=0), name="ERP Integration", department="System")
 DEFAULT_FILE = Path(__file__).resolve().parents[3] / "data" / "cables" / "coax-cables.json"
 HOOKUPS_FILE = DEFAULT_FILE.with_name("hookup-wires.json")
+ARTICLES_FILE = DEFAULT_FILE.with_name("coax-articles.json")
+VOCABULARY_FILE = DEFAULT_FILE.with_name("coax-vocabulary.json")
 
 
 def read_seed(path: Path = DEFAULT_FILE) -> dict:
@@ -50,9 +64,13 @@ def read_seed(path: Path = DEFAULT_FILE) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Монтажные провода и коаксиальные кабели → ERP")
-    parser.add_argument("--file", type=Path, default=None, help=f"по умолчанию {DEFAULT_FILE.name} ({HOOKUPS_FILE.name} с --hookups)")
+    parser.add_argument("--file", type=Path, default=None, help=f"по умолчанию {DEFAULT_FILE.name} ({HOOKUPS_FILE.name} с --hookups, "
+                                                                     f"{VOCABULARY_FILE.name} с --coax-vocabulary)")
     parser.add_argument("--dry-run", action="store_true", help="проверить и посчитать, ничего не записывая")
     parser.add_argument("--hookups", action="store_true", help="только база монтажных проводов из hookup-wires.json")
+    parser.add_argument("--articles", type=Path, default=ARTICLES_FILE, help=f"полные названия и артикулы, по умолчанию {ARTICLES_FILE.name}")
+    parser.add_argument("--coax-vocabulary", action="store_true",
+                        help=f"один раз: ячейки коаксиальных строк БД.ПРОВ словами {VOCABULARY_FILE.name}")
     args = parser.parse_args(argv)
     from app.database import build_engine, build_references_uow_factory
 
@@ -71,9 +89,19 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(hookup_summary(report, mode))
         return 0
+    if args.coax_vocabulary:
+        try:
+            result = apply_coax_vocabulary(read_seed(args.file or VOCABULARY_FILE), ACTOR, now, factory(), dry_run=args.dry_run)
+        except (OSError, ValueError, ReferenceValidationError) as error:
+            print(f"Словарь коаксиальных кабелей не применён: {error}", file=sys.stderr)
+            return 1
+        print(vocabulary_summary(result, mode))
+        return 0
     try:
         wires = structure_hookups(ACTOR, now, factory, dry_run=args.dry_run)
         coax = import_coax_cards(read_seed(args.file or DEFAULT_FILE), ACTOR, now, factory(), dry_run=args.dry_run)
+        # A dry run wrote no cards: the names are planned over the cards the base has now.
+        names = import_coax_names(read_seed(args.articles), ACTOR, now, factory(), dry_run=args.dry_run)
     except (OSError, ValueError, ReferenceValidationError) as error:
         print(f"Структурная база кабелей не загружена: {error}", file=sys.stderr)
         return 1
@@ -81,7 +109,35 @@ def main(argv: list[str] | None = None) -> int:
           f"осталось владельцу {len(wires['left'])}" + "".join(f"\n  — {line}" for line in wires["left"]))
     print(f"Коаксиальные кабели ({mode}): в файле {coax['cards']}, новых {coax['created']}, "
           f"обновлено {coax['updated']}, удалено {coax['removed']}")
+    print(names_summary(names, mode))
     return 0
+
+
+def names_summary(report: dict, mode: str) -> str:
+    lines = [
+        f"Названия и артикулы коаксиальных кабелей ({mode}): кабелей в файле {report['cables']}, имён у карточек "
+        f"{report['aliases']}, добавлено {report['aliases_added']}, убрано {report['aliases_removed']}, полных названий "
+        f"изменено {report['full_names_changed']}; предложений «по семейству» (не имя кабеля) {report['family_only']}",
+    ]
+    if report["no_card"]:
+        lines.append(f"  нет карточки ({len(report['no_card'])}), имена ждут её: " + ", ".join(report["no_card"]))
+    if report["refused"]:
+        lines.append(f"  не загружено ({len(report['refused'])}):")
+        lines += [f"     — {item}" for item in report["refused"]]
+    return "\n".join(lines)
+
+
+def vocabulary_summary(report: dict, mode: str) -> str:
+    lines = [f"Словарь коаксиальных кабелей → БД.ПРОВ ({mode}): ячеек в словаре {report['cells']}, "
+             f"переписано {len(report['rewritten'])}, не тронуто {len(report['problems'])}, "
+             f"марок нет в БД.ПРОВ {len(report['missing'])}"]
+    lines += [f"  — {item}" for item in report["rewritten"]]
+    if report["problems"]:
+        lines.append("  не тронуто (ячейку уже поменяли):")
+        lines += [f"     — {item}" for item in report["problems"]]
+    if report["missing"]:
+        lines.append("  марок нет в БД.ПРОВ: " + ", ".join(report["missing"]))
+    return "\n".join(lines)
 
 
 def hookup_summary(report: ImportReport, mode: str) -> str:

@@ -16,8 +16,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0108_session_view_as"
-down_revision: str | None = "0107_stage_ladder"
+revision: str = "0109_session_view_as"
+down_revision: str | None = "0108_coax_cable_aliases"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

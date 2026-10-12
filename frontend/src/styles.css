@@ -3414,3 +3414,34 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .stage-cascade li { overflow-wrap: anywhere; }
 .stage-cascade .muted, .stage-cascade section.muted { color: var(--muted-foreground); }
 @media (pointer: coarse) { .stage-cascade summary { padding: 10px 0; } }
+
+/* Оборудование (БД.ОБ): карточка станка, форма «Новая запись», «что обжимает» (владелец 12.10.2026) */
+.tnum { font-variant-numeric: tabular-nums slashed-zero; }
+.eq-card { padding: 16px 20px; }
+.eq-card .tr-head { grid-template-columns: minmax(0, 2fr) repeat(4, minmax(0, auto)); }
+.eq-line { margin: 0; font-size: 13px; }
+.eq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.eq-table th { padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; font-weight: 500; text-align: left; }
+.eq-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.eq-table tbody tr:nth-child(even) { background: var(--accent); }
+.eq-table tr.eq-row { cursor: pointer; }
+.eq-table tr.eq-row:hover { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
+.eq-table .eq-act { width: 1%; text-align: right; white-space: nowrap; }
+.eq-add { display: grid; gap: 4px; margin-top: 8px; }
+.eq-add input { max-width: 560px; }
+.eq-hit { display: flex; align-items: center; justify-content: space-between; gap: 12px; max-width: 760px; padding: 2px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.eq-doubt { margin-left: 8px; font-size: 12px; }
+.eq-op { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); font-size: 12.5px; }
+.eq-x { border: 0; padding: 0 2px; color: var(--muted-foreground); background: transparent; font-size: 14px; line-height: 1; cursor: pointer; }
+.eq-x:hover { color: var(--foreground); }
+.eq-link { border: 0; padding: 0; color: var(--primary); background: transparent; font: inherit; text-decoration: underline; cursor: pointer; }
+.eq-rest > summary { margin: 8px 0; }
+.eq-form .form-grid { padding: 0; }
+.eq-form .eq-rest .form-grid { margin-top: 8px; }
+.eq-missing { margin: 0 0 8px; font-size: 13px; }
+.eq-missing-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.eq-crimp h5 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
+@media (max-width: 900px) { .eq-card .tr-head { grid-template-columns: 1fr 1fr; } }
+@media (pointer: coarse) { .eq-table td, .eq-hit { padding-top: 8px; padding-bottom: 8px; } .eq-x { padding: 8px; } }
+.eq-chip-btn { cursor: pointer; color: var(--foreground); }
+.eq-chip-btn:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }

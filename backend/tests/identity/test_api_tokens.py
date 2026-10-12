@@ -381,6 +381,7 @@ PATH_PARAM = re.compile(r"{([^}:]+)(:[^}]+)?}")
 TOKEN_REFUSED_IN_ENDPOINT = {
     ("POST", "/api/techcards/projects/{card_id}/build"),
     ("DELETE", "/api/references/wire-gauges/{gauge_id}"),
+    ("DELETE", "/api/references/tech-operations/{record_id}/crimps/terminals/{terminal_id}"),
 }
 
 
@@ -418,8 +419,12 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
     reads = [
         ("GET", "/api/references/bases"),
         ("GET", "/api/references/cables"),
+        ("GET", "/api/references/coax-dia"),
         ("GET", "/api/references/import/{table}/schema"),
         ("GET", "/api/references/tech-operations"),
+        ("GET", "/api/references/tech-operations/crimp-codes"),
+        ("GET", "/api/references/tech-operations/equipment-number"),
+        ("GET", "/api/references/tech-operations/{record_id}/crimps"),
         ("GET", "/api/references/wire-dia"),
         ("POST", "/api/references/technology/resolve-terminal"),
     ]
@@ -427,6 +432,10 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("PATCH", "/api/references/tech-operations/{record_id}"),
         ("POST", "/api/references/import/{table}"),
         ("POST", "/api/references/tech-operations"),
+        ("POST", "/api/references/tech-operations/{record_id}/crimps/targets"),
+        ("POST", "/api/references/tech-operations/{record_id}/crimps/targets/remove"),
+        ("POST", "/api/references/tech-operations/{record_id}/crimps/terminals/{terminal_id}"),
+        ("POST", "/api/references/tech-operations/{record_id}/duplicate"),
         ("POST", "/api/references/wire-gauges"),
         ("PUT", "/api/references/cables/diameters"),
         ("PUT", "/api/references/cables/{record_id}/hookup"),

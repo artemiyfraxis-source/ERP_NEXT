@@ -272,9 +272,9 @@ def test_deleting_the_viewed_employee_ends_the_view(view_api):
     assert row.details["reason"] == "сотрудник удалён"
 
 
-# ── Migration 0108 ───────────────────────────────────────────────────────────────────────────────────────
+# ── Migration 0109 ───────────────────────────────────────────────────────────────────────────────────────
 
-AFTER = "0108_session_view_as"
+AFTER = "0109_session_view_as"
 
 
 def _config(database_path: Path) -> Config:

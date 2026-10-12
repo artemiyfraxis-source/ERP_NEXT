@@ -268,7 +268,6 @@ def test_migration_keeps_old_rows_checks_the_new_ladder_and_keeps_the_journal_ap
     # Повторный upgrade ничего не делает.
     with sqlite3.connect(database) as connection:
         schema = _schema(connection)
-    # (до своей ревизии, не до "head": следующие миграции цепочки этот тест не касаются)
     command.upgrade(_config(database), "0107_stage_ladder")
     with sqlite3.connect(database) as connection:
         assert _schema(connection) == schema

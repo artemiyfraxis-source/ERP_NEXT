@@ -163,6 +163,11 @@ def test_tech_bases_are_built_like_the_gas_exporter(tmp_path):
         "terStrip": "2,54 - 2,92", "terCrimpHeight": "24 AWG: 0,83 - 0,93\n22 AWG: 0,83 - 0,93\n20 AWG: 0,89 - 0,99",
         "terPullForceMin": "24 AWG: 22,2\n22 AWG: 35,6\n20 AWG: 57,8", "terPullForceMax": "",
         "awgFrom": "24", "awgTo": "20", "mm2From": "0,2", "mm2To": "0,5",
+        # the contact card of protocol v5.2 (owner 12.10.2026), from the columns the GAS exporter never read
+        "terGender": "Male", "terArticleBag": "430310007",
+        "terInsCrimpHeight": "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7", "terInsOdFrom": "1,3", "terInsOdTo": "1,85",
+        "terMaterial": "Phosphor Bronze / Tin", "terMaxCurrent": "8,5",
+        "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310001",
     }
     assert (kvt.display_text, kvt.fields["terApplicator"], kvt.fields["awgFrom"]) == ("КВТ | НВИ 1.5 | НВИ", "M31", "20")
 

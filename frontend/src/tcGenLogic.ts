@@ -14,6 +14,8 @@ export type Comp = { id: string; type: string; name: string; art: string; kd?: s
 export type TerRec = {
   id?: string; article: string; step: string; strip: string; lPlus: string; lMinus: string; applicator: string;
   awgFrom: string; awgTo: string; mm2From: string; mm2To: string; fields?: Record<string, string>;
+  /** The same terminal in BAG packaging (БД.ТЕР «Артикул контакта (BAG)», protocol v5.2): found by it too. */
+  articleBag?: string;
 };
 export type CoaxRec = {
   article: string; type: string; wire: string; mfr: string; program: string;
@@ -334,7 +336,7 @@ export function emptyState(): GenState {
     cap: { enabled: true, tut: "", len: "" },
     wrap: { enabled: false, slots: WRAP_SLOTS_.map(() => ({ mat: "", kind: "tape" as WrapKind, len: "" })) },
     seal: { enabled: false, mat: "", places: "" },
-    tin: { enabled: false, wires: null, stripLen: "" },
+    tin: { enabled: false, wires: null, stripLen: "5" },  // зачистка под лужение по умолчанию 5 мм (владелец 12.10.2026)
     coax: {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null,
@@ -362,15 +364,17 @@ export function makeGen(D: GenData, S: GenState) {
   function findTerRecord_(art: string | undefined): TerRec | null {
     if (!art) return null;
     const records = D.terRecords || [];
+    // REEL or BAG article of one row (owner 12.10.2026); the stored spelling is kept, the match ignores it.
+    const articles = (r: TerRec) => [r.article, r.articleBag].filter((a): a is string => !!a);
     const exact = String(art).toLowerCase().trim();
     const norm = normalizeArt_(art);
-    let found = records.find((r) => (r.article || "").toLowerCase().trim() === exact);
-    if (!found && norm.length >= 3) found = records.find((r) => normalizeArt_(r.article) === norm);
+    let found = records.find((r) => articles(r).some((a) => a.toLowerCase().trim() === exact));
+    if (!found && norm.length >= 3) found = records.find((r) => articles(r).some((a) => normalizeArt_(a) === norm));
     if (!found) {
       const words = String(art).trim().split(/\s+/);
       if (words.length > 1) {
         const normNoMfr = normalizeArt_(words.slice(1).join(" "));
-        if (normNoMfr.length >= 3) found = records.find((r) => normalizeArt_(r.article) === normNoMfr);
+        if (normNoMfr.length >= 3) found = records.find((r) => articles(r).some((a) => normalizeArt_(a) === normNoMfr));
       }
     }
     return found || null;
@@ -1918,7 +1922,9 @@ const pick = (fields: Record<string, string>, ...keys: string[]) => {
 };
 export function terFromFields(id: string, f: Record<string, string>): TerRec {
   return { id, fields: f, article: f.terArticle || "", step: f.terStep || "", strip: f.terStrip || "", lPlus: f.terLPlus || "", lMinus: f.terLMinus || "",
-    applicator: f.terApplicator || "", awgFrom: f.awgFrom || "", awgTo: f.awgTo || "", mm2From: f.mm2From || "", mm2To: f.mm2To || "" };
+    applicator: f.terApplicator || "", awgFrom: f.awgFrom || "", awgTo: f.awgTo || "", mm2From: f.mm2From || "", mm2To: f.mm2To || "",
+    // A row stored before terArticleBag existed still has the sheet column «Артикул контакта (BAG)».
+    articleBag: f.terArticleBag || String(Object.entries(f).find(([name]) => /\(bag\)/i.test(name))?.[1] || "").trim() };
 }
 export function coaxFromFields(f: Record<string, string>): CoaxRec {
   return {
