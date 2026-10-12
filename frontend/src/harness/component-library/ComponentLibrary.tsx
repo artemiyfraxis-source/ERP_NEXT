@@ -73,7 +73,7 @@ import {
 import { type ContactDirectionV2, type ImageNodeV2, type ParameterValueV2, type TemplateContentV2 as LegacyTemplateContentV2, type TemplateV2Diagnostic } from "./template-model-v2";
 import { type BundlePortV3 as BundlePortV2, type LogicalContactV3 as LogicalContactV2, type NumericExpressionV3 as NumericExpressionV2, type TemplateContentV3 as TemplateContentV2, type TemplateNodeV3 as TemplateNodeV2, type ViewContactPointV3 as ViewContactPointV2 } from "./template-model-v3";
 import { type TemplateContentV4 } from "./template-model-v4";
-import { createTemplateContentV5FromEditor, projectTemplateContentV5TableToV1, projectTemplateContentV5ToV3, type TerminalContactTypeBindingV5 } from "./template-model-v5";
+import { createTemplateContentV5FromEditor, projectTemplateContentV5TableToV1, projectTemplateContentV5ToV3, type CompatibleSealV5, type TerminalContactTypeBindingV5 } from "./template-model-v5";
 import { expandTemplateRepeatsV2 } from "./template-repeat-v2";
 import "../harness.css";
 import "./component-library.css";
@@ -88,7 +88,7 @@ interface Props {
   /** Страница спрашивает у библиотеки, можно ли уйти: при несохранённых правках покажет вопрос. */
   readonly onNavigationGuard?: (guard: (() => Promise<boolean>) | null) => void;
 }
-export interface Draft { drawingGenerators?: DrawingGenerator[]; e4Presentation?: ConnectorSchematicPresentation; articleDrawings?: ArticleDrawing[]; drawingContactBindings?: DrawingContactBinding[]; templateId: string | null; version: number; code: string; name: string; previewPng: string | null; previewPngName: string; assets: TemplateAsset[]; content: TemplateContentV2; compatibleTerminalArticleKeys: ArticleBinding[]; terminalContactTypeBindings: TerminalContactTypeBindingV5[] | null; e4ConnectorTable: E4ConnectorSeriesTable; }
+export interface Draft { drawingGenerators?: DrawingGenerator[]; e4Presentation?: ConnectorSchematicPresentation; articleDrawings?: ArticleDrawing[]; drawingContactBindings?: DrawingContactBinding[]; templateId: string | null; version: number; code: string; name: string; previewPng: string | null; previewPngName: string; assets: TemplateAsset[]; content: TemplateContentV2; compatibleTerminalArticleKeys: ArticleBinding[]; compatibleSeals?: CompatibleSealV5[]; terminalContactTypeBindings: TerminalContactTypeBindingV5[] | null; e4ConnectorTable: E4ConnectorSeriesTable; }
 
 export const TEMPLATE_UNDO_LIMIT = 100;
 export function pushTemplateUndo(stack: readonly TemplateContentV2[], current: TemplateContentV2): TemplateContentV2[] {
@@ -99,7 +99,7 @@ type EditableNode = Extract<TemplateNodeV2, { kind: "line" | "polyline" | "recta
 
 const newDraft = (): Draft => {
   const content = newTemplateContentV2();
-  return { articleDrawings: [], drawingContactBindings: [], templateId: null, version: 0, code: "", name: "Новый компонент", previewPng: null, previewPngName: "", assets: [], content, compatibleTerminalArticleKeys: [], terminalContactTypeBindings: [], e4ConnectorTable: createE4ConnectorSeriesTableFromV3(content) };
+  return { articleDrawings: [], drawingContactBindings: [], templateId: null, version: 0, code: "", name: "Новый компонент", previewPng: null, previewPngName: "", assets: [], content, compatibleTerminalArticleKeys: [], compatibleSeals: [], terminalContactTypeBindings: [], e4ConnectorTable: createE4ConnectorSeriesTableFromV3(content) };
 };
 const firstLayerIds = (content: TemplateContentV2) => Object.fromEntries(content.views.map(view => [view.id, view.layers[0]!.id]));
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Неизвестная ошибка.";
@@ -506,9 +506,9 @@ export function ComponentLibrary({ api, references, canEdit, onNavigationGuard }
     }
   }, [draft.content, selectedArticleVariantId]);
   const e4PreviewContent = useMemo(() => {
-    try { return createTemplateContentV5FromEditor(draft.content, draft.e4ConnectorTable, draft.compatibleTerminalArticleKeys, draft.terminalContactTypeBindings, draft.e4Presentation, draft.articleDrawings, draft.drawingContactBindings, draft.drawingGenerators).content; }
+    try { return createTemplateContentV5FromEditor(draft.content, draft.e4ConnectorTable, draft.compatibleTerminalArticleKeys, draft.terminalContactTypeBindings, draft.e4Presentation, draft.articleDrawings, draft.drawingContactBindings, draft.drawingGenerators, draft.compatibleSeals ?? []).content; }
     catch { return null; }
-  }, [draft.content, draft.e4ConnectorTable, draft.compatibleTerminalArticleKeys, draft.terminalContactTypeBindings, draft.e4Presentation, draft.articleDrawings, draft.drawingContactBindings, draft.drawingGenerators]);
+  }, [draft.content, draft.e4ConnectorTable, draft.compatibleTerminalArticleKeys, draft.terminalContactTypeBindings, draft.e4Presentation, draft.articleDrawings, draft.drawingContactBindings, draft.drawingGenerators, draft.compatibleSeals]);
   const effectivePreviewParameterValues = useMemo<Readonly<Record<string, ParameterValueV2>>>(() => ({
     ...previewParameterValues,
     ...articlePreview.values,
@@ -606,7 +606,7 @@ export function ComponentLibrary({ api, references, canEdit, onNavigationGuard }
     const compatibleTerminalArticleKeys = terminals?.map(item => ({ ...item })) ?? compatibleTerminalsFromV3(content);
     const projected = applySeriesTerminalsToEditor(content, table ?? createE4ConnectorSeriesTableFromV3(content), compatibleTerminalArticleKeys, bindings);
     setOpened(true); setConflict(null);
-    setDraftRaw({ drawingGenerators: isTemplateContentV5(item.content) ? structuredClone(item.content.drawingGenerators ?? []) : [], e4Presentation: isTemplateContentV5(item.content) ? item.content.e4Presentation : undefined, articleDrawings: isTemplateContentV5(item.content) ? structuredClone(item.content.articleDrawings ?? []) : [], drawingContactBindings: isTemplateContentV5(item.content) ? structuredClone(item.content.drawingContactBindings ?? []) : [], templateId: item.templateId, version: item.version, code: item.code, name: item.name, previewPng: null, previewPngName: "", assets: [...item.assets], content: structuredClone(projected.content), compatibleTerminalArticleKeys, terminalContactTypeBindings: bindings?.map(binding => structuredClone(binding)) ?? null, e4ConnectorTable: structuredClone(projected.table) });
+    setDraftRaw({ drawingGenerators: isTemplateContentV5(item.content) ? structuredClone(item.content.drawingGenerators ?? []) : [], e4Presentation: isTemplateContentV5(item.content) ? item.content.e4Presentation : undefined, articleDrawings: isTemplateContentV5(item.content) ? structuredClone(item.content.articleDrawings ?? []) : [], drawingContactBindings: isTemplateContentV5(item.content) ? structuredClone(item.content.drawingContactBindings ?? []) : [], templateId: item.templateId, version: item.version, code: item.code, name: item.name, previewPng: null, previewPngName: "", assets: [...item.assets], content: structuredClone(projected.content), compatibleTerminalArticleKeys, compatibleSeals: isTemplateContentV5(item.content) ? structuredClone(item.content.compatibleSeals ?? []) : [], terminalContactTypeBindings: bindings?.map(binding => structuredClone(binding)) ?? null, e4ConnectorTable: structuredClone(projected.table) });
     setViewId(content.views[0]!.id); setActiveLayerIds(firstLayerIds(content)); setSelectedId(null); setUndoStack([]);
     setGraphicEditorMode("e4");
     setPendingLogicalContactId(null);
@@ -850,7 +850,7 @@ export function ComponentLibrary({ api, references, canEdit, onNavigationGuard }
     let v5Content;
     try {
       for(const drawing of working.articleDrawings??[])validateArticleDrawingContacts(working.content,working.e4ConnectorTable,working.drawingContactBindings??[],drawing);
-      v5Content = createTemplateContentV5FromEditor(working.content, working.e4ConnectorTable, working.compatibleTerminalArticleKeys, working.terminalContactTypeBindings, working.e4Presentation, working.articleDrawings, working.drawingContactBindings, working.drawingGenerators).content;
+      v5Content = createTemplateContentV5FromEditor(working.content, working.e4ConnectorTable, working.compatibleTerminalArticleKeys, working.terminalContactTypeBindings, working.e4Presentation, working.articleDrawings, working.drawingContactBindings, working.drawingGenerators, working.compatibleSeals ?? []).content;
     } catch (caught) { setError(errorText(caught)); return null; }
     const body = { code: working.code.trim(), name: working.name.trim(), articleBindings: articleBindingsFromTemplateV3(working.content), content: v5Content };
     return body;
@@ -871,7 +871,7 @@ export function ComponentLibrary({ api, references, canEdit, onNavigationGuard }
     const projected = applySeriesTerminalsToEditor(content, table, terminals, bindings);
     const reconciliation = reconcileTemplateEnvelopeAssets(result.content, result.assets);
     if (reconciliation.diagnostics.length) throw new Error(reconciliation.diagnostics[0]!.message);
-    setDraftRaw(current => ({ drawingGenerators: isTemplateContentV5(result.content) ? structuredClone(result.content.drawingGenerators ?? []) : [], e4Presentation: isTemplateContentV5(result.content) ? result.content.e4Presentation : undefined, articleDrawings: isTemplateContentV5(result.content) ? structuredClone(result.content.articleDrawings ?? []) : [], drawingContactBindings: isTemplateContentV5(result.content) ? structuredClone(result.content.drawingContactBindings ?? []) : [], templateId: result.templateId, version: result.version, code: result.code, name: result.name, previewPng: null, previewPngName: current.previewPngName, assets: [...result.assets], content: structuredClone(projected.content), compatibleTerminalArticleKeys: terminals.map(item => ({ ...item })), terminalContactTypeBindings: bindings === null ? null : structuredClone(bindings), e4ConnectorTable: structuredClone(projected.table) }));
+    setDraftRaw(current => ({ drawingGenerators: isTemplateContentV5(result.content) ? structuredClone(result.content.drawingGenerators ?? []) : [], e4Presentation: isTemplateContentV5(result.content) ? result.content.e4Presentation : undefined, articleDrawings: isTemplateContentV5(result.content) ? structuredClone(result.content.articleDrawings ?? []) : [], drawingContactBindings: isTemplateContentV5(result.content) ? structuredClone(result.content.drawingContactBindings ?? []) : [], templateId: result.templateId, version: result.version, code: result.code, name: result.name, previewPng: null, previewPngName: current.previewPngName, assets: [...result.assets], content: structuredClone(projected.content), compatibleTerminalArticleKeys: terminals.map(item => ({ ...item })), compatibleSeals: isTemplateContentV5(result.content) ? structuredClone(result.content.compatibleSeals ?? []) : [], terminalContactTypeBindings: bindings === null ? null : structuredClone(bindings), e4ConnectorTable: structuredClone(projected.table) }));
     setServerHasImage(Boolean(result.hasImage) || draft.previewPng !== null || serverHasImage);
     setDirty(false); setPublishFailed(false); setUpgradedFromV1(false); setAssetMismatch(false); setDiagnostics([]); setConflict(null);
     setSaved(`Опубликована версия ${result.version}`); setError(null);
