@@ -4,7 +4,6 @@ import { hasAccess } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
 import { EquipmentForm } from "./EquipmentForm";
 import { applicatorTokens } from "./equipmentModel";
-import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
 import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
@@ -54,14 +53,13 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
   // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»; 10.10.2026: сечения — отдельной
   // таблицей, у монтажных жила из неё, многожильные — в отдельную вкладку. БД.ПРОВ, the coax D1·D2·D3 table and the coax
   // cards are joined by the server (references/cables.py, cable_structure.py). «Сечения AWG ↔ мм²» is the size table
-  // the монтажные wires reference; «Ø изоляции по маркам» is the СПР.КАБ AWG sheet the ETK generator reads.
+  // the монтажные wires reference (owner 12.10.2026: it sits in «Соответствия»); «Ø изоляции по маркам» is no tab any
+  // more — the generator reads it from the монтажные провода (GET /api/references/wire-dia).
   { title: "Кабели и провода", tabs: [
     { id: "cab_coax", label: "Коаксиальные кабели" },
     { id: "cab_wire", label: "Монтажные провода" },
-    { id: "gauges", label: "Сечения AWG ↔ мм²" },
     { id: "cab_multi", label: "Многожильные кабели" },
     { id: "cab_other", label: "Прочие кабели" },
-    { id: "kab_awg", label: "Ø изоляции по маркам" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
   { title: "Материалы", tabs: [
@@ -70,18 +68,19 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
   { title: "Соответствия", tabs: [
     { id: "suppliers", label: "Домен → поставщик" },
     { id: "countries", label: "Изготовитель → страна" },
+    { id: "gauges", label: "Сечения AWG ↔ мм²" },
   ] },
 ];
 const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_other: "other" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
 // D1 · D2 · D3» → коаксиальные кабели.
-const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax" };
+const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire" };
 const MAP_TABS: Record<MapTab, { keyLabel: string; valueLabel: string }> = {
   suppliers: { keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
   countries: { keyLabel: "Изготовитель", valueLabel: "Страна" },
 };
 // СПР.КАБ — только просмотр (как в портале SUPPLYMAP): таблица как на листе, без правки и «+ Запись».
-const VIEW_ONLY_TABS: DbTab[] = ["kab_coax", "kab_awg"];
+const VIEW_ONLY_TABS: DbTab[] = ["kab_coax"];
 const TAB_STORAGE = "erp-db-tab";
 // Record fields are SUPPLYMAP DB_SCHEMA keys (TcOpsDb.gs, backend technology._TECH_SCHEMA); the sheet's own header
 // is what people know, so the column shows that. Unknown keys (БД.ПРОВ, БД.МАТ, СПР.КАБ) are headers already.
@@ -181,7 +180,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [focusTool, setFocusTool] = useState("");
   const [bases, setBases] = useState<BasesResult>({ bases: [] });
   const [cables, setCables] = useState<CablesResult | null>(null);
-  const [awgRecords, setAwgRecords] = useState<TechOperationRecord[] | null>(null);
   // Вкладка, чьи записи уже пришли: таблица строится по готовым колонкам (иначе «скрыты по умолчанию» не сработает).
   const [techReady, setTechReady] = useState("");
   const [opCount, setOpCount] = useState<number | null>(null);
@@ -269,9 +267,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     setNotice("");
     if (techTab) void loadTech(techTab);
     if ((cableKind || tab === "gauges") && cables === null) void loadCables();
-    if (cableKind === "wire" && awgRecords === null) {
-      referencesApi.techOperations("kab_awg", "", 5000).then((result) => setAwgRecords(result.records)).catch(() => setAwgRecords([]));
-    }
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function count(def: TabDef): number | null {
@@ -425,7 +420,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
           : <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />}
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
       </div>}
-      {techTab === "kab_awg" && <WireLookup records={tech.records} />}
       {techTab === "ob" ? <EquipmentCards
         records={tech.records}
         operations={obOps}
@@ -471,7 +465,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     {cableKind && cableKind !== "wire" && cables !== null && <CableTable
       kind={cableKind}
       data={cables}
-      awgRecords={awgRecords ?? []}
       canEdit={principal.permissions.erpref === "edit"}
       onSaved={cablesSaved}
       onError={(message) => { setNotice(""); setError(message); }}

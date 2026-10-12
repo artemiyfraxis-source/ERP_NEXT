@@ -919,6 +919,18 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(requested.every((call) => call === "GET /api/stock" || call.startsWith("GET /api/stock/totals"))).toBe(true);
 });
 
+it("«История» is on a lot for the storekeeper too, not for a view-only user (owner 12.10.2026)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total: 1, truncated: 0, next_cursor: null }));
+  const { unmount } = render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  expect(screen.getByRole("button", { name: "История" })).toBeInTheDocument();
+  unmount();
+
+  render(<WarehousePage readOnly />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  expect(screen.queryByRole("button", { name: "История" })).not.toBeInTheDocument();
+});
+
 it("«История» on a lot opens a window with the journal of its ГРН only (administrator)", async () => {
   const requested: string[] = [];
   const at = "2026-09-01T10:00:00+00:00";

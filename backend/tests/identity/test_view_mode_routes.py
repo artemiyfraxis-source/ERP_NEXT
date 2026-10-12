@@ -18,7 +18,7 @@ READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 MODULE_PREFIXES = ("/api/stock", "/api/procurement", "/api/receiving")
 # Reads that stay closed in view mode (decided 29.09, tests/*/test_view_mode.py): the tool belongs to a write.
 EDIT_ONLY_READS = {
-    "/api/stock/journal",  # «Журнал склада» — the administrator's
+    "/api/stock/journal",  # «Журнал склада» / «История» партии — who works with the warehouse
     "/api/stock/article-info",  # feeds «Внести позиции»
     "/api/stock/item-types",  # «Типы» dictionary editor
     "/api/stock/export",  # first half of «Загрузить правки»

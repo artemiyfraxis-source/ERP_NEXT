@@ -12,7 +12,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_read import card_view, issued_card_for_item
+from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item
+from app.workflows.etk_lots import IssuedKitLots
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.identity import Actor
@@ -271,6 +272,12 @@ def production_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
 def techcards_uow_factory(request: Request) -> Callable[[], TechcardsUnitOfWork] | None:
     factory = getattr(request.app.state, "techcards_uow_factory", None)
     return factory if callable(factory) else None
+
+
+def etk_issued_lots(request: Request) -> IssuedLots | None:
+    """Lots handed to the shop for the КБ, so the fitter's ETK names the ГРН bound after it was issued."""
+    factory = getattr(request.app.state, "fulfillment_uow_factory", None)
+    return IssuedKitLots(factory) if callable(factory) else None
 
 
 def _number(value: Decimal) -> str:
@@ -780,6 +787,7 @@ def operation_etk(
     principal: Annotated[Principal, Depends(production_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+    issued_lots: Annotated[IssuedLots | None, Depends(etk_issued_lots)],
 ) -> dict:
     """ЭТК операции для монтажника без доступа к разделу техкарт: только выданная карта проекта и КБ этого ПЗ
     и операция, на которой её открыть. Монтажнику — своя операция, планировщику — любая."""
@@ -788,7 +796,7 @@ def operation_etk(
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     with techcards_factory() as techcards:
         card = issued_card_for_item(techcards, task.project, task.item)
-        result = card_view(card) if card is not None else None
+        result = card_views(techcards, [card], issued=issued_lots)[0] if card is not None else None
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
     return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}

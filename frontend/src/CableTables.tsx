@@ -1,6 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
-import { matchWire, parseWireTable, shownWireValue } from "./WireLookup";
 import { CABLE_KIND_LABELS, CoaxCardView, num, spanText } from "./CableStructure";
 import {
   failureText,
@@ -65,10 +64,9 @@ function draftOf(row: CableRow | null, columns: string[], kind: CableKind): Draf
   };
 }
 
-export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, toolbar }: {
+export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   kind: CableKind;
   data: CablesResult;
-  awgRecords: TechOperationRecord[];
   canEdit: boolean;
   onSaved: (message: string) => Promise<void> | void;
   onError: (message: string) => void;
@@ -76,14 +74,7 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
 }) {
   const [adding, setAdding] = useState(false);
   const rows = useMemo(() => data.rows.filter((row) => row.kind === kind), [data.rows, kind]);
-  const wireTable = useMemo(() => parseWireTable(awgRecords), [awgRecords]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
-  // The generator's Ø by the AWG table for a wire named like this row (WireLookup.matchWire — the same match).
-  const wireDia = (row: CableRow) => {
-    const matched = wireTable.marks.length ? matchWire(row.cable, wireTable.marks, wireTable.rows) : null;
-    const value = matched?.row ? shownWireValue(matched.row.byMark[matched.mark.norm]) : "";
-    return { matched, value };
-  };
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
   const textColumn = (name: string, hidden: boolean): DataColumn<CableRow> => {
@@ -113,15 +104,6 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
         render: (row: CableRow) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
       },
     ] : []),
-    ...(kind === "wire" ? [{
-      key: "__wire_dia", title: "Ø по таблице AWG, мм", numeric: true,
-      value: (row: CableRow) => wireDia(row).value,
-      render: (row: CableRow) => {
-        const { matched, value } = wireDia(row);
-        if (value && matched?.row) return <span title={`Марка ${matched.mark.name}, AWG ${matched.row.awg}${matched.row.gost ? ` · ${matched.row.gost} мм²` : ""} — так подберёт генератор ЭТК`}>{value}</span>;
-        return <span className="muted" title={matched ? `Марка ${matched.mark.name} есть в таблице AWG, сечение не найдено` : "Марки нет в таблице AWG"}>—</span>;
-      },
-    }] : []),
     ...shown.map((name) => textColumn(name, false)),
     ...data.columns.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, true)),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
@@ -149,8 +131,7 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
       storageKey={`db:cables:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
-      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
-        : kind === "wire" ? [{ label: "Нет в таблице AWG", test: (row) => !wireDia(row).value }] : undefined}
+      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
       toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />

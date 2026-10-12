@@ -192,8 +192,9 @@ warehouse_view_principal = require_section("warehouse", "view")
 warehouse_edit_principal = require_section("warehouse", "edit")
 # Import of an edited stock table (SK-14): the administrator only (SUPPLYMAP portalStock05Bulk, adminOnly).
 warehouse_admin_principal = require_full_access("Импорт таблицы остатков — только администратору.")
-# «Журнал склада» (SK-16): SUPPLYMAP portalStock05Log — portalRealAdmin_.
-warehouse_journal_principal = require_full_access("Журнал склада доступен только администратору.")
+# «Журнал склада» (SK-16) и «История» партии: в SUPPLYMAP только администратор; владелец 12.10.2026 — кладовщику тоже
+# (кто работает со складом, видит историю ГРН).
+warehouse_journal_principal = require_section("warehouse", "edit")
 # Picking reserves, handout writes off: two sections over one request (SUPPLYMAP Issue.gs portalIssueGuard_, owner
 # 02.09.2026). Reading the shared list takes either key; each write takes its own (NAV-SECTIONS).
 fulfillment_view_principal = require_section(("fulfillment", "handout"), "view")
