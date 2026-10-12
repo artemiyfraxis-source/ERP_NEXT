@@ -199,18 +199,22 @@ it("opens a coax card a tester reads at the VNA: markers, connectors, constructi
   const card = screen.getByRole("region", { name: "Карточка кабеля RG-316" });
   expect(within(card).getByText("проверено по datasheet · достоверность средняя")).toBeInTheDocument();
   // the rated operating limit and the TE11 cut-off are two numbers, never one
-  expect(within(card).getByText("Рабочая частота").parentElement).toHaveTextContent("Рабочая частота до 3 ГГц");
-  expect(within(card).getByText("Частота среза TE11").parentElement).toHaveTextContent("≈ 65,3 ГГц");
+  expect(within(card).getByText("Рабочая частота").parentElement).toHaveTextContent(/Рабочая частота\s*до 3 ГГц/);
+  expect(within(card).getByText("Частота среза TE11").parentElement).toHaveTextContent(/≈ 65,3 ГГц/);
   const markers = within(card).getByRole("table", { name: "Маркеры VNA" });
   expect(within(markers).getByText("КСВН — норма приёмки (предложено)")).toBeInTheDocument();
-  expect(within(markers).getByRole("columnheader", { name: "Паспорт сборки ≤" })).toBeInTheDocument();
+  expect(within(markers).getByRole("columnheader", { name: "Паспорт ≤" })).toBeInTheDocument();
   const rows = within(markers).getAllByRole("row").slice(1).map((row) => row.textContent);
-  expect(rows).toEqual(["433 МГц1,11,40,55 интерп.", "2,45 ГГц1,221,41,65 расч.", "Peak — максимум по диапазону1,25——"]);
+  expect(rows).toEqual(["433 МГц1,11,4≈ 0,55", "2,45 ГГц1,221,41,65", "Peak — максимум по диапазону1,25——"]);
   const connectors = within(card).getByRole("table", { name: "Разъёмы" });
   expect(within(connectors).getByText("до 2 ГГц", { selector: "strong" })).toBeInTheDocument(); // BNC narrows the span
   const datasheet = within(card).getByRole("table", { name: "Затухание по источнику" });
-  expect(datasheet).toHaveTextContent("dB/100ft");
-  expect(datasheet).toHaveTextContent("интерполировано (лог-лог) между 400 и 1000 МГц");
+  expect(datasheet).toHaveTextContent("50,3 дБ/100 фут");
+  expect(within(datasheet).queryByRole("columnheader", { name: "t, °C" })).toBeInTheDocument(); // one point has a temperature
+  expect(datasheet).toHaveTextContent("интерполяция 400–1000 МГц");
+  expect(within(datasheet).getByText("пересчёт")).toBeInTheDocument();
+  expect(within(datasheet).queryByRole("columnheader", { name: "Единица" })).toBeNull(); // the unit sits next to the source value, not in a column of its own
+  expect(within(datasheet).getByRole("link", { name: "example.test" })).toHaveAttribute("href", "https://example.test/rg316.pdf");
   expect(within(card).getByText("Волновое сопротивление").parentElement).toHaveAttribute("title", "50 ±2");
   expect(within(card).getByText("Мощность, макс.").parentElement).toHaveTextContent("173 Вт на 1 ГГц");
 });

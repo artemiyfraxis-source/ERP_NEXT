@@ -497,31 +497,40 @@ table.ship-lines td:first-child { width: 1%; }
 .db-later { align-self: center; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; }
 .hookup-form { padding-bottom: 10px; border-bottom: 1px solid var(--sheet-line); }
 .hookup-form select { min-width: 0; }
-.coax-card { display: grid; gap: 10px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--sheet-line); }
-.coax-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
-.coax-card-head h3 { margin: 0; font-size: 16px; }
-.coax-card-head h3 small { font-weight: 400; color: var(--muted-foreground); font-size: 13px; }
-.coax-card-head small { color: var(--muted-foreground); font-size: 12px; }
-.coax-flag { padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--accent); }
+.coax-card { display: grid; gap: 12px; min-width: 0; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--sheet-line); font-variant-numeric: tabular-nums; }
+.coax-card-head { display: grid; gap: 8px; }
+.coax-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.coax-title h3 { margin: 0; font-size: 16px; }
+.coax-title h3 small { font-weight: 400; color: var(--muted-foreground); font-size: 13px; }
+.coax-desc { flex: 1 1 280px; min-width: 0; color: var(--muted-foreground); font-size: 14px; overflow-wrap: anywhere; }
+.coax-flag { padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--accent); white-space: nowrap; }
 .coax-flag.tone-warn { background: var(--warn-soft); }
 .coax-flag.tone-ok { background: var(--chip-ok-bg); }
-.coax-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 12px 18px; align-items: start; }
-.coax-block { min-width: 0; overflow-x: auto; }
-.coax-mini caption small { margin-left: 6px; font-weight: 400; color: var(--muted-foreground); font-size: 11.5px; }
-.coax-mini td.wrap { white-space: normal; }
-.coax-mini td small { display: inline; margin-left: 4px; }
-.coax-mini { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); }
-.coax-mini caption { padding: 0 0 4px; text-align: left; font-weight: 600; font-size: 13px; }
-.coax-mini th { padding: 4px 8px; text-align: left; vertical-align: bottom; background: var(--table-head); color: var(--table-head-fg); font-size: 11px; font-weight: 600; }
-.coax-mini th small { font-weight: 400; color: var(--muted-foreground); font-size: 10.5px; }
-.coax-mini td { padding: 4px 8px; border-top: 1px solid var(--sheet-line); white-space: nowrap; }
-.coax-mini tbody tr:nth-child(even) td { background: var(--table-zebra); }
-.coax-mini td.num { text-align: right; }
-.coax-mini tr.coax-peak td { font-style: italic; color: var(--muted-foreground); }
-.coax-datasheet { max-width: 900px; }
-.coax-note { margin: 0; max-width: 1100px; font-size: 13px; line-height: 1.45; }
-.coax-params small { font-size: 11px; text-transform: none; }
-.coax-sources { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 12px; color: var(--muted-foreground); }
+.coax-facts { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; padding: 6px 0; border-top: 1px solid var(--sheet-line); border-bottom: 1px solid var(--sheet-line); }
+.coax-facts div { display: flex; align-items: baseline; gap: 6px; }
+.coax-facts dt { color: var(--muted-foreground); font-size: 12px; }
+.coax-facts dd { margin: 0; font-size: 14px; font-weight: 600; }
+.coax-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px 24px; align-items: start; }
+.coax-col { display: grid; gap: 16px; min-width: 0; }
+.coax-wide { min-width: 0; }
+/* Specificity doubled on purpose: inside DataTable's detail row `.data-table …th/td` rules pin headers and force nowrap. */
+.coax-card.coax-card .coax-mini { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); }
+.coax-card.coax-card .coax-mini caption { padding: 0 0 4px; text-align: left; font-weight: 600; font-size: 14px; }
+.coax-card.coax-card .coax-mini caption small { margin-left: 8px; font-weight: 400; color: var(--muted-foreground); font-size: 12px; }
+.coax-card.coax-card .coax-mini th { position: static; padding: 4px 8px; text-align: left; vertical-align: bottom; background: var(--table-head); box-shadow: none; color: var(--table-head-fg); font-size: 12px; font-weight: 500; white-space: normal; }
+.coax-card.coax-card .coax-mini tbody th { background: none; color: var(--foreground); font-size: 13px; font-weight: 400; vertical-align: top; border-top: 1px solid var(--sheet-line); }
+.coax-card.coax-card .coax-mini td { padding: 4px 8px; border-top: 1px solid var(--sheet-line); border-bottom: 0; white-space: nowrap; }
+.coax-card.coax-card .coax-mini td.wrap { white-space: normal; overflow-wrap: anywhere; }
+.coax-card.coax-card .coax-mini th.num, .coax-card.coax-card .coax-mini td.num { text-align: right; }
+.coax-card.coax-card .coax-mini tbody tr:nth-child(even) td, .coax-card.coax-card .coax-mini tbody tr:nth-child(even) th { background: var(--table-zebra); }
+.coax-card.coax-card .coax-mini td.coax-est { color: var(--muted-foreground); }
+.coax-card.coax-card .coax-mini tr.coax-peak td { border-top-color: var(--sheet-hover); color: var(--muted-foreground); }
+.coax-card.coax-card table.coax-mini thead th:first-child { position: static; z-index: auto; box-shadow: none; background: var(--table-head); }
+.coax-card.coax-card .coax-datasheet { max-width: 820px; }
+.coax-card.coax-card .coax-datasheet td:last-child { white-space: normal; overflow-wrap: anywhere; }
+.coax-note { margin: 0; font-size: 14px; line-height: 1.45; }
+.coax-legend { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.coax-sources { display: flex; flex-wrap: wrap; gap: 4px 24px; font-size: 12px; color: var(--muted-foreground); }
 .coax-sources a { margin-left: 6px; }
 
 .reference-tiles .tile { min-height: 0; }
@@ -2072,10 +2081,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-solder > div { display: grid; gap: 2px; padding: 8px 12px; border-radius: 10px; border: 1px solid #f0b8a8; background: #fff4f0; font-size: 13px; min-width: 220px; }
 .etk-solder small { font-size: 11px; color: #9a3412; }
 .etk-assumed { justify-self: start; padding: 1px 6px; border-radius: 999px; background: #fef3c7; color: #92400e; font-size: 11px; cursor: help; }
-.etk-defects > summary { cursor: pointer; list-style: none; }
-.etk-defects > summary::-webkit-details-marker { display: none; }
-.etk-defects > summary h4::after { content: "▾"; color: var(--muted-foreground); font-weight: 400; }
-.etk-defects:not([open]) > summary h4::after { content: "▸"; }
+/* Любой блок ЭТК сворачивается по заголовку: ▾ открыт, ▸ свёрнут. */
+.etk-fold > summary { cursor: pointer; list-style: none; }
+.etk-fold > summary::-webkit-details-marker { display: none; }
+.etk-fold > summary h4::after { content: "▾"; color: var(--muted-foreground); font-weight: 400; }
+.etk-fold:not([open]) > summary h4::after { content: "▸"; }
+.etk-fold:not([open]) > summary h4 { margin-bottom: 0; }
 .etk-def-intro { display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 11.5px; }
 .etk-def-group { display: grid; gap: 6px; margin-bottom: 10px; }
 .etk-def-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
@@ -3259,6 +3270,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .etk-block > strong + .etk-in-row { border-top: 0; }
 .etk-in-name { display: grid; gap: 1px; min-width: 0; }
 .etk-in-name small { color: var(--muted-foreground); font-size: 11px; }
+.etk-in-name small.etk-spec { font-variant-numeric: tabular-nums; }
 .etk-in-qty { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* «Оснастка»: пустой раздел — «нет» серым (ЭТК-1). */
 .tr-none { color: var(--muted-foreground); font-size: 12px; }
@@ -3327,3 +3339,12 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .quality-page .danger-text { color: var(--tone-danger); }
 
 .ec-legend { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+
+/* Обжим по сечениям (вкладка «Терминалы», карточка серии): сечение написано один раз, значения — столбиками. */
+.crimp { display: grid; gap: 1px; }
+.crimp-row { display: grid; grid-template-columns: repeat(var(--crimp-n, 1), minmax(11ch, auto)); gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crimp-row.has-awg { grid-template-columns: 9ch repeat(var(--crimp-n, 1), minmax(11ch, auto)); }
+.crimp-awg { color: var(--muted-foreground); font-weight: 600; border-right: 1px solid var(--border); padding-right: 8px; }
+.crimp-val { text-align: right; }
+.crimp-unit { font-style: normal; color: var(--muted-foreground); }
+@media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }

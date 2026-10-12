@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { TcGenerator } from "./TcGenerator";
 import {
   kitsetsApi,
@@ -12,7 +12,7 @@ import {
   type TechcardRevision,
   failureText,
 } from "./api";
-import { ETK_CONNECTION_COLUMNS, etkChips, etkConnectionRows, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
+import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkChips, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkPrintPages } from "./etkPrint";
 import { etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, formatMinutes } from "./etkRoute";
 import { defectArt, defectGroupCode } from "./etkDefectArt";
@@ -181,13 +181,22 @@ function ResultView({ label, result = [], time = [], batch }: { label: string; r
   </div>;
 }
 
-/** Комплектующие (SUPPLYMAP etkPartRow_): артикул к применению, под ним «по КД», наименование по артикулу, ГРН партии. */
-function PartRows({ rows }: { rows?: EtkRow[] }) {
+/** «не задано» в тексте нормы — тоном опасности (erp-screens: пустая норма видна, а не угадывается). */
+function MarkMissing({ text }: { text: string }) {
+  const parts = text.split(ETK_NOT_SET);
+  return <>{parts.map((part, index) => <Fragment key={index}>{part}{index < parts.length - 1 && <b className="tone-danger">{ETK_NOT_SET}</b>}</Fragment>)}</>;
+}
+
+/** Комплектующие (SUPPLYMAP etkPartRow_): артикул к применению, под ним «по КД», наименование по артикулу, ГРН партии;
+ *  у обжимаемого контакта — строка спецификации на свой конец: аппликатор, высота обжима, отрыв, зачистка. */
+function PartRows({ rows, fields }: { rows?: EtkRow[]; fields?: unknown }) {
   if (!rows?.length) return null;
+  const crimp = fields && typeof fields === "object" ? fields as Record<string, unknown> : {};
   return <div className="etk-block"><strong>Комплектующие</strong>{rows.map((row, index) =>
     <InputLine key={`${row.art || row.name}:${index}`} qty={quantity(row)}>
       {row.art || row.name || "—"}{row.kd && <small>по КД: {row.kd}, аналог</small>}
       {row.art && row.name && <small>{row.name}</small>}{row.grn && <small>ГРН {row.grn}</small>}
+      {etkContactSpecs(crimp, row.art).map((spec) => <small key={spec} className="etk-spec"><MarkMissing text={spec} /></small>)}
     </InputLine>
   )}</div>;
 }
@@ -235,39 +244,34 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
       {actions}
     </header>
     {etkChips(raw).length > 0 && <div className="etk-chips" aria-label="Параметры операции">{etkChips(raw).map(([label, value]) =>
-      <span key={label}><small>{label}</small>{value}</span>)}</div>}
+      <span key={label}><small>{label}</small><MarkMissing text={value} /></span>)}</div>}
     {safety && <details className="etk-safety"><summary>Требование безопасности</summary><div>{safety}</div></details>}
     {!operation.card && <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
-    <section className="etk-sec" aria-label="Вход">
-      <h4><span className="etk-sec-n">{next()}</span>Вход</h4>
+    <EtkSection label="Вход" number={next()}>
       {hasInput ? <div className="etk-flow">
-        <PartRows rows={operation.components} />
+        <PartRows rows={operation.components} fields={raw.fields} />
         <Rows title="Полуфабрикат на входе" rows={operation.semis} />
       </div> : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
-    </section>
-    <section className="etk-sec" aria-label="Оснастка">
-      <h4><span className="etk-sec-n">{next()}</span>Оснастка</h4>
+    </EtkSection>
+    <EtkSection label="Оснастка" number={next()}>
       {solder && <SolderPanel mode={solder} />}
       <ToolingBySection tooling={tooling} fixed />
-    </section>
-    {operation.card?.steps?.length || marks.length ? <section className="etk-sec" aria-label="Ход операции">
-      <h4><span className="etk-sec-n">{next()}</span>Ход операции</h4>
+    </EtkSection>
+    {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>
       {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
       {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
         <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small>Допуск: {step.tolerance}</small>}</li>
-      )}</ol> : null}</section> : null}
+      )}</ol> : null}</EtkSection> : null}
     {operation.card?.defects && <DefectsView text={operation.card.defects} code={operation.code || ""} number={next()} />}
-    {(figure || sketch) && <section className="etk-sec" aria-label="Эскиз">
-      <h4><span className="etk-sec-n">{next()}</span>Эскиз</h4>
+    {(figure || sketch) && <EtkSection label="Эскиз" number={next()}>
       <div className="etk-fig-row">
         {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
         {sketch}
       </div>
-    </section>}
-    {hasResult && <section className="etk-sec" aria-label="Результат">
-      <h4><span className="etk-sec-n">{next()}</span>Результат</h4>
+    </EtkSection>}
+    {hasResult && <EtkSection label="Результат" number={next()}>
       <ResultView label={resultLabel} result={operation.result} time={operation.time} batch={batch} />
-    </section>}
+    </EtkSection>}
   </article>;
 }
 
@@ -281,12 +285,23 @@ function SolderPanel({ mode }: { mode: SolderMode }) {
   </div>;
 }
 
+/** Блок ЭТК, который сворачивается щелчком по заголовку, как «Типовые дефекты» (владелец, 12.10: «не могу скрыть»).
+ *  Открыт по умолчанию; печать (etkPrint.ts) печатает все блоки. */
+function EtkSection({ label, number, children }: { label: string; number: number; children: ReactNode }) {
+  return <section className="etk-sec" aria-label={label}>
+    <details className="etk-fold" open>
+      <summary><h4><span className="etk-sec-n">{number}</span>{label}</h4></summary>
+      {children}
+    </details>
+  </section>;
+}
+
 /** Типовые дефекты карточками: на каждый дефект рисунок «Норма | Брак» из общей библиотеки (в Google — сплошной
  *  текст). Рисунок выбирается при показе по названию дефекта и коду операции. */
 function DefectsView({ text, code, number }: { text: string; code: string; number: number }) {
   const parsed = parseDefects(text);
   const count = parsed.groups.reduce((sum, group) => sum + group.items.length, 0);
-  return <details className="etk-sec etk-defects" open aria-label="Типовые дефекты">
+  return <details className="etk-sec etk-defects etk-fold" open aria-label="Типовые дефекты">
     <summary><h4><span className="etk-sec-n">{number}</span>Типовые дефекты{count ? ` · ${count}` : ""}</h4></summary>
     {count ? <>
       {parsed.intro.length > 0 && <small className="etk-def-intro">{parsed.intro.join(" · ")}</small>}
@@ -410,9 +425,9 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
   const chips = etkChips(raw);
   return {
     chips: chips.length ? <div className="etk-chips" aria-label="Параметры операции">{chips.map(([label, value]) =>
-      <span key={label}><small>{label}</small>{value}</span>)}</div> : undefined,
+      <span key={label}><small>{label}</small><MarkMissing text={value} /></span>)}</div> : undefined,
     input: operation.components?.length || operation.semis?.length
-      ? <div className="etk-flow"><PartRows rows={operation.components} /><Rows title="Полуфабрикат на входе" rows={operation.semis} /></div> : undefined,
+      ? <div className="etk-flow"><PartRows rows={operation.components} fields={raw.fields} /><Rows title="Полуфабрикат на входе" rows={operation.semis} /></div> : undefined,
     sketch: figure || sketchUrl ? <div className="etk-fig-row">
       {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
       {sketchUrl && <div className="etk-sketch"><img src={sketchUrl} alt="Эскиз операции" /></div>}

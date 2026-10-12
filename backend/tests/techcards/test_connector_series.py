@@ -115,3 +115,17 @@ def test_connector_series_api(project_techcards_api):
     assert body["match"]["series"] == "jst-ph" and body["match"]["article"] == "PHR-4"
     assert len(body["series"]) == families["series_count"]
     assert project_techcards_api.get("/api/techcards/connector-series").json()["match"] is None
+
+
+def test_terminal_payload_carries_crimp_height_and_pull_force():
+    plain = {"terSeries": "GHR", "terArticle": "P-1", "terCrimpHeight": "0,85 - 0,90", "terPullForceMin": "50", "terPullForceMax": "70"}
+    profiled = {"terSeries": "GHR", "terArticle": "P-2", "terCrimpHeight": "26 AWG: 0,62 (15 Н)\n28 AWG: 0,70 (12 Н)"}
+    split = {"terSeries": "GHR", "terArticle": "P-3", "terCrimpHeight": "24 AWG: 0.76 - 0.81 22 AWG: 0,84",
+             "terPullForceMin": "24 AWG: 29,3\n22 AWG: 44,1", "terPullForceMax": "24 AWG: 35"}
+    empty = {"terSeries": "GHR", "terArticle": "P-4"}
+    a, b, c, d = terminals_for(("GHR",), [plain, profiled, split, empty])
+
+    assert (a["crimp_height"], a["pull_force"]) == ("0,85–0,90", "50–70")
+    assert (b["crimp_height"], b["pull_force"]) == ("26 AWG: 0,62; 28 AWG: 0,70", "26 AWG: 15; 28 AWG: 12")
+    assert (c["crimp_height"], c["pull_force"]) == ("24 AWG: 0,76–0,81; 22 AWG: 0,84", "24 AWG: 29,3–35; 22 AWG: 44,1")
+    assert (d["crimp_height"], d["pull_force"]) == ("", "")

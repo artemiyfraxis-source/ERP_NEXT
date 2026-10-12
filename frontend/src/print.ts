@@ -31,6 +31,7 @@ const PAGE_CSS = `
   .page:last-child { page-break-after: auto; }
   .page h2 { font-size: 14px; margin: 14px 0 6px; }
   .page table { margin-bottom: 10px; }
+  .page td { white-space: pre-line; }
   .text { font-size: 12px; white-space: pre-wrap; margin: 8px 0; }
   .fig { margin: 8px 0 10px; page-break-inside: avoid; }
   .fig svg { max-width: 100%; height: auto; }

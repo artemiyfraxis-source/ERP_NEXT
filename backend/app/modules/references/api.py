@@ -38,6 +38,7 @@ from .technology import (
     TerminalRecord,
     fold_wire_section,
     import_supplymap_snapshot,
+    normalize_terminal_fields,
     resolve_terminal,
     schema_keys,
     wire_section,
@@ -204,7 +205,8 @@ def tech_operations(
         "columns": _columns(tab, records),
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
-            "source_sheet": item.source_sheet, "fields": item.fields,
+            "source_sheet": item.source_sheet,
+            "fields": normalize_terminal_fields(item.fields) if item.tab == TechOperationTab.TERMINAL else item.fields,
         } for item in records],
     }
 

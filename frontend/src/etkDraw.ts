@@ -459,13 +459,91 @@ export function etkDrawHarness(topo: EtkTopologyData | null | undefined, pins: R
   return svg(W, H, body);
 }
 
+/** Нет значения в БД.ТЕР — так и пишется (erp-screens: «не задано», не «?»); экран красит его тоном опасности. */
+export const ETK_NOT_SET = "не задано";
+
+/** Норма обжима для чтения: «0,60 - 0,75» → «0,60–0,75», точка → запятая; старый «?» и «⚠ нет данных» — «не задано». */
+export function crimpText(value: unknown): string {
+  return str(value).trim()
+    .replace(/(\d)\.(\d)/g, "$1,$2")
+    .replace(/(\d)\s*[-–—]\s*(?=\d)/g, "$1–")
+    .replace(/⚠\s*нет данных/gi, ETK_NOT_SET)
+    .replace(/(^|\s)\?(?=\s|$)/g, `$1${ETK_NOT_SET}`);
+}
+
+/** Обжим одного контакта на одном конце (или на обоих) и одном сечении — `fields.crimpEnds` новых ЭТК. */
+export type EtkCrimpEnd = {
+  ends: string[]; art: string; name?: string; wire?: string; section?: string;
+  applicator?: string; crimpHeight?: string; pullForce?: string; strip?: string;
+};
+
+export function etkCrimpEnds(fields: Row): EtkCrimpEnd[] {
+  return list(fields.crimpEnds).map((item) => ({
+    ends: Array.isArray(item.ends) ? item.ends.map(str) : [], art: str(item.art), name: str(item.name), wire: str(item.wire),
+    section: str(item.section), applicator: str(item.applicator), crimpHeight: str(item.crimpHeight),
+    pullForce: str(item.pullForce), strip: str(item.strip),
+  }));
+}
+
+const withUnit = (value: string | undefined, unit: string) => value?.trim() ? `${crimpText(value)} ${unit}` : ETK_NOT_SET;
+/** Отрыв: одно число — нижняя граница «≥ 9,8 Н», диапазон — как есть «9,8–39,2 Н». */
+const pullText = (value: string | undefined) => !value?.trim() ? ETK_NOT_SET
+  : /[–;:]/.test(crimpText(value)) ? `${crimpText(value)} Н` : `≥ ${crimpText(value)} Н`;
+const endsText = (ends: string[]) => ends.length > 1 ? `Концы ${ends.join(" и ")}` : `Конец ${ends[0] || "A"}`;
+
+/** Серая строка контакта в «Комплектующих»: конец, провод и сечение, аппликатор, высота обжима, отрыв, зачистка. */
+export function etkCrimpSpec(entry: EtkCrimpEnd): string {
+  const wire = [entry.wire, entry.section && entry.section !== entry.wire ? `(${entry.section})` : ""].filter(Boolean).join(" ");
+  return [
+    endsText(entry.ends), wire, `аппликатор ${entry.applicator?.trim() || ETK_NOT_SET}`,
+    `обжим проводника ${withUnit(entry.crimpHeight, "мм")}`, `отрыв ${pullText(entry.pullForce)}`,
+    `зачистка ${withUnit(entry.strip, "мм")}`,
+  ].filter(Boolean).join(" · ");
+}
+
+/** Строки спецификации обжима для строки комплектующих по артикулу контакта; у выданных до 12.10 ЭТК — пусто. */
+export function etkContactSpecs(fields: Row, art: unknown): string[] {
+  const key = str(art).trim();
+  return key ? etkCrimpEnds(fields).filter((entry) => entry.art.trim() === key).map(etkCrimpSpec) : [];
+}
+
+/** Короткое имя контакта для чипа: первое слово артикула от 3 знаков («T-DS1071-SC600» → «DS1071», «SXH-001T» → «SXH»). */
+function contactShort(art: string): string {
+  return art.split(/[-\s]+/).find((part) => part.length >= 3) || art;
+}
+
+/** Чипы шапки «Аппликатор / Высота обжима / Отрыв». Два разных контакта — по концам с именем контакта
+ *  («A (SXH) 0,60–0,75 мм · B (DS1071) не задано»); один — одно значение. ЭТК без `crimpEnds` — по старым полям. */
+export function etkCrimpChips(fields: Row): Array<[string, string]> {
+  const ends = etkCrimpEnds(fields);
+  if (!ends.length) {
+    const out: Array<[string, string]> = [];
+    if (fields.applicator) out.push(["Аппликатор", crimpText(fields.applicator)]);
+    if ("crimpHeight" in fields) out.push(["Высота обжима", fields.crimpHeight ? `${crimpText(fields.crimpHeight)} мм` : ETK_NOT_SET]);
+    if (fields.pullForce) out.push(["Отрыв", `${crimpText(fields.pullForce)} Н`]);
+    return out;
+  }
+  const arts = [...new Set(ends.map((entry) => entry.art))];
+  const value = (entries: EtkCrimpEnd[], pick: (entry: EtkCrimpEnd) => string) => {
+    const values = [...new Set(entries.map(pick))];
+    return values.length > 1 ? entries.map((entry) => `${entry.section || entry.wire}: ${pick(entry)}`).join("; ") : values[0];
+  };
+  const chip = (pick: (entry: EtkCrimpEnd) => string): string => arts.length === 1 ? value(ends, pick)
+    : ["A", "B"].map((end) => {
+      const own = ends.filter((entry) => entry.ends.includes(end));
+      return own.length ? `${end} (${contactShort(own[0].art)}) ${value(own, pick)}` : "";
+    }).filter(Boolean).join(" · ");
+  return [
+    ["Аппликатор", chip((entry) => entry.applicator?.trim() || ETK_NOT_SET)],
+    ["Высота обжима", chip((entry) => withUnit(entry.crimpHeight, "мм"))],
+    ["Отрыв", chip((entry) => pullText(entry.pullForce))],
+  ];
+}
+
 /** Чипы полей операции над ходом операции (renderEtk_ chips): аппликатор, высота обжима, отрыв, длина, допуск,
  * зачистка, свивка и время из БД.ОП (на штуку — с, подготовка — мин). */
 export function etkChips(operation: Row): Array<[string, string]> {
-  const f = obj(operation.fields), out: Array<[string, string]> = [];
-  if (f.applicator) out.push(["Аппликатор", str(f.applicator)]);
-  if ("crimpHeight" in f) out.push(["Высота обжима", f.crimpHeight ? `${str(f.crimpHeight)} мм` : "⚠ нет данных"]);
-  if (f.pullForce) out.push(["Отрыв", `${str(f.pullForce)} Н`]);
+  const f = obj(operation.fields), out: Array<[string, string]> = [...etkCrimpChips(f)];
   if (f.lengthKd) out.push(["Длина по КД", str(f.lengthKd)]);
   if (f.cutTolerance) out.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
   // Ручная сборка: сколько раз операция на одно изделие, параметры и примечание технолога.
