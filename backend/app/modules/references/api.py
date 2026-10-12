@@ -688,7 +688,8 @@ def crimp_add_terminal(
     return _run_edit(lambda: change_terminal(record_id, terminal_id, add=True, actor=principal.actor, now=now, uow=uow_factory()))
 
 
-@router.delete("/tech-operations/{record_id}/crimps/terminals/{terminal_id}")
+@router.delete("/tech-operations/{record_id}/crimps/terminals/{terminal_id}",
+               dependencies=[Depends(refuse_api_tokens("Токен API не снимает связи инструмента с контактами."))])
 def crimp_remove_terminal(
     record_id: UUID, terminal_id: UUID,
     principal: Annotated[Principal, Depends(references_edit_principal)],

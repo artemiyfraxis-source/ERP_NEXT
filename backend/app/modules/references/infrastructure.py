@@ -90,6 +90,9 @@ class SqlAlchemyTechOperationRepository:
     def get(self, record_id: UUID) -> TechOperationRecord | None:
         row = self.session.get(TechOperationRecordRow, record_id)
         return None if row is None else self._domain(row)
+    def delete(self, record_id: UUID) -> None:
+        row = self.session.get(TechOperationRecordRow, record_id)
+        if row is not None: self.session.delete(row)
     def save(self, record: TechOperationRecord) -> None:
         row = self.session.get(TechOperationRecordRow, record.id)
         if row is None: row = TechOperationRecordRow(id=record.id); self.session.add(row)
