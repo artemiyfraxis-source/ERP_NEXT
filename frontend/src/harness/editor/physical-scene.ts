@@ -89,6 +89,13 @@ export function physicalTopologyScene(document: HarnessDesignDocument): EditorSc
         // still owns its automatically generated outer corners and must expose
         // them to the first move/delete gesture.
         controlled:fixed?.controlled??(!automaticMemberRoute&&controlled(authored[index+1]!))};
+    }).filter(handle=>{
+      // After an OP is created, its axis supplies the member stations. An
+      // unregistered bend from the old P at that axis is stale presentation
+      // state: keeping it produces a duplicate numbered point and midpoint.
+      // Explicitly persisted bend ownership is retained for later editing.
+      const region=handle.authoredRegion??joiningPipeMidpointRegion(document,segment.id,handle.fraction);
+      return !(segment.path.kind==="polyline"&&region==="axis"&&handle.authoredRegion===undefined);
     });
     const generated:SceneControl[]=generatedControls?.map(control=>({fraction:control.fraction,point:control.point,controlled:control.controlled,connection:control.connection,boundary:control.boundary,lead:control.lead,memberIndex:control.memberIndex,transition:control.transition}))??[];
     const mergedHandles:SceneControl[]=[...authoredHandles,...generated].sort((a,b)=>a.fraction-b.fraction)

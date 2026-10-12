@@ -1,10 +1,11 @@
-"""HTTP: автоплан площадки ЦАР на период — предпросмотр и применение выбранного мастером."""
+"""HTTP: автоплан площадки ЦАР — что войдёт в расчёт, предпросмотр и применение выбранного мастером
+(режимы «Весь цех» и «По проекту», период — от сейчас до горизонта работы)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -25,25 +26,32 @@ from .autoplan_application import (
     ApplyAutoplanCommand,
     AutoplanCommand,
     AutoplanForbidden,
+    AutoplanMode,
     CardSnapshot,
     StaleAutoplan,
     apply_autoplan,
+    autoplan_context,
     card_key,
     describe,
     equipment_numbers,
     preview_autoplan,
 )
 from .domain import ProductionValidationError
+from .launchable import ReadyCard, ready_cards
 
 
 router = APIRouter(prefix="/api/production/autoplan", tags=["production"])
 
 
 class PreviewPayload(BaseModel):
-    date_from: date
-    date_to: date
-    task_ids: list[UUID] | None = Field(default=None, max_length=1000)
-    replan_auto: bool = False
+    # «Весь цех» — вся работа на всех монтажников ЦАР; «По проекту» — работа проекта на выбранных людей.
+    mode: Literal["shop", "project"] = "shop"
+    project: str = Field(default="", max_length=200)
+    people: list[UUID] = Field(default_factory=list, max_length=200)
+    # Исключённые из «Весь цех»: id заданий и id техкарт КБ без задания.
+    exclude: list[UUID] = Field(default_factory=list, max_length=2000)
+    # «До даты» вручную; не задано — план до горизонта работы (самый поздний срок или сколько нужно, до 8 недель).
+    date_to: date | None = None
 
 
 class ApplyItem(BaseModel):
@@ -53,9 +61,16 @@ class ApplyItem(BaseModel):
 
 
 class ApplyPayload(PreviewPayload):
-    # task_ids и replan_auto — те же, что в предпросмотре: они входят в отпечаток.
+    # Режим, проект, люди, исключения и «до даты» — те же, что в предпросмотре: они входят в отпечаток.
     items: list[ApplyItem] = Field(min_length=1, max_length=5000)
     fingerprint: str = Field(min_length=16, max_length=128)
+
+
+def _command(payload: PreviewPayload, principal: Principal, now: datetime) -> AutoplanCommand:
+    return AutoplanCommand(
+        actor=principal.actor, now=now, mode=AutoplanMode(payload.mode), project=payload.project.strip(),
+        people=tuple(dict.fromkeys(payload.people)), exclude=frozenset(payload.exclude), date_to=payload.date_to,
+    )
 
 
 def references_uow_factory(request: Request) -> Callable[[], Any] | None:
@@ -63,16 +78,19 @@ def references_uow_factory(request: Request) -> Callable[[], Any] | None:
     return factory if callable(factory) else None
 
 
-def _cards(factory: Callable[[], TechcardsUnitOfWork] | None) -> dict[tuple[str, str], CardSnapshot]:
-    """Текущая выданная техкарта каждой позиции (проект, индекс); у нескольких — последняя выданная."""
+def _techcards(factory: Callable[[], TechcardsUnitOfWork] | None) -> tuple[dict[tuple[str, str], CardSnapshot], list[ReadyCard]]:
+    """Текущая выданная техкарта каждой позиции (проект, индекс; у нескольких — последняя выданная) и КБ к запуску —
+    тот же список, что «Создать задание» на доске мастера (/api/production/launchable)."""
     if factory is None:
-        return {}
+        return {}, []
     with factory() as techcards:
         rows = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
+        kitsets = tuple(techcards.kitsets.list()) if hasattr(techcards, "kitsets") else ()
     result: dict[tuple[str, str], CardSnapshot] = {}
-    for card in sorted(rows, key=lambda item: (item.issued_at or item.updated_at, item.updated_at, str(item.id))):
+    rows.sort(key=lambda item: (item.issued_at or item.updated_at, item.updated_at, str(item.id)))
+    for card in rows:
         result[card_key(card.project, card.item_index)] = CardSnapshot(card.id, card.version, card.document)
-    return result
+    return result, ready_cards(rows, kitsets)
 
 
 def _units(factory: Callable[[], Any] | None) -> dict[str, int]:
@@ -97,6 +115,18 @@ def _handle(operation):
         raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
 
 
+@router.post("/context")
+def context(
+    payload: PreviewPayload,
+    principal: Annotated[Principal, Depends(production_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    cards, ready = _techcards(techcards_factory)
+    return _handle(lambda: autoplan_context(_command(payload, principal, now), uow_factory(), cards, ready))
+
+
 @router.post("/preview")
 def preview(
     payload: PreviewPayload,
@@ -106,12 +136,8 @@ def preview(
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     references_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
 ) -> dict:
-    cards, units = _cards(techcards_factory), _units(references_factory)
-    return _handle(lambda: describe(preview_autoplan(AutoplanCommand(
-        date_from=payload.date_from, date_to=payload.date_to,
-        task_ids=tuple(payload.task_ids) if payload.task_ids is not None else None,
-        replan_auto=payload.replan_auto, actor=principal.actor, now=now,
-    ), uow_factory(), cards, units)))
+    (cards, ready), units = _techcards(techcards_factory), _units(references_factory)
+    return _handle(lambda: describe(preview_autoplan(_command(payload, principal, now), uow_factory(), cards, units, ready)))
 
 
 @router.post("/apply")
@@ -123,19 +149,18 @@ def apply(
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     references_factory: Annotated[Callable[[], Any] | None, Depends(references_uow_factory)],
 ) -> dict:
-    cards, units = _cards(techcards_factory), _units(references_factory)
+    (cards, ready), units = _techcards(techcards_factory), _units(references_factory)
 
     def execute() -> dict:
         applied = apply_autoplan(ApplyAutoplanCommand(
-            date_from=payload.date_from, date_to=payload.date_to,
-            task_ids=tuple(payload.task_ids) if payload.task_ids is not None else None,
-            replan_auto=payload.replan_auto,
+            plan=_command(payload, principal, now),
             items=tuple((item.task_id, item.operation_id, item.operator_id) for item in payload.items),
-            fingerprint=payload.fingerprint, actor=principal.actor, now=now,
-        ), uow_factory(), cards, units)
+            fingerprint=payload.fingerprint,
+        ), uow_factory(), cards, units, ready)
         return {
             "applied": applied.operations,
             "tasks": [{"id": str(task.id), "number": task.number, "version": task.version} for task in applied.tasks],
+            "created": [{"id": str(task.id), "number": task.number} for task in applied.created],
         }
 
     return _handle(execute)

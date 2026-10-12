@@ -6,11 +6,45 @@
  * следующем открытии.
  */
 import { wireColorKnown } from "./connectorArt";
-import { makeGen, parsePinList_, sideRu_, updateWire, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { PALETTE, canonicalColor } from "./wireColors";
+import { makeGen, NO_WIRES, parsePinList_, sideRu_, updateWire, type Branch, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side } from "./tcGenLogic";
+
+/** Цвет жилы по названию палитры: одноцветная или двухцветная («бело-синий» — основной белый, полоса синяя). */
+export function coreColor(text: string | undefined): { name: string; baseName: string; hex: string; stripe: string | null } | null {
+  const name = text ? canonicalColor(text) : null;
+  if (!name) return null;
+  const single = PALETTE.find((color) => color.name === name);
+  if (single) return { name, baseName: single.name, hex: single.hex, stripe: null };
+  const [head, tail] = name.split("-");
+  const first = PALETTE.find((color) => color.stem === head), second = PALETTE.find((color) => color.name === tail);
+  return first && second ? { name, baseName: first.name, hex: first.hex, stripe: second.hex } : null;
+}
+
+/** Жил в проводе: кабелей × жил в кабеле — каждая жила отдельно разводится по контактам и красится (владелец 12.10:
+ *  «многожильный кабель — жилы отдельно, а сам кабель — оболочка»). Провод без оболочки — одна жила на штуку. */
+export const coreCount = (gen: Gen, w: { qty: number | string; cores?: number }) =>
+  Math.max(1, Math.round(Number(w.qty) || 1)) * Math.max(1, gen.wireCores_(w as never) || 1);
+
+/** Цвет жилы `unit` кабеля `idx` с палитры (одно название или двухцветное); null — вернуть цвет из наименования. */
+export function setCoreColor(D: GenData, S: GenState, idx: number, unit: number, color: string | null): GenState {
+  const canon = color ? coreColor(color)?.name ?? null : null;
+  if (color && !canon) return S;
+  const gen = makeGen(D, S);
+  return { ...S, wires: S.wires.map((w) => {
+    if (w.idx !== idx) return w;
+    const qty = coreCount(gen, w);
+    const list = Array.from({ length: Math.max(qty, unit + 1) }, (_, k) => w.coreColors?.[k] || "");
+    list[unit] = canon ?? "";
+    const { coreColors: _old, ...rest } = w;
+    return list.some(Boolean) ? { ...rest, coreColors: list.slice(0, qty) } : rest;
+  }) };
+}
 
 export type PinoutWire = { idx: number; name: string; qty: number; text: string; pins: number[]; color: string | null };
 export type PinoutEnd = {
   id: string; key: string; side: Side; conn: string; double: boolean;
+  /** Одна из нескольких разъёмов стороны: провод идёт сюда, только если у него здесь есть контакт. */
+  multi: boolean;
   /** Проводов в один контакт: 1, при двойном/групповом обжиме — 2 и больше. */
   per: number;
   wires: PinoutWire[];
@@ -34,6 +68,39 @@ export function plural(n: number, one: string, few: string, many: string) {
 const endKey = (gen: Gen, ep: Endpoint) => sideRu_(ep.side) + gen.endpointOrdinal_(ep);
 const compName = (gen: Gen, id: string) => { const c = gen.getCompById(id); return c ? c.art || c.name || "" : ""; };
 
+/** Сторона с несколькими разъёмами в «Сложной сборке» (владелец 12.10: «галки с проводами — рудимент, буду растыкивать на
+ *  распиновке»): провод идёт на разъём такой стороны тогда и только тогда, когда у него там есть контакт. */
+export const multiSide = (gen: Gen, S: GenState, side: Side) => S.tab === "complex" && gen.endpointsOnSide_(side).length >= 2;
+const hasPin = (ep: Endpoint, idx: number) => parsePinList_(ep.pins?.[idx]).length > 0;
+const sidePinned = (gen: Gen, side: Side) => gen.endpointsOnSide_(side).some((e) => gen.activeWires_().some((w) => hasPin(e, w.idx)));
+/** Старое сохранение: на стороне с несколькими разъёмами заданы `wireIdxs`, а контактов ещё нет — это начальная раздача. */
+const legacyRouting = (gen: Gen, side: Side) => !sidePinned(gen, side) && gen.endpointsOnSide_(side).some((e) => e.wireIdxs?.length);
+
+/** Провода разъёма: у разъёма стороны с несколькими — те, у кого тут контакт (старое сохранение без контактов — по `wireIdxs`). */
+export function pinRouted(gen: Gen, S: GenState, ep: Endpoint): number[] {
+  if (!multiSide(gen, S, ep.side)) return gen.routedWireIdxs_(ep);
+  if (legacyRouting(gen, ep.side)) return gen.routedWireIdxs_(ep);
+  return gen.activeWires_().filter((w) => hasPin(ep, w.idx)).map((w) => w.idx);
+}
+
+/** Генератор читает `routedWireIdxs_` из `wireIdxs`: на стороне с несколькими разъёмами держим их равными тому, у кого
+ *  где контакт. Пока на стороне нет ни одного контакта, раздача не трогается (старое сохранение, свежая форма). */
+export function syncRoutes(D: GenData, S: GenState): GenState {
+  if (S.tab !== "complex") return S;
+  const gen = makeGen(D, S);
+  const all = gen.activeWires_().map((w) => w.idx);
+  let changed = false;
+  const endpoints = S.endpoints.map((ep) => {
+    if (!multiSide(gen, S, ep.side) || !sidePinned(gen, ep.side)) return ep;
+    const mine = all.filter((i) => hasPin(ep, i));
+    const next = mine.length === all.length ? [] : mine.length ? mine : [NO_WIRES];
+    if (JSON.stringify(next) === JSON.stringify(ep.wireIdxs || [])) return ep;
+    changed = true;
+    return { ...ep, wireIdxs: next };
+  });
+  return changed ? { ...S, endpoints } : S;
+}
+
 function summaryOf(end: Omit<PinoutEnd, "summary" | "checked" | "sig">): string {
   const contacts = end.wires.reduce((n, w) => n + w.pins.length, 0);
   if (!contacts) return "контакты не заданы";
@@ -56,20 +123,21 @@ export function pinoutEnds(gen: Gen, S: GenState): PinoutEnd[] {
   const links = gen.connections_().list;
   const active = gen.activeWires_();
   return (["A", "B"] as Side[]).flatMap((side) => gen.endpointsOnSide_(side)).flatMap((ep) => {
-    const routed = new Set(gen.routedWireIdxs_(ep));
+    const routed = new Set(pinRouted(gen, S, ep));
+    const multi = multiSide(gen, S, ep.side);
     const wires = active.filter((w) => routed.has(w.idx)).map((w): PinoutWire => {
       const name = compName(gen, w.compId);
       const text = ep.pins?.[w.idx] || "";
-      return { idx: w.idx, name, qty: w.qty || 1, text, pins: parsePinList_(text), color: wireColorKnown(name) };
+      return { idx: w.idx, name, qty: coreCount(gen, w), text, pins: parsePinList_(text), color: wireColorKnown(name) };
     });
-    if (!wires.length) return [];
+    if (!wires.length && !multi) return [];
     const key = endKey(gen, ep);
     const own = links.filter((l) => l.from.end === key || l.to.end === key);
     const count: Record<number, number> = {};
     wires.forEach((w) => w.pins.forEach((p) => { count[p] = (count[p] || 0) + 1; }));
     const dups = ep.double ? [] : Object.keys(count).map(Number).filter((p) => count[p] > 1).sort((a, b) => a - b);
     const conn = compName(gen, ep.connId);
-    const base = { id: ep.id, key, side: ep.side, conn, double: !!ep.double, per: ep.double ? gen.epPer_(ep) : 1, wires, links: own, missing: wires.filter((w) => !w.pins.length).map((w) => w.name), dups };
+    const base = { id: ep.id, key, side: ep.side, conn, multi, double: !!ep.double, per: ep.double ? gen.epPer_(ep) : 1, wires, links: own, missing: wires.filter((w) => !w.pins.length).map((w) => w.name), dups };
     const sig = JSON.stringify([conn, wires.map((w) => [w.name, w.qty, w.pins.join(",")]),
       own.map((l) => `${l.wire}:${l.from.end}.${l.from.pin}>${l.to.end}.${l.to.pin}`)]);
     return [{ ...base, sig, checked: ep.pinChecked === sig, summary: summaryOf(base) }];
@@ -83,15 +151,25 @@ export function confirmPinout(D: GenData, S: GenState, epId: string): GenState {
   return { ...S, endpoints: S.endpoints.map((ep) => (ep.id === epId ? { ...ep, pinChecked: end.sig } : ep)) };
 }
 
-export type PinoutRecord = { ends: Array<{ end: string; conn: string; checked: boolean; sig: string; wires: Array<{ pos: number; art: string; pins: string }> }> };
+export type PinoutRecord = {
+  ends: Array<{ end: string; conn: string; checked: boolean; sig: string; wires: Array<{ pos: number; art: string; pins: string }> }>;
+  /** Ответвления: провод (позиция в списке кабелей), разъёмы и контакты по ключам «А1»/«В2». */
+  branches?: Array<{ pos: number; mode: Branch["mode"]; from: string; pin: number; to: string; toPin: number }>;
+  /** Цвета жил, выбранные на палитре: кабель (позиция), жила и название цвета. */
+  cores?: Array<{ pos: number; unit: number; color: string }>;
+};
 
 /** build_config.pinout: контакты по разъёмам и флаг проверки — чтобы пережить перезагрузку формы. Ни контактов, ни
  *  проверки — ключа нет (конфиг как раньше, как у пакетной сборки tcGenBatch). */
 export function pinoutRecord(gen: Gen, S: GenState): PinoutRecord | null {
   const ends = pinoutEnds(gen, S);
-  if (!ends.some((end) => end.checked || end.wires.some((w) => w.text))) return null;
+  const colored = gen.activeWires_().flatMap((w, pos) => (w.coreColors || []).flatMap((color, unit) => (color ? [{ pos, unit, color }] : [])));
+  if (!colored.length && !ends.some((end) => end.checked || end.wires.some((w) => w.text))) return null;
   const pos = new Map(gen.activeWires_().map((w, i) => [w.idx, i]));
-  return { ends: ends.map((end) => ({
+  const keyOf = new Map(S.endpoints.map((ep) => [ep.id, endKey(gen, ep)]));
+  const branches = (S.branches || []).filter((b) => pos.has(b.main) && pos.has(b.extra) && keyOf.has(b.from) && keyOf.has(b.to))
+    .map((b) => ({ pos: pos.get(b.main)!, mode: b.mode, from: keyOf.get(b.from)!, pin: b.pin, to: keyOf.get(b.to)!, toPin: b.toPin }));
+  return { ...(branches.length ? { branches } : {}), ...(colored.length ? { cores: colored } : {}), ends: ends.map((end) => ({
     end: end.key, conn: end.conn, checked: end.checked, sig: end.sig,
     wires: end.wires.filter((w) => w.text).map((w) => ({ pos: pos.get(w.idx) ?? -1, art: w.name, pins: w.text })),
   })) };
@@ -101,10 +179,20 @@ export function pinoutRecord(gen: Gen, S: GenState): PinoutRecord | null {
 export function restorePinout(D: GenData, S: GenState, config: unknown): GenState {
   const saved = (config as { pinout?: PinoutRecord } | null | undefined)?.pinout;
   if (!saved || !Array.isArray(saved.ends) || S.tab === "coax" || S.tab === "manual") return S;
-  const gen = makeGen(D, S);
-  const active = gen.activeWires_();
-  const byKey = new Map(S.endpoints.map((ep) => [endKey(gen, ep), ep]));
+  const gen0 = makeGen(D, S);
+  const keys = new Map(S.endpoints.map((ep) => [endKey(gen0, ep), ep.id]));
   let next: GenState = S;
+  (Array.isArray(saved.branches) ? saved.branches : []).forEach((b) => {
+    const main = gen0.activeWires_()[b.pos], from = keys.get(b.from), to = keys.get(b.to);
+    if (main && from && to) next = addBranch(D, next, { epId: from, idx: main.idx, pin: b.pin }, to, b.toPin, b.mode);
+  });
+  (Array.isArray(saved.cores) ? saved.cores : []).forEach((item) => {
+    const wire = makeGen(D, next).activeWires_()[item.pos];
+    if (wire && typeof item.color === "string") next = setCoreColor(D, next, wire.idx, item.unit, item.color);
+  });
+  const gen = makeGen(D, next);
+  const active = gen.activeWires_();
+  const byKey = new Map(next.endpoints.map((ep) => [endKey(gen, ep), ep]));
   const matched: Array<[string, string]> = [];
   saved.ends.forEach((item) => {
     const ep = item && byKey.get(item.end);
@@ -133,6 +221,12 @@ export function restorePinout(D: GenData, S: GenState, config: unknown): GenStat
 /** Один провод для палитры: номер в списке кабелей («2», у провода ×N — «2.1», «2.2»), цвет и контакт на каждом разъёме. */
 export type PinUnit = {
   key: string; idx: number; unit: number; num: string; compId: string; name: string; color: string | null;
+  /** Вторая краска двухцветной жилы (цвет полосы), иначе null. */
+  stripe: string | null;
+  /** Цвет, выбранный на жиле, каноническим названием («красный», «бело-синий»); "" — цвет из наименования. */
+  colorName: string;
+  /** Название основного цвета выбранной жилы — по нему рисуется торец разъёма. */
+  baseName: string | null;
   /** Длина по чертежу, мм (0 — не задана). */
   length: number;
   /** Разъём (id) → контакт этого провода; null — провод заведён в разъём, контакт не задан. */
@@ -142,7 +236,7 @@ export type PinUnit = {
 export function pinUnits(gen: Gen, S: GenState): PinUnit[] {
   const ends = pinoutEnds(gen, S);
   return gen.activeWires_().flatMap((w, pos) => {
-    const qty = Math.max(1, Math.round(Number(w.qty) || 1));
+    const qty = coreCount(gen, w);
     const name = compName(gen, w.compId);
     const length = S.advancedLength ? Number(w.length) || 0 : Number(S.drawingLength) || 0;
     return Array.from({ length: qty }, (_, k) => {
@@ -151,7 +245,9 @@ export function pinUnits(gen: Gen, S: GenState): PinUnit[] {
         const wire = end.wires.find((x) => x.idx === w.idx);
         if (wire) at[end.id] = wire.pins[k] ?? null;
       });
-      return { key: `${w.idx}.${k}`, idx: w.idx, unit: k, num: qty > 1 ? `${pos + 1}.${k + 1}` : `${pos + 1}`, compId: w.compId, name, color: wireColorKnown(name), length, at };
+      const own = coreColor(w.coreColors?.[k]);
+      return { key: `${w.idx}.${k}`, idx: w.idx, unit: k, num: qty > 1 ? `${pos + 1}.${k + 1}` : `${pos + 1}`, compId: w.compId, name,
+        color: own ? own.hex : wireColorKnown(name), stripe: own?.stripe ?? null, colorName: own?.name ?? "", baseName: own?.baseName ?? null, length, at };
     });
   });
 }
@@ -162,12 +258,12 @@ function editPins(D: GenData, S: GenState, epId: string, edit: (lists: Lists, ep
   const gen = makeGen(D, S);
   const ep = S.endpoints.find((e) => e.id === epId);
   if (!ep) return S;
-  const routed = gen.routedWireIdxs_(ep);
+  const routed = multiSide(gen, S, ep.side) ? gen.activeWires_().map((w) => w.idx) : gen.routedWireIdxs_(ep);
   const lists: Lists = Object.fromEntries(routed.map((idx) => [idx, parsePinList_(ep.pins?.[idx])]));
   if (!edit(lists, ep, gen)) return S;
   const pins: Record<number, string> = {};
   Object.entries(lists).forEach(([idx, list]) => { if (list.length) pins[Number(idx)] = list.join(", "); });
-  return { ...S, endpoints: S.endpoints.map((e) => (e.id === epId ? { ...e, pins } : e)) };
+  return syncRoutes(D, { ...S, endpoints: S.endpoints.map((e) => (e.id === epId ? { ...e, pins } : e)) });
 }
 
 /** Провод `idx` (k-й из ×N) — в контакт `pin` разъёма. Контакт занят: занявший провод уходит на прежний контакт
@@ -238,29 +334,163 @@ const wiresCount = (n: number) => `${n} ${plural(n, "провод", "прово�
  *  Проводам, которым не хватило контакта, контакт не задаётся — они названы в предупреждении. */
 export function autoFillPinout(D: GenData, S: GenState, counts: Record<string, number | null | undefined>): AutoFill {
   const gen = makeGen(D, S);
-  const units = pinUnits(gen, S);
+  const all = pinUnits(gen, S);
+  const active = gen.activeWires_();
   const notes: string[] = [], warnings: string[] = [];
+  const ends = pinoutEnds(gen, S);
+  // Сторона с несколькими разъёмами и без контактов: провода раздаются по порядку, пока хватает контактов разъёма.
+  // Не знаем число контактов или проводов больше, чем мест — не угадываем: провод остаётся «не назначен».
+  const assigned = new Map<string, number[]>();
+  (["A", "B"] as Side[]).forEach((side) => {
+    if (!multiSide(gen, S, side) || sidePinned(gen, side) || legacyRouting(gen, side)) return;
+    const eps = gen.endpointsOnSide_(side);
+    const title = `Сторона ${sideRu_(side)}`;
+    eps.forEach((ep) => assigned.set(ep.id, []));
+    if (eps.some((ep) => !counts[ep.id])) {
+      warnings.push(`${title}: число контактов разъёмов неизвестно — раздайте провода по разъёмам на схеме.`);
+      return;
+    }
+    let rest = active.map((w) => ({ w, n: coreCount(gen, w) }));
+    const parts: string[] = [];
+    eps.forEach((ep) => {
+      const slots = (counts[ep.id] || 0) * (ep.double ? gen.epPer_(ep) : 1);
+      let used = 0;
+      const mine: number[] = [];
+      rest = rest.filter(({ w, n }) => {
+        if (used + n > slots) return true;
+        used += n; mine.push(w.idx);
+        return false;
+      });
+      assigned.set(ep.id, mine);
+      const nums = all.filter((u) => mine.includes(u.idx)).map((u) => u.num);
+      if (nums.length) parts.push(`${endKey(gen, ep)}: ${nums.join(", ")}`);
+    });
+    if (parts.length) notes.push(`${title}: провода разведены по разъёмам — ${parts.join("; ")}.`);
+    if (rest.length) warnings.push(`${title}: контактов разъёмов не хватает — не назначены: ${all.filter((u) => rest.some((r) => r.w.idx === u.idx)).map((u) => `${u.num} · ${u.name}`).join(", ")}.`);
+  });
   let state = S;
-  pinoutEnds(gen, S).forEach((end) => {
-    const mine = units.filter((u) => end.id in u.at);
-    const n = counts[end.id] || 0;
+  S.endpoints.forEach((ep) => {
+    const end = ends.find((e) => e.id === ep.id);
+    const idxs = assigned.get(ep.id) ?? end?.wires.map((w) => w.idx) ?? [];
+    const mine = all.filter((u) => idxs.includes(u.idx));
+    if (!mine.length) {
+      if (assigned.has(ep.id)) state = { ...state, endpoints: state.endpoints.map((e) => (e.id === ep.id ? { ...e, pins: {} } : e)) };
+      return;
+    }
+    const per = ep.double ? gen.epPer_(ep) : 1;
+    const n = counts[ep.id] || 0;
     const lists: Lists = {};
     const left: PinUnit[] = [];
     mine.forEach((u, i) => {
-      const pin = Math.floor(i / end.per) + 1;
+      const pin = Math.floor(i / per) + 1;
       if (n && pin > n) { left.push(u); return; }
       (lists[u.idx] = lists[u.idx] || []).push(pin);
     });
-    const used = Math.ceil((mine.length - left.length) / end.per);
-    const title = `${end.key}${end.conn ? ` (${end.conn})` : ""}`;
+    const used = Math.ceil((mine.length - left.length) / per);
+    const conn = compName(gen, ep.connId);
+    const title = `${endKey(gen, ep)}${conn ? ` (${conn})` : ""}`;
     if (left.length) warnings.push(`${title}: ${contacts(n)}, а ${wiresCount(mine.length)} — без контакта: ${left.map((u) => `${u.num} · ${u.name}`).join(", ")}.`);
     else if (!n) notes.push(`${title}: число контактов разъёма неизвестно — ${wiresCount(mine.length)} по порядку на ${range(1, Math.max(1, used))}.`);
     else if (used < n) notes.push(`${title}: ${wiresCount(mine.length)} на ${contacts(n)}, свободны ${range(used + 1, n)}.`);
     const pins: Record<number, string> = {};
     Object.entries(lists).forEach(([idx, list]) => { pins[Number(idx)] = list.join(", "); });
-    state = { ...state, endpoints: state.endpoints.map((e) => (e.id === end.id ? { ...e, pins } : e)) };
+    state = { ...state, endpoints: state.endpoints.map((e) => (e.id === ep.id ? { ...e, pins } : e)) };
   });
-  return { state, notes, warnings };
+  return { state: syncRoutes(D, state), notes, warnings };
+}
+
+// ── Ответвление: с одного контакта на два вывода ──────────────────────────────────────────────────────────────────
+/** Провод `idx`, пришедший на контакт `pin` разъёма `epId`, получает второй вывод — на контакт `toPin` разъёма `toEpId`.
+ *  Второй вывод — отдельный провод того же кабеля (его длина — длина чертежа до дальнего конца): он попадает в состав,
+ *  в раскрой и в операции генератора. «Двойной обжим»: оба провода обжимаются в один контакт источника (у разъёма включён
+ *  двойной обжим). «Сросток»: второй провод идёт только к дальнему разъёму, а с первым его сращивают (включается «Сростки»).
+ *  Только в «Сложной сборке» — там у разъёма свой список проводов. */
+export function addBranch(D: GenData, S: GenState, from: { epId: string; idx: number; pin: number }, toEpId: string, toPin: number, mode: Branch["mode"]): GenState {
+  if (S.tab !== "complex" || !(toPin > 0) || from.epId === toEpId) return S;
+  const wire = S.wires.find((w) => w.idx === from.idx);
+  const src = S.endpoints.find((e) => e.id === from.epId), dst = S.endpoints.find((e) => e.id === toEpId);
+  if (!wire || !wire.compId || !src || !dst) return S;
+  const extra = S.nextWireIdx;
+  const before = makeGen(D, S);
+  const keep = new Map(S.endpoints.map((e) => [e.id, before.routedWireIdxs_(e)]));
+  const core = Math.max(0, parsePinList_(src.pins?.[from.idx]).indexOf(from.pin));
+  const { coreColors, ...plain } = wire;
+  let next: GenState = { ...S, wires: [...S.wires, { ...plain, idx: extra, qty: 1, cores: 1, ...(coreColors?.[core] ? { coreColors: [coreColors[core]] } : {}) }], nextWireIdx: extra + 1 };
+  const all = makeGen(D, next).activeWires_().map((w) => w.idx);
+  const endpoints = next.endpoints.map((e) => {
+    const has = new Set(keep.get(e.id) || []);
+    const wants = e.id === toEpId || (mode === "double" && e.id === from.epId);
+    if (wants) has.add(extra); else has.delete(extra);
+    const list = all.filter((i) => has.has(i));
+    const pins = { ...(e.pins || {}) };
+    if (e.id === toEpId) pins[extra] = String(toPin);
+    else if (mode === "double" && e.id === from.epId) pins[extra] = String(from.pin);
+    return { ...e, wireIdxs: list.length === all.length ? [] : list.length ? list : [NO_WIRES], pins, ...(mode === "double" && e.id === from.epId ? { double: true } : {}) };
+  });
+  next = { ...next, endpoints, branches: [...(S.branches || []), { main: from.idx, extra, mode, from: from.epId, pin: from.pin, to: toEpId, toPin }] };
+  if (mode === "splice") {
+    const spl = next.spl;
+    const list = String(spl.wires || "").split(/[,;\s]+/).filter(Boolean);
+    next = { ...next, spl: !spl.enabled ? { ...spl, enabled: true, count: "1", wires: "2" }
+      : list.length > 1 ? { ...spl, wires: `${spl.wires},2` } : { ...spl, count: String((parseInt(spl.count, 10) || 0) + 1) } };
+  }
+  return syncRoutes(D, next);
+}
+
+/** Убрать ответвление: второй провод и его контакты уходят, сросток или двойной обжим снимается. */
+export function removeBranch(D: GenData, S: GenState, extra: number): GenState {
+  const b = (S.branches || []).find((x) => x.extra === extra);
+  if (!b) return S;
+  const branches = (S.branches || []).filter((x) => x.extra !== extra);
+  let next: GenState = { ...S, branches, wires: S.wires.filter((w) => w.idx !== extra), endpoints: S.endpoints.map((e) => {
+    const pins = { ...(e.pins || {}) };
+    delete pins[extra];
+    const list = (e.wireIdxs || []).filter((i) => i !== extra);
+    const stillDouble = e.id === b.from && b.mode === "double" && branches.some((x) => x.mode === "double" && x.from === e.id);
+    return { ...e, pins, wireIdxs: e.wireIdxs?.length && !list.length ? [NO_WIRES] : list, ...(e.id === b.from && b.mode === "double" && !stillDouble ? { double: false } : {}) };
+  }) };
+  if (b.mode === "splice") {
+    const spl = next.spl;
+    const list = String(spl.wires || "").split(/[,;\s]+/).filter(Boolean);
+    const count = list.length > 1 ? list.length - 1 : (parseInt(spl.count, 10) || 0) - 1;
+    next = { ...next, spl: count <= 0 ? { ...spl, enabled: false } : list.length > 1 ? { ...spl, wires: list.slice(0, -1).join(",") } : { ...spl, count: String(count) } };
+  }
+  return syncRoutes(D, next);
+}
+
+/** Сросток ↔ двойной обжим для уже созданного ответвления. */
+export function setBranchMode(D: GenData, S: GenState, extra: number, mode: Branch["mode"]): GenState {
+  const b = (S.branches || []).find((x) => x.extra === extra);
+  if (!b || b.mode === mode) return S;
+  return addBranch(D, removeBranch(D, S, extra), { epId: b.from, idx: b.main, pin: b.pin }, b.to, b.toPin, mode);
+}
+
+/** Предупреждения о раздаче проводов по разъёмам: генератор не угадывает, куда идёт провод. */
+export function routingWarnings(D: GenData, S: GenState): string[] {
+  const gen = makeGen(D, S);
+  const out: string[] = [];
+  const units = pinUnits(gen, S);
+  const extras = new Set((S.branches || []).map((b) => b.extra));
+  (["A", "B"] as Side[]).forEach((side) => {
+    if (!multiSide(gen, S, side)) return;
+    const eps = gen.endpointsOnSide_(side);
+    const title = `Сторона ${sideRu_(side)}`;
+    if (!sidePinned(gen, side)) {
+      if (!legacyRouting(gen, side)) out.push(`${title}: провода не розданы по разъёмам — раздайте их на схеме, пока генератор считает все провода на каждом разъёме.`);
+      return;
+    }
+    const names = [...new Set(units.filter((u) => !extras.has(u.idx) && !eps.some((ep) => ep.id in u.at)).map((u) => `${u.num} · ${u.name}`))];
+    if (names.length) out.push(`${title}: не назначены на разъём — ${names.join(", ")}.`);
+  });
+  // Кабель в оболочке: жила без контакта ни на одном разъёме — не задействована (подрезать и изолировать или назначить контакт).
+  const jacketed = new Set(S.wires.filter((w) => gen.wireCores_(w) > 1).map((w) => w.idx));
+  const idle = units.filter((u) => jacketed.has(u.idx) && Object.values(u.at).every((p) => p == null));
+  if (idle.length && idle.length < units.filter((u) => jacketed.has(u.idx)).length) {
+    out.push(`Не задействованы жилы: ${idle.map((u) => `${u.num} · ${u.name}`).join(", ")} — назначьте контакт или подрежьте и заизолируйте.`);
+  }
+  const branched = units.filter((u) => !extras.has(u.idx) && (["A", "B"] as Side[]).some((side) => gen.endpointsOnSide_(side).filter((ep) => ep.id in u.at && u.at[ep.id] != null).length > 1));
+  if (branched.length) out.push(`Разветвление: ${[...new Set(branched.map((u) => u.name))].join(", ")} — нужен сросток или перемычка (щёлкните контакт и второй разъём — «Добавить ответвление»).`);
+  return out;
 }
 
 /** Распиновка не помещается в разъём: проводов больше, чем контактов, или контакт с номером больше, чем есть. */

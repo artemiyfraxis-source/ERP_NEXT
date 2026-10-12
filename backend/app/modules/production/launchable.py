@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from datetime import date
 from typing import Any, Iterable, Mapping, Sequence
+from uuid import UUID
 
 from app.modules.techcards.etk_builder import operation_norms
 
@@ -343,3 +345,54 @@ def launch_operations(route: Sequence[RouteStep], quantity: int) -> tuple[Produc
         stage_key=_step_block(step) or None,
     ) for step in route)
     return link_inputs(operations, route_inputs(route))
+
+
+@dataclass(frozen=True)
+class ReadyCard:
+    """КБ с выданной техкартой — то, из чего можно запустить задание (prodLaunchable_): маршрут, тираж, срок."""
+
+    techcard_id: UUID
+    version: int
+    revision: int
+    project: str
+    index: str
+    name: str
+    customer: str
+    run: str  # тираж как в карточке набора («» — тиража нет)
+    deadline: date | None
+    route: LaunchRoute
+    document: Mapping[str, Any] | None
+
+    @property
+    def key(self) -> str:
+        return kit_stage_key(self.project, self.index)
+
+    @property
+    def quantity(self) -> int | None:
+        """Тираж целым числом больше нуля; иначе None — запускать на автомате нечего."""
+        text = str(self.run or "").strip()
+        return int(text) if text.isdigit() and int(text) > 0 else None
+
+
+def ready_cards(cards: Iterable[Any], kitsets: Iterable[Any]) -> list[ReadyCard]:
+    """Выданные техкарты с маршрутом, по (проект, индекс). Тираж и заказчик — из карточки набора (prodLaunchable_ читает
+    «Наборы»); нет набора — партия ЭТК. Один список и для «Создать задание» на доске мастера, и для автоплана."""
+    kit_rows = {
+        kit_stage_key(kitset.project, assembly.index): (kitset.customer, assembly.run)
+        for kitset in kitsets for assembly in kitset.assemblies
+    }
+    result: list[ReadyCard] = []
+    for card in cards:
+        route = launch_route(card.document)
+        if not route.steps:
+            continue
+        kit = (card.document or {}).get("kit") if isinstance(card.document, Mapping) else None
+        customer, run = kit_rows.get(kit_stage_key(card.project, card.item_index), ("", None))
+        result.append(ReadyCard(
+            techcard_id=card.id, version=card.version, revision=card.revision, project=card.project,
+            index=card.item_index, name=card.product_name, customer=customer,
+            run=format(Decimal(run).normalize(), "f") if run else str((kit if isinstance(kit, Mapping) else {}).get("part_quantity") or ""),
+            deadline=card.deadline, route=route, document=card.document,
+        ))
+    result.sort(key=lambda item: (item.project, item.index))
+    return result

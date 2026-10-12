@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { failureText, referencesApi, type CrimpCodes, type TechOperationRecord } from "./api";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -10,7 +10,7 @@ import {
 import { headerLabel, valueLabel } from "./referenceLabels";
 
 /** БД.ОБ: the list is one row per model (owner 12.10.2026: «дубли одного и того же свернуть»), a row opens the machine
-    card — instances with «Ещё такой же», the БД.ОП operations tied to the model (link / unlink), what a crimp tool or a
+    card in a right-hand panel beside the list (master–detail; the pick lives in `?equipment=`) — instances with «Ещё такой же», the БД.ОП operations tied to the model (link / unlink), what a crimp tool or a
     matrix crimps, the economics. The raw 21-column row stays under «Прочее». */
 
 // DB_SCHEMA keys the importer stores next to the sheet's own columns — shown once, by the sheet header.
@@ -26,6 +26,17 @@ const opName = (op: TechOperationRecord) => pick(op.fields, "Название", 
 function filled(fields: Record<string, string>, keep: (key: string) => boolean): Array<[string, string]> {
   return Object.entries(fields).filter(([key, value]) => keep(key) && !SCHEMA_KEYS.has(key) && String(value ?? "").trim()
     && String(value).trim().toUpperCase() !== "FALSE");
+}
+// Values the sheet computes: read-only, marked as derived.
+const DERIVED = /окупаемост|стоимость 1 сек/i;
+function EconomyList({ items }: { items: Array<[string, string]> }) {
+  return <dl className="eq-econ">{items.map(([key, value]) => {
+    const derived = DERIVED.test(key);
+    return <div key={key} className={derived ? "derived" : undefined}>
+      <dt>{headerLabel(key)}</dt>
+      <dd className="tnum">{valueLabel(key, value)}{derived && <span className="eq-calc" title="Считается по таблице, здесь не правится">расчёт</span>}</dd>
+    </div>;
+  })}</dl>;
 }
 function FieldList({ items }: { items: Array<[string, string]> }) {
   return <dl className="op-fields">{items.map(([key, value]) => <div key={key}><dt>{headerLabel(key)}</dt><dd className="pre-line">{
@@ -46,11 +57,22 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   focusId?: string;
   toolbar?: ReactNode;
 }) {
-  const [openId, setOpenId] = useState(focusId ?? "");
+  const [openId, setOpenId] = useState(() => focusId || new URLSearchParams(window.location.search).get("equipment") || "");
+  const panelRef = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false);
   const [codes, setCodes] = useState<CrimpCodes | null>(null);
   const [opQuery, setOpQuery] = useState("");
-  useEffect(() => { if (focusId) setOpenId(focusId); }, [focusId]);
+  // The picked machine stays in the address, so a reload reopens its card (same as «Проекты» → `?project=`).
+  const select = (id: string) => {
+    setOpenId(id);
+    setOpQuery("");
+    try {
+      const url = new URL(window.location.href);
+      if (id) url.searchParams.set("equipment", id); else url.searchParams.delete("equipment");
+      window.history.replaceState(window.history.state, "", url);
+    } catch { /* address is not writable */ }
+  };
+  useEffect(() => { if (focusId) select(focusId); }, [focusId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let live = true;
     referencesApi.crimpCodes().then((result) => { if (live) setCodes(result); }).catch(() => { if (live) setCodes(null); });
@@ -69,6 +91,18 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     && model.items.some((item) => invOf(item) && pick(record.fields, TOOL_KEY) === invOf(item)));
   const opsOf = (model: EquipmentModel) => operationsOfModel(model, operations);
   const open = openId ? models.find((model) => model.items.some((item) => item.id === openId)) : undefined;
+  const openKey = open?.key;
+  // Esc closes the card; switching machines starts the panel from its top.
+  useEffect(() => {
+    if (!openKey) return;
+    panelRef.current?.scrollTo?.({ top: 0 });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || (event.target as HTMLElement | null)?.closest?.("[role='dialog']")) return;
+      select("");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [openKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function guarded(action: () => Promise<unknown>, done: string) {
     if (busy) return;
@@ -76,6 +110,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     try { await action(); onNotice(done); onChanged(); } catch (reason) { onError(failureText(reason, "Не записано")); } finally { setBusy(false); }
   }
 
+  let panel: ReactNode = null;
   if (open) {
     const field = operationField(open.type);
     const linked = opsOf(open);
@@ -88,65 +123,71 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     const economy = filled(last.fields, isEconomy);
     const rest = filled(last.fields, (key) => !SHOWN_KEYS.has(key) && !isEconomy(key));
     const place = open.places.map((item) => valueLabel("Расположение", item)).join(", ");
+    const subtitle = [open.article, open.maker, open.type, place].filter(Boolean).join(" · ");
     const setOperation = (op: TechOperationRecord, column: string, value: string) =>
       referencesApi.editRecord(op.id, [{ field: column, old: op.fields[column] ?? "", value }]);
+    // The edit form sits above the list: bring it into view.
+    const edit = (record: TechOperationRecord) => {
+      onEdit(record);
+      try { document.querySelector(".workspace")?.scrollTo?.({ top: 0 }); } catch { /* no scrolling in tests */ }
+    };
 
     // Коды терминалов есть только у обжимного инструмента и матриц (owner 12.10.2026).
     const withCodes = open.type === CRIMP_TOOL_TYPE || open.type === MATRIX_TYPE;
-    return <article className="panel template-detail tr-paper eq-card">
-      <div className="form-actions"><button className="secondary" onClick={() => { setOpenId(""); setOpQuery(""); }}>← Всё оборудование</button>
-        {canEdit && <button className="secondary" onClick={() => onEdit(open.items[0])}>Править{open.items.length > 1 ? ` ${invOf(open.items[0])}` : ""}</button>}
-        {canEdit && invOf(last) && <button className="primary" disabled={busy}
-          onClick={() => void guarded(async () => { const copy = await referencesApi.duplicateRecord(last.id); setOpenId(copy.id); }, "Добавлен ещё один экземпляр")}>Ещё такой же</button>}</div>
-      <div className="tr-head">
-        <div className="tr-head-name"><small>Наименование</small><b>{open.name || "—"}</b></div>
-        <div><small>Артикул</small><b>{open.article || "—"}</b></div>
-        <div><small>Производитель</small><b>{open.maker || "—"}</b></div>
-        <div><small>Тип</small><b>{open.type}</b></div>
-        <div><small>Расположение</small><b>{place || "—"}</b></div>
-      </div>
-      {pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
+    panel = <aside className="eq-panel" aria-label="Карточка оборудования" ref={panelRef}>
+      <article className="panel eq-card">
+        <header className="eq-head">
+          <div className="eq-title"><b>{open.name || "—"}</b>{subtitle && <span className="muted">{subtitle}</span>}</div>
+          <div className="eq-head-act">
+            {canEdit && <button className="secondary small" onClick={() => edit(open.items[0])}>Править{open.items.length > 1 ? ` ${invOf(open.items[0])}` : ""}</button>}
+            {canEdit && invOf(last) && <button className="secondary small" disabled={busy}
+              onClick={() => void guarded(async () => { const copy = await referencesApi.duplicateRecord(last.id); select(copy.id); }, "Добавлен ещё один экземпляр")}>Ещё такой же</button>}
+            <button type="button" className="eq-close" aria-label="Закрыть карточку" title="Закрыть (Esc)" onClick={() => select("")}>×</button>
+          </div>
+        </header>
+        {pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
 
-      <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
-        <table className="eq-table"><thead><tr><th>Инв. номер</th><th>№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}<th /></tr></thead>
-          <tbody>{open.items.map((item) => <tr key={item.id} className={canEdit ? "eq-row" : undefined} onClick={canEdit ? () => onEdit(item) : undefined}>
-            <td className="tnum"><b>{invOf(item) || "—"}</b></td><td className="tnum">{pick(item.fields, "№") || "—"}</td>
-            <td>{valueLabel("Расположение", placeOf(item)) || "—"}</td>{withCodes && <td className="tnum">{pick(item.fields, CODE_KEY) || "—"}</td>}
-            <td className="eq-act">{canEdit && <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); onEdit(item); }}>Править</button>}</td>
-          </tr>)}</tbody></table>
-      </div>
+        <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
+          <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}</tr></thead>
+            <tbody>{open.items.map((item) => <tr key={item.id} className={canEdit ? "eq-row" : undefined} onClick={canEdit ? () => edit(item) : undefined}
+              title={canEdit ? `Править ${invOf(item)}` : undefined}>
+              <td className="tnum"><b>{invOf(item) || "—"}</b></td><td className="tnum num">{pick(item.fields, "№") || "—"}</td>
+              <td>{valueLabel("Расположение", placeOf(item)) || "—"}</td>{withCodes && <td className="tnum">{pick(item.fields, CODE_KEY) || "—"}</td>}
+            </tr>)}</tbody></table>
+        </div>
 
-      <div className="tr-block"><h4>Операции <span>{linked.length}</span></h4>
-        {linked.length ? <table className="eq-table"><thead><tr><th>Номер</th><th>Название</th><th /></tr></thead>
-          <tbody>{linked.map((op) => <tr key={op.id}><td className="tnum">{opNumber(op)}</td><td>{opName(op)}</td>
-            <td className="eq-act">{canEdit && <button type="button" className="secondary small" disabled={busy}
+        <div className="tr-block"><h4>Операции <span>{linked.length}</span></h4>
+          {linked.length ? <ul className="eq-ops">{linked.map((op) => <li key={op.id}>
+            <span><b className="tnum">{opNumber(op)}</b>{opName(op) && <> — {opName(op)}</>}</span>
+            {canEdit && <button type="button" className="eq-x" disabled={busy} aria-label={`Отвязать операцию ${opNumber(op)}`} title="Отвязать"
               onClick={() => void guarded(async () => {
                 for (const column of OP_LINK_COLUMNS) if (norm(op.fields[column] ?? "") === norm(open.base)) await setOperation(op, column, "");
-              }, `Операция ${opNumber(op)} отвязана`)}>Отвязать</button>}</td></tr>)}</tbody></table>
-          : <div className="empty">{operations.length ? "Ни одна операция БД.ОП не привязана к этой модели." : "БД.ОП не загружена."}</div>}
-        {canEdit && open.base && operations.length > 0 && <div className="eq-add">
-          <input type="search" aria-label="Найти операцию" placeholder="Привязать операцию: номер или название…" value={opQuery} onChange={(event) => setOpQuery(event.target.value)} />
-          {candidates.map((op) => {
-            const current = (op.fields[field] ?? "").trim();
-            return <div className="eq-hit" key={op.id}>
-              <span><b className="tnum">{opNumber(op)}</b> {opName(op)}{current && <span className="muted"> · сейчас: {current}</span>}</span>
-              <button type="button" className="secondary small" disabled={busy}
-                onClick={() => void guarded(async () => { await setOperation(op, field, open.base); setOpQuery(""); }, `Операция ${opNumber(op)} привязана`)}>{current ? "Заменить" : "Привязать"}</button>
-            </div>;
-          })}
-          {text.length >= 2 && candidates.length === 0 && <div className="empty">Операции не найдены.</div>}
-        </div>}
-      </div>
+              }, `Операция ${opNumber(op)} отвязана`)}>✕</button>}</li>)}</ul>
+            : <div className="empty">{operations.length ? "Ни одна операция БД.ОП не привязана к этой модели." : "БД.ОП не загружена."}</div>}
+          {canEdit && open.base && operations.length > 0 && <div className="eq-add">
+            <input type="search" aria-label="Найти операцию" placeholder="Привязать операцию: номер или название…" value={opQuery} onChange={(event) => setOpQuery(event.target.value)} />
+            {candidates.map((op) => {
+              const current = (op.fields[field] ?? "").trim();
+              return <div className="eq-hit" key={op.id}>
+                <span><b className="tnum">{opNumber(op)}</b> {opName(op)}{current && <span className="muted"> · сейчас: {current}</span>}</span>
+                <button type="button" className="secondary small" disabled={busy}
+                  onClick={() => void guarded(async () => { await setOperation(op, field, open.base); setOpQuery(""); }, `Операция ${opNumber(op)} привязана`)}>{current ? "Заменить" : "Привязать"}</button>
+              </div>;
+            })}
+            {text.length >= 2 && candidates.length === 0 && <div className="empty">Операции не найдены.</div>}
+          </div>}
+        </div>
 
-      {open.type !== MATRIX_TYPE && matricesOf(open).length > 0 && <div className="tr-block"><h4>Матрицы к этому инструменту <span>{matricesOf(open).length}</span></h4>
-        <div className="tr-chips">{matricesOf(open).map((matrix) => <button key={matrix.id} type="button" className="eq-op eq-chip-btn" onClick={() => setOpenId(matrix.id)}>
-          <span className="tnum">{invOf(matrix)}</span> {nameOf(matrix)}</button>)}</div></div>}
+        {open.type !== MATRIX_TYPE && matricesOf(open).length > 0 && <div className="tr-block"><h4>Матрицы к этому инструменту <span>{matricesOf(open).length}</span></h4>
+          <div className="tr-chips">{matricesOf(open).map((matrix) => <button key={matrix.id} type="button" className="eq-op eq-chip-btn" onClick={() => select(matrix.id)}>
+            <span className="tnum">{invOf(matrix)}</span> {nameOf(matrix)}</button>)}</div></div>}
 
-      {crimp && <CrimpLinks model={open} tool={crimp} siblings={records} canEdit={canEdit} onChanged={onChanged} onEditTool={onEdit} />}
+        {crimp && <CrimpLinks model={open} tool={crimp} siblings={records} canEdit={canEdit} onChanged={onChanged} onEditTool={onEdit} />}
 
-      {economy.length > 0 && <div className="tr-block"><h4>Экономика</h4><FieldList items={economy} /></div>}
-      {rest.length > 0 && <details className="tr-block eq-rest"><summary>Прочее <span className="muted">({rest.length})</span></summary><FieldList items={rest} /></details>}
-    </article>;
+        {economy.length > 0 && <div className="tr-block"><h4>Экономика</h4><EconomyList items={economy} /></div>}
+        {rest.length > 0 && <details className="tr-block eq-rest"><summary>Прочее <span className="muted">({rest.length})</span></summary><FieldList items={rest} /></details>}
+      </article>
+    </aside>;
   }
 
   const columns: DataColumn<EquipmentModel>[] = [
@@ -162,28 +203,32 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   ];
   const presets = types.map(([name]) => ({ label: name, test: (model: EquipmentModel) => model.type === name }));
   const missing = codes?.missing ?? [];
-  return <>
-    {missing.length > 0 && <details className="eq-missing">
-      <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>
-      <div className="eq-missing-list">{missing.map((item) => <span key={item.code} className="tr-code eq-op" title={`Указан у ${item.count} контактов в БД.ТЕР`}>
-        <span className="tnum">{item.code}</span>{canEdit && <button type="button" className="eq-x" aria-label={`Создать запись для кода ${item.code}`}
-          onClick={() => onCreate({ Тип: CRIMP_TOOL_TYPE, [CODE_KEY]: item.code })}>＋</button>}</span>)}</div>
-    </details>}
-    <DataTable
-      rows={models}
-      columns={columns}
-      rowKey={(model) => model.key}
-      storageKey="db:equipment-models"
-      label="Оборудование"
-      exportName="Оборудование"
-      searchPlaceholder="Поиск: инв. номер, название, артикул, производитель…"
-      presets={presets}
-      presetCountsFollowSearch
-      onRowClick={(model) => setOpenId(model.items[0].id)}
-      rowTitle={(model) => `Открыть: ${model.name || invOf(model.items[0])}`}
-      toolbar={toolbar}
-      emptyText={records.length ? "Ничего не найдено." : "Записей нет."}
-    />
-  </>;
+  return <div className={open ? "eq-split has-card" : "eq-split"}>
+    <div className="eq-list">
+      {missing.length > 0 && <details className="eq-missing">
+        <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>
+        <div className="eq-missing-list">{missing.map((item) => <span key={item.code} className="tr-code eq-op" title={`Указан у ${item.count} контактов в БД.ТЕР`}>
+          <span className="tnum">{item.code}</span>{canEdit && <button type="button" className="eq-x" aria-label={`Создать запись для кода ${item.code}`}
+            onClick={() => onCreate({ Тип: CRIMP_TOOL_TYPE, [CODE_KEY]: item.code })}>＋</button>}</span>)}</div>
+      </details>}
+      <DataTable
+        rows={models}
+        columns={columns}
+        rowKey={(model) => model.key}
+        storageKey="db:equipment-models"
+        label="Оборудование"
+        exportName="Оборудование"
+        searchPlaceholder="Поиск: инв. номер, название, артикул, производитель…"
+        presets={presets}
+        presetCountsFollowSearch
+        onRowClick={(model) => select(model.items[0].id)}
+        rowClassName={(model) => open && model.key === open.key ? "eq-selected" : ""}
+        rowTitle={(model) => `Открыть: ${model.name || invOf(model.items[0])}`}
+        toolbar={toolbar}
+        emptyText={records.length ? "Ничего не найдено." : "Записей нет."}
+      />
+    </div>
+    {panel}
+  </div>;
 }
 

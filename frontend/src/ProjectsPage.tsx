@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   ApiError,
   failureText,
+  fulfillmentApi,
   harnessApi,
   kitsetsApi,
   requestsApi,
@@ -18,6 +19,7 @@ import {
   type KitsetReserve,
   type KitsetStockLot,
   type KitsetTile,
+  type FulfillmentCandidate,
   type Principal,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -27,6 +29,8 @@ import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { AutoTextarea } from "./AutoTextarea";
 import { formatDate, formatDateTime, formatDay, formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
+import { canSee } from "./navigation";
+import { CANDIDATE_LEGEND, candidateTone, matchText } from "./stockCandidates";
 // Редактор чертежа жгута — отдельным куском, вкладкой карточки проекта («Чертёж КБn»).
 const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
 import { useLatestSearch } from "./useLatestSearch";
@@ -149,7 +153,7 @@ function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange, op
     {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}{assembly.kd.some((document) => document.kind === "harness") && <> · <button className="link-button" onClick={() => openDrawing(assembly.index)}>Чертёж жгута</button></>}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
-    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange}
+    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange} onOpenDrawing={() => openDrawing(index)}
       onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
   </div>;
 }
@@ -480,7 +484,8 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
     {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} openDrawing={(index) => setTab(`hn:${index}`)} />}
-    {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline} />}
+    {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline}
+      canSeeStock={canSee(principal, "warehouse") || canSee(principal, "fulfillment", "edit")} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} setWarning={setWarning} reload={load} />}
     {tab === "gen" && <GenTab card={card} principal={principal} openDrawing={(index) => setTab(`hn:${index}`)} index={genIndex} pick={setGenIndex} builtId={builtDrafts[genIndex] || ""}
       onBuiltChange={(id) => setBuiltDrafts((current) => ({ ...current, [genIndex]: id }))}
@@ -757,19 +762,43 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
   </div>;
 }
 
+/* «Стадия» одним словом (владелец 12.10.2026): счётчики сверху идут в том же порядке и тех же цветах. */
+const SUPPLY_STATES: Array<[key: string, label: string, tone: string]> = [
+  ["short", "Не хватает", "danger"], ["procurement", "В закупке", "warn"], ["outside", "Куплено вне системы", "neutral"],
+  ["stock", "Со склада", "info"], ["kitting", "В комплектации", "ok"], ["received", "Принято на склад", "ok"],
+];
+
+type Maybe = { items: FulfillmentCandidate[]; more: number };
+
 /* «Снабжение»: Нужно / Свободно / Без ГРН / В закупке / Не хватает по каждой позиции. Позиции, где не хватает, отмечаются
-   галочкой, и одна кнопка «Заказать недостающее» оформляет на них заявки на закупку (ничего не отмечено — на все). */
-function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder: boolean; deadline?: string | null }) {
+   галочкой, и одна кнопка «Заказать недостающее» оформляет на них заявки на закупку (ничего не отмечено — на все).
+   Тому, кому открыт склад, строки нехватки окрашены «Возможно есть» — как в комплектации. */
+function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
+  project: string; canOrder: boolean; canSeeStock: boolean; deadline?: string | null;
+}) {
   const [lines, setLines] = useState<SupplyLine[] | null>(null);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [until, setUntil] = useState((deadline || "").slice(0, 10));
   const [ordering, setOrdering] = useState(false);
   const [result, setResult] = useState<{ text: string; bad: boolean } | null>(null);
+  // «Возможно есть»: one request for the positions short of stock; a failure leaves the column empty.
+  const [maybe, setMaybe] = useState<Map<string, Maybe> | null>(null);
   function load() {
     return supplyApi.lines(project).then((answer) => setLines(answer.lines)).catch((reason) => setError(message(reason, "Сервер не ответил.")));
   }
   useEffect(() => { void load(); }, [project]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const wanted = (lines ?? []).filter((line) => Number(line.short) > 0);
+  const wantedKey = wanted.map((line) => `${line.art}\u0000${line.short}`).join("\u0001");
+  useEffect(() => {
+    if (!canSeeStock || !wanted.length) { setMaybe(null); return; }
+    let alive = true;
+    setMaybe(null);
+    fulfillmentApi.candidatesFor(project, wanted.map((line) => ({ article: line.art, name: line.name, unit: line.unit })))
+      .then((answer) => { if (alive) setMaybe(new Map(answer.positions.map((item) => [item.article, { items: item.candidates, more: item.more }]))); })
+      .catch(() => { if (alive) setMaybe(new Map()); });
+    return () => { alive = false; };
+  }, [project, canSeeStock, wantedKey]);  // eslint-disable-line react-hooks/exhaustive-deps
   if (error) return <div className="empty">{error}</div>;
   if (!lines) return <div className="empty">Считаю по заявкам и закупке…</div>;
   if (!lines.length) return <div className="empty">В спецификации проекта нет позиций с артикулом.</div>;
@@ -777,17 +806,18 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
   const shortLines = lines.filter(isShort);
   const chosen = shortLines.filter((line) => picked.has(line.art));
   const count = chosen.length || shortLines.length;
-  const missing = lines.filter((line) => line.stage === "не заведено").length;
-  const received = lines.filter((line) => line.received).length;
-  // Закрыто «Есть на складе, без ГРН» — тоже со склада, без закупки (стадия «Закупка · Готово · без ГРН»).
-  const fromStock = (line: SupplyLine) => line.stage === "со склада" || line.stage.endsWith("без ГРН");
-  const stock = lines.filter(fromStock).length;
-  const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : fromStock(line) ? "info" : "warn";
   const zeroDash = (value: string) => Number(value) ? value : "—";
   // «Готово · без ГРН»: партию к строке привязывает её закупщик — подсказка говорит, где.
   const grnHint = (line: SupplyLine) => {
     const row = line.rows.find((item) => item.status.endsWith("без ГРН"));
-    return row ? `ГРН привязывает закупщик: Закупка → Мои позиции → ${row.source_id} → «Привязать ГРН»` : undefined;
+    return row ? `ГРН привязывает закупщик: Закупка → Мои позиции → ${row.source_id} → «Привязать ГРН»` : "";
+  };
+  const stateHint = (line: SupplyLine) => [line.state_hint, line.rows.length ? `Цепочка: ${line.stage}` : "", grnHint(line)]
+    .filter(Boolean).join("\n");
+  const offered = (line: SupplyLine) => (isShort(line) && maybe ? maybe.get(line.art) : undefined);
+  const candTone = (line: SupplyLine) => {
+    const found = offered(line);
+    return found ? candidateTone(Number(line.short), found.items) : null;
   };
 
   function toggle(art: string, on: boolean) {
@@ -819,32 +849,59 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
         ? <label className="sel-hit"><input type="checkbox" aria-label={`Заказать ${line.art}`} checked={picked.has(line.art)} onChange={(event) => toggle(line.art, event.target.checked)} /></label>
         : null }] : []),
     { key: "art", title: "Артикул КД", width: 170, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
-    { key: "name", title: "Наименование", width: 170, value: (line) => line.name, wrap: true },
+    // Источник имени — подсказкой (справочник / склад / спецификация / сайт); без имени — «—» и почему.
+    { key: "name", title: "Наименование", width: 260, value: (line) => line.name, wrap: true,
+      render: (line) => line.name
+        ? <span title={line.name_hint || undefined}>{line.name}</span>
+        : <span className="supply-unknown" title={line.name_hint || undefined}>— <small>артикул неизвестен</small></span> },
+    // «Стадия» одним словом сразу за именем (владелец 12.10.2026): цифры за ней — в подсказке.
+    { key: "stage", title: "Стадия", width: 165, wrap: true, filter: true, value: (line) => line.state_label || line.stage,
+      render: (line) => <span className={`tone-${line.state_tone || "neutral"}`} title={stateHint(line) || undefined}>{line.state_label || line.stage}</span> },
     { key: "need", title: "Нужно", width: 72, value: (line) => line.need, numeric: true },
     { key: "free", title: "Свободно", width: 90, value: (line) => zeroDash(line.free), numeric: true, hint: "Свободно на складе, с резервами самого проекта" },
+    // Ключевые — до «Возможно есть» (влезают в 16"), разбивка «Без ГРН / В закупке / В комплектации» — за ней.
+    { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,
+      render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
+    ...(canSeeStock ? [{ key: "maybe", title: "Возможно есть", width: 200, wrap: true,
+      hint: "Партии склада, которые могут быть этой позицией: тот же артикул или похожий",
+      value: (line: SupplyLine) => offered(line)?.items[0]?.grn ?? "",
+      render: (line: SupplyLine) => {
+        if (!isShort(line)) return <span className="muted">—</span>;
+        if (!maybe) return <span className="t-sub">…</span>;
+        const found = offered(line);
+        const best = found?.items[0];
+        if (!best) return <span className="cand-none-text">не найдено</span>;
+        const others = (found?.items.length ?? 1) - 1 + (found?.more ?? 0);
+        return <span className="supply-cand" title={`${matchText(best)} · ${best.article} · ${best.name}`}>
+          <span>ГРН {best.grn} · {best.available} {best.unit}</span>
+          <small>{matchText(best)} · {best.warehouse}{others > 0 ? ` · ещё ${others}` : ""}</small>
+        </span>;
+      } }] : []),
     { key: "off_book", title: "Без ГРН", width: 76, value: (line) => zeroDash(line.off_book || "0"), numeric: true, hint: "Закупка отметила «Есть на складе, без ГРН»: лежит на полке, но не заведено в партию и не в резерве" },
     { key: "ordered", title: "В закупке", width: 84, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
     { key: "kitted", title: "В комплектации", width: 132, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
-    { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,
-      render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
     { key: "unit", title: "Ед.", width: 48, value: (line) => line.unit },
     { key: "kbs", title: "КБ", width: 72, wrap: true, value: (line) => line.kbs.join(" · ") },
-    { key: "stage", title: "Стадия", width: 170, wrap: true, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`} title={grnHint(line)}>
-      {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
-    </span> },
     { key: "rows", title: "Строк", width: 64, hidden: true, value: (line) => line.rows.length || "—", numeric: true },
   ];
 
   return <div className="kit-pane">
     {/* Счётчики одной строкой (аудит 10.10, ПР-8): число — цветом своего тона, ноль — серым. */}
     <dl className="kit-supply-summary" aria-label="Итог по снабжению">
-      {([["Принято на склад", received, "ok"], ["В работе снабжения", lines.length - missing - received - stock, "warn"], ["Со склада, без закупки", stock, "info"], ["Не заведено", missing, "danger"], ["Не хватает", shortLines.length, "danger"]] as Array<[string, number, string]>).map(([label, value, toneName]) =>
-        <div key={label} className="kit-supply-count"><dt>{label}</dt><dd className={value ? `tone-${toneName}` : "muted"}>{value}</dd></div>)}
+      {SUPPLY_STATES.map(([key, label, toneName]) => {
+        const value = lines.filter((line) => line.state === key).length;
+        return <div key={key} className="kit-supply-count"><dt>{label}</dt><dd className={value ? `tone-${toneName}` : "muted"}>{value}</dd></div>;
+      })}
     </dl>
     {result && <div className={result.bad ? "error-banner" : "success-banner"} role={result.bad ? "alert" : "status"}>{result.text}</div>}
+    {canSeeStock && shortLines.length > 0 && <div className="cand-legend" aria-label="Цвета строк">
+      <span>Возможно есть на складе (для нехватки):</span>
+      {CANDIDATE_LEGEND.filter((item) => item.tone !== "done").map((item) => <span key={item.tone} className={`cand-key cand-${item.tone}`}>{item.text}</span>)}
+    </div>}
     <DataTable
       rows={lines}
       columns={columns}
+      rowClassName={(line) => { const toneName = candTone(line); return toneName ? `cand-row cand-${toneName}` : ""; }}
       rowKey={(line) => line.art}
       storageKey="kit-supply"
       label="Снабжение проекта"

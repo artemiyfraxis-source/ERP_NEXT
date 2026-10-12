@@ -23,7 +23,7 @@ function json(body: unknown) {
   });
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/"); });
 
 it("edits and atomically saves all reference maps", async () => {
   let payload: unknown;
@@ -415,4 +415,46 @@ it("the new record form asks for the essentials first, proposes the inventory nu
   await waitFor(() => expect(posted).toHaveLength(1));
   expect((posted[0].fields as Record<string, string>)["Наменование"]).toBe("Новый станок");
   expect((posted[0].fields as Record<string, string>)["Инв. номер"]).toBe("ОБ.105");
+});
+
+it("БД.ОБ: the machine card is a side panel — the list stays, another row switches it, × and Esc close it, a reload reopens it", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010", { "Срок окупаемости": "14 мес.", "Стоимость": "900 000,00" }) },
+      { id: "b1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Артикул": "APS3010H", "Для базы": "APS3010H/Блок питания" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  window.history.replaceState({}, "", "/");
+  const { unmount } = render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByText("ОБ.010"));
+  const panel = screen.getByRole("complementary", { name: "Карточка оборудования" });
+  expect(within(panel).getByText("Станция паяльная")).toBeInTheDocument();
+  expect(within(panel).getByText("8620DX-Pro · SUGON · Оборудование · ЦАР")).toBeInTheDocument();
+  expect(within(panel).getByText("расчёт")).toBeInTheDocument(); // окупаемость is derived
+  expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list is still there
+  expect(window.location.search).toContain("equipment=a1");
+
+  fireEvent.click(screen.getByText("Блок питания"));
+  expect(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByText("APS3010H · Оборудование")).toBeInTheDocument();
+  expect(window.location.search).toContain("equipment=b1");
+
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  expect(window.location.search).not.toContain("equipment");
+  expect(screen.getByText("ОБ.010")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("ОБ.010"));
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть карточку" }));
+  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+
+  fireEvent.click(screen.getByText("ОБ.010"));
+  unmount();
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  expect(await screen.findByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
 });

@@ -420,16 +420,16 @@ describe("OP midpoint gesture shown in video 14:43", () => {
     const prepared = { ...base, physicalTopology: { ...topology, segments: topology.segments.map(segment =>
       segment.id === "p1" ? { ...segment, path: { kind: "polyline" as const,
         points: [{ x: 90, y: 160 }, { x: 270, y: 210 }, { x: 470, y: 265 }] } } : segment) } };
-    const scene = memberScene(prepared);
-    const metadata = scene.pipe!.authoredHandleIndices!.flatMap((value, index) => value > 0
-      ? [{ bendIndex: value - 1, point: scene.pipe!.handles[index]! }] : []);
-    expect(metadata).toHaveLength(3);
     const owned = { ...prepared, physicalTopology: { ...prepared.physicalTopology,
       joiningPipes: prepared.physicalTopology.joiningPipes!.map(pipe => ({ ...pipe,
         members: pipe.members.map((member, index) => index === 1 ? { ...member,
-          authoredBendRegions: metadata.map((entry, bendIndex) => ({ segmentId: "p1", bendIndex,
+          authoredBendRegions: prepared.physicalTopology!.segments.find(segment => segment.id === "p1")!.path.points.map((point, bendIndex) => ({ segmentId: "p1", bendIndex,
             region: bendIndex === 2 ? "after-exit" as const : "enter" as const,
-            displayPoint: entry.point })) } : member) })) } };
+            displayPoint: point })) } : member) })) } };
+    const scene = memberScene(owned);
+    const metadata = scene.pipe!.authoredHandleIndices!.flatMap((value, index) => value > 0
+      ? [{ bendIndex: value - 1, point: scene.pipe!.handles[index]! }] : []);
+    expect(metadata).toHaveLength(3);
     const split = { ...owned, physicalTopology: splitPhysicalSegment(owned, "p1", 2, "joint2", "tail2") };
     const regions = split.physicalTopology.joiningPipes![0]!.members[1]!.authoredBendRegions!;
     expect(regions.map(entry => [entry.segmentId, entry.bendIndex]))

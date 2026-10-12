@@ -57,8 +57,8 @@ from .application import (
 from .domain import FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total
 from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
-    item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, route_from_document,
-    stage_name,
+    item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, ready_cards,
+    route_from_document, stage_name,
 )
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
@@ -1250,30 +1250,15 @@ def launchable(
     with techcards_factory() as techcards:
         cards = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
         kitsets = tuple(techcards.kitsets.list()) if hasattr(techcards, "kitsets") else ()
-    # Тираж и заказчик — из карточки набора (prodLaunchable_ читает «Наборы»); нет набора — партия ЭТК.
-    kit_rows = {
-        kit_stage_key(kitset.project, assembly.index): (kitset.customer, assembly.run)
-        for kitset in kitsets for assembly in kitset.assemblies
-    }
     with uow_factory() as uow:
         launched = launched_quantity(uow.production.list(limit=10_000))
-    items = []
-    for card in cards:
-        planned = launch_route(card.document)
-        route = planned.steps
-        if not route:
-            continue
-        item = item_id(card.project, card.item_index)
-        kit = (card.document or {}).get("kit") if isinstance(card.document, dict) else None
-        customer, run = kit_rows.get(kit_stage_key(card.project, card.item_index), ("", None))
-        items.append({
-            "techcard_id": str(card.id), "project": card.project, "index": card.item_index,
-            "item": item, "name": card.product_name, "customer": customer,
-            "run": _number(run) if run else str((kit or {}).get("part_quantity") or ""),
-            "deadline": card.deadline.isoformat() if card.deadline else None,
-            "launched": launched.get(kit_stage_key(card.project, card.item_index), 0), "operations": len(route),
-            "warnings": list(planned.warnings),
-        })
+    items = [{
+        "techcard_id": str(card.techcard_id), "project": card.project, "index": card.index,
+        "item": item_id(card.project, card.index), "name": card.name, "customer": card.customer, "run": card.run,
+        "deadline": card.deadline.isoformat() if card.deadline else None,
+        "launched": launched.get(card.key, 0), "operations": len(card.route.steps),
+        "warnings": list(card.route.warnings),
+    } for card in ready_cards(cards, kitsets)]
     items.sort(key=lambda value: (value["project"], value["index"]))
     return {"items": items}
 

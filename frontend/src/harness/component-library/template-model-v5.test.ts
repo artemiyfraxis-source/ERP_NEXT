@@ -40,6 +40,16 @@ function v3Fixture() {
 }
 
 describe("template content v5 contract", () => {
+  it("persists compatible seals and rejects a row selection outside the series list", () => {
+    const content = upgradeTemplateContentV3ToV5(v3Fixture().content).content;
+    const seals = [{ article: "7165-0100", color: "Красный", section: "0,35–0,5", insulationDiameter: "1,4–1,8 мм" }];
+    const saved = { ...content, compatibleSeals: seals };
+    expect(validateTemplateContentV5(JSON.parse(JSON.stringify(saved))).valid).toBe(true);
+    const broken = structuredClone(saved);
+    broken.e4ConnectorTable.seriesDefaults[0]!.values.customValues = { seal: "NOT-COMPATIBLE" };
+    expect(validateTemplateContentV5(broken).diagnostics).toContainEqual(expect.objectContaining({ code: "incompatible_seal" }));
+  });
+
   it("migrates v3 terminal compatibility into one deterministic series list", () => {
     const source = v3Fixture().content;
     const before = structuredClone(source);

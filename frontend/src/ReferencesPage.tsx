@@ -9,6 +9,7 @@ import { ConnectorGallery } from "./ConnectorGallery";
 import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
+import { CoveringsTable } from "./Coverings";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -32,7 +33,7 @@ import {
 
 type MapTab = "suppliers" | "countries";
 type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_other";
-export type DbTab = "templates" | "connectors" | "gauges" | TechOperationTab | MapTab | CableTab;
+export type DbTab = "templates" | "connectors" | "gauges" | "cov" | TechOperationTab | MapTab | CableTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
@@ -62,7 +63,9 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "cab_other", label: "Прочие кабели" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
+  // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой.
   { title: "Материалы", tabs: [
+    { id: "cov", label: "Оболочки" },
     { id: "mat", label: "Материалы", base: "mat" },
   ] },
   { title: "Соответствия", tabs: [
@@ -184,11 +187,12 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [techReady, setTechReady] = useState("");
   const [opCount, setOpCount] = useState<number | null>(null);
   const [connectorCount, setConnectorCount] = useState<number | null>(null);
+  const [coveringCount, setCoveringCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
-  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" ? tab : null;
+  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
@@ -273,6 +277,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     if (isMapTab(def.id)) return canRefs ? maps[def.id].length : null;
     if (def.id === "templates") return opCount;
     if (def.id === "connectors") return connectorCount;
+    if (def.id === "cov") return coveringCount;
     if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
     if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
     if (def.id === tab && techTab) return tech.records.length;
@@ -395,6 +400,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
 
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
     {tab === "connectors" && <ConnectorGallery />}
+    {tab === "cov" && <CoveringsTable canEdit={canEdit} onCount={setCoveringCount} />}
 
     {isMapTab(tab) && (() => {
       const disabled = !canEditSuppliers;

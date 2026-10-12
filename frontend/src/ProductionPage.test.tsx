@@ -487,7 +487,7 @@ it("lets the master hand out operations of issued projects to installers and lau
   expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя: 1")).toBeInTheDocument();
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
-  expect(await screen.findByText("к запуску 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
+  expect(await screen.findByText("без задания 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
   expect(screen.getByText("ООО «Тест»")).toBeInTheDocument();
   expect(screen.getByText("ТК на все КБ")).toBeInTheDocument();
 
@@ -523,7 +523,10 @@ it("lets the master hand out operations of issued projects to installers and lau
 
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");
-  fireEvent.click(await screen.findByRole("button", { name: "Запустить сегодня" }));
+  const create = await screen.findByRole("button", { name: "Создать задание" });
+  expect(create).toHaveAttribute("title", expect.stringContaining("Автоплан создаёт задания сам"));
+  expect(screen.getByText(/техкарта выдана, задания ещё нет/)).toBeInTheDocument();
+  fireEvent.click(create);
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: "/api/production/tasks",
     body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
