@@ -7,10 +7,11 @@ Reads procurement lines (facts for the card, the list and «Собрать из 
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -172,6 +173,21 @@ def group_lines(lines: Iterable[LineFacts]) -> list[Group]:
     return sorted(by_article.values(), key=lambda g: g.key) + sorted(by_name.values(), key=lambda g: g.key)
 
 
+def match_item(
+    index: items_repo.AliasIndex, items: Mapping[UUID, Any], part: str | None, name: str | None,
+) -> tuple[UUID | None, str | None]:
+    """The item a part key (`article_key` of the article) or a name points at, and how: "part_key" | "alias".
+    A name never links across different part numbers: a line with a part key only meets items without one.
+    `items` maps id → anything with `.part_key` (rows or column tuples). Shared by «Собрать из закупок» and the
+    request pool (purchasing_rfq_stats.py)."""
+    if part and part in index.by_part:
+        return index.by_part[part], "part_key"
+    found = index.by_name.get(items_repo.alias_key(name))
+    if found is not None and found in items and (not part or not items[found].part_key):
+        return found, "alias"
+    return None, None
+
+
 def run_import(uow, procurement_uow_factory: Callable, actor: Actor, now: datetime) -> dict:
     """Creates / links items for every unlinked procurement line. The caller commits (apply) or leaves the unit of
     work uncommitted (dry run): both paths run the same code, so the preview is exactly what apply does."""
@@ -192,14 +208,7 @@ def run_import(uow, procurement_uow_factory: Callable, actor: Actor, now: dateti
         item_type = _majority(line.item_type for line in group.lines)
         category = items_repo.guess_category(name, item_type)
 
-        target_id, reason = None, None
-        if group.kind == "article" and group.key in index.by_part:
-            target_id, reason = index.by_part[group.key], "part_key"
-        else:
-            found = index.by_name.get(items_repo.alias_key(name))
-            # A name never links across different part numbers: an article group only meets items without one.
-            if found is not None and (group.kind == "name" or not items[found].part_key):
-                target_id, reason = found, "alias"
+        target_id, reason = match_item(index, items, group.key if group.kind == "article" else None, name)
         entry = {
             "kind": group.kind, "key": group.key, "name": name, "part_number": part_number, "unit": unit,
             "category": category, "manufacturer": manufacturer, "lines": len(group.lines),

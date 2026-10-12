@@ -7,7 +7,6 @@ import {
   type DecisionField,
   type PastedRow,
   type QuoteLineInput,
-  type RfqCandidate,
   type RfqCell,
   type RfqLine,
   type RfqMatrix,
@@ -16,6 +15,7 @@ import {
   type SuggestResult,
   type SupplierBrief,
 } from "./purchasingRfqApi";
+import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
  *  suppliers → their quotes in a matrix compared with VAT by what covering the need costs → the choice with the
@@ -86,6 +86,15 @@ export function PurchasingRfq({ readOnly = false, focusId }: { readOnly?: boolea
 
   useEffect(() => { void reload(focusId); }, [reload, focusId]);
 
+  if (creating) {
+    // The pool takes the whole width (a sheet of lines, not a modal list); the new request's matrix opens after it.
+    return (
+      <section className="page">
+        <RfqPool onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); void reload(id); }} />
+      </section>
+    );
+  }
+
   return (
     <section className="page" style={{ display: "grid", gridTemplateColumns: "210px minmax(0, 1fr)", gap: 16, alignItems: "start" }}>
       <aside className="panel" style={{ padding: 12, display: "grid", gap: 6 }}>
@@ -95,7 +104,7 @@ export function PurchasingRfq({ readOnly = false, focusId }: { readOnly?: boolea
         </div>
         {error && <div className="error-banner" role="alert">{error}</div>}
         {!error && rfqs === null && <div className="empty">Загрузка…</div>}
-        {rfqs?.length === 0 && <div className="empty">Запросов нет — нажмите «Новый запрос» и отметьте строки «В работе».</div>}
+        {rfqs?.length === 0 && <div className="empty">Запросов нет — нажмите «+ Запрос» и отметьте строки «В работе».</div>}
         {rfqs?.map((rfq) => (
           <button
             key={rfq.id} type="button" aria-pressed={rfq.id === selected}
@@ -116,12 +125,6 @@ export function PurchasingRfq({ readOnly = false, focusId }: { readOnly?: boolea
           ? <RfqMatrixView key={selected} id={selected} readOnly={readOnly} onChanged={() => void reload(selected)} />
           : <div className="panel empty">Выберите запрос слева или создайте новый.</div>}
       </div>
-      {creating && (
-        <NewRfqDialog
-          onClose={() => setCreating(false)}
-          onCreated={(id) => { setCreating(false); void reload(id); }}
-        />
-      )}
     </section>
   );
 }
@@ -134,82 +137,6 @@ function Dialog({ title, wide = false, onClose, children }: { title: string; wid
         {children}
       </div>
     </div>
-  );
-}
-
-function NewRfqDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
-  const [lines, setLines] = useState<RfqCandidate[] | null>(null);
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    rfqApi.candidates()
-      .then(({ lines: next }) => setLines(next))
-      .catch((reason) => setError(failureText(reason, "Строки не загрузились")));
-  }, []);
-
-  const toggle = (id: string) => setPicked((current) => {
-    const next = new Set(current);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-
-  async function create() {
-    setBusy(true);
-    setError("");
-    try {
-      const created = await rfqApi.create([...picked], title.trim());
-      onCreated(created.id);
-    } catch (reason) {
-      setError(failureText(reason, "Запрос не создан"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const all = lines !== null && lines.length > 0 && picked.size === lines.length;
-  return (
-    <Dialog title="Новый запрос КП" wide onClose={onClose}>
-      <label>Название (необязательно)
-        <input value={title} maxLength={255} onChange={(event) => setTitle(event.target.value)} placeholder="Например, разъёмы для RND.012" />
-      </label>
-      {error && <div className="error-banner" role="alert">{error}</div>}
-      {lines === null && !error && <div className="empty">Загрузка…</div>}
-      {lines?.length === 0 && <div className="empty">Нет строк «В работе» / «Готов к запросу» вне запросов КП — возьмите строки в работу на листе закупки.</div>}
-      {lines && lines.length > 0 && (
-        <div className="inwork-scroll" style={{ maxHeight: "55vh" }}>
-          <table className="inwork-table">
-            <thead>
-              <tr>
-                <th><input type="checkbox" aria-label="Выбрать все" checked={all} onChange={() => setPicked(all ? new Set() : new Set(lines.map((line) => line.id)))} /></th>
-                <th>Позиция</th><th>Артикул</th><th>Кол-во</th><th>Поставщик в строке</th><th>Бюджет с НДС</th><th>Плановая дата</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => (
-                <tr key={line.id} onClick={() => toggle(line.id)} style={{ cursor: "pointer" }}>
-                  <td><input type="checkbox" aria-label={`Взять ${line.legacy_id}`} checked={picked.has(line.id)} onChange={() => toggle(line.id)} onClick={(event) => event.stopPropagation()} /></td>
-                  <td><strong>{line.name}</strong> <small className="muted">{line.legacy_id} · {line.status}</small></td>
-                  <td>{line.article ?? ""}</td>
-                  <td>{quantity(line.quantity)} {line.unit}</td>
-                  <td>{line.supplier ?? ""}</td>
-                  <td>{money(line.budget_unit_gross)}</td>
-                  <td>{formatDay(line.need_by)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <div className="form-actions">
-        <button type="button" className="secondary" onClick={onClose}>Отмена</button>
-        <button type="button" className="primary" disabled={busy || picked.size === 0} onClick={() => void create()}>
-          Создать запрос ({picked.size})
-        </button>
-      </div>
-    </Dialog>
   );
 }
 
@@ -824,23 +751,20 @@ function SuggestDialog({ rfqId, onClose, onDone }: { rfqId: string; onClose: () 
     rfqApi.suggest(rfqId)
       .then((next) => {
         setResult(next);
-        setPicked(new Set(next.suggestions.filter((item) => item.preselect).map((item) => item.supplier_id)));
+        setPicked(new Set(next.suggestions.filter((item) => item.preselect).map(suggestionKey)));
       })
       .catch((reason) => setError(failureText(reason, "Подсказка не загрузилась")));
   }, [rfqId]);
 
-  async function add(names: string[] = []) {
+  async function add() {
     if (!result) return;
     setBusy(true);
     setError("");
     let count = 0;
     try {
-      for (const item of result.suggestions.filter((suggestion) => picked.has(suggestion.supplier_id) && !suggestion.in_rfq)) {
-        await rfqApi.addSupplier(rfqId, { supplier_id: item.supplier_id }, item.reason);
-        count += 1;
-      }
-      for (const name of names) {
-        await rfqApi.addSupplier(rfqId, { name }, "plan");
+      // One by one: a supplier not in the directory is quick-added by name, as «Добавить поставщика» does.
+      for (const pick of picksOf(result.suggestions, picked)) {
+        await rfqApi.addSupplier(rfqId, pick.supplier_id ? { supplier_id: pick.supplier_id } : { name: pick.name }, pick.reason);
         count += 1;
       }
       onDone(count);
@@ -850,41 +774,20 @@ function SuggestDialog({ rfqId, onClose, onDone }: { rfqId: string; onClose: () 
     }
   }
 
-  const toggle = (id: string) => setPicked((current) => {
+  const toggle = (key: string) => setPicked((current) => {
     const next = new Set(current);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    if (next.has(key)) next.delete(key); else next.add(key);
     return next;
   });
-  const fresh = result?.suggestions.filter((item) => picked.has(item.supplier_id) && !item.in_rfq).length ?? 0;
+  const fresh = result ? picksOf(result.suggestions, picked).length : 0;
   return (
-    <Dialog title="Подобрать поставщиков" onClose={onClose}>
+    <Dialog title="Подобрать поставщиков" wide onClose={onClose}>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!result && !error && <div className="empty">Загрузка…</div>}
-      {result && result.suggestions.length === 0 && result.unmapped_plan.length === 0 && (
-        <div className="empty">Подходящих поставщиков нет — у поставщиков в справочнике не указаны категории этих позиций. Добавьте поставщика по названию.</div>
+      {result && result.suggestions.length === 0 && (
+        <div className="empty">Подсказать некого: истории закупок этих позиций нет, в строках поставщик не указан, у поставщиков справочника нет таких категорий. Добавьте поставщика по названию.</div>
       )}
-      {result && result.suggestions.length > 0 && (
-        <div style={{ display: "grid", gap: 4 }}>
-          {result.suggestions.map((item) => (
-            <label key={item.supplier_id} className="check-inline" style={{ color: "var(--foreground)" }}>
-              <input type="checkbox" disabled={item.in_rfq} checked={item.in_rfq || picked.has(item.supplier_id)} onChange={() => toggle(item.supplier_id)} />
-              <strong style={{ display: "inline" }}>{item.name}{item.is_key ? " ★" : ""}</strong>
-              <span className="muted">
-                {REASONS[item.reason]}{item.last_asked_at ? ` · спрашивали ${formatDay(item.last_asked_at)}` : item.reason === "rotation" ? " · ещё не спрашивали" : ""}
-                {item.in_rfq ? " · уже в запросе" : ""}
-              </span>
-            </label>
-          ))}
-        </div>
-      )}
-      {result && result.unmapped_plan.length > 0 && (
-        <div className="warning-inline">
-          В строках указан поставщик не из справочника: {result.unmapped_plan.join(", ")}.{" "}
-          <button type="button" className="link-button" style={{ padding: 0 }} disabled={busy} onClick={() => void add(result.unmapped_plan)}>
-            Добавить в справочник и в запрос
-          </button>
-        </div>
-      )}
+      {result && result.suggestions.length > 0 && <SuggestionList items={result.suggestions} checked={picked} onToggle={toggle} />}
       <div className="form-actions">
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
         <button type="button" className="primary" disabled={busy || fresh === 0} onClick={() => void add()}>Добавить выбранных ({fresh})</button>

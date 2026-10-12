@@ -3851,3 +3851,26 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .history-timeline li > div span { color: var(--foreground); }
 .history-timeline li > div small { color: var(--muted-foreground); font-size: 11px; }
 .today-link { display: block; margin-top: 2px; color: var(--muted-foreground); font-size: 11.5px; }
+
+/* «Новый запрос КП» (RfqPool.tsx): the buyer's lines by category as a dense sheet, a sticky selection bar, then the
+   suppliers with their reasons. Rows stay one line high; the nomenclature cell wraps its chips. */
+.rfq-pool { display: grid; gap: 10px; padding: 12px 14px; }
+.rfq-pool-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.rfq-pool-head h2, .rfq-pool-head h3 { margin: 0; font-size: 16px; }
+.rfq-pool .table-wrap { max-height: calc(100dvh - 250px); }
+.rfq-pool-table td { padding-top: 3px; padding-bottom: 3px; vertical-align: top; }
+.rfq-pool-table td small { display: block; color: var(--muted-foreground); font-size: 11.5px; }
+.rfq-pool-table td.text strong { display: block; font-weight: 600; }
+.rfq-pool .rfq-group-toggle { padding: 0; color: var(--foreground); }
+.rfq-nomen { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 6px; max-width: 360px; }
+.rfq-nomen small { flex-basis: 100%; }
+.rfq-pool-bar { position: sticky; bottom: 8px; z-index: 5; border: 1px solid var(--border); box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 16%, transparent); }
+.rfq-pool-bar .spacer { flex: 1; }
+.rfq-suggest { display: grid; gap: 10px; }
+.rfq-suggest-title { display: grid; gap: 4px; max-width: 520px; font-size: 13px; }
+.rfq-suggest-list { display: grid; border: 1px solid var(--border); border-radius: 8px; max-height: 52vh; overflow: auto; }
+.rfq-suggest-list label { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--foreground); font-size: 13px; font-weight: 400; }
+.rfq-suggest-list label:last-child { border-bottom: 0; }
+.rfq-suggest-list input[type="checkbox"] { width: auto; margin: 0; }
+.rfq-add-supplier { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.rfq-add-supplier input { width: min(360px, 100%); }

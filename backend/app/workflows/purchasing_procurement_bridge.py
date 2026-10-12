@@ -13,6 +13,7 @@ from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -30,8 +31,11 @@ from app.modules.procurement.domain import (
     ProcurementLine,
     ProcurementValidationError,
 )
+from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.purchasing.rfq import LineChanged, LineRefused, LineView
 from app.shared.identity import Actor
+
+_CHUNK = 500
 
 
 def budget_unit_gross(line: ProcurementLine) -> Decimal | None:
@@ -61,6 +65,8 @@ def line_view(line: ProcurementLine) -> LineView:
         hint=" ".join(part for part in (line.item_type, line.category, line.calculated_name) if part),
         actual_quantity=line.actual_quantity,
         actual_unit=line.actual_unit,
+        project=line.project_reference,
+        item_type=line.item_type,
     )
 
 
@@ -80,12 +86,21 @@ class ProcurementLinesBridge:
         return [line_view(line) for line in lines if line.status in FACTS_EDITABLE]
 
     def get_many(self, line_ids: Iterable[UUID]) -> dict[UUID, LineView]:
+        wanted = list(dict.fromkeys(line_ids))
         found: dict[UUID, LineView] = {}
         with self.procurement_uow_factory() as uow:
-            for line_id in dict.fromkeys(line_ids):
+            session = getattr(uow, "session", None)
+            # One query for all: the repository's get() below then reads the session's identity map (the rows are
+            # held here so it cannot drop them) instead of one SELECT per line.
+            held = [
+                row for start in range(0, len(wanted), _CHUNK) for row in session.scalars(
+                    select(ProcurementLineRow).where(ProcurementLineRow.id.in_(wanted[start:start + _CHUNK])))
+            ] if session is not None and len(wanted) > 1 else []
+            for line_id in wanted:
                 line = uow.procurement.get(line_id)
                 if line is not None:
                     found[line_id] = line_view(line)
+        del held
         return found
 
     def apply_choice(

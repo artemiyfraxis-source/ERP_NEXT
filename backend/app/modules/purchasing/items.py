@@ -445,13 +445,20 @@ class AliasIndex:
     by_name: dict[str, UUID]
 
 
-def build_index(session: Session) -> AliasIndex:
+def build_index(session: Session, active_only: bool = False) -> AliasIndex:
+    """Only the columns used are read (the request pool builds it on every open). `active_only` leaves archived items
+    out — a merged-away item must not catch a line its successor should get."""
     by_part: dict[str, UUID] = {}
     by_name: dict[str, UUID] = {}
-    for row in session.scalars(select(ItemRow)):
-        if row.part_key:
-            by_part[row.part_key] = row.id
-        by_name.setdefault(alias_key(row.name), row.id)
-    for alias in session.scalars(select(ItemAliasRow)):
-        by_name.setdefault(alias.alias_key, alias.item_id)
+    items = select(ItemRow.id, ItemRow.name, ItemRow.part_key)
+    aliases = select(ItemAliasRow.alias_key, ItemAliasRow.item_id)
+    if active_only:
+        items = items.where(ItemRow.archived_at.is_(None))
+        aliases = aliases.join(ItemRow, ItemRow.id == ItemAliasRow.item_id).where(ItemRow.archived_at.is_(None))
+    for item_id, name, key in session.execute(items):
+        if key:
+            by_part[key] = item_id
+        by_name.setdefault(alias_key(name), item_id)
+    for key, item_id in session.execute(aliases):
+        by_name.setdefault(key, item_id)
     return AliasIndex(by_part, by_name)

@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
@@ -16,8 +16,10 @@ from sqlalchemy.orm.exc import StaleDataError
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal, section_allowed
 from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
+from app.workflows.purchasing_rfq_stats import PurchaseStatsBridge
 
 from . import rfq as service
+from . import rfq_pool
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
 
 
@@ -45,6 +47,13 @@ def procurement_lines(
 
 Lines = Annotated[service.ProcurementLines, Depends(procurement_lines)]
 
+
+def purchase_stats(factory: Annotated[Callable, Depends(procurement_uow_factory)]) -> rfq_pool.PurchaseStats:
+    return PurchaseStatsBridge(factory)
+
+
+Stats = Annotated[rfq_pool.PurchaseStats, Depends(purchase_stats)]
+
 Money = Annotated[Decimal, Field(ge=0, max_digits=18, decimal_places=2)]
 Amount = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 Text = Annotated[str, Field(max_length=2000)]
@@ -69,15 +78,20 @@ def _run(operation):
     raise AssertionError("unreachable")
 
 
-class CreateRfqInput(BaseModel):
-    line_ids: list[UUID] = Field(min_length=1, max_length=200)
-    title: str | None = Field(default=None, max_length=255)
+# The five stored reasons plus the suggestion's own (mapped to a stored one by `rfq.stored_reason`).
+Reason = Literal["key", "category", "rotation", "plan", "manual", "items", "category_history", "original"]
 
 
 class AddSupplierInput(BaseModel):
     supplier_id: UUID | None = None
     name: str | None = Field(default=None, max_length=255)
-    reason: Literal["key", "category", "rotation", "plan", "manual"] = "manual"
+    reason: Reason = "manual"
+
+
+class CreateRfqInput(BaseModel):
+    line_ids: list[UUID] = Field(min_length=1, max_length=200)
+    title: str | None = Field(default=None, max_length=255)
+    suppliers: list[AddSupplierInput] = Field(default_factory=list, max_length=100)
 
 
 class DeclineInput(BaseModel):
@@ -158,8 +172,34 @@ def rfq_directory(_principal: View, uow: Uow) -> dict:
     return {"suppliers": _run(lambda: service.directory(uow()))}
 
 
+@router.get("/pool")
+def rfq_pool_lines(principal: Edit, uow: Uow, lines: Lines, stats: Stats) -> dict:
+    return _run(lambda: rfq_pool.pool(uow(), lines, stats, principal.actor))
+
+
+def _uuids(values: list[str]) -> list[UUID]:
+    """`?line_ids=a,b` and `?line_ids=a&line_ids=b` alike."""
+    try:
+        return [UUID(part) for value in values for part in value.split(",") if part.strip()]
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="Неверный id строки") from error
+
+
+@router.get("/suggest")
+def rfq_suggest_by_stats(
+    principal: Edit, uow: Uow, lines: Lines, stats: Stats,
+    line_ids: Annotated[list[str], Query(max_length=200)] = [],  # noqa: B006 — FastAPI copies the default
+    rfq_id: UUID | None = None,
+) -> dict:
+    ids = _uuids(line_ids)
+    if len(ids) > 200:
+        raise HTTPException(status_code=422, detail="Не больше 200 строк в одном запросе")
+    return _run(lambda: rfq_pool.suggest(uow(), lines, stats, principal.actor, line_ids=ids, rfq_id=rfq_id))
+
+
 @router.get("/suggest-suppliers")
 def rfq_suggest(rfq_id: UUID, principal: Edit, uow: Uow, lines: Lines) -> dict:
+    """The earlier suggestion of a request (directory only); the client asks /suggest now."""
     return _run(lambda: service.suggest_suppliers(uow(), lines, principal.actor, rfq_id))
 
 
@@ -176,7 +216,8 @@ def rfq_list(principal: View, uow: Uow, scope: Literal["mine", "all"] = "mine") 
 
 @router.post("", status_code=201)
 def rfq_create(payload: CreateRfqInput, principal: Edit, now: Now, uow: Uow, lines: Lines) -> dict:
-    return _run(lambda: service.create_rfq(uow(), lines, principal.actor, now, payload.line_ids, payload.title))
+    picks = [service.SupplierPick(item.supplier_id, item.name, item.reason) for item in payload.suppliers]
+    return _run(lambda: service.create_rfq(uow(), lines, principal.actor, now, payload.line_ids, payload.title, picks))
 
 
 @router.get("/{rfq_id}")
