@@ -2036,6 +2036,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-base svg { display: block; max-width: 100%; height: auto; }
 .conn-warn { color: var(--tone-danger); }
 .conn-muted { color: var(--muted-foreground); font-size: 12px; }
+.conn-cats { margin: 0; }
+.conn-sections { display: grid; gap: 14px; }
+.conn-section h3 { margin: 0 0 6px; font-size: 14px; }
+.conn-section h3 .muted { font-weight: 400; }
 .conn-series-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
 .conn-series { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; min-height: 72px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; }
 .conn-series:hover, .conn-series:focus-visible { border-color: var(--primary); background: var(--accent); }

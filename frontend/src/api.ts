@@ -1497,6 +1497,10 @@ export interface ConnectorSeries {
   color: string | null;
   checked: boolean;
   sample: ConnectorSeriesHousing | null;
+  /** Раздел галереи: «Провод — плата», «Автомобильные», … — у каждой серии ровно один. */
+  category: string;
+  /** Артикулы БД.КОАКС для ВЧ-серий. */
+  catalog: Array<{ article: string; kind: string; maker: string; wire: string }>;
 }
 
 export interface ConnectorSeriesMatch {

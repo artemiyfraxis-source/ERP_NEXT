@@ -147,6 +147,10 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "conf": "high", "model": "frame",
      "src": "Connfly DS1069 + JST eXH", "note": "по чертежу Connfly DS1069 (метка Circuit No.1) и JST eXH: защёлка сверху, контакт 1 слева",
      "body": {"extra": 4.8, "h": 4.1, "len": 7.8, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}, "color_by": ((r"-SCB", BLACK),)},
+    # DS1066 — Connfly 2.0 mm female housing «Гнездо на провод N конт. шаг 2,0» (warehouse lots I-DS1066-SCW02/03, type
+    # «Соединитель»; pitch from the lot name). No maker drawing is read, so the numbering stays unchecked.
+    {"id": "connfly-ds1066", "title": "Connfly DS1066 (шаг 2,0)", "pattern": r"^I-DS1066-SC[BW]0*(\d+)", "pitch": 2.0, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": IVORY, "erp_only": True, "conf": "low",
+     "color_by": ((r"-SCB", BLACK),), "note": "корпус Connfly DS1066: чертёж производителя не сверен — контакт 1 по ответной вилке"},
     # Amass XT / QS8: the Amass product specifications (XT60, XT60H 2021V1) show the faces without numbers or «+»/«−»,
     # so the contacts stay unlabelled and unchecked.
     {"id": "amass-xt", "title": "Amass XT", "pattern": r"^XT-?(30|60|90)", "fixed": 2, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": "#f2c200", "cavity": "round", "labels": ("", ""), "conf": "low",
@@ -381,6 +385,7 @@ CATALOG_SAMPLES: dict[str, str] = {
     "jst-sm-p": "SMP-04V-BC", "molex-picoblade": "51021-0400", "molex-minifit-jr": "39012080",
     "molex-microfit": "43025-0400", "molex-microfit-1r": "43645-0400", "molex-sl-2r": "22-55-2081",
     "te-multilock-040": "174047-2", "connfly-ds1071": "I-DS1071-SCB02X5", "connfly-ds1069": "I-DS1069-SCW004",
+    "connfly-ds1066": "I-DS1066-SCW02",
     "amass-xt": "XT60H-M", "amass-qs8": "QS8-S-M", "rj45": "RJ45 8P8C", "weipu-sa8": "SA812/S4",
     "cnlinko-lp12": "LP-12-C04PE", "usb-a": "USB-A", "jst-phd": "PHDR-14VS", "molex-microfit-plug": "43020-0400",
     "molex-microfit-plug-1r": "43640-0400", "molex-clikmate": "5025780600", "molex-picoclasp": "5011892010",
