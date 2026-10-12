@@ -240,3 +240,15 @@ def test_a_few_hundred_rows_answer_fast(env):
         assert response.status_code == 200
         assert elapsed < 150, (query, elapsed)
     assert titles(client.get(URL, params={"q": "FRX.26.0001200"}), "Склад") == ["FRX.26.0001200"]
+
+
+def test_mixed_case_cyrillic_is_found_on_sqlite_too():
+    """«ЧипДип» in the data, «чипдип» typed: the SQLite LIKE prefilter must not drop it (ASCII-only case folding)."""
+    from sqlalchemy import create_engine, text
+
+    from app.shared import sqlite_casefold  # noqa: F401
+
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    with engine.connect() as connection:
+        hit = connection.execute(text("select erp_casefold('ООО «ЧипДип»') like '%чипдип%'")).scalar()
+    assert hit == 1

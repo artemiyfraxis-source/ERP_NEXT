@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.modules.procurement.infrastructure import ProcurementLineRow
@@ -25,6 +25,7 @@ from app.modules.purchasing.infrastructure import (
 )
 from app.modules.warehouse.infrastructure import StockLotRow
 from app.modules.warehouse.word_search import _FOLD, fold, matches_words
+from app.shared import sqlite_casefold  # noqa: F401 — erp_casefold() on SQLite connections
 from app.shared import stage_options
 from app.shared.http_auth import Principal, authenticated_principal, section_allowed
 
@@ -47,7 +48,7 @@ def _result(group: str, title: str, subtitle: str, section: str, **params: str) 
 
 def _prefilter(query: str) -> list[str]:
     """LIKE patterns for the most selective word. Look-alikes and ё/е become `_` (any one character), a Cyrillic
-    letter is tried in lower / upper / capitalised form (SQL case-folding is ASCII only). [] — no prefilter."""
+    the pattern is casefolded and compared case-insensitively by `_narrow`. [] — no prefilter."""
     # A word with a dash may span two columns (GRN «…0000003-П2» = grn + package): any dash-free part is enough.
     raw = [part for word in query.strip().casefold().split() for part in word.split("-") if part]
     if not raw:
@@ -62,12 +63,15 @@ def _prefilter(query: str) -> list[str]:
     masked = "".join(
         "_" if char in _AMBIGUOUS else ("\\" + char if char in "%_\\" else char) for char in best
     )
-    return sorted({f"%{variant}%" for variant in (masked, masked.upper(), masked.capitalize())})
+    return [f"%{masked}%"]
 
 
-def _narrow(columns: Iterable[Any], patterns: list[str]):
+def _narrow(columns: Iterable[Any], patterns: list[str], session: Session):
+    """PostgreSQL ILIKE folds Unicode case; SQLite compares the Unicode-casefolded text (sqlite_casefold)."""
     if not patterns:
         return None
+    if session.get_bind().dialect.name == "sqlite":
+        return or_(*[func.erp_casefold(column).like(pattern, escape="\\") for column in columns for pattern in patterns])
     return or_(*[column.ilike(pattern, escape="\\") for column in columns for pattern in patterns])
 
 
@@ -76,7 +80,7 @@ def _scan(session: Session, columns: list[Any], patterns: list[str], match_colum
     statement = select(*columns)
     if base is not None:
         statement = statement.where(base)
-    narrow = _narrow(match_columns, patterns)
+    narrow = _narrow(match_columns, patterns, session)
     if narrow is not None:
         statement = statement.where(narrow)
     if order is not None:
@@ -154,7 +158,7 @@ def _items(session: Session, words: list[str], patterns: list[str]) -> list[dict
                 return list(found.values())
     statement = select(row.id, row.name, row.part_number, alias.alias_text).join(
         alias, alias.item_id == row.id).where(row.archived_at.is_(None))
-    narrow = _narrow([alias.alias_text], patterns)
+    narrow = _narrow([alias.alias_text], patterns, session)
     if narrow is not None:
         statement = statement.where(narrow)
     for item_id, name, part, alias_text in session.execute(statement):
