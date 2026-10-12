@@ -1028,7 +1028,7 @@ it("lets a master work for a fitter: banner, start on her behalf with a replay k
     if (path.includes("/inputs")) return json({ boxes: [], materials: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
-  render(<ProductionPage principal={{ ...principal, permissions: { production: "edit", myops: "view" } }} mine />);
+  render(<ProductionPage principal={{ ...principal, permissions: { production: "edit", myops: "edit" } }} mine />);
 
   fireEvent.change(await screen.findByRole("combobox", { name: "Сотрудник" }), { target: { value: fitterId } });
   expect(await screen.findByText("Работаете за сотрудника Оператор")).toBeInTheDocument();

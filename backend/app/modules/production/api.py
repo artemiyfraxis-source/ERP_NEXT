@@ -17,7 +17,7 @@ from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
 from app.shared.identity import Actor
 from app.shared.stored_files import file_response
-from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, section_allowed, shipping_warehouse_principal
+from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, section_allowed, shipping_warehouse_principal
 
 from .application import (
     Absence,
@@ -548,11 +548,10 @@ def _may_act_for(principal: Principal, viewer, target) -> bool:
 
 
 def _performer(uow_factory: Callable[[], UnitOfWork], principal: Principal, on_behalf_of: UUID | None) -> Actor | None:
-    """За кого нажата кнопка «Заданий». Без on_behalf_of (или себя) — сам: нужна правка «Заданий». За другого —
-    только по праву `_may_act_for`, проверенному здесь, а не на экране; возвращает исполнителя."""
+    """За кого нажата кнопка «Заданий». Правку «Заданий» уже проверил гейт маршрута (production_view_work_principal);
+    без on_behalf_of (или себя) — сам. За другого — сверх гейта право `_may_act_for`, проверенное здесь, а не на
+    экране; возвращает исполнителя."""
     if on_behalf_of is None or on_behalf_of == principal.actor.id:
-        if not section_allowed(principal, ("myops",), "edit"):
-            raise HTTPException(status_code=403, detail="Раздел «Задания» открыт вам только на просмотр.")
         return None
     with uow_factory() as uow:
         target = uow.operators.get(on_behalf_of)
@@ -677,9 +676,10 @@ def my_operations(
         for entry in uow.work_log.entries(operator_id=viewed, operation_ids=own_operations):
             logged.setdefault(entry.operation_id, []).append(entry)
         # Свои задания — сам; чужие — работает ли за него смотрящий (иначе экран остаётся только просмотром).
-        can_act = section_allowed(principal, ("myops",), "edit") if viewed == principal.actor.id else _may_act_for(
+        # Действия идут через гейт правки «Заданий» (production_view_work_principal) — без неё только просмотр.
+        can_act = section_allowed(principal, ("myops",), "edit") and (viewed == principal.actor.id or _may_act_for(
             principal, uow.operators.get(principal.actor.id), uow.operators.get(viewed),
-        )
+        ))
     boxes_by_task: dict[UUID, list[ProductionBox]] = {}
     for box in boxes:
         boxes_by_task.setdefault(box.task_id, []).append(box)
@@ -916,7 +916,7 @@ def start_execution(
     task_id: UUID,
     operation_id: UUID,
     payload: StartWorkPayload,
-    principal: Annotated[Principal, Depends(production_view_principal)],
+    principal: Annotated[Principal, Depends(production_view_work_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     on_behalf_of: UUID | None = None,
@@ -941,28 +941,28 @@ def _session_command(session_id: UUID, principal: Principal, now: datetime, uow_
 
 
 @router.post("/work/{session_id}/pause")
-def pause_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+def pause_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
     command = _session_command(session_id, principal, now, uow_factory, on_behalf_of, idempotency_key)
     session = _execution(lambda: pause_work(command, uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/resume")
-def resume_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+def resume_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
     command = _session_command(session_id, principal, now, uow_factory, on_behalf_of, idempotency_key)
     session = _execution(lambda: resume_work(command, uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/cancel")
-def cancel_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+def cancel_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
     command = _session_command(session_id, principal, now, uow_factory, on_behalf_of, idempotency_key)
     session = _execution(lambda: cancel_work(command, uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/submit")
-def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
     performer = _performer(uow_factory, principal, on_behalf_of)
     session, box, output, defect = _execution(lambda: submit_work(SubmitWorkCommand(
         session_id=session_id, actor=principal.actor, now=now,
@@ -1026,7 +1026,7 @@ def box_outputs(
 
 
 @router.post("/boxes/{box_id}/correct")
-def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: Annotated[Principal, Depends(production_view_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None) -> dict:
+def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None) -> dict:
     performer = _performer(uow_factory, principal, on_behalf_of)
     box, output, defect = _execution(lambda: correct_box(CorrectBoxCommand(
         box_id=box_id, expected_version=payload.version, actor=principal.actor, now=now, performer=performer,

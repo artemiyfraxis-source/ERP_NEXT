@@ -126,19 +126,24 @@ def test_master_of_the_site_may_act_others_stay_read_only(production_api):
     # Монтажник за напарника не работает, даже с правкой «Заданий».
     _as(operator_id, "Оператор", {"operator"}, {"myops": "edit"})
     assert client.post(start, params={"on_behalf_of": str(MASTER_ID)}, json={}).status_code == 403
-    # Видит планирование, но не правит — только просмотр.
-    _as(MASTER_ID, "Мастер", {"foreman"}, {"production": "view", "myops": "view"})
+    # Видит планирование, но не правит — только просмотр, даже с правкой «Заданий».
+    _as(MASTER_ID, "Мастер", {"foreman"}, {"production": "view", "myops": "edit"})
     assert client.post(start, params=behalf, json={}).status_code == 403
     assert client.get("/api/production/my", params={"operator_id": str(operator_id)}).json()["can_act"] is False
-    # Мастер другой площадки — нет; мастер её площадки — да.
-    _as(ZHUK_MASTER, "Степан", {"foreman"}, {"production": "edit", "myops": "view"})
-    assert client.post(start, params=behalf, json={}).status_code == 403
+    # Правит планирование, но «Задания» у него на просмотре — гейт маршрута не пускает ни за себя, ни за сотрудника.
     _as(MASTER_ID, "Мастер", {"foreman"}, {"production": "edit", "myops": "view"})
+    assert client.post(start, params=behalf, json={}).status_code == 403
+    assert client.post(start, json={}).status_code == 403
+    assert client.post(f"/api/production/work/{ZHUK_MASTER}/pause", params=behalf).status_code == 403
+    assert client.get("/api/production/my", params={"operator_id": str(operator_id)}).json()["can_act"] is False
+    # Мастер другой площадки — нет; мастер её площадки — да.
+    _as(ZHUK_MASTER, "Степан", {"foreman"}, {"production": "edit", "myops": "edit"})
+    assert client.post(start, params=behalf, json={}).status_code == 403
+    _as(MASTER_ID, "Мастер", {"foreman"}, {"production": "edit", "myops": "edit"})
+    assert client.get("/api/production/my", params={"operator_id": str(operator_id)}).json()["can_act"] is True
     started = client.post(start, params=behalf, json={})
     assert started.status_code == 200, started.text
     assert started.json()["session"]["operator_id"] == str(operator_id)
-    # Без on_behalf_of мастер со «Заданиями» на просмотре сам ничего не начинает.
-    assert client.post(start, json={}).status_code == 403
     assert _log_rows()[0].actor_name == "Мастер"
 
 
