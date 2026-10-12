@@ -320,9 +320,11 @@ it("searches by number, purpose, requester and status and counts every stage in 
   render(<FulfillmentPage principal={principal} mode="pick" />);
   expect(await screen.findByRole("button", { name: "Не начата · 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Недоукомплектован · 1" })).toBeInTheDocument();
-  // «Готов к выдаче» is done for the picker: hidden until ticked (ISS_MODES_.pick.hidden).
+  // «Готов к выдаче» is not a stage of its own any more: it counts in «Укомплектован», no checkbox, no chip.
+  expect(screen.getByRole("button", { name: "Укомплектован · 1" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Готов к выдаче/ })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("показать «Готов к выдаче»")).not.toBeInTheDocument();
   expect(screen.queryByText("FRX-ISS-26-0003")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByLabelText("показать «Готов к выдаче»"));
   await showAll();
   expect(await screen.findByText("FRX-ISS-26-0003")).toBeInTheDocument();
 
@@ -1057,22 +1059,34 @@ it("gives no issue action without the handout right or on the picking screen", a
   expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();
 });
 
-it("opens «Выдача» on the stages that hold requests, «Готов к выдаче» first, when the saved ones are empty (В-1)", async () => {
+it("opens «Выдача» on the stages that hold requests when the saved ones are empty (В-1); a kit at the handout point is «Укомплектован»", async () => {
   issueFetch(order([{ status: "Готов к выдаче", handout_location: "1B3" }, { status: "КБ Выдана", project: "40К.1", purpose: "40К.1 · КБ1 · Жгут" }]), []);
   render(<FulfillmentPage principal={principal} mode="give" />);
-  const ready = await screen.findByRole("button", { name: "Готов к выдаче · 1" });
+  const ready = await screen.findByRole("button", { name: "Укомплектован · 1" });
   await waitFor(() => expect(ready).toHaveAttribute("aria-pressed", "true"));
-  expect(screen.getByRole("button", { name: "КБ Выдана · 1" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "Укомплектован · 0" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: "КБ Выдана · 1" })).toHaveAttribute("aria-pressed", "false"); // the default already holds a kit
+  expect(screen.queryByRole("button", { name: /^Готов к выдаче/ })).not.toBeInTheDocument();
   expect(screen.queryByText(/заявок нет/)).not.toBeInTheDocument();
+  expect(screen.getAllByText("Укомплектован").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Готов к выдаче")).not.toBeInTheDocument();
+});
+
+it("shows a kit at the handout point as «Укомплектован» with its place, never as «Готов к выдаче»", async () => {
+  issueFetch([{ ...request, status: "Готов к выдаче", handout_location: "1B3", lines: [boundLine] }], []);
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  const badge = await screen.findByText("Укомплектован · 1B3");
+  expect(badge).toHaveAttribute("title", "Лежит в зоне выдачи: 1B3");
+  expect(screen.queryByText("Готов к выдаче")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Таблицей" }));
+  expect((await screen.findAllByText("Укомплектован · 1B3")).length).toBeGreaterThan(0);
 });
 
 it("keeps the default «Выдача» stages when they hold requests", async () => {
   issueFetch(order([{ status: "Укомплектован" }, { status: "Готов к выдаче" }]), []);
   render(<FulfillmentPage principal={principal} mode="give" />);
-  const kitted = await screen.findByRole("button", { name: "Укомплектован · 1" });
+  const kitted = await screen.findByRole("button", { name: "Укомплектован · 2" });
   await waitFor(() => expect(kitted).toHaveAttribute("aria-pressed", "true"));
-  expect(screen.getByRole("button", { name: "Готов к выдаче · 1" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByRole("button", { name: /^Готов к выдаче/ })).not.toBeInTheDocument();
 });
 
 it("draws «Отменить заявку» as a danger button and asks before cancelling (К-2)", async () => {
