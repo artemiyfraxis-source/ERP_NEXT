@@ -379,6 +379,9 @@ export interface WarehouseLot {
   balance: string;
   available: string;
   source_receiving_ids: string[];
+  /** Who holds the reserve: kit requests, techcards, procurement covers. Only lots with a reserve carry holders. */
+  reserve_holders?: Array<{ kind: string; label: string; quantity: string; unit: string }>;
+  reserve_note?: string;
   // Lot passport (SK-6); older payloads may lack it.
   unit_mass_g?: string | null;
   expiry_date?: string | null;

@@ -98,6 +98,14 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
     { delay: 0, fallback: "Итоги не получены" },
   );
   const totals = totalsState.data?.group === groupBy ? totalsState.data : null;
+  // «В резерве N шт» for the whole filter: the server sums of the groups (grouped table) or the lots when all are loaded.
+  const reserveTotal = useMemo(() => {
+    const rows = flat ? (cursor ? null : [{ reserved: quantity(lots, "reserved"), units: [...new Set(lots.map((lot) => lot.unit).filter(Boolean))] }]) : totals?.groups ?? null;
+    if (!rows) return "";
+    const units = [...new Set(rows.flatMap((row) => Number(row.reserved) > 0 ? row.units : []))];
+    const sum = Math.round(rows.reduce((acc, row) => acc + Number(row.reserved), 0) * 1_000_000) / 1_000_000;
+    return sum > 0 && units.length === 1 ? `${sum} ${units[0]}` : "";
+  }, [flat, cursor, lots, totals]);
   const groupedLots = useMemo(() => warehouseGroups(lots, groupBy, sort, totals, !cursor), [lots, groupBy, sort, totals, cursor]);
   // «Колонки»: each table has its own order and set of columns, the viewer changes both (remembered in this browser).
   // The name is always there; the column the rows are grouped by is the group header already, not repeated in every row.
@@ -217,6 +225,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
       <header className="page-head">
         <h1>Склад</h1>
         <span className="page-count">{total}</span>
+        {reserveTotal && <span className="page-sub" role="status">в резерве {reserveTotal}</span>}
         {/* The daily actions stay in sight; the reference tools sit behind «Ещё» (every one still one click away). */}
         <div className="page-actions">
           <button className="secondary" disabled={loading || Boolean(busy)} onClick={() => void reload()}>{loading ? "Обновляем…" : "Обновить"}</button>
@@ -376,7 +385,7 @@ function replaceLots(current: WarehouseLot[], touched: WarehouseLot[]) {
 }
 
 /** Sums of an article or a group over every lot of the filter; null while the server has not answered and not all lots are loaded. */
-type RowTotals = { balance: string; lots: number; units: string[] };
+type RowTotals = { balance: string; reserved?: string; lots: number; units: string[] };
 
 type WarehouseArticle = {
   key: string;
@@ -403,10 +412,10 @@ function shelf(location: string) {
   return location.replace(/\s+/g, "").toUpperCase().match(/^(\d+[A-ZА-Я])/)?.[1] ?? location;
 }
 
-type SortKey = Exclude<ColumnKey, "available" | "purpose">;
+type SortKey = Exclude<ColumnKey, "purpose">;
 
 function columnClass(key: ColumnKey) {
-  return key === "name" ? "stock-name" : key === "balance" || key === "lots" || key === "available" ? "num" : undefined;
+  return key === "name" ? "stock-name" : key === "balance" || key === "lots" || key === "available" || key === "reserved" ? "num" : undefined;
 }
 
 function classes(...names: Array<string | false | undefined>) {
@@ -457,6 +466,8 @@ function sortValue(item: WarehouseArticle, key: SortKey): string | number {
     case "type": return distinct(item.lots, "item_type");
     case "grn": return distinct(item.lots, "grn");
     case "balance": return Number(item.totals?.balance ?? quantity(item.lots, "balance"));
+    case "reserved": return Number(item.totals?.reserved ?? quantity(item.lots, "reserved"));
+    case "available": return Number(quantity(item.lots, "available"));
     case "lots": return item.totals?.lots ?? item.lots.length;
     case "place": return distinct(item.lots, "storage_location");
     case "series": return distinct(item.lots, "series");
@@ -474,7 +485,7 @@ function compareArticles(left: WarehouseArticle, right: WarehouseArticle, sort: 
 }
 
 function loadedTotals(lots: WarehouseLot[]): RowTotals {
-  return { balance: quantity(lots, "balance"), lots: lots.length, units: [...new Set(lots.map((lot) => lot.unit).filter(Boolean))] };
+  return { balance: quantity(lots, "balance"), reserved: quantity(lots, "reserved"), lots: lots.length, units: [...new Set(lots.map((lot) => lot.unit).filter(Boolean))] };
 }
 
 function warehouseGroups(
@@ -535,8 +546,20 @@ function places(lots: WarehouseLot[]) {
   return all.slice(0, 3).join(" · ") + (all.length > 3 ? ` +${all.length - 3}` : "");
 }
 
-function quantity(lots: WarehouseLot[], field: "balance" | "available") {
+function quantity(lots: WarehouseLot[], field: "balance" | "available" | "reserved") {
   return String(Math.round(lots.reduce((sum, lot) => sum + Number(lot[field]), 0) * 1_000_000) / 1_000_000);
+}
+
+/** «Под какие заявки»: one line per holder of the reserve — «REQ.26.0000012 · 719К.2 КБ12 — 100 шт». */
+function holdersTitle(lots: WarehouseLot[]) {
+  return lots.flatMap((lot) => lot.reserve_holders ?? [])
+    .map((holder) => `${holder.label} — ${holder.quantity} ${holder.unit}`.trim()).join("\n") || undefined;
+}
+
+/** «Резерв»: the quantity with the unit, a dim «—» when nothing is reserved; the tooltip says by whom. */
+function reserveCell(key: ColumnKey, amount: string, unit: string, lots: WarehouseLot[], pinned: boolean) {
+  const held = Number(amount) > 0;
+  return <td key={key} className={classes("num", pinned && "stock-pin", !held && "stock-dim")} title={held ? holdersTitle(lots) : undefined}>{held ? `${amount}${unit ? ` ${unit}` : ""}` : "—"}</td>;
 }
 
 /** A cell cut to its column with «…»; the full text is the tooltip. */
@@ -552,6 +575,7 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean) {
     case "grn": return cutCell(key, `${lot.grn}${lot.package ? ` · ${lot.package}` : ""}`, pinned, "stock-grn");
     case "balance": return <td key={key} className={classes("num", pinned && "stock-pin")}><strong>{lot.balance} {lot.unit}</strong></td>;
     case "available": return <td key={key} className={classes("num", pinned && "stock-pin")}>{lot.available}</td>;
+    case "reserved": return reserveCell(key, lot.reserved, lot.unit, [lot], pinned);
     case "place": return cutCell(key, lot.storage_location || "—", pinned);
     case "warehouse": return cutCell(key, lot.warehouse, pinned);
     case "purpose": return cutCell(key, lot.purpose || "—", pinned);
@@ -574,6 +598,14 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
       if (!item.totals) return <td key={key} className={classes("num", pinned && "stock-pin")} title="Итог считается">…</td>;
       const unit = item.totals.units.join(" · ");
       return <td key={key} className={classes("num", pinned && "stock-pin")}><strong>{item.totals.balance}{unit ? ` ${unit}` : ""}</strong></td>;
+    }
+    case "reserved": {
+      if (!item.totals) return <td key={key} className={classes("num", pinned && "stock-pin")} title="Итог считается">…</td>;
+      return reserveCell(key, item.totals.reserved ?? quantity(item.lots, "reserved"), item.totals.units.join(" · "), item.lots, pinned);
+    }
+    case "available": {
+      const unit = item.totals?.units.join(" · ") ?? "";
+      return <td key={key} className={classes("num", pinned && "stock-pin")}>{quantity(item.lots, "available")}{unit ? ` ${unit}` : ""}</td>;
     }
     case "lots": return <td key={key} className={classes("num", pinned && "stock-pin")}>{item.totals ? item.totals.lots : "…"}</td>;
     case "place": return <td key={key} className={classes("cut", pinned && "stock-pin")} title={distinct(item.lots, "storage_location") || undefined}>{places(item.lots)}</td>;
@@ -598,7 +630,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   readOnly: boolean;
 }) {
   return <>
-    {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {countLabel(group.totals?.articles ?? group.articles.length, ["артикул", "артикула", "артикулов"])}</span>{group.totals && <span className="stock-group-sum"> · {countLabel(group.totals.lots, ["партия", "партии", "партий"])}{group.totals.units.length === 1 ? ` · остаток ${group.totals.balance} ${group.totals.units[0]}` : ""}</span>}</td></tr>}
+    {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {countLabel(group.totals?.articles ?? group.articles.length, ["артикул", "артикула", "артикулов"])}</span>{group.totals && <span className="stock-group-sum"> · {countLabel(group.totals.lots, ["партия", "партии", "партий"])}{group.totals.units.length === 1 ? ` · остаток ${group.totals.balance} ${group.totals.units[0]}` : ""}{group.totals.units.length === 1 && Number(group.totals.reserved) > 0 ? ` · резерв ${group.totals.reserved} ${group.totals.units[0]}` : ""}</span>}</td></tr>}
     {group.articles.map((item) => {
       const open = expanded.has(item.key);
       return <Fragment key={item.key}>
@@ -1323,6 +1355,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
         <span>ГРН {lot.grn}{lot.package ? ` / ${lot.package}` : ""}</span>
         {lot.purpose && <span>{lot.purpose}</span>}
         {writtenOff && <span>списано {lot.written_off}</span>}
+        {Number(lot.reserved) > 0 && <span title={lot.reserve_note || undefined}>резерв {lot.reserved} {lot.unit}{lot.reserve_note ? ` · ${lot.reserve_note.replace(/^резерв: /, "")}` : ""}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
       {(!readOnly || history) && <div className="lot-card-actions">
