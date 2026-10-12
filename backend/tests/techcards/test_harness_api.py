@@ -539,6 +539,34 @@ def test_unlink_keeps_the_drawing_listed_and_restore_links_it_back(harness_api):
     ]
 
 
+def test_removal_takes_only_an_unlinked_drawing_with_its_history(harness_api):
+    client, factory, _clock = harness_api
+    first = client.put(f"{BASE}/КБ1", json={"design": _design()}).json()
+    document_id = first["document"]["id"]
+    url = f"{BASE}/КБ1/unlinked/{document_id}"
+    # A linked drawing is refused: unlink first.
+    refused = client.delete(url)
+    assert refused.status_code == 409 and "сначала отвяжите" in refused.json()["detail"]
+    assert len(_rows(factory, "КБ1")) == 1
+
+    assert client.post(f"{BASE}/КБ1/unlink", json={}).status_code == 200
+    # Another position's address does not reach it; no edit right — 403.
+    assert client.delete(f"{BASE}/КБ2/unlinked/{document_id}").status_code == 404
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "view"})
+    assert client.delete(url).status_code == 403
+    assert len(_rows(factory, "КБ1")) == 1
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit"})
+
+    removed = client.delete(url)
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["res"]["deleted"] == 1
+    assert _rows(factory, "КБ1") == [] and _kd(client) == []
+    with factory() as uow:
+        assert uow.harness_revisions.count(UUID(document_id)) == 0
+    assert _harness_events(factory)[-1] == "techcards.kitset_harness_deleted"
+    assert client.delete(url).status_code == 404
+
+
 def test_unlink_and_restore_refusals(harness_api):
     client, factory, _clock = harness_api
     assert client.post(f"{BASE}/КБ1/unlink", json={}).json()["detail"] == "У сборки КБ1 нет чертежа жгута"

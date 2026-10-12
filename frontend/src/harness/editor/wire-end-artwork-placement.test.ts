@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { wireDrawingEndArtworkPlacement } from "./CanvasViewport";
+import { artworkWireDiameter } from "../wire-blank-artwork";
 
 it("anchors a free-end terminal at its inner jacket edge and renders it outside the wire", () => {
   const placement = wireDrawingEndArtworkPlacement({ x: 100, y: 40 }, { x: 20, y: 40 }, 5)!;
@@ -19,4 +20,9 @@ it("keeps the artwork outside a vertical free end", () => {
   const terminal = placement.y + Math.sin(placement.rotation) * 78 * placement.scale;
   expect(edge).toBeCloseTo(100);
   expect(terminal).toBeGreaterThan(100);
+});
+
+it("matches the reference jacket diameter to the drawing wire after redesign", () => {
+  const placement = wireDrawingEndArtworkPlacement({ x: 0, y: 0 }, { x: 500, y: 0 }, 5)!;
+  expect(placement.scale * artworkWireDiameter).toBeCloseTo(5);
 });

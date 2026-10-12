@@ -292,6 +292,22 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .issue-chooser th.check, .issue-chooser td.check { width: 36px; text-align: center; }
 .issue-chooser td.check input { width: 16px; height: 16px; margin: 0; }
 .issue-chooser tr.muted-row td { color: var(--muted-foreground); }
+/* «Возможно есть» (owner 12.10.2026): the row of a position is tinted by what the warehouse may hold — green exact
+   and enough, yellow lookalike or too little, red nothing, neutral already picked. The tint is a mix of the tone
+   token over the page, so it reads in a dark theme too. */
+.cand-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 0 8px; font-size: 12px; color: var(--muted-foreground); }
+.cand-key { display: inline-flex; align-items: center; gap: 6px; }
+.cand-key::before { content: ""; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border); }
+.cand-key.cand-ok::before { background: color-mix(in srgb, var(--tone-ok) 22%, transparent); border-color: var(--tone-ok); }
+.cand-key.cand-maybe::before { background: color-mix(in srgb, var(--tone-warn) 22%, transparent); border-color: var(--tone-warn); }
+.cand-key.cand-none::before { background: color-mix(in srgb, var(--tone-danger) 18%, transparent); border-color: var(--tone-danger); }
+.fulfillment-project .table-wrap .grid tbody tr.cand-ok:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-ok) 12%, transparent); }
+.fulfillment-project .table-wrap .grid tbody tr.cand-maybe:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-warn) 14%, transparent); }
+.fulfillment-project .table-wrap .grid tbody tr.cand-none:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-danger) 10%, transparent); }
+.fulfillment-project .table-wrap .grid tbody tr.cand-done:not(.detail):not(.group-row) > td { color: var(--muted-foreground); }
+.cand-cell .link-button { display: grid; gap: 1px; text-align: left; font-size: 13px; color: var(--foreground); text-decoration: underline dotted; text-underline-offset: 3px; }
+.cand-cell small, .cand-tag { color: var(--muted-foreground); font-size: 12px; }
+.cand-none-text { color: var(--tone-danger); font-size: 13px; }
 .issue-writeoff { margin-top: 10px; font-size: 13px; }
 .issue-writeoff summary { cursor: pointer; font-weight: 500; }
 .issue-writeoff .table-wrap { margin-top: 8px; }
@@ -2112,7 +2128,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-def small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted-foreground); }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
 /* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
-.etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(220px, 280px); gap: 10px; align-items: start; }
+.etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(240px, 320px); gap: 10px; align-items: start; }
 /* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
 .etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
 .etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
@@ -2129,14 +2145,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-links th:not(:first-child) { text-align: left; width: auto; }
 .etk-links th:first-child, .etk-links th:nth-child(4), .etk-links th:nth-child(6) { text-align: right; }
 .etk-links td { padding: 4px 12px; }
-.etk-time { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
-.etk-time > small { font-size: 11px; color: var(--muted-foreground); }
-.etk-time > small:first-child { font-size: 12px; font-weight: 600; }
-.etk-time > b { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.etk-time > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
+.etk-fig { display: grid; gap: 2px; align-content: start; padding: 8px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.etk-fig > small { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.etk-fig > b { font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.etk-fig > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; }
 .etk-time ul { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; }
 .etk-time li { display: flex; justify-content: space-between; gap: 8px; }
-.etk-result:not(:has(.etk-result-table)) { grid-template-columns: minmax(220px, 280px); }
+.etk-result-one { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+.etk-result-name { display: grid; gap: 2px; flex: 1 1 260px; align-content: start; padding: 8px 0; font-size: 14px; font-weight: 600; }
+.etk-result-name > small { font-size: 12px; color: var(--muted-foreground); }
+.etk-figs { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; flex: 0 1 460px; }
+.etk-result:not(:has(.etk-result-table)):not(.etk-result-one) { grid-template-columns: minmax(220px, 280px); }
 @media (max-width: 1100px) { .etk-result { grid-template-columns: 1fr; } .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
 
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
@@ -2950,7 +2969,7 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 
 /* Автоплан */
 .autoplan-dialog { display: flex; flex-direction: column; gap: 10px; width: min(880px, 100%); height: auto; max-height: calc(100vh - 32px); overflow: hidden; padding: 16px 20px; outline: none; }
-.autoplan-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.autoplan-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .autoplan-head h2 { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
 .autoplan-scroll { display: grid; gap: 10px; align-content: start; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
 .autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
@@ -2976,7 +2995,7 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-batch { border-left: 3px solid var(--primary); padding-left: 8px; margin-bottom: 6px; }
 .autoplan-batch-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; padding: 2px 0; }
 .autoplan-batch-head small { color: var(--muted-foreground); font-weight: 400; }
-.autoplan-row { display: grid; grid-template-columns: 24px 70px minmax(0, 1fr) 160px 150px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; border-top: 1px solid var(--border); }
+.autoplan-row { display: grid; grid-template-columns: 24px 120px minmax(0, 1fr) 160px 150px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; border-top: 1px solid var(--border); }
 .autoplan-row input { width: auto; margin: 0; }
 .autoplan-op small { display: block; color: var(--muted-foreground); font-size: 11px; }
 .autoplan-slot { white-space: nowrap; }
@@ -2984,9 +3003,25 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-unplaced { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--card); }
 .autoplan-unplaced h3 { margin: 0 0 4px; font-size: 14px; }
 .autoplan-unplaced-row { font-size: 13px; padding: 2px 0; }
+.autoplan-head .seg-tabs.autoplan-modes { margin: 0; }
+.autoplan-period { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+.autoplan-period label { display: flex; align-items: center; gap: 6px; }
+.autoplan-period .link-button { padding: 0; margin: 0; }
+.autoplan-scope { display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.autoplan-scope small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+.autoplan-exclude summary { padding: 6px 10px; cursor: pointer; font-weight: 600; }
+.autoplan-exclude[open] summary { border-bottom: 1px solid var(--border); }
+.autoplan-new { display: inline-block; justify-self: start; padding: 0 6px; border-radius: 6px; background: color-mix(in srgb, var(--primary) 14%, white); color: var(--primary); font-size: 11px; font-style: normal; font-weight: 600; line-height: 18px; white-space: nowrap; }
+.autoplan-new.off { background: var(--accent); color: var(--muted-foreground); }
+.autoplan-task .autoplan-new { display: block; width: fit-content; margin-top: 1px; }
+.autoplan-skipped { display: grid; grid-template-columns: 20px 84px minmax(110px, 190px) minmax(0, 1fr); gap: 8px; align-items: center; min-height: 28px; font-size: 13px; }
+.autoplan-project { display: grid; gap: 3px; font-size: 12px; max-width: 520px; }
+.autoplan-check.autoplan-person { display: grid; grid-template-columns: 20px minmax(140px, 220px) 60px minmax(0, 1fr); gap: 8px; min-height: 28px; font-variant-numeric: tabular-nums; }
+.autoplan-free { color: var(--muted-foreground); }
+.autoplan-created { font-size: 13px; padding: 6px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--primary) 35%, white); }
 .autoplan-dialog .autoplan-actions { margin: 0; padding: 10px 0 0; border-top: 1px solid var(--border); flex-wrap: nowrap; }
 @media (max-width: 700px) { .autoplan-task-line { grid-template-columns: 20px 76px minmax(0, 1fr); } .autoplan-task-name { grid-column: 3; } .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
-@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"] { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
+@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"], .autoplan-person, .autoplan-exclude summary, .autoplan-dialog select { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
 
 /* Вид сотрудника: выбор рядом с заголовком, заметная полоса «только просмотр» */
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -3306,7 +3341,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kit-meta .kit-calc-link { color: var(--primary); text-decoration: none; }
 .kit-meta .kit-calc-link:hover { text-decoration: underline; }
 /* «Ещё ▾» за чертой после рабочих кнопок: удаление отдельно от них (ПР-2). */
-.kit-actions .kit-more { margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--border); }
+.kit-head .kit-more { margin-left: 4px; }
 .kit-more .more-menu-list button.kit-more-danger { color: var(--tone-danger); }
 .kit-more .more-menu-list button.kit-more-danger:hover { background: var(--danger-soft); }
 .kit-delete-dialog .page-sub { line-height: 1.5; }
@@ -3443,3 +3478,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 @media (pointer: coarse) { .eq-table td, .eq-hit { padding-top: 8px; padding-bottom: 8px; } .eq-x { padding: 8px; } }
 .eq-chip-btn { cursor: pointer; color: var(--foreground); }
 .eq-chip-btn:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+
+/* «Чертёж КБn» — редактор жгута внутри карточки проекта: высота окна за вычетом шапки карточки, не весь экран. */
+.kit-pane-harness .harness-page { height: calc(100vh - 168px); min-height: 520px; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
+.kit-kd-delete { color: var(--tone-danger); }

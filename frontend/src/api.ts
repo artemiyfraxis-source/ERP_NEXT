@@ -512,6 +512,21 @@ export interface FulfillmentLot {
   available: string;
 }
 
+/** «Возможно есть»: a warehouse lot that may be a КД position; `kind` exact — the same article, fuzzy — a lookalike. */
+export interface FulfillmentCandidate extends FulfillmentLot {
+  lot_id: string;
+  kind: "exact" | "fuzzy";
+  match: string;
+}
+
+export interface FulfillmentPositionCandidates {
+  article: string;
+  name: string;
+  unit: string;
+  candidates: FulfillmentCandidate[];
+  more: number;
+}
+
 export interface FulfillmentLine {
   id: string;
   requirement_id: string;
@@ -2693,6 +2708,9 @@ export const fulfillmentApi = {
   remove: (requestId: string) =>
     api<{ message: string }>(`/api/issues/${requestId}`, { method: "DELETE" }),
   lots: () => api<{ lots: FulfillmentLot[] }>("/api/issues/lots"),
+  /** «Возможно есть»: the lots that may be each position of the project, one request for the whole card. */
+  candidates: (project: string) =>
+    api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`),
   printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
   returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
   bind: (requestId: string, lineId: string, version: number, lotId: string) =>
@@ -2777,32 +2795,55 @@ export interface AutoplanProposal {
   changeover_seconds: number;
   setup_seconds: number;
   batched: boolean;
+  /** Операция будущего задания: КБ с выданной техкартой без задания, задание создаст «Применить». */
+  new?: boolean;
 }
 
+/** «Весь цех» — вся работа на всех монтажников; «По проекту» — работа проекта на выбранных людей. */
+export type AutoplanMode = "shop" | "project";
+
 export interface AutoplanRequest {
-  date_from: string;
-  date_to: string;
-  task_ids?: string[];
-  replan_auto: boolean;
+  mode: AutoplanMode;
+  project?: string;
+  people?: string[];
+  /** «Весь цех»: исключённые задания (id) и КБ без задания (id техкарты). */
+  exclude?: string[];
+  /** «До даты» вручную; без неё — план до горизонта работы. */
+  date_to?: string | null;
+}
+
+export interface AutoplanContext {
+  period: { start: string; last_day: string; auto: boolean };
+  max_days: number;
+  tasks: Array<{ id: string; number: string; project: string; item: string; name: string; deadline: string | null }>;
+  new: Array<{ techcard_id: string; project: string; index: string; name: string; run: string; deadline: string | null; operations: number; skipped: string }>;
+  projects: Array<{ project: string; deadline: string | null; tasks: number; new: number }>;
+  fitters: Array<{ id: string; name: string; site: string; free_seconds: number }>;
 }
 
 export interface AutoplanPreview {
-  period: { start: string; finish: string };
+  period: { start: string; last_day: string };
+  scope: { tasks: number; new: number; fitters: number };
+  new_tasks: Array<{ task_id: string; techcard_id: string; project: string; index: string; name: string; quantity: number; deadline: string | null }>;
   proposals: AutoplanProposal[];
   batches: Array<{ operator_id: string; operator_name: string; batches: Array<{ label: string; machine: string; operations: number; tasks: string[]; start: string; finish: string; changeover_seconds: number }> }>;
-  unplaced: Array<{ operation_id: string; task_id: string; task_number: string; position: number | null; reason: string }>;
+  unplaced: Array<{ operation_id: string | null; task_id: string | null; techcard_id?: string; task_number: string; position: number | null; reason: string }>;
   warnings: string[];
   stats: { changeovers: number; changeovers_naive: number; saved_seconds: number };
   fingerprint: string;
 }
 
 export const productionApi = {
+  autoplanContext: (payload: AutoplanRequest) => api<AutoplanContext>("/api/production/autoplan/context", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
   autoplanPreview: (payload: AutoplanRequest) => api<AutoplanPreview>("/api/production/autoplan/preview", {
     method: "POST",
     body: JSON.stringify(payload),
   }),
   autoplanApply: (payload: AutoplanRequest & { items: Array<{ task_id: string; operation_id: string; operator_id: string }>; fingerprint: string }) =>
-    api<{ applied: number; tasks: Array<{ id: string; number: string; version: number }> }>("/api/production/autoplan/apply", {
+    api<{ applied: number; tasks: Array<{ id: string; number: string; version: number }>; created: Array<{ id: string; number: string }> }>("/api/production/autoplan/apply", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
@@ -3935,6 +3976,9 @@ export const harnessApi = {
   /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
   relink: (project: string, index: string, documentId: string) =>
     api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+  /** «Удалить» отвязанный чертёж позиции насовсем, с историей версий; привязанный сервер не удалит (409). */
+  removeUnlinked: (project: string, index: string, documentId: string) =>
+    api<{ res: { deleted: number; revisions: number } }>(`${harnessPath(project, index)}/unlinked/${encodeURIComponent(documentId)}`, { method: "DELETE" }),
   /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
   exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
   /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */

@@ -69,6 +69,9 @@ AUTOPLAN_SITE = "ЦАР"
 # Метка назначения автопланом (поле assigned_by операции): «Автоплан · <мастер>». По ней replan_auto знает, что можно
 # переставить.
 AUTOPLAN_MARK = "Автоплан · "
+# Номер будущего задания в расчёте (КБ с выданной техкартой, задания ещё нет): номер ПЗ ему дадут при применении.
+# При равном дедлайне будущие задания идут после запущенных.
+NEW_TASK_PREFIX = "Новое · "
 ADJUSTMENT_SECONDS = 10 * 60
 BATCH_GAP_SECONDS = 60 * 60
 _SLOT_ATTEMPTS = 400
@@ -334,6 +337,8 @@ def _peak(intervals: Sequence[tuple[datetime, datetime]], start: datetime, finis
 
 
 def _number_key(number: str) -> tuple[int, str]:
+    if number.startswith(NEW_TASK_PREFIX):
+        return (10**12, number)
     digits = re.sub(r"\D", "", number)
     return (int(digits) if digits else 0, number)
 

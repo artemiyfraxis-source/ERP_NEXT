@@ -339,6 +339,9 @@ function useWidth() {
   return { ref, width };
 }
 
+// «Создать задание» у КБ без задания (владелец, 12.10: «непонятный функционал «Запустить сегодня»»).
+const CREATE_TASK_HINT = "Создаёт производственное задание на весь тираж; операции появятся в списке для назначения. Автоплан создаёт задания сам";
+
 export function MasterBoard({ tasks, operators, site = "", skills, absences, shift, holidays = [], projectDeadlines = {}, canEdit, busy, mutate, openTask }: {
   tasks: ProductionTask[];
   operators: ProductionOperator[];
@@ -417,7 +420,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     return <>
       {deadlineTags(project)}
       {total > 0 && <span className={free ? "mb-free" : "mb-done"}>{free ? `без исполнителя ${free} из ${total}` : `распределено ${total}`}</span>}
-      {toLaunch > 0 && <span className="mb-launch">к запуску {toLaunch}</span>}
+      {toLaunch > 0 && <span className="mb-launch" title="КБ с выданной техкартой, задания ещё нет">без задания {toLaunch}</span>}
       {handed > 0 && <span className="mb-handed">в {HANDOVER_SITE}: {handed}</span>}
     </>;
   }
@@ -557,10 +560,13 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               </table>
             </div>;
           })}
-          {!onlyFree && projectReady.map((item) => <div className="mb-ready" key={item.techcard_id}>
-            <span><b>{kbLabel(item.project, item.index)}</b>{item.name ? ` · ${item.name}` : ""}<small> · техкарта выдана, этапов {item.operations}, тираж {item.run || "—"}{item.deadline ? `, срок ${formatDay(item.deadline)}` : ""}</small></span>
-            <button className="secondary small" disabled={Boolean(busy) || !/^\d+$/.test(item.run) || Number(item.run) <= 0} title={/^\d+$/.test(item.run) ? "" : "Тиража нет — запустите через «+ Запустить задание»"} onClick={() => launch(item)}>Запустить сегодня</button>
-          </div>)}
+          {!onlyFree && projectReady.map((item) => {
+            const runOk = /^\d+$/.test(item.run) && Number(item.run) > 0;
+            return <div className="mb-ready" key={item.techcard_id}>
+              <span><b>{kbLabel(item.project, item.index)}</b>{item.name ? ` · ${item.name}` : ""}<small> · техкарта выдана, задания ещё нет · этапов {item.operations}, тираж {item.run || "—"}{item.deadline ? `, срок ${formatDay(item.deadline)}` : ""}</small></span>
+              <button className="secondary small" disabled={Boolean(busy) || !runOk} title={runOk ? CREATE_TASK_HINT : "Тиража нет — запустите через «+ Запустить задание»"} onClick={() => launch(item)}>Создать задание</button>
+            </div>;
+          })}
         </div>;
       })}
     </section>

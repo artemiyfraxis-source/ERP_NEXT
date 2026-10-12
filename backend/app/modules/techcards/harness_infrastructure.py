@@ -19,7 +19,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint, Uuid, false,
-    func, select, update,
+    delete, func, select, update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column, undefer
@@ -103,6 +103,11 @@ class SqlAlchemyHarnessRevisionRepository:
         return self.session.scalar(
             select(func.count()).select_from(HarnessRevisionRow).where(HarnessRevisionRow.document_id == document_id)
         ) or 0
+
+    def delete_all(self, document_id: UUID) -> int:
+        """The whole history of a drawing — before its register row goes (the FK is RESTRICT)."""
+        result = self.session.execute(delete(HarnessRevisionRow).where(HarnessRevisionRow.document_id == document_id))
+        return result.rowcount or 0
 
     def get(self, document_id: UUID, revision: int) -> tuple[HarnessRevision, bytes] | None:
         row = self.session.scalar(
