@@ -55,8 +55,8 @@ it("seeds the form from the kit and sends the SUPPLYMAP config to the build", as
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
 
   expect(await screen.findByRole("tab", { name: "Межплатная", selected: true })).toBeInTheDocument();
-  expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
-  expect(screen.getByText("Опрессовка терминалов А1")).toBeInTheDocument();
+  expect((await screen.findAllByText("Резка — МГТФ 0,12"))[0]).toBeInTheDocument();
+  expect(screen.getAllByText("Опрессовка терминалов А1")[0]).toBeInTheDocument();
   expect(await screen.findAllByText(/Подбор по сечению: 0,12 мм² → S12/)).toHaveLength(2);
   vi.spyOn(window, "confirm").mockReturnValue(true);
   pressBuild();
@@ -136,7 +136,7 @@ it("works off the wire replaced in the calc and shows the КД article under it"
 
   const sheet = await screen.findByRole("region", { name: "Данные из листа" });
   expect(sheet).toHaveTextContent("Силиконовый 30AWG черныйпо КД: Силиконовый 28AWG черный");
-  expect(await screen.findByText("Резка — Силиконовый 30AWG черный")).toBeInTheDocument();
+  expect((await screen.findAllByText("Резка — Силиконовый 30AWG черный"))[0]).toBeInTheDocument();
   await waitFor(() => expect(resolved.length).toBeGreaterThan(0));
   expect(resolved.map((body) => (body as { wires: string[] }).wires)).toContainEqual(["Силиконовый 30AWG черный"]);
   expect(JSON.stringify(resolved)).not.toContain("28AWG");
@@ -159,7 +159,7 @@ it("resets hand-typed times to БД.ОП on the next form change, as renderOpsCa
     : undefined));
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
 
-  expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
+  expect((await screen.findAllByText("Резка — МГТФ 0,12"))[0]).toBeInTheDocument();
   const prep = () => screen.getAllByLabelText(/^Подготовка, сек: /)[0];
   await waitFor(() => expect(prep()).toHaveValue(30));
   fireEvent.change(prep(), { target: { value: "45" } });
@@ -222,7 +222,7 @@ it("«Термоусадка на жгут»: без ТТК/ТУТ в соста
   mockApi();
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
 
-  await screen.findByText("Резка — МГТФ 0,12");
+  (await screen.findAllByText("Резка — МГТФ 0,12"))[0];
   fireEvent.click(screen.getByRole("switch", { name: /Термоусадка на жгут/ }));
   expect(screen.getByText(/В составе проекта нет термоусадки \(ТТК\/ТУТ\)/)).toBeInTheDocument();
 });
@@ -232,7 +232,7 @@ it("«Термоусадка на жгут»: ТТК из состава даё�
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()}
     kit={kitOf("Жгут XHP 150мм", [...XH, { type: "Трубка", name: "ТТК 6/3", art: "ТТК 6/3", qty: 2 }])} />);
 
-  await screen.findByText("Резка — МГТФ 0,12");
+  (await screen.findAllByText("Резка — МГТФ 0,12"))[0];
   const toggle = screen.getByRole("switch", { name: /Термоусадка на жгут/ });
   if (!(toggle as HTMLInputElement).checked) fireEvent.click(toggle);
   expect(await screen.findByText(/ТТК 6\/3 — отрезок/)).toBeInTheDocument();
@@ -245,7 +245,7 @@ it("«Маркировать изделие»: одна метка «На изд
   const onBuild = vi.fn();
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
 
-  await screen.findByText("Резка — МГТФ 0,12");
+  (await screen.findAllByText("Резка — МГТФ 0,12"))[0];
   fireEvent.click(screen.getByRole("switch", { name: /Маркировка жгута/ }));
   fireEvent.click(screen.getByRole("button", { name: "+ Метка" }));
   expect(screen.getByLabelText("Материал 1")).toHaveValue("Термотрубка");

@@ -3936,6 +3936,20 @@ export interface HarnessPlacementGraph {
   unresolved: string[];
 }
 
+/** «Маршрут» позиции как его читает холст (techcards/harness/route_application.py `view`): `stale` — чертёж с тех пор
+ *  изменился; `missing_refs` — части, которых в чертеже уже нет; `complete` — одна карточка «Готовый жгут» со всеми
+ *  частями чертежа. Маршрута нет — `route: null`; чертежа нет — `drawing: null`. */
+export interface HarnessRouteRead {
+  route: {
+    revision: number; document: Record<string, unknown>; drawing_document_id: string; drawing_revision: number;
+    updated_at: string; updated_by: string;
+  } | null;
+  drawing: { document_id: string; revision: number } | null;
+  stale: boolean;
+  missing_refs: Array<{ kind: string; id: string }>;
+  complete: boolean;
+}
+
 const componentsPath = "/api/techcards/harness-components";
 const componentPath = (templateId: string, revision?: number) =>
   `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
@@ -3979,6 +3993,15 @@ export const harnessApi = {
   /** «Удалить» отвязанный чертёж позиции насовсем, с историей версий; привязанный сервер не удалит (409). */
   removeUnlinked: (project: string, index: string, documentId: string) =>
     api<{ res: { deleted: number; revisions: number } }>(`${harnessPath(project, index)}/unlinked/${encodeURIComponent(documentId)}`, { method: "DELETE" }),
+  /** «Маршрут» позиции (Маршрут v3): карточки, связи, версия и версия чертежа, на которой он построен. */
+  route: (project: string, index: string) => api<HarnessRouteRead>(`${harnessPath(project, index)}/route`),
+  /** Сохранить маршрут новой версией: `revision` — из последнего чтения (null — маршрута ещё нет; иначе 409, если его
+   *  сохранили после); `drawingRevision` — версия чертежа, на которой маршрут построен. Нельзя хранить — 422 со списком. */
+  saveRoute: (project: string, index: string, document: Record<string, unknown>, revision: number | null, drawingRevision: number) =>
+    api<HarnessRouteRead>(`${harnessPath(project, index)}/route`, { method: "PUT", body: JSON.stringify({ document, revision, drawing_revision: drawingRevision }) }),
+  /** «Построить по чертежу»: карточки и связи заново по сохранённому чертежу (ручные правки карточек пропадают). */
+  generateRoute: (project: string, index: string, revision: number | null) =>
+    api<HarnessRouteRead>(`${harnessPath(project, index)}/route/generate`, { method: "POST", body: JSON.stringify({ revision }) }),
   /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
   exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
   /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */

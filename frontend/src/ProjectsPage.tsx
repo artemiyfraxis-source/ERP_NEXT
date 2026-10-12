@@ -29,6 +29,8 @@ import { formatDate, formatDateTime, formatDay, formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
 // Редактор чертежа жгута — отдельным куском, вкладкой карточки проекта («Чертёж КБn»).
 const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
+// «Маршрут КБn» — холст маршрута позиции с чертежом, тоже отдельным куском (ядро поля жгута рисует карточки).
+const HarnessRouteView = lazy(() => import("./HarnessRouteView"));
 import { useLatestSearch } from "./useLatestSearch";
 import { ProjectStatus } from "./ProjectStatus";
 import { StageChangeDialog, STAGE_AUTO } from "./StageChangeDialog";
@@ -375,7 +377,7 @@ function CreateFromCalc({ canRequest, close, done }: {
   </div>;
 }
 
-type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${string}` | `hn:${string}`;
+type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${string}` | `hn:${string}` | `rt:${string}`;
 
 function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: (result?: Flash) => void;
@@ -450,8 +452,9 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
     ["sostav", "Состав"], ["supply", "Снабжение"], ["spec", "Спецификация"], ["gen", "Генератор"],
     ...tcTabs.map((assembly) => [`tc:${assembly.index}` as Tab, `ТК ${assembly.index}`] as [Tab, string]),
     // «Чертёж КБn» — редактор жгута в карточке: вкладка есть у позиции с привязанным чертежом и пока она открыта.
-    ...card.assemblies.filter((assembly) => assembly.kd.some((document) => document.kind === "harness") || tab === `hn:${assembly.index}`)
-      .map((assembly) => [`hn:${assembly.index}` as Tab, `Чертёж ${assembly.index}`] as [Tab, string]),
+    // «Маршрут КБn» — рядом с чертежом: карточки полуфабрикатов, построенные по нему.
+    ...card.assemblies.filter((assembly) => assembly.kd.some((document) => document.kind === "harness") || tab === `hn:${assembly.index}` || tab === `rt:${assembly.index}`)
+      .flatMap((assembly) => [[`hn:${assembly.index}` as Tab, `Чертёж ${assembly.index}`], [`rt:${assembly.index}` as Tab, `Маршрут ${assembly.index}`]] as Array<[Tab, string]>),
     ["journal", `Журнал${card.journal?.length ? ` · ${card.journal.length}` : ""}`],
     ["track", "Трек"],
   ];
@@ -491,6 +494,11 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
       <Suspense fallback={<div className="empty">Загрузка редактора…</div>}>
         <HarnessPage key={tab} project={card.project} index={tab.slice(3)} canEdit={canEdit}
           onBack={() => { setTab("sostav"); void load(); }} />
+      </Suspense>
+    </div>}
+    {tab.startsWith("rt:") && <div className="kit-pane kit-pane-route">
+      <Suspense fallback={<div className="empty">Загрузка маршрута…</div>}>
+        <HarnessRouteView key={tab} project={card.project} index={tab.slice(3)} canEdit={canEdit} onOpenDrawing={() => setTab(`hn:${tab.slice(3)}`)} />
       </Suspense>
     </div>}
     {tab.startsWith("tc:") && (() => {

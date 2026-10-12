@@ -12,9 +12,11 @@ export type Route = { blocks: RouteBlock[]; edges: RouteEdge[] };
 
 /** Операция, которая попадёт в сборку: position — номер в ЭТК, key — устойчивый ключ формы, minutes — норма на партию,
     number — номер в списке операций формы (отличается от position, когда у операции выше нет шаблона), code — код карты
-    БД.ОП, codeNote — чем выбранная карта отличается от той, что просило правило («вместо CUT_WIRE+2crimp — нет карты»). */
+    БД.ОП, codeNote — чем выбранная карта отличается от той, что просило правило («вместо CUT_WIRE+2crimp — нет карты»),
+    side — сторона жгута, на которой идёт операция (карточки «Сторона А/В собрана» на схеме, routeCards.ts). */
 export type RouteOp = {
   position: number; key: string; type: string; code: string; label: string; minutes: number | null; number?: number; codeNote?: string;
+  side?: "A" | "B";
 };
 
 export type BlockTotals = {
