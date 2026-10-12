@@ -1,7 +1,8 @@
 """Port of the purchasing hybrid to «Сегодня» of procurement: what the buyer's open requests for quotes still need.
 
 Procurement must not import purchasing, so the board gets two plain dicts from here (read-only, one session):
-- «Нет ответа на запрос КП»: a supplier was marked sent more than `quote_wait_days` ago, has no quote and did not decline;
+- «Нет ответа на запрос КП»: a supplier was marked sent more than `quote_wait_days` ago, has no quote and did not decline
+  (on the lines asked of it);
 - «Выбрать поставщика»: a request line has priced quotes (the gate passes, or at least one) and no decision yet.
 Both are keyed by the procurement line id, so the board shows them as project cards like any other field."""
 
@@ -23,7 +24,7 @@ from app.modules.purchasing.infrastructure import (
     SupplierRow,
 )
 from app.modules.purchasing.offers import current_offers, gate_status
-from app.modules.purchasing.rfq import line_offers
+from app.modules.purchasing.rfq import asked_lines, line_offers
 
 NO_ANSWER = "rfq_no_answer"
 TO_DECIDE = "rfq_to_decide"
@@ -55,18 +56,21 @@ def rfq_followups(session: Session, buyer_id: UUID, today: date) -> dict[str, di
         if not open_lines:
             continue
         answered = set(session.scalars(select(QuoteRow.supplier_id).where(QuoteRow.rfq_id == rfq.id)))
-        waiting: list[tuple[str, date]] = []
+        waiting: list[tuple[str, date, UUID]] = []
         for rfq_supplier, supplier in session.execute(
             select(RfqSupplierRow, SupplierRow).join(SupplierRow, SupplierRow.id == RfqSupplierRow.supplier_id)
             .where(RfqSupplierRow.rfq_id == rfq.id, RfqSupplierRow.sent_at.is_not(None), RfqSupplierRow.declined_at.is_(None))
         ):
             sent = _day(rfq_supplier.sent_at)
             if rfq_supplier.supplier_id not in answered and (today - sent).days > wait_days:
-                waiting.append((supplier.name, sent))
-        if waiting:
-            oldest = min(sent for _, sent in waiting)
-            names = ", ".join(sorted(name for name, _ in waiting))
-            for line in open_lines:
+                waiting.append((supplier.name, sent, rfq_supplier.id))
+        asked = asked_lines(session, [rfq_supplier_id for _, _, rfq_supplier_id in waiting])
+        for line in open_lines:
+            silent = [(name, sent) for name, sent, rfq_supplier_id in waiting
+                      if rfq_supplier_id not in asked or line.id in asked[rfq_supplier_id]]
+            if silent:
+                oldest = min(sent for _, sent in silent)
+                names = ", ".join(sorted(name for name, _ in silent))
                 result[NO_ANSWER][line.procurement_line_id] = {
                     "rfq_id": str(rfq.id), "rfq_number": rfq.number, "date": oldest, "days": (today - oldest).days,
                     "hint": f"{rfq.number}: нет ответа на запрос — {names}. Напомните или отметьте отказ",

@@ -155,7 +155,8 @@ def _past(purchase: _Paid) -> PastPrice:
 
 
 def _suppliers(paid: Iterable[_Paid]) -> tuple[SupplierStat, ...]:
-    """Paid lines per supplier (one supplier key, shown in its commonest spelling): count, last paid day, categories."""
+    """Paid lines per supplier (one supplier key, shown in its commonest spelling): count, last paid day, categories
+    and the items (what the suggestion relates to each line)."""
     keys: dict[str, str] = {}
     groups: dict[str, tuple[Counter, list]] = {}
     for purchase in paid:
@@ -164,12 +165,15 @@ def _suppliers(paid: Iterable[_Paid]) -> tuple[SupplierStat, ...]:
         key = keys.get(purchase.supplier)
         if key is None:
             key = keys[purchase.supplier] = supplier_key(purchase.supplier)
-        spellings, slot = groups.setdefault(key, (Counter(), [0, None, set()]))
+        spellings, slot = groups.setdefault(key, (Counter(), [0, None, set(), set()]))
         spellings[purchase.supplier] += 1
         slot[0] += 1
         slot[1] = purchase.on if slot[1] is None or purchase.on > slot[1] else slot[1]
         slot[2].add(purchase.category)
+        if purchase.item_id is not None:
+            slot[3].add(purchase.item_id)
     return tuple(
-        SupplierStat(text=spellings.most_common(1)[0][0], lines=lines, last=last, categories=tuple(sorted(found)))
-        for spellings, (lines, last, found) in groups.values()
+        SupplierStat(text=spellings.most_common(1)[0][0], lines=lines, last=last, categories=tuple(sorted(found)),
+                     items=frozenset(items))
+        for spellings, (lines, last, found, items) in groups.values()
     )

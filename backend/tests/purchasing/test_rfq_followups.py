@@ -98,3 +98,20 @@ def test_choose_supplier_appears_with_a_priced_quote_and_goes_after_the_decision
     })
     assert decided.status_code == 201, decided.text
     assert "rfq_to_decide" not in _keys(client)  # a decided line leaves the field
+
+
+def test_no_answer_marks_only_the_lines_asked_of_the_silent_supplier(rfq_api, monkeypatch, tmp_path):  # noqa: F811
+    client, lines, sessions = rfq_api
+    _options(monkeypatch, tmp_path, **{"procurement.rfq": True})
+    rfq = _rfq(client, lines)
+    rfq_lines = client.get(f"{BASE}/{rfq['id']}").json()["lines"]
+    first = next(item for item in rfq_lines if item["procurement_line_id"] == str(lines[0].id))
+    silent = _supplier(client, rfq["id"], "ООО Молчит")
+    asked = client.put(f"{BASE}/{rfq['id']}/suppliers/{silent}/lines", json={"line_ids": [first["id"]]})
+    assert asked.status_code == 200, asked.text
+    assert client.post(f"{BASE}/{rfq['id']}/suppliers/{silent}/sent").status_code == 200
+    _clock(20)
+    assert _keys(client)["rfq_no_answer"] == 1
+    drill = client.get("/api/procurement/today/project", params={"project": "Без проекта"}).json()["lines"]
+    assert "ООО Молчит" in next(item for item in drill if item["id"] == str(lines[0].id))["rfq"]["hint"]
+    assert next(item for item in drill if item["id"] == str(lines[1].id))["rfq"] is None  # not asked of him

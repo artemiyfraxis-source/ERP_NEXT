@@ -87,6 +87,7 @@ class SupplierStat:
     lines: int
     last: date | None
     categories: tuple[str, ...] = ()
+    items: frozenset[UUID] = frozenset()  # nomenclature items among these paid lines
 
 
 @dataclass(frozen=True)
@@ -224,6 +225,9 @@ class _Entry:
     name: str
     reasons: dict[str, dict] = field(default_factory=dict)
     preselect: bool = False
+    items: set[UUID] = field(default_factory=set)  # the lines' items it delivered
+    history: set[str] = field(default_factory=set)  # the lines' categories it delivered
+    originals: set[UUID] = field(default_factory=set)  # the lines written with it
 
     def add(self, code: str, *, lines: int | None = None, last: date | None = None, label: str | None = None,
             preselect: bool = False) -> None:
@@ -267,7 +271,8 @@ def suggest(
             ids = list(dict.fromkeys(line_ids))
             if not ids:
                 raise Refused("Выберите строки для запроса")
-        views = list(lines.get_many(ids).values())
+        found_views = lines.get_many(ids)
+        views = [found_views[line_id] for line_id in ids if line_id in found_views]
         analysis = stats.analyse(session, views)
         categories = {_insight(analysis, view).category for view in views}
         directory = Directory(session)
@@ -279,11 +284,17 @@ def suggest(
 
         entries: dict[tuple[str, object], _Entry] = {}
 
-        def entry(text: str) -> _Entry | None:
+        def key_of(text: str) -> tuple[tuple[str, object], SupplierRow | None] | None:
             row = directory.find(text)
             if row is not None and row.archived_at is not None:
                 return None  # archived suppliers are never suggested
-            key: tuple[str, object] = ("id", row.id) if row is not None else ("text", supplier_key(text))
+            return (("id", row.id) if row is not None else ("text", supplier_key(text))), row
+
+        def entry(text: str) -> _Entry | None:
+            found = key_of(text)
+            if found is None:
+                return None
+            key, row = found
             if key not in entries:
                 entries[key] = _Entry(row, row.name if row is not None else _clean(text))
             return entries[key]
@@ -295,6 +306,13 @@ def suggest(
             found = entry(stat.text)
             if found is not None:
                 found.add("items", lines=stat.lines, last=stat.last, preselect=True)
+                found.items.update(stat.items)
+        # Every supplier's delivered categories (not only the shown ones): what relates it to each line.
+        history: dict[tuple[str, object], set[str]] = {}
+        for stat in analysis.by_categories:
+            known = key_of(stat.text)
+            if known is not None:
+                history.setdefault(known[0], set()).update(stat.categories)
         rank = 0
         for stat in sorted(analysis.by_categories, key=lambda s: (-s.lines, -(s.last.toordinal() if s.last else 0))):
             found = entry(stat.text)
@@ -309,11 +327,14 @@ def suggest(
         for view in views:
             text = _clean(view.supplier)
             if text and not is_stock_source(text):
-                originals.setdefault(supplier_key(text), [text, 0])[1] += 1
-        for text, count in originals.values():
+                slot = originals.setdefault(supplier_key(text), [text, 0, []])
+                slot[1] += 1
+                slot[2].append(view.id)
+        for text, count, line_ids_written in originals.values():
             found = entry(text)
             if found is not None:
                 found.add("original", lines=count, preselect=True)
+                found.originals.update(line_ids_written)
 
         relevant = sorted(
             (row for row in directory.active()
@@ -331,15 +352,41 @@ def suggest(
             asked = last_asked.get(row.id)
             entry_of(row).add("rotation" if index < rotation_size else "category", last=asked.date() if asked else None)
 
+        for key, item in entries.items():
+            item.history = history.get(key, set())
+        line_insights = [(view.id, _insight(analysis, view)) for view in views]
         ordered = sorted(entries.values(), key=_Entry.sort_key)
         return {
             "categories": [code for code, _ in GROUPS if code in categories],
             "lines": len(views),
-            "suggestions": [_suggestion(item, in_rfq, last_asked) for item in ordered],
+            "suggestions": [_suggestion(item, in_rfq, last_asked, line_insights) for item in ordered],
         }
 
 
-def _suggestion(item: _Entry, in_rfq: set[UUID], last_asked: dict[UUID, datetime]) -> dict:
+def _line_reasons(item: _Entry, lines: Sequence[tuple[UUID, LineInsight]]) -> list[dict]:
+    """Which of the chosen lines the supplier relates to and why (ranked codes): it delivered the line's item, it
+    delivered the line's category, the line is written with it, its directory categories hold the line's category."""
+    row = item.row
+    directory = {category_code(value) for value in (row.categories or [])} if row is not None else set()
+    directory_code = "key" if row is not None and row.is_key else "rotation" if "rotation" in item.reasons else "category"
+    out = []
+    for line_id, insight in lines:
+        codes = []
+        if insight.item is not None and insight.item.id in item.items:
+            codes.append("items")
+        if insight.category in item.history:
+            codes.append("category_history")
+        if line_id in item.originals:
+            codes.append("original")
+        if insight.category in directory:
+            codes.append(directory_code)
+        if codes:
+            out.append({"line_id": str(line_id), "reasons": codes})
+    return out
+
+
+def _suggestion(item: _Entry, in_rfq: set[UUID], last_asked: dict[UUID, datetime],
+                lines: Sequence[tuple[UUID, LineInsight]]) -> dict:
     reasons = sorted(item.reasons.values(), key=lambda reason: REASON_RANK[reason["code"]])
     row = item.row
     taken = row is not None and row.id in in_rfq
@@ -355,4 +402,6 @@ def _suggestion(item: _Entry, in_rfq: set[UUID], last_asked: dict[UUID, datetime
         "preselect": item.preselect and not taken,
         "in_rfq": taken,
         "last_asked_at": asked.isoformat() if asked else None,
+        # The lines it relates to (procurement line ids) — ticked by default; none would mean every line.
+        "lines": _line_reasons(item, lines),
     }

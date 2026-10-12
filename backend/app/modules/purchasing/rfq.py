@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.workflows.article_key import code_key
@@ -35,6 +35,7 @@ from .infrastructure import (
     QuoteRow,
     RfqLineRow,
     RfqRow,
+    RfqSupplierLineRow,
     RfqSupplierRow,
     SupplierNameRow,
     SupplierRow,
@@ -248,6 +249,36 @@ class SupplierPick:
     supplier_id: UUID | None = None
     name: str | None = None
     reason: str = "manual"
+    line_ids: tuple[UUID, ...] | None = None  # procurement line ids of the request asked of it; None — every line
+
+
+NO_LINES = "Поставщику не выбрано ни одной позиции"
+
+
+def asked_lines(session: Session, rfq_supplier_ids: Iterable[UUID]) -> dict[UUID, set[UUID]]:
+    """The lines each request supplier is asked for; a request supplier missing here is asked for every line."""
+    ids = list(rfq_supplier_ids)
+    if not ids:
+        return {}
+    out: dict[UUID, set[UUID]] = {}
+    for rfq_supplier_id, rfq_line_id in session.execute(
+        select(RfqSupplierLineRow.rfq_supplier_id, RfqSupplierLineRow.rfq_line_id)
+        .where(RfqSupplierLineRow.rfq_supplier_id.in_(ids))
+    ):
+        out.setdefault(rfq_supplier_id, set()).add(rfq_line_id)
+    return out
+
+
+def _ask_for(session: Session, rfq_supplier_id: UUID, wanted: set[UUID], live: set[UUID]) -> None:
+    """Stores the supplier's lines; every live line — no rows (the way older requests read)."""
+    target = set() if wanted >= live else wanted
+    existing = {row.rfq_line_id: row for row in session.scalars(
+        select(RfqSupplierLineRow).where(RfqSupplierLineRow.rfq_supplier_id == rfq_supplier_id))}
+    for line_id, row in existing.items():
+        if line_id not in target:
+            session.delete(row)
+    session.add_all(RfqSupplierLineRow(rfq_supplier_id=rfq_supplier_id, rfq_line_id=line_id)
+                    for line_id in sorted(target - set(existing), key=str))
 
 
 # The suggestion's reasons beyond the five the table stores (no schema change): what a supplier delivered before is
@@ -296,19 +327,39 @@ def create_rfq(
         )
         session.add(rfq)
         session.flush()
+        rfq_line_of: dict[UUID, UUID] = {}  # procurement line → its line in the request
         for view in (views[line_id] for line_id in ids):
+            rfq_line_of[view.id] = uuid4()
             session.add(RfqLineRow(
-                id=uuid4(), rfq_id=rfq.id, procurement_line_id=view.id, item_id=items.get(view.id),
+                id=rfq_line_of[view.id], rfq_id=rfq.id, procurement_line_id=view.id, item_id=items.get(view.id),
                 name=view.name[:512], article=(view.article or None) and view.article[:255], quantity=view.to_buy,
                 unit=view.unit or "шт", need_by=view.need_by, budget_unit_gross=view.budget_unit_gross, created_at=now,
             ))
-        added: set[UUID] = set()
+        added: dict[UUID, tuple[str, set[UUID] | None]] = {}  # supplier → (reason, its lines; None — every line)
         for pick in suppliers:
             reason = stored_reason(pick.reason)
             supplier = _resolve_supplier(session, uow, actor, now, pick.supplier_id, pick.name)
-            if supplier.id not in added:
-                added.add(supplier.id)
-                session.add(RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier.id, reason=reason, created_at=now))
+            asked = None
+            if pick.line_ids is not None:
+                wanted = set(pick.line_ids)
+                if not wanted:
+                    raise Refused(f"{NO_LINES}: {supplier.name}")
+                if not wanted <= set(rfq_line_of):
+                    raise Refused(f"«{supplier.name}»: позиция не из этого запроса")
+                asked = {rfq_line_of[line_id] for line_id in wanted}
+            if supplier.id in added:  # picked twice: the first reason, the lines of both
+                first_reason, first_asked = added[supplier.id]
+                added[supplier.id] = (first_reason, None if first_asked is None or asked is None else first_asked | asked)
+            else:
+                added[supplier.id] = (reason, asked)
+        session.flush()
+        everything = set(rfq_line_of.values())
+        for supplier_id, (reason, asked) in added.items():
+            rfq_supplier = RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier_id, reason=reason, created_at=now)
+            session.add(rfq_supplier)
+            if asked is not None and not asked >= everything:
+                session.flush()
+                _ask_for(session, rfq_supplier.id, asked, everything)
         _audit(uow, rfq.id, "purchasing.rfq_created", actor, now,
                {"number": rfq.number, "lines": str(len(ids)), "suppliers": str(len(added))})
         uow.commit()
@@ -563,8 +614,41 @@ def remove_supplier(uow: UnitOfWork, actor: Actor, rfq_id: UUID, supplier_id: UU
         row = _rfq_supplier(session, rfq, supplier_id)
         if session.scalar(select(QuoteRow.id).where(QuoteRow.rfq_id == rfq.id, QuoteRow.supplier_id == supplier_id)):
             raise Conflict("У поставщика уже есть КП в этом запросе — сначала удалите КП")
+        session.execute(delete(RfqSupplierLineRow).where(RfqSupplierLineRow.rfq_supplier_id == row.id))
         session.delete(row)
         uow.commit()
+
+
+def set_supplier_lines(
+    uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, supplier_id: UUID, line_ids: Sequence[UUID],
+) -> dict:
+    """The lines a supplier of the request is asked for (request line ids); every line — no rows. A line the supplier
+    has already quoted stays."""
+    with uow:
+        session = _session(uow)
+        rfq = _open(_own(_rfq(session, rfq_id), actor))
+        row = _rfq_supplier(session, rfq, supplier_id)
+        live = _live_lines(session, rfq.id)
+        live_ids = {line.id for line in live}
+        wanted = set(line_ids)
+        if not wanted:
+            raise Refused(NO_LINES)
+        if not wanted <= live_ids:
+            raise Refused("Позиция не из этого запроса")
+        quoted = set(session.scalars(
+            select(QuoteLineRow.rfq_line_id).join(QuoteRow, QuoteRow.id == QuoteLineRow.quote_id)
+            .where(QuoteRow.rfq_id == rfq.id, QuoteRow.supplier_id == supplier_id)
+        ))
+        dropped = next((line for line in live if line.id in quoted and line.id not in wanted), None)
+        if dropped is not None:
+            raise Refused(f"«{dropped.name}»: у поставщика уже есть КП по этой позиции — её не убрать")
+        _ask_for(session, row.id, wanted, live_ids)
+        everything = wanted >= live_ids
+        _audit(uow, rfq.id, "purchasing.rfq_supplier_lines", actor, now, {
+            "number": rfq.number, "supplier": str(supplier_id), "lines": "все" if everything else str(len(wanted)),
+        })
+        uow.commit()
+        return {"line_ids": None if everything else [str(line.id) for line in live if line.id in wanted]}
 
 
 # ── offers and the matrix ───────────────────────────────────────────────────────────────────────────────────────
@@ -611,6 +695,7 @@ def _cell(entry: _Entry, *, current: bool, best: Offer | None, base: Offer | Non
           requires: list[str]) -> dict:
     line, quote, offer = entry.line, entry.quote, entry.offer
     return {
+        "asked": True,
         "quote_line_id": str(line.id), "quote_id": str(quote.id),
         "received_on": quote.received_on.isoformat(),
         "valid_until": offer.valid_until.isoformat() if offer.valid_until else None,
@@ -654,6 +739,11 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             .where(RfqSupplierRow.rfq_id == rfq.id)
         ).all())
         suppliers.sort(key=lambda pair: (not pair[1].is_key, pair[1].name.casefold()))
+        rows_of = asked_lines(session, [rfq_supplier.id for rfq_supplier, _ in suppliers])
+        asked_of: dict[UUID, set[UUID] | None] = {}  # supplier → the live lines asked of it; None — every line
+        for rfq_supplier, supplier in suppliers:
+            own = rows_of.get(rfq_supplier.id)
+            asked_of[supplier.id] = None if own is None or own >= set(by_id) else own & set(by_id)
         quotes = list(session.scalars(
             select(QuoteRow).where(QuoteRow.rfq_id == rfq.id).order_by(QuoteRow.received_on, QuoteRow.created_at)
         ))
@@ -684,6 +774,9 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             for _, supplier in suppliers:
                 own = [entry for entry in found if entry.quote.supplier_id == supplier.id]
                 if not own:
+                    asked = asked_of[supplier.id]
+                    if asked is not None and line.id not in asked:
+                        cells[str(supplier.id)] = {"asked": False}  # not asked of this supplier: no quote expected
                     continue
                 live = next((entry for entry in own if entry.offer.quote_line_id in current_ids), None)
                 shown = live or max(own, key=lambda entry: _arrival(entry.offer))
@@ -743,6 +836,8 @@ def matrix(uow: UnitOfWork, lines: ProcurementLines, actor: Actor, rfq_id: UUID,
             supplier_results.append({
                 "supplier_id": str(supplier.id), "name": supplier.name, "is_key": supplier.is_key,
                 "reason": rfq_supplier.reason,
+                "line_ids": None if asked_of[supplier.id] is None
+                else [str(line.id) for line in rfq_lines if line.id in asked_of[supplier.id]],
                 "sent_at": rfq_supplier.sent_at.isoformat() if rfq_supplier.sent_at else None,
                 "declined_at": rfq_supplier.declined_at.isoformat() if rfq_supplier.declined_at else None,
                 "decline_note": rfq_supplier.decline_note,
@@ -824,6 +919,9 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
         if supplier is None:
             raise NotFound("Поставщик не найден")
         live = {line.id: line for line in _live_lines(session, rfq.id)}
+        rfq_supplier = session.scalar(select(RfqSupplierRow).where(
+            RfqSupplierRow.rfq_id == rfq.id, RfqSupplierRow.supplier_id == supplier.id))
+        asked = asked_lines(session, [rfq_supplier.id]).get(rfq_supplier.id) if rfq_supplier is not None else None
         default_vat = Decimal(purchasing_settings.load(session)["default_vat_rate"])
         received_on = data.received_on or _today(now)
         if data.valid_until is not None and data.valid_until < received_on:
@@ -840,6 +938,8 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
                 raise Refused("Строка КП не из этого запроса")
             if item.rfq_line_id in seen:
                 raise Refused(f"«{line.name}» дважды в одном КП")
+            if asked is not None and line.id not in asked:
+                raise Refused(f"«{line.name}»: эту позицию у «{supplier.name}» не запрашивали")
             seen.add(item.rfq_line_id)
             vat = default_vat if item.vat_rate is None else item.vat_rate
             if vat < 0 or vat >= 100:
@@ -861,8 +961,7 @@ def add_quote(uow: UnitOfWork, actor: Actor, now: datetime, rfq_id: UUID, data: 
                 in_stock=item.in_stock, declined=item.declined, analog=item.analog,
                 analog_note=((item.analog_note or "").strip()[:512] or None) if item.analog else None,
             ))
-        if session.scalar(select(RfqSupplierRow.id).where(
-                RfqSupplierRow.rfq_id == rfq.id, RfqSupplierRow.supplier_id == supplier.id)) is None:
+        if rfq_supplier is None:
             session.add(RfqSupplierRow(id=uuid4(), rfq_id=rfq.id, supplier_id=supplier.id, reason="manual", created_at=now))
         session.add(QuoteRow(
             id=quote_id, rfq_id=rfq.id, supplier_id=supplier.id, supplier_is_key=supplier.is_key,
@@ -1102,12 +1201,21 @@ def match_rows(rows: list[PastedRow], targets: Sequence[MatchTarget]) -> list[Pa
     return rows
 
 
-def paste_preview(uow: UnitOfWork, actor: Actor, rfq_id: UUID, text: str) -> dict:
-    """Parsed rows matched to the request's lines; nothing is saved — the client confirms through add_quote."""
+def paste_preview(uow: UnitOfWork, actor: Actor, rfq_id: UUID, text: str, supplier_id: UUID | None = None) -> dict:
+    """Parsed rows matched to the request's lines (with `supplier_id` — to the lines asked of that supplier); nothing
+    is saved — the client confirms through add_quote."""
     with uow:
         session = _session(uow)
         rfq = _open(_own(_rfq(session, rfq_id), actor))
-        targets = [MatchTarget(line.id, line.name, line.article) for line in _live_lines(session, rfq.id)]
+        asked = None
+        if supplier_id is not None:
+            rfq_supplier = session.scalar(select(RfqSupplierRow).where(
+                RfqSupplierRow.rfq_id == rfq.id, RfqSupplierRow.supplier_id == supplier_id))
+            asked = asked_lines(session, [rfq_supplier.id]).get(rfq_supplier.id) if rfq_supplier is not None else None
+        targets = [
+            MatchTarget(line.id, line.name, line.article) for line in _live_lines(session, rfq.id)
+            if asked is None or line.id in asked
+        ]
         default_vat = Decimal(purchasing_settings.load(session)["default_vat_rate"])
     header, rows = parse_pasted_table(text)
     if not rows:

@@ -88,10 +88,19 @@ class AddSupplierInput(BaseModel):
     reason: Reason = "manual"
 
 
+class PickSupplierInput(AddSupplierInput):
+    # The procurement line ids (of `line_ids`) asked of this supplier; omitted — every line of the request.
+    line_ids: list[UUID] | None = Field(default=None, max_length=200)
+
+
 class CreateRfqInput(BaseModel):
     line_ids: list[UUID] = Field(min_length=1, max_length=200)
     title: str | None = Field(default=None, max_length=255)
-    suppliers: list[AddSupplierInput] = Field(default_factory=list, max_length=100)
+    suppliers: list[PickSupplierInput] = Field(default_factory=list, max_length=100)
+
+
+class SupplierLinesInput(BaseModel):
+    line_ids: list[UUID] = Field(max_length=500)  # request line ids; every line — asked for all
 
 
 class DeclineInput(BaseModel):
@@ -216,7 +225,11 @@ def rfq_list(principal: View, uow: Uow, scope: Literal["mine", "all"] = "mine") 
 
 @router.post("", status_code=201)
 def rfq_create(payload: CreateRfqInput, principal: Edit, now: Now, uow: Uow, lines: Lines) -> dict:
-    picks = [service.SupplierPick(item.supplier_id, item.name, item.reason) for item in payload.suppliers]
+    picks = [
+        service.SupplierPick(item.supplier_id, item.name, item.reason,
+                             None if item.line_ids is None else tuple(item.line_ids))
+        for item in payload.suppliers
+    ]
     return _run(lambda: service.create_rfq(uow(), lines, principal.actor, now, payload.line_ids, payload.title, picks))
 
 
@@ -236,6 +249,13 @@ def rfq_add_supplier(rfq_id: UUID, payload: AddSupplierInput, principal: Edit, n
 def rfq_remove_supplier(rfq_id: UUID, supplier_id: UUID, principal: Edit, uow: Uow) -> Response:
     _run(lambda: service.remove_supplier(uow(), principal.actor, rfq_id, supplier_id))
     return Response(status_code=204)
+
+
+@router.put("/{rfq_id}/suppliers/{supplier_id}/lines")
+def rfq_supplier_lines(
+    rfq_id: UUID, supplier_id: UUID, payload: SupplierLinesInput, principal: Edit, now: Now, uow: Uow,
+) -> dict:
+    return _run(lambda: service.set_supplier_lines(uow(), principal.actor, now, rfq_id, supplier_id, payload.line_ids))
 
 
 @router.post("/{rfq_id}/suppliers/{supplier_id}/sent")
@@ -259,7 +279,7 @@ def rfq_add_quote(rfq_id: UUID, payload: QuoteModel, principal: Edit, now: Now, 
 
 @router.post("/{rfq_id}/quotes/paste")
 def rfq_paste_quote(rfq_id: UUID, payload: PasteInput, principal: Edit, uow: Uow) -> dict:
-    return _run(lambda: service.paste_preview(uow(), principal.actor, rfq_id, payload.text))
+    return _run(lambda: service.paste_preview(uow(), principal.actor, rfq_id, payload.text, payload.supplier_id))
 
 
 @router.post("/{rfq_id}/decisions", status_code=201)
