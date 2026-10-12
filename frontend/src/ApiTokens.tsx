@@ -6,7 +6,12 @@ import { formatDate, formatDay } from "./format";
 /** «Токены API» в «Доступах»: токен даёт программе (генератору техкарт, загрузчику схем сборки) вход без пароля.
  *  Секрет виден один раз — сразу после выпуска; в состоянии страницы он живёт, только пока открыта панель. */
 
-const SCOPES: Array<[key: string, label: string]> = [["tcgen", "Генератор техкарт"], ["assembly", "Черновики сборки"]];
+const SCOPES: Array<[key: string, label: string]> = [
+  ["tcgen", "Генератор техкарт"],
+  ["assembly", "Черновики сборки"],
+  ["refs:read", "Чтение базы данных"],
+  ["refs:write", "Загрузка в базу данных"],
+];
 const SCOPE_LABEL: Record<string, string> = Object.fromEntries(SCOPES);
 const STATUS: Record<ApiTokenStatus, { label: string; tone: string }> = {
   active: { label: "действует", tone: "tone-ok" },
