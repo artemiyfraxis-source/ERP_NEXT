@@ -293,11 +293,28 @@ const PARAM_LABELS: Array<[CoaxParam, string, string]> = [
 const KIND_LABELS: Record<string, string> = { nominal: "ном.", typical: "тип.", max: "макс." };
 const CONFIDENCE_TONE: Record<string, string> = { высокая: "tone-ok", средняя: "tone-ok", низкая: "tone-warn" };
 
+/** Russian decimal comma inside free text from the data file («7×0.102» → «7×0,102»). */
+const ruDecimals = (text: string): string => text.replace(/(\d)\.(\d)/g, "$1,$2");
+const LOSS_UNITS: Record<string, string> = { "dB/m": "дБ/м", "dB/100m": "дБ/100 м", "dB/100ft": "дБ/100 фут", "dB/ft": "дБ/фут", "dB/km": "дБ/км" };
+type CoaxPoint = CoaxCard["attenuation"][number];
+/** How a dB/m figure was obtained, in one word; the full wording stays in the tooltip and the footnote. */
+const lossMethod = (point: CoaxPoint): string => point.interpolated
+  ? (/^экстрапол/i.test(point.basis) ? "экстраполяция" : "интерполяция")
+  : point.derived ? "пересчёт" : "таблица";
+const lossMethodText = (point: CoaxPoint): string => {
+  const between = point.basis.match(/между\s+([\d.,]+)\s+и\s+([\d.,]+)\s+МГц/i);
+  if (point.interpolated) return between ? `${lossMethod(point)} ${num(Number(between[1]))}–${num(Number(between[2]))} МГц` : lossMethod(point);
+  return point.basis && point.basis.length <= 24 ? ruDecimals(point.basis) : lossMethod(point);
+};
+const sourceName = (source: string): string => {
+  try { return new URL(source).hostname.replace(/^www\./, ""); } catch { return source; }
+};
+
 export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }) {
   // dB/m at a marker: a published point first (typical / nominal, then max), else the interpolated one.
   const lossAt = (mhz: number | null) => {
     const points = card.attenuation.filter((point) => point.freq_mhz === mhz);
-    const rank = (point: CoaxCard["attenuation"][number]) => (point.interpolated ? 10 : 0) + (point.kind === "max" ? 1 : 0);
+    const rank = (point: CoaxPoint) => (point.interpolated ? 10 : 0) + (point.kind === "max" ? 1 : 0);
     return [...points].sort((a, b) => rank(a) - rank(b))[0] ?? null;
   };
   const onMarkers = new Set(card.markers.map((marker) => marker.freq_mhz));
@@ -306,74 +323,104 @@ export function CoaxCardView({ card, exact }: { card: CoaxCard; exact: boolean }
   const params = PARAM_LABELS.filter(([key]) => card.params[key] !== undefined);
   const lossTemp = card.attenuation.find((point) => point.temp_c !== null)?.temp_c ?? null;
   const hasReference = card.markers.some((marker) => marker.vswr_ref !== null);
+  const hasEstimate = card.markers.some((marker) => lossAt(marker.freq_mhz)?.interpolated);
+  // The datasheet table drops a column nobody fills: the cable's own unit, the kind, the temperature.
+  const showSource = card.attenuation.some((point) => point.unit !== "dB/m");
+  const showKind = card.attenuation.some((point) => point.kind !== "nominal");
+  const showTemp = card.attenuation.some((point) => point.temp_c !== null);
+  const footnotes = [...new Set(card.attenuation.filter((point) => point.interpolated && /^экстрапол/i.test(point.basis)).map((point) => ruDecimals(point.basis)))];
   const flag = card.verified
     ? `проверено по datasheet${card.confidence ? ` · достоверность ${card.confidence}` : ""}`
     : card.confidence || "не проверено";
+  const facts: Array<[string, string, string | undefined]> = [
+    ["Диапазон VNA", spanText(card), undefined],
+    ["Рабочая частота", card.max_operating_ghz !== null ? `до ${num(card.max_operating_ghz)} ГГц` : "", card.max_operating_note || undefined],
+    ["Частота среза TE11", card.fc_ghz !== null ? `≈ ${num(card.fc_ghz)} ГГц` : "", card.fc_note ? ruDecimals(card.fc_note) : undefined],
+    ["Температура", temp ? `${temp} °C` : "", undefined],
+  ];
   return <section className="coax-card" aria-label={`Карточка кабеля ${card.name}`}>
     <header className="coax-card-head">
-      <h3>{card.name}{!exact && <small> — карточка семейства</small>}</h3>
-      {card.family && <span className="muted">{card.family}</span>}
-      <span className={`coax-flag ${card.verified ? CONFIDENCE_TONE[card.confidence] ?? "tone-ok" : "tone-warn"}`}>{flag}</span>
-      {spanText(card) && <span><small>Диапазон VNA</small> <strong>{spanText(card)}</strong></span>}
-      {card.max_operating_ghz !== null && <span title={card.max_operating_note || undefined}><small>Рабочая частота</small> <strong>до {num(card.max_operating_ghz)} ГГц</strong></span>}
-      {card.fc_ghz !== null && <span title={card.fc_note || undefined}><small>Частота среза TE11</small> <strong>≈ {num(card.fc_ghz)} ГГц</strong></span>}
-      {temp && <span><small>Температура</small> <strong>{temp} °C</strong></span>}
+      <div className="coax-title">
+        <h3>{card.name}{!exact && <small> — карточка семейства</small>}</h3>
+        {card.family && <span className="coax-desc">{ruDecimals(card.family)}</span>}
+        <span className={`coax-flag ${card.verified ? CONFIDENCE_TONE[card.confidence] ?? "tone-ok" : "tone-warn"}`}>{flag}</span>
+      </div>
+      <dl className="coax-facts">{facts.filter(([, value]) => value).map(([label, value, note]) => <div key={label} title={note}>
+        <dt>{label}</dt><dd>{value}</dd>
+      </div>)}</dl>
     </header>
-    {card.span_note && <p className="coax-note">Диапазон: {card.span_note}</p>}
+    {card.span_note && <p className="coax-note">Диапазон: {ruDecimals(card.span_note)}</p>}
     <div className="coax-grid">
-      <div className="coax-block"><table className="coax-mini" aria-label="Маркеры VNA">
-        <caption>Маркеры VNA <small>КСВН — норма приёмки (предложено)</small></caption>
-        <thead><tr><th>Частота</th><th>КСВН ≤</th>{hasReference && <th title="КСВН, который гарантирует паспорт эталонной сборки — по нему решается спорный брак">Паспорт сборки ≤</th>}<th>дБ/м{lossTemp !== null ? ` при ${num(lossTemp)} °C` : ""}</th></tr></thead>
-        <tbody>{card.markers.length === 0
-          ? <tr><td colSpan={hasReference ? 4 : 3} className="muted">Маркеров нет</td></tr>
-          : card.markers.map((marker, index) => {
-            const loss = lossAt(marker.freq_mhz);
-            return <tr key={index} className={marker.peak ? "coax-peak" : undefined}>
-              <td>{marker.peak ? "Peak — максимум по диапазону" : freq(marker.freq_mhz)}</td>
-              <td title={marker.note || undefined}>{marker.vswr_max !== null ? num(marker.vswr_max) : <span className="muted">—</span>}</td>
-              {hasReference && <td>{marker.vswr_ref !== null ? num(marker.vswr_ref) : <span className="muted">—</span>}</td>}
-              <td title={loss ? [loss.basis, loss.derived ? `пересчитано из ${num(loss.value)} ${loss.unit}` : ""].filter(Boolean).join("; ") || undefined : undefined}>
-                {loss ? <>{num(Math.round(loss.loss_db_m * 100) / 100)}{loss.interpolated ? <small className="muted"> интерп.</small> : loss.derived ? <small className="muted"> расч.</small> : null}</> : <span className="muted">—</span>}
-              </td>
-            </tr>;
-          })}</tbody>
-      </table></div>
-      <div className="coax-block"><table className="coax-mini" aria-label="Разъёмы">
-        <caption>Разъёмы</caption>
-        <thead><tr><th>Разъём</th><th>Предел разъёма</th><th>Диапазон сборки</th></tr></thead>
-        <tbody>{card.connectors.map((connector) => <tr key={connector.family}>
-          <td>{connector.family}</td>
-          <td title={connector.max_note || undefined}>{connector.max_ghz !== null ? `до ${num(connector.max_ghz)} ГГц` : connector.max_note || "—"}</td>
-          <td>{connector.span_to_ghz !== null ? <strong>до {num(connector.span_to_ghz)} ГГц</strong> : <span className="muted">как у кабеля</span>}</td>
-        </tr>)}</tbody>
-      </table></div>
-      <div className="coax-block"><table className="coax-mini" aria-label="Конструкция">
-        <caption>Конструкция</caption>
-        <thead><tr><th>Слой</th><th>Материал</th><th>Ø, мм</th></tr></thead>
-        <tbody>{card.layers.map((layer) => <tr key={layer.layer}>
-          <td>{layer.label}</td><td className="wrap">{layer.material || "—"}</td><td className="num">{num(layer.diameter_mm) || "—"}</td>
-        </tr>)}</tbody>
-      </table></div>
+      <div className="coax-col">
+        {card.layers.length > 0 && <table className="coax-mini" aria-label="Конструкция">
+          <caption>Конструкция</caption>
+          <thead><tr><th>Слой</th><th>Материал</th><th className="num">Ø, мм</th></tr></thead>
+          <tbody>{card.layers.map((layer) => <tr key={layer.layer}>
+            <td>{layer.label}</td><td className="wrap">{layer.material ? ruDecimals(layer.material) : "—"}</td><td className="num">{num(layer.diameter_mm) || "—"}</td>
+          </tr>)}</tbody>
+        </table>}
+        {card.connectors.length > 0 && <table className="coax-mini" aria-label="Разъёмы">
+          <caption>Разъёмы</caption>
+          <thead><tr><th>Разъём</th><th>Предел разъёма</th><th>Диапазон сборки</th></tr></thead>
+          <tbody>{card.connectors.map((connector) => <tr key={connector.family}>
+            <td className="wrap">{connector.family}</td>
+            <td className="wrap" title={connector.max_note ? ruDecimals(connector.max_note) : undefined}>{connector.max_ghz !== null ? `до ${num(connector.max_ghz)} ГГц` : connector.max_note ? ruDecimals(connector.max_note) : "—"}</td>
+            <td>{connector.span_to_ghz !== null ? <strong>до {num(connector.span_to_ghz)} ГГц</strong> : <span className="muted">как у кабеля</span>}</td>
+          </tr>)}</tbody>
+        </table>}
+      </div>
+      <div className="coax-col">
+        <table className="coax-mini" aria-label="Маркеры VNA">
+          <caption>Маркеры VNA <small>КСВН — норма приёмки (предложено)</small></caption>
+          <thead><tr><th>Частота</th><th className="num">КСВН ≤</th>{hasReference && <th className="num" title="КСВН, который гарантирует паспорт эталонной сборки — по нему решается спорный брак">Паспорт ≤</th>}<th className="num">дБ/м{lossTemp !== null ? ` при ${num(lossTemp)} °C` : ""}</th></tr></thead>
+          <tbody>{card.markers.length === 0
+            ? <tr><td colSpan={hasReference ? 4 : 3} className="muted">Маркеров нет</td></tr>
+            : card.markers.map((marker, index) => {
+              const loss = lossAt(marker.freq_mhz);
+              return <tr key={index} className={marker.peak ? "coax-peak" : undefined}>
+                <td className={marker.peak ? "wrap" : undefined}>{marker.peak ? "Peak — максимум по диапазону" : freq(marker.freq_mhz)}</td>
+                <td className="num" title={marker.note ? ruDecimals(marker.note) : undefined}>{marker.vswr_max !== null ? num(marker.vswr_max) : <span className="muted">—</span>}</td>
+                {hasReference && <td className="num">{marker.vswr_ref !== null ? num(marker.vswr_ref) : <span className="muted">—</span>}</td>}
+                <td className={`num${loss?.interpolated ? " coax-est" : ""}`} title={loss ? [ruDecimals(loss.basis), loss.derived ? `пересчитано из ${num(loss.value)} ${LOSS_UNITS[loss.unit] ?? loss.unit}` : ""].filter(Boolean).join("; ") || undefined : undefined}>
+                  {loss ? <>{loss.interpolated ? "≈ " : ""}{num(Math.round(loss.loss_db_m * 100) / 100)}</> : <span className="muted">—</span>}
+                </td>
+              </tr>;
+            })}</tbody>
+        </table>
+        {hasEstimate && <p className="coax-legend">≈ — в источнике нет точки на этой частоте: значение посчитано между соседними точками таблицы или по аппроксимации.</p>}
+      </div>
+      {params.length > 0 && <div className="coax-col">
+        <table className="coax-mini" aria-label="Параметры кабеля">
+          <caption>Параметры</caption>
+          <tbody>{params.map(([key, label, unit]) => <tr key={key} title={card.param_notes[key] ? ruDecimals(card.param_notes[key]) : undefined}>
+            <th scope="row">{label}</th>
+            <td className="num">{num(card.params[key])} <span className="muted">{unit}</span>{key === "max_power_w" && card.params.max_power_at_mhz !== undefined ? ` на ${freq(card.params.max_power_at_mhz)}` : ""}</td>
+          </tr>)}</tbody>
+        </table>
+        {card.param_notes.mechanical && <p className="coax-legend">{ruDecimals(card.param_notes.mechanical)}</p>}
+      </div>}
     </div>
-    {params.length > 0 && <div className="reference-fields coax-params">{params.map(([key, label, unit]) => <span key={key} title={card.param_notes[key] || undefined}>
-      <small>{label}</small>{num(card.params[key])} {unit}{key === "max_power_w" && card.params.max_power_at_mhz !== undefined ? ` на ${freq(card.params.max_power_at_mhz)}` : ""}
-    </span>)}</div>}
-    {card.param_notes.mechanical && <p className="coax-note muted">{card.param_notes.mechanical}</p>}
-    {datasheet && <div className="coax-block"><table className="coax-mini coax-datasheet" aria-label="Затухание по источнику">
+    {datasheet && <div className="coax-wide"><table className="coax-mini coax-datasheet" aria-label="Затухание по источнику">
       <caption>Затухание по источнику</caption>
-      <thead><tr><th>Частота</th><th>Значение</th><th>Единица</th><th>Тип</th><th>t, °C</th><th>дБ/м</th><th>Как получено</th><th>Источник</th></tr></thead>
+      <thead><tr>
+        <th>Частота</th><th className="num">дБ/м</th>{showSource && <th className="num">В источнике</th>}{showKind && <th>Тип</th>}{showTemp && <th className="num">t, °C</th>}<th>Как получено</th><th>Источник</th>
+      </tr></thead>
       <tbody>{card.attenuation.map((point, index) => <tr key={index}>
-        <td>{freq(point.freq_mhz)}</td><td>{num(point.value)}</td><td>{point.unit}</td>
-        <td>{KIND_LABELS[point.kind] ?? point.kind}</td>
-        <td>{num(point.temp_c) || "—"}</td><td>{num(Math.round(point.loss_db_m * 1000) / 1000)}{point.derived && !point.interpolated ? " (расч.)" : ""}</td>
-        <td className="wrap">{point.interpolated ? point.basis || "интерполировано" : point.basis || "опубликовано"}</td>
-        <td>{point.source ? <a href={point.source} target="_blank" rel="noreferrer">ссылка</a> : "—"}</td>
+        <td>{freq(point.freq_mhz)}</td>
+        <td className={`num${point.interpolated ? " coax-est" : ""}`}>{num(Math.round(point.loss_db_m * 1000) / 1000)}</td>
+        {showSource && <td className="num">{point.unit !== "dB/m" ? <>{num(point.value)} <span className="muted">{LOSS_UNITS[point.unit] ?? point.unit}</span></> : <span className="muted">—</span>}</td>}
+        {showKind && <td>{KIND_LABELS[point.kind] ?? point.kind}</td>}
+        {showTemp && <td className="num">{num(point.temp_c) || "—"}</td>}
+        <td className="wrap" title={point.basis ? ruDecimals(point.basis) : undefined}>{lossMethodText(point)}</td>
+        <td>{point.source ? <a href={point.source} target="_blank" rel="noreferrer" title={point.source}>{sourceName(point.source)}</a> : <span className="muted">—</span>}</td>
       </tr>)}</tbody>
-    </table></div>}
-    {card.notes && <p className="coax-note">{card.notes}</p>}
+    </table>
+    {footnotes.map((text) => <p key={text} className="coax-legend">Экстраполяция: {text}.</p>)}
+    </div>}
+    {card.notes && <p className="coax-note">{ruDecimals(card.notes)}</p>}
     {(card.sources.length > 0 || card.changes.length > 0) && <div className="coax-sources">
       {card.sources.length > 0 && <span>Источники: {card.sources.map((source, index) => <a key={index} href={source} target="_blank" rel="noreferrer" title={source}>{index + 1}</a>)}</span>}
-      {card.changes.length > 0 && <details><summary>Исправлено при проверке: {card.changes.length}</summary><ul>{card.changes.map((change, index) => <li key={index}>{change}</li>)}</ul></details>}
+      {card.changes.length > 0 && <details><summary>Исправлено при проверке: {card.changes.length}</summary><ul>{card.changes.map((change, index) => <li key={index}>{ruDecimals(change)}</li>)}</ul></details>}
     </div>}
   </section>;
 }
