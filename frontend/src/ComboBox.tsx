@@ -35,7 +35,8 @@ export function ComboBox({
   const selectedLabel = strict ? (options.find((option) => option.value === value)?.label ?? value) : value;
   const text = strict && typedText !== null ? typedText : selectedLabel;
   const typed = (strict ? (typedText ?? "") : value).trim().toLocaleLowerCase("ru");
-  const exact = options.some((option) => option.label.toLocaleLowerCase("ru") === typed);
+  const exactOption = typed ? options.find((option) => option.label.toLocaleLowerCase("ru") === typed) : undefined;
+  const exact = Boolean(exactOption);
   const matches = (option: ComboOption) =>
     option.label.toLocaleLowerCase("ru").includes(typed) || (option.desc ?? "").toLocaleLowerCase("ru").includes(typed);
   const shown = (prefiltered || !typed || exact ? [...options] : options.filter(matches)).slice(0, limit);
@@ -84,7 +85,8 @@ export function ComboBox({
       setOpen(false);
       return;
     }
-    if (event.key === "Enter" && strict && typedText?.trim() && shown.length > 0) pick(shown[0]);
+    // An exact match wins over the list order: «м» typed is «м», not the first unit «шт».
+    if (event.key === "Enter" && strict && typedText?.trim() && shown.length > 0) pick(exactOption ?? shown[0]);
     onKeyDown?.(event);
   };
 
@@ -92,6 +94,7 @@ export function ComboBox({
     setOpen(false);
     if (strict && typedText !== null) {
       if (!typedText.trim()) onClear?.();
+      else if (exactOption && exactOption.value !== value) onChange(exactOption.value, exactOption); // Tab after «м» keeps «м»
       setTypedText(null);
     }
   };
