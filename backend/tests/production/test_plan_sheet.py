@@ -110,17 +110,20 @@ def test_latest_mark_wins_and_auto_or_empty_clears():
 def test_status_is_blocker_plus_erp_stage_name():
     assert shop_status_auto("КБ набрана") == "КБ набрана"
     assert shop_status_auto("В работе", "ОЖИД КОМПЛ") == "ОЖИД КОМПЛ, В работе"
-    assert shop_status_auto("КБ на складе") == "КБ на складе"
+    assert shop_status_auto("Готово к отгрузке") == "Готово к отгрузке"
     assert shop_status_auto("Отгружено") == "Отгружено"
     assert shop_status_auto("ТК готова") == "ТК готова"
 
 
 def test_groups_come_from_stage_and_blocker():
     assert sheet_group("В работе", "ХОЛД") == "hold"
-    assert sheet_group("КБ на складе", "ПАУЗА") == "hold"
+    assert sheet_group("Готово к отгрузке", "ПАУЗА") == "hold"
     assert sheet_group("Отказ", "СТОП", terminal=True) == "hold"
     assert sheet_group("В работе", "ОЖИД ИНФ") == "active"
-    assert sheet_group("КБ на складе") == "done"
+    # Работа цеха кончена — ГП принята и дальше; ОТК ещё у цеха.
+    assert sheet_group("ОТК") == "active"
+    assert sheet_group("Готово к отгрузке") == "done"
+    assert sheet_group("На отгрузке") == "done"
     assert sheet_group("Отгружено") == "done"
     assert sheet_group("Отгружено", "ОЖИД КОМПЛ") == "active"
     assert sheet_group("В работе") == "active"
@@ -132,7 +135,9 @@ def test_ready_percent_is_output_weighted_by_norm():
     task = _task([heavy, light], quantity=10)
     assert ready_percent("В работе", [task], {heavy.id: Decimal(5), light.id: Decimal(20)}) == "63"
     assert ready_percent("В работе", [task], {}) == "0"
-    assert ready_percent("КБ на складе", [task], {}) == "100"
+    # Производство закончено (ОТК и дальше) — 100.
+    assert ready_percent("ОТК", [task], {}) == "100"
+    assert ready_percent("Готово к отгрузке", [task], {}) == "100"
     assert ready_percent("В работе", [_task([heavy], status=ProductionStatus.CANCELLED)], {}) == ""
     assert ready_percent("Новый", [], {}) == ""
 
@@ -161,7 +166,7 @@ def test_sheet_cells_edge_cases_without_supply_and_all_in_stock():
     assert (bare["customer_supplied"].value, bare["kit_arrival"].value, bare["zkp"].value) == ("НЕТ", "", "нет")
     assert (bare["tc_ready"].value, bare["kit_picked"].value, bare["in_plan"].value) == ("нет", "нет", "нет")
     stocked = sheet_cells(
-        stage=_stage(KitStage("КБ1", "КБ на складе", tc=True)), blocker="",
+        stage=_stage(KitStage("КБ1", "Готово к отгрузке", tc=True)), blocker="",
         supply=SupplySummary(total=3, stock=3, customer_supplied=3, customer_supplied_stock=3),
         assigned=0, ready="100", marks={},
     )

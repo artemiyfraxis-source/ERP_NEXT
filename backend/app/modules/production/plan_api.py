@@ -176,12 +176,16 @@ def production_plan(
     goods = _safe_read("goods", shipping_uow_factory, lambda uow: tuple(uow.goods.list(limit=10_000)))
     requests = _safe_read("requests", requests_uow_factory, lambda uow: tuple(uow.requests.recent(10_000)))
     procurement = _safe_read("procurement", procurement_uow_factory, lambda uow: tuple(uow.procurement.list(limit=10_000)))
+    # ОТК лестницы: коробки последней операции в очереди ОТК или проверенные ОТК.
+    boxes = _safe_read("boxes", production_uow_factory, lambda uow: tuple(uow.boxes.list(limit=100_000)))
+    inspected = _safe_read("qc", production_uow_factory, lambda uow: frozenset(uow.qc.inspected_box_ids()), frozenset())
     running = tuple(task.id for task in tasks)
     outputs = _safe_read("outputs", production_uow_factory, lambda uow: tuple(uow.outputs.active_for_tasks(running)))
     rows = build_production_plan(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods,
         requests=requests, procurement=procurement, projects=projects,
         events=events, today=today, kitsets=kitsets, processed=_processed(outputs),
+        boxes=boxes, inspected=inspected,
     )
     first_day, last_day = calendar_span(today)
     return {

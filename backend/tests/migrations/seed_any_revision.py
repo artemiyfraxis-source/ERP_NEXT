@@ -155,8 +155,12 @@ def _database_assigns(table: Table, column: Column, dialect: str) -> bool:
 
 
 # Pairs a CHECK ties together that the column-by-column fill can't see: identity_documents.scope takes 'all' from its
-# `IN (…)` list, and `scope = 'all'` demands an empty scope_value (0100_identity_documents).
-_COUPLED_VALUES: dict[tuple[str, str], Any] = {("identity_documents", "scope_value"): ""}
+# `IN (…)` list, and `scope = 'all'` demands an empty scope_value (0100_identity_documents); fulfillment_lines.absent_at
+# is left empty (`absent_at IS NULL OR …`), and «who» goes with «when» (0106_fulfillment_line_absent).
+_COUPLED_VALUES: dict[tuple[str, str], Any] = {
+    ("identity_documents", "scope_value"): "",
+    ("fulfillment_lines", "absent_by"): None,
+}
 
 
 def _value(table: str, column: Column, index: int) -> Any:

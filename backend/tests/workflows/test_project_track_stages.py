@@ -71,10 +71,10 @@ def test_a_step_to_the_next_stage_has_no_skipped_rows(production):
 
 
 def test_a_backward_move_shows_from_to_and_the_reason(production):
-    _move(production, (_kit("КБ1", "КБ на складе"),), "В работе", "КБ1", reason="брак на ОТК")
+    _move(production, (_kit("КБ1", "Готово к отгрузке"),), "В работе", "КБ1", reason="брак на ОТК")
 
     assert _track(production) == [
-        ("Этап КБ", "В работе", "возврат вручную КБ на складе → В работе · причина: брак на ОТК · Мастер", "КБ1"),
+        ("Этап КБ", "В работе", "возврат вручную Готово к отгрузке → В работе · причина: брак на ОТК · Мастер", "КБ1"),
     ]
 
 

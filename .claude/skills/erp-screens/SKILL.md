@@ -29,7 +29,8 @@ charts) also follow `erp-dense-ui` — the style yardstick for density, type, co
   or extend that one map — never add another copy. `workflows/techcards_all.py` still writes «БЕЗ КОДА»; treat it
   as an empty code, never display it.
 - Domain words exactly as in SUPPLYMAP: КБ, ЭТК, ТК, ГРН, партия, комплектация, выдача, отгрузка, статусы
-  проекта `Новый→ТК готова→КБ набрана→В работе→КБ на складе→Отгружено`, блокеры ХОЛД/СТОП/ОЖИД ИНФ/ОЖИД
+  проекта `Новый→ТК готова→КБ набрана→В работе→ОТК→Готово к отгрузке→На отгрузке→Отгружено` (12.10; the list
+  comes from the API's `stages`), блокеры ХОЛД/СТОП/ОЖИД ИНФ/ОЖИД
   КОМПЛ/ПАУЗА. A button says what it does, verb first («Назначить на 01.10», «Выдать ЭТК»), and keeps the same
   word in the result message.
 - No service text: no explanations of how the system works («Маршрут копируется из техкарты…»), no tech notes,

@@ -82,7 +82,7 @@ def test_project_stage_uses_farthest_fact_per_kit_and_slowest_kit_for_project():
         "stock": {first}, "shipped": set(),
     })
     assert stage.status == "КБ набрана"
-    assert [item.status for item in stage.kits] == ["КБ на складе", "КБ набрана"]
+    assert [item.status for item in stage.kits] == ["Готово к отгрузке", "КБ набрана"]
     assert project_stage("708К.4", ("КБ1",), {}, "Отменён").status == "Отменён"
     assert KIT_STAGES[-1] == "Отгружено"
 
@@ -164,6 +164,7 @@ def test_stage_mark_without_kb_is_the_stage_of_a_project_without_kits():
 
 def test_plan_shows_registry_project_without_kits_by_its_journal_stage_and_blocker():
     events = (
+        # Старая запись журнала со словом «КБ на складе» читается как «Готово к отгрузке».
         PlanEvent("70К.26.13", datetime(2026, 9, 28, 9), "план цеха", PLAN_KINDS["stage"], value="КБ на складе"),
         PlanEvent("70К.26.13", datetime(2026, 9, 28, 10), "план цеха", PLAN_KINDS["block"], "ХОЛД", "ждём оплату"),
     )
@@ -173,7 +174,7 @@ def test_plan_shows_registry_project_without_kits_by_its_journal_stage_and_block
         today=date(2026, 9, 28),
     )
 
-    assert [(row.project, row.stage.status, row.stage.manual) for row in rows] == [("70К.26.13", "КБ на складе", True)]
+    assert [(row.project, row.stage.status, row.stage.manual) for row in rows] == [("70К.26.13", "Готово к отгрузке", True)]
     assert rows[0].journal.blocker and rows[0].journal.blocker.type == "ХОЛД"
 
 

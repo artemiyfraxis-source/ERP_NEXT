@@ -55,7 +55,7 @@ def test_issued_kit_does_not_hold_back_later_stages():
     key = kit_stage_key("33МФ.2", "КБ1")
     facts = _kit_facts(FulfillmentStatus.ISSUED)
     facts["stock"].add(key)
-    assert project_stage("33МФ.2", ("КБ1",), facts).status == "КБ на складе"
+    assert project_stage("33МФ.2", ("КБ1",), facts).status == "Готово к отгрузке"
 
 
 def test_issued_techcard_keeps_the_stages_a_manual_pick_skipped():
