@@ -45,6 +45,22 @@ it("the marking operation of the ETK lists every mark by КД before the steps, 
   expect(html).toMatch(/Что маркируем[\s\S]*Надпись[\s\S]*708К\.4КБ1[\s\S]*на обоих концах[\s\S]*Описание операции/);
 });
 
+it("a tube cutting step without a length shows «длина не задана» in red on screen and with a warning sign in print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks });
+  const operation = (card.document as { operations: Array<{ card: { steps: unknown[] } }> }).operations[0];
+  operation.card.steps = [
+    { number: "1", kind: "Операция", text: "Нарезать трубки в размер — станок резки трубок.", tolerance: "длина не задана" },
+    { number: "2", kind: "Контроль", text: "ВИЗУАЛЬНЫЙ КОНТРОЛЬ: надпись на трубке соответствует КД.", tolerance: "Согласно КД" },
+  ];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByText("Допуск: длина не задана")).toHaveClass("tone-danger");
+  expect(screen.getByText("Допуск: Согласно КД")).not.toHaveClass("tone-danger");
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  expect(buildPrintDocumentHtml("ТК", etkPrintPages(card, []))).toContain("⚠ длина не задана");
+});
+
 it("an old marking operation without a mark list renders and prints as before", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));

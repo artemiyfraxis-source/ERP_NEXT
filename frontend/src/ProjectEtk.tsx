@@ -192,6 +192,9 @@ function PartRows({ rows }: { rows?: EtkRow[] }) {
   )}</div>;
 }
 
+/** Допуск шага, которого нет в данных («длина не задана» у нарезки трубок-маркеров) — красным, как «не задано» пайки. */
+const NOT_SET = /не задан/i;
+
 /** Метки по КД в «Ходе операции» маркировки: монтажник видит, какую надпись, чем и где делать, сколько штук. */
 function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
   return <table className="etk-marks" aria-label="Метки по КД">
@@ -254,7 +257,7 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
       <h4><span className="etk-sec-n">{next()}</span>Ход операции</h4>
       {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
       {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
-        <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small>Допуск: {step.tolerance}</small>}</li>
+        <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small className={NOT_SET.test(step.tolerance) ? "tone-danger" : undefined}>Допуск: {step.tolerance}</small>}</li>
       )}</ol> : null}</section> : null}
     {operation.card?.defects && <DefectsView text={operation.card.defects} code={operation.code || ""} number={next()} />}
     {(figure || sketch) && <section className="etk-sec" aria-label="Эскиз">

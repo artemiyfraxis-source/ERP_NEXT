@@ -167,7 +167,9 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     const marks = numbered(rows(object(operation.fields).marks), (mark) => [
       text(mark.target), text(mark.text), text(mark.material), text(mark.place), text(mark.qty), text(mark.batch),
     ]);
-    const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text), text(step.tolerance)]);
+    // Допуска нет в данных («длина не задана») — со знаком внимания, как «нет данных» у высоты обжима.
+    const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text),
+      /не задан/i.test(text(step.tolerance)) ? `⚠ ${text(step.tolerance)}` : text(step.tolerance)]);
     const defects = text(opCard.defects);
     const figure = etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]);
     const result = numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);

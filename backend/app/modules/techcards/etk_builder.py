@@ -12,6 +12,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from .domain.route import (
     Block, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_totals,
 )
+from .etk_marking import apply_marking
 from .operation_cards import OperationCardTemplate
 from .project_cards import CUSTOM_OP
 
@@ -796,7 +797,7 @@ def _typed_operation(
     if terminal_warning:
         warnings.append(terminal_warning)
     replacements = _placeholder_map(op, config, previous, result, wire_data, fields)
-    return {
+    operation = {
         "position": position, "code": code, "type": str(op.get("type") or ""),
         "side": str(op.get("side") or ""), "connector": connector,
         "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
@@ -809,6 +810,10 @@ def _typed_operation(
         "times": _times(op),
         "fields": fields,
     }
+    if op.get("type") == "insMark" and _kd_marks(_mark_items(op)):
+        # Маркировка по КД: ход операции, дефекты, оборудование и время — по видам меток (etk_marking).
+        apply_marking(operation, op, _mark_items(op), _part_quantity(config), warnings)
+    return operation
 
 
 def _times(op: Mapping[str, Any]) -> dict[str, str]:
