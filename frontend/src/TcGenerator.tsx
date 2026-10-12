@@ -14,6 +14,7 @@ import {
 import {
   CRIMP_BOTH_,
   FOLD_STRIP_MM_,
+  SHRINK_LEN_MM_,
   JACKET_STRIP_MM_,
   WRAP_SLOTS_,
   addEndpoint,
@@ -745,6 +746,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <Chip checked={!ep.tutOff} onChange={(on) => set({ tutOff: !on })}>ТУТ на каждый провод</Chip>
         </div>
       </>}
+      {conn && <div className="ep-ter" aria-label={`Термоусадка поверх разъёма ${name}`}>
+        <Chip checked={!!ep.shrinkOn} onChange={(on) => set({ shrinkOn: on })}>Термоусадка поверх разъёма<small>на корпус и выход проводов</small></Chip>
+        {ep.shrinkOn && <>
+          <Field label="Термоусадка" className="lead">{selectComps(gen.shrinkCandidates_(), ep.shrinkMat || gen.defaultShrinkComp_()?.id || "", (id) => set({ shrinkMat: id }), `Термоусадка поверх разъёма ${name}`, "— нет ТУТ/ТТК в листе —")}</Field>
+          <Field label="Длина" className="mid"><UnitInput unit="мм" value={ep.shrinkLen ?? ""} placeholder={SHRINK_LEN_MM_} onChange={(event) => set({ shrinkLen: event.target.value })} /></Field>
+        </>}
+      </div>}
       {pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
         onConfirm={() => { setS((current) => confirmPinout(D, current, ep.id)); setPinOpen((current) => ({ ...current, [ep.id]: false })); }}
         onPins={(wireIdx, value) => {

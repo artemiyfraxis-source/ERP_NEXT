@@ -337,3 +337,58 @@ def test_sort_kitsets_like_portal():
     assert [r["project"] for r in sort_kitsets(rows, "no", statuses)] == ["9К.1", "10К.1"]
     assert [r["project"] for r in sort_kitsets(rows, "status", statuses)] == ["9К.1", "10К.1"]
     assert [r["project"] for r in sort_kitsets(rows, "customer", statuses)] == ["9К.1", "10К.1"]
+
+
+# ── «Стадия» on «Снабжение»: one word + tone (owner, 12.10.2026) ──
+
+
+def _position(**values) -> kitsets.SupplyLine:
+    base = {"article": "LP-12-C04PE-02-001", "name": "", "kbs": ("КБ1",), "need": Decimal("20"), "grn": "", "stage": "",
+            "received": False}
+    return kitsets.SupplyLine(**{**base, **values})
+
+
+def _row(where: str, status: str, source: str, **values) -> SupplyRow:
+    return SupplyRow("LP-12-C04PE-02-001", where, status, source, **values)
+
+
+@pytest.mark.parametrize(("line", "key", "label", "tone"), [
+    (_position(free=Decimal("25")), "stock", "Со склада", "info"),
+    (_position(free=Decimal("5")), "short", "Не хватает 15", "danger"),
+    (_position(free=Decimal("5"), ordered=Decimal("2.5")), "short", "Не хватает 12,5", "danger"),
+    (_position(kitted=Decimal("20")), "kitting", "В комплектации", "ok"),
+    (_position(ordered=Decimal("20"), rows=(_row("Закупка", "В работе", "ЗК-1", open_quantity=Decimal("20")),)),
+     "procurement", "В закупке", "warn"),
+    (_position(free=Decimal("20"), rows=(_row("Приёмка", "Готово", "ЗК-1", received=True),)),
+     "received", "Принято на склад", "ok"),
+    # A request entered without «В закупку»: no procurement line in ERP — bought outside the system.
+    (_position(free=Decimal("20"), rows=(_row("Запрос", "Закрыто", "З-7"),)), "outside", "Куплено вне системы", "neutral"),
+    (_position(ordered=Decimal("20"), rows=(_row("Запрос", "Новый", "З-8", open_quantity=Decimal("20")),)),
+     "outside", "Куплено вне системы", "neutral"),
+    # Procurement closed it from the shelf («Готово · без ГРН»): stock, no purchase.
+    (_position(off_book=Decimal("20"), rows=(_row("Закупка", "Готово · без ГРН", "ЗК-2"),)), "stock", "Со склада", "info"),
+    (_position(need=Decimal("0")), "none", "Нет потребности", "neutral"),
+])
+def test_supply_state(line, key, label, tone):
+    state = kitsets.supply_state(line)
+    assert (state.key, state.label, state.tone) == (key, label, tone)
+    assert "Нужно" in state.hint
+
+
+def test_supply_state_hint_carries_the_numbers_and_the_rows():
+    short = kitsets.supply_state(_position(free=Decimal("5"), ordered=Decimal("2.5"), kitted=Decimal("1")))
+    assert short.hint == "Нужно 20 · свободно 5 · без ГРН 0 · в закупке 2,5 · в комплектации 1 → не хватает 11,5"
+    buying = kitsets.supply_state(_position(
+        ordered=Decimal("20"), rows=(_row("Закупка", "В пути", "ЗК-1", open_quantity=Decimal("20")),),
+    ))
+    assert buying.hint.startswith("В закупке 20: ЗК-1 · Закупка · В пути")
+    assert kitsets.supply_state(_position(free=Decimal("25"))).hint.startswith("Свободно на складе 25 из нужных 20")
+
+
+def test_supply_lines_carry_the_first_link_of_the_position():
+    kitset = manual_kitset(project="720К.1", customer="З", who="Т", now=NOW, assemblies=[
+        {"index": "КБ1", "run": "1", "components": [{"art": "XHP-4", "per": "1"}]},
+        {"index": "КБ2", "run": "1", "components": [{"art": "xhp-4", "per": "1", "link": "https://shop.example/xhp"}]},
+    ])
+    (line,) = supply_lines(kitset, [])
+    assert line.link == "https://shop.example/xhp"
