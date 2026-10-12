@@ -11,6 +11,7 @@ import { DraftProvider, DraftStore } from "./formDrafts";
 import {
   accessLevelOf,
   canAct,
+  canSee,
   hasFullAccess,
   isBlock,
   isViewOnly,
@@ -299,7 +300,8 @@ export function App() {
         {activeSection === "requests" && <RequestsPage principal={principal} />}
         {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
-        {activeSection === "stock" && <WarehousePage admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")} />}
+        {activeSection === "stock" && <WarehousePage admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
+          finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}

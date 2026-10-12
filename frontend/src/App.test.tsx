@@ -223,14 +223,15 @@ it("opens native finished-goods and shipping at the shipping route", async () =>
     if (path === "/api/shipping/shipments") return json({ shipments: [] });
     if (path === "/api/shipping/project-addressees") return json({ addressees: [] });
     if (path === "/api/production/finished-goods-ready") return json({ boxes: [] });
+    if (path === "/api/shipping/finished-goods/from-production") return json({ rows: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Отгрузка", level: 1 })).toBeInTheDocument();
-  // Кладовщик тоже отгружает: первой открывается «К отгрузке».
-  expect(await screen.findByText("Готовой продукции пока нет — КБ встают сюда при заведении проекта.")).toBeInTheDocument();
+  // Кладовщик начинает с того, что сдал цех: первой открывается «Из производства».
+  expect(await screen.findByText("В производстве нет КБ, которые ждут склада.")).toBeInTheDocument();
 });
 
 it("opens native references at the references route", async () => {

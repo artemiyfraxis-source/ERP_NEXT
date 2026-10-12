@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 import { openPrintSheet } from "./print";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
+import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
   chooserColumns, ColumnChooser, columnTitle, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
@@ -58,8 +59,28 @@ function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, 
 
 /** `admin` — the administrator sees «Журнал склада» (SK-16, SUPPLYMAP portalStock05Log is admin only).
  *  `readOnly` — «режим просмотра» (ID-6): the stock is read, every entry/move/writeoff/edit control is gone
- *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes). */
-export function WarehousePage({ admin = false, readOnly = false }: { admin?: boolean; readOnly?: boolean } = {}) {
+ *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes).
+ *  `finishedGoods` — the viewer reads «Отгрузка»: the «Готовая продукция» tab (read-only, owner 12.10.2026). */
+export function WarehousePage({ admin = false, readOnly = false, finishedGoods = false }: { admin?: boolean; readOnly?: boolean; finishedGoods?: boolean } = {}) {
+  // `?section=stock&view=goods` opens «Готовая продукция» (a link, a screenshot).
+  const [view, setView] = useState<"stock" | "goods">(() => new URLSearchParams(window.location.search).get("view") === "goods" ? "goods" : "stock");
+  if (finishedGoods && view === "goods") return <section className="page stock-page">
+    <header className="page-head"><h1>Склад</h1></header>
+    <StockViews view={view} onChange={setView} />
+    <FinishedGoodsPanel />
+  </section>;
+  return <StockPage admin={admin} readOnly={readOnly} views={finishedGoods ? <StockViews view={view} onChange={setView} /> : null} />;
+}
+
+/** «Материалы» | «Готовая продукция» под заголовком склада. */
+function StockViews({ view, onChange }: { view: "stock" | "goods"; onChange: (view: "stock" | "goods") => void }) {
+  return <div className="seg-tabs stock-views" role="tablist" aria-label="Склад">
+    {([["stock", "Материалы и комплектующие"], ["goods", "Готовая продукция"]] as const).map(([key, label]) =>
+      <button key={key} type="button" role="tab" aria-selected={view === key} className={view === key ? "on" : undefined} onClick={() => onChange(key)}>{label}</button>)}
+  </div>;
+}
+
+function StockPage({ admin, readOnly, views }: { admin: boolean; readOnly: boolean; views: ReactNode }) {
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
@@ -246,6 +267,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           {!readOnly && <button className="primary" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>}
         </div>
       </header>
+      {views}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {putawayError && <div className="error-banner" role="alert">{putawayError}</div>}
       {/* Wording from SUPPLYMAP «Склад 0.5» (PortalApp.html wh-hint). */}

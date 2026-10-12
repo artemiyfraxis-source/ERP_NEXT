@@ -1107,6 +1107,78 @@ export interface FinishedGood {
   note: string;
 }
 
+/** Состояние штук КБ в регистре готовой продукции: В производстве → Принято складом → Упаковано → Отгружено. */
+export type GoodsStateKey = "production" | "accepted" | "packed" | "shipped";
+
+/** Задание цеха КБ и сколько из его тиража сдано (площадка — «Сдано N шт», цех — годные финальной операции). */
+export interface FinishedGoodsTaskShare {
+  number: string;
+  status: string;
+  /** Площадка (ЖУК), пусто — свой цех. */
+  site: string;
+  quantity: number;
+  delivered: string;
+}
+
+/** «Из производства»: КБ с живыми заданиями, которые склад принял не целиком. */
+export interface FromProductionRow {
+  project: string;
+  item_index: string;
+  name: string;
+  unit: string;
+  needed: string;
+  /** Сдано цехом по живым заданиям. */
+  delivered: string;
+  accepted: string;
+  /** Сдано, но склад ещё не принял — можно принять сейчас. */
+  remaining: string;
+  in_production: string;
+  good_id: string | null;
+  good_version: number | null;
+  tasks: FinishedGoodsTaskShare[];
+}
+
+/** Ход журнала готовой продукции (новые сверху). */
+export interface FinishedGoodsMove {
+  id: string;
+  item_index: string;
+  kind: string;
+  kind_label: string;
+  quantity: string;
+  from: GoodsStateKey;
+  to: GoodsStateKey;
+  from_label: string;
+  to_label: string;
+  shipment_id: string | null;
+  shipment_number: string | null;
+  actor: string;
+  occurred_at: string;
+  reason: string;
+}
+
+/** Сквозной статус КБ проекта: штуки в каждом состоянии, отправки КБ. */
+export interface ProjectGoodsKb {
+  item_index: string;
+  name: string;
+  unit: string;
+  good_id: string | null;
+  needed: string;
+  delivered: string | null;
+  waiting: string;
+  pieces: Record<GoodsStateKey, string>;
+  totals: { accepted: string; packed: string; shipped: string };
+  has_tasks: boolean;
+  journal_ok: boolean;
+  shipments: Array<{ id: string; number: string; status: string; picked: string }>;
+}
+
+export interface ProjectGoodsStatus {
+  project: string;
+  states: Array<{ key: GoodsStateKey; label: string }>;
+  kbs: ProjectGoodsKb[];
+  moves: FinishedGoodsMove[];
+}
+
 export interface ShipmentLine {
   id: string;
   good_id: string;
@@ -3070,6 +3142,20 @@ export const shippingApi = {
     ship: boolean;
   }, idempotencyKey: string) => api<{ shipment: Shipment; shipped: boolean; closed: boolean; why: string; replayed: boolean }>("/api/shipping/project-ship", {
     method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload),
+  }),
+  /** «Из производства»: что цех сдал, а склад ещё не принял, и что ещё в производстве. */
+  fromProduction: () => api<{ rows: FromProductionRow[] }>("/api/shipping/finished-goods/from-production"),
+  /** Приёмка пакетом: все отмеченные КБ или ни одной; не больше сданного цехом. Тот же ключ с тем же телом — уже сделанное. */
+  acceptFromProduction: (lines: Array<{ project: string; item_index: string; quantity: string }>, receivedAt: string | null, idempotencyKey: string) =>
+    api<{ goods: FinishedGood[]; replayed: boolean }>("/api/shipping/finished-goods/accept", {
+      method: "POST", headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(receivedAt ? { lines, received_at: receivedAt } : { lines }),
+    }),
+  /** Сквозной статус проекта по КБ и журнал ходов. */
+  projectGoods: (project: string) => api<ProjectGoodsStatus>(`/api/shipping/finished-goods/project?project=${encodeURIComponent(project)}`),
+  /** Откат «Отгружено» — только администратор, с причиной; штуки снова «Упаковано». */
+  unship: (shipmentId: string, version: number, reason: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/unship`, {
+    method: "POST", body: JSON.stringify({ version, reason }),
   }),
 };
 
