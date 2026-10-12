@@ -2994,6 +2994,24 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .view-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; padding: 10px 14px; border: 1px solid var(--warn-border); border-radius: 8px; background: var(--warn-soft); font-size: 14px; font-weight: 600; }
 @media (pointer: coarse) { .view-strip button { min-height: 40px; } }
+/* «Смотреть как сотрудник»: полоса во всю ширину рабочей области, прилипает к верху экрана на каждой странице.
+   Липкое считается от края содержимого .workspace — отрицательный top и поля снимают её отступ (30 px; 20 px на планшете). */
+.view-as-banner { position: sticky; top: -30px; z-index: 30; display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; margin: -30px -34px 20px; padding: 8px 34px; border-bottom: 1px solid var(--warn-border); background: var(--warn-soft); font-size: 14px; }
+.view-as-banner > span:first-child { flex: 1 1 auto; min-width: 0; }
+.view-as-until { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.view-as-error { color: var(--tone-danger); font-size: 13px; }
+.harness-host > .view-as-banner { position: static; margin: 0; padding: 8px 16px; }
+@media (max-width: 1280px), (pointer: coarse) and (max-width: 1600px) { .view-as-banner { top: -20px; margin: -20px -18px 16px; padding: 8px 18px; } }
+@media (max-width: 720px) { .view-as-banner { top: 0; margin: -24px -14px 16px; padding: 8px 14px; } }
+@media (pointer: coarse) { .view-as-banner button, .view-as-person { min-height: 44px; } }
+.view-as-dialog { width: min(720px, 100%); }
+.view-as-list { margin: 0; padding: 0; list-style: none; max-height: min(60vh, 520px); overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.view-as-list > li + li { border-top: 1px solid var(--border); }
+.view-as-person { width: 100%; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; align-items: center; gap: 12px; min-height: 34px; padding: 6px 12px; border: 0; border-radius: 0; background: transparent; color: var(--foreground); text-align: left; font-size: 13px; cursor: pointer; }
+.view-as-person:hover:not(:disabled), .view-as-person:focus-visible { background: var(--accent); }
+.view-as-person > span { color: var(--muted-foreground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-as-person > .view-as-opening { color: var(--primary); }
+@media (max-width: 720px) { .view-as-person { grid-template-columns: 1fr; gap: 2px; } }
 /* Производственный план → Загрузка по людям: сетка «часы/смена» на языке «Монтажников». */
 .pl-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
 .pl-period { font-size: 13px; color: var(--muted-foreground); }

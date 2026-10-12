@@ -197,6 +197,8 @@ const EVENT_NAMES: Record<string, string> = {
   "identity.user_access_saved": "Исключения доступа сохранены",
   "identity.admin_mode_on": "Режим администратора включён",
   "identity.admin_mode_off": "Режим администратора выключен",
+  "identity.view_as_on": "Просмотр от лица сотрудника начат",
+  "identity.view_as_off": "Просмотр от лица сотрудника закончен",
   "identity.login_lock_released": "Блокировка входа снята",
   // Темы очереди фоновых заданий (их показывают «Ошибки фоновых заданий» и «Фоновые процессы»).
   "procurement.autofill_requested": "Автозаполнение строки закупки",
@@ -222,7 +224,7 @@ const DETAIL_LABELS: Record<string, string> = {
   events: "записей",
   level: "уровень", access_level: "уровень доступа", shop_worker: "монтажник", site_master: "мастер площадки",
   login: "логин", role: "прежняя роль", changes: "изменения", exceptions: "исключения", levels: "уровни", people: "люди",
-  note: "примечание",
+  note: "примечание", viewed: "сотрудник",
   source: "сайт", tls: "сертификат", topic: "задание", attempts: "попыток", error: "ошибка", released: "снято",
 };
 

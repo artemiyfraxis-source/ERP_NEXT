@@ -35,6 +35,9 @@ export interface Principal {
   /** «Режим админа» (portalToggleAdmin): the account may switch it / it is on for this session. */
   can_admin_mode?: boolean;
   admin_mode?: boolean;
+  /** «Смотреть как сотрудник»: `user` and the rights above are the viewed employee's; who really looks and until when.
+   *  The server refuses every change while it is on, except «Вернуться к себе» and «Выйти». */
+  viewing?: { viewer: { id: string; name: string }; until: string | null } | null;
 }
 
 /** The login list (portalStaffLite_): active employees, no e-mails. */
@@ -1880,7 +1883,12 @@ export const identityApi = {
   adminMode: (on: boolean) =>
     api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }), safe: true }),
   logout: () => api<void>("/api/auth/logout", { method: "POST", safe: true }),
-  profile: () => api<OwnProfile>("/api/auth/profile"),
+  /** «Смотреть как сотрудник» (administrator only): the answer is the viewed employee's principal. */
+  viewAs: (userId: string) =>
+    api<Principal>("/api/auth/view-as", { method: "POST", body: JSON.stringify({ user_id: userId }) }),
+  /** «Вернуться к себе»: the own principal again. */
+  stopViewAs: () => api<Principal>("/api/auth/view-as", { method: "DELETE", safe: true }),
+  profile:() => api<OwnProfile>("/api/auth/profile"),
   changePassword: (current: string, next: string) =>
     api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
 };

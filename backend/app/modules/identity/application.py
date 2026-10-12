@@ -61,6 +61,9 @@ class IdentitySession:
     revoked_at: datetime | None = None
     # «Режим админа» (Portal.gs portalToggleAdmin): the level is admin until this moment (CacheService TTL, 6 h).
     admin_mode_until: datetime | None = None
+    # «Смотреть как сотрудник»: the session reads as this employee until `view_as_until` (writes are refused).
+    view_as_user_id: UUID | None = None
+    view_as_until: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +151,9 @@ class IdentityRepository(Protocol):
     def setting(self, key: str) -> str | None: ...
     def set_setting(self, key: str, value: str | None) -> None: ...
     def set_admin_mode(self, session_id: UUID, until: datetime | None) -> bool: ...
+    # «Смотреть как сотрудник»
+    def set_view_as(self, session_id: UUID, target_id: UUID | None, until: datetime | None) -> bool: ...
+    def user_by_id(self, user_id: UUID) -> IdentityUser | None: ...
     # Токены API (service principals)
     def add_api_token(self, token: ApiToken) -> None: ...
     def api_tokens(self) -> list[ApiToken]: ...
@@ -559,6 +565,138 @@ def toggle_admin_mode(
         return result
 
 
+# ── «Смотреть как сотрудник» (owner 12.10.2026) ─────────────────────────────────────────────────────────────
+# An administrator starts it from their own card: the session then reads as the chosen employee — their level, their
+# personal exceptions, their identity (own tasks, own card, own requests) — and the session middleware refuses every
+# write until «Вернуться к себе». Only a cookie session of a superadmin/admin starts it (never an API token); anyone but
+# oneself may be viewed. It ends by itself after VIEW_AS_TTL, on logout, with the session, when the administrator
+# loses the full access or the viewed employee stops working. The start and every end go to the journal.
+
+VIEW_AS_TTL = timedelta(hours=2)
+VIEW_AS_DENIED = "Смотреть как сотрудник может только администратор."
+
+
+class ViewAsRefused(ValueError):
+    pass
+
+
+def _view_principal(uow: UnitOfWork, target: IdentityUser, viewer: Actor, until: datetime) -> Principal:
+    """The viewed employee's own principal (no admin mode: it belongs to a session, not to a person), marked with the
+    real viewer. «Режим админа» is never switched from someone else's eyes."""
+    return replace(_principal_for(uow, target), can_admin_mode=False, viewer=viewer, view_as_until=until)
+
+
+def _view_as_audit(
+    uow: UnitOfWork,
+    *,
+    on: bool,
+    target_id: UUID,
+    target_name: str,
+    viewer: Actor,
+    now: datetime,
+    reason: str = "",
+) -> None:
+    """Who (the actor — always the real administrator), whom (`viewed`), when (the event's time); an end says why."""
+    details = {"viewed_id": str(target_id), "viewed": target_name}
+    if reason:
+        details["reason"] = reason
+    _audit(
+        uow, aggregate_id=target_id, event_type="identity.view_as_on" if on else "identity.view_as_off",
+        actor=viewer, now=now, details=details,
+    )
+
+
+def _view_as_end_reason(own: Principal, target: IdentityUser | None, until: datetime | None, now: datetime) -> str:
+    if target is None:
+        return "сотрудник удалён"
+    if until is None or until <= now:
+        return "время просмотра истекло"
+    if own.service or not own.full_access:
+        return "нет прав администратора"
+    if not target.active:
+        return "сотрудник не работает"
+    if target.id == own.actor.id:
+        return "свой профиль"
+    return ""
+
+
+def start_view_as(
+    session: IdentitySession, principal: Principal, target_id: UUID, now: datetime, uow: UnitOfWork,
+) -> Principal:
+    """Raises PermissionError (not an administrator, already viewing), KeyError (no such employee), ViewAsRefused
+    (oneself, a former employee)."""
+    if principal.service or principal.viewer is not None or not principal.full_access:
+        raise PermissionError(VIEW_AS_DENIED)
+    now = as_utc(now)
+    with uow:
+        user = uow.identity.user_for_update(session.user_id)
+        if user is None or not user.active:
+            raise PermissionError(VIEW_AS_DENIED)
+        own = _principal_for(uow, user, admin_mode=_session_admin_mode(session, user, now))
+        if not own.full_access:
+            raise PermissionError(VIEW_AS_DENIED)
+        if target_id == user.id:
+            raise ViewAsRefused("Это вы сами — выберите другого сотрудника.")
+        target = uow.identity.user_by_id(target_id)
+        if target is None:
+            raise KeyError(f"Identity user not found: {target_id}")
+        if not target.active:
+            raise ViewAsRefused(f"{target.name or target.login} не работает — смотреть от его лица нельзя.")
+        until = now + VIEW_AS_TTL
+        if not uow.identity.set_view_as(session.id, target.id, until):
+            raise AuthenticationError("Сессия истекла — войди заново.")
+        _view_as_audit(
+            uow, on=True, target_id=target.id, target_name=target.name or target.login, viewer=own.actor, now=now,
+        )
+        result = _view_principal(uow, target, own.actor, until)
+        uow.commit()
+        return result
+
+
+def stop_view_as(session: IdentitySession, principal: Principal, now: datetime, uow: UnitOfWork) -> Principal:
+    """«Вернуться к себе»: the session's own principal again. Harmless when the session is not viewing."""
+    now = as_utc(now)
+    with uow:
+        user = uow.identity.user_for_update(session.user_id)
+        if user is None or not user.active:
+            raise AuthenticationError("Сессия истекла — войди заново.")
+        own = _principal_for(uow, user, admin_mode=_session_admin_mode(session, user, now))
+        if session.view_as_user_id is not None or session.view_as_until is not None:
+            if not uow.identity.set_view_as(session.id, None, None):
+                raise AuthenticationError("Сессия истекла — войди заново.")
+            if principal.viewer is not None:
+                _view_as_audit(
+                    uow, on=False, target_id=principal.actor.id, target_name=principal.actor.name, viewer=own.actor,
+                    now=now, reason="вернулся к себе",
+                )
+        uow.commit()
+        return own
+
+
+def _resolve_view_as(
+    uow: UnitOfWork, session: IdentitySession, own: Principal, now: datetime,
+) -> tuple[IdentitySession, Principal]:
+    """The principal this session reads as. A view that may no longer go on ends here, with its journal row."""
+    if session.view_as_user_id is None and session.view_as_until is None:
+        return session, own
+    target = uow.identity.user_by_id(session.view_as_user_id) if session.view_as_user_id is not None else None
+    reason = _view_as_end_reason(own, target, session.view_as_until, now)
+    if not reason:
+        return session, _view_principal(uow, target, own.actor, session.view_as_until)
+    if uow.identity.set_view_as(session.id, None, None):
+        _view_as_audit(
+            uow,
+            on=False,
+            target_id=target.id if target else (session.view_as_user_id or UUID(int=0)),
+            target_name=(target.name or target.login) if target else "",
+            viewer=own.actor,
+            now=now,
+            reason=reason,
+        )
+        uow.commit()
+    return replace(session, view_as_user_id=None, view_as_until=None), own
+
+
 def resolve_session(token: str, now: datetime, uow: UnitOfWork) -> ResolvedSession | None:
     if not token:
         return None
@@ -580,6 +718,7 @@ def resolve_session(token: str, now: datetime, uow: UnitOfWork) -> ResolvedSessi
             return None
 
         principal = _principal_for(uow, user, admin_mode=_session_admin_mode(session, user, now))
+        session, principal = _resolve_view_as(uow, session, principal, now)
         if session.last_seen_at <= now - timedelta(minutes=15):
             session = replace(
                 session,
@@ -599,12 +738,19 @@ def csrf_matches(resolved: ResolvedSession, csrf_token: str) -> bool:
     )
 
 
-def logout(token: str, actor: Actor, now: datetime, uow: UnitOfWork) -> None:
+def logout(token: str, actor: Actor, now: datetime, uow: UnitOfWork, *, viewed: Actor | None = None) -> None:
+    """`actor` — the person signing out (the viewer while «Смотреть как сотрудник» is on); `viewed` — whom they were
+    viewing as: the logout ends that view too, and the journal says so."""
     if not token:
         return
     now = as_utc(now)
     with uow:
         if uow.identity.revoke_session(secret_hash(token), now):
+            if viewed is not None:
+                _view_as_audit(
+                    uow, on=False, target_id=viewed.id, target_name=viewed.name, viewer=actor, now=now,
+                    reason="выход из ERP",
+                )
             _audit(
                 uow,
                 aggregate_id=actor.id or UUID(int=0),
