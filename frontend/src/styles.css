@@ -1348,6 +1348,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 
 /* Данные из листа — плотная таблица как DataTable. */
 .tcgen .gtable-wrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+/* «Данные из листа» — всё сразу, без прокрутки; соседние блоки ряда — одной высоты (владелец 12.10.2026). */
+.tcgen .gtable-wrap.is-full { max-height: none; overflow-x: auto; overflow-y: visible; }
+.tcgen .gsec { align-self: stretch; }
 .tcgen .gtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .tcgen .gtable th { position: sticky; top: 0; z-index: 1; padding: 6px 10px; background: var(--table-head); color: var(--table-head-fg); font-weight: 600; border-bottom: 1px solid var(--border); }
 .tcgen .gtable td { height: 30px; padding: 4px 10px; white-space: normal; }
@@ -1374,6 +1377,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 
 /* Сторона — разъёмы строками внутри секции (без рамки в рамке); пустая сторона — одна строка. */
 .tcgen .ep-side { container-type: inline-size; }
+/* Стороны A и B — одной высоты, распиновка прижата к низу: блоки заканчиваются на одном уровне (владелец 12.10.2026). */
+.tcgen .ep-side:not(.full) { align-self: stretch; display: flex; flex-direction: column; }
+.tcgen .ep-side:not(.full) > .ep-card:last-child { flex: 1 1 auto; display: flex; flex-direction: column; }
+.tcgen .ep-side:not(.full) > .ep-card:last-child > :last-child { margin-top: auto; }
 .tcgen .ep-side.is-empty { padding-top: 10px; padding-bottom: 10px; }
 .tcgen .ep-card { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid var(--border); }
 .tcgen .gsec-head + .ep-card { padding-top: 2px; border-top: 0; }
