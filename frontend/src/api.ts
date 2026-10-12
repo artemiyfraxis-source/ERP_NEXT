@@ -1210,6 +1210,9 @@ export interface HookupWire {
   voltage_v: number | null;
   temp_min_c: number | null;
   temp_max_c: number | null;
+  /** «медь луженая»; "" — not known yet. Filled by the hook-up wire file import. */
+  conductor_material?: string;
+  insulation_thickness_mm?: number | null;
 }
 
 export interface CoaxCard {

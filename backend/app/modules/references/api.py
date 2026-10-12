@@ -378,7 +378,8 @@ def _hookup_json(wire: HookupWire | None) -> dict | None:
         return None
     return {"id": str(wire.id), "series": wire.series, "gauge_id": str(wire.gauge_id), "insulation": wire.insulation,
             "outer_d_mm": _num(wire.outer_d_mm), "voltage_v": wire.voltage_v, "temp_min_c": wire.temp_min_c,
-            "temp_max_c": wire.temp_max_c}
+            "temp_max_c": wire.temp_max_c, "conductor_material": wire.conductor_material,
+            "insulation_thickness_mm": _num(wire.insulation_thickness_mm)}
 
 
 def _card_json(card: CoaxCard | None) -> dict | None:
@@ -422,6 +423,7 @@ def _cable_json(row: CableRow, catalog: CableCatalog | None = None) -> dict:
                 "series": parsed.series, "gauge_id": str(parsed.gauge.id) if parsed.gauge else "",
                 "insulation": parsed.insulation, "outer_d_mm": _num(parsed.outer_d_mm), "voltage_v": parsed.voltage_v,
                 "temp_min_c": parsed.temp_min_c, "temp_max_c": parsed.temp_max_c,
+                "conductor_material": "", "insulation_thickness_mm": None,
             }
     return result
 
@@ -501,6 +503,9 @@ class HookupValues(BaseModel):
 class HookupPayload(HookupValues):
     # What the screen showed (null — the wire was not structured yet); a different current value → 409.
     old: HookupValues | None = None
+    # Not sent — the stored value stays (the screen does not edit them yet; the file import fills them).
+    conductor_material: str | None = Field(default=None, max_length=255)
+    insulation_thickness_mm: str | None = Field(default=None, max_length=32)
 
 
 def _old_hookup(record_id: UUID, old: HookupValues | None, uow_factory) -> HookupWire | None:
@@ -531,6 +536,7 @@ def save_hookup_wire(
         record_id=record_id, series=payload.series, gauge_id=payload.gauge_id, insulation=payload.insulation,
         outer_d_mm=payload.outer_d_mm, voltage_v=payload.voltage_v, temp_min_c=payload.temp_min_c,
         temp_max_c=payload.temp_max_c, old=old, actor=principal.actor, now=now,
+        conductor_material=payload.conductor_material, insulation_thickness_mm=payload.insulation_thickness_mm,
     ), uow_factory()))
     return {"hookup": _hookup_json(wire), "record": _record_json(record)}
 

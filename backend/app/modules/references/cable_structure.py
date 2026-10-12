@@ -170,10 +170,13 @@ class HookupWire:
     voltage_v: int | None = None
     temp_min_c: int | None = None
     temp_max_c: int | None = None
+    conductor_material: str = ""  # «медь луженая»; '' — not known yet
+    insulation_thickness_mm: Decimal | None = None
 
     @classmethod
     def create(cls, *, mark: str, series: str, gauge_id: UUID, insulation: str = "", outer_d_mm: object = None,
                voltage_v: object = None, temp_min_c: object = None, temp_max_c: object = None,
+               conductor_material: str = "", insulation_thickness_mm: object = None,
                id: UUID | None = None) -> HookupWire:
         clean_mark = str(mark or "").strip()
         key = cable_key(clean_mark)
@@ -189,7 +192,8 @@ class HookupWire:
         if low is not None and high is not None and low >= high:
             raise ReferenceValidationError("Температура «от» должна быть ниже «до»")
         return cls(id or uuid4(), clean_mark, key, clean_series, gauge_id, " ".join(str(insulation or "").split()),
-                   positive("Наружный Ø, мм", outer_d_mm), voltage, low, high)
+                   positive("Наружный Ø, мм", outer_d_mm), voltage, low, high, " ".join(str(conductor_material or "").split()),
+                   positive("Толщина изоляции, мм", insulation_thickness_mm))
 
 
 def _int_or_none(name: str, value: object) -> int | None:
@@ -292,7 +296,8 @@ def refreshed_hookup(wire: HookupWire, mark: str, fields: Mapping[str, str], edi
     values: dict[str, Any] = {
         "mark": mark, "series": wire.series, "gauge_id": wire.gauge_id, "insulation": wire.insulation,
         "outer_d_mm": wire.outer_d_mm, "voltage_v": wire.voltage_v, "temp_min_c": wire.temp_min_c,
-        "temp_max_c": wire.temp_max_c,
+        "temp_max_c": wire.temp_max_c, "conductor_material": wire.conductor_material,
+        "insulation_thickness_mm": wire.insulation_thickness_mm,
     }
     if SECTION_FIELD in edited and AWG_FIELD not in edited:
         # the section was changed on its own: it decides, not the AWG cell left from before

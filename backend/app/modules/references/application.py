@@ -398,6 +398,8 @@ class SaveHookupCommand:
     old: HookupWire | None  # what the screen showed (None — not structured yet); stale otherwise
     actor: Actor
     now: datetime
+    conductor_material: str | None = None  # None — keep what is stored (the screen does not edit it yet)
+    insulation_thickness_mm: str | None = None
 
 
 def _same_hookup(left: HookupWire | None, right: HookupWire | None) -> bool:
@@ -427,6 +429,10 @@ def save_hookup(command: SaveHookupCommand, uow: UnitOfWork) -> tuple[HookupWire
             id=current.id if current else None, mark=mark, series=command.series, gauge_id=gauge.id,
             insulation=command.insulation, outer_d_mm=command.outer_d_mm, voltage_v=command.voltage_v,
             temp_min_c=command.temp_min_c, temp_max_c=command.temp_max_c,
+            conductor_material=(current.conductor_material if current else "") if command.conductor_material is None
+            else command.conductor_material,
+            insulation_thickness_mm=(current.insulation_thickness_mm if current else None)
+            if command.insulation_thickness_mm is None else command.insulation_thickness_mm,
         )
         uow.cable_structure.save_hookup(wire, command.now)
         changes = written_back_fields(record.fields, wire, gauge, gauges)

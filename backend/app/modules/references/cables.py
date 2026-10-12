@@ -63,8 +63,37 @@ def _cores(fields: Mapping[str, str]) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> tuple[CableKind, str]:
-    """Deterministic class of a БД.ПРОВ row and the reason shown to the user, first rule that fits:
+# The база монтажных проводов (owner 12.10.2026: «UL1061 UL1571 UL1007 UL3239 НВ-4 600 ПВАМ МГТФ МГШВ МС 16-13
+# МС 15-11 МК 26-13 ПУГВ … остальные марки туда не заноси»): series key → the start of a mark that names it. Spaces
+# and hyphens inside a series name are free («МС16-13» = «МС 16-13»), the next character must not continue the name
+# (МГТФЭ, ПуГВнг(А)-LS, UL10610 are other wires), a mark is matched from its start (МНВ-4 is not НВ-4).
+HOOKUP_SERIES = (
+    ("UL1061", r"UL[\s-]*1061"), ("UL1571", r"UL[\s-]*1571"), ("UL1007", r"UL[\s-]*1007"), ("UL3239", r"UL[\s-]*3239"),
+    ("НВ-4", r"НВ[\s-]*4"), ("ПВАМ", r"ПВАМ"), ("МГТФ", r"МГТФ"), ("МГШВ", r"МГШВ"),
+    ("МС 16-13", r"МС[\s-]*16[\s-]*13"), ("МС 15-11", r"МС[\s-]*15[\s-]*11"), ("МК 26-13", r"МК[\s-]*26[\s-]*13"),
+    ("ПуГВ", r"ПУГВ"),
+)
+_HOOKUP_PATTERNS = tuple(
+    (key, re.compile(rf"^(?:ПРОВОД\s+)?{pattern}(?![0-9A-ZА-ЯЁ(])")) for key, pattern in HOOKUP_SERIES
+)
+# Latin letters typed for their Cyrillic twins («MГТФ», «HB-4»); the UL series are matched before this is applied.
+_LATIN_TWINS = str.maketrans("ABCEHKMOPTXY", "АВСЕНКМОРТХУ")
+NOT_HOOKUP_REASON = "марка не из базы монтажных"
+
+
+def hookup_series(mark: str) -> str | None:
+    """The series key of a mark from the база монтажных проводов, or None: «МС16-13 0,08» → «МС 16-13», «НВ-4 600
+    0,20» → «НВ-4», «ПуГВ 1,0» → «ПуГВ»; «ПуГВнг(А)-LS 1х1,0», «МНВ-4 0,12», «UL1015 26AWG», «НВМ 0,35» → None."""
+    text = " ".join(str(mark or "").split()).upper().replace("Ё", "Е")
+    for candidate in (text, text.translate(_LATIN_TWINS)):
+        for key, pattern in _HOOKUP_PATTERNS:
+            if pattern.match(candidate):
+                return key
+    return None
+
+
+def shape_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> tuple[CableKind, str]:
+    """The class a БД.ПРОВ row has by its shape alone, first rule that fits:
     1. «Тип провода» starts with «коакс» → коаксиальный;
     2. the mark has a row in the D1·D2·D3 table → коаксиальный;
     3. no type, the mark carries the generator's coax markers (RG-…, coax, коакс) → коаксиальный;
@@ -93,6 +122,25 @@ def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | s
     if cores is not None:
         return CableKind.OTHER, f"жил: {cores}"
     return CableKind.OTHER, f"тип «{kind_type}»" if kind_type else "тип не указан"
+
+
+def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> tuple[CableKind, str]:
+    """Deterministic class of a БД.ПРОВ row and the reason shown to the user. Коаксиальные and многожильные — by
+    shape (`shape_kind`); монтажные провода — only the series of the база монтажных (`hookup_series`), whatever the
+    row's type or core count says (ПВАМ typed «силовой» is one); every other mark → прочие кабели. A manual move
+    (`cable_kind` map) still beats this rule."""
+    kind, reason = shape_kind(fields, mark, dia_keys)
+    if kind in (CableKind.COAX, CableKind.MULTI):
+        return kind, reason
+    series = hookup_series(mark)
+    if series is None:
+        return CableKind.OTHER, NOT_HOOKUP_REASON
+    return (kind, reason) if kind == CableKind.WIRE else (CableKind.WIRE, f"серия {series} из базы монтажных")
+
+
+def left_hookups(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> bool:
+    """A row the shape rule calls монтажный that the база монтажных sends to прочие (UL1015, AGR2, силиконовый…)."""
+    return shape_kind(fields, mark, dia_keys)[0] == CableKind.WIRE and auto_kind(fields, mark, dia_keys)[0] == CableKind.OTHER
 
 
 @dataclass(frozen=True)
