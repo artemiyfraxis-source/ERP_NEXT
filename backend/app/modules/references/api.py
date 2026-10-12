@@ -30,7 +30,7 @@ from .cable_structure import (
 )
 from .cables import DIAMETERS, CableKind, CableRow, cable_counts
 from .domain import (
-    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
+    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     TechOperationTab,
 )
 from .technology import (
@@ -126,6 +126,18 @@ def _maps(entries) -> dict:
     }
 
 
+def _shown_maps(saved: dict) -> dict:
+    """What «Соответствия» shows: nothing saved yet → the SUPPLIER_BY_LINK seed (stored on the first save); the
+    country map is always saved rows + the COUNTRY_BY_MANUFACTURER seed for the keys not saved (owner 12.10.2026)."""
+    shown = dict(saved)
+    if not saved["suppliers"] and not saved["countries"]:
+        shown["suppliers"] = [{"key": key, "value": value} for key, value in SUPPLIER_BY_LINK]
+    shown["countries"] = [
+        {"key": key, "value": value} for key, value in merge_country_pairs((item["key"], item["value"]) for item in saved["countries"])
+    ]
+    return shown
+
+
 def _map_rights(principal: Principal) -> dict[str, bool]:
     """Who changes which map: supplier/country — the buyer (portalCanWork_ = `procurement` edit). ГОСТ→AWG is not
     saved here any more (owner 10.10.2026): it follows «Сечения AWG ↔ мм²» (`save_gauge`), so a maps save — often from
@@ -139,12 +151,7 @@ def _map_rights(principal: Principal) -> dict[str, bool]:
 @router.get("/maps")
 def maps(principal: Annotated[Principal, Depends(references_maps_view_principal)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
     with uow_factory() as uow: entries = uow.references.list()
-    result = _maps(entries)
-    # getReferences: nothing saved yet → the SUPPLIER_BY_LINK seed (shown, stored on the first save).
-    if not result["suppliers"] and not result["countries"]:
-        result["suppliers"] = [{"key": key, "value": value} for key, value in SUPPLIER_BY_LINK]
-    result["can_edit"] = _map_rights(principal)
-    return result
+    return {**_shown_maps(_maps(entries)), "can_edit": _map_rights(principal)}
 
 
 @router.put("/maps")
@@ -160,7 +167,7 @@ def save_maps(payload: MapsPayload, principal: Annotated[Principal, Depends(refe
         gost_awg=tuple(ReferencePair(item.key, item.value) for item in payload.gost_awg),
         actor=principal.actor, now=now, kinds=kinds,
     ), uow_factory()))
-    return {**_maps(entries), "can_edit": rights}
+    return {**_shown_maps(_maps(entries)), "can_edit": rights}
 
 
 def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord]) -> list[str]:
