@@ -33,7 +33,6 @@ import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { AutoTextarea } from "./AutoTextarea";
 import { formatDate, formatDateTime, formatDay, formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
-import { canSee } from "./navigation";
 import { CANDIDATE_LEGEND, candidateTone, matchText } from "./stockCandidates";
 // Редактор чертежа жгута — отдельным куском, вкладкой карточки проекта («Чертёж КБn»).
 const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
