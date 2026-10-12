@@ -1,5 +1,6 @@
-"""Лестница этапов из 8 шагов (владелец 12.10.2026, «Загрузка цеха»): факты каждого этапа, старое слово
-«КБ на складе», пороги закрытия при ручном шаге вперёд, один набор КБ у плана и экрана проекта, миграция 0107."""
+"""Лестница этапов из 8 шагов (владелец 12.10.2026, «Загрузка цеха»): факты каждого этапа, старые слова
+(«КБ на складе», «Готово к отгрузке», «На отгрузке»), пороги закрытия при ручном шаге вперёд, один набор КБ
+у плана и экрана проекта, миграции 0107 и 0108."""
 
 from __future__ import annotations
 
@@ -49,16 +50,19 @@ LEGACY = "КБ на складе"
 
 def test_the_ladder_is_eight_steps_in_shop_order():
     assert KIT_STAGES == (
-        "Новый", "ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено",
+        "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Отгружено",
     )
 
 
 # ── Факты этапов ────────────────────────────────────────────────────────
 
 
-def _task(status=ProductionStatus.RUNNING, item="КБ1"):
-    return SimpleNamespace(id=uuid4(), status=status, project=PROJECT, item=item,
-                           final_operation=SimpleNamespace(id=FINAL))
+def _task(status=ProductionStatus.RUNNING, item="КБ1", planned=False, started=False):
+    """``planned`` — every operation has a window in the resource plan; ``started`` — someone took a share."""
+    share = SimpleNamespace(started_at=NOW if started else None)
+    operation = SimpleNamespace(planned_start=NOW if planned else None, shares=(share,))
+    return SimpleNamespace(id=uuid4(), status=status, project=PROJECT, item=item, handed_to="",
+                           operations=(operation,), final_operation=SimpleNamespace(id=FINAL))
 
 
 def _box(task, status=BoxStatus.CONFIRMED, operation=FINAL):
@@ -71,67 +75,86 @@ def _good(accepted="0"):
     return good.accept(Decimal(accepted), date(2026, 10, 12), "ГП.26.0000001") if Decimal(accepted) else good
 
 
-def _stage(tasks=(), boxes=(), inspected=(), goods=()) -> str:
+def _stage(tasks=(), boxes=(), inspected=(), goods=(), worked=()) -> str:
     facts, _marks = kit_stage_facts(
-        cards=(), tasks=tasks, fulfillment=(), goods=goods, marks={}, boxes=boxes, inspected=inspected,
+        cards=(), tasks=tasks, fulfillment=(), goods=goods, marks={}, boxes=boxes, inspected=inspected, worked=worked,
     )
     return project_stage(PROJECT, ("КБ1",), facts).status
 
 
-def test_a_running_task_is_at_work_and_a_finished_task_without_a_box_is_at_qc():
-    assert _stage((_task(),)) == "В работе"
+def test_a_launched_task_is_not_work_yet_a_placed_one_is_planned_a_worked_one_is_at_work():
+    assert _stage((_task(),)) == "Новый"  # запущено, но в ресурсном плане не стоит
+    assert _stage((_task(planned=True),)) == "Распланировано"
+    # Частично распланированное КБ остаётся ниже.
+    assert _stage((_task(planned=True), _task(planned=False))) == "Новый"
+    # Смена по заданию («след работы») или «взял» по доле — работа начата.
+    placed = _task(planned=True)
+    assert _stage((placed,), worked={placed.id}) == "В работе"
+    assert _stage((_task(planned=True, started=True),)) == "В работе"
+    assert _stage((_task(started=True),)) == "В работе"  # работа без плана — тоже работа
+    cancelled = _task(ProductionStatus.CANCELLED, planned=True, started=True)
+    assert _stage((cancelled,), worked={cancelled.id}) == "Новый"
+
+
+def test_a_finished_task_without_a_box_is_at_qc():
     assert _stage((_task(ProductionStatus.DONE),)) == "ОТК"
 
 
 def test_a_final_operation_box_in_the_qc_queue_or_inspected_is_at_qc():
-    task = _task()
+    task = _task(started=True)
     assert _stage((task,), (_box(task),)) == "ОТК"  # подтверждена мастером — в очереди ОТК
     inspected = _box(task, BoxStatus.CONSUMED)
     assert _stage((task,), (inspected,), {inspected.id}) == "ОТК"  # проверена ОТК
 
 
 def test_a_box_not_yet_at_qc_keeps_the_kb_at_work():
-    task = _task()
+    task = _task(started=True)
     assert _stage((task,), (_box(task, BoxStatus.OPERATOR_CLOSED),)) == "В работе"  # мастер ещё не подтвердил
     assert _stage((task,), (_box(task, operation=EARLIER),)) == "В работе"  # не последняя операция
     cancelled = _task(ProductionStatus.CANCELLED)
     assert _stage((cancelled,), (_box(cancelled),)) == "Новый"
 
 
-def test_accepted_taken_and_sent_goods_climb_the_ladder():
+def test_accepted_and_sent_goods_climb_the_ladder():
     done = (_task(ProductionStatus.DONE),)
     assert _stage(done, goods=(_good("4"),)) == "ОТК"  # принята не вся ГП
     accepted = _good("10")
-    assert _stage(done, goods=(accepted,)) == "Готово к отгрузке"
+    assert _stage(done, goods=(accepted,)) == "Принято складом"
     taken = accepted.take(Decimal("10"))
-    assert _stage(done, goods=(taken,)) == "На отгрузке"
-    assert _stage(done, goods=(taken.dispatch(Decimal("4")),)) == "На отгрузке"  # уехала часть
+    assert _stage(done, goods=(taken,)) == "Принято складом"  # отобрано в отправку - этапа «На отгрузке» больше нет
+    assert _stage(done, goods=(taken.dispatch(Decimal("4")),)) == "Принято складом"  # уехала часть
     assert _stage(done, goods=(taken.dispatch(Decimal("10")),)) == "Отгружено"
 
 
 # ── Старое слово «КБ на складе» ─────────────────────────────────────────
 
 
-def test_an_old_journal_word_reads_as_ready_to_ship():
+def test_an_old_journal_word_reads_as_accepted_by_the_warehouse():
     marks = summarize_kit_marks((
         PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value=LEGACY, from_value="В работе"),
     ))
     stage = project_stage(PROJECT, ("КБ1",), {}, marks=marks).kits[0]
-    assert (stage.status, stage.manual, stage.skipped) == ("Готово к отгрузке", True, ("ОТК",))
+    assert (stage.status, stage.manual, stage.skipped) == ("Принято складом", True, ("ОТК",))
     back = summarize_kit_marks((
         PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value="В работе", from_value=LEGACY),
     ))
     assert back[next(iter(back))].stage == "В работе"
+    for word in ("Готово к отгрузке", "На отгрузке"):
+        marks = summarize_kit_marks((
+            PlanEvent(PROJECT, NOW, "РП", PLAN_KINDS["stage"], item_index="КБ1", value=word, from_value="ОТК"),
+        ))
+        assert project_stage(PROJECT, ("КБ1",), {}, marks=marks).kits[0].status == "Принято складом"
 
 
 def test_a_new_write_of_the_old_word_is_refused_by_name():
-    hint = "Этапа «КБ на складе» больше нет — теперь «Готово к отгрузке»."
-    with pytest.raises(ProductionValidationError) as picked:
-        plan_stage_change((KitStageNow("КБ1", "Новый", False, "Новый"),), LEGACY)
-    assert str(picked.value) == hint
-    with pytest.raises(ProductionValidationError) as noted:
-        validate_plan_note({"project": PROJECT, "kind": "stage", "item_index": "КБ1", "value": LEGACY}, (PROJECT,))
-    assert str(noted.value) == hint
+    for word in (LEGACY, "Готово к отгрузке", "На отгрузке"):
+        hint = f"Этапа «{word}» больше нет — теперь «Принято складом»."
+        with pytest.raises(ProductionValidationError) as picked:
+            plan_stage_change((KitStageNow("КБ1", "Новый", False, "Новый"),), word)
+        assert str(picked.value) == hint
+        with pytest.raises(ProductionValidationError) as noted:
+            validate_plan_note({"project": PROJECT, "kind": "stage", "item_index": "КБ1", "value": word}, (PROJECT,))
+        assert str(noted.value) == hint
 
 
 # ── Пороги закрытия при шаге вперёд (stage_cascade) ─────────────────────
@@ -155,7 +178,14 @@ def test_kit_requests_close_from_work_and_idle_tasks_from_qc():
     ])
     assert _cascade("В работе") == (["kit_request"], [("task", "Этап ниже «ОТК» — задание остаётся.")])
     assert _cascade("ОТК") == (["kit_request", "task"], [])
-    assert _cascade("Готово к отгрузке") == (["kit_request", "task"], [])
+    assert _cascade("Принято складом") == (["kit_request", "task"], [])
+
+
+def test_a_manual_move_to_planned_closes_nothing():
+    assert _cascade("Распланировано") == ([], [
+        ("kit_request", "Этап ниже «В работе» — заявка остаётся."),
+        ("task", "Этап ниже «ОТК» — задание остаётся."),
+    ])
 
 
 # ── Один набор КБ у плана и экрана проекта (T5) ─────────────────────────
@@ -169,7 +199,7 @@ def test_a_techcard_kb_outside_the_kitset_gives_the_same_stage_on_the_plan_and_t
     outside = ProjectTechcard.create(
         project=PROJECT, item_index="КБ2", product_name="Корпус", source_calculation="", deadline=None, now=NOW,
     )
-    goods = (_good("10"),)  # КБ1 — «Готово к отгрузке»; КБ2 только в техкартах — «Новый»
+    goods = (_good("10"),)  # КБ1 — «Принято складом»; КБ2 только в техкартах — «Новый»
     snapshot = PlanProjectSnapshot(PROJECT, customer="ООО")
 
     screen, _blocker = flow.kitset_stages(
@@ -180,7 +210,7 @@ def test_a_techcard_kb_outside_the_kitset_gives_the_same_stage_on_the_plan_and_t
         projects=(snapshot,), events=(), today=NOW.date(), kitsets=(kitset,),
     )
 
-    assert [(kit.item_index, kit.status) for kit in screen.kits] == [("КБ1", "Готово к отгрузке"), ("КБ2", "Новый")]
+    assert [(kit.item_index, kit.status) for kit in screen.kits] == [("КБ1", "Принято складом"), ("КБ2", "Новый")]
     assert screen.status == row.stage.status == "Новый"
     assert [(kit.item_index, kit.status) for kit in row.stage.kits] == [(kit.item_index, kit.status) for kit in screen.kits]
 
@@ -260,15 +290,15 @@ def test_migration_keeps_old_rows_checks_the_new_ladder_and_keeps_the_journal_ap
     finally:
         engine.dispose()
     assert [(event.from_value, event.value, event.text) for event in events] == [
-        ("Новый", "Готово к отгрузке", "Новый → КБ на складе"),
-        ("Готово к отгрузке", "В работе", "КБ на складе → В работе"),
+        ("Новый", "Принято складом", "Новый → КБ на складе"),
+        ("Принято складом", "В работе", "КБ на складе → В работе"),
         ("В работе", "ОТК", "В работе → ОТК"),
     ]
 
     # Повторный upgrade ничего не делает.
     with sqlite3.connect(database) as connection:
         schema = _schema(connection)
-    command.upgrade(_config(database), "head")
+    command.upgrade(_config(database), "0107_stage_ladder")
     with sqlite3.connect(database) as connection:
         assert _schema(connection) == schema
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0107_stage_ladder"

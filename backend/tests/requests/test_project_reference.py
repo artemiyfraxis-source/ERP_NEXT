@@ -159,7 +159,7 @@ def test_plan_snapshot_registry_lists_open_projects_only():
 
     # «Статус проекта» из журнала ERP сильнее снимка: закрытый уходит из списка, возвращённый — снова в нём.
     with SqlAlchemyProductionUnitOfWork(sessions) as uow:
-        uow.plan_events.add(PlanEvent("591К.3", now, "РП", PLAN_KINDS["status"], value="Отказ"))
+        uow.plan_events.add(PlanEvent("591К.3", now, "РП", PLAN_KINDS["status"], value="Отменён"))
         uow.plan_events.add(PlanEvent("366К.2", now, "РП", PLAN_KINDS["status"], value="авто"))
         uow.commit()
     assert registry.open_projects() == ["366К.2"]

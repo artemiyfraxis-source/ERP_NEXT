@@ -296,7 +296,7 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
     row({ project: "702К.1", customer: "Бета", days_left: -2, deadline: "2026-09-20", stage: "В работе" }),
     row({ project: "703К.1", customer: "Гамма", days_left: 5, deadline: "2026-09-27", stage: "Новый", blocker: { type: "ХОЛД", text: "Ждём", since: "2026-09-22", who: "Мастер" } }),
     row({ project: "704К.1", customer: "Дельта", days_left: 1, deadline: "2026-09-23", stage: "В работе" }),
-    row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Отказ" }),
+    row({ project: "705К.1", customer: "Эпсилон", terminal: true, stage: "Отменён" }),
     row({ project: "706К.1", customer: "Зета", stage: "Отгружено" }),
   ] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input) === "/api/production/calendar"
@@ -327,13 +327,13 @@ it("groups the sheet by stage in the plan order, overdue first, closed last on d
   expect(screen.getByText("Под этот поиск проектов нет.")).toBeInTheDocument();
 });
 
-const STAGES = ["Новый", "ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено"];
+const STAGES = ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Отгружено"];
 const names = (groups: ReturnType<typeof groupSheetRows>) => groups.map((group) => [group.label, group.rows.map((item) => item.project)]);
 
 it("groupSheetRows: groups follow the stage list, empty ones are hidden, closed go last", () => {
   const rows = [
     row({ project: "A", stage: "Отгружено" }), row({ project: "B", stage: "Новый" }), row({ project: "C", stage: "ОТК" }),
-    row({ project: "D", stage: "Отказ", terminal: true }), row({ project: "E", stage: "В работе" }),
+    row({ project: "D", stage: "Отменён", terminal: true }), row({ project: "E", stage: "В работе" }),
   ];
   expect(names(groupSheetRows(rows, STAGES))).toEqual([["Новый", ["B"]], ["В работе", ["E"]], ["ОТК", ["C"]], ["Отгружено", ["A"]], ["Закрытые", ["D"]]]);
   // The order comes from the passed list, not from the code.
@@ -599,8 +599,8 @@ it("changes the stage, blocks and closes a project without a card from the statu
 
   // Закрытие проекта — запись «Статус проекта».
   box = await menu();
-  fireEvent.click(within(box).getByRole("menuitemradio", { name: "Отказ" }));
-  await waitFor(() => expect(payloads[1]).toMatchObject({ project: "709К.1", kind: "status", value: "Отказ" }));
+  fireEvent.click(within(box).getByRole("menuitemradio", { name: "Отменён" }));
+  await waitFor(() => expect(payloads[1]).toMatchObject({ project: "709К.1", kind: "status", value: "Отменён" }));
 
   // Этап — то же окно подтверждения с предпросмотром плана, запись «Этап КБ» на весь проект.
   box = await menu();

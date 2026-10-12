@@ -39,13 +39,13 @@ def _kit_facts(status: FulfillmentStatus) -> dict[str, set[str]]:
     return facts
 
 
-def test_issued_kit_means_work_started_picked_kit_does_not():
+def test_an_issued_kit_alone_is_no_longer_work_started():
+    """Владелец 12.10: «В работе» — кто-то начал работу; выданный монтажнику комплект сам по себе ею не считается."""
     key = kit_stage_key("33МФ.2", "КБ1")
-    for status in (FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE):
-        facts = _kit_facts(status)
-        assert key in facts["kit"] and key in facts["work"]
-        assert project_stage("33МФ.2", ("КБ1",), facts).status == "В работе"
-    for status in (FulfillmentStatus.COMPLETE, FulfillmentStatus.READY):
+    for status in (
+        FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE,
+        FulfillmentStatus.COMPLETE, FulfillmentStatus.READY,
+    ):
         facts = _kit_facts(status)
         assert key in facts["kit"] and key not in facts["work"]
         assert project_stage("33МФ.2", ("КБ1",), facts).status == "КБ набрана"
@@ -55,7 +55,7 @@ def test_issued_kit_does_not_hold_back_later_stages():
     key = kit_stage_key("33МФ.2", "КБ1")
     facts = _kit_facts(FulfillmentStatus.ISSUED)
     facts["stock"].add(key)
-    assert project_stage("33МФ.2", ("КБ1",), facts).status == "Готово к отгрузке"
+    assert project_stage("33МФ.2", ("КБ1",), facts).status == "Принято складом"
 
 
 def test_issued_techcard_keeps_the_stages_a_manual_pick_skipped():

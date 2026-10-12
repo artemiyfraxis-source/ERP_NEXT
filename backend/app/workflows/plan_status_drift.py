@@ -91,10 +91,11 @@ def load_and_compare(state, today: date) -> list[StatusDrift]:
     procurement = read("procurement_uow_factory", lambda uow: tuple(uow.procurement.list(limit=10_000)))
     boxes = read("production_uow_factory", lambda uow: tuple(uow.boxes.list(limit=100_000)))
     inspected = read("production_uow_factory", lambda uow: frozenset(uow.qc.inspected_box_ids()), frozenset())
+    worked = read("production_uow_factory", lambda uow: frozenset(uow.production.worked([task.id for task in tasks])), frozenset())
     rows = build_production_plan(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods, requests=requests,
         procurement=procurement, projects=projects, events=events, today=today, kitsets=kitsets,
-        boxes=boxes, inspected=inspected,
+        boxes=boxes, inspected=inspected, worked=worked,
     )
     return status_drift(rows, events)
 

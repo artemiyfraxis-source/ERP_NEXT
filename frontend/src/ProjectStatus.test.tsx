@@ -37,7 +37,7 @@ it("shows plain chips without the menu when editing is not allowed", () => {
 });
 
 it("offers the stages it is given, in that order, instead of its own list", () => {
-  const stages = ["Новый", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено"];
+  const stages = ["Новый", "ОТК", "Принято складом", "Отгружено"];
   render(<ProjectStatus project="709К.1" status="ОТК" blocker="" canEdit stages={stages} onChanged={vi.fn()} />);
   fireEvent.click(screen.getByRole("button", { name: /Статус проекта 709К.1/ }));
   const items = within(screen.getByRole("menu")).getAllByRole("menuitemradio").map((item) => item.textContent?.trim());

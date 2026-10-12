@@ -82,7 +82,7 @@ def test_project_stage_uses_farthest_fact_per_kit_and_slowest_kit_for_project():
         "stock": {first}, "shipped": set(),
     })
     assert stage.status == "КБ набрана"
-    assert [item.status for item in stage.kits] == ["Готово к отгрузке", "КБ набрана"]
+    assert [item.status for item in stage.kits] == ["Принято складом", "КБ набрана"]
     assert project_stage("708К.4", ("КБ1",), {}, "Отменён").status == "Отменён"
     assert KIT_STAGES[-1] == "Отгружено"
 
@@ -164,7 +164,7 @@ def test_stage_mark_without_kb_is_the_stage_of_a_project_without_kits():
 
 def test_plan_shows_registry_project_without_kits_by_its_journal_stage_and_blocker():
     events = (
-        # Старая запись журнала со словом «КБ на складе» читается как «Готово к отгрузке».
+        # Старая запись журнала со словом «КБ на складе» читается как «Принято складом».
         PlanEvent("70К.26.13", datetime(2026, 9, 28, 9), "план цеха", PLAN_KINDS["stage"], value="КБ на складе"),
         PlanEvent("70К.26.13", datetime(2026, 9, 28, 10), "план цеха", PLAN_KINDS["block"], "ХОЛД", "ждём оплату"),
     )
@@ -174,7 +174,7 @@ def test_plan_shows_registry_project_without_kits_by_its_journal_stage_and_block
         today=date(2026, 9, 28),
     )
 
-    assert [(row.project, row.stage.status, row.stage.manual) for row in rows] == [("70К.26.13", "Готово к отгрузке", True)]
+    assert [(row.project, row.stage.status, row.stage.manual) for row in rows] == [("70К.26.13", "Принято складом", True)]
     assert rows[0].journal.blocker and rows[0].journal.blocker.type == "ХОЛД"
 
 
@@ -283,6 +283,7 @@ def test_shipment_overrides_a_manual_stage_and_the_journal_closes_or_reopens_a_p
     closed = summarize_journal((
         PlanEvent("708К.4", datetime(2026, 9, 22, 9), "РП", PLAN_KINDS["status"], value="Слился"),
     ))["708К.4"]
-    assert project_terminal(None, closed) == "Слился"
+    # «Слился» — слово прежнего списка (до 12.10): читается как «Отменён».
+    assert project_terminal(None, closed) == "Отменён"
     with pytest.raises(ProductionValidationError, match="статус"):
         validate_plan_note({"project": "708К.4", "kind": "status", "value": "Готово"}, ("708К.4",))

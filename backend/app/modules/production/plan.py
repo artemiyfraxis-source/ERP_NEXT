@@ -24,25 +24,30 @@ PLAN_KINDS = {
     "mark": "Отметка плана",
 }
 PLAN_BLOCKERS = ("ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА")
-# Одна лестница этапов на всё ERP (владелец 12.10.2026, «Загрузка цеха»: «сам придумай норм порядок»):
-# ОТК — производство закончено (задание «Выполнено» или коробка последней операции в очереди ОТК / принята ОТК), ГП ещё
-# не принята на склад; «Готово к отгрузке» — ГП принята (принято ≥ нужно), бывшее «КБ на складе»; «На отгрузке» —
-# отобрано в отправку (отобрано ≥ нужно), ещё не уехало; «Отгружено» — уехало (отправлено ≥ нужно).
+# Одна лестница этапов на всё ERP (владелец 12.10.2026): «Распланировано» — задания КБ стоят в ресурсном плане
+# (у всех открытых заданий КБ все операции с плановым окном); «В работе» — кто-то начал работу (смена по заданию КБ
+# или «взял» по доле операции); ОТК — производство закончено (задание «Выполнено» или коробка последней операции
+# в очереди ОТК / принята ОТК), ГП ещё не принята на склад; «Принято складом» — ГП принята (принято ≥ нужно);
+# «Отгружено» — уехало (отправлено ≥ нужно).
 KIT_STAGES = (
-    "Новый", "ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено",
+    "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Отгружено",
 )
 # Старые записи журнала «Этап КБ» неизменяемы (0101): их слово читается как этап новой лестницы; новые записи
-# со старым словом не принимаются (422 в приложении, CHECK 0107 в базе).
-LEGACY_STAGE_ALIASES = {"КБ на складе": "Готово к отгрузке"}
+# со старым словом не принимаются (422 в приложении, CHECK 0108 в базе).
+LEGACY_STAGE_ALIASES = {
+    "КБ на складе": "Принято складом", "Готово к отгрузке": "Принято складом", "На отгрузке": "Принято складом",
+}
 TC_REVIEW_VALUES = ("не проверена", "проверена", "с погрешностями")
 PLAN_STAGE_AUTO = "авто"
 # ERP_PROJ_TERMINALS_ (Schema.gs): решение человека перекрывает вычисленный этап. В SUPPLYMAP — СТАТУС листа
 # «Проекты»; в ERP ставится записью журнала «Статус проекта» (value «авто» — вернуть в работу), она сильнее снимка.
-PROJECT_TERMINALS = ("Отказ", "Слился", "Отменён")
+# Владелец 12.10: закрыть проект можно только «Отменён»; «Отказ» и «Слился» в старых записях читаются как «Отменён».
+PROJECT_TERMINALS = ("Отменён",)
+LEGACY_TERMINAL_ALIASES = {"Отказ": "Отменён", "Слился": "Отменён"}
 # Лист цеха «ЗАГРУЗ» (владелец 04.10: «тут вот такое представление я хочу»): статусы ячейки «Статус», в одной
 # ячейке их может быть несколько через запятую. Порядок — как в выпадающем списке листа.
 SHOP_STATUSES = (
-    "ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ",
+    "ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "РАСПЛАН", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ",
     "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН",
 )
 # ProdPlan.gs planShopStatus_: статусы в листе набраны руками — опечатки к словарю.
@@ -61,9 +66,9 @@ PLAN_MARK_FLAG_FIELDS = ("in_plan", "kit_checked", "kit_present", "zkp", "tc_rea
 STATUS_MARK_REFUSAL = "Статус в загрузке цеха берётся из этапа проекта — меняйте этап"
 PLAN_DAY_FIELD_PREFIX = "day:"
 PLAN_DAY_NOTE_MAX = 16
-# Факт, дающий этап лестницы (тот же порядок, что KIT_STAGES): qc — производство закончено, stock — ГП принята,
-# taken — отобрано в отправку, shipped — уехало.
-_KIT_STAGE_FACTS = ("", "tc", "kit", "work", "qc", "stock", "taken", "shipped")
+# Факт, дающий этап лестницы (тот же порядок, что KIT_STAGES): planned — задания в ресурсном плане, work — работа
+# начата, qc — производство закончено, stock — ГП принята, shipped — уехало.
+_KIT_STAGE_FACTS = ("", "tc", "kit", "planned", "work", "qc", "stock", "shipped")
 # № проекта сравнивается по `app.shared.project_number` (normalize_project_number / project_from_purpose выше).
 MANUAL_TECHCARD_PROJECTS = frozenset(("714К.1", "35К.М.34"))
 
@@ -72,6 +77,12 @@ def stage_alias(value: object) -> str:
     """A stored stage word as the current ladder reads it: an old word (from an immutable journal row) → its new name."""
     text = str(value or "")
     return LEGACY_STAGE_ALIASES.get(text, text)
+
+
+def terminal_alias(value: object) -> str:
+    """A stored closed-project word as the current list reads it («Отказ» / «Слился» → «Отменён»)."""
+    text = str(value or "")
+    return LEGACY_TERMINAL_ALIASES.get(text, text)
 
 
 def legacy_stage_refusal(value: object) -> str:
@@ -522,7 +533,7 @@ def summarize_journal(events: Iterable[PlanEvent]) -> dict[str, ProjectJournal]:
         elif event.kind == PLAN_KINDS["deadline"]:
             row["deadline"] = event.deadline
         elif event.kind == PLAN_KINDS["status"]:
-            row["status"] = event.value if event.value in PROJECT_TERMINALS else ""
+            row["status"] = terminal_alias(event.value) if terminal_alias(event.value) in PROJECT_TERMINALS else ""
         if event.text and event.kind in {
             PLAN_KINDS["note"], PLAN_KINDS["block"], PLAN_KINDS["unblock"],
         }:
@@ -537,7 +548,7 @@ def project_terminal(snapshot: PlanProjectSnapshot | None, journal: ProjectJourn
     """Терминальный статус проекта (Отказ/Слился/Отменён) или "": запись журнала сильнее снимка реестра."""
     if journal is not None and journal.status is not None:
         return journal.status
-    return snapshot.status if snapshot is not None and snapshot.terminal and snapshot.status else ""
+    return terminal_alias(snapshot.status) if snapshot is not None and snapshot.terminal and snapshot.status else ""
 
 
 def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
