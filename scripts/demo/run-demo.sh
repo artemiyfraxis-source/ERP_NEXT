@@ -15,7 +15,7 @@ rm -f demo.db
 export ERP_DATABASE_URL="sqlite+pysqlite:///demo.db" ERP_COOKIE_SECURE=0 DEMO_BASE="http://127.0.0.1:$PORT"
 "$PY" -m alembic upgrade head
 printf 'Preview-2026!\nPreview-2026!\n' | "$PY" -m app.identity_admin create-user --login preview \
-  --email preview@example.com --name 'Артемий' --department 'Руководство' --role admin
+  --email preview@example.com --name 'Артемий' --department 'Руководящий состав' --role admin
 "$PY" -m app.modules.references.load_mirror  # справочники из снимка backend/data/reference-mirror
 "$PY" -m app.modules.techcards.seed_library
 "$PY" -m app.modules.references.erp_corrections

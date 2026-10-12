@@ -163,7 +163,7 @@ def _heads_for(departments: list[str], heads: dict[str, UUID]) -> dict[str, UUID
 
 
 def staff_directory(uow: UnitOfWork) -> StaffDirectory:
-    """portalStaffGet: every employee by name + the department list (saved ∪ in use, staffDepts_) + department heads."""
+    """portalStaffGet: every employee by name + the department list (saved in its order, then the ones in use only) + department heads."""
     with uow:
         users = uow.identity.all_users()
         departments = department_list(uow.identity.saved_departments(), [user.department for user in users])
@@ -461,8 +461,9 @@ def ensure_admin_remains(
 
 
 def save_departments(values: list[str], actor: Actor, now: datetime, uow: UnitOfWork) -> list[str]:
-    """portalStaffSave `depts`: what the admin typed ∪ the departments people have; role-like values and
-    duplicates are dropped. A department someone still has cannot leave the list — rename it instead."""
+    """portalStaffSave `depts`: what the admin typed, in the typed order, ∪ the departments people have (appended at
+    the end); role-like values and duplicates are dropped. A department someone still has cannot leave the list —
+    rename it instead."""
     if len(values) > DEPARTMENTS_LIMIT:
         raise IdentityValidationError(f"Отделов больше {DEPARTMENTS_LIMIT}.")
     typed = [normalize_department(value) for value in values]
