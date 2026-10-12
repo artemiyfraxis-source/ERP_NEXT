@@ -29,6 +29,9 @@
 .pin-diagram .pin-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; align-items: start; }
 .pin-diagram .pin-sides.is-one { grid-template-columns: minmax(0, 1fr); }
 .pin-diagram .pin-side { display: grid; gap: 12px; justify-items: center; min-width: 0; }
+.pin-diagram .pin-side[data-side="A"] { justify-items: end; }
+.pin-diagram .pin-side[data-side="B"] { justify-items: start; }
+.pin-diagram .pin-sides.is-one .pin-side { justify-items: start; }
 .pin-diagram .pin-end { display: grid; gap: 4px; justify-items: center; max-width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px 8px; background: var(--card); }
 .pin-diagram .pin-end.is-target { border-color: var(--primary); }
 .pin-diagram .pin-end-head { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
@@ -49,9 +52,9 @@
 .pin-diagram .pin-cell.is-dup .pin-hit { stroke: var(--tone-danger); stroke-width: 3; }
 .pin-diagram .pin-cell.is-held .pin-hit { stroke: var(--primary); stroke-width: 3; stroke-dasharray: 4 2; }
 .pin-diagram.has-hand .pin-end.is-target .pin-cell:not(.is-used) .pin-hit { stroke: var(--primary); stroke-dasharray: 3 2; }
-.pin-diagram .pin-badge circle { fill: var(--card); stroke: var(--foreground); stroke-width: 1; }
-.pin-diagram .pin-badge text { fill: var(--foreground); font-size: 9.5px; font-weight: 700; }
-.pin-diagram .pin-cell.is-dup .pin-badge circle { fill: var(--sheet-invalid-bg); stroke: var(--tone-danger); }
+.pin-diagram .pin-badge circle { fill: var(--foreground); stroke: var(--card); stroke-width: 1.5; }
+.pin-diagram .pin-badge text { fill: var(--card); font-size: 9.5px; font-weight: 700; }
+.pin-diagram .pin-cell.is-dup .pin-badge circle { fill: var(--tone-danger); }
 
 /* Разъёма нет в базе: пронумерованные квадраты по порядку. */
 .pin-diagram .pin-boxes { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; max-width: 360px; }
@@ -144,10 +147,11 @@
 .tcgen .pin-color-dot { position: absolute; left: 4px; top: 50%; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; transform: translateY(-50%); cursor: pointer; }
 .tcgen .pin-color-dot:hover .pin-swatch { box-shadow: 0 0 0 2px var(--primary); }
 .tcgen .pin-color-dot:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.pin-color-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 6px; width: 300px; max-width: 80vw; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); font-size: 12.5px; }
+.pin-color-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 6px; width: 340px; max-width: 80vw; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); font-size: 12.5px; }
 .pin-color-pop .pin-color-row { display: grid; gap: 4px; }
 .pin-color-pop .swatch { width: 24px; height: 24px; }
-.pin-color-pop .pin-color-two { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.pin-color-pop .pin-color-two { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.pin-color-pop .pin-color-two input { width: auto; margin: 0; }
 .pin-color-pop .pin-color-foot { display: flex; align-items: center; gap: 12px; }
 .pin-color-pop .pin-color-foot .muted { margin-right: auto; }
 @media (pointer: coarse) { .pin-color-pop .swatch, .tcgen .pin-color-dot { width: 40px; height: 40px; } }
