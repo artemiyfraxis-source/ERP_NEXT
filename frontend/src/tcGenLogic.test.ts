@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyGrapherGroups, applyOpOrder, grapherLengthText, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -398,4 +398,8 @@ it("finds a terminal by its BAG article too, spelled any way (protocol v5.2, own
   expect(gen.findTerRecord_("5556 tl")?.id).toBe("t2"); // a row stored before terArticleBag: the sheet column
   expect(legacy.articleBag).toBe("5556-TL"); // the stored spelling is kept
   expect(gen.findTerRecord_("39000040")).toBeNull();
+});
+
+it("зачистка под лужение по умолчанию — 5 мм (владелец 12.10.2026)", () => {
+  expect(emptyState().tin.stripLen).toBe("5");
 });
