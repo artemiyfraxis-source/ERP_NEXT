@@ -225,6 +225,20 @@ class RfqSupplierRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+
+class RfqSupplierLineRow(Base):
+    """A line a supplier of a request is asked for (migration 0107). No rows for a request supplier = every line."""
+
+    __tablename__ = "purchasing_rfq_supplier_lines"
+    __table_args__ = (Index("ix_purchasing_rfq_supplier_lines_line", "rfq_line_id"),)
+
+    rfq_supplier_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("purchasing_rfq_suppliers.id", ondelete="CASCADE"), primary_key=True,
+    )
+    rfq_line_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("purchasing_rfq_lines.id", ondelete="CASCADE"), primary_key=True,
+    )
+
 QUOTE_SOURCES = ("manual", "paste", "file")
 
 
