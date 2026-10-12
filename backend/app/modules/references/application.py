@@ -18,7 +18,11 @@ from .cable_structure import (
     validate_aliases, validate_gauges, vocabulary_cells, vocabulary_changes, written_back_fields,
 )
 from .cables import DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, diameter_index
-from .domain import EDITABLE_TABS, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import EDITABLE_TABS, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
+from .equipment import (
+    BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
+    prepare_equipment,
+)
 from .technology import TECH_SNAPSHOT_SCHEMA_VERSION, schema_display_text, schema_keys, sync_schema_fields
 
 
@@ -32,6 +36,7 @@ class TechOperationRepository(Protocol):
     def counts(self) -> dict[TechOperationTab, int]: ...
     def get(self, record_id: UUID) -> TechOperationRecord | None: ...
     def save(self, record: TechOperationRecord) -> None: ...
+    def delete(self, record_id: UUID) -> None: ...
     def replace(self, records: tuple[TechOperationRecord, ...], *, schema_version: int, source_updated_at: datetime | None, imported_at: datetime, keep_tabs: tuple[TechOperationTab, ...] = (), preserve_erp_edits: bool = False) -> dict[str, int]: ...
     def metadata(self) -> dict | None: ...
 
@@ -204,10 +209,6 @@ class CreateRecordCommand:
     now: datetime
 
 
-class StaleRecordError(Exception):
-    pass
-
-
 def _search_text(record: TechOperationRecord) -> str:
     return " ".join(f"{record.display_text} {' '.join(record.fields.values())}".casefold().split())
 
@@ -225,7 +226,8 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
         display = record.display_text
         refused: list[str] = []
         for edit in command.edits:
-            if edit.field not in record.fields:
+            known = edit.field in record.fields or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
+            if not known:
                 refused.append(f"{edit.field}: поля нет в записи")
                 continue
             try:
@@ -233,14 +235,20 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
             except ReferenceValidationError as error:
                 refused.append(f"{edit.field}: {error}")
                 continue
-            if fields[edit.field] != str(edit.old or "").strip():
+            if fields.get(edit.field, "") != str(edit.old or "").strip():
                 refused.append(f"{edit.field}: запись уже поменяли — откройте её заново")
                 continue
-            if display == fields[edit.field] and value:
+            if display == fields.get(edit.field) and value:
                 display = value
             fields[edit.field] = value
         if refused:
             raise StaleRecordError("Не записано ничего — отклонено полей: " + str(len(refused)) + "; " + "; ".join(refused))
+        if record.tab == TechOperationTab.EQUIPMENT:
+            others = [item for item in _equipment_rows(uow)]
+            before_base = fields_base(record.fields)
+            fields = prepare_equipment(fields, others, self_id=record.id, creating=False, previous=record.fields)
+            if before_base == record.fields.get(BASE_KEY, "") and fields_base(fields) != fields.get(BASE_KEY):
+                fields[BASE_KEY] = fields_base(fields)
         # A sheet column edit also moves the schema value the generator reads (Название → opName).
         edited = {edit.field for edit in command.edits}
         synced = sync_schema_fields(record.tab.value, fields)
@@ -260,23 +268,57 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
     return updated
 
 
+def _equipment_rows(uow: UnitOfWork) -> list[tuple[object, dict[str, str]]]:
+    return [(item.id, item.fields) for item in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10_000)]
+
+
 def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
     if command.tab not in EDITABLE_TABS:
         raise ReferenceValidationError("База только для просмотра")
     fields = {str(key).strip(): _clean_cell(value) for key, value in command.fields.items() if str(key).strip()}
-    filled = [value for value in fields.values() if value]
-    if not filled:
-        raise ReferenceValidationError("Заполни хотя бы одно поле")
-    fields = sync_schema_fields(command.tab.value, fields)
-    display = schema_display_text(command.tab.value, fields) or filled[0]
-    record = TechOperationRecord.create(
-        tab=command.tab, display_text=display, search_text="", source_sheet="",
-        sort_key=display, fields=fields, edited_in_erp=True,
-    )
     with uow:
+        if command.tab == TechOperationTab.EQUIPMENT:
+            # Number, row and code are checked and given under this same transaction as the save.
+            fields = prepare_equipment(fields, _equipment_rows(uow), creating=True)
+        filled = [value for value in fields.values() if value]
+        if not filled:
+            raise ReferenceValidationError("Заполни хотя бы одно поле")
+        fields = sync_schema_fields(command.tab.value, fields)
+        display = schema_display_text(command.tab.value, fields) or filled[0]
+        record = TechOperationRecord.create(
+            tab=command.tab, display_text=display, search_text="", source_sheet="",
+            sort_key=display, fields=fields, edited_in_erp=True,
+        )
         uow.tech_operations.save(record)
         _audit("references.tech_record_created", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
+        }, uow)
+        uow.commit()
+    return record
+
+
+def duplicate_equipment(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> TechOperationRecord:
+    """«Ещё такой же»: the unit's fields copied, the next instance number («ОБ.070.8» → «ОБ.070.9»), a new row number.
+    The source and every other record keep their numbers; the tool code stays with the original."""
+    with uow:
+        source = uow.tech_operations.get(record_id)
+        if source is None:
+            raise LookupError("Запись справочника не найдена")
+        if source.tab != TechOperationTab.EQUIPMENT:
+            raise ReferenceValidationError("Копировать можно только оборудование")
+        rows = _equipment_rows(uow)
+        fields = {key: value for key, value in source.fields.items() if key not in (CODE_KEY, ROW_KEY)}
+        fields[INV_KEY] = next_instance_inventory(field(source.fields, INV_KEY), [item[1] for item in rows])
+        fields = prepare_equipment(fields, rows, creating=True)
+        fields = sync_schema_fields(source.tab.value, fields)
+        display = schema_display_text(source.tab.value, fields) or source.display_text
+        record = TechOperationRecord.create(
+            tab=source.tab, display_text=display, search_text="", source_sheet="",
+            sort_key=display, fields=fields, edited_in_erp=True,
+        )
+        uow.tech_operations.save(record)
+        _audit("references.tech_record_created", actor, now, {
+            "record_id": str(record.id), "tab": record.tab.value, "copy_of": str(source.id),
         }, uow)
         uow.commit()
     return record

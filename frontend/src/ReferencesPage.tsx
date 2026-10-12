@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { hasAccess } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
+import { EquipmentForm } from "./EquipmentForm";
+import { applicatorTokens } from "./equipmentModel";
 import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
@@ -174,6 +176,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [tech, setTech] = useState<TechOperationResult>({ metadata: null, records: [] });
   const [cableDia, setCableDia] = useState<CableDia>({});
   const [obOps, setObOps] = useState<TechOperationRecord[]>([]);
+  // БД.ТЕР «Аппликатор»: code → the БД.ОБ record that owns it (a link to its card); the card to open after the jump.
+  const [toolOwners, setToolOwners] = useState<Record<string, string>>({});
+  const [focusTool, setFocusTool] = useState("");
   const [bases, setBases] = useState<BasesResult>({ bases: [] });
   const [cables, setCables] = useState<CablesResult | null>(null);
   const [awgRecords, setAwgRecords] = useState<TechOperationRecord[] | null>(null);
@@ -205,6 +210,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     setError("");
     try {
       setTech(await referencesApi.techOperations(next, "", 5000));
+      if (next === "ter") {
+        void referencesApi.crimpCodes().then((result) => setToolOwners(result.owners)).catch(() => setToolOwners({}));
+      }
       if (next === "ob") {
         void referencesApi.techOperations("op", "", 5000).then((ops) => setObOps(ops.records)).catch(() => setObOps([]));
       }
@@ -332,6 +340,20 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
             ? <span className="muted" title={`У кабеля «${record.fields["Провод"] ?? record.fields.coaxWire ?? ""}» нет D1–D3 — задайте их во вкладке «Коаксиальные кабели»`}>нет у кабеля</span>
             : <span className="muted" title="У разъёма не указан кабель («Провод»)">—</span>,
       };
+      if (techTab === "ter" && headerKey(fieldTitle(field)) === "аппликатор") return {
+        key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
+        // A tool code with a БД.ОБ record is a link to its card («что обжимает» lives there).
+        render: (record) => {
+          const text = record.fields[field] ?? "";
+          const owned = applicatorTokens(text).filter((token) => toolOwners[token.code]);
+          if (!owned.length) return text;
+          return <span className="db-clip" title={text} onClick={(event) => event.stopPropagation()}>{text.split(/([/,;\s]+)/).map((part, index) => {
+            const owner = toolOwners[part.toUpperCase()];
+            return owner ? <button key={index} type="button" className="eq-link tnum" title={`Открыть инструмент ${part.toUpperCase()}`}
+              onClick={() => { setFocusTool(owner); setTab("ob"); }}>{part}</button> : part;
+          })}</span>;
+        },
+      };
       const shown = (record: TechOperationRecord) => valueLabel(field, record.fields[field] ?? "");
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
       const long = values.some((value) => value.length > 40);
@@ -348,6 +370,11 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   // БД.ТЕР: обжим одной колонкой «по сечениям» и «От AWG / До AWG» одной колонкой «AWG» (владелец 12.10); исходные
   // колонки остаются в «Колонках» и в выгрузке, но скрыты.
   const techColumns = techTab === "ter" ? mergeTerminalColumns(sheetColumns, fieldColumns) : sheetColumns;
+  function startCreate(preset: Record<string, string> = {}) {
+    const blank = Object.fromEntries(fieldColumns.map((key) => [key, ""]));
+    setEditing({ id: null, values: techTab === "ob" ? { ...blank, Тип: "Оборудование", ...preset } : blank });
+    window.scrollTo?.({ top: 0, behavior: "smooth" });
+  }
   function startEdit(record: TechOperationRecord) {
     setEditing({ id: record.id, values: editValues(record) });
     window.scrollTo?.({ top: 0, behavior: "smooth" });
@@ -393,7 +420,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     {techTab && <>
       {canEdit && editing && <div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${editingRecord?.display_text ?? ""}`}</h2></div>
-        <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
+        {techTab === "ob"
+          ? <EquipmentForm values={editing.values} isNew={editing.id === null} records={tech.records} onChange={(values) => setEditing({ ...editing, values })} />
+          : <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />}
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
       </div>}
       {techTab === "kab_awg" && <WireLookup records={tech.records} />}
@@ -402,7 +431,12 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         operations={obOps}
         canEdit={canEdit}
         onEdit={startEdit}
-        toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
+        onCreate={startCreate}
+        onChanged={() => void loadTech("ob")}
+        onNotice={(message) => { setError(""); setNotice(message); }}
+        onError={(message) => { setNotice(""); setError(message); }}
+        focusId={focusTool}
+        toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
       /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <DataTable
         key={techTab}
         label={current?.label ?? "База"}

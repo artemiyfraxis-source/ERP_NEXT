@@ -3,6 +3,11 @@
   --pin-free-bg: #eef1f3;
   --pin-free-fg: #7d8794;
   --pin-ok-bg: #e3f5e8;
+  /* Кончики свободных концов: лужёный (олово), зачищенный (медь), обрез. */
+  --pin-tin: #c3c9cf;
+  --pin-tin-edge: #7a838c;
+  --pin-copper: #c87a3e;
+  --pin-outline: #3b4652;
 }
 
 .pin-chip { display: inline-flex; align-items: center; border: 1px solid var(--warn-border); border-radius: 999px; padding: 0 8px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; font-weight: 600; line-height: 20px; white-space: nowrap; }
@@ -37,6 +42,54 @@
 .pin-diagram .pin-wire { cursor: help; }
 .pin-diagram .pin-wire:hover .pin-line { stroke-width: 4.5; }
 .pin-diagram .pin-stub-end { fill: var(--card); stroke: var(--muted-foreground); stroke-width: 1.5; }
+
+/* Контакты — кнопки: провод из руки встаёт щелчком, Enter или пробелом. */
+.pin-diagram .pin-cell { cursor: pointer; outline: none; touch-action: none; }
+.pin-diagram .pin-cell:hover rect { stroke: var(--primary); stroke-width: 2; }
+.pin-diagram .pin-cell:focus-visible rect { stroke: var(--primary); stroke-width: 3; }
+.pin-diagram .pin-cell.is-used:not(.is-light) rect { stroke: var(--foreground); }
+.pin-diagram .pin-cell.is-light rect { stroke: var(--pin-outline); }
+.pin-diagram .pin-cell.is-held rect { stroke: var(--primary); stroke-width: 3; stroke-dasharray: 4 2; }
+.pin-diagram.has-hand .pin-block.is-target .pin-cell:not(.is-used) rect { stroke: var(--primary); stroke-dasharray: 3 2; }
+.pin-diagram .pin-free-head { fill: var(--muted-foreground); font-weight: 500; }
+.pin-diagram .pin-free-name { fill: var(--foreground); font-size: 11.5px; }
+.pin-diagram .pin-free-label { font-size: 12px; font-weight: 500; }
+.pin-diagram .pin-free-label.is-tin { fill: var(--foreground); }
+.pin-diagram .pin-free-label.is-strip { fill: var(--pin-copper); }
+.pin-diagram .pin-free-label.is-none { fill: var(--muted-foreground); }
+.pin-diagram .pin-tip-tin { fill: var(--pin-tin); stroke: var(--pin-tin-edge); stroke-width: 1; }
+.pin-diagram .pin-tip-cu { fill: var(--pin-copper); stroke: none; }
+.pin-diagram .pin-tip-cut { stroke: var(--foreground); stroke-width: 1.5; }
+
+/* Палитра проводов и «рука» над схемой. */
+.tcgen .pin-board { display: grid; gap: 8px; }
+.tcgen .pin-board.is-dragging, .tcgen .pin-board.is-dragging * { cursor: grabbing; }
+.tcgen .pin-tools { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.tcgen .pin-tools > button { margin-left: auto; }
+.tcgen .pin-palette { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
+.tcgen .pin-chip-wire { display: inline-grid; grid-template-columns: auto auto minmax(0, max-content); grid-template-rows: auto auto; column-gap: 6px; align-items: center;
+  max-width: 320px; min-height: 32px; border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; background: var(--card); color: var(--foreground);
+  font: inherit; font-size: 12.5px; text-align: left; cursor: grab; touch-action: none; }
+.tcgen .pin-chip-wire:hover { border-color: var(--primary); }
+.tcgen .pin-chip-wire:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.tcgen .pin-chip-wire.is-held { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--card)); box-shadow: 0 0 0 1px var(--primary); }
+.tcgen .pin-num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tcgen .pin-chip-wire .pin-swatch, .tcgen .pin-chip-wire .pin-num { grid-row: span 2; }
+.tcgen .pin-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .pin-chip-wire small { color: var(--muted-foreground); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tcgen .pin-chip-wire.is-open small { color: var(--tone-warn); }
+.pin-swatch { display: inline-block; flex: none; width: 14px; height: 14px; border: 1px solid var(--pin-outline); border-radius: 50%; }
+.pin-swatch.is-unknown { background: repeating-linear-gradient(45deg, var(--pin-free-bg) 0 3px, var(--card) 3px 6px); border-style: dashed; }
+.tcgen .pin-hand { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; border: 1px solid var(--primary); border-radius: 8px; padding: 4px 12px;
+  background: color-mix(in srgb, var(--primary) 6%, var(--card)); font-size: 12.5px; }
+.tcgen .pin-hand-what { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.tcgen .pin-hand-color { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
+.tcgen .pin-hand-color { margin-left: auto; }
+.tcgen .pin-hand-color select { min-width: 160px; height: 28px; }
+.tcgen .pin-hint, .tcgen .pin-note { display: block; font-size: 12px; }
+.tcgen .pin-board-notes { display: grid; gap: 4px; }
+.tcgen .pin-board-notes:empty { display: none; }
+@media (pointer: coarse) { .tcgen .pin-chip-wire, .tcgen .pin-tools > button, .tcgen .pin-hand button, .tcgen .pin-hand select { min-height: 40px; } }
 
 .pin-ask { width: min(620px, 100%); }
 .pin-ask > p { margin: 0; font-size: 13px; }

@@ -286,7 +286,8 @@ it("shows БД.ОБ as cards by type with every column and the БД.ОП operati
   fireEvent.click(screen.getByText("ОБ.015"));
   expect(screen.getByText("900 000,00")).toBeInTheDocument();
   expect(screen.getByText("CUT_WIRE_auto")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Править" })).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: /^Править/ }).length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Ещё такой же" })).toBeInTheDocument();
 });
 
 it("matches a wire article to AWG, ГОСТ section and Ø by cable type, as the generator does", async () => {
@@ -361,6 +362,66 @@ it("БД-5: equipment shows «ЦАР» whatever case the sheet wrote and lists u
   expect(within(row).getByText("ЦАР")).toBeInTheDocument();
   expect(screen.queryByText("Цар")).toBeNull();
   fireEvent.click(row);
-  expect(screen.getByText("Строка БД.ОБ")).toBeInTheDocument();
-  expect(screen.getByText("ЦАР", { selector: "dd" })).toBeInTheDocument();
+  expect(screen.getByText("Экземпляры")).toBeInTheDocument();
+  expect(within(screen.getByText("Экземпляры").closest(".tr-block") as HTMLElement).getByText("ЦАР")).toBeInTheDocument();
+});
+
+const unitFields = (inv: string, extra: Record<string, string> = {}) => ({
+  "Тип": "Оборудование", "Инв. номер": inv, "Наменование": "Станция паяльная", "Артикул": "8620DX-Pro", "Производитель": "SUGON",
+  "Расположение": "ЦАР", "Для базы": "8620DX-Pro/Станция паяльная", ...extra,
+});
+
+it("collapses the units of one model into a row with a count and an inventory range; search finds a unit", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      ...[1, 2, 3].map((k) => ({ id: `u${k}`, tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields(`ОБ.070.${k}`) })),
+      { id: "s1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Артикул": "APS3010H", "Для базы": "APS3010H/Блок питания" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  expect(await screen.findByText("ОБ.070.1–3")).toBeInTheDocument();
+  expect(screen.getByText("3 шт.")).toBeInTheDocument();
+  expect(screen.getByText("ОБ.044")).toBeInTheDocument();
+  expect(screen.queryByText("ОБ.070.2")).toBeNull();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОБ.070.2" } });
+  expect(screen.getByText("ОБ.070.1–3")).toBeInTheDocument();
+  expect(screen.queryByText("ОБ.044")).toBeNull();
+  fireEvent.click(screen.getByText("ОБ.070.1–3"));
+  expect(screen.getByText("Экземпляры")).toBeInTheDocument();
+  expect(screen.getByText("ОБ.070.2")).toBeInTheDocument();
+});
+
+it("the new record form asks for the essentials first, proposes the inventory number and keeps the rest folded", async () => {
+  const posted: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.startsWith("/api/references/tech-operations/equipment-number")) return json({ inventory: "ОБ.105", row: "190" });
+    if (path.includes("tab=ob")) return json({ metadata: null, columns: ["№", "Тип", "Инв. номер", "Артикул", "Наменование", "Производитель", "Расположение", "Стоимость", "Для базы"], records: [
+      { id: "s1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: unitFields("ОБ.104") },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    if (path === "/api/references/tech-operations" && init?.method === "POST") {
+      posted.push(JSON.parse(String(init.body)));
+      return json({ id: "n1", tab: "ob", display_text: "x", source_sheet: "", fields: {} });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Новая запись" }));
+  await waitFor(() => expect(screen.getByLabelText("Инв. номер")).toHaveValue("ОБ.105"));
+  expect(screen.getByLabelText("Тип")).toHaveValue("Оборудование");
+  expect(screen.queryByLabelText("Поле Стоимость")).not.toBeVisible();
+  expect(screen.queryByLabelText("Поле №")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Новый станок" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(posted).toHaveLength(1));
+  expect((posted[0].fields as Record<string, string>)["Наменование"]).toBe("Новый станок");
+  expect((posted[0].fields as Record<string, string>)["Инв. номер"]).toBe("ОБ.105");
 });

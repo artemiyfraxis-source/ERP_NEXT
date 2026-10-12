@@ -1,112 +1,187 @@
-import { useMemo, useState, type ReactNode } from "react";
-import type { TechOperationRecord } from "./api";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { failureText, referencesApi, type CrimpCodes, type TechOperationRecord } from "./api";
+import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
+import {
+  CODE_KEY, CRIMP_TOOL_TYPE, MATRIX_TYPE, OP_LINK_COLUMNS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
+  inventoryRange, invOf, nameOf, norm, operationField, operationsOfModel, pick, placeOf, typeOf,
+  type EquipmentModel,
+} from "./equipmentModel";
 import { headerLabel, valueLabel } from "./referenceLabels";
 
-/** БД.ОБ as a dense table (audit БД-2: 192 cards were 6 500 px of scrolling), a row opens the card: by «Тип» chips,
-    every sheet column in the open card, plus the БД.ОП operations that name the unit as «Машина» / «Инструмент» /
-    «Апликаторы / модули» by its «Для базы» value (the same key SUPPLYMAP's БД.ОП dropdowns use). */
+/** БД.ОБ: the list is one row per model (owner 12.10.2026: «дубли одного и того же свернуть»), a row opens the machine
+    card — instances with «Ещё такой же», the БД.ОП operations tied to the model (link / unlink), what a crimp tool or a
+    matrix crimps, the economics. The raw 21-column row stays under «Прочее». */
 
 // DB_SCHEMA keys the importer stores next to the sheet's own columns — shown once, by the sheet header.
 const SCHEMA_KEYS = new Set(["baseValue", "obType"]);
-const OP_LINK_COLUMNS = ["Машина", "Инструмент", "Апликаторы / модули"];
+const SHOWN_KEYS = new Set(["Тип", "Наменование", "Наименование", "Полное наименование ", "Полное наименование", "Артикул", "Производитель",
+  "Расположение", "Инв. номер", "№", "Для базы", "Описание", CODE_KEY, TOOL_KEY, TARGETS_KEY]);
+const ECONOMY = /^(стоимость|коэффициент|[cс]рок окупаемости|кол-во сек|желаемый срок|потребление)/i;
+const isEconomy = (key: string) => ECONOMY.test(key.trim());
+const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE];
+const opNumber = (op: TechOperationRecord) => pick(op.fields, "Номер", "opNumber");
+const opName = (op: TechOperationRecord) => pick(op.fields, "Название", "opName");
 
-const pick = (fields: Record<string, string>, ...keys: string[]) => {
-  for (const key of keys) {
-    const value = String(fields[key] ?? "").trim();
-    if (value) return value;
-  }
-  return "";
-};
-const typeOf = (record: TechOperationRecord) => pick(record.fields, "Тип", "obType") || "Без типа";
-const nameOf = (record: TechOperationRecord) => pick(record.fields, "Наменование", "Наименование", "Полное наименование ", "Полное наименование", "baseValue");
-const baseOf = (record: TechOperationRecord) => pick(record.fields, "Для базы", "baseValue");
-const invOf = (record: TechOperationRecord) => pick(record.fields, "Инв. номер");
-const norm = (value: string) => value.trim().toLocaleLowerCase("ru-RU").replace(/\s+/g, " ");
-
-function filledColumns(fields: Record<string, string>): Array<[string, string]> {
-  return Object.entries(fields).filter(([key, value]) => !SCHEMA_KEYS.has(key) && String(value ?? "").trim() && String(value).trim().toUpperCase() !== "FALSE");
+function filled(fields: Record<string, string>, keep: (key: string) => boolean): Array<[string, string]> {
+  return Object.entries(fields).filter(([key, value]) => keep(key) && !SCHEMA_KEYS.has(key) && String(value ?? "").trim()
+    && String(value).trim().toUpperCase() !== "FALSE");
+}
+function FieldList({ items }: { items: Array<[string, string]> }) {
+  return <dl className="op-fields">{items.map(([key, value]) => <div key={key}><dt>{headerLabel(key)}</dt><dd className="pre-line">{
+    /^https?:\/\//.test(value.trim()) ? <a href={value.trim()} target="_blank" rel="noreferrer">{value.trim()}</a> : valueLabel(key, value)
+  }</dd></div>)}</dl>;
 }
 
-export function EquipmentCards({ records, operations, canEdit, onEdit, toolbar }: {
+export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate, onChanged, onNotice, onError, focusId, toolbar }: {
   records: TechOperationRecord[];
   operations: TechOperationRecord[];
   canEdit: boolean;
   onEdit: (record: TechOperationRecord) => void;
+  onCreate: (preset?: Record<string, string>) => void;
+  onChanged: () => void;
+  onNotice: (message: string) => void;
+  onError: (message: string) => void;
+  /** A record to open (from the «Аппликатор» link in БД.ТЕР). */
+  focusId?: string;
   toolbar?: ReactNode;
 }) {
-  const [openId, setOpenId] = useState("");
-  const usedBy = useMemo(() => {
-    const byBase = new Map<string, string[]>();
-    operations.forEach((op) => {
-      const code = pick(op.fields, "opNumber", "Номер");
-      if (!code) return;
-      OP_LINK_COLUMNS.forEach((column) => {
-        const value = norm(op.fields[column] ?? "");
-        if (!value) return;
-        const list = byBase.get(value) ?? [];
-        if (!list.includes(code)) list.push(code);
-        byBase.set(value, list);
-      });
-    });
-    return byBase;
-  }, [operations]);
-  const opsOf = (record: TechOperationRecord) => (baseOf(record) ? usedBy.get(norm(baseOf(record))) ?? [] : []);
+  const [openId, setOpenId] = useState(focusId ?? "");
+  const [busy, setBusy] = useState(false);
+  const [codes, setCodes] = useState<CrimpCodes | null>(null);
+  const [opQuery, setOpQuery] = useState("");
+  useEffect(() => { if (focusId) setOpenId(focusId); }, [focusId]);
+  useEffect(() => {
+    let live = true;
+    referencesApi.crimpCodes().then((result) => { if (live) setCodes(result); }).catch(() => { if (live) setCodes(null); });
+    return () => { live = false; };
+  }, [records]);
+
+  const models = useMemo(() => groupModels(records).sort((a, b) => Number(!a.name) - Number(!b.name)), [records]);
   const types = useMemo(() => {
     const counts = new Map<string, number>();
     records.forEach((record) => counts.set(typeOf(record), (counts.get(typeOf(record)) ?? 0) + 1));
+    CRIMP_TYPES.forEach((type) => { if (!counts.has(type)) counts.set(type, 0); });
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [records]);
-  // Пустые строки листа (ни номера, ни названия) — в конец: они не должны открывать таблицу.
-  const rows = useMemo(() => [...records].sort((a, b) => Number(!(invOf(a) || nameOf(a))) - Number(!(invOf(b) || nameOf(b)))), [records]);
-  const open = openId ? records.find((record) => record.id === openId) : undefined;
+  // Matrices that name one of the model's inventory numbers in «Для инструмента».
+  const matricesOf = (model: EquipmentModel) => records.filter((record) => typeOf(record) === MATRIX_TYPE
+    && model.items.some((item) => invOf(item) && pick(record.fields, TOOL_KEY) === invOf(item)));
+  const opsOf = (model: EquipmentModel) => operationsOfModel(model, operations);
+  const open = openId ? models.find((model) => model.items.some((item) => item.id === openId)) : undefined;
+
+  async function guarded(action: () => Promise<unknown>, done: string) {
+    if (busy) return;
+    setBusy(true);
+    try { await action(); onNotice(done); onChanged(); } catch (reason) { onError(failureText(reason, "Не записано")); } finally { setBusy(false); }
+  }
 
   if (open) {
-    const ops = opsOf(open);
-    return <article className="panel template-detail tr-paper">
-      <div className="form-actions"><button className="secondary" onClick={() => setOpenId("")}>← Всё оборудование</button>
-        {canEdit && <button className="primary" onClick={() => onEdit(open)}>Править</button>}</div>
+    const field = operationField(open.type);
+    const linked = opsOf(open);
+    const linkedIds = new Set(linked.map((op) => op.id));
+    const text = opQuery.trim() ? norm(opQuery) : "";
+    const candidates = text.length < 2 ? [] : operations.filter((op) => !linkedIds.has(op.id)
+      && norm(`${opNumber(op)} ${opName(op)}`).includes(text)).slice(0, 8);
+    const last = open.items[open.items.length - 1];
+    const crimp = CRIMP_TYPES.includes(open.type) ? crimpRecord(open) : undefined;
+    const economy = filled(last.fields, isEconomy);
+    const rest = filled(last.fields, (key) => !SHOWN_KEYS.has(key) && !isEconomy(key));
+    const place = open.places.map((item) => valueLabel("Расположение", item)).join(", ");
+    const setOperation = (op: TechOperationRecord, column: string, value: string) =>
+      referencesApi.editRecord(op.id, [{ field: column, old: op.fields[column] ?? "", value }]);
+
+    return <article className="panel template-detail tr-paper eq-card">
+      <div className="form-actions"><button className="secondary" onClick={() => { setOpenId(""); setOpQuery(""); }}>← Всё оборудование</button>
+        {canEdit && <button className="secondary" onClick={() => onEdit(open.items[0])}>Править{open.items.length > 1 ? ` ${invOf(open.items[0])}` : ""}</button>}
+        {canEdit && invOf(last) && <button className="primary" disabled={busy}
+          onClick={() => void guarded(async () => { const copy = await referencesApi.duplicateRecord(last.id); setOpenId(copy.id); }, "Добавлен ещё один экземпляр")}>Ещё такой же</button>}</div>
       <div className="tr-head">
-        <div><small>Инв. номер</small><b>{invOf(open) || "—"}</b></div>
-        <div className="tr-head-name"><small>Наименование</small><b>{nameOf(open) || "—"}</b></div>
-        <div><small>Тип</small><b>{typeOf(open)}</b></div>
-        <div><small>Расположение</small><b>{valueLabel("Расположение", pick(open.fields, "Расположение")) || "—"}</b></div>
+        <div className="tr-head-name"><small>Наименование</small><b>{open.name || "—"}</b></div>
+        <div><small>Артикул</small><b>{open.article || "—"}</b></div>
+        <div><small>Производитель</small><b>{open.maker || "—"}</b></div>
+        <div><small>Тип</small><b>{open.type}</b></div>
+        <div><small>Расположение</small><b>{place || "—"}</b></div>
       </div>
-      <div className="tr-block"><h4>Строка БД.ОБ <span>{filledColumns(open.fields).length} полей</span></h4>
-        <dl className="op-fields">{filledColumns(open.fields).map(([key, value]) => <div key={key}><dt>{headerLabel(key)}</dt><dd className="pre-line">{
-          /^https?:\/\//.test(value.trim()) ? <a href={value.trim()} target="_blank" rel="noreferrer">{value.trim()}</a> : valueLabel(key, value)
-        }</dd></div>)}</dl>
+      {pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
+
+      <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
+        <table className="eq-table"><thead><tr><th>Инв. номер</th><th>№</th><th>Расположение</th><th>Код терминалов</th><th /></tr></thead>
+          <tbody>{open.items.map((item) => <tr key={item.id} className={canEdit ? "eq-row" : undefined} onClick={canEdit ? () => onEdit(item) : undefined}>
+            <td className="tnum"><b>{invOf(item) || "—"}</b></td><td className="tnum">{pick(item.fields, "№") || "—"}</td>
+            <td>{valueLabel("Расположение", placeOf(item)) || "—"}</td><td className="tnum">{pick(item.fields, CODE_KEY) || "—"}</td>
+            <td className="eq-act">{canEdit && <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); onEdit(item); }}>Править</button>}</td>
+          </tr>)}</tbody></table>
       </div>
-      <div className="tr-block"><h4>Операции БД.ОП с этим оборудованием <span>{ops.length}</span></h4>
-        {ops.length ? <div className="tr-chips">{ops.map((code) => <span key={code} className="tr-code eq-op">{code}</span>)}</div>
-          : <div className="empty">{operations.length ? "Ни одна операция БД.ОП не ссылается на «Для базы» этой строки." : "БД.ОП не загружена."}</div>}
+
+      <div className="tr-block"><h4>Операции <span>{linked.length}</span></h4>
+        {linked.length ? <table className="eq-table"><thead><tr><th>Номер</th><th>Название</th><th /></tr></thead>
+          <tbody>{linked.map((op) => <tr key={op.id}><td className="tnum">{opNumber(op)}</td><td>{opName(op)}</td>
+            <td className="eq-act">{canEdit && <button type="button" className="secondary small" disabled={busy}
+              onClick={() => void guarded(async () => {
+                for (const column of OP_LINK_COLUMNS) if (norm(op.fields[column] ?? "") === norm(open.base)) await setOperation(op, column, "");
+              }, `Операция ${opNumber(op)} отвязана`)}>Отвязать</button>}</td></tr>)}</tbody></table>
+          : <div className="empty">{operations.length ? "Ни одна операция БД.ОП не привязана к этой модели." : "БД.ОП не загружена."}</div>}
+        {canEdit && open.base && operations.length > 0 && <div className="eq-add">
+          <input type="search" aria-label="Найти операцию" placeholder="Привязать операцию: номер или название…" value={opQuery} onChange={(event) => setOpQuery(event.target.value)} />
+          {candidates.map((op) => {
+            const current = (op.fields[field] ?? "").trim();
+            return <div className="eq-hit" key={op.id}>
+              <span><b className="tnum">{opNumber(op)}</b> {opName(op)}{current && <span className="muted"> · сейчас: {current}</span>}</span>
+              <button type="button" className="secondary small" disabled={busy}
+                onClick={() => void guarded(async () => { await setOperation(op, field, open.base); setOpQuery(""); }, `Операция ${opNumber(op)} привязана`)}>{current ? "Заменить" : "Привязать"}</button>
+            </div>;
+          })}
+          {text.length >= 2 && candidates.length === 0 && <div className="empty">Операции не найдены.</div>}
+        </div>}
       </div>
+
+      {open.type !== MATRIX_TYPE && matricesOf(open).length > 0 && <div className="tr-block"><h4>Матрицы к этому инструменту <span>{matricesOf(open).length}</span></h4>
+        <div className="tr-chips">{matricesOf(open).map((matrix) => <button key={matrix.id} type="button" className="eq-op eq-chip-btn" onClick={() => setOpenId(matrix.id)}>
+          <span className="tnum">{invOf(matrix)}</span> {nameOf(matrix)}</button>)}</div></div>}
+
+      {crimp && <CrimpLinks model={open} tool={crimp} siblings={records} canEdit={canEdit} onChanged={onChanged} onEditTool={onEdit} />}
+
+      {economy.length > 0 && <div className="tr-block"><h4>Экономика</h4><FieldList items={economy} /></div>}
+      {rest.length > 0 && <details className="tr-block eq-rest"><summary>Прочее <span className="muted">({rest.length})</span></summary><FieldList items={rest} /></details>}
     </article>;
   }
 
-  const columns: DataColumn<TechOperationRecord>[] = [
-    { key: "inv", title: "Инв. номер", value: (record) => invOf(record) },
-    { key: "name", title: "Наименование", value: (record) => nameOf(record) },
-    { key: "type", title: "Тип", value: typeOf, filter: true },
-    { key: "article", title: "Артикул", value: (record) => pick(record.fields, "Артикул") },
-    { key: "maker", title: "Производитель", value: (record) => pick(record.fields, "Производитель").replace(/^-+$/, "") },
-    { key: "place", title: "Расположение", value: (record) => valueLabel("Расположение", pick(record.fields, "Расположение")), filter: true },
-    { key: "ops", title: "Операций", numeric: true, value: (record) => opsOf(record).length, hint: "Сколько операций БД.ОП ссылаются на эту единицу в «Машина», «Инструмент» или «Апликаторы / модули»" },
+  const columns: DataColumn<EquipmentModel>[] = [
+    { key: "inv", title: "Инв. номер", value: (model) => model.items.map(invOf).filter(Boolean).join(" "),
+      render: (model) => <span className="tnum" title={model.items.map(invOf).join(", ")}>{inventoryRange(model.items.map(invOf)) || "—"}</span> },
+    { key: "name", title: "Наименование", value: (model) => model.name, grow: true },
+    { key: "count", title: "Единиц", numeric: true, value: (model) => model.items.length, render: (model) => model.items.length > 1 ? `${model.items.length} шт.` : "1 шт." },
+    { key: "type", title: "Тип", value: (model) => model.type, filter: true },
+    { key: "article", title: "Артикул", value: (model) => model.article },
+    { key: "maker", title: "Производитель", value: (model) => model.maker },
+    { key: "place", title: "Расположение", value: (model) => model.places.map((item) => valueLabel("Расположение", item)).join(", "), filter: true },
+    { key: "ops", title: "Операций", numeric: true, value: (model) => opsOf(model).length, hint: "Сколько операций БД.ОП привязано к этой модели" },
   ];
-  const presets = types.map(([name]) => ({ label: name, test: (record: TechOperationRecord) => typeOf(record) === name }));
-  return <DataTable
-    rows={rows}
-    columns={columns}
-    rowKey={(record) => record.id}
-    storageKey="db:equipment"
-    label="Оборудование"
-    exportName="Оборудование"
-    searchPlaceholder="Поиск: инв. номер, название, артикул, производитель…"
-    presets={presets}
-    presetCountsFollowSearch
-    onRowClick={(record) => setOpenId(record.id)}
-    rowTitle={(record) => `Открыть: ${nameOf(record) || invOf(record)}`}
-    toolbar={toolbar}
-    emptyText={records.length ? "Ничего не найдено." : "Записей нет."}
-  />;
+  const presets = types.map(([name]) => ({ label: name, test: (model: EquipmentModel) => model.type === name }));
+  const missing = codes?.missing ?? [];
+  return <>
+    {missing.length > 0 && <details className="eq-missing">
+      <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>
+      <div className="eq-missing-list">{missing.map((item) => <span key={item.code} className="tr-code eq-op" title={`Указан у ${item.count} контактов в БД.ТЕР`}>
+        <span className="tnum">{item.code}</span>{canEdit && <button type="button" className="eq-x" aria-label={`Создать запись для кода ${item.code}`}
+          onClick={() => onCreate({ Тип: CRIMP_TOOL_TYPE, [CODE_KEY]: item.code })}>＋</button>}</span>)}</div>
+    </details>}
+    <DataTable
+      rows={models}
+      columns={columns}
+      rowKey={(model) => model.key}
+      storageKey="db:equipment-models"
+      label="Оборудование"
+      exportName="Оборудование"
+      searchPlaceholder="Поиск: инв. номер, название, артикул, производитель…"
+      presets={presets}
+      presetCountsFollowSearch
+      onRowClick={(model) => setOpenId(model.items[0].id)}
+      rowTitle={(model) => `Открыть: ${model.name || invOf(model.items[0])}`}
+      toolbar={toolbar}
+      emptyText={records.length ? "Ничего не найдено." : "Записей нет."}
+    />
+  </>;
 }
+
