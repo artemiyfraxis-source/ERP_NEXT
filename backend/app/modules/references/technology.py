@@ -9,6 +9,8 @@ from math import log
 import re
 from typing import Iterable, Mapping, Sequence
 
+from .equipment import parse_inventory
+
 
 WIRE_AWG_MM2 = {
     30: Decimal("0.05"),
@@ -719,6 +721,22 @@ def schema_display_text(tab: str, fields: Mapping[str, str]) -> str:
     return display(values)
 
 
+# Owner 12.10.2026: «Оборудование (ПР)» is a Google-era leftover — those rows are plain «Оборудование»; the «.X» rows
+# with «(R)» in the article stood in for a model in the calculation and are replaced by the model's own text.
+RETIRED_EQUIPMENT_TYPES = {"Оборудование (ПР)": "Оборудование"}
+_CALC_UNIT_SUFFIX = re.compile(r"\(R\)(?=\s*/)")
+
+
+def repoint_calc_unit(text: str) -> str:
+    """«T21(R)/Станция паяльная» → «T21/Станция паяльная» (the «Для базы» text of the model's numbered units)."""
+    return _CALC_UNIT_SUFFIX.sub("", text)
+
+
+def retired_unit(inventory: str, article: str) -> bool:
+    parsed = parse_inventory(inventory)
+    return bool(parsed and parsed.suffix == "X") or article.strip().endswith("(R)")
+
+
 def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[list[str], list[dict[str, object]]]:
     """One base sheet (display values, sheet rows from 1) → `(columnHeaders, records)` exactly as the GAS exporter
     builds them (SUPPLYMAP TcOpsDb.gs `fetchTechOperationsSnapshotFromSource_` + `buildRecordFromSchema_`): header
@@ -733,14 +751,30 @@ def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[
     resolved = _resolve_schema(fields, header)
 
     def cell(row: Sequence[object], index: int) -> str:
-        return str(row[index] if 0 <= index < len(row) and row[index] is not None else "").strip()
+        text = str(row[index] if 0 <= index < len(row) and row[index] is not None else "").strip()
+        if tab == "ob" and index in (type_index, resolved.get("obType", -2)):
+            return RETIRED_EQUIPMENT_TYPES.get(text, text)
+        if tab == "op":
+            return repoint_calc_unit(text)
+        return text
 
+    inv_index = next((index for index, name in enumerate(header) if _normalize_header(name) == "инв. номер"), -1)
+    article_index = next((index for index, name in enumerate(header) if _normalize_header(name) == "артикул"), -1)
+    type_index = next((index for index, name in enumerate(header) if _normalize_header(name) == "тип"), -1)
+    identity = [index for index, name in enumerate(header) if tab == "ob"
+                and _normalize_header(name) in ("инв. номер", "наменование", "наименование")]
     records = []
     for row in rows[header_row:]:
         values = {field.key: cell(row, resolved[field.key]) for field in fields}
         text = display(values)
         if not text:
             continue
+        # БД.ОБ: a row dragged down with only «№» and the «Для базы» formula («/») is no equipment — it has neither
+        # an inventory number, nor a name, nor a type.
+        if tab == "ob" and not values["obType"] and not any(cell(row, index) for index in identity):
+            continue
+        if tab == "ob" and retired_unit(cell(row, inv_index), cell(row, article_index)):
+            continue  # «.X» / «(R)»: a calculation stand-in of the model, not a machine (owner 12.10.2026)
         record: dict[str, object] = {
             "tabKey": tab, "displayText": text,
             "normalizedSearch": re.sub(r"\s+", "", search(values).lower()),

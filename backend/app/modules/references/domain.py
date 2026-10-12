@@ -14,6 +14,10 @@ class ReferenceValidationError(ValueError):
     pass
 
 
+class StaleRecordError(Exception):
+    pass
+
+
 class ReferenceKind(str, Enum):
     SUPPLIER = "supplier"
     COUNTRY = "country"

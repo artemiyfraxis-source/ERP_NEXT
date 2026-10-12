@@ -3052,9 +3052,29 @@ export const referencesApi = {
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
+  equipmentNumber: (type: string) =>
+    api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
+  duplicateRecord: (id: string) =>
+    api<TechOperationRecord>(`/api/references/tech-operations/${id}/duplicate`, { method: "POST" }),
+  crimps: (id: string) => api<CrimpOverview>(`/api/references/tech-operations/${id}/crimps`),
+  crimpCodes: () => api<CrimpCodes>("/api/references/tech-operations/crimp-codes"),
+  crimpTerminal: (toolId: string, terminalId: string, add: boolean) =>
+    api<CrimpTerminal>(`/api/references/tech-operations/${toolId}/crimps/terminals/${terminalId}`, { method: add ? "POST" : "DELETE" }),
+  crimpTarget: (toolId: string, target: CrimpTarget, add: boolean) =>
+    api<{ targets: CrimpTarget[] }>(`/api/references/tech-operations/${toolId}/crimps/targets${add ? "" : "/remove"}`, {
+      method: "POST", body: JSON.stringify(target),
+    }),
   resolveTerminal: (payload: { article: string; wires: string[]; folded?: boolean; gost_awg?: Record<string, number> }) =>
     api<TerminalResolution>("/api/references/technology/resolve-terminal", { method: "POST", body: JSON.stringify(payload) }),
 };
+
+export interface CrimpTerminal {
+  id: string; display_text: string; article: string; series: string; maker: string; kind: string;
+  applicator: string; doubtful: boolean;
+}
+export interface CrimpTarget { kind: string; key: string; label: string }
+export interface CrimpOverview { code: string; terminals: CrimpTerminal[]; targets: CrimpTarget[] }
+export interface CrimpCodes { owners: Record<string, string>; missing: Array<{ code: string; count: number }> }
 
 export interface TerminalResolution {
   applicator: string;
