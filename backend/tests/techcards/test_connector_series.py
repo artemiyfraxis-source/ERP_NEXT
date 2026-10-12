@@ -171,3 +171,17 @@ def test_coax_articles_fill_the_rf_series_by_type():
     assert [c["article"] for c in series["rf-qma"]["catalog"]] == ["QMA-KPD7"]
     assert series["rf-fakra"]["category"] == "Автомобильные" and len(series["rf-fakra"]["catalog"]) == 1
     assert series["rf-bnc"]["catalog"] == [] and series["rf-bnc"]["housing_count"] == 0
+
+
+def test_terminal_payload_carries_crimp_height_and_pull_force():
+    plain = {"terSeries": "GHR", "terArticle": "P-1", "terCrimpHeight": "0,85 - 0,90", "terPullForceMin": "50", "terPullForceMax": "70"}
+    profiled = {"terSeries": "GHR", "terArticle": "P-2", "terCrimpHeight": "26 AWG: 0,62 (15 Н)\n28 AWG: 0,70 (12 Н)"}
+    split = {"terSeries": "GHR", "terArticle": "P-3", "terCrimpHeight": "24 AWG: 0.76 - 0.81 22 AWG: 0,84",
+             "terPullForceMin": "24 AWG: 29,3\n22 AWG: 44,1", "terPullForceMax": "24 AWG: 35"}
+    empty = {"terSeries": "GHR", "terArticle": "P-4"}
+    a, b, c, d = terminals_for(("GHR",), [plain, profiled, split, empty])
+
+    assert (a["crimp_height"], a["pull_force"]) == ("0,85–0,90", "50–70")
+    assert (b["crimp_height"], b["pull_force"]) == ("26 AWG: 0,62; 28 AWG: 0,70", "26 AWG: 15; 28 AWG: 12")
+    assert (c["crimp_height"], c["pull_force"]) == ("24 AWG: 0,76–0,81; 22 AWG: 0,84", "24 AWG: 29,3–35; 22 AWG: 44,1")
+    assert (d["crimp_height"], d["pull_force"]) == ("", "")

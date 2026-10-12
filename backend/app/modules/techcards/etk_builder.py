@@ -589,9 +589,84 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
     if isinstance(terminal_norm_b, Mapping) and _endpoint_b(op) and _terminal(_side_b_op(op)) != _terminal(op):
         for key in ("applicator", "crimpHeight", "pullForce"):
             value_a, value_b = str(fields.get(key) or ""), str(terminal_norm_b.get(key) or "")
-            if value_b and value_b != value_a:
-                fields[key] = f"{value_a}/{value_b}" if key == "applicator" else f"{value_a or '?'} (А) / {value_b} (В)"
+            if key == "applicator" and value_b and value_b != value_a:
+                fields[key] = f"{value_a}/{value_b}"
+            elif key != "applicator" and (value_a or value_b) and value_b != value_a:
+                fields[key] = f"{value_a or NOT_SET} (А) / {value_b or NOT_SET} (В)"
+    crimp_ends = _crimp_ends(op, fields, wires)
+    if crimp_ends:
+        fields["crimpEnds"] = crimp_ends
     return fields
+
+
+NOT_SET = "не задано"
+# references.technology NO_DATA_MARK: the terminal is not in БД.ТЕР — on a contact's spec line that is «не задано».
+_NO_DATA = "⚠ НЕТ ДАННЫХ"
+
+
+def _wire_group(labels: Sequence[str]) -> str:
+    """One name for the wires a contact crimps: the wire itself, or the words the colours of one grade share
+    («НВ4 0,2 белый», «НВ4 0,2 зелёный» → «НВ4 0,2»); nothing in common — «N пров.»."""
+    names = list(dict.fromkeys(label.strip() for label in labels if label.strip()))
+    if len(names) <= 1:
+        return names[0] if names else ""
+    common: list[str] = []
+    for column in zip(*(name.split() for name in names)):
+        if any(word != column[0] for word in column):
+            break
+        common.append(column[0])
+    return " ".join(common) or f"{len(names)} пров."
+
+
+def _crimp_ends(
+    op: Mapping[str, Any], fields: Mapping[str, Any], wire_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Crimp spec of every contact the operation crimps, per end and wire section — for the contact's line in
+    «Комплектующие» and the per-end header chips: ends A/B (one entry for both when the contact and its norms match),
+    wires and section, applicator, crimp height, pull force, strip. An empty value is not in БД.ТЕР («не задано»)."""
+    operation_type = str(op.get("type") or "")
+    if operation_type not in {"prsTerm", "cutWireCrimp"}:
+        return []
+    sides = [("B" if op.get("side") == "B" else "A", op, op.get("terminalNorm"))]
+    if _endpoint_b(op):
+        sides.append(("B", _side_b_op(op), op.get("terminalNormB")))
+    if not any(isinstance(norm, Mapping) for _, _, norm in sides):
+        return []
+    wires = [str(wire.get("art") or wire.get("name") or "") for wire in wire_rows]
+    strip = fields.get("strip") if isinstance(fields.get("strip"), Mapping) else {}
+    entries: list[dict[str, Any]] = []
+    for end, side_op, norm in sides:
+        art = _terminal(side_op)
+        if not art:
+            continue
+        norm = norm if isinstance(norm, Mapping) else {}
+        rows = [item for item in norm.get("bySection") or [] if isinstance(item, Mapping)]
+        machine_strip = str(strip.get(f"len{end}") or "").strip() if strip.get(end.lower()) else ""
+        common_applicator = str(norm.get("applicator") or "")
+        common_applicator = "" if common_applicator == _NO_DATA else common_applicator
+        for item in rows or [None]:
+            row = item or {}
+            applicator = str(row.get("applicator") or common_applicator)
+            if operation_type == "cutWireCrimp" and applicator:
+                applicator = _machine_applicator(applicator)
+            listed = row.get("wires")
+            section_wires = listed if isinstance(listed, list) else wires if len(rows) <= 1 else []
+            entries.append({
+                "ends": [end], "art": art, "name": str(_endpoint(side_op).get("termName") or ""),
+                "wire": _wire_group([str(value) for value in section_wires]), "section": str(row.get("section") or ""),
+                "applicator": applicator,
+                "crimpHeight": str((row if item else norm).get("crimpHeight") or ""),
+                "pullForce": str((row if item else norm).get("pullForce") or ""),
+                "strip": machine_strip or str(row.get("strip") or ""),
+            })
+    merged: list[dict[str, Any]] = []
+    for entry in entries:
+        twin = next((item for item in merged if {**item, "ends": [], "name": ""} == {**entry, "ends": [], "name": ""}), None)
+        if twin:
+            twin["ends"].extend(end for end in entry["ends"] if end not in twin["ends"])
+        else:
+            merged.append(entry)
+    return merged
 
 
 def _placeholder_map(

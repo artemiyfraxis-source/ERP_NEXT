@@ -1,0 +1,2617 @@
+{
+ "version": 1,
+ "notes": "Справочник монтажных проводов (задача T1, 12.10.2026). Каждое значение — {value, source} из первоисточника (стандарт/ТУ, сборник ВНИИКП или датащит производителя) либо null. Данные реселлеров и дистрибьюторов в значения не попадают — только в notes. conductor_dia_mm для скруток 7 и 19 проволок — геометрический расчёт по конструкции из того же источника (помечено в source). Ø наружный: для UL — номинальный; для ГОСТ/ТУ-марок — максимальный по стандарту (см. notes серии).",
+ "gauges": [
+  {
+   "awg": "36",
+   "section_mm2": 0.0127,
+   "conductor_dia_mm": {
+    "value": 0.127,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "34",
+   "section_mm2": 0.0201,
+   "conductor_dia_mm": {
+    "value": 0.16,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "32",
+   "section_mm2": 0.032,
+   "conductor_dia_mm": {
+    "value": 0.202,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "30",
+   "section_mm2": 0.0509,
+   "conductor_dia_mm": {
+    "value": 0.255,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "28",
+   "section_mm2": 0.081,
+   "conductor_dia_mm": {
+    "value": 0.321,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "26",
+   "section_mm2": 0.1288,
+   "conductor_dia_mm": {
+    "value": 0.405,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "24",
+   "section_mm2": 0.2047,
+   "conductor_dia_mm": {
+    "value": 0.511,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "22",
+   "section_mm2": 0.3255,
+   "conductor_dia_mm": {
+    "value": 0.644,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "20",
+   "section_mm2": 0.5176,
+   "conductor_dia_mm": {
+    "value": 0.812,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "18",
+   "section_mm2": 0.823,
+   "conductor_dia_mm": {
+    "value": 1.024,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "17",
+   "section_mm2": 1.0378,
+   "conductor_dia_mm": {
+    "value": 1.15,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "16",
+   "section_mm2": 1.3087,
+   "conductor_dia_mm": {
+    "value": 1.291,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "14",
+   "section_mm2": 2.0809,
+   "conductor_dia_mm": {
+    "value": 1.628,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "12",
+   "section_mm2": 3.3088,
+   "conductor_dia_mm": {
+    "value": 2.053,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": "10",
+   "section_mm2": 5.2612,
+   "conductor_dia_mm": {
+    "value": 2.588,
+    "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+   },
+   "source": "ASTM B258-18 «Standard Specification for Standard Nominal Diameters and Cross-Sectional Areas of AWG Sizes of Solid Round Wires», табл. 1: d = 0,005·92^((36−n)/39) дюйм, S = π·d²/4"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.02,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ТУ 16-505.083-78 (МС 16-13); Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.03,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ТУ 16-505.185-71, ТУ 16-505.083-78; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.05,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ТУ 16-505.185-71, ТУ 16-505.083-78; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.07,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ТУ 16-505.185-71 (МГТФ); Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.08,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; ТУ 16-505.083-78; ТУ 16-705.199-81; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.1,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: Камкабель, МГТФ (ТУ 16-505.185-71); Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.12,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.14,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ТУ 16-505.437-82 (МГШВ); Камкабель, МГТФ; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.2,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.35,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.5,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; ГОСТ 31947-2012; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 0.75,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 1.0,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 1.5,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 2.5,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 17515-72 табл. 1; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 4.0,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 31947-2012 / табл. 9 «Промтех»; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 6.0,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 31947-2012 / табл. 9 «Промтех»; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 10.0,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 31947-2012 / табл. 9 «Промтех»; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  },
+  {
+   "awg": null,
+   "section_mm2": 16.0,
+   "conductor_dia_mm": null,
+   "source": "номинальное сечение ряда: ГОСТ 31947-2012 / табл. 9 «Промтех»; Ø жилы для многопроволочной жилы стандартом не задаётся"
+  }
+ ],
+ "series": [
+  {
+   "key": "UL1061",
+   "aliases": [
+    "UL1061",
+    "UL 1061"
+   ],
+   "standard": {
+    "value": "UL 758, AWM Style 1061",
+    "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+   },
+   "insulation_material": {
+    "value": "ПВХ полужёсткий (SR-PVC)",
+    "source": "Daburn #2660 UL 1061 SRPVC — daburn.com/2660-UL-1061-SRPVC-Business-Machine-Wire---300-Volt-80-C-AWM-1061.aspx (−10…+80 °C, wall 0,23 мм)"
+   },
+   "voltage_v": {
+    "value": 300,
+    "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+   },
+   "temp_min_c": {
+    "value": -10,
+    "source": "Daburn #2660 UL 1061 SRPVC — daburn.com/2660-UL-1061-SRPVC-Business-Machine-Wire---300-Volt-80-C-AWM-1061.aspx (−10…+80 °C, wall 0,23 мм)"
+   },
+   "temp_max_c": {
+    "value": 80,
+    "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+   },
+   "colors": {
+    "value": [
+     "чёрный",
+     "коричневый",
+     "красный",
+     "оранжевый",
+     "жёлтый",
+     "зелёный",
+     "синий",
+     "фиолетовый",
+     "серый",
+     "белый"
+    ],
+    "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+   },
+   "sizes": [
+    {
+     "mark": "UL1061 30AWG",
+     "awg": "30",
+     "section_mm2": 0.051,
+     "strands": {
+      "value": "7×0,101",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.303,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 0.81,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    },
+    {
+     "mark": "UL1061 28AWG",
+     "awg": "28",
+     "section_mm2": 0.081,
+     "strands": {
+      "value": "7×0,127",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.381,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 0.89,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    },
+    {
+     "mark": "UL1061 26AWG",
+     "awg": "26",
+     "section_mm2": 0.129,
+     "strands": {
+      "value": "7×0,16",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.48,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 0.99,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    },
+    {
+     "mark": "UL1061 24AWG",
+     "awg": "24",
+     "section_mm2": 0.205,
+     "strands": {
+      "value": "7×0,203",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.609,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 1.14,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    },
+    {
+     "mark": "UL1061 22AWG",
+     "awg": "22",
+     "section_mm2": 0.326,
+     "strands": {
+      "value": "7×0,254",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.762,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 1.32,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    },
+    {
+     "mark": "UL1061 20AWG",
+     "awg": "20",
+     "section_mm2": 0.518,
+     "strands": {
+      "value": "10×0,254",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 1.42,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    },
+    {
+     "mark": "UL1061 18AWG",
+     "awg": "18",
+     "section_mm2": 0.823,
+     "strands": {
+      "value": "16×0,254",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 1.75,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    },
+    {
+     "mark": "UL1061 16AWG",
+     "awg": "16",
+     "section_mm2": 1.309,
+     "strands": {
+      "value": "26×0,254",
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.23,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     },
+     "outer_dia_mm": {
+      "value": 2.08,
+      "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+     }
+    }
+   ],
+   "notes": "Ø наружный — номинальный (Insulation O.D.) по RDS Wire. Сечение — площадь AWG по ASTM B258. Lapp даёт для 26–16 AWG ту же стенку 9 mil, но иной Ø (напр. 22 AWG 7/30 — 0,049\"). Daburn (−10…+80 °C) — другой производитель того же стиля."
+  },
+  {
+   "key": "UL1007",
+   "aliases": [
+    "UL1007",
+    "UL 1007"
+   ],
+   "standard": {
+    "value": "UL 758, AWM Style 1007",
+    "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "Remington Industries, «UL1007 Hook Up Wire Data Sheet», rev. −2 от 06.01.2025 — remingtonindustries.com/content/UL1007%20Hook%20Up%20Wire%20Data%20Sheet.pdf (Tinned Copper)"
+   },
+   "insulation_material": {
+    "value": "ПВХ",
+    "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+   },
+   "voltage_v": {
+    "value": 300,
+    "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+   },
+   "temp_min_c": {
+    "value": -30,
+    "source": "Letronic, датащит UL 1007/1569 — letronic.de/en/produkte/datenblatt/699-ul-1007-1569 (TPC, UL-PVC, стенка 0,38 мм, −30 °C неподвижно / −10 °C при движении)"
+   },
+   "temp_max_c": {
+    "value": 80,
+    "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+   },
+   "colors": {
+    "value": [
+     "чёрный",
+     "коричневый",
+     "красный",
+     "оранжевый",
+     "жёлтый",
+     "зелёный",
+     "синий",
+     "фиолетовый",
+     "серый",
+     "белый"
+    ],
+    "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+   },
+   "sizes": [
+    {
+     "mark": "UL1007 30AWG",
+     "awg": "30",
+     "section_mm2": 0.051,
+     "strands": {
+      "value": "7×0,102",
+      "source": "Letronic, датащит UL 1007/1569 — letronic.de/en/produkte/datenblatt/699-ul-1007-1569 (TPC, UL-PVC, стенка 0,38 мм, −30 °C неподвижно / −10 °C при движении)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.306,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.38,
+      "source": "Letronic, датащит UL 1007/1569 — letronic.de/en/produkte/datenblatt/699-ul-1007-1569 (TPC, UL-PVC, стенка 0,38 мм, −30 °C неподвижно / −10 °C при движении)"
+     },
+     "outer_dia_mm": {
+      "value": 1.15,
+      "source": "Letronic, датащит UL 1007/1569 — letronic.de/en/produkte/datenblatt/699-ul-1007-1569 (TPC, UL-PVC, стенка 0,38 мм, −30 °C неподвижно / −10 °C при движении)"
+     },
+     "notes": "30 AWG у RDS Wire в стиле 1007 нет; строка по Letronic (UL 1007/1569)."
+    },
+    {
+     "mark": "UL1007 28AWG",
+     "awg": "28",
+     "section_mm2": 0.081,
+     "strands": {
+      "value": "7×0,127",
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.381,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.41,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "outer_dia_mm": {
+      "value": 1.14,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     }
+    },
+    {
+     "mark": "UL1007 26AWG",
+     "awg": "26",
+     "section_mm2": 0.129,
+     "strands": {
+      "value": "7×0,16",
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.48,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.41,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "outer_dia_mm": {
+      "value": 1.22,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     }
+    },
+    {
+     "mark": "UL1007 24AWG",
+     "awg": "24",
+     "section_mm2": 0.205,
+     "strands": {
+      "value": "7×0,203",
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.609,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.41,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "outer_dia_mm": {
+      "value": 1.45,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     }
+    },
+    {
+     "mark": "UL1007 22AWG",
+     "awg": "22",
+     "section_mm2": 0.326,
+     "strands": {
+      "value": "7×0,254",
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.762,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": {
+      "value": 0.41,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "outer_dia_mm": {
+      "value": 1.65,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     }
+    },
+    {
+     "mark": "UL1007 20AWG",
+     "awg": "20",
+     "section_mm2": 0.518,
+     "strands": {
+      "value": "10×0,254",
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.41,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "outer_dia_mm": {
+      "value": 1.83,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     }
+    },
+    {
+     "mark": "UL1007 18AWG",
+     "awg": "18",
+     "section_mm2": 0.823,
+     "strands": {
+      "value": "16×0,254",
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.41,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "outer_dia_mm": {
+      "value": 2.03,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     }
+    },
+    {
+     "mark": "UL1007 16AWG",
+     "awg": "16",
+     "section_mm2": 1.309,
+     "strands": {
+      "value": "26×0,254",
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.41,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     },
+     "outer_dia_mm": {
+      "value": 2.39,
+      "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+     }
+    }
+   ],
+   "notes": "Стиль 1007 — 80 °C; двойная маркировка 1007/1569 у Remington и Letronic даёт 105 °C (это стиль 1569). Стенка RDS .016\" = 0,41 мм, Letronic/Lapp — 0,38 мм (15 mil). Мин. температура −30 °C — неподвижная прокладка по Letronic (при движении −10 °C)."
+  },
+  {
+   "key": "UL1571",
+   "aliases": [
+    "UL1571",
+    "UL 1571"
+   ],
+   "standard": {
+    "value": "UL 758, AWM Style 1571",
+    "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+   },
+   "insulation_material": {
+    "value": "ПВХ",
+    "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+   },
+   "voltage_v": {
+    "value": 30,
+    "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+   },
+   "temp_min_c": {
+    "value": -30,
+    "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+   },
+   "temp_max_c": {
+    "value": 80,
+    "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+   },
+   "colors": {
+    "value": [
+     "чёрный",
+     "коричневый",
+     "красный",
+     "оранжевый",
+     "жёлтый",
+     "зелёный",
+     "синий",
+     "фиолетовый",
+     "серый",
+     "белый"
+    ],
+    "source": "RDS Wire, UL Style 1571 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/UL-Style-1571 (30 V max, 80 °C, стенка от 0,002\"; цвета 0–9)"
+   },
+   "sizes": [
+    {
+     "mark": "UL1571 36AWG",
+     "awg": "36",
+     "section_mm2": 0.013,
+     "strands": {
+      "value": "7×0,05",
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.15,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.45,
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     }
+    },
+    {
+     "mark": "UL1571 32AWG",
+     "awg": "32",
+     "section_mm2": 0.032,
+     "strands": {
+      "value": "7×0,08",
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.24,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.54,
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     }
+    },
+    {
+     "mark": "UL1571 30AWG",
+     "awg": "30",
+     "section_mm2": 0.051,
+     "strands": {
+      "value": "7×0,102",
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.306,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.75,
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     }
+    },
+    {
+     "mark": "UL1571 28AWG",
+     "awg": "28",
+     "section_mm2": 0.081,
+     "strands": {
+      "value": "7×0,127",
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.381,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.85,
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     }
+    },
+    {
+     "mark": "UL1571 26AWG",
+     "awg": "26",
+     "section_mm2": 0.129,
+     "strands": {
+      "value": "7×0,16",
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.48,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.98,
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     }
+    },
+    {
+     "mark": "UL1571 24AWG",
+     "awg": "24",
+     "section_mm2": 0.205,
+     "strands": {
+      "value": "7×0,203",
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.609,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.11,
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     }
+    },
+    {
+     "mark": "UL1571 22AWG",
+     "awg": "22",
+     "section_mm2": 0.326,
+     "strands": {
+      "value": "7×0,254",
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.762,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.3,
+      "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+     }
+    }
+   ],
+   "notes": "Стиль 1571 — для цепей Class 2, 30 В. Стенка по стилю переменная (от 0,002\"), поэтому Ø зависит от производителя: RDS Wire со стенкой 0,004\" даёт 28 AWG 0,58 мм, 26 AWG 0,69 мм, 30 AWG 0,51 мм. Взят Letronic (типовая стенка рынка). Мин. −30 °C — неподвижно, −10 °C при движении."
+  },
+  {
+   "key": "UL3239",
+   "aliases": [
+    "UL3239",
+    "UL 3239"
+   ],
+   "standard": {
+    "value": "UL 758, AWM Style 3239 (3 кВ DC)",
+    "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+   },
+   "insulation_material": {
+    "value": "силиконовая резина",
+    "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+   },
+   "voltage_v": {
+    "value": 3000,
+    "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+   },
+   "temp_min_c": {
+    "value": -50,
+    "source": "CnC Tech / Reihsing, «UL3239 Silicone Rubber Wire 150°C 3KV», P/N 3239-24-1-0500-0XX-1-TS — static.chipdip.ru/lib/693/DOC040693878.pdf (Rated Temperature 150 °C ~ −50 °C)"
+   },
+   "temp_max_c": {
+    "value": 150,
+    "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+   },
+   "colors": {
+    "value": [
+     "чёрный",
+     "белый",
+     "жёлтый",
+     "красный",
+     "синий",
+     "коричневый",
+     "зелёный",
+     "оранжевый",
+     "жёлто-зелёный"
+    ],
+    "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+   },
+   "sizes": [
+    {
+     "mark": "UL3239 24AWG",
+     "awg": "24",
+     "section_mm2": 0.205,
+     "strands": {
+      "value": "11×0,16",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.65,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 1.9,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    },
+    {
+     "mark": "UL3239 22AWG",
+     "awg": "22",
+     "section_mm2": 0.326,
+     "strands": {
+      "value": "17×0,16",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.65,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 2.05,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    },
+    {
+     "mark": "UL3239 20AWG",
+     "awg": "20",
+     "section_mm2": 0.518,
+     "strands": {
+      "value": "21×0,18",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.65,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 2.25,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    },
+    {
+     "mark": "UL3239 18AWG",
+     "awg": "18",
+     "section_mm2": 0.823,
+     "strands": {
+      "value": "34×0,18",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.65,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 2.5,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    },
+    {
+     "mark": "UL3239 16AWG",
+     "awg": "16",
+     "section_mm2": 1.309,
+     "strands": {
+      "value": "26×0,254",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.65,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 2.8,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    },
+    {
+     "mark": "UL3239 14AWG",
+     "awg": "14",
+     "section_mm2": 2.081,
+     "strands": {
+      "value": "37×0,254",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.65,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 3.3,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    },
+    {
+     "mark": "UL3239 12AWG",
+     "awg": "12",
+     "section_mm2": 3.309,
+     "strands": {
+      "value": "67×0,254",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.75,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 4.0,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    },
+    {
+     "mark": "UL3239 10AWG",
+     "awg": "10",
+     "section_mm2": 5.261,
+     "strands": {
+      "value": "105×0,254",
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.85,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     },
+     "outer_dia_mm": {
+      "value": 4.8,
+      "source": "CnC Tech (Eassan), «UL3239 Silicone Rubber Wire 150°C 3KV-DC», P/N 3239-XX-1-0500-0XX-1-TS — atta.szlcsc.com/upload/public/pdf/source/20231008/B9E0930CC0C3F9BF59B4373637ECE412.pdf (табл. 24–10 AWG)"
+     }
+    }
+   ],
+   "notes": "Стиль 3239 разрешён UL на 3–30 кВ DC (у других производителей до 50 кВ); толщина изоляции и Ø растут с напряжением. Здесь — исполнение 3 кВ DC. Сечения в мм² у CnC Tech (24 AWG 0,22; 22 AWG 0,33…) округлены, в файле — площадь AWG по ASTM B258. В БД.ПРОВ и СПР.КАБ этой марки нет."
+  },
+  {
+   "key": "НВ-4 (600 В)",
+   "aliases": [
+    "НВ-4",
+    "НВ4",
+    "НВ 4"
+   ],
+   "standard": {
+    "value": "ГОСТ 17515-72, марка НВ, класс жилы 4 по ГОСТ 22483, 600 В",
+    "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+   },
+   "insulation_material": {
+    "value": "ПВХ-пластикат",
+    "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+   },
+   "voltage_v": {
+    "value": 600,
+    "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+   },
+   "temp_min_c": {
+    "value": -50,
+    "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+   },
+   "temp_max_c": {
+    "value": 105,
+    "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+   },
+   "colors": {
+    "value": [
+     "белый",
+     "жёлтый",
+     "красный",
+     "синий",
+     "зелёный",
+     "коричневый",
+     "чёрный"
+    ],
+    "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+   },
+   "sizes": [
+    {
+     "mark": "НВ-4 0,08",
+     "awg": null,
+     "section_mm2": 0.08,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 1.2,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    },
+    {
+     "mark": "НВ-4 0,12",
+     "awg": null,
+     "section_mm2": 0.12,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 1.3,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    },
+    {
+     "mark": "НВ-4 0,20",
+     "awg": null,
+     "section_mm2": 0.2,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 1.5,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    },
+    {
+     "mark": "НВ-4 0,35",
+     "awg": null,
+     "section_mm2": 0.35,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 1.6,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    },
+    {
+     "mark": "НВ-4 0,50",
+     "awg": null,
+     "section_mm2": 0.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 1.8,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    },
+    {
+     "mark": "НВ-4 0,75",
+     "awg": null,
+     "section_mm2": 0.75,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 2.1,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    },
+    {
+     "mark": "НВ-4 1,0",
+     "awg": null,
+     "section_mm2": 1.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 2.2,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    },
+    {
+     "mark": "НВ-4 1,5",
+     "awg": null,
+     "section_mm2": 1.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.35,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     },
+     "outer_dia_mm": {
+      "value": 2.5,
+      "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+     }
+    }
+   ],
+   "notes": "ГОСТ: п. 1.1 (марка НВ — жила из медных лужёных проволок), табл. 1 (сечения), табл. 2 (изоляция 600 В: ном. 0,35, мин. 0,20 мм), табл. 3 (Ø наружный — МАКСИМАЛЬНЫЙ, марка НВ 1 жила 600 В), табл. 3а (класс 4: 0,08–1,5 мм²), п. 2.1 (−50…+105 °C), табл. 4 (7 цветов; допускаются оранжевый/розовый/голубой/фиолетовый как пары). Подтверждено каталогом «Кабельный Альянс» с. 251. Сечения 0,14 мм² в ГОСТ нет — строка БД.ПРОВ «НВ-4 0,14» стандарту не соответствует. Число/Ø проволок класса 4 ГОСТ не задаёт (только класс по ГОСТ 22483). Постоянное напряжение — 840 В."
+  },
+  {
+   "key": "ПВАМ",
+   "aliases": [
+    "ПВАМ"
+   ],
+   "standard": {
+    "value": "ТУ 16.К19-12-2003",
+    "source": "Обозначение изделия АО «Электрокабель» Кольчугинский завод «ПВАМ-0,35 48В ТУ 16.К19-12-2003» (карточка товара vseinstrumenti.ru/product/provod-ao-elektrokabel-kolchuginskij-zavod-pvam-0-35-48v-tu-16-k19-12-2003-chernyj-buhta-500-m-100000084940-ch-500-24473652/)"
+   },
+   "conductor_material": null,
+   "insulation_material": null,
+   "voltage_v": {
+    "value": 48,
+    "source": "Обозначение изделия АО «Электрокабель» Кольчугинский завод «ПВАМ-0,35 48В ТУ 16.К19-12-2003» (карточка товара vseinstrumenti.ru/product/provod-ao-elektrokabel-kolchuginskij-zavod-pvam-0-35-48v-tu-16-k19-12-2003-chernyj-buhta-500-m-100000084940-ch-500-24473652/)"
+   },
+   "temp_min_c": null,
+   "temp_max_c": null,
+   "colors": null,
+   "sizes": [
+    {
+     "mark": "ПВАМ 0,35",
+     "awg": null,
+     "section_mm2": 0.35,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "ПВАМ 0,50",
+     "awg": null,
+     "section_mm2": 0.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "ПВАМ 0,75",
+     "awg": null,
+     "section_mm2": 0.75,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "ПВАМ 1,0",
+     "awg": null,
+     "section_mm2": 1.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "ПВАМ 1,5",
+     "awg": null,
+     "section_mm2": 1.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "ПВАМ 2,5",
+     "awg": null,
+     "section_mm2": 2.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "ПВАМ 4",
+     "awg": null,
+     "section_mm2": 4.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "ПВАМ 6",
+     "awg": null,
+     "section_mm2": 6.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    }
+   ],
+   "notes": "Текст ТУ 16.К19-12-2003 и каталог завода не найдены — размеры не заполнены. Непервичные данные для сверки: справочник дистрибьютора ЭЛЕКОН (elcn.ru/inf/29672, ТУ не указан) — класс жилы 4 для 0,35 и 5 для остальных; ном. изоляция / макс. Ø: 0,35 — 0,268/1,4; 0,5 — 0,30/1,6; 0,75 — 0,327/1,9; 1,0 — 0,338/2,1; 1,5 — 0,355/2,4; 2,5 — 0,385/3,0; 4 — 0,472/3,7; 6 — 0,425/4,3; −40…+105 °C; медь, ПВХ-пластикат. bystrokabel.ru: ПВАМ выпускается и по ТУ 16.К17-030-97, ТУ 16.К05-015-2002, ТУ 16.К01-27-2001."
+  },
+  {
+   "key": "МГТФ",
+   "aliases": [
+    "МГТФ"
+   ],
+   "standard": {
+    "value": "ТУ 16-505.185-71",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+   },
+   "conductor_material": {
+    "value": "медь",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+   },
+   "insulation_material": {
+    "value": "фторопласт-4 (обмотка плёнкой)",
+    "source": "Холдинг «Кабельный Альянс», каталог «Кабели и провода монтажные», с. 254 «МГТФ, МГТФЭ ТУ 16-505.185-71» — ros-electric.ru (тот же PDF)"
+   },
+   "voltage_v": {
+    "value": 250,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+   },
+   "temp_min_c": {
+    "value": -60,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+   },
+   "temp_max_c": {
+    "value": 220,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+   },
+   "colors": null,
+   "sizes": [
+    {
+     "mark": "МГТФ 0,03",
+     "awg": null,
+     "section_mm2": 0.03,
+     "strands": {
+      "value": "7×0,08",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.24,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.56,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     }
+    },
+    {
+     "mark": "МГТФ 0,05",
+     "awg": null,
+     "section_mm2": 0.05,
+     "strands": {
+      "value": "10×0,08",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.62,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     }
+    },
+    {
+     "mark": "МГТФ 0,07",
+     "awg": null,
+     "section_mm2": 0.07,
+     "strands": {
+      "value": "14×0,08",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.75,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     }
+    },
+    {
+     "mark": "МГТФ 0,10",
+     "awg": null,
+     "section_mm2": 0.1,
+     "strands": {
+      "value": "21×0,08",
+      "source": "Камкабель, лист «Провод МГТФ» (табл. размеров) — radiodetali.perm.ru/goodstech/100011668_3513.pdf"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.85,
+      "source": "Камкабель, лист «Провод МГТФ» (табл. размеров) — radiodetali.perm.ru/goodstech/100011668_3513.pdf"
+     }
+    },
+    {
+     "mark": "МГТФ 0,12",
+     "awg": null,
+     "section_mm2": 0.12,
+     "strands": {
+      "value": "24×0,08",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.87,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     }
+    },
+    {
+     "mark": "МГТФ 0,14",
+     "awg": null,
+     "section_mm2": 0.14,
+     "strands": {
+      "value": "30×0,08",
+      "source": "Камкабель, лист «Провод МГТФ» (табл. размеров) — radiodetali.perm.ru/goodstech/100011668_3513.pdf"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.9,
+      "source": "Камкабель, лист «Провод МГТФ» (табл. размеров) — radiodetali.perm.ru/goodstech/100011668_3513.pdf"
+     }
+    },
+    {
+     "mark": "МГТФ 0,20",
+     "awg": null,
+     "section_mm2": 0.2,
+     "strands": {
+      "value": "19×0,12",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.6,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.04,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     }
+    },
+    {
+     "mark": "МГТФ 0,35",
+     "awg": null,
+     "section_mm2": 0.35,
+     "strands": {
+      "value": "19×0,15",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     },
+     "conductor_dia_mm": {
+      "value": 0.75,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.19,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+     }
+    }
+   ],
+   "notes": "Ø наружный — максимальный по ТУ. 250 В — переменное до 5 кГц; постоянное 350 В (Камкабель, «Кабельный Альянс»); 1500 В — это испытательное напряжение Камкабеля, не рабочее. Сечения 0,10 и 0,14 есть у Камкабеля и «Кабельного Альянса» (каталог с. 254), в сборнике ВНИИКП их нет. Сечения 0,5 / 0,75 / 1,0 мм² в ТУ (сборник ВНИИКП) и у этих двух заводов отсутствуют — только у дистрибьютора «Кварц» (static.chipdip.ru/lib/238/DOC020238708.pdf: макс. Ø 1,5 / 1,8 / 1,9 мм), поэтому в ряд не включены; позиция БД.ПРОВ «МГТФ 1,0» стандартом не подтверждена. Цвет изоляции в ТУ не задан (натуральный фторопласт)."
+  },
+  {
+   "key": "МГШВ",
+   "aliases": [
+    "МГШВ"
+   ],
+   "standard": {
+    "value": "ТУ 16-505.437-82",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+   },
+   "insulation_material": {
+    "value": "волокнистая (полиэфирные нити) + ПВХ-пластикат",
+    "source": "Камкабель, лист «Провод МГШВ» (табл. размеров) — radiodetali.perm.ru/goodstech/28963_3533.pdf"
+   },
+   "voltage_v": {
+    "value": 1000,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+   },
+   "temp_min_c": {
+    "value": -50,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+   },
+   "temp_max_c": {
+    "value": 70,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+   },
+   "colors": {
+    "value": [
+     "белый",
+     "жёлтый",
+     "красный",
+     "синий",
+     "зелёный",
+     "коричневый",
+     "чёрный"
+    ],
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+   },
+   "sizes": [
+    {
+     "mark": "МГШВ 0,12",
+     "awg": null,
+     "section_mm2": 0.12,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.3,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     },
+     "voltage_v": {
+      "value": 380,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    },
+    {
+     "mark": "МГШВ 0,14",
+     "awg": null,
+     "section_mm2": 0.14,
+     "strands": {
+      "value": "8×0,15",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.4,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     },
+     "voltage_v": {
+      "value": 380,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    },
+    {
+     "mark": "МГШВ 0,20",
+     "awg": null,
+     "section_mm2": 0.2,
+     "strands": {
+      "value": "7×0,20",
+      "source": "Камкабель, лист «Провод МГШВ» (табл. размеров) — radiodetali.perm.ru/goodstech/28963_3533.pdf"
+     },
+     "conductor_dia_mm": {
+      "value": 0.6,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.6,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    },
+    {
+     "mark": "МГШВ 0,35",
+     "awg": null,
+     "section_mm2": 0.35,
+     "strands": {
+      "value": "19×0,15",
+      "source": "Камкабель, лист «Провод МГШВ» (табл. размеров) — radiodetali.perm.ru/goodstech/28963_3533.pdf"
+     },
+     "conductor_dia_mm": {
+      "value": 0.75,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.9,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    },
+    {
+     "mark": "МГШВ 0,50",
+     "awg": null,
+     "section_mm2": 0.5,
+     "strands": {
+      "value": "16×0,20",
+      "source": "Камкабель, лист «Провод МГШВ» (табл. размеров) — radiodetali.perm.ru/goodstech/28963_3533.pdf"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 2.2,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    },
+    {
+     "mark": "МГШВ 0,75",
+     "awg": null,
+     "section_mm2": 0.75,
+     "strands": {
+      "value": "24×0,20",
+      "source": "Камкабель, лист «Провод МГШВ» (табл. размеров) — radiodetali.perm.ru/goodstech/28963_3533.pdf"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 2.5,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    },
+    {
+     "mark": "МГШВ 1,0",
+     "awg": null,
+     "section_mm2": 1.0,
+     "strands": {
+      "value": "19×0,26",
+      "source": "Камкабель, лист «Провод МГШВ» (табл. размеров) — radiodetali.perm.ru/goodstech/28963_3533.pdf"
+     },
+     "conductor_dia_mm": {
+      "value": 1.3,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 2.8,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    },
+    {
+     "mark": "МГШВ 1,5",
+     "awg": null,
+     "section_mm2": 1.5,
+     "strands": {
+      "value": "19×0,32",
+      "source": "Камкабель, лист «Провод МГШВ» (табл. размеров) — radiodetali.perm.ru/goodstech/28963_3533.pdf"
+     },
+     "conductor_dia_mm": {
+      "value": 1.6,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 3.0,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+     }
+    }
+   ],
+   "notes": "ТУ (сборник ВНИИКП): табл. 1 — Ø наружный МАКСИМАЛЬНЫЙ; табл. 2 — класс жилы (0,12 и 0,20 — кл. 4; 0,14 — 8×0,15; 0,35–0,75 — кл. 5; 1,0–1,5 — кл. 4); табл. 3 — номинальное переменное напряжение до 10 кГц: 0,08–0,14 мм² — 380 В, 0,20–1,50 мм² — 1000 В (Камкабель: постоянное 1500 В). Число×Ø проволок 0,20–1,50 — по листу Камкабеля. Цвета: 7 (допускаются натуральный/оранжевый/розовый/голубой/фиолетовый как пары)."
+  },
+  {
+   "key": "МС 16-13",
+   "aliases": [
+    "МС 16-13",
+    "МС16-13"
+   ],
+   "standard": {
+    "value": "ТУ 16-505.083-78",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+   },
+   "conductor_material": {
+    "value": "медь посеребрённая",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+   },
+   "insulation_material": {
+    "value": "плёнка фторопласта-4Д (обмотка с термообработкой)",
+    "source": "Камкабель, лист «МС 16-13, ТУ 16-505.083-78» — optochip.org/docum/store/factory/series/101775/1490348780-5-10678.pdf"
+   },
+   "voltage_v": {
+    "value": 100,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+   },
+   "temp_min_c": {
+    "value": -60,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+   },
+   "temp_max_c": {
+    "value": 200,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+   },
+   "colors": {
+    "value": [
+     "белый",
+     "красный",
+     "жёлтый",
+     "синий",
+     "зелёный",
+     "коричневый",
+     "чёрный"
+    ],
+    "source": "Камкабель, лист «МС 16-13, ТУ 16-505.083-78» — optochip.org/docum/store/factory/series/101775/1490348780-5-10678.pdf"
+   },
+   "sizes": [
+    {
+     "mark": "МС 16-13 0,02",
+     "awg": null,
+     "section_mm2": 0.02,
+     "strands": {
+      "value": "7×0,06",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.18,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.56,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 16-13 0,03",
+     "awg": null,
+     "section_mm2": 0.03,
+     "strands": {
+      "value": "7×0,08",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.24,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.6,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 16-13 0,05",
+     "awg": null,
+     "section_mm2": 0.05,
+     "strands": {
+      "value": "7×0,10",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.3,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.66,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 16-13 0,08",
+     "awg": null,
+     "section_mm2": 0.08,
+     "strands": {
+      "value": "7×0,12",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.36,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.72,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 16-13 0,12",
+     "awg": null,
+     "section_mm2": 0.12,
+     "strands": {
+      "value": "7×0,15",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.45,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.81,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 16-13 0,20",
+     "awg": null,
+     "section_mm2": 0.2,
+     "strands": {
+      "value": "7×0,20",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.6,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.96,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 16-13 0,35",
+     "awg": null,
+     "section_mm2": 0.35,
+     "strands": {
+      "value": "7×0,26",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.78,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.25,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 16-13 0,50",
+     "awg": null,
+     "section_mm2": 0.5,
+     "strands": {
+      "value": "19×0,18",
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     },
+     "conductor_dia_mm": {
+      "value": 0.9,
+      "source": "расчёт по конструкции жилы из того же источника: скрутка 1+6 → Ø = 3·d, 1+6+12 → Ø = 5·d (d — Ø проволоки)"
+     },
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.37,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+     }
+    }
+   ],
+   "notes": "ТУ (сборник ВНИИКП), табл. 2: число×Ø проволок и МАКСИМАЛЬНЫЙ Ø. Камкабель даёт номинальный Ø: 0,03 — 0,56; 0,05 — 0,62; 0,08 — 0,68; 0,12 — 0,77; 0,20 — 0,92; 0,35 — 1,20; 0,50 — 1,32 мм. 100 В — переменное до 10 кГц (постоянное 150 В, Камкабель). Тот же ТУ: МС 26-13 — 250 В, МС 36-13 — 500 В."
+  },
+  {
+   "key": "МС 15-11",
+   "aliases": [
+    "МС 15-11",
+    "МС15-11"
+   ],
+   "standard": {
+    "value": "ТУ 16-705.199-81",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+   },
+   "insulation_material": {
+    "value": "фторопласт-4МБ (монолитная)",
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+   },
+   "voltage_v": {
+    "value": 100,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+   },
+   "temp_min_c": {
+    "value": -60,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+   },
+   "temp_max_c": {
+    "value": 155,
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+   },
+   "colors": {
+    "value": [
+     "натуральный",
+     "красный",
+     "жёлтый",
+     "синий",
+     "зелёный",
+     "коричневый",
+     "чёрный"
+    ],
+    "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+   },
+   "sizes": [
+    {
+     "mark": "МС 15-11 0,08",
+     "awg": null,
+     "section_mm2": 0.08,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.8,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 15-11 0,12",
+     "awg": null,
+     "section_mm2": 0.12,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 0.89,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 15-11 0,20",
+     "awg": null,
+     "section_mm2": 0.2,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.04,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 15-11 0,35",
+     "awg": null,
+     "section_mm2": 0.35,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.29,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+     }
+    },
+    {
+     "mark": "МС 15-11 0,50",
+     "awg": null,
+     "section_mm2": 0.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 1.4,
+      "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные марок МС 15-11 … ТУ 16-705.199-81», марки, табл. 1 (Ø не более), диапазон температур"
+     }
+    }
+   ],
+   "notes": "ТУ (сборник ВНИИКП), табл. 1: МАКСИМАЛЬНЫЙ Ø одножильного провода. Жила многопроволочная класса 4 (0,08–0,35 мм²) и класса 5 (0,50 мм²) по ГОСТ 22483 — число×Ø проволок ТУ не задаёт. 100 В — переменное до 50 МГц. Сечение 0,05 мм² в этом ТУ только у МС 16-16."
+  },
+  {
+   "key": "МК 26-13",
+   "aliases": [
+    "МК 26-13",
+    "МК26-13"
+   ],
+   "standard": null,
+   "conductor_material": null,
+   "insulation_material": null,
+   "voltage_v": null,
+   "temp_min_c": null,
+   "temp_max_c": null,
+   "colors": null,
+   "sizes": [
+    {
+     "mark": "МК 26-13 0,07",
+     "awg": null,
+     "section_mm2": 0.07,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "МК 26-13 0,12",
+     "awg": null,
+     "section_mm2": 0.12,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "МК 26-13 0,20",
+     "awg": null,
+     "section_mm2": 0.2,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "МК 26-13 0,35",
+     "awg": null,
+     "section_mm2": 0.35,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    },
+    {
+     "mark": "МК 26-13 0,50",
+     "awg": null,
+     "section_mm2": 0.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": null
+    }
+   ],
+   "notes": "Первичный источник не найден: марки нет в сборнике ВНИИКП (т. 4, ч. I и II), сайт Чувашкабеля данных не даёт. По системе обозначений ОТУ (сборник ВНИИКП, введение): «МК» — провод монтажный с комбинированной изоляцией, «2» — 250 В, «6» — 200 °C. Непервичные данные реселлера snabcable.ru/onboard/mk-26-13-mke-26-13/mk-26-13/: Чувашкабель, ТУ 16.К05-016-2003; медь, обмотка плёнкой фторопласта-4 и -4Д; 250 В AC до 5 кГц / 350 В DC; −60…+200 °C; сечения 0,07/0,12/0,20/0,35/0,50 с Ø 0,75/0,87/1,04/1,19/1,5 мм; цвета белый, жёлтый, зелёный, коричневый, красный, оранжевый, синий, чёрный. Ряд сечений взят оттуда, значения не заполнены."
+  },
+  {
+   "key": "ПуГВ",
+   "aliases": [
+    "ПуГВ",
+    "ПУГВ"
+   ],
+   "standard": {
+    "value": "ГОСТ 31947-2012; ТУ 16-705.501-2010",
+    "source": "Иркутсккабель (УНКОМТЕХ), описание марки ПуГВ, ТУ 16-705.501-2010 — uncomtech.ru/marks/download/VE11"
+   },
+   "conductor_material": {
+    "value": "медь",
+    "source": "Иркутсккабель (УНКОМТЕХ), описание марки ПуГВ, ТУ 16-705.501-2010 — uncomtech.ru/marks/download/VE11"
+   },
+   "insulation_material": {
+    "value": "ПВХ-пластикат",
+    "source": "Иркутсккабель (УНКОМТЕХ), описание марки ПуГВ, ТУ 16-705.501-2010 — uncomtech.ru/marks/download/VE11"
+   },
+   "voltage_v": {
+    "value": 450,
+    "source": "ГОСТ 31947-2012 (ред. изм. 1) «Провода и кабели для электрических установок на номинальное напряжение до 450/750 В», п. 4.2, 5.2.1.4 — meganorm.ru/mega_doc/norm/gost_gosudarstvennyj-standart/0/gost_31947-2012_mezhgosudarstvennyy_standart_provoda_i.html"
+   },
+   "temp_min_c": {
+    "value": -50,
+    "source": "Иркутсккабель (УНКОМТЕХ), описание марки ПуГВ, ТУ 16-705.501-2010 — uncomtech.ru/marks/download/VE11"
+   },
+   "temp_max_c": {
+    "value": 65,
+    "source": "Иркутсккабель (УНКОМТЕХ), описание марки ПуГВ, ТУ 16-705.501-2010 — uncomtech.ru/marks/download/VE11"
+   },
+   "colors": null,
+   "sizes": [
+    {
+     "mark": "ПуГВ 0,50",
+     "awg": null,
+     "section_mm2": 0.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.6,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 2.5,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 0,75",
+     "awg": null,
+     "section_mm2": 0.75,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.6,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 2.7,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 1,0",
+     "awg": null,
+     "section_mm2": 1.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.6,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 2.8,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 1,5",
+     "awg": null,
+     "section_mm2": 1.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.7,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 3.4,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 2,5",
+     "awg": null,
+     "section_mm2": 2.5,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.8,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 4.1,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 4",
+     "awg": null,
+     "section_mm2": 4.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.8,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 4.8,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 6",
+     "awg": null,
+     "section_mm2": 6.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.8,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 5.3,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 10",
+     "awg": null,
+     "section_mm2": 10.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 1.0,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 6.8,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    },
+    {
+     "mark": "ПуГВ 16",
+     "awg": null,
+     "section_mm2": 16.0,
+     "strands": null,
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 1.0,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     },
+     "outer_dia_mm": {
+      "value": 8.1,
+      "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+     }
+    }
+   ],
+   "notes": "Жила класса 5 по ГОСТ 22483 (ГОСТ 31947 п. 5.2.1.4; Иркутсккабель) — число×Ø проволок не нормируется. Напряжение 450/750 В переменного тока до 400 Гц или 1000 В постоянного; в поле — U0 = 450 В. Изоляция и Ø — номинальная толщина и МАКСИМАЛЬНЫЙ Ø по табл. 9 каталога ООО «Промтех» (ТУ 27.32.13-012-32408375-2023 по ГОСТ 31947-2012); таблица 3 ТУ 16-705.501-2010 не найдена. Ряд по ТУ — 0,5–400 мм², в файле до 16 мм². Температура: Иркутсккабель −50…+65 °C (жила до 70 °C); «Промтех» — −50…+70 °C. Цвет — по согласованию с заказчиком. ПуГВнг(А)-LS — отдельная марка, сюда не относится."
+  }
+ ],
+ "was": [
+  {
+   "mark": "UL1061 30AWG",
+   "field": "outer_dia_mm",
+   "old": "0,8",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.81,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1061 28AWG",
+   "field": "outer_dia_mm",
+   "old": "0,9",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.89,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1061 26AWG",
+   "field": "outer_dia_mm",
+   "old": "1",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.99,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1061 24AWG",
+   "field": "outer_dia_mm",
+   "old": "1,15",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.14,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1061 22AWG",
+   "field": "outer_dia_mm",
+   "old": "1,35",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.32,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1061 20AWG",
+   "field": "outer_dia_mm",
+   "old": "1,6",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.42,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1061 18AWG",
+   "field": "outer_dia_mm",
+   "old": "1,9",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.75,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1061 16AWG",
+   "field": "outer_dia_mm",
+   "old": "2,4",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.08,
+   "source": "RDS Wire, UL Style 1061 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1061 (таблица AWG/stranding/Insulation O.D., wall .009\", 80°C 300V)"
+  },
+  {
+   "mark": "UL1007 30AWG",
+   "field": "temp_min_c",
+   "old": "-20",
+   "old_from": "БД.ПРОВ",
+   "new": -30,
+   "source": "Letronic, датащит UL 1007/1569 — letronic.de/en/produkte/datenblatt/699-ul-1007-1569 (TPC, UL-PVC, стенка 0,38 мм, −30 °C неподвижно / −10 °C при движении)"
+  },
+  {
+   "mark": "UL1007 30AWG",
+   "field": "strands",
+   "old": "7×0,101",
+   "old_from": "БД.ПРОВ",
+   "new": "7×0,102",
+   "source": "Letronic, датащит UL 1007/1569 — letronic.de/en/produkte/datenblatt/699-ul-1007-1569 (TPC, UL-PVC, стенка 0,38 мм, −30 °C неподвижно / −10 °C при движении)"
+  },
+  {
+   "mark": "UL1007 30AWG",
+   "field": "outer_dia_mm",
+   "old": "1,1",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.15,
+   "source": "Letronic, датащит UL 1007/1569 — letronic.de/en/produkte/datenblatt/699-ul-1007-1569 (TPC, UL-PVC, стенка 0,38 мм, −30 °C неподвижно / −10 °C при движении)"
+  },
+  {
+   "mark": "UL1007 28AWG",
+   "field": "outer_dia_mm",
+   "old": "1,2",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.14,
+   "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+  },
+  {
+   "mark": "UL1007 26AWG",
+   "field": "outer_dia_mm",
+   "old": "1,3",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.22,
+   "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+  },
+  {
+   "mark": "UL1007 24AWG",
+   "field": "outer_dia_mm",
+   "old": "1,4",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.45,
+   "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+  },
+  {
+   "mark": "UL1007 22AWG",
+   "field": "outer_dia_mm",
+   "old": "1,6",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.65,
+   "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+  },
+  {
+   "mark": "UL1007 20AWG",
+   "field": "outer_dia_mm",
+   "old": "1,8",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.83,
+   "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+  },
+  {
+   "mark": "UL1007 18AWG",
+   "field": "outer_dia_mm",
+   "old": "2,1",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.03,
+   "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+  },
+  {
+   "mark": "UL1007 16AWG",
+   "field": "outer_dia_mm",
+   "old": "2,6",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.39,
+   "source": "RDS Wire, UL Style 1007 — rdswire.com/commercial-wire-and-cable-products/ul-awm-styles/ul-awm-pvc-wire/ul-style-1007 (28–16 AWG, wall .016\", 300V, 80°C)"
+  },
+  {
+   "mark": "UL1571 32AWG",
+   "field": "outer_dia_mm",
+   "old": "0,7",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.54,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 30AWG",
+   "field": "outer_dia_mm",
+   "old": "0,85",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.75,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 28AWG",
+   "field": "voltage_v",
+   "old": "300",
+   "old_from": "БД.ПРОВ",
+   "new": 30,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 28AWG",
+   "field": "outer_dia_mm",
+   "old": "0,95",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.85,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 26AWG",
+   "field": "voltage_v",
+   "old": "300",
+   "old_from": "БД.ПРОВ",
+   "new": 30,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 26AWG",
+   "field": "strands",
+   "old": "7×0,14",
+   "old_from": "БД.ПРОВ",
+   "new": "7×0,16",
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 26AWG",
+   "field": "outer_dia_mm",
+   "old": "1,05",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.98,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 24AWG",
+   "field": "outer_dia_mm",
+   "old": "1,2",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.11,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "UL1571 22AWG",
+   "field": "outer_dia_mm",
+   "old": "1,4",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.3,
+   "source": "Letronic, датащит UL 1571 — letronic.de/en/produkte/datenblatt/368-ul-1571 (TPC, special PVC, 30 V, −30 °C неподвижно / −10 °C при движении … +80 °C)"
+  },
+  {
+   "mark": "НВ-4 0,35",
+   "field": "outer_dia_mm",
+   "old": "1,7",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.6,
+   "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+  },
+  {
+   "mark": "НВ-4 0,50",
+   "field": "outer_dia_mm",
+   "old": "1,9",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.8,
+   "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+  },
+  {
+   "mark": "НВ-4 1,0",
+   "field": "outer_dia_mm",
+   "old": "2,3",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.2,
+   "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+  },
+  {
+   "mark": "НВ-4 1,5",
+   "field": "outer_dia_mm",
+   "old": "2,6",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.5,
+   "source": "ГОСТ 17515-72 (ред. изм. 1–8) «Провода монтажные с пластмассовой изоляцией. ТУ» — meganorm.ru/Data1/21/21444/index.htm"
+  },
+  {
+   "mark": "МГТФ 0,03",
+   "field": "outer_dia_mm",
+   "old": "0,55",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.56,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+  },
+  {
+   "mark": "МГТФ 0,05",
+   "field": "outer_dia_mm",
+   "old": "0,65",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.62,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+  },
+  {
+   "mark": "МГТФ 0,12",
+   "field": "outer_dia_mm",
+   "old": "0,85",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.87,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+  },
+  {
+   "mark": "МГТФ 0,14",
+   "field": "voltage_v",
+   "old": "1500",
+   "old_from": "БД.ПРОВ",
+   "new": 250,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+  },
+  {
+   "mark": "МГТФ 0,20",
+   "field": "voltage_v",
+   "old": "1500",
+   "old_from": "БД.ПРОВ",
+   "new": 250,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+  },
+  {
+   "mark": "МГТФ 0,20",
+   "field": "outer_dia_mm",
+   "old": "1",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.04,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+  },
+  {
+   "mark": "МГТФ 0,35",
+   "field": "outer_dia_mm",
+   "old": "1,2",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.19,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные теплостойкие с изоляцией из фторопласта, ТУ 16-505.185-71» (марки, таблица конструкции/размеров, диапазон температур)"
+  },
+  {
+   "mark": "МГШВ 0,12",
+   "field": "outer_dia_mm",
+   "old": "1,2",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.3,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МГШВ 0,2",
+   "field": "voltage_v",
+   "old": "380 (AC до 10кГц) / 500 (DC)",
+   "old_from": "БД.ПРОВ",
+   "new": 1000,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МГШВ 0,20",
+   "field": "outer_dia_mm",
+   "old": "1,4",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.6,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МГШВ 0,35",
+   "field": "outer_dia_mm",
+   "old": "1,6",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.9,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МГШВ 0,50",
+   "field": "outer_dia_mm",
+   "old": "1,8",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.2,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МГШВ 0,75",
+   "field": "outer_dia_mm",
+   "old": "2",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.5,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МГШВ 1,0",
+   "field": "outer_dia_mm",
+   "old": "2,1",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 2.8,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МГШВ 1,5",
+   "field": "outer_dia_mm",
+   "old": "2,4",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 3.0,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с волокнистой или плёночной и ПВХ изоляцией, ТУ 16-505.437-82», табл. 1 (Ø не более), табл. 2 (класс жилы), табл. 3 (напряжение)"
+  },
+  {
+   "mark": "МС 16-13 0,05",
+   "field": "outer_dia_mm",
+   "old": "0,8",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.66,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "МС16-13 0,08",
+   "field": "strands",
+   "old": "7×0,15",
+   "old_from": "БД.ПРОВ",
+   "new": "7×0,12",
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "МС 16-13 0,08",
+   "field": "outer_dia_mm",
+   "old": "0,9",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.72,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "МС16-13 0,12",
+   "field": "outer_dia_mm",
+   "old": "0,9",
+   "old_from": "БД.ПРОВ",
+   "new": 0.81,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "МС 16-13 0,12",
+   "field": "outer_dia_mm",
+   "old": "1",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.81,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "МС 16-13 0,20",
+   "field": "outer_dia_mm",
+   "old": "1,1",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 0.96,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "МС 16-13 0,35",
+   "field": "outer_dia_mm",
+   "old": "1,3",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.25,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "МС 16-13 0,50",
+   "field": "outer_dia_mm",
+   "old": "1,5",
+   "old_from": "СПР.КАБ Ø изоляции",
+   "new": 1.37,
+   "source": "ВНИИКП, «Информационно-технический сборник. Изделия кабельные. Том 4. Кабели и провода монтажные. Часть I» — meganorm.ru/Data2/1/4293851/4293851304.htm, раздел «Провода монтажные с изоляцией из спекаемой плёнки, ТУ 16-505.083-78», табл. 2 (одножильные: проволоки, Ø не более), диапазон температур"
+  },
+  {
+   "mark": "ПуГВ 1,0",
+   "field": "outer_dia_mm",
+   "old": "2,5",
+   "old_from": "БД.ПРОВ",
+   "new": 2.8,
+   "source": "ООО «Промтех», «Провода для электрических установок на 450/750 В, ТУ 27.32.13-012-32408375-2023, ГОСТ 31947-2012», табл. 9 (ПуГВ) — indtechnology.ru/documents/pugv.pdf"
+  }
+ ]
+}

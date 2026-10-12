@@ -16,6 +16,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.workflows.terminal_crimp import crimp_display
+
 from .connector_housings import CATALOG_SAMPLES, FAMILIES, housing_of, normalize_article
 
 JST_PDF = "https://www.jst-mfg.com/product/pdf/eng/{}.pdf"
@@ -255,7 +257,7 @@ def terminals_for(keys: Iterable[str], records: Iterable[Mapping[str, Any]]) -> 
             "mm2_from": str(fields.get("mm2From") or "").strip(), "mm2_to": str(fields.get("mm2To") or "").strip(),
             "strip": str(fields.get("terStrip") or "").strip(),
             "applicator": str(fields.get("terApplicator") or "").strip(),
-            "crimp_height": str(fields.get("terCrimpHeight") or "").strip(),
+            **crimp_display(fields.get("terCrimpHeight"), fields.get("terPullForceMin"), fields.get("terPullForceMax")),
         })
     return out
 

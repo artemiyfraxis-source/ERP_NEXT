@@ -20,14 +20,14 @@ describe("etkChips (renderEtk_ chips)", () => {
       ["Время", "3,5 с на шт. · подгот. 3 мин"],
     ]);
     expect(etkChips({ fields: { crimpHeight: "", twist: { pitch: "", count: 2 }, lengthKd: "300мм", cutTolerance: "±5" } })).toEqual([
-      ["Высота обжима", "⚠ нет данных"], ["Длина по КД", "300мм"], ["Допуск реза", "±5 мм"], ["Шаг свивки", "по КД"], ["Пар", "2"],
+      ["Высота обжима", "не задано"], ["Длина по КД", "300мм"], ["Допуск реза", "±5 мм"], ["Шаг свивки", "по КД"], ["Пар", "2"],
       ["Время", "— · подгот. —"],
     ]);
   });
 
   it("shows the crimp height range and the tinned end of the cut-crimp-tin operation", () => {
     const chips = Object.fromEntries(etkChips(crimpTin()));
-    expect(chips["Высота обжима"]).toBe("0,43 – 0,47 мм");
+    expect(chips["Высота обжима"]).toBe("0,43–0,47 мм");
     expect(chips["Допуск реза"]).toBe("±3 мм");
     expect(chips["Зачистка"]).toBe("A 1,2 мм · B 3 мм (лужение)");
     // Выданная ЭТК: длины под лужение нет, конец В всё равно лужёный и зачищен.
