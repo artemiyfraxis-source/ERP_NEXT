@@ -7,6 +7,8 @@ read here. Results are plain JSON-ready dicts (Decimals as strings)."""
 
 from __future__ import annotations
 
+import re
+
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -22,6 +24,7 @@ from app.shared.identity import Actor
 from . import settings as purchasing_settings
 from .infrastructure import RfqSupplierRow, SupplierNameRow, SupplierRow
 from .items import guess_category, normalize_unit
+from .suppliers import is_stock_source
 from .rfq import (
     LineView,
     ProcurementLines,
@@ -39,7 +42,14 @@ from .rfq import (
 )
 from .suppliers import supplier_key
 
-GROUPS = (("cable", "Кабель и провод"), ("connector", "Разъёмы и клеммы"), ("ekb", "ЭКБ"), ("other", "Прочее"))
+GROUPS = (
+    ("cable", "Кабель и провод"), ("connector", "Разъёмы, клеммы, наконечники"), ("ekb", "ЭКБ"),
+    ("consumables", "Маркировка и расходники"), ("other", "Прочее"),
+)
+# A pool group only (nomenclature categories stay four): what would otherwise crowd «Прочее».
+_CONSUMABLES = re.compile(r"маркиров|маркер|бирк|^тут\b|\bтут\s|термоусад|трубк|кембрик|стяжк|хомут|клей|герметик"
+                          r"|лента|изолент|флюс|припой|спирт|перчатк|салфетк", re.IGNORECASE)
+
 GROUP_LABEL = dict(GROUPS)
 
 # ── the statistics port ─────────────────────────────────────────────────────────────────────────────────────────
@@ -151,9 +161,13 @@ def pool(uow: UnitOfWork, lines: ProcurementLines, stats: PurchaseStats, actor: 
         groups: dict[str, dict] = {}
         for view in sorted(views, key=lambda v: (v.name.casefold(), v.legacy_id)):
             insight = _insight(analysis, view)
-            code = insight.category if insight.category in GROUP_LABEL else "other"
-            group = groups.setdefault(code, {"lines": [], "suppliers": {}})
+            code = insight.category if insight.category in ("cable", "connector", "ekb") else (
+                "consumables" if _CONSUMABLES.search(view.name or "") else "other")
+            group = groups.setdefault(code, {"lines": [], "suppliers": {}, "from_stock": 0})
             text = _clean(view.supplier)
+            if is_stock_source(text):  # «Склад» in the supplier column: from our stock, nobody to ask
+                group["from_stock"] += 1
+                text = ""
             known = directory.find(text) if text else None
             shown = known.name if known is not None else text  # the directory's spelling, archived or not
             supplier_id = str(known.id) if known is not None and known.archived_at is None else None
@@ -179,6 +193,7 @@ def pool(uow: UnitOfWork, lines: ProcurementLines, stats: PurchaseStats, actor: 
             "groups": [
                 {
                     "category": code, "label": label, "count": len(groups[code]["lines"]),
+                    "from_stock": groups[code]["from_stock"],
                     "suppliers": sorted(groups[code]["suppliers"].values(),
                                         key=lambda s: (-s["lines"], s["name"].casefold())),
                     "lines": groups[code]["lines"],
@@ -293,7 +308,7 @@ def suggest(
         originals: dict[str, list] = {}
         for view in views:
             text = _clean(view.supplier)
-            if text:
+            if text and not is_stock_source(text):
                 originals.setdefault(supplier_key(text), [text, 0])[1] += 1
         for text, count in originals.values():
             found = entry(text)

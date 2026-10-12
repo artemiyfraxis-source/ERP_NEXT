@@ -24,7 +24,7 @@ from app.modules.purchasing import items as items_repo
 from app.modules.purchasing.infrastructure import ItemRow, LineItemRow
 from app.modules.purchasing.rfq import LineView
 from app.modules.purchasing.rfq_pool import Analysis, ItemMatch, LineInsight, PastPrice, SupplierStat
-from app.modules.purchasing.suppliers import supplier_key
+from app.modules.purchasing.suppliers import is_stock_source, supplier_key
 from app.workflows.purchasing_items_lines import match_item
 
 _PAID_COLUMNS = (
@@ -159,7 +159,7 @@ def _suppliers(paid: Iterable[_Paid]) -> tuple[SupplierStat, ...]:
     keys: dict[str, str] = {}
     groups: dict[str, tuple[Counter, list]] = {}
     for purchase in paid:
-        if not purchase.supplier:
+        if not purchase.supplier or is_stock_source(purchase.supplier):
             continue
         key = keys.get(purchase.supplier)
         if key is None:

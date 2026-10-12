@@ -419,3 +419,12 @@ def apply_import(session: Session, plan: dict[str, Any], actor_id: UUID | None, 
 def matches_search(row: SupplierRow, query: str) -> bool:
     haystack = " ".join([row.name, row.inn or "", " ".join(row.domains or []), row.site or "", row.email or ""]).casefold().replace("ё", "е")
     return all(word in haystack for word in query.casefold().replace("ё", "е").split())
+
+
+_STOCK_SOURCES = ("склад", "со склада", "с склада", "из склада", "наш склад")
+
+
+def is_stock_source(text: str | None) -> bool:
+    """«Склад» written in the supplier column means «take it from our stock», not a company to ask for quotes."""
+    value = " ".join(str(text or "").split()).casefold().strip(" .")
+    return value in _STOCK_SOURCES or value.startswith("склад ")

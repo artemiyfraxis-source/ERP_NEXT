@@ -73,6 +73,8 @@ export type PoolLine = RfqCandidate & {
 export type PoolGroup = {
   category: PoolCategory; label: string; count: number;
   suppliers: { name: string; supplier_id: string | null; lines: number }[]; lines: PoolLine[];
+  /** lines whose supplier column says «Склад» — taken from our stock, nobody to ask */
+  from_stock?: number;
 };
 export type RfqPoolResult = { total: number; groups: PoolGroup[] };
 

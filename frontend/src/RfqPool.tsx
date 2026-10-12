@@ -161,6 +161,7 @@ export function RfqPool({ onClose, onCreated }: { onClose: () => void; onCreated
                         {" · "}
                         {rows.length === group.count ? countLabel(group.count, LINE_FORMS) : `${rows.length} из ${countLabel(group.count, LINE_FORMS)}`}
                         {group.suppliers.length > 0 && <span className="muted"> · изначально: {originals(group.suppliers)}</span>}
+                        {(group.from_stock ?? 0) > 0 && <span className="muted"> · со склада: {group.from_stock}</span>}
                         {pickedIn > 0 && <span className="group-picked"> · выбрано {pickedIn}</span>}
                       </td>
                     </tr>
@@ -173,7 +174,8 @@ export function RfqPool({ onClose, onCreated }: { onClose: () => void; onCreated
                           />
                         </td>
                         <td className="text"><strong>{line.name}</strong><small>{line.legacy_id}{line.need_by ? ` · к ${formatDay(line.need_by)}` : ""}</small></td>
-                        <td>{line.article ?? ""}</td>
+                        {/* The article repeats the name on most calc lines — shown only when it adds something. */}
+                        <td>{line.article && line.article.trim().toLocaleLowerCase("ru") !== line.name.trim().toLocaleLowerCase("ru") ? line.article : "—"}</td>
                         <td className="num">{formatQty(line.quantity, line.unit)}</td>
                         <td>{project(line.project) || <span className="cell-empty">—</span>}</td>
                         <td title={line.supplier && line.supplier !== line.supplier_name ? `В строке: ${line.supplier}` : undefined}>

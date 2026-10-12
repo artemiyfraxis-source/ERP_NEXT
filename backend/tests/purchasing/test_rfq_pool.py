@@ -161,7 +161,8 @@ def test_pool_groups_by_the_item_category_else_the_guess_with_the_original_suppl
 
     pool = _pool(stand)
     assert [(g["category"], g["label"], g["count"]) for g in pool["groups"]] == [
-        ("cable", "Кабель и провод", 4), ("connector", "Разъёмы и клеммы", 1), ("ekb", "ЭКБ", 1), ("other", "Прочее", 1),
+        ("cable", "Кабель и провод", 4), ("connector", "Разъёмы, клеммы, наконечники", 1), ("ekb", "ЭКБ", 1),
+        ("consumables", "Маркировка и расходники", 1),
     ]
     cable = pool["groups"][0]
     assert cable["suppliers"] == [
@@ -257,7 +258,7 @@ def test_suggestion_reasons_ranking_unknown_and_archived(stand):
     alfa_row = by_name["ООО Альфа"]
     assert [r["code"] for r in alfa_row["reasons"]] == ["items", "category_history"]
     assert alfa_row["reasons"][0] == {"code": "items", "label": "поставлял эти позиции", "lines": 2, "last_date": "2026-09-01"}
-    assert alfa_row["reasons"][1]["label"] == "поставлял такие же (разъёмы и клеммы)"
+    assert alfa_row["reasons"][1]["label"] == "поставлял такие же (разъёмы, клеммы, наконечники)"
     assert (alfa_row["supplier_id"], alfa_row["rfq_reason"], alfa_row["preselect"]) == (str(alfa), "category", True)
     assert by_name["ООО Бета"]["supplier_id"] == str(beta) and by_name["ООО Бета"]["reasons"][0]["lines"] == 3
     unknown = by_name["ИП Неизвестный"]
@@ -368,3 +369,25 @@ def test_pool_and_suggest_stay_fast_on_thousands_of_lines(stand):
     body = _suggest(stand, *active[:50])
     elapsed = time.perf_counter() - started
     assert body["suggestions"] and elapsed < 1.0, f"подсказка {elapsed:.3f} с"
+
+
+def test_part_numbers_place_lines_in_the_right_category():
+    """Owner 12.10: JST/Molex terminals, wires by brand and a TVS diode used to fall into «Прочее»."""
+    from app.modules.purchasing.items import guess_category
+
+    assert {name: guess_category(name) for name in (
+        "GHR-04V-S", "SMR-02V-B", "Molex 430250400", "XT30U-F.G.Y", "I-DS1071-SCB01X3", "НКИ 1.5-6", "РПИ-М 1.5-(4.8)",
+    )} == dict.fromkeys(("GHR-04V-S", "SMR-02V-B", "Molex 430250400", "XT30U-F.G.Y", "I-DS1071-SCB01X3", "НКИ 1.5-6",
+                         "РПИ-М 1.5-(4.8)"), "connector")
+    assert guess_category("МС16-13 0,12 белый") == "cable"
+    assert guess_category("ParLan Patch U/UTP Cat5e 2x2x0,48") == "cable"
+    assert guess_category("Силиконовый 8AWG красный") == "cable"
+    assert guess_category("Sunmate 1.5KE24CA") == "ekb"
+    assert guess_category("Клей-герметик Силагерм 1044") == "other"
+
+
+def test_stock_in_the_supplier_column_is_not_a_supplier():
+    from app.modules.purchasing.suppliers import is_stock_source
+
+    assert is_stock_source("Склад") and is_stock_source(" склад ") and is_stock_source("Со склада")
+    assert not is_stock_source("ООО «Складские системы»") and not is_stock_source("") and not is_stock_source(None)

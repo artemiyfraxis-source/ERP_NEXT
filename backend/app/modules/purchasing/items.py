@@ -7,6 +7,8 @@ app/workflows/purchasing_items_lines.py."""
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -63,20 +65,37 @@ def alias_key(text: str | None) -> str:
 
 
 _CATEGORY_WORDS = (
-    ("cable", ("кабел", "провод", "шнур", "cable", "wire")),
-    ("connector", ("разъем", "разъём", "клемм", "терминал", "вилка", "розетка", "коннектор", "connector")),
-    ("ekb", ("микросхем", "резистор", "конденсатор", "диод", "транзистор")),
+    ("cable", ("кабел", "провод", "шнур", "cable", "wire", "коаксиал")),
+    ("connector", ("разъем", "разъём", "клемм", "терминал", "вилк", "розетк", "коннектор", "connector", "наконечник",
+                   "гильз", "колодк", "штекер", "гнездо")),
+    ("ekb", ("микросхем", "резистор", "конденсатор", "диод", "транзистор", "стабилитрон", "плата ", "arduino")),
+)
+# Part numbers say what words do not (owner 12.10: JST/Molex terminals fell into «Прочее»). Checked when no word hit.
+_CATEGORY_PATTERNS = (
+    ("connector", re.compile(
+        r"\b(?:GHR|GH|SHR|SMR|SMP|SMM|SYM|SYP|SYR|SHF|SSHL|SSH|SXH|SPH|XHP|PHR|ZHR|EHR|VHR|NSHR|PUDP|PADP)-"
+        r"|\bmolex\b|\bjst\b|\bXT\d{2}|\bDS\d{4}|\bQS\d|\bSA\d{3}/|\bXP-\d|\bD-?SUB\b|\bDB-?\d"
+        r"|^(?:ГС|НКИ|НШВИ|НВИ|НШП|ПМ|РПИ|РПМ|РПП)(?:[\s-]|\d)", re.IGNORECASE)),
+    ("cable", re.compile(
+        r"\bМС\s?16|\bМГТФ|\bПВАМ|\bНВ-\d|\bПуГВ|\bШВВП|\bПВС\b|\bКСПВ|\bUTP\b|\bFTP\b|\bcat\.?\s?[5-7]"
+        r"|\bpatch\b|\bAWG\b|\d\s?AWG\b|\bRG-?\d", re.IGNORECASE)),
+    ("ekb", re.compile(r"\d(?:[.,]\d)?KE\d|\bTVS\b|\bSMBJ|\bSMAJ|\bLM\d{3}|\bNE555|\bATmega|\bSTM32", re.IGNORECASE)),
 )
 
 
 def guess_category(name: str | None, item_type: str | None = None) -> str:
-    """cable / connector / ekb by words of the name (the item type is the fallback), else other."""
+    """cable / connector / ekb by words of the name (the item type is the fallback), then by part-number patterns,
+    else other."""
     # The word that comes first wins: «Разъём DB-9 вилка на кабель» is a connector, «Кабель с разъёмом» a cable.
     for text in (name, item_type):
         low = str(text or "").casefold()
         hits = [(low.find(word), category) for category, words in _CATEGORY_WORDS for word in words if word in low]
         if hits:
             return min(hits)[1]
+    text = " ".join(str(name or "").split())
+    for category, pattern in _CATEGORY_PATTERNS:
+        if pattern.search(text):
+            return category
     return "other"
 
 
