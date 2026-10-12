@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Suspense } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+
+// Ленивый редактор жгута грузится долго, когда полный гейт гоняет все наборы параллельно: под нагрузкой
+// 10–15 с не хватало (таймауты 12.10.2026), поэтому этому файлу — свой запас.
+vi.setConfig({ testTimeout: 45_000 });
 import { CANVAS_EDIT_PROPS, readOnlyCanvasProps, type CanvasViewportProps } from "./editor/CanvasViewport";
 import { physicalFixture } from "./editor/physical-topology-fixture";
 import { HarnessEditorLazy } from "./index";
@@ -31,7 +35,7 @@ async function openReadOnly() {
   const view = render(<Suspense fallback={<div>Загрузка редактора…</div>}>
     <HarnessEditorLazy projectId="p-1" harnessId="h-1" harnessDesignation="КБ1" initialView="e4" {...inMemoryEditorPorts({}, api)} documentsSource={documentsSource} readOnly />
   </Suspense>);
-  await waitFor(() => expect(view.container.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 10_000 });
+  await waitFor(() => expect(view.container.querySelector(".harness-root .he-host")).not.toBeNull(), { timeout: 30_000 });
   return { api, stored, save, ...view };
 }
 
@@ -75,7 +79,7 @@ describe("редактор жгута в режиме просмотра", () =>
     const zoomIn = await waitFor(() => {
       fireEvent.click(within(toolbar).getByRole("tab", { name: "Вид" }));
       return within(toolbar).getByRole("button", { name: "Увеличить масштаб" });
-    }, { timeout: 5_000 });
+    }, { timeout: 15_000 });
     fireEvent.click(zoomIn);
     expect(await screen.findByLabelText(/Поле схемы Э4\. Масштаб 120 процентов/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Чертёж" }));
