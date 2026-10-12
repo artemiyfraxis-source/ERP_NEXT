@@ -304,7 +304,9 @@ def build_production_plan(
             journal=project_journal,
             terminal=is_terminal,
             sheet=cells,
-            group=sheet_group(cells["status"].value if "status" in cells else "", is_terminal),
+            group=sheet_group(
+                stage.status, project_journal.blocker.type if project_journal.blocker else "", is_terminal,
+            ),
             calendar=_safe(
                 "calendar", lambda: sheet_calendar(project_tasks, project_marks, first_day, last_day),
                 SheetCalendar(),

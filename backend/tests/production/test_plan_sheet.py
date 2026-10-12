@@ -60,12 +60,17 @@ def _mark(field, value="", text="", project="708К.4"):
                      kind=PLAN_KINDS["mark"], field=field, value=value, text=text)
 
 
-def test_shop_status_typos_and_multi_status_follow_plan_shop_status():
+def test_old_status_typos_still_normalize_for_the_drift_report():
     assert normalize_shop_statuses("к запус, ОЖД ИНФ.,ОЖИД КОМП") == "К ЗАПУСК, ОЖИД ИНФ, ОЖИД КОМПЛ"
     assert normalize_shop_statuses("В РАБОТЕ, в работе") == "В РАБОТЕ"
-    assert plan_mark_value("status", "холд,  в работе") == "ХОЛД, В РАБОТЕ"
-    with pytest.raises(ProductionValidationError, match="Неизвестный статус"):
-        plan_mark_value("status", "ГОТОВО, ЛЕТИТ")
+
+
+@pytest.mark.parametrize("value", ["холд, в работе", "авто", ""])
+def test_new_status_mark_is_refused_even_a_clearing_one(value):
+    with pytest.raises(ProductionValidationError, match="берётся из этапа проекта — меняйте этап"):
+        plan_mark_value("status", value)
+    with pytest.raises(ProductionValidationError, match="меняйте этап"):
+        validate_plan_note({"project": "708К.4", "kind": "mark", "field": "status", "value": value}, ["708К.4"])
 
 
 @pytest.mark.parametrize(("field", "value", "expected"), [
@@ -96,29 +101,30 @@ def test_latest_mark_wins_and_auto_or_empty_clears():
         _mark("ready", "40"), _mark("ready", "70"), _mark("in_plan", "да"), _mark("in_plan", "авто"),
         _mark("comment", text="ждём кабель"), _mark("comment", text="ждём кабель 2"),
         _mark("test_sb", "да", project="591К.3"),
+        _mark("status", "ХОЛД"),  # an old status mark stays in the journal but is ignored on reading
     ])
     assert marks == {"708К.4": {"ready": "70", "comment": "ждём кабель 2"}, "591К.3": {"test_sb": "да"}}
     assert summarize_plan_marks([_mark("comment", text="x"), _mark("comment", text="")]) == {"708К.4": {}}
 
 
-def test_auto_status_is_blocker_plus_shop_status_of_the_stage():
-    assert shop_status_auto("КБ набрана") == "К ЗАПУСК"
-    assert shop_status_auto("В работе", "ОЖИД КОМПЛ") == "ОЖИД КОМПЛ, В РАБОТЕ"
-    assert shop_status_auto("КБ на складе") == "ГОТОВО"
-    assert shop_status_auto("Отгружено") == "ОТГРУЖЕН"
-    # A stage without a sheet twin stays a neutral ERP word.
+def test_status_is_blocker_plus_erp_stage_name():
+    assert shop_status_auto("КБ набрана") == "КБ набрана"
+    assert shop_status_auto("В работе", "ОЖИД КОМПЛ") == "ОЖИД КОМПЛ, В работе"
+    assert shop_status_auto("КБ на складе") == "КБ на складе"
+    assert shop_status_auto("Отгружено") == "Отгружено"
     assert shop_status_auto("ТК готова") == "ТК готова"
 
 
-def test_groups_put_hold_on_top_and_finished_to_the_bottom():
-    assert sheet_group("ХОЛД") == "hold"
-    assert sheet_group("ПАУЗА, В РАБОТЕ") == "hold"
-    assert sheet_group("СТОП", terminal=True) == "hold"
-    assert sheet_group("ОЖИД ИНФ, В РАБОТЕ") == "active"
-    assert sheet_group("ОТК, НА ОТГР") == "done"
-    assert sheet_group("ОТГРУЖЕН, В РАБОТЕ") == "active"
+def test_groups_come_from_stage_and_blocker():
+    assert sheet_group("В работе", "ХОЛД") == "hold"
+    assert sheet_group("КБ на складе", "ПАУЗА") == "hold"
+    assert sheet_group("Отказ", "СТОП", terminal=True) == "hold"
+    assert sheet_group("В работе", "ОЖИД ИНФ") == "active"
+    assert sheet_group("КБ на складе") == "done"
+    assert sheet_group("Отгружено") == "done"
+    assert sheet_group("Отгружено", "ОЖИД КОМПЛ") == "active"
+    assert sheet_group("В работе") == "active"
     assert sheet_group("Отказ", terminal=True) == "closed"
-    assert sheet_group("") == "active"
 
 
 def test_ready_percent_is_output_weighted_by_norm():
@@ -143,7 +149,7 @@ def test_sheet_cells_compute_sheet_columns_from_erp_facts():
     cells = sheet_cells(stage=stage, blocker="ОЖИД КОМПЛ", supply=supply, assigned=2, ready="40", marks={})
     values = {name: cell.value for name, cell in cells.items()}
     assert values == {
-        "comment": "", "status": "ОЖИД КОМПЛ, В РАБОТЕ", "ready": "40", "in_plan": "да",
+        "comment": "", "status": "ОЖИД КОМПЛ, В работе", "ready": "40", "in_plan": "да",
         "customer_supplied": "Ч/Т", "kit_checked": "нет", "kit_present": "нет", "zkp": "да",
         "kit_arrival": "2026-10-09", "tc_ready": "да", "test_sb": "нет", "kit_picked": "нет",
     }
@@ -173,7 +179,8 @@ def test_manual_mark_overrides_and_keeps_the_auto_value():
     cells = sheet_cells(stage=_stage(), blocker="", supply=None, assigned=0, ready="",
                         marks={"in_plan": "да", "status": "ПРВ КОМПЛ", "comment": "срочно"})
     assert (cells["in_plan"].value, cells["in_plan"].auto, cells["in_plan"].manual) == ("да", "нет", True)
-    assert cells["status"].value == "ПРВ КОМПЛ" and cells["status"].auto == "В РАБОТЕ"
+    # The status is derived only: even a mark that slipped in does not override it.
+    assert (cells["status"].value, cells["status"].manual) == ("В работе", False)
     assert cells["comment"].value == "срочно"
 
 

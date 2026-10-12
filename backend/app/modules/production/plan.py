@@ -48,6 +48,8 @@ PLAN_MARK_FIELDS = (
     "zkp", "kit_arrival", "tc_ready", "test_sb", "kit_picked",
 )
 PLAN_MARK_FLAG_FIELDS = ("in_plan", "kit_checked", "kit_present", "zkp", "tc_ready", "test_sb", "kit_picked")
+# Owner 12.10: статус листа сквозной (этап проекта + блокер); старые отметки `status` читаются как история и не действуют.
+STATUS_MARK_REFUSAL = "Статус в загрузке цеха берётся из этапа проекта — меняйте этап"
 PLAN_DAY_FIELD_PREFIX = "day:"
 PLAN_DAY_NOTE_MAX = 16
 _KIT_STAGE_FACTS = ("", "tc", "kit", "work", "stock", "shipped")
@@ -547,6 +549,8 @@ def plan_mark_value(field_name: str, value: object, text: object = "") -> str:
     raw = str(value or "").strip()
     if field_name == "comment":
         return str(text or "").strip()
+    if field_name == "status":
+        raise ProductionValidationError(STATUS_MARK_REFUSAL)
     if raw in ("", PLAN_STAGE_AUTO):
         return ""
     if field_name.startswith(PLAN_DAY_FIELD_PREFIX):
@@ -557,12 +561,6 @@ def plan_mark_value(field_name: str, value: object, text: object = "") -> str:
         return raw
     if field_name not in PLAN_MARK_FIELDS:
         raise ProductionValidationError("Неизвестная колонка плана.")
-    if field_name == "status":
-        statuses = normalize_shop_statuses(raw)
-        unknown = [status for status in statuses.split(", ") if status not in SHOP_STATUSES]
-        if unknown:
-            raise ProductionValidationError(f"Неизвестный статус: {', '.join(unknown)}.")
-        return statuses
     if field_name == "ready":
         if not re.fullmatch(r"\d{1,3}", raw) or int(raw) > 100:
             raise ProductionValidationError("Готовность — число от 0 до 100.")
@@ -595,7 +593,7 @@ def summarize_plan_marks(events: Iterable[PlanEvent]) -> dict[str, dict[str, str
     """Current manual value per project and sheet column; the latest mark wins, an empty one clears."""
     marks: dict[str, dict[str, str]] = {}
     for event in events:
-        if event.kind != PLAN_KINDS["mark"] or not event.field:
+        if event.kind != PLAN_KINDS["mark"] or not event.field or event.field == "status":
             continue
         project = normalize_project_number(event.project)
         current = marks.setdefault(project, {})
