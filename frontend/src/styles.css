@@ -3434,8 +3434,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 
 /* Оборудование (БД.ОБ): карточка станка, форма «Новая запись», «что обжимает» (владелец 12.10.2026) */
 .tnum { font-variant-numeric: tabular-nums slashed-zero; }
-.eq-card { padding: 16px 20px; }
-.eq-card .tr-head { grid-template-columns: minmax(0, 2fr) repeat(4, minmax(0, auto)); }
 .eq-line { margin: 0; font-size: 13px; }
 .eq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .eq-table th { padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; font-weight: 500; text-align: left; }
@@ -3458,7 +3456,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .eq-missing { margin: 0 0 8px; font-size: 13px; }
 .eq-missing-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .eq-crimp h5 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
-@media (max-width: 900px) { .eq-card .tr-head { grid-template-columns: 1fr 1fr; } }
 @media (pointer: coarse) { .eq-table td, .eq-hit { padding-top: 8px; padding-bottom: 8px; } .eq-x { padding: 8px; } }
 .eq-chip-btn { cursor: pointer; color: var(--foreground); }
 .eq-chip-btn:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
@@ -3466,3 +3463,36 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 /* «Чертёж КБn» — редактор жгута внутри карточки проекта: высота окна за вычетом шапки карточки, не весь экран. */
 .kit-pane-harness .harness-page { height: calc(100vh - 168px); min-height: 520px; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
 .kit-kd-delete { color: var(--tone-danger); }
+
+/* БД.ОБ master–detail: the list stays on the left, the machine card is a right-hand panel (full-screen on a tablet). */
+.eq-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.eq-split.has-card { grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); }
+.eq-list { min-width: 0; }
+.eq-panel { position: sticky; top: 0; max-height: calc(100dvh - 60px); overflow: auto; overscroll-behavior: contain; min-width: 0; }
+.eq-card { display: grid; gap: 12px; padding: 12px 16px; }
+.eq-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.eq-title { display: grid; gap: 2px; min-width: 0; }
+.eq-title b { font-size: 16px; line-height: 1.25; overflow-wrap: anywhere; }
+.eq-title .muted { font-size: 12.5px; overflow-wrap: anywhere; }
+.eq-head-act { display: flex; align-items: center; gap: 8px; flex: none; }
+.eq-close { border: 0; padding: 0 6px; background: transparent; color: var(--muted-foreground); font-size: 22px; line-height: 1; cursor: pointer; }
+.eq-close:hover { color: var(--foreground); }
+.eq-ops { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.eq-ops li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.eq-ops li:hover { background: var(--accent); }
+.eq-table .num { text-align: right; }
+.eq-econ { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0; font-size: 13px; }
+.eq-econ > div { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.eq-econ dt { color: var(--muted-foreground); font-size: 12px; }
+.eq-econ dd { margin: 0; text-align: right; }
+.eq-econ .derived dd { color: var(--muted-foreground); font-style: italic; }
+.eq-calc { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--border); border-radius: 4px; font-size: 11px; font-style: normal; }
+.eq-split .eq-selected td { background: color-mix(in srgb, var(--primary) 14%, var(--card)); }
+@media (max-width: 1100px), (pointer: coarse) {
+  .eq-split.has-card { grid-template-columns: minmax(0, 1fr); }
+  .eq-panel { position: fixed; inset: 0; z-index: 45; max-height: none; padding: 8px; background: var(--background, #f6f8f8); }
+  .eq-econ { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 700px) { .eq-econ { grid-template-columns: minmax(0, 1fr); } }
+@media (pointer: coarse) { .eq-close { min-width: 40px; min-height: 40px; font-size: 26px; } .eq-head-act .small { min-height: 40px; } .eq-ops li { min-height: 40px; } }
+.eq-econ dd { flex: none; white-space: nowrap; } .eq-econ dt { min-width: 0; }
