@@ -177,7 +177,7 @@ def normalize_terminal_fields(fields: Mapping[str, str]) -> dict[str, str]:
     """БД.ТЕР fields for display: the crimp height and pull force cells in the canonical text (see above)."""
     out = dict(fields)
     for key, value in fields.items():
-        if key in ("terCrimpHeight", "terPullForceMin", "terPullForceMax") or _CRIMP_COLUMN.match(re.sub(r"\s+", " ", key).strip().lower()):
+        if key in ("terCrimpHeight", "terInsCrimpHeight", "terPullForceMin", "terPullForceMax") or _CRIMP_COLUMN.match(re.sub(r"\s+", " ", key).strip().lower()):
             out[key] = normalize_crimp_text(value)
     return out
 
@@ -214,10 +214,30 @@ class TerminalRecord:
     awg_to: str = ""
     mm2_from: str = ""
     mm2_to: str = ""
+    # The contact card of protocol v5.2 (owner 12.10.2026): the same article in BAG packaging, Male / Female, the
+    # insulation crimp, insulation OD, «Металл / Покрытие», max current, the maker's datasheet.
+    article_bag: str = ""
+    gender: str = ""
+    ins_crimp_height: str = ""
+    ins_od_from: str = ""
+    ins_od_to: str = ""
+    material: str = ""
+    max_current: str = ""
+    datasheet: str = ""
 
     @classmethod
     def from_fields(cls, fields: Mapping[str, str]) -> TerminalRecord:
+        # A row stored before the card keys existed still has its sheet columns: they give the card meanwhile.
+        card = {**terminal_card_fields(fields), **{key: fields[key] for key in TER_CARD_KEYS if fields.get(key)}}
         return cls(
+            article_bag=card.get("terArticleBag", ""),
+            gender=card.get("terGender", ""),
+            ins_crimp_height=card.get("terInsCrimpHeight", ""),
+            ins_od_from=card.get("terInsOdFrom", ""),
+            ins_od_to=card.get("terInsOdTo", ""),
+            material=card.get("terMaterial", ""),
+            max_current=card.get("terMaxCurrent", ""),
+            datasheet=card.get("terDatasheet", ""),
             article=fields.get("terArticle", ""),
             step=fields.get("terStep", ""),
             strip=fields.get("terStrip", ""),
@@ -263,20 +283,28 @@ def _normalized_article(value: str) -> str:
 def matching_terminal_records(
     records: Iterable[TerminalRecord], article: str,
 ) -> tuple[TerminalRecord, ...]:
+    """The rows of a terminal by its REEL or BAG article: exact, then without spaces . / ( ) _ - and case, then
+    without a leading manufacturer word. The stored articles keep their spelling (owner 12.10.2026)."""
     records = tuple(records)
+
+    def articles(item: TerminalRecord) -> tuple[str, ...]:
+        return tuple(value for value in (item.article, item.article_bag) if value)
+
     exact = str(article or "").casefold().strip()
-    matches = tuple(item for item in records if item.article.casefold().strip() == exact)
+    matches = tuple(item for item in records if any(value.casefold().strip() == exact for value in articles(item)))
     if matches:
         return matches
     normalized = _normalized_article(article)
     if len(normalized) >= 3:
-        matches = tuple(item for item in records if _normalized_article(item.article) == normalized)
+        matches = tuple(item for item in records if any(_normalized_article(value) == normalized
+                                                         for value in articles(item)))
         if matches:
             return matches
     words = str(article or "").strip().split()
     without_manufacturer = _normalized_article(" ".join(words[1:])) if len(words) > 1 else ""
     if len(without_manufacturer) >= 3:
-        return tuple(item for item in records if _normalized_article(item.article) == without_manufacturer)
+        return tuple(item for item in records if any(_normalized_article(value) == without_manufacturer
+                                                     for value in articles(item)))
     return ()
 
 
@@ -674,8 +702,90 @@ def _resolve_schema(fields: Sequence[_SchemaField], header: Sequence[object]) ->
     return resolved
 
 
-# Fields the import derives from the sheet besides the DB_SCHEMA ones (БД.ТЕР AWG/мм² ranges).
-_DERIVED_KEYS = {"ter": ("awgFrom", "awgTo", "mm2From", "mm2To")}
+# The contact card of protocol v5.2 (owner 12.10.2026, «карточка контакта»): БД.ТЕР columns the GAS exporter never
+# read. Derived here from the sheet columns, like the AWG/мм² ranges, so the GAS snapshot and the mirror give equal
+# records; terGender comes from terType («Тип контакта»).
+_TER_CARD = (
+    _SchemaField("terArticleBag", ("артикул контакта (bag)", "артикул (bag)", "артикул bag", "bag"), pattern=r"\(bag\)"),
+    _SchemaField("terInsCrimpHeight", ("высота обжима изоляции, мм", "высота обжима изоляции",
+                                       "insulation crimp height"), pattern=r"^высота обжима изоляц"),
+    _SchemaField("terInsOdFrom", ("диаметр изоляции от, мм", "диаметр изоляции от", "insulation od from"),
+                 pattern=r"^диаметр изоляции от"),
+    _SchemaField("terInsOdTo", ("диаметр изоляции до, мм", "диаметр изоляции до", "insulation od to"),
+                 pattern=r"^диаметр изоляции до"),
+    _SchemaField("terMaterial", ("материал контакта", "материал / покрытие", "материал/покрытие", "material"),
+                 pattern=r"^материал"),
+    _SchemaField("terMaxCurrent", ("максимальная сила тока, а", "максисмальная сила тока, а", "максимальный ток, а",
+                                   "max current"), pattern=r"^макс\S* (сила )?тока"),
+    _SchemaField("terDatasheet", ("ссылка на datasheet на сайте производителя", "datasheet", "даташит"),
+                 pattern=r"datasheet|даташит"),
+)
+TER_CARD_KEYS = ("terGender", *(field.key for field in _TER_CARD))
+
+# Fields the import derives from the sheet besides the DB_SCHEMA ones (БД.ТЕР AWG/мм² ranges, the contact card).
+_DERIVED_KEYS = {"ter": ("awgFrom", "awgTo", "mm2From", "mm2To", *TER_CARD_KEYS)}
+
+_FEMALE = re.compile(r"^(female|socket|receptacle|гнезд|мама)|\(socket\)|\(гнездо\)")
+_MALE = re.compile(r"^(male|pin|tab|plug|штыр|папа)|\(pin\)|\(tab\)|\(штырь\)")
+
+
+def contact_gender(value: object) -> str:
+    """«Тип контакта» → Male / Female («Male (Pin)», «Female (Socket)», «Гнездо»…); text it can't read stays as is."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    folded = text.casefold()
+    if _FEMALE.search(folded):
+        return "Female"
+    if _MALE.search(folded):
+        return "Male"
+    return text
+
+
+def normalize_material(value: object) -> str:
+    """«Металл / Покрытие» (protocol v5.2): one space on both sides of a slash, no doubled spaces."""
+    return re.sub(r"\s*/\s*", " / ", re.sub(r"\s+", " ", str(value or "")).strip())
+
+
+def terminal_card_indexes(columns: Sequence[object]) -> dict[str, int]:
+    """Card key → index of the БД.ТЕР column it is read from; -1 — the base has no such column."""
+    return _resolve_schema(_TER_CARD, columns)
+
+
+def terminal_card_fields(fields: Mapping[str, str]) -> dict[str, str]:
+    """The contact card from a БД.ТЕР record's sheet columns (and terGender from terType); a key whose column the
+    record lacks is left out, so a stored value is not wiped. Nothing is guessed: an empty cell stays empty."""
+    keys = schema_keys("ter")
+    columns = [name for name in fields if name not in keys]
+    card = {}
+    for key, index in terminal_card_indexes(columns).items():
+        if index >= 0:
+            value = str(fields[columns[index]] or "").strip()
+            card[key] = normalize_material(value) if key == "terMaterial" else value
+    if "terType" in fields:
+        card["terGender"] = contact_gender(fields["terType"])
+    return card
+
+
+_FORCE_UNITS = re.compile(r"\s*(?<![^\W\d_])(kgf|kgs|кгс|кгф|lbf|lbs|lb|фунт\w*)\b\.?", re.IGNORECASE)
+_FORCE_NUMBER = re.compile(r"(?<![\w,.])(\d+(?:[.,]\d+)?)(?![\d,.])(?!\s*(?:[-–—]\s*\d+\s*)?awg)", re.IGNORECASE)
+
+
+def pull_force_newtons(value: object) -> str:
+    """A pull force in N (protocol v5.2): a profile written in kgf is ×9.8, in lbf ×4.448, rounded to 0,1 N with a
+    decimal comma; the unit is dropped. AWG labels are not numbers of force; a text without such units is untouched."""
+    text = str(value or "")
+    parts = re.split(r"(\n|;)", text)
+    for number, part in enumerate(parts):
+        unit = _FORCE_UNITS.search(part)
+        if not unit:
+            continue
+        factor = Decimal("9.8") if unit.group(1).casefold().startswith(("kg", "кг")) else Decimal("4.448")
+
+        def newtons(match: re.Match[str]) -> str:
+            force = (Decimal(match.group(1).replace(",", ".")) * factor).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+            return format(force.normalize(), "f").replace(".", ",")
+
+        parts[number] = _FORCE_NUMBER.sub(newtons, _FORCE_UNITS.sub("", part))
+    return "".join(parts).strip()
 
 
 def schema_keys(tab: str) -> frozenset[str]:
@@ -705,6 +815,7 @@ def sync_schema_fields(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
         for key, index in _range_indexes(columns).items():
             if index >= 0:
                 result[key] = str(fields[columns[index]] or "").strip()
+        result.update(terminal_card_fields(result))
     return result
 
 
@@ -849,6 +960,8 @@ def import_supplymap_snapshot(payload: Mapping[str, object]) -> ImportedTechnolo
         if tab == "ter" and isinstance(export_values, list):
             for key, index in terminal_indexes.items():
                 fields[key] = str(export_values[index] or "").strip() if 0 <= index < len(export_values) else ""
+        if tab == "ter":
+            fields.update(terminal_card_fields(fields))
         records.append(ImportedTechnologyRecord(
             tab=tab,
             display_text=str(raw.get("displayText") or "").strip(),

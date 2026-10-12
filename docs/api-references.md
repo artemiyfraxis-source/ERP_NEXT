@@ -107,7 +107,7 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 
 | Таблица | Что это | Ключ | Поля `fields` |
 |---|---|---|---|
-| `ter` | БД.ТЕР — контакты, терминалы и разъёмы | `terArticle` (артикул; ищется как в генераторе: точно, потом без пробелов и `. / ( ) _ -`) | поля схемы (ниже) + колонки листа |
+| `ter` | БД.ТЕР — контакты, терминалы и разъёмы | `terArticle` (артикул REEL; ищется как в генераторе: точно, потом без пробелов и `. / ( ) _ -` — и среди артикулов REEL, и среди BAG) | поля схемы (ниже) + колонки листа |
 | `coax` | БД.КОАКС — коаксиальные разъёмы | `coaxArticle` + `coaxWire` (артикул + «Провод»; одна строка на пару) | `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire` + колонки листа |
 | `ob` | БД.ОБ — станки и оборудование | `baseValue` («Для базы», как строка видна в базе) | `baseValue`, `obType` + колонки листа |
 | `prov` | БД.ПРОВ — кабели и провода | `Марка` (без пробелов и дефисов, без регистра: «UL1061-28AWG» = «UL1061 28AWG») | колонки БД.ПРОВ (ниже) |
@@ -122,7 +122,10 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 
 - `ter`: `terManufacturer`, `terSeries`, `terComponent`, `terType`, `terArticle`, `terLPlus`, `terLMinus`,
   `terStep`, `terApplicator`, `terStrip`, `terCrimpHeight`, `terPullForceMin`, `terPullForceMax`, `awgFrom`,
-  `awgTo`, `mm2From`, `mm2To`;
+  `awgTo`, `mm2From`, `mm2To`; карточка контакта по протоколу v5.2: `terGender` (Male / Female из «Тип контакта»),
+  `terArticleBag` (тот же контакт в упаковке BAG — вторая колонка той же строки, не отдельная строка),
+  `terInsCrimpHeight`, `terInsOdFrom`, `terInsOdTo`, `terMaterial` («Металл / Покрытие»), `terMaxCurrent` (А),
+  `terDatasheet` (ссылка на сайт производителя);
 - `coax`: `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire`;
 - `ob`: `baseValue`, `obType`.
 
@@ -131,6 +134,15 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 колонку, из которой оно читается (`terStep` → «Шаг разьема»), а колонка — в своё поле схемы, так что генератор и
 экран видят одно. Поле схемы и его колонка в одной строке с разными значениями отклоняют строку. `connType`,
 `artISL`, `artSAG`, `supplier`, `program` генератор не хранит — их пишут через колонки листа.
+
+`ter` по протоколу контактов v5.2: аппликатор (`terApplicator`, «Аппликатор»), «Пневма Автомат», «ОТР», «С
+зачисткой» и мм² (`mm2From`, `mm2To`, «От мм2», «До мм2») заполняет технолог — строка с любым из них отклоняется,
+мм² из AWG не считаются. Усилие обрыва хранится в Н: значения в kgf/кгс умножаются на 9,8, в lbf — на 4,448
+(округление до 0,1); AWG пишется без «#»; материал — «Металл / Покрытие». Значения обжима, которых нет в документации
+производителя, не присылайте: пустое не усредняется и не подставляется. `terGender`, расходящийся с присланным в той
+же строке «Тип контакта», отклоняет строку; присланный без него становится типом контакта. Тело загрузки из зеркала
+БД.ТЕР (по артикулу REEL: производитель, серия, тип и карточка контакта):
+`python -m app.modules.references.load_mirror --export-ter ter.json`.
 
 Колонки `prov`: «Марка», «Тип провода», «Стандарт / производитель», «Сечение, мм2», «AWG», «Жила: проволок ×
 диаметр, мм», «Число жил», «Цвета», «Наружный диаметр, мм», «Изоляция», «Экран», «Волновое сопротивление, Ом»,
@@ -156,7 +168,7 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 post() { curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
   --data "$2" "$ERP/api/references/import/$1?dry_run=1"; }
 
-post ter '{"rows":[{"fields":{"terArticle":"ZHR-5","terManufacturer":"JST","terStep":"1,5","terApplicator":"AP-1","awgFrom":"28","awgTo":"26"}}]}'
+post ter '{"rows":[{"fields":{"terArticle":"ZHR-5","terManufacturer":"JST","terStep":"1,5","terGender":"Female","awgFrom":"28","awgTo":"26"}}]}'
 post coax '{"rows":[{"fields":{"coaxArticle":"BNC-C58P","coaxWire":"RG58","coaxType":"BNC-male","coaxMfr":"RUICHI"}}]}'
 post ob '{"rows":[{"fields":{"baseValue":"T21/Станция паяльная","obType":"Инструмент"}}]}'
 post prov '{"rows":[{"fields":{"Марка":"UL1061 28AWG","Цвета":"чёрный, красный","Наружный диаметр, мм":"0,89"}}]}'

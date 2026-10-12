@@ -13,11 +13,12 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .cable_structure import (
-    MARK_FIELD, MIRRORED_FIELDS, CoaxCard, HookupWire, WireGauge, cards_from_seed, gauge_gost_awg, hookup_from_parse,
-    parse_hookup, refreshed_hookup, section_key, validate_gauges, written_back_fields,
+    MARK_FIELD, MIRRORED_FIELDS, CoaxCard, CoaxNames, HookupWire, WireGauge, alias_dia_rows, cards_from_seed,
+    gauge_gost_awg, hookup_from_parse, names_from_articles, parse_hookup, refreshed_hookup, section_key,
+    validate_aliases, validate_gauges, vocabulary_cells, vocabulary_changes, written_back_fields,
 )
 from .cables import DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, diameter_index
-from .domain import EDITABLE_TABS, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import EDITABLE_TABS, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
     prepare_equipment,
@@ -54,6 +55,7 @@ class CableStructureRepository(Protocol):
     def save_hookup(self, wire: HookupWire, now: datetime) -> None: ...
     def cards(self) -> list[CoaxCard]: ...
     def replace_cards(self, cards: Sequence[CoaxCard], now: datetime) -> dict[str, int]: ...
+    def replace_names(self, names: dict[str, CoaxNames]) -> dict[str, int]: ...
 
 
 class UnitOfWork(Protocol):
@@ -541,6 +543,67 @@ def import_coax_cards(document, actor: Actor, now: datetime, uow: UnitOfWork, *,
         if not dry_run:
             uow.commit()
     return {**result, "cards": len(cards)}
+
+
+def import_coax_names(document, actor: Actor, now: datetime, uow: UnitOfWork, *, dry_run: bool = False) -> dict[str, object]:
+    """Idempotent load of the supplier file (`coax-articles.json`) after the cards: each card gets its full name and
+    aliases (`cable_structure.names_from_articles`); a card the file does not name has none. Nothing is renamed: the
+    card keeps its mark, the D-table its «Кабель». Returns the counts and what was left out, with the reason."""
+    with uow:
+        cards = uow.cable_structure.cards()
+        plan = names_from_articles(document, cards)
+        validate_aliases(plan.names, cards)
+        result = uow.cable_structure.replace_names(plan.names)
+        aliases = sum(len(item.aliases) for item in plan.names.values())
+        _audit("references.coax_names_imported", actor, now, {
+            **result, "aliases": aliases, "refused": len(plan.refused), "dry_run": dry_run}, uow)
+        if not dry_run:
+            uow.commit()
+    return {**result, "cables": len(document.get("cables") or []), "aliases": aliases, "family_only": plan.family_only,
+            "no_card": list(plan.no_card), "refused": list(plan.refused)}
+
+
+def coax_dia_rows(uow: UnitOfWork, limit: int = 100_000) -> list[dict[str, str]]:
+    """The D1·D2·D3 table as the ETK generator and the harness catalogue read it, over an open unit of work: the
+    СПР.КАБ · коаксиал rows in their order, then one row per other name of a cable (`alias_dia_rows`) — so a BOM that
+    names the cable by its full name, an article or another spelling of the mark gets the same D1–D3. Rows are only
+    appended, for names without a row of their own: every name found before finds the same row."""
+    records = uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=limit)
+    index = {key: record.fields for key, record in diameter_index(records).items()}
+    return [dict(record.fields) for record in records] + alias_dia_rows(index, uow.cable_structure.cards(), DIAMETERS)
+
+
+def apply_coax_vocabulary(document, actor: Actor, now: datetime, uow: UnitOfWork, *, dry_run: bool = False) -> dict[str, object]:
+    """One-off (`load_cables --coax-vocabulary`): the БД.ПРОВ coax cells «Тип провода», «Изоляция», «Экран» get the
+    terms of the coax vocabulary (`coax-vocabulary.json`, map entries of «БД.ПРОВ»). Only a cell that still holds the
+    old text is rewritten; the row is marked edited in ERP, so a mirror reload keeps it. A second run changes nothing."""
+    by_mark: dict[str, list] = {}
+    for cell in vocabulary_cells(document):
+        by_mark.setdefault(cell.mark_key, []).append(cell)
+    rewritten: list[str] = []
+    problems: list[str] = []
+    found: set[str] = set()
+    with uow:
+        for record in uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000):
+            key = cable_key(cable_mark(record))
+            if key not in by_mark:
+                continue
+            found.add(key)
+            changes, row_problems = vocabulary_changes(record.fields, by_mark[key])
+            problems += row_problems
+            if not changes:
+                continue
+            updated = replace(record, fields={**record.fields, **changes}, edited_in_erp=True)
+            uow.tech_operations.save(replace(updated, normalized_search=_search_text(updated)))
+            rewritten += [f"{cable_mark(record)}, {name}: «{record.fields.get(name, '')}» → «{value}»"
+                          for name, value in changes.items()]
+        missing = sorted(group[0].mark for key, group in by_mark.items() if key not in found)
+        _audit("references.coax_vocabulary_applied", actor, now, {
+            "cells": len(rewritten), "problems": len(problems), "missing": len(missing), "dry_run": dry_run}, uow)
+        if not dry_run:
+            uow.commit()
+    return {"cells": sum(len(group) for group in by_mark.values()), "rewritten": rewritten, "problems": problems,
+            "missing": missing}
 
 
 @dataclass(frozen=True)

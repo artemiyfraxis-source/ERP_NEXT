@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from app.modules.production.plan import MANUAL_TECHCARD_PROJECTS, normalize_project_number
+from app.modules.references.application import coax_dia_rows
 from app.modules.references.domain import TechOperationTab
 from app.modules.references.wire_dia import read_wire_dia
 from app.modules.requests.application import CalcSheetError
@@ -313,7 +314,8 @@ def calc_ops_for(kitset: Kitset, indexes: list[str], reader: SheetsReader | None
 
 def generator_refs(techcards_factory: Callable[[], Any], references_factory: Callable[[], Any] | None) -> dict:
     """Справочники генератора как их читает форма (`loadRefs`): шаблоны техкарт, БД.ОП/ТЕР/КОАКС, СПР.КАБ · коаксиал
-    и «Ø изоляции по маркам» из базы монтажных проводов (`wire_dia`, GET /api/references/wire-dia)."""
+    со строкой на каждое другое имя кабеля (`coax_dia_rows`, GET /api/references/coax-dia) и «Ø изоляции по маркам» из
+    базы монтажных проводов (`wire_dia`, GET /api/references/wire-dia)."""
     with techcards_factory() as uow:
         templates = [{"id": card.source_id, "title": card.title, "category": card.category}
                      for card in uow.operation_cards.list()]
@@ -325,6 +327,7 @@ def generator_refs(techcards_factory: Callable[[], Any], references_factory: Cal
                 records = uow.tech_operations.list(tab=TechOperationTab(tab), query="", limit=5000)
                 tabs[tab] = ([{"id": str(item.id), "fields": item.fields} for item in records] if tab == "ter"
                              else [item.fields for item in records])
+            tabs["kab_coax"] = coax_dia_rows(uow)
             wire_dia = read_wire_dia(uow)
     return {"templates": templates, **tabs, "wire_dia": wire_dia}
 

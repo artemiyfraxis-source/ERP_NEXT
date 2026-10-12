@@ -24,8 +24,8 @@ from .application import (
 from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
 from .application import (
-    CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, delete_gauge, import_coax_cards, save_gauge,
-    save_hookup,
+    CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
+    import_coax_cards, import_coax_names, save_gauge, save_hookup,
 )
 from .cable_structure import (
     LAYER_LABELS, CoaxCard, HookupWire, WireGauge, parse_hookup,
@@ -406,6 +406,9 @@ def _card_json(card: CoaxCard | None) -> dict | None:
         "max_operating_note": card.max_operating_note, "notes": card.notes, "sources": list(card.sources),
         "confidence": card.confidence, "verified": card.verified, "changes": list(card.changes),
         "params": {key: _num(value) for key, value in card.params.items()}, "param_notes": dict(card.param_notes),
+        "full_name": card.full_name,
+        "aliases": [{"alias": item.alias, "kind": item.kind, "supplier": item.supplier, "url": item.url}
+                    for item in card.aliases],
     }
 
 
@@ -552,14 +555,30 @@ def import_coax(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """Reloads the coax cards from the committed file (`load_cables`), as the server does on every update."""
-    from .load_cables import read_seed
+    """Reloads the coax cards, then their full names and aliases, from the committed files (`load_cables`), as the
+    server does on every update."""
+    from .load_cables import ARTICLES_FILE, read_seed
 
     try:
-        document = read_seed()
+        document, articles = read_seed(), read_seed(ARTICLES_FILE)
     except (OSError, ValueError) as error:
         raise HTTPException(status_code=422, detail=f"Файл карточек не прочитан: {error}") from error
-    return _run(lambda: import_coax_cards(document, principal.actor, now, uow_factory()))
+    cards = _run(lambda: import_coax_cards(document, principal.actor, now, uow_factory()))
+    return {**cards, "names": _run(lambda: import_coax_names(articles, principal.actor, now, uow_factory()))}
+
+
+@router.get("/coax-dia")
+def coax_dia(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """СПР.КАБ · коаксиал as the ETK generator reads it: the D1·D2·D3 rows, then one row per other name of a cable
+    (full name, supplier article, another spelling of the mark) with that cable's D1–D3 (`coax_dia_rows`)."""
+    with uow_factory() as uow:
+        rows = coax_dia_rows(uow)
+    return {"metadata": None, "columns": ["Кабель", *DIAMETERS], "records": [
+        {"id": "", "tab": TechOperationTab.KAB_COAX.value, "display_text": str(row.get("Кабель") or ""),
+         "source_sheet": "", "fields": row} for row in rows]}
 
 
 class CableKindPayload(BaseModel):

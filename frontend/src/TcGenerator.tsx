@@ -130,7 +130,7 @@ async function readRefs(): Promise<Refs> {
     safe(referencesApi.techOperations("ter", "", 5000), noRecords),
     safe(referencesApi.techOperations("coax", "", 5000), noRecords),
     safe(referencesApi.wireDia(), { columns: [], series: [], records: [] }),
-    safe(referencesApi.techOperations("kab_coax", "", 5000), noRecords),
+    safe(referencesApi.coaxDia(), noRecords),
     safe(referencesApi.techOperations("mat", "", 5000), noRecords),
   ]);
   return {

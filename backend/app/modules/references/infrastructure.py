@@ -16,7 +16,8 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .cable_structure import (
-    LAYERS, PARAMS, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, HookupWire, WireGauge,
+    ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
+    HookupWire, WireGauge, same_card,
 )
 from .domain import ReferenceEntry, ReferenceKind, TechOperationRecord, TechOperationTab
 
@@ -213,6 +214,7 @@ class CoaxCableRow(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     name_key: Mapped[str] = mapped_column(String(255), nullable=False)
     family: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    full_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     span_from_mhz: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
     span_to_ghz: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
     span_note: Mapped[str] = mapped_column(String(2000), nullable=False, default="", server_default="")
@@ -316,6 +318,27 @@ class CoaxCableAttenuationRow(Base):
     basis: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
 
 
+class CoaxCableAliasRow(Base):
+    """Another name of a coax card (migration 0108): the key is unique across all cables."""
+    __tablename__ = "coax_cable_aliases"
+    __table_args__ = (
+        UniqueConstraint("alias_key", name="ux_coax_cable_aliases_key"),
+        CheckConstraint("alias <> ''", name="ck_coax_cable_aliases_alias_not_blank"),
+        CheckConstraint("alias_key <> ''", name="ck_coax_cable_aliases_key_not_blank"),
+        CheckConstraint("kind IN (" + ", ".join(f"'{kind}'" for kind in ALIAS_KINDS) + ")", name="ck_coax_cable_aliases_kind"),
+        CheckConstraint("kind <> 'supplier_article' OR supplier <> ''", name="ck_coax_cable_aliases_article_supplier"),
+        Index("ix_coax_cable_aliases_cable", "cable_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    cable_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("coax_cables.id", ondelete="CASCADE"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(500), nullable=False)
+    alias_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    supplier: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    url: Mapped[str] = mapped_column(String(1000), nullable=False, default="", server_default="")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
 def _gauge(row: WireGaugeRow) -> WireGauge:
     return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm), row.strands, row.position)
 
@@ -371,7 +394,7 @@ class SqlAlchemyCableStructureRepository:
     def cards(self) -> list[CoaxCard]:
         cables = list(self.session.scalars(select(CoaxCableRow).order_by(CoaxCableRow.position, CoaxCableRow.name)))
         ids = [row.id for row in cables]
-        children: dict[UUID, dict[str, list]] = {cable_id: {"layers": [], "connectors": [], "markers": [], "attenuation": []} for cable_id in ids}
+        children: dict[UUID, dict[str, list]] = {cable_id: {"layers": [], "connectors": [], "markers": [], "attenuation": [], "aliases": []} for cable_id in ids}
         if ids:
             order = {layer: index for index, layer in enumerate(LAYERS)}
             for row in self.session.scalars(select(CoaxCableLayerRow).where(CoaxCableLayerRow.cable_id.in_(ids))):
@@ -382,6 +405,8 @@ class SqlAlchemyCableStructureRepository:
                 children[row.cable_id]["markers"].append(row)
             for row in self.session.scalars(select(CoaxCableAttenuationRow).where(CoaxCableAttenuationRow.cable_id.in_(ids)).order_by(CoaxCableAttenuationRow.freq_mhz, CoaxCableAttenuationRow.kind)):
                 children[row.cable_id]["attenuation"].append(row)
+            for row in self.session.scalars(select(CoaxCableAliasRow).where(CoaxCableAliasRow.cable_id.in_(ids)).order_by(CoaxCableAliasRow.position)):
+                children[row.cable_id]["aliases"].append(row)
         else:
             order = {}
         result = []
@@ -403,22 +428,31 @@ class SqlAlchemyCableStructureRepository:
                 params={key: _dec(getattr(row, key)) for key in PARAMS if getattr(row, key) is not None},
                 position=row.position, fc_note=row.fc_note, max_operating_ghz=_dec(row.max_operating_ghz),
                 max_operating_note=row.max_operating_note, param_notes=dict(row.param_notes or {}),
+                full_name=row.full_name or "",
+                aliases=tuple(CoaxAlias(item.alias, item.alias_key, item.kind, item.supplier, item.url) for item in own["aliases"]),
             ))
         return result
 
     def replace_cards(self, cards: Sequence[CoaxCard], now: datetime) -> dict[str, int]:
-        """Idempotent seed: a card per name key — kept id, its rows and children replaced by the file's; cards the
-        file no longer names are removed with their children."""
+        """Idempotent seed: a card per name key — kept id, its rows and children replaced by the file's when they
+        differ (an unchanged card is not written); cards the file no longer names are removed with their children and
+        aliases. The full name and the aliases are not the card file's (`replace_names`)."""
         existing = {row.name_key: row for row in self.session.scalars(select(CoaxCableRow))}
+        stored = {card.name_key: card for card in self.cards()}
         keys = {card.name_key for card in cards}
         removed = [row.id for key, row in existing.items() if key not in keys]
         if removed:
+            # the FK cascades on PostgreSQL; SQLite (tests, preview) does not enforce it, and an orphan name would
+            # still hold its unique key
+            self.session.execute(delete(CoaxCableAliasRow).where(CoaxCableAliasRow.cable_id.in_(removed)))
             self.session.execute(delete(CoaxCableRow).where(CoaxCableRow.id.in_(removed)))
         created = updated = 0
         for card in cards:
             row = existing.get(card.name_key)
             if row is None:
                 row = CoaxCableRow(id=card.id); self.session.add(row); created += 1
+            elif same_card(stored[card.name_key], card):
+                continue
             else:
                 updated += 1
                 for child in (CoaxCableLayerRow, CoaxCableConnectorRow, CoaxCableMarkerRow, CoaxCableAttenuationRow):
@@ -447,6 +481,31 @@ class SqlAlchemyCableStructureRepository:
                 interpolated=item.interpolated, source=item.source, basis=item.basis) for item in card.attenuation)
         self.session.flush()
         return {"created": created, "updated": updated, "removed": len(removed)}
+
+    def replace_names(self, names: dict[str, CoaxNames]) -> dict[str, int]:
+        """Full name and aliases of each card (card name key → names; a card not given keeps its own). Written only
+        where they differ: a second load with the same file changes nothing. Aliases of every changed card go first,
+        so a name moving from one card to another never meets itself on the unique key."""
+        rows = {row.name_key: row for row in self.session.scalars(select(CoaxCableRow))}
+        cards = {card.name_key: card for card in self.cards()}
+        changed = [key for key, item in names.items() if key in cards and cards[key].aliases != item.aliases]
+        renamed = [key for key, item in names.items() if key in cards and cards[key].full_name != item.full_name]
+        if changed:
+            self.session.execute(delete(CoaxCableAliasRow).where(CoaxCableAliasRow.cable_id.in_([rows[key].id for key in changed])))
+            self.session.flush()
+        for key in renamed:
+            rows[key].full_name = names[key].full_name
+        added = removed = 0
+        for key in changed:
+            before = {alias.alias_key for alias in cards[key].aliases}
+            after = {alias.alias_key for alias in names[key].aliases}
+            added += len(after - before); removed += len(before - after)
+            self.session.add_all(CoaxCableAliasRow(
+                id=uuid4(), cable_id=rows[key].id, alias=alias.alias, alias_key=alias.alias_key, kind=alias.kind,
+                supplier=alias.supplier, url=alias.url, position=index) for index, alias in enumerate(names[key].aliases))
+        self.session.flush()
+        return {"cables_changed": len(set(changed) | set(renamed)), "aliases_added": added, "aliases_removed": removed,
+                "full_names_changed": len(renamed)}
 
 
 class SqlAlchemyReferencesUnitOfWork:
