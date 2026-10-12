@@ -334,7 +334,7 @@ export function emptyState(): GenState {
     cap: { enabled: true, tut: "", len: "" },
     wrap: { enabled: false, slots: WRAP_SLOTS_.map(() => ({ mat: "", kind: "tape" as WrapKind, len: "" })) },
     seal: { enabled: false, mat: "", places: "" },
-    tin: { enabled: false, wires: null, stripLen: "" },
+    tin: { enabled: false, wires: null, stripLen: "5" },  // зачистка под лужение по умолчанию 5 мм (владелец 12.10.2026)
     coax: {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null,
