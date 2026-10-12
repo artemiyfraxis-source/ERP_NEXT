@@ -60,3 +60,16 @@ def test_gost_section_key_is_a_positive_decimal_and_value_an_integer_awg():
     assert gost_awg_map(entries) == {"0.35": 22, "1": 17}
     with pytest.raises(ReferenceValidationError, match="повторяющийся"):
         validate_entries(entries + (ReferenceEntry.create(ReferenceKind.GOST_AWG, "0.35", "20", 2),))
+
+
+def test_country_seed_is_sorted_unique_by_key_and_merged_under_saved():
+    from app.modules.references.domain import COUNTRY_BY_MANUFACTURER, merge_country_pairs, normalized_manufacturer_key
+
+    keys = [normalized_manufacturer_key(name) for name, _ in COUNTRY_BY_MANUFACTURER]
+    assert len(keys) == len(set(keys)) and all(country.strip() for _, country in COUNTRY_BY_MANUFACTURER)
+    assert [name.casefold() for name, _ in COUNTRY_BY_MANUFACTURER] == sorted(name.casefold() for name, _ in COUNTRY_BY_MANUFACTURER)
+
+    merged = merge_country_pairs([("  HIROSE ", "Китай"), ("Fraxis", "Россия")])
+    assert merged[:2] == [("  HIROSE ", "Китай"), ("Fraxis", "Россия")]
+    assert ("Hirose", "Япония") not in merged and ("Molex", "США") in merged
+    assert len(merged) == len(COUNTRY_BY_MANUFACTURER) + 1

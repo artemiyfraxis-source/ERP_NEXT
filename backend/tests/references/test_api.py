@@ -63,7 +63,7 @@ def test_replaces_both_editable_maps_atomically(references_api):
     assert response.status_code == 200
     assert fetched.json() == {
         "suppliers": [{"key": "https://www.Example.ru/catalog", "value": "ООО Поставщик"}],
-        "countries": [{"key": "Fraxis", "value": "Россия"}],
+        "countries": [{"key": "Fraxis", "value": "Россия"}] + _seed_countries(),  # saved rows, then the seed
         "gost_awg": [],  # follows «Сечения AWG ↔ мм²», a maps save does not write it (10.10.2026)
         "can_edit": {"suppliers": True, "gost_awg": False},
     }
@@ -86,7 +86,12 @@ def test_blank_rows_are_dropped_and_literal_supplier_keys_are_kept(references_ap
     assert response.json()["suppliers"] == [
         {"key": "Склад", "value": "Склад"}, {"key": "Вода", "value": "ООО \"Польза природы\""},
     ]
-    assert response.json()["countries"] == [] and response.json()["gost_awg"] == []
+    assert response.json()["countries"] == _seed_countries() and response.json()["gost_awg"] == []
+
+
+def _seed_countries():
+    from app.modules.references.domain import COUNTRY_BY_MANUFACTURER
+    return [{"key": key, "value": value} for key, value in COUNTRY_BY_MANUFACTURER]
 
 
 def test_nothing_saved_shows_the_supplymap_seed(references_api):
@@ -94,7 +99,22 @@ def test_nothing_saved_shows_the_supplymap_seed(references_api):
 
     assert {"key": "фраксис", "value": "Склад"} in maps["suppliers"]
     assert {"key": "chipdip.ru", "value": "АО \"ЧИП И ДИП\""} in maps["suppliers"]
-    assert maps["countries"] == []
+    assert maps["countries"] == _seed_countries()
+    assert {"key": "Molex", "value": "США"} in maps["countries"]
+
+
+def test_saved_country_overrides_the_seed_and_the_rest_stays(references_api):
+    references_api.put("/api/references/maps", json={
+        "suppliers": [], "countries": [{"key": " molex ", "value": "Китай"}, {"key": "Fraxis", "value": "Россия"}],
+        "gost_awg": [],
+    })
+
+    countries = references_api.get("/api/references/maps").json()["countries"]
+
+    assert countries[:2] == [{"key": "molex", "value": "Китай"}, {"key": "Fraxis", "value": "Россия"}]
+    assert {"key": "Molex", "value": "США"} not in countries
+    assert {"key": "Amphenol", "value": "США"} in countries
+    assert len(countries) == len(_seed_countries()) + 1
 
 
 def test_supplier_maps_are_the_buyers_and_gost_awg_is_never_saved_with_them(references_api):
