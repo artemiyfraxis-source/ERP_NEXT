@@ -151,9 +151,9 @@ def _cascade(to_stage: str):
 def test_kit_requests_close_from_work_and_idle_tasks_from_qc():
     assert _cascade("КБ набрана") == ([], [
         ("kit_request", "Этап ниже «В работе» — заявка остаётся."),
-        ("task", "Этап ниже «ОТК» — задание остаётся в работе."),
+        ("task", "Этап ниже «ОТК» — задание остаётся."),
     ])
-    assert _cascade("В работе") == (["kit_request"], [("task", "Этап ниже «ОТК» — задание остаётся в работе.")])
+    assert _cascade("В работе") == (["kit_request"], [("task", "Этап ниже «ОТК» — задание остаётся.")])
     assert _cascade("ОТК") == (["kit_request", "task"], [])
     assert _cascade("Готово к отгрузке") == (["kit_request", "task"], [])
 

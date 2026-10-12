@@ -309,13 +309,13 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
     ]
     assert kb1["keep"] == [
         {"kind": "goods", "label": "Готовая продукция Жгут",
-         "reason": "Принято на склад ГП, не отгружено: 3 шт — этап не отгружает."},
-        {"kind": "goods", "label": "Готовая продукция Жгут", "reason": "Отгружено 1 шт — отгрузки не трогаем."},
+         "reason": "Принято на склад ГП, не отгружено: 3 шт — этап не отгружает, переносу не мешает."},
+        {"kind": "goods", "label": "Готовая продукция Жгут", "reason": "Отгружено 1 шт — отгрузки остаются, переносу не мешают."},
     ]
     assert kb1["warnings"] == [
         "Закроется (пропущено вручную: ОТК → Отгружено): заданий цеха — 1, заявок на комплектацию — 1.",
-        "Готовая продукция Жгут: Принято на склад ГП, не отгружено: 3 шт — этап не отгружает.",
-        "Готовая продукция Жгут: Отгружено 1 шт — отгрузки не трогаем.",
+        "Готовая продукция Жгут: Принято на склад ГП, не отгружено: 3 шт — этап не отгружает, переносу не мешает.",
+        "Готовая продукция Жгут: Отгружено 1 шт — отгрузки остаются, переносу не мешают.",
     ]
     assert (kb2["skipped"], kb2["close"], kb2["keep"], kb2["warnings"]) == (
         ["ТК готова", "КБ набрана", "В работе", "ОТК", "Готово к отгрузке", "На отгрузке"], [], [], [],
@@ -463,7 +463,7 @@ def test_forward_to_work_cancels_new_and_underfilled_kits_and_gives_every_reserv
     assert [item["label"] for item in kb2["close"]] == [f"Заявка на комплектацию {under.number} · снимается резерв с 1 поз."]
     assert kb3["close"] == [] and kb3["keep"] == [{
         "kind": "kit_request", "label": f"Заявка на комплектацию {picked.number}",
-        "reason": "Комплект собран («Укомплектован») — не отменяем.",
+        "reason": "Комплект собран («Укомплектован») — остаётся, не мешает переносу.",
     }]
     assert preview["totals"] == {"tasks": 0, "kit_requests": 3, "reserves": 1, "close": 4, "keep": 1}
     assert _world(sessions)[:2] == (requests, lots)  # предпросмотр ничего не пишет
@@ -503,7 +503,7 @@ def test_forward_to_qc_cancels_idle_running_tasks_and_keeps_the_one_being_worked
     [kb1] = [kb for kb in preview["kbs"] if kb["kb"] == "КБ1"]
     assert [(item["kind"], item["label"], item["qty"]) for item in kb1["close"]] == [("task", "Задание П-1 · Жгут", "10")]
     assert kb1["keep"] == [{"kind": "task", "label": "Задание П-2 · Жгут",
-                            "reason": "По заданию идёт работа (смена открыта) — не отменяем."}]
+                            "reason": "По заданию идёт работа (смена открыта) — остаётся, не мешает переносу."}]
 
     _move(factory, sessions, "ОТК", kb="КБ1", token=preview["preview_token"], reason="собрали на ЖУК")
 

@@ -53,7 +53,7 @@ describe("StageChangeDialog", () => {
     ] }));
     expect(await screen.findByText("Активный блокер «ХОЛД» — смена этапа его не снимает.")).toBeTruthy();
     expect(screen.getByText("Есть открытые задания цеха: 2")).toBeTruthy();
-    expect(screen.getByText("Закрывать нечего — меняется только этап")).toBeTruthy();
+    expect(screen.getByText("Меняется только этап, остальное не трогаем.")).toBeTruthy();
   });
 
   it("server refusal on apply stays in the dialog and reloads the preview", async () => {
@@ -80,7 +80,7 @@ describe("StageChangeDialog", () => {
       { kind: "kit_request", id: "r2", label: "Заявка на комплектацию 0413 (довыдача) · снимается резерв с 5 поз.", qty: "1", unit: "" },
       { kind: "task", id: "t1", label: "Задание 77 · Резка", qty: "10", unit: "шт" },
     ],
-    keep: [{ kind: "task", label: "Задание 78", reason: "По заданию идёт работа (смена открыта) — не отменяем." }],
+    keep: [{ kind: "task", label: "Задание 78", reason: "По заданию идёт работа (смена открыта) — остаётся, не мешает переносу." }],
     totals: { tasks: 1, kit_requests: 2, reserves: 0, close: 3, keep: 1 },
     preview_token: "tok-1",
   });
@@ -92,9 +92,9 @@ describe("StageChangeDialog", () => {
     expect(screen.getByText("(вернётся резерв 14 поз.)")).toBeTruthy();
     expect(screen.getByText("Задания цеха: 1")).toBeTruthy();
     expect(screen.getByText("Заявка на комплектацию 0412")).toBeTruthy();
-    expect(screen.getByText("Остаётся: 1")).toBeTruthy();
+    expect(screen.getByText("Остаётся как есть (переносу не мешает): 1")).toBeTruthy();
     expect(screen.getByText(/По заданию идёт работа/)).toBeTruthy();
-    expect(screen.queryByText("Закрывать нечего — меняется только этап")).toBeNull();
+    expect(screen.queryByText("Меняется только этап, остальное не трогаем.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Сменить этап и закрыть 3" }));
     await waitFor(() => expect(apply).toHaveBeenCalledWith("", "tok-1"));
   });

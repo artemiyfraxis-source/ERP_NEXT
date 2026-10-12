@@ -49,7 +49,7 @@ function ClosePart({ items }: { items: StageCloseItem[] }) {
 
 function KeepPart({ items }: { items: StageKeepItem[] }) {
   return <details className="stage-cascade-keep" open={items.length <= OPEN_LIMIT}>
-    <summary>Остаётся: {items.length}</summary>
+    <summary>Остаётся как есть (переносу не мешает): {items.length}</summary>
     <ul>{items.map((item, index) => <li key={`${item.label}-${index}`}>{item.label}<span className="muted"> — {item.reason}</span></li>)}</ul>
   </details>;
 }
@@ -131,7 +131,7 @@ export function StageChangeDialog({ project, kb = "", current, value, loadPrevie
         {warnings.length > 0 && <div className="warning-inline stage-dialog-warn" role="status"><ul>{warnings.map((text) => <li key={text}>{text}</li>)}</ul></div>}
         {(closing.length > 0 || keeping.length > 0 || note || (forward && closing.length === 0)) && <div className="stage-cascade">
           {closing.length > 0 && <section><h3>Будет закрыто</h3><ClosePart items={closing} /></section>}
-          {forward && closing.length === 0 && <div className="page-sub">Закрывать нечего — меняется только этап</div>}
+          {forward && closing.length === 0 && <div className="page-sub">Меняется только этап, остальное не трогаем.</div>}
           {note && <div className="page-sub">{note}</div>}
           {keeping.length > 0 && <section className="muted"><KeepPart items={keeping} /></section>}
         </div>}
