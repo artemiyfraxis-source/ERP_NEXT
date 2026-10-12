@@ -1,6 +1,7 @@
 // Ported from TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permission (THIRD_PARTY_NOTICES.md).
 // Original: src/Techmap.Client/src/uml/uml-model.ts @ 0a456d2f7bd23288111e871058ebf55bf14426cd (branch codex/integration-m5-22).
-// ERP changes: Route V2 is not ported, so createUmlFromRouteV2 takes any route graph of that shape (Route v3 fits).
+// ERP changes: Route V2 is not ported, so createUmlFromRouteV2 takes any route graph of that shape (Route v3 fits);
+// an operation may name the ERP library card it came from (`code`, `templateId`).
 /** ERP: the part of a Route V2 / v3 document the UML import reads. */
 export interface UmlRouteSource {
   readonly nodes: readonly { readonly id: string; readonly title: string; readonly x: number; readonly y: number }[];
@@ -18,6 +19,10 @@ export interface UmlOperation {
   readonly employees: number;
   readonly quantity: number;
   readonly minutesEach: number;
+  /** ERP: the operation card of the ERP library the operation was taken from (its code; the template id) — the feed of
+   *  the route into the techcard (S2) maps the operation to that card. Absent — a hand-written operation. */
+  readonly code?: string;
+  readonly templateId?: string;
 }
 export interface UmlNode {
   readonly id: string;

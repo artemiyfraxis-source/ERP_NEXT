@@ -88,7 +88,7 @@ const openManual = async () => {
 it("«Поправить вручную» opens the typical assembly in the manual tab with blocks and generator operations", async () => {
   const calls = mockApi([], (path, init) => (path === "/api/techcards/assembly/from-generator" && init?.method === "POST" ? json(fromGenerator()) : undefined));
   const onBuild = mount();
-  expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
+  expect((await screen.findAllByText("Резка — МГТФ 0,12"))[0]).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Поправить вручную" }));
 
   expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();

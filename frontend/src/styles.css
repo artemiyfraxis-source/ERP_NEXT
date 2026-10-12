@@ -3563,6 +3563,129 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kit-pane-harness .harness-page { height: calc(100vh - 168px); min-height: 520px; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
 .kit-kd-delete { color: var(--tone-danger); }
 
+/* Холст маршрута (RouteCanvas, владелец 12.10): карточки полуфабрикатов со связями — «Схема полуфабрикатов» генератора
+   и «Маршрут КБn» позиции с чертежом. Карточка: вид маленьким ярлыком, название, «N … · шт · мин», рисунок. */
+:root { --rc-dot: color-mix(in srgb, var(--muted-foreground) 22%, transparent); --rc-link: #8a94a6; --rc-tube: #3b4248; --rc-final-fg: #00756a; }
+.rc { display: grid; gap: 8px; min-width: 0; }
+.rc-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.rc-tools-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.rc-zoom { display: inline-flex; align-items: center; gap: 4px; }
+.rc-zoom .small { min-width: 32px; }
+.rc-zoom-value { min-width: 48px; color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.rc-view { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft) radial-gradient(circle, var(--rc-dot) 1px, transparent 1.4px) 0 0 / 16px 16px; }
+.rc-view.is-auto { overflow: hidden; border: 0; border-radius: 0; background: none; }
+.rc-stage { position: relative; }
+.rc-plane { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+.rc-links { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.rc-links marker path { fill: var(--rc-link); }
+.rc-link { fill: none; stroke: var(--rc-link); stroke-width: 1.5; }
+.rc-link.is-active { stroke: var(--primary); stroke-width: 2; }
+.rc-link-tools { position: absolute; z-index: 2; display: flex; align-items: center; gap: 4px; transform: translate(-50%, -50%); }
+.rc-qty { padding: 0 8px; border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border)); border-radius: 999px; background: var(--card); font-size: 12px; font-weight: 600; line-height: 20px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-link-btn { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: var(--card); color: var(--muted-foreground); font-size: 15px; font-weight: 600; line-height: 1; }
+.rc-link-btn:hover, .rc-link-btn:focus-visible { border-color: var(--primary); color: var(--foreground); }
+.rc-link-btn.is-danger:hover, .rc-link-btn.is-danger:focus-visible { border-color: var(--tone-danger); color: var(--tone-danger); }
+.rc-card { position: absolute; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); box-shadow: 0 1px 2px rgba(0, 26, 24, .06); }
+.rc-card.is-interactive { cursor: pointer; }
+.rc-card.is-interactive:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.rc-card.is-final { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); }
+.rc-card.is-selected { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
+.rc-card.is-dragging { z-index: 3; box-shadow: 0 8px 24px rgba(0, 26, 24, .18); cursor: grabbing; }
+.rc-card-head { display: flex; align-items: center; gap: 8px; min-height: 16px; }
+.rc-kind { color: var(--muted-foreground); font-size: 11px; font-weight: 700; letter-spacing: .06em; line-height: 16px; }
+.rc-card.is-assembly .rc-kind { color: var(--chip-info-fg); }
+.rc-card.is-final .rc-kind { color: var(--rc-final-fg); }
+.rc-card-x { display: inline-grid; place-items: center; width: 24px; height: 24px; margin: -4px -6px -4px auto; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 16px; line-height: 1; }
+.rc-card-x:hover, .rc-card-x:focus-visible { background: var(--danger-soft); color: var(--tone-danger); }
+.rc-title { overflow: hidden; font-size: 14px; font-weight: 600; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.rc-sub { overflow: hidden; font-size: 12px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
+.rc-meta { overflow: hidden; color: var(--muted-foreground); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.rc-warn { color: var(--chip-warning-fg); font-size: 12px; line-height: 16px; }
+.rc-art { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; margin-top: 6px; padding: 4px 6px; overflow: hidden; border-radius: 6px; background: var(--panel-soft); }
+.rc-snapshot { display: block; width: 100%; height: 100%; }
+/* Провода и оболочки — строками сверху, без пустой серой площадки под ними. */
+.rc-art:has(> .rc-rows) { flex: 0 0 auto; align-items: flex-start; }
+.rc-rows { display: grid; gap: 2px; width: 100%; align-self: start; }
+.rc-row { display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 8px; height: 20px; }
+.rc-wire svg { display: block; width: 84px; height: 17px; }
+.rc-tube { display: block; width: 84px; height: 16px; }
+.rc-tube rect { fill: var(--rc-tube); }
+.rc-tube line { stroke: var(--panel-soft); stroke-width: 1; opacity: .5; }
+.rc-row-label { overflow: hidden; font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.rc-more { color: var(--muted-foreground); font-size: 12px; line-height: 16px; }
+.rc-faces { display: flex; align-items: flex-end; justify-content: center; gap: 12px; width: 100%; }
+.rc-face-cell { display: grid; justify-items: center; gap: 2px; min-width: 0; margin: 0; }
+.rc-face-cell figcaption { max-width: 120px; overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.rc-face { display: block; }
+.rc-face-none { display: inline-grid; place-items: center; min-width: 44px; height: 32px; padding: 0 8px; border: 1px dashed var(--chip-box); border-radius: 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.rc-final { display: flex; align-items: center; justify-content: center; width: 100%; }
+.rc-cable { flex: 1; max-width: 72px; height: 4px; margin: 0 2px 14px; border-radius: 2px; }
+.rc-end { width: 8px; height: 8px; margin-bottom: 14px; border-radius: 50%; background: var(--chip-box); }
+.rc-ops { display: grid; margin: 6px -6px 0; padding: 0; list-style: none; }
+.rc-op { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto auto; align-items: center; gap: 6px; width: 100%; height: 22px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: var(--foreground); font-size: 12px; font-weight: 400; text-align: left; cursor: pointer; }
+.rc-op:hover { background: var(--accent); }
+.rc-op.is-selected { background: color-mix(in srgb, var(--primary) 14%, transparent); }
+.rc-op-no { color: var(--muted-foreground); font-variant-numeric: tabular-nums; text-align: right; }
+.rc-op-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-op-note { padding: 0 6px; border-radius: 999px; background: var(--chip-warning-bg); color: var(--chip-warning-fg); font-size: 11px; line-height: 16px; }
+.rc-op-time { color: var(--muted-foreground); font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (pointer: coarse) {
+  .rc-link-btn { width: 40px; height: 40px; }
+  .rc-card-x { width: 40px; height: 40px; }
+  .rc-op { height: 40px; }
+}
+
+/* «Маршрут КБn» (HarnessRouteView): шапка с сохранением и действиями, холст слева, настройки карточки справа. */
+.hr { display: grid; gap: 8px; min-width: 0; }
+.hr-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.hr-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.hr-meta { font-size: 12px; font-variant-numeric: tabular-nums; }
+.hr-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.hr-banner { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-bottom: 0; }
+.hr-stale, .hr .warning-inline { margin: 0; font-size: 13px; }
+.hr-empty { display: grid; justify-items: start; gap: 8px; padding: 24px; border: 1px dashed var(--border); border-radius: 8px; background: var(--card); }
+.hr-empty p { margin: 0; color: var(--muted-foreground); font-size: 14px; }
+.hr-body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; align-items: start; }
+.hr-body .rc-view { min-height: 480px; }
+.hr-sum { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hr-panel { display: grid; gap: 12px; align-content: start; max-height: calc(100vh - 250px); overflow: auto; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); font-size: 13px; }
+.hr-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hr-panel .rc-kind.is-assembly { color: var(--chip-info-fg); }
+.hr-panel .rc-kind.is-final { color: var(--rc-final-fg); }
+.hr-hint { margin: 0; color: var(--muted-foreground); font-size: 13px; }
+.hr-link { border: 0; padding: 0; background: none; color: var(--rc-final-fg); font-size: 13px; font-weight: 600; cursor: pointer; }
+.hr-field { display: grid; gap: 4px; color: var(--muted-foreground); font-size: 12px; }
+.hr-field input, .hr-field select { width: 100%; color: var(--foreground); font-size: 14px; }
+.hr-pair { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 8px; }
+.hr-section { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.hr-section h3 { margin: 0; font-size: 14px; font-weight: 600; }
+/* Операция: название и «×» первой строкой, ниже — как считать время, поля времени и итог в минутах. */
+.hr-op { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 8px; align-items: end; padding: 6px 0; border-bottom: 1px solid var(--sheet-line); }
+.hr-op .hr-op-name { grid-column: 1 / 4; }
+.hr-op .hr-x { grid-column: 4; justify-self: end; }
+.hr-op > select { grid-column: 1 / 3; }
+.hr-num { display: grid; gap: 2px; color: var(--muted-foreground); font-size: 11px; }
+.hr-num input { width: 100%; font-variant-numeric: tabular-nums; }
+.hr-op-time { grid-column: 3 / -1; justify-self: end; align-self: center; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.hr-x { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 16px; line-height: 1; }
+.hr-x:hover:not(:disabled), .hr-x:focus-visible { background: var(--danger-soft); color: var(--tone-danger); }
+.hr-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.hr-add { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.hr-add select, .hr-add input { flex: 1; min-width: 160px; }
+.hr-library { display: grid; gap: 6px; padding: 8px; border-radius: 8px; background: var(--panel-soft); }
+.hr-found { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.hr-found button { display: grid; width: 100%; gap: 0; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--foreground); font-size: 13px; font-weight: 400; text-align: left; cursor: pointer; }
+.hr-found button:hover, .hr-found button:focus-visible { background: var(--card); }
+.hr-found small { font-size: 11px; }
+.hr-parts { display: grid; gap: 2px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.hr-parts li { display: grid; padding: 2px 0; border-bottom: 1px solid var(--sheet-line); }
+.hr-parts small { overflow: hidden; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.hr-remove { justify-self: start; }
+@media (max-width: 1279px) {
+  .hr-body { grid-template-columns: minmax(0, 1fr); }
+  .hr-panel { max-height: none; }
+}
+@media (pointer: coarse) { .hr-x { width: 40px; height: 40px; } .hr-found button { min-height: 40px; } }
 /* «Оболочки»: a table per kind under its own heading; «Прочее» collapsed at the bottom */
 .coverings { display: grid; gap: 16px; }
 .cov-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }

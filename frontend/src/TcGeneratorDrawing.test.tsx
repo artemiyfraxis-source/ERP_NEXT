@@ -1,5 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+
+// «Построить чертёж» грузит редактор жгута лениво: в холодном прогоне первая сборка дольше 5 с (12.10.2026).
+vi.setConfig({ testTimeout: 45_000 });
 import { TcGenerator } from "./TcGenerator";
 import { resetPinoutHousings } from "./PinoutDiagram";
 import type { KitsetBom, ProjectTechcard } from "./api";
@@ -64,7 +67,7 @@ async function mountPinned(onOpenDrawing = vi.fn()) {
 it("builds the drawing of the position from the form and opens it", async () => {
   const open = await mountPinned();
   fireEvent.click(await screen.findByRole("button", { name: "Построить чертёж" }));
-  expect(await screen.findByText("Чертёж КБ1 построен: 2 разъёма, 2 провода.")).toBeTruthy();
+  expect(await screen.findByText("Чертёж КБ1 построен: 2 разъёма, 2 провода.", {}, { timeout: 20_000 })).toBeTruthy();
   const save = calls.find((call) => call.method === "PUT")!;
   expect(save.body).toMatchObject({ revision: null, checkpoint: true });
   const design = save.body!.design as { connectors: Array<{ designation: string; partNumber: string }>; wires: unknown[] };
@@ -76,7 +79,7 @@ it("builds the drawing of the position from the form and opens it", async () => 
   // Свой же чертёж обновляется без вопроса — его никто не правил.
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Обновить чертёж" }));
-  expect(await screen.findByText("Чертёж КБ1 обновлён: 2 разъёма, 2 провода.")).toBeTruthy();
+  expect(await screen.findByText("Чертёж КБ1 обновлён: 2 разъёма, 2 провода.", {}, { timeout: 20_000 })).toBeTruthy();
   expect(confirm).not.toHaveBeenCalled();
 });
 
@@ -91,7 +94,7 @@ it("asks before overwriting a drawing edited by hand and keeps the old version i
 
   confirm.mockReturnValue(true);
   fireEvent.click(screen.getByRole("button", { name: "Обновить чертёж" }));
-  expect(await screen.findByText("Чертёж КБ1 обновлён: 2 разъёма, 2 провода.")).toBeTruthy();
+  expect(await screen.findByText("Чертёж КБ1 обновлён: 2 разъёма, 2 провода.", {}, { timeout: 20_000 })).toBeTruthy();
   const writes = calls.filter((call) => call.method !== "GET").map((call) => [call.method, call.path.replace(HARNESS, ""), call.body?.revision]);
   expect(writes).toEqual([["POST", "/checkpoint", 7], ["PUT", "", 7]]);
 });

@@ -59,7 +59,7 @@ it("gives the same config as opening the generator and pressing «Создать
   });
   const onBuild = vi.fn();
   render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kit} />);
-  expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
+  expect((await screen.findAllByText("Резка — МГТФ 0,12"))[0]).toBeInTheDocument();
   vi.spyOn(window, "confirm").mockReturnValue(true);
   pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());

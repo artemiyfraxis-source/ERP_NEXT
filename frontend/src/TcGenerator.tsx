@@ -57,6 +57,7 @@ import {
   type WrapKind,
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
+import { schemeArt } from "./routeCards";
 import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import { ManualAssembly, ManualSummary, type KdOffer } from "./ManualAssembly";
 import { AssemblyDrafts } from "./AssemblyDrafts";
@@ -421,6 +422,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         position: index + 1, key: spec.opKey, type: spec.type, code,
         label: spec.label || spec.cat || `Операция ${index + 1}`, minutes: docMinutes ? docMinutes.minutes[index] : null,
         number: ops.indexOf(spec) + 1, codeNote: differs ? `вместо ${want}${known ? "" : " — нет карты"}` : "",
+        ...(spec.side ? { side: spec.side } : {}),
       };
     });
   }, [routeSpecs, gen, D.templates, docMinutes, ops]);
@@ -514,6 +516,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const pinFree = freeSide(gen, S);
   const pinHousings = usePinHousings(pinEnds.map((end) => end.conn));
   const pinCounts = Object.fromEntries(pinEnds.map((end) => [end.id, pinHousings[end.conn]?.n || null]));
+  const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList, pinHousings, pinFree);
   // Автозаполнение (владелец 12.10): распиновка пустая, а число контактов каждого разъёма известно из базы разъёмов —
   // провода встают по порядку сами (одна сторона — 1…N, две — пин-в-пин). Один раз на набор разъёмов и проводов:
   // очищенную вручную распиновку не перезаполняет; не помещается — не трогает, предупреждение под схемой.
@@ -1181,7 +1184,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
                 skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
                 renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }}
-                onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} />
+                onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} art={routeArt} />
             </>}
           {/* Служебное (владелец 29.09) — свод материалов, удаление черновика, JSON — свёрнуто в «Ещё». */}
           <details className="gen-more"><summary>Ещё</summary>
