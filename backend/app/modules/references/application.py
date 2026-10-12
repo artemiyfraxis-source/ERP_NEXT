@@ -268,6 +268,43 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
     return updated
 
 
+@dataclass(frozen=True)
+class SetCoveringGroupCommand:
+    record_id: UUID
+    group: str  # «ТУТ» / «ТТК» / «Оплётки» / «Гофра» / «Прочее», or "" — back to the automatic one
+    actor: Actor
+    now: datetime
+
+
+def set_covering_group(command: SetCoveringGroupCommand, uow: UnitOfWork) -> TechOperationRecord:
+    """«Оболочки»: the manual group of a БД.МАТ row — the cell «Раздел оболочек», created on the first move."""
+    from .coverings import OVERRIDE_CHOICES, OVERRIDE_FIELD
+    group = command.group.strip()
+    if group and group not in OVERRIDE_CHOICES:
+        raise ReferenceValidationError("Раздел оболочек: " + ", ".join(OVERRIDE_CHOICES))
+    with uow:
+        record = uow.tech_operations.get(command.record_id)
+        if record is None:
+            raise LookupError("Запись справочника не найдена")
+        if record.tab != TechOperationTab.MATERIAL:
+            raise ReferenceValidationError("Раздел оболочек есть только у материалов")
+        fields = {**record.fields, OVERRIDE_FIELD: group}
+        updated = replace(record, fields=fields, edited_in_erp=True)
+        updated = replace(updated, normalized_search=_search_text(updated))
+        uow.tech_operations.save(updated)
+        _audit("references.covering_group_set", command.actor, command.now,
+               {"record_id": str(record.id), "group": group}, uow)
+        uow.commit()
+    return updated
+
+
+def coverings_catalog(uow: UnitOfWork) -> dict:
+    from .coverings import build
+    with uow:
+        records = uow.tech_operations.list(tab=TechOperationTab.MATERIAL, query="", limit=10_000)
+    return build([(str(item.id), item.fields) for item in records])
+
+
 def _equipment_rows(uow: UnitOfWork) -> list[tuple[object, dict[str, str]]]:
     return [(item.id, item.fields) for item in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10_000)]
 

@@ -3500,6 +3500,12 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kit-pane-harness .harness-page { height: calc(100vh - 168px); min-height: 520px; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
 .kit-kd-delete { color: var(--tone-danger); }
 
+/* «Оболочки»: a table per kind under its own heading; «Прочее» collapsed at the bottom */
+.coverings { display: grid; gap: 16px; }
+.cov-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
+.cov-other { display: grid; gap: 8px; justify-items: start; }
+.cov-other > .cov-group { justify-self: stretch; }
 /* БД.ОБ master–detail: the list stays on the left, the machine card is a right-hand panel (full-screen on a tablet). */
 .eq-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
 .eq-split.has-card { grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); }
