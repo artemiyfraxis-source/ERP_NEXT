@@ -646,6 +646,8 @@ export interface ProductionOperation {
   /** Готовность входов для монтажника («Мои задания») и сколько штук ему осталось сдать. */
   readiness?: ProductionReadiness;
   remaining?: string;
+  /** «Факт / норма» сданного исполнителем по журналу времени: факт без пауз, норма на сданные штуки. */
+  time_fact?: { actual_seconds: number; norm_seconds: number; percent: number | null; finishes: number } | null;
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
@@ -996,6 +998,19 @@ export interface ProductionOutput {
   defect_quantity: string;
   finished_at: string;
   correction_of_id: string | null;
+}
+
+export interface WorkCall {
+  onBehalfOf?: string;
+  key?: string;
+}
+
+function behalfQuery(onBehalfOf: string | undefined): string {
+  return onBehalfOf ? `?on_behalf_of=${encodeURIComponent(onBehalfOf)}` : "";
+}
+
+function replayHeaders(key: string | undefined): Record<string, string> | undefined {
+  return key ? { "Idempotency-Key": key } : undefined;
 }
 
 export interface CorrectBoxInput {
@@ -2775,7 +2790,8 @@ export const productionApi = {
       body: JSON.stringify(payload),
     }),
   list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
-  mine: (operatorId = "") => api<{ tasks: ProductionTask[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
+  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
@@ -2860,26 +2876,28 @@ export const productionApi = {
     `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
-  inputs: (taskId: string, operationId: string) =>
-    api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
+  inputs: (taskId: string, operationId: string, operatorId = "") =>
+    api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs${operatorId ? `?operator_id=${operatorId}` : ""}`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
-  startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = []) =>
-    api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start`, {
-      method: "POST", body: JSON.stringify({ inputs, materials }),
+  // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
+  // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = [], work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ inputs, materials }),
     }),
-  workAction: (sessionId: string, action: "pause" | "resume" | "cancel") =>
-    api<{ session: ProductionWorkSession }>(`/api/production/work/${sessionId}/${action}`, { method: "POST" }),
-  submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "") =>
-    api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit`, {
-      method: "POST", body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
+  workAction: (sessionId: string, action: "pause" | "resume" | "cancel", work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession }>(`/api/production/work/${sessionId}/${action}${behalfQuery(work.onBehalfOf)}`, { method: "POST", headers: replayHeaders(work.key) }),
+  submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "", work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
     }),
   boxAction: (boxId: string, action: "confirm", version: number) =>
     api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
     }),
   boxOutputs: (boxId: string) => api<{ outputs: ProductionOutput[] }>(`/api/production/boxes/${boxId}/outputs`),
-  correctBox: (boxId: string, version: number, input: CorrectBoxInput) =>
-    api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct`, {
+  correctBox: (boxId: string, version: number, input: CorrectBoxInput, onBehalfOf = "") =>
+    api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct${behalfQuery(onBehalfOf)}`, {
       method: "POST", body: JSON.stringify({ version, ...input }),
     }),
   returnBox: (boxId: string, version: number, reason: string) =>

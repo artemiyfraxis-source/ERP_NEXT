@@ -482,6 +482,16 @@ class WorkSession:
             pause_seconds=self.pause_seconds + elapsed,
         )
 
+    def running_seconds(self, now: datetime) -> int:
+        """Фактическое время работы: от начала до now за вычетом пауз (идущая пауза — до now тоже не считается)."""
+        session = self.resume(now) if self.status is WorkStatus.PAUSED else self
+        started_at = session.started_at
+        if started_at.tzinfo is None and now.tzinfo is not None:
+            started_at = started_at.replace(tzinfo=now.tzinfo)
+        elif started_at.tzinfo is not None and now.tzinfo is None:
+            started_at = started_at.replace(tzinfo=None)
+        return max(0, int((now - started_at).total_seconds()) - session.pause_seconds)
+
     def complete(self, now: datetime) -> WorkSession:
         session = self.resume(now) if self.status is WorkStatus.PAUSED else self
         if session.status is not WorkStatus.ACTIVE:
