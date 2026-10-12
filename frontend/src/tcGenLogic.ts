@@ -258,11 +258,37 @@ export function twistPitchForZ0_(d: number, D: number, z0: number, eps: number) 
   }
   return { p: Math.round((lo + hi) / 2 * 10) / 10, reachable: true };
 }
+/** ε_r изоляции по марке (ключ — колонка таблицы Ø без пробелов и дефисов). Серии базы монтажных проводов, которых не
+ *  было в СПР.КАБ: МС 16-13 — фторопласт, как МГТФ/МС (2,1); МС 15-11 и МК 26-13 — правило МС (2,1), своего
+ *  источника нет; UL3239 — силиконовая резина (UL AWM 3239), как «Силикон» (3,0); ПуГВ — ПВХ, как ПГВА (4,0). Марки вне
+ *  базы остаются: Ø у них нет, но ручной Ø со свивкой их ещё встречает. */
 const EPS_BY_MARK: Record<string, number> = {
-  мгтф: 2.1, мс: 2.1, ptfe: 2.1, m22759: 2.5, txl: 2.3, gxl: 2.3,
+  мгтф: 2.1, мс: 2.1, мс1613: 2.1, мс1511: 2.1, мк2613: 2.1, ptfe: 2.1, m22759: 2.5, txl: 2.3, gxl: 2.3,
   ul1061: 3.5, ul1571: 3.5, ul1007: 3.5, ul1015: 3.5, мгшв: 3.5, нв4: 3.5, flry: 3.5,
-  пвам: 4.0, пгва: 4.0, силикон: 3.0, ркгм: 3.0,
+  пвам: 4.0, пгва: 4.0, пугв: 4.0, силикон: 3.0, ul3239: 3.0, ркгм: 3.0,
 };
+/** Провод без Ø в базе монтажных (марка вне 12 серий или размера нет): видимая подсказка вместо молчаливого 0. */
+export const WIRE_DIA_MISSING_ = "Ø провода не найден в базе монтажных проводов — задайте вручную";
+/** Ø взят из старой таблицы СПР.КАБ (в базе монтажных его ещё нет, wire_dia «По старой таблице»): видно, что не подтверждён. */
+export const WIRE_DIA_OLD_ = "Ø провода по старой таблице, не подтверждено источником — проверьте";
+const WIRE_DIA_OLD_COLUMN_ = "По старой таблице";
+const OLD_FLAG_ = "old:"; // WireDiaRow[OLD_FLAG_ + norm] = 1 — Ø этой марки в строке из старой таблицы
+// Латинские буквы, набранные вместо кириллических двойников («MГТФ», «HB-4»), — как cables.hookup_series.
+const LATIN_TWINS_: Record<string, string> = { a: "а", b: "в", c: "с", e: "е", h: "н", k: "к", m: "м", o: "о", p: "р", t: "т", x: "х", y: "у" };
+/** Марка таблицы Ø в строке артикула: целиком, не частью другой марки (МНВ-4 — не НВ-4, ПуГВнг(А)-LS — не ПуГВ,
+ *  МГТФЭ — не МГТФ), пробелы и дефисы внутри названия свободны (cables.hookup_series). Возвращает строку, в которой
+ *  марка нашлась (с латиницей, заменённой на кириллицу, если иначе не нашлась), — по ней ищется сечение. */
+export function findWireMark_<M extends { norm: string }>(s: string, marks: M[]): { mk: M; s: string } | null {
+  const twin = s.replace(/[a-z]/g, (ch) => LATIN_TWINS_[ch] || ch);
+  for (const text of twin === s ? [s] : [s, twin]) {
+    for (const mk of marks) {
+      if (!mk.norm) continue;
+      const body = mk.norm.split("").map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s-]*");
+      if (new RegExp(`(?:^|[^0-9a-zа-яё])${body}(?![0-9a-zа-яё(])`).test(text)) return { mk, s: text };
+    }
+  }
+  return null;
+}
 export function isRjConn_(c: Comp) { return /8p8c|rj[\s-]*45/i.test(`${c.art || ""} ${c.name || ""}`); }
 function endpointOpKey_(side: Side, ordinal: number, kind: "prs" | "ins" | "solder") {
   const base = side + ordinal;
@@ -308,7 +334,7 @@ export function emptyState(): GenState {
     cap: { enabled: true, tut: "", len: "" },
     wrap: { enabled: false, slots: WRAP_SLOTS_.map(() => ({ mat: "", kind: "tape" as WrapKind, len: "" })) },
     seal: { enabled: false, mat: "", places: "" },
-    tin: { enabled: false, wires: null, stripLen: "" },
+    tin: { enabled: false, wires: null, stripLen: "5" },  // зачистка под лужение по умолчанию 5 мм (владелец 12.10.2026)
     coax: {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null,
@@ -729,10 +755,11 @@ export function makeGen(D: GenData, S: GenState) {
     return pairs;
   }
 
-  // Справочник СПР.КАБ
+  // «Ø изоляции по маркам» из базы монтажных проводов (GET /api/references/wire-dia)
   function wireGostKey_(s: string, mk: { norm: string }, byGost: Record<string, WireDiaRow>) {
     const re = new RegExp(mk.norm.split("").map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s-]*"));
-    const nums = s.replace(re, " ").match(/\d+(?:\.\d+)?/g) || [];
+    // «ПуГВ 1х0,75»: число перед «х» — жилы, не сечение
+    const nums = s.replace(re, " ").replace(/\d+\s*[хx×*]\s*(?=\d)/g, " ").match(/\d+(?:\.\d+)?/g) || [];
     const keys = nums.map((n) => String(Number(n))).filter((k) => byGost[k]);
     return keys.find((k) => byGost[k][mk.norm]) || keys[0] || null;
   }
@@ -740,16 +767,23 @@ export function makeGen(D: GenData, S: GenState) {
     const wd = D.wireDia;
     if (!wd) return null;
     const s = String(art || "").toLowerCase().replace(/,/g, ".");
-    const sNorm = s.replace(/[\s-]/g, "");
-    const mk = (wd.marks || []).find((x) => x.norm && sNorm.includes(x.norm));
-    if (!mk) return null;
+    const found = findWireMark_(s, wd.marks || []);
+    if (!found) return null;
+    const mk = found.mk;
     let row: WireDiaRow | null = null;
     const aw = s.match(/(\d+)\s*awg/);
     if (aw && wd.byAwg) row = wd.byAwg[aw[1]] || null;
-    if (!row && wd.byGost) { const k = wireGostKey_(s, mk, wd.byGost); row = k ? wd.byGost[k] : null; }
+    if (!row && wd.byGost) { const k = wireGostKey_(found.s, mk, wd.byGost); row = k ? wd.byGost[k] : null; }
     return row ? { row, mk } : null;
   }
   function lookupWireDia_(art: string) { const r = wireRow_(art); return (r && r.row[r.mk.norm]) || 0; }
+  /** Ø провода (по артикулу, иначе по наименованию — как свивка его берёт) и взят ли он из старой таблицы. */
+  function compWireDia_(c: Comp) {
+    const art = lookupWireDia_(c.art) ? c.art : c.name;
+    const r = wireRow_(art);
+    const dia = (r && r.row[r.mk.norm]) || 0;
+    return { dia, old: !!(r && dia && r.row[OLD_FLAG_ + r.mk.norm]) };
+  }
   function wireGauge_(art: string) {
     const wd = D.wireDia;
     const s = String(art || "").toLowerCase().replace(/,/g, ".");
@@ -757,9 +791,11 @@ export function makeGen(D: GenData, S: GenState) {
     const awg = aw ? Number(aw[1]) : null;
     let mm2: number | null = null;
     if (wd && wd.marks && wd.byGost) {
-      const sNorm = s.replace(/[\s-]/g, "");
-      const mk = wd.marks.find((x) => x.norm && sNorm.includes(x.norm));
-      if (mk) { const k = wireGostKey_(s, mk, wd.byGost); if (k) mm2 = Number(k); }
+      const found = findWireMark_(s, wd.marks);
+      if (found) { const k = wireGostKey_(found.s, found.mk, wd.byGost); if (k) mm2 = Number(k); }
+      // Марка вне базы монтажных (ПГВА 0,50, НВМ 0,35): сечение — отдельное число из таблицы сечений, как его берут
+      // нормы обжима на сервере (technology.wire_section); «4x0,35» числом не считается.
+      else mm2 = s.split(/\s+/).filter((t) => /^\d+(?:\.\d+)?$/.test(t)).map((t) => String(Number(t))).filter((k) => wd.byGost[k]).map(Number)[0] ?? null;
     }
     return { awg, mm2 };
   }
@@ -839,6 +875,22 @@ export function makeGen(D: GenData, S: GenState) {
     return dset.size === 1 ? String([...dset][0]).replace(".", ",") : "";
   }
   const twistDiaValue = () => (S.twist.diaManual || !S.twist.enabled ? S.twist.dia : autoTwistDia());
+  /** Свиваемые провода, Ø которых нет в базе монтажных проводов (марка вне базы или размера нет), — по ним видна
+   *  подсказка WIRE_DIA_MISSING_ вместо молчаливого 0. Ручной Ø снимает её: свивка считается по нему. */
+  function twistWiresWhere_(test: (d: ReturnType<typeof compWireDia_>) => boolean) {
+    if (!S.twist.enabled || (S.twist.diaManual && parseDecimal_(S.twist.dia) > 0)) return [] as string[];
+    const active = activeWires_();
+    const names = new Set<string>();
+    twistIdx_().forEach((i) => {
+      const w = active[i];
+      const c = w ? getCompById(w.compId) : null;
+      if (c && test(compWireDia_(c))) names.add(c.name || c.art);
+    });
+    return [...names];
+  }
+  const twistDiaMissing_ = () => twistWiresWhere_((d) => !d.dia);
+  /** Свиваемые провода, Ø которых пришёл из старой таблицы (WIRE_DIA_OLD_), — пока у размера нет источника. */
+  const twistDiaOld_ = () => twistWiresWhere_((d) => d.old);
   function twistZ0Warn_(g: NonNullable<ReturnType<typeof wireGeom_>>, z0: number, p: number) {
     if (!(g && z0 > 0)) return "";
     const min = twistZ0_(g.d, g.D, 2, g.eps), max = twistZ0_(g.d, g.D, 2000, g.eps);
@@ -1530,6 +1582,10 @@ export function makeGen(D: GenData, S: GenState) {
     return w;
   }
   /** generate(): проверки перед отправкой. error — стоп, warnings — спросить подтверждение. */
+  function twistDiaWarnings_() {
+    const line = (names: string[], text: string) => (names.length ? ["• Свивка: " + names.map((n) => "«" + n + "»").join(", ") + " — " + text + " (поле «Ø провода»)"] : []);
+    return line(twistDiaMissing_(), WIRE_DIA_MISSING_).concat(line(twistDiaOld_(), WIRE_DIA_OLD_));
+  }
   function validate() {
     const cfg = buildConfig();
     const ops = (cfg.ops as Array<{ templateId: string; type: string }>).filter((o) => o.templateId);
@@ -1539,7 +1595,7 @@ export function makeGen(D: GenData, S: GenState) {
       if (!S.advancedLength && !sharedLength()) return { cfg, error: 'Укажите длину кабелей (поле "Длина, мм" вверху секции).', warnings: [] };
       if (S.advancedLength && (cfg.wires as Array<{ length: number }>).some((w) => !w.length)) return { cfg, error: "Укажите длину для каждого кабеля.", warnings: [] };
     }
-    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings) };
+    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_()) };
   }
 
   return {
@@ -1547,7 +1603,7 @@ export function makeGen(D: GenData, S: GenState) {
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
-    twistGeom_, twistDiaValue, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
+    twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
@@ -1885,7 +1941,9 @@ export function coaxRecordFields(p: Omit<CoaxRec, "article">): Record<string, st
 export function opFromFields(f: Record<string, string>): OpRec {
   return { opNumber: f.opNumber || "", opName: f.opName || "", tOp: f.tOp || "", tPrep: f.tPrep || "", tMachine: f.tMachine || "" };
 }
-/** parseWireDia_ над записями СПР.КАБ · AWG (ключи полей = шапка листа по порядку). */
+/** parseWireDia_ над строками «Ø изоляции по маркам» (ключи полей = шапка по порядку: AWG · ГОСТ · Ø жилы · марки).
+ *  Строки — GET /api/references/wire-dia (база монтажных проводов, 12 серий), раньше — СПР.КАБ · AWG. Размер только
+ *  по ГОСТ (0,07 мм², AWG пусто) ищется по сечению. */
 export function wireDiaFromRecords(rows: Array<Record<string, string>>): WireDia {
   if (!rows.length) return null;
   const headers = Object.keys(rows[0]);
@@ -1897,13 +1955,15 @@ export function wireDiaFromRecords(rows: Array<Record<string, string>>): WireDia
   const byAwg: Record<string, WireDiaRow> = {}, byGost: Record<string, WireDiaRow> = {}, gostAwg: Record<string, number> = {};
   rows.forEach((r) => {
     const awg = String(r[headers[awgCol]] || "").trim();
-    if (!awg) return;
+    const gv = gostCol >= 0 ? parseFloat(String(r[headers[gostCol]] || "").replace(",", ".")) : NaN;
+    if (!awg && !isFinite(gv)) return;
     const row: WireDiaRow = {};
     const core = parseFloat(String(r[coreKey] || "").replace(",", "."));
     if (isFinite(core) && core > 0) row.__core = core;
     marks.forEach((m) => { const v = parseFloat(String(r[m.name] || "").replace(",", ".")); if (isFinite(v) && v > 0) row[m.norm] = v; });
-    byAwg[awg] = row;
-    const gv = gostCol >= 0 ? parseFloat(String(r[headers[gostCol]] || "").replace(",", ".")) : NaN;
+    String(r[WIRE_DIA_OLD_COLUMN_] || "").split(",").map((s) => s.trim().toLowerCase().replace(/[\s-]/g, "")).filter(Boolean)
+      .forEach((norm) => { if (row[norm]) row[OLD_FLAG_ + norm] = 1; });
+    if (awg) byAwg[awg] = row;
     if (isFinite(gv)) byGost[String(gv)] = row;
     if (isFinite(gv) && /^\d+$/.test(awg)) gostAwg[String(gv)] = Number(awg);
   });

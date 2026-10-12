@@ -1323,6 +1323,15 @@ export interface TechOperationRecord {
   fields: Record<string, string>;
 }
 
+/** GET /api/references/wire-dia — «Ø изоляции по маркам» из базы монтажных проводов: строка на размер «Сечения AWG ↔
+ *  мм²», поля по порядку «По старой таблице» · AWG · ГОСТ · Ø жилы · Ø наружный по каждой из 12 серий («—» — нет).
+ *  «По старой таблице» — серии, чей Ø в строке взят из старой СПР.КАБ (в базе его ещё нет). Читает генератор ЭТК. */
+export interface WireDiaResult {
+  columns: string[];
+  series: string[];
+  records: Array<{ id: string; display_text: string; source_sheet: string; fields: Record<string, string> }>;
+}
+
 export interface TechOperationResult {
   metadata: null | {
     schema_version: number;
@@ -3038,6 +3047,7 @@ export const referencesApi = {
     if (limit) params.set("limit", String(limit));
     return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
+  wireDia: () => api<WireDiaResult>("/api/references/wire-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>

@@ -42,6 +42,8 @@ import {
   updateEndpoint,
   updateWire,
   wireDiaFromRecords,
+  WIRE_DIA_MISSING_,
+  WIRE_DIA_OLD_,
   type Comp,
   type Connection,
   type Endpoint,
@@ -120,12 +122,12 @@ function loadRefs(force = false): Promise<Refs> {
 async function readRefs(): Promise<Refs> {
   const safe = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
   const noRecords = { metadata: null, columns: [], records: [] };
-  const [templates, op, ter, coax, kabAwg, kabCoax, mat] = await Promise.all([
+  const [templates, op, ter, coax, wireDia, kabCoax, mat] = await Promise.all([
     safe(techcardsApi.templates(), { metadata: null, items: [] }),
     safe(referencesApi.techOperations("op", "", 5000), noRecords),
     safe(referencesApi.techOperations("ter", "", 5000), noRecords),
     safe(referencesApi.techOperations("coax", "", 5000), noRecords),
-    safe(referencesApi.techOperations("kab_awg", "", 5000), noRecords),
+    safe(referencesApi.wireDia(), { columns: [], series: [], records: [] }),
     safe(referencesApi.techOperations("kab_coax", "", 5000), noRecords),
     safe(referencesApi.techOperations("mat", "", 5000), noRecords),
   ]);
@@ -138,7 +140,7 @@ async function readRefs(): Promise<Refs> {
     ops: (op?.records || []).map((record) => opFromFields(record.fields)),
     terRecords: (ter?.records || []).map((record) => terFromFields(record.id, record.fields)).filter((record) => record.article),
     coaxRecords: (coax?.records || []).map((record) => coaxFromFields(record.fields)),
-    wireDia: wireDiaFromRecords((kabAwg?.records || []).map((record) => record.fields)),
+    wireDia: wireDiaFromRecords((wireDia?.records || []).map((record) => record.fields)),
     coaxCableDia: coaxDiaFromRecords((kabCoax?.records || []).map((record) => record.fields)),
     markMats: markMatsFromRecords((mat?.records || []).map((record) => record.fields)),
   };
@@ -464,6 +466,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Одну сторону автомат обжать может, другую — нет: почему другая остаётся ручной.
   const crimpSideNote = crimpSides.length === 1 ? gen.crimpCutSideNote_(crimpSides[0] === "A" ? "B" : "A") : "";
   const note = gen.twistNote();
+  const diaMissing = gen.twistDiaMissing_();
+  const diaOld = gen.twistDiaOld_();
 
   function selectComps(list: Comp[], value: string, onChange: (id: string) => void, label: string, empty = "— нет —") {
     return <select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>
@@ -860,9 +864,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     <div className="opt-grid">
       <Field label="Шаг свивки"><UnitInput unit="мм" aria-label="Шаг свивки" value={S.twist.pitch} placeholder="—" onChange={(event) => twistPitchInput(event.target.value)} /></Field>
       <Field label="Z₀"><UnitInput unit="Ом" aria-label="Z0" value={S.twist.z0} placeholder="по шагу" onChange={(event) => twistZ0Input(event.target.value)} /></Field>
-      <Field label="Ø провода"><UnitInput unit="мм" aria-label="Ø провода" className={gen.twistDiaValue().trim() ? undefined : "is-warn"} value={gen.twistDiaValue()} placeholder="из СПР.КАБ"
+      <Field label="Ø провода"><UnitInput unit="мм" aria-label="Ø провода" className={gen.twistDiaValue().trim() ? undefined : "is-warn"} value={gen.twistDiaValue()} placeholder="из базы монтажных"
         onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, dia: event.target.value, diaManual: !!event.target.value.trim() } }))} /></Field>
     </div>
+    {diaMissing.length > 0 && <small className="opt-note tone-danger">⚠ {WIRE_DIA_MISSING_}: {diaMissing.map((name) => `«${name}»`).join(", ")}</small>}
+    {diaOld.length > 0 && <small className="opt-note tone-warn">⚠ {WIRE_DIA_OLD_}: {diaOld.map((name) => `«${name}»`).join(", ")}</small>}
     {note.text && <small className={note.explicit ? "opt-note" : "opt-note tone-danger"}>{note.text}{note.warn && <><br /><span className="tone-danger">⚠ {note.warn}</span></>}</small>}
   </Toggle>;
 
