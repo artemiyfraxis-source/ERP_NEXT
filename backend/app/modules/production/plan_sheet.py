@@ -24,7 +24,8 @@ from .plan import (
 )
 
 
-# ProdPlan.gs PLAN_SHOP_STAGE_ read backwards: the ERP stage is shown as the sheet status it maps from.
+# Owner 12.10: «Статус» листа сквозной — всегда этап проекта (как на экране «Проекты») + блокер, ручной отметки нет.
+# Старые отметки `status` в журнале остаются историей; STAGE_SHOP_STATUS — только чтобы сверить их с этапом (plan_status_drift).
 STAGE_SHOP_STATUS = {
     "КБ набрана": "К ЗАПУСК",
     "В работе": "В РАБОТЕ",
@@ -32,7 +33,7 @@ STAGE_SHOP_STATUS = {
     "Отгружено": "ОТГРУЖЕН",
 }
 SHOP_HOLD = frozenset(("ХОЛД", "СТОП", "ПАУЗА"))
-SHOP_DONE = frozenset(("ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН"))
+SHOP_DONE_STAGES = frozenset(("КБ на складе", "Отгружено"))
 SHEET_GROUPS = ("hold", "active", "done", "closed")
 CALENDAR_BEFORE_DAYS = 7
 CALENDAR_AFTER_DAYS = 60
@@ -53,22 +54,17 @@ class SheetCalendar:
 
 
 def shop_status_auto(stage: str, blocker: str = "") -> str:
-    """Blocker of the journal + the sheet status of the ERP stage; a stage with no sheet twin stays as it is."""
-    parts = [blocker] if blocker else []
-    stage_status = STAGE_SHOP_STATUS.get(stage, stage)
-    if stage_status and stage_status not in parts:
-        parts.append(stage_status)
-    return ", ".join(parts)
+    """Blocker of the journal + the ERP stage name, exactly as the projects screen shows them."""
+    return ", ".join(part for part in (blocker, stage) if part)
 
 
-def sheet_group(status: str, terminal: bool = False) -> str:
-    """Rows on hold go on top, finished ones (ОТК … ОТГРУЖЕН) to the bottom, refused projects last."""
-    statuses = [item.strip() for item in status.split(",") if item.strip()]
-    if any(item in SHOP_HOLD for item in statuses):
+def sheet_group(stage: str, blocker: str = "", terminal: bool = False) -> str:
+    """Rows on hold go on top, finished ones (КБ на складе, Отгружено) to the bottom, refused projects last."""
+    if blocker in SHOP_HOLD:
         return "hold"
     if terminal:
         return "closed"
-    if statuses and all(item in SHOP_DONE for item in statuses):
+    if not blocker and stage in SHOP_DONE_STAGES:
         return "done"
     return "active"
 
@@ -109,7 +105,7 @@ def sheet_cells(
     ready: str,
     marks: Mapping[str, str],
 ) -> dict[str, SheetCell]:
-    """Auto value of every sheet column next to the manual mark that overrides it."""
+    """Auto value of every sheet column next to the manual mark that overrides it (the status has no mark)."""
     kits = stage.kits
     reached = lambda status: KIT_STAGES.index(status) if status in KIT_STAGES else -1  # noqa: E731
     picked = KIT_STAGES.index("КБ набрана")
@@ -143,7 +139,7 @@ def sheet_cells(
         "kit_picked": _flag(bool(kits) and all(item.kit or reached(item.status) >= picked for item in kits)),
     }
     return {
-        name: SheetCell(marks[name], value, True) if name in marks else SheetCell(value, value, False)
+        name: SheetCell(marks[name], value, True) if name in marks and name != "status" else SheetCell(value, value, False)
         for name, value in auto.items()
     }
 
@@ -197,7 +193,7 @@ def calendar_span(today: date) -> tuple[date, date]:
 
 
 __all__ = [
-    "CALENDAR_AFTER_DAYS", "CALENDAR_BEFORE_DAYS", "SHEET_GROUPS", "SHOP_DONE", "SHOP_HOLD", "SHOP_STATUSES",
+    "CALENDAR_AFTER_DAYS", "CALENDAR_BEFORE_DAYS", "SHEET_GROUPS", "SHOP_DONE_STAGES", "SHOP_HOLD", "SHOP_STATUSES",
     "STAGE_SHOP_STATUS", "SheetCalendar", "SheetCell", "calendar_span", "ready_percent", "sheet_calendar",
     "sheet_cells", "sheet_group", "shop_status_auto",
 ]
