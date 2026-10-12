@@ -425,12 +425,78 @@ class SupplyLine:
     # «Без ГРН»: procurement covered it «Есть на складе, без ГРН» — on the shelf, in no lot, reserved nowhere; less
     # what the project's kits already issued «есть, не заведено» (the same unbooked goods, never counted twice).
     off_book: Decimal = Decimal("0")
+    link: str = ""  # the first supplier link of the position in the spec
+    # Where the shown «Наименование» comes from (`app.workflows.item_names`): ref | stock | spec | site | "" (unknown),
+    # and the tooltip that says so (or why no name was found).
+    name_source: str = ""
+    name_hint: str = ""
 
     @property
     def short(self) -> Decimal:
         """«Не хватает»: need − free stock − in procurement − already in the kits − on the shelf without a ГРН, never
         below zero."""
         return max(self.need - self.free - self.ordered - self.kitted - self.off_book, Decimal("0"))
+
+
+@dataclass(frozen=True)
+class SupplyState:
+    """One word of «Стадия» on «Снабжение», its tone and a tooltip with the numbers behind it."""
+
+    key: str  # short | kitting | procurement | received | outside | stock | none
+    label: str
+    tone: str  # ok | warn | danger | info | neutral
+    hint: str
+
+
+_PROCUREMENT_PLACES = ("Закупка", "Приёмка")
+
+
+def supply_state(line: SupplyLine) -> SupplyState:
+    """The position's state in one word (owner, 12.10.2026: «если заведено без кнопки в закупку — значит это куплено вне
+    системы»), first that holds:
+
+    - «Не хватает N» — need − free − without ГРН − in procurement − in the kits is still above zero (the checkbox);
+    - «В комплектации» — the project's kits already hold (reserved or issued) the whole need;
+    - «В закупке» — an ERP procurement line of the position is still open;
+    - «Принято на склад» — procurement brought it and receiving accepted it;
+    - «Куплено вне системы» — only purchase requests, none handed to procurement («В закупку» never pressed);
+    - «Со склада» — free stock (or the stock procurement marked «без ГРН») covers it, no purchase in ERP.
+    """
+    def n(value: Decimal) -> str:
+        return _display(value).replace(".", ",")
+
+    numbers = (
+        f"Нужно {n(line.need)} · свободно {n(line.free)} · без ГРН {n(line.off_book)} · в закупке {n(line.ordered)}"
+        f" · в комплектации {n(line.kitted)}"
+    )
+    if line.need <= 0:
+        return SupplyState("none", "Нет потребности", "neutral", numbers)
+    if line.short > 0:
+        return SupplyState(
+            "short", f"Не хватает {n(line.short)}", "danger", f"{numbers} → не хватает {n(line.short)}",
+        )
+    if line.kitted >= line.need:
+        return SupplyState(
+            "kitting", "В комплектации", "ok",
+            f"В резерве или выдано по комплектации проекта: {n(line.kitted)} из {n(line.need)} · {numbers}",
+        )
+    procurement = [row for row in line.rows if row.where in _PROCUREMENT_PLACES]
+    rows_text = "; ".join(f"{row.source_id} · {row.where} · {row.status}" for row in line.rows if row.source_id)
+    open_lines = [row for row in procurement if not row.received and not row.status.endswith("без ГРН")]
+    if open_lines:
+        return SupplyState("procurement", "В закупке", "warn", f"В закупке {n(line.ordered)}: {rows_text} · {numbers}")
+    if any(row.received for row in procurement):
+        return SupplyState("received", "Принято на склад", "ok", f"Принято по закупке: {rows_text} · {numbers}")
+    if line.rows and not procurement:
+        return SupplyState(
+            "outside", "Куплено вне системы", "neutral",
+            f"Заявка без «В закупку» — закупки в ERP нет: {rows_text} · {numbers}",
+        )
+    if line.off_book > 0 and line.free < line.need:
+        return SupplyState(
+            "stock", "Со склада", "info", f"Закупка отметила «Есть на складе, без ГРН»: {n(line.off_book)} · {numbers}",
+        )
+    return SupplyState("stock", "Со склада", "info", f"Свободно на складе {n(line.free)} из нужных {n(line.need)} · {numbers}")
 
 
 _SUPPLY_RANK = {"Запрос": 1, "Закупка": 2, "Приёмка": 3}
@@ -483,6 +549,7 @@ def supply_lines(
             if line is None:
                 line = lines[key] = {
                     "article": component.article, "name": component.name, "type": component.type, "kbs": [],
+                    "link": component.link.strip(),
                     "need": Decimal("0"), "grn": "", "rows": (), "used": set(), "names": set(),
                     "free": Decimal("0"), "kitted": Decimal("0"), "off_book": Decimal("0"),
                     "kitted_off_book": Decimal("0"), "absent": Decimal("0"),
@@ -492,6 +559,8 @@ def supply_lines(
                 line["used"].add(used)
             if _article_key(component.name):
                 line["names"].add(_article_key(component.name))
+            if not line["link"] and component.link.strip():
+                line["link"] = component.link.strip()
             if assembly.index and assembly.index not in line["kbs"]:
                 line["kbs"].append(assembly.index)
             line["need"] = (line["need"] + component.batch(assembly.run)).quantize(Decimal("0.01"))
@@ -525,7 +594,7 @@ def supply_lines(
             rows=found, item_type=line["type"],
             ordered=sum((row.open_quantity for row in found), Decimal("0")),
             free=max(line["free"] - line["absent"], Decimal("0")), kitted=line["kitted"],
-            off_book=max(line["off_book"] - line["kitted_off_book"], Decimal("0")),
+            off_book=max(line["off_book"] - line["kitted_off_book"], Decimal("0")), link=line["link"],
         ))
     return tuple(result)
 
