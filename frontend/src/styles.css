@@ -2128,7 +2128,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-def small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted-foreground); }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
 /* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
-.etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(220px, 280px); gap: 10px; align-items: start; }
+.etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(240px, 320px); gap: 10px; align-items: start; }
 /* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
 .etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
 .etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
@@ -2145,14 +2145,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-links th:not(:first-child) { text-align: left; width: auto; }
 .etk-links th:first-child, .etk-links th:nth-child(4), .etk-links th:nth-child(6) { text-align: right; }
 .etk-links td { padding: 4px 12px; }
-.etk-time { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
-.etk-time > small { font-size: 11px; color: var(--muted-foreground); }
-.etk-time > small:first-child { font-size: 12px; font-weight: 600; }
-.etk-time > b { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.etk-time > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
+.etk-fig { display: grid; gap: 2px; align-content: start; padding: 8px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.etk-fig > small { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.etk-fig > b { font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.etk-fig > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; }
 .etk-time ul { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; }
 .etk-time li { display: flex; justify-content: space-between; gap: 8px; }
-.etk-result:not(:has(.etk-result-table)) { grid-template-columns: minmax(220px, 280px); }
+.etk-result-one { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+.etk-result-name { display: grid; gap: 2px; flex: 1 1 260px; align-content: start; padding: 8px 0; font-size: 14px; font-weight: 600; }
+.etk-result-name > small { font-size: 12px; color: var(--muted-foreground); }
+.etk-figs { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; flex: 0 1 460px; }
+.etk-result:not(:has(.etk-result-table)):not(.etk-result-one) { grid-template-columns: minmax(220px, 280px); }
 @media (max-width: 1100px) { .etk-result { grid-template-columns: 1fr; } .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
 
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
@@ -3322,7 +3325,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kit-meta .kit-calc-link { color: var(--primary); text-decoration: none; }
 .kit-meta .kit-calc-link:hover { text-decoration: underline; }
 /* «Ещё ▾» за чертой после рабочих кнопок: удаление отдельно от них (ПР-2). */
-.kit-actions .kit-more { margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--border); }
+.kit-head .kit-more { margin-left: 4px; }
 .kit-more .more-menu-list button.kit-more-danger { color: var(--tone-danger); }
 .kit-more .more-menu-list button.kit-more-danger:hover { background: var(--danger-soft); }
 .kit-delete-dialog .page-sub { line-height: 1.5; }
@@ -3459,3 +3462,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 @media (pointer: coarse) { .eq-table td, .eq-hit { padding-top: 8px; padding-bottom: 8px; } .eq-x { padding: 8px; } }
 .eq-chip-btn { cursor: pointer; color: var(--foreground); }
 .eq-chip-btn:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+
+/* «Чертёж КБn» — редактор жгута внутри карточки проекта: высота окна за вычетом шапки карточки, не весь экран. */
+.kit-pane-harness .harness-page { height: calc(100vh - 168px); min-height: 520px; padding: 0; border: 1px solid var(--border); border-radius: 10px; }
+.kit-kd-delete { color: var(--tone-danger); }
