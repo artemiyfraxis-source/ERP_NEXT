@@ -3048,6 +3048,9 @@ export const referencesApi = {
     return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
   wireDia: () => api<WireDiaResult>("/api/references/wire-dia"),
+  /** СПР.КАБ · коаксиал для генератора ЭТК: строки D1·D2·D3 и по строке на каждое другое имя кабеля (полное название,
+   *  артикул поставщика, другое написание марки) с D1–D3 этого кабеля. */
+  coaxDia: () => api<TechOperationResult>("/api/references/coax-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>

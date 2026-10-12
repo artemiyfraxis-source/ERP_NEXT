@@ -268,7 +268,7 @@ def test_migration_keeps_old_rows_checks_the_new_ladder_and_keeps_the_journal_ap
     # Повторный upgrade ничего не делает.
     with sqlite3.connect(database) as connection:
         schema = _schema(connection)
-    command.upgrade(_config(database), "head")
+    command.upgrade(_config(database), "0107_stage_ladder")
     with sqlite3.connect(database) as connection:
         assert _schema(connection) == schema
         assert connection.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0107_stage_ladder"

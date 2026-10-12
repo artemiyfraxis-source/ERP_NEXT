@@ -418,6 +418,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
     reads = [
         ("GET", "/api/references/bases"),
         ("GET", "/api/references/cables"),
+        ("GET", "/api/references/coax-dia"),
         ("GET", "/api/references/import/{table}/schema"),
         ("GET", "/api/references/tech-operations"),
         ("GET", "/api/references/wire-dia"),

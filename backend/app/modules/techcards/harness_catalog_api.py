@@ -18,7 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Response
 from pydantic import BaseModel, Field
 
-from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
+from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
 from app.modules.references.domain import TechOperationTab
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, projects_edit_principal, projects_view_principal
@@ -53,12 +53,14 @@ def harness_catalog(
 
 
 def reference_tables(references_factory: Callable[[], ReferencesUnitOfWork]) -> tuple[dict | None, dict[str, list]]:
-    """The reference tabs the harness catalog reads (tab → record fields) and the import metadata."""
+    """The reference tabs the harness catalog reads (tab → record fields) and the import metadata. СПР.КАБ · коаксиал
+    carries one more row per other name of a cable (`coax_dia_rows`): a coax cable is found with its D1–D3 by its full
+    name, an article or another spelling of the mark too."""
     with references_factory() as uow:
         metadata = uow.tech_operations.metadata()
         tables = {
-            tab: [record.fields for record in uow.tech_operations.list(tab=TechOperationTab(tab), query="",
-                                                                       limit=RECORD_LIMIT)]
+            tab: coax_dia_rows(uow, RECORD_LIMIT) if tab == "kab_coax" else
+            [record.fields for record in uow.tech_operations.list(tab=TechOperationTab(tab), query="", limit=RECORD_LIMIT)]
             for tab in TABS
         }
     return metadata, tables
