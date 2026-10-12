@@ -351,7 +351,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
             disabled={Boolean(busy) || loading}
             mutate={mutate}
             onMove={(item) => { setMoveLot(item); setMoveOpen(true); }}
-            history={admin}
+            history={admin || !readOnly}
             readOnly={readOnly}
           />)}</tbody>
         </table>

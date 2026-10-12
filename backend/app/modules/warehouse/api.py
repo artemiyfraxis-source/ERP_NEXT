@@ -401,7 +401,7 @@ def journal(
     q: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
     """SK-16 «Журнал склада» (portalStock05Log): events + write-offs, returns and issues, newest first, the last
-    400 matches of the search. The administrator only."""
+    400 matches of the search. Who works with the warehouse (owner 12.10.2026: the storekeeper sees a lot's history)."""
     page = warehouse_journal(uow_factory(), q)
     return {
         "rows": [

@@ -504,7 +504,7 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
         with shop.sessions() as session:
             for row in session.scalars(select(StockLotRow)):
                 assert net.get(row.id, Decimal("0")) == row.written_off, row.grn
-    shop.storekeeper.refused("GET", "/api/stock/journal")  # журнал склада — только администратору
+    shop.storekeeper.ok("GET", "/api/stock/journal")  # журнал склада — кладовщику с правкой склада (владелец 12.10.2026)
     journal = shop.owner.ok("GET", "/api/stock/journal", params={"q": request["number"]})["rows"]
     assert len(journal) >= len(request["lines"])
 
