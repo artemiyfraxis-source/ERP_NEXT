@@ -213,8 +213,10 @@ const REASON_TONE: Record<string, Tone> = {
 export const suggestionKey = (item: SupplierSuggestion) => item.supplier_id ?? `name:${item.name.toLowerCase()}`;
 
 function reasonText(reason: SuggestReason) {
-  if (reason.code === "rotation") {
-    return reason.last_date ? `${reason.label} · спрашивали ${formatDay(reason.last_date)}` : "ещё не спрашивали";
+  // Rotation and the rest of the category carry the day the supplier was last asked, history reasons the last purchase.
+  if (reason.code === "rotation" || reason.code === "category") {
+    if (reason.last_date) return `${reason.label} · спрашивали ${formatDay(reason.last_date)}`;
+    return reason.code === "rotation" ? "ещё не спрашивали" : reason.label;
   }
   const parts = [reason.label];
   if (reason.lines) parts.push(countLabel(reason.lines, LINE_FORMS));
