@@ -2920,7 +2920,7 @@ export const productionPlanApi = {
     api<StagePreview>(`/api/production/plan/stage-preview?project=${encodeURIComponent(project)}&value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   addEvent: (payload: {
     project: string;
-    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark";
+    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark" | "status";
     blocker?: string;
     text?: string;
     deadline?: string | null;

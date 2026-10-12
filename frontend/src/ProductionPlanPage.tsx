@@ -154,9 +154,9 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
         <span className="zg-span" title={`Период листа ${shortDate(sheetSpan.from)} – ${shortDate(sheetSpan.to)}`}><b>{periodWords(sheetSpan.from, sheetSpan.to)}</b> · сегодня {WEEKDAYS[new Date(`${sheetSpan.today}T00:00:00`).getDay()]} {formatDayMonth(sheetSpan.today)}</span></div>
       {!loaded ? <div className="empty">Загрузка…</div>
         : <PlanLoadSheet rows={data.rows} from={sheetSpan.from} to={sheetSpan.to} today={sheetSpan.today} holidays={holidays}
-          shopStatuses={data.shop_statuses ?? []} suppliedValues={data.supplied_values ?? ["НЕТ", "ДА", "Ч/Т"]}
+          suppliedValues={data.supplied_values ?? ["НЕТ", "ДА", "Ч/Т"]}
           arrivalValues={data.arrival_values ?? ["Склад", "Ждем", "???"]} canEdit={canEdit} busy={busy}
-          onMark={addMark}
+          onStatusChanged={() => void reload()} onMark={addMark}
           onDeadline={(project, deadline) => addEvent({ project, kind: "deadline", blocker: "", text: "", deadline })}
           onOpenProject={openRow} onOpenJournal={(row) => setSelectedProject(row.project)} hasCard={hasCard} />}
       {selected && <div className="plan-drawer" role="dialog" aria-label={`Проект ${selected.project}`}>
