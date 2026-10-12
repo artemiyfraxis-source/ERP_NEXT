@@ -17,3 +17,12 @@ The component library of the harness drawing (`harness_component_templates`, mig
 author's own JST SH connector artwork — `design/jst-sh-assets/variants/*.png` of the same repository, copied
 unchanged into `backend/data/harness-library/jst-sh/` (`build_seed.py` turns them into templates). The QCAD hatching
 catalog of that repository (GPL-3.0) is not used anywhere in ERP_NEXT.
+
+«Маршрут v3» (the route-card graph of a harness) is ported from commit `0a456d2f7bd23288111e871058ebf55bf14426cd`
+of the same branch, with the same permission: `src/Techmap.Client/src/manufacturing-v3/route-v3-model.ts`,
+`route-v3-graph.ts`, `uml/uml-model.ts`, `manufacturing/route-source.ts`, `manufacturing/route-drawing-copy.ts` and
+their tests are copied into `frontend/src/harness/route/` (first commit unchanged, ERP edits in the next one, each
+file names its original). `backend/app/modules/techcards/harness/route_v3.py` rewrites `parseRouteV3`,
+`generateRouteV3`, `createInitialRouteV3` and the part list of `buildRouteSourceItems` in Python. The author keeps the
+route in the browser; ERP stores it per position on the server (`techcard_harness_routes`, migration 0111), and a
+snapshot keeps hidden object IDs and isolated geometry instead of a full copy of the drawing.
