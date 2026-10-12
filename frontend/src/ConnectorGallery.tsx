@@ -88,6 +88,14 @@ const TERMINAL_COLUMNS: DataColumn<ConnectorTerminal>[] = [
   { key: "applicator", title: "Аппликатор", value: (t) => t.applicator },
 ];
 
+type CatalogRow = ConnectorSeries["catalog"][number];
+const CATALOG_COLUMNS: DataColumn<CatalogRow>[] = [
+  { key: "article", title: "Артикул", value: (c) => c.article, render: (c) => <b>{c.article}</b> },
+  { key: "kind", title: "Тип", value: (c) => c.kind },
+  { key: "wire", title: "Кабель", value: (c) => c.wire },
+  { key: "maker", title: "Производитель", value: (c) => c.maker },
+];
+
 function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match: ConnectorSeriesMatch | null; onBack: () => void }) {
   const hit = match?.series === series.id ? match.article : null;
   const range = countsText(series.counts);
@@ -98,18 +106,22 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
     <div className="conn-series-head">
       <button type="button" className="secondary small" onClick={onBack}>← Все серии</button>
       <h2>{series.title}</h2>
-      <span className="muted">{[series.maker, series.pitch ? `шаг ${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", `${series.housing_count} корп.`].filter(Boolean).join(" · ")}</span>
+      <span className="muted">{[series.category, series.maker, series.pitch ? `шаг ${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", series.housing_count ? `${series.housing_count} корп.` : ""].filter(Boolean).join(" · ")}</span>
       {series.datasheet && <a href={series.datasheet} target="_blank" rel="noreferrer">Чертёж производителя (PDF)</a>}
     </div>
     <div className="conn-facts">
-      {series.checked
-        ? <span className="order-chip tone-ok">нумерация сверена с чертежом</span>
-        : <span className="order-chip tone-warn">нумерация не сверена с чертежом</span>}
-      {series.range_checked
-        ? <span className="order-chip tone-neutral">ряд корпусов по каталогу {series.range_src.replace(", Housing", "")}</span>
-        : <span className="order-chip tone-warn" title="Каталога серии в ERP нет — показаны корпуса, которые ERP уже знает">диапазон не сверен</span>}
+      {series.housing_count === 0
+        ? <span className="order-chip tone-warn" title="Каталога корпусов серии в ERP нет — показаны только данные из баз «Терминалы» и «Коакс»">корпуса не добавлены</span>
+        : <>
+          {series.checked
+            ? <span className="order-chip tone-ok">нумерация сверена с чертежом</span>
+            : <span className="order-chip tone-warn">нумерация не сверена с чертежом</span>}
+          {series.range_checked
+            ? <span className="order-chip tone-neutral">ряд корпусов по каталогу {series.range_src.replace(", Housing", "")}</span>
+            : <span className="order-chip tone-warn" title="Каталога серии в ERP нет — показаны корпуса, которые ERP уже знает">диапазон не сверен</span>}
+        </>}
       {series.wire && <span className="order-chip tone-info">провод {wireText(series.wire)}</span>}
-      <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>
+      {series.housing_count > 0 && <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>}
     </div>
     {match?.series === series.id && !match.article && <div className="warning-inline">
       Такого корпуса нет в {series.range_checked ? "каталоге серии" : "известных ERP"} — ниже он нарисован по правилу серии.
@@ -123,25 +135,35 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
           {items.map((item) => <HousingCard key={item.article} item={item} hit={item.article === hit} wide={wide} />)}</div>;
       })}
     </section>)}
-    <section className="conn-variant">
+    {series.catalog.length > 0 && <section className="conn-variant">
+      <h3>Артикулы <span className="muted">{series.catalog.length} · из вкладки «Коакс»</span></h3>
+      <DataTable label={`Артикулы ${series.title}`} rows={series.catalog} columns={CATALOG_COLUMNS} rowKey={(c) => c.article}
+        storageKey="db:conn-catalog" exportName={`Коакс ${series.title}`} hideSearch compactBelow={30} />
+    </section>}
+    {(series.terminals.length > 0 || series.catalog.length === 0) && <section className="conn-variant">
       <h3>Терминалы <span className="muted">{series.terminals.length ? `${series.terminals.length} · из вкладки «Терминалы»` : ""}</span></h3>
       <DataTable label={`Терминалы ${series.title}`} rows={series.terminals} columns={TERMINAL_COLUMNS} rowKey={(t) => t.article}
         storageKey="db:conn-terminals" exportName={`Терминалы ${series.title}`} hideSearch compactBelow={30}
         emptyText="В «Терминалы» нет контактов этой серии." />
-    </section>
+    </section>}
   </div>;
 }
 
 function SeriesCard({ series, onOpen }: { series: ConnectorSeries; onOpen: () => void }) {
   const range = countsText(series.counts);
+  const bare = series.housing_count === 0;
+  const facts = bare
+    ? [series.terminals.length ? `${series.terminals.length} терминалов` : "", series.catalog.length ? `${series.catalog.length} артикулов` : ""]
+    : [series.pitch ? `${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", `${series.housing_count} корп.`];
   return <button type="button" className="conn-series" onClick={onOpen} aria-label={`Серия ${series.title}`}>
     <span className="conn-series-pic">{series.sample && <Thumb housing={series.sample.housing} />}</span>
     <span className="conn-series-text">
       <b>{series.title}</b>
-      <small>{[series.pitch ? `${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", `${series.housing_count} корп.`].filter(Boolean).join(" · ")}</small>
-      {!series.checked ? <small className="conn-warn">нумерация не сверена</small>
-        : !series.range_checked ? <small className="tone-warn">диапазон не сверен</small>
-          : <small>по каталогу {series.maker}</small>}
+      <small>{facts.filter(Boolean).join(" · ") || "нет данных в базах"}</small>
+      {bare ? <small className="tone-warn">корпуса не добавлены</small>
+        : !series.checked ? <small className="conn-warn">нумерация не сверена</small>
+          : !series.range_checked ? <small className="tone-warn">диапазон не сверен</small>
+            : <small>по каталогу {series.maker}</small>}
     </span>
   </button>;
 }
@@ -151,6 +173,7 @@ export function ConnectorGallery() {
   const [error, setError] = useState("");
   const [article, setArticle] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [category, setCategory] = useState<string | null>(null);
   const [match, setMatch] = useState<ConnectorSeriesMatch | null>(null);
   const [unknown, setUnknown] = useState<{ article: string; housing: ConnectorFamily["housing"] | null } | null>(null);
 
@@ -162,7 +185,23 @@ export function ConnectorGallery() {
   const query = article.trim().toUpperCase().replace(/\s+/g, "");
   const shown = useMemo(() => (series ?? []).filter((item) => !query
     || `${item.title} ${item.maker}`.toUpperCase().replace(/\s+/g, "").includes(query)
-    || item.variants.some((variant) => variant.housings.some((h) => h.article.toUpperCase().includes(query)))), [series, query]);
+    || item.variants.some((variant) => variant.housings.some((h) => h.article.toUpperCase().includes(query)))
+    || item.terminals.some((t) => t.article.toUpperCase().replace(/\s+/g, "").includes(query))
+    || item.catalog.some((c) => c.article.toUpperCase().replace(/\s+/g, "").includes(query))), [series, query]);
+  // Sections in the order the server sends them (fixed category order); counts follow the search.
+  const sections = useMemo(() => {
+    const out: Array<{ name: string; items: ConnectorSeries[] }> = [];
+    for (const item of shown) {
+      const last = out.find((section) => section.name === item.category);
+      if (last) last.items.push(item); else out.push({ name: item.category, items: [item] });
+    }
+    return out;
+  }, [shown]);
+  const categories = useMemo(() => {
+    const names: string[] = [];
+    for (const item of series ?? []) if (!names.includes(item.category)) names.push(item.category);
+    return names;
+  }, [series]);
 
   async function check() {
     const value = article.trim();
@@ -177,6 +216,7 @@ export function ConnectorGallery() {
   }
 
   if (series === null) return <div className="empty">Загрузка…</div>;
+  const visible = sections.filter((section) => category === null || section.name === category);
   const open = series.find((item) => item.id === openId) ?? null;
   const housings = series.reduce((sum, item) => sum + item.housing_count, 0);
   return <div className="conn-base">
@@ -191,10 +231,20 @@ export function ConnectorGallery() {
       ? <div className="warning-inline">«{unknown.article}» — {connectorSummary(unknown.housing)}: серия без списка корпусов, рисунок по правилу семейства.
         <div className="conn-grid"><HousingCard item={{ article: unknown.article, n: unknown.housing.n || 0, housing: unknown.housing, headers: [] }} hit /></div></div>
       : <div className="warning-inline">«{unknown.article}» — серия не распознана: на схеме будет только название.</div>)}
+    {!open && <div className="seg-tabs conn-cats" role="group" aria-label="Тип разъёмов">
+      <button type="button" className={category === null ? "on" : ""} aria-pressed={category === null} onClick={() => setCategory(null)}>
+        Все<span className="ship-tab-count">{shown.length}</span></button>
+      {categories.map((name) => <button key={name} type="button" className={category === name ? "on" : ""} aria-pressed={category === name}
+        onClick={() => setCategory(name)}>{name}<span className="ship-tab-count">{shown.filter((item) => item.category === name).length}</span></button>)}
+    </div>}
     {open
       ? <SeriesView series={open} match={match} onBack={() => { setOpenId(null); setMatch(null); }} />
-      : <div className="conn-series-list">{shown.length
-        ? shown.map((item) => <SeriesCard key={item.id} series={item} onOpen={() => { setOpenId(item.id); setMatch(null); }} />)
+      : <div className="conn-sections">{visible.length
+        ? visible.map((section) => <section key={section.name} className="conn-section">
+          <h3>{section.name} <span className="muted">{section.items.length}</span></h3>
+          <div className="conn-series-list">
+            {section.items.map((item) => <SeriesCard key={item.id} series={item} onOpen={() => { setOpenId(item.id); setMatch(null); }} />)}
+          </div></section>)
         : <div className="empty">Серий по «{article.trim()}» нет — нажмите «Проверить артикул», чтобы узнать, как ERP нарисует корпус.</div>}</div>}
   </div>;
 }

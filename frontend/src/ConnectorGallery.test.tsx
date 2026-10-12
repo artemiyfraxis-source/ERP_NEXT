@@ -25,6 +25,7 @@ const GH: ConnectorSeries = {
     awg_from: "30", awg_to: "26", mm2_from: "0,05", mm2_to: "0,12", strip: "1,7", applicator: "S4/M4/A4", crimp_height: "" }],
   wire: { awg_thin: 30, awg_thick: 26, mm2_min: 0.05, mm2_max: 0.12 },
   housing_count: 3, counts: [2, 3, 4], pitch: 1.25, color: "#efe6cf", checked: true, sample: housing(2),
+  category: "Провод — плата", catalog: [],
 };
 const MINIFIT: ConnectorSeries = {
   ...GH, id: "molex-minifit-jr", title: "Molex Mini-Fit Jr.", maker: "Molex", range_checked: false, range_src: "", datasheet: "",
@@ -34,15 +35,22 @@ const MINIFIT: ConnectorSeries = {
   terminals: [], wire: null, housing_count: 1, counts: [8], pitch: 4.2,
 };
 MINIFIT.sample = MINIFIT.variants[0].housings[0];
+// A series known only from БД.ТЕР: no housings, the picture of the closest shape, one terminal.
+const MQS: ConnectorSeries = {
+  ...GH, id: "te-mqs", title: "TE MQS", maker: "TE", category: "Автомобильные", range_checked: false, range_src: "", datasheet: "",
+  variants: [], housing_count: 0, counts: [], pitch: null, checked: false, wire: null,
+  terminals: [{ ...GH.terminals[0], article: "929939-3", maker: "TE", product: "MQS", series: "MQS" }],
+  sample: { ...housing(2), article: "" },
+};
 
 function mockApi() {
   const paths: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     paths.push(path);
-    const body = path === "/api/techcards/connector-series" ? { series: [GH, MINIFIT], match: null }
-      : path === "/api/techcards/connector-series?article=GHR-03V-S" ? { series: [GH, MINIFIT], match: { series: "jst-gh", article: "GHR-03V-S", housing: gh(3) } }
-        : path.startsWith("/api/techcards/connector-series?article=") ? { series: [GH, MINIFIT], match: null }
+    const body = path === "/api/techcards/connector-series" ? { series: [GH, MINIFIT, MQS], match: null }
+      : path === "/api/techcards/connector-series?article=GHR-03V-S" ? { series: [GH, MINIFIT, MQS], match: { series: "jst-gh", article: "GHR-03V-S", housing: gh(3) } }
+        : path.startsWith("/api/techcards/connector-series?article=") ? { series: [GH, MINIFIT, MQS], match: null }
           : null;
     if (!body) throw new Error(`Unexpected request: ${path}`);
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -60,8 +68,42 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
     expect(card).toHaveTextContent("1,25 мм · 2–4 конт. · 3 корп.");
     expect(card).toHaveTextContent("по каталогу JST");
     expect(screen.getByRole("button", { name: "Серия Molex Mini-Fit Jr." })).toHaveTextContent("диапазон не сверен");
-    expect(screen.getByText("2 серий · 4 корпусов")).toBeInTheDocument();
+    expect(screen.getByText("3 серий · 4 корпусов")).toBeInTheDocument();
     expect(screen.queryByText("GHR-03V-S")).toBeNull();
+  });
+
+  it("groups the series into sections by type with a count, and a chip filters to one section", async () => {
+    mockApi();
+    render(<ConnectorGallery />);
+    await screen.findByRole("button", { name: "Серия JST GH" });
+    expect(screen.getByRole("heading", { name: /^Провод — плата\s*2$/, level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Автомобильные\s*1$/, level: 3 })).toBeInTheDocument();
+    const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(headings[0]).toMatch(/^Провод — плата/);
+    const chips = within(screen.getByRole("group", { name: "Тип разъёмов" }));
+    expect(chips.getByRole("button", { name: /^Все\s*3$/ })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(chips.getByRole("button", { name: /^Автомобильные\s*1$/ }));
+    expect(screen.queryByRole("button", { name: "Серия JST GH" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Серия TE MQS" })).toBeInTheDocument();
+    // The search still looks through every type, also by a terminal article.
+    fireEvent.click(chips.getByRole("button", { name: /^Все\s*3$/ }));
+    fireEvent.change(screen.getByLabelText("Артикул корпуса"), { target: { value: "929939" } });
+    expect(screen.getByRole("button", { name: "Серия TE MQS" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Серия JST GH" })).toBeNull();
+    expect(chips.getByRole("button", { name: /^Провод — плата\s*0$/ })).toBeInTheDocument();
+  });
+
+  it("shows a series without housings as «корпуса не добавлены» with its terminals", async () => {
+    mockApi();
+    render(<ConnectorGallery />);
+    const card = await screen.findByRole("button", { name: "Серия TE MQS" });
+    expect(card).toHaveTextContent("1 терминалов");
+    expect(card).toHaveTextContent("корпуса не добавлены");
+    fireEvent.click(card);
+    expect(screen.getByRole("heading", { name: "TE MQS", level: 2 })).toBeInTheDocument();
+    expect(screen.getByText("корпуса не добавлены")).toBeInTheDocument();
+    expect(screen.getByText("929939-3")).toBeInTheDocument();
+    expect(screen.queryByText("нумерация не сверена с чертежом")).toBeNull();
   });
 
   it("opens a series with every housing, its board headers, terminals, wire range and the maker drawing", async () => {
