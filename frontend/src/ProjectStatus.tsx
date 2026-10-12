@@ -5,7 +5,8 @@ import { STAGE_AUTO, StageChangeDialog } from "./StageChangeDialog";
 import { StatusChip } from "./StatusChip";
 import { statusTone } from "./statusTone";
 
-export const PROJECT_STAGES = ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено"];
+/** Запасной список этапов — только когда экран не передал свой (порядок этапов ведёт сервер: `stages` плана и карточки). */
+const FALLBACK_STAGES = ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено"];
 export const PROJECT_TERMINALS = ["Отказ", "Слился", "Отменён"];
 export const PROJECT_BLOCKERS = ["ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА"];
 
@@ -38,7 +39,7 @@ export const planStatusApi: ProjectStatusApi = {
  *  задания, ГП на складе, отгрузка). Блокер (ХОЛД, СТОП…) — с причиной, как «Поставить блокер» плана SUPPLYMAP.
  *  Отказ / Слился / Отменён закрывают проект; этап или «Авто» возвращают его в работу. «Отгружено» по факту
  *  отгрузки ставится само. */
-export function ProjectStatus({ project, status, blocker, canEdit, stages = PROJECT_STAGES, terminals = PROJECT_TERMINALS, blockers = PROJECT_BLOCKERS, api = kitsetStatusApi, floating = false, onChanged, onError }: {
+export function ProjectStatus({ project, status, blocker, canEdit, stages = FALLBACK_STAGES, terminals = PROJECT_TERMINALS, blockers = PROJECT_BLOCKERS, api = kitsetStatusApi, floating = false, onChanged, onError }: {
   project: string;
   status: string;
   blocker: string;

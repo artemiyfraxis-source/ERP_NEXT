@@ -35,3 +35,12 @@ it("shows plain chips without the menu when editing is not allowed", () => {
   expect(screen.queryByRole("button")).toBeNull();
   expect(screen.getByText("ХОЛД")).toBeInTheDocument();
 });
+
+it("offers the stages it is given, in that order, instead of its own list", () => {
+  const stages = ["Новый", "ОТК", "Готово к отгрузке", "На отгрузке", "Отгружено"];
+  render(<ProjectStatus project="709К.1" status="ОТК" blocker="" canEdit stages={stages} onChanged={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: /Статус проекта 709К.1/ }));
+  const items = within(screen.getByRole("menu")).getAllByRole("menuitemradio").map((item) => item.textContent?.trim());
+  expect(items.filter((name) => stages.includes(name ?? ""))).toEqual(stages);
+  expect(items).not.toContain("КБ на складе");
+});
