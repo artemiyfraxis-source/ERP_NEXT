@@ -67,11 +67,6 @@ ROWS[0].card = {
 ROWS[0].card.verified = true;
 ROWS[0].card.confidence = "средняя";
 ROWS[0].card_exact = true;
-const AWG = [
-  { id: "a1", tab: "kab_awg", display_text: "22", source_sheet: "", fields: { AWG: "22", "ГОСТ": "0,35", "Ø жилы": "0,64", "МГТФ": "1,2", "UL1061": "1,35", "ПВАМ": "—" } },
-  { id: "a2", tab: "kab_awg", display_text: "20", source_sheet: "", fields: { AWG: "20", "ГОСТ": "0,5", "Ø жилы": "0,81", "МГТФ": "1,35", "UL1061": "1,6", "ПВАМ": "2" } },
-];
-
 function json(body: unknown) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 }
@@ -94,7 +89,6 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
     if (path === "/api/references/cables/diameters") return json(dia("d-new", "x", "", "", ""));
     if (path.startsWith("/api/references/cables/")) return json(rows[0]);
     if (path.startsWith("/api/references/tech-operations/") && method === "PATCH") return json(rows[0].record);
-    if (path.startsWith("/api/references/tech-operations?tab=kab_awg")) return json({ metadata: null, records: AWG });
     if (path.startsWith("/api/references/tech-operations?tab=op")) return json({ metadata: null, records: [
       { id: "o1", tab: "op", display_text: "Резка", source_sheet: "БД.ОП", fields: { opNumber: "CUT_WIRE_auto" } },
       { id: "o2", tab: "op", display_text: "Пайка", source_sheet: "БД.ОП", fields: { opNumber: "SDR_PCB" } },
@@ -124,16 +118,16 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
   expect(groups).toEqual([
     { title: "Техкарты", tabs: ["Операции", "Оборудование"] },
     { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы"] },
-    { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Сечения AWG ↔ мм²", "Многожильные кабели", "Прочие кабели", "Ø изоляции по маркам"] },
+    { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Прочие кабели"] },
     { title: "Материалы", tabs: ["Материалы"] },
-    { title: "Соответствия", tabs: ["Домен → поставщик", "Изготовитель → страна"] },
+    { title: "Соответствия", tabs: ["Домен → поставщик", "Изготовитель → страна", "Сечения AWG ↔ мм²"] },
   ]);
   const chip = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) });
   const expected: Array<[string, string]> = [
     ["Операции", "3"], // CUT_WIRE_auto (A/B — one card), STRIP_WIRE, SDR_PCB from БД.ОП
     ["Оборудование", "192"], ["Разъёмы", "2"], ["Коаксиальные разъёмы", "181"], ["Терминалы", "528"],
     ["Коаксиальные кабели", "47"], ["Монтажные провода", "52"], ["Сечения AWG ↔ мм²", "24"], ["Многожильные кабели", "9"],
-    ["Прочие кабели", "56"], ["Ø изоляции по маркам", "22"],
+    ["Прочие кабели", "56"],
     ["Домен → поставщик", "1"], ["Изготовитель → страна", "0"],
   ];
   for (const [name, n] of expected) await waitFor(() => expect(chip(name).querySelector(".db-tab-count")).toHaveTextContent(new RegExp(`^${n}$`)));
