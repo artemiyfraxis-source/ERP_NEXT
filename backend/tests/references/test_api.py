@@ -63,9 +63,9 @@ def test_replaces_both_editable_maps_atomically(references_api):
     assert response.status_code == 200
     assert fetched.json() == {
         "suppliers": [{"key": "https://www.Example.ru/catalog", "value": "ООО Поставщик"}],
-        "countries": [{"key": "Fraxis", "value": "Россия"}],
-        "gost_awg": [{"key": "0,35", "value": "22"}],
-        "can_edit": {"suppliers": True, "gost_awg": True},
+        "countries": [{"key": "Fraxis", "value": "Россия"}] + _seed_countries(),  # saved rows, then the seed
+        "gost_awg": [],  # follows «Сечения AWG ↔ мм²», a maps save does not write it (10.10.2026)
+        "can_edit": {"suppliers": True, "gost_awg": False},
     }
     assert duplicate.status_code == 422
     assert references_api.get("/api/references/maps").json() == fetched.json()
@@ -86,7 +86,12 @@ def test_blank_rows_are_dropped_and_literal_supplier_keys_are_kept(references_ap
     assert response.json()["suppliers"] == [
         {"key": "Склад", "value": "Склад"}, {"key": "Вода", "value": "ООО \"Польза природы\""},
     ]
-    assert response.json()["countries"] == [] and response.json()["gost_awg"] == []
+    assert response.json()["countries"] == _seed_countries() and response.json()["gost_awg"] == []
+
+
+def _seed_countries():
+    from app.modules.references.domain import COUNTRY_BY_MANUFACTURER
+    return [{"key": key, "value": value} for key, value in COUNTRY_BY_MANUFACTURER]
 
 
 def test_nothing_saved_shows_the_supplymap_seed(references_api):
@@ -94,11 +99,26 @@ def test_nothing_saved_shows_the_supplymap_seed(references_api):
 
     assert {"key": "фраксис", "value": "Склад"} in maps["suppliers"]
     assert {"key": "chipdip.ru", "value": "АО \"ЧИП И ДИП\""} in maps["suppliers"]
-    assert maps["countries"] == []
+    assert maps["countries"] == _seed_countries()
+    assert {"key": "Molex", "value": "США"} in maps["countries"]
 
 
-def test_supplier_maps_are_the_buyers_and_gost_awg_the_reference_books(references_api):
-    """Portal.gs portalSaveReferences: portalCanWork_ (procurement edit); ГОСТ→AWG follows `erpref` edit."""
+def test_saved_country_overrides_the_seed_and_the_rest_stays(references_api):
+    references_api.put("/api/references/maps", json={
+        "suppliers": [], "countries": [{"key": " molex ", "value": "Китай"}, {"key": "Fraxis", "value": "Россия"}],
+        "gost_awg": [],
+    })
+
+    countries = references_api.get("/api/references/maps").json()["countries"]
+
+    assert countries[:2] == [{"key": "molex", "value": "Китай"}, {"key": "Fraxis", "value": "Россия"}]
+    assert {"key": "Molex", "value": "США"} not in countries
+    assert {"key": "Amphenol", "value": "США"} in countries
+    assert len(countries) == len(_seed_countries()) + 1
+
+
+def test_supplier_maps_are_the_buyers_and_gost_awg_is_never_saved_with_them(references_api):
+    """Portal.gs portalSaveReferences: portalCanWork_ (procurement edit); ГОСТ→AWG follows the size table."""
     references_api.put("/api/references/maps", json={
         "suppliers": [{"key": "kroks.ru", "value": "Крокс"}], "countries": [],
         "gost_awg": [{"key": "0,35", "value": "22"}],
@@ -117,7 +137,7 @@ def test_supplier_maps_are_the_buyers_and_gost_awg_the_reference_books(reference
 
     assert buyer.status_code == 200
     assert buyer.json()["suppliers"] == [{"key": "chipdip.ru", "value": "ЧИП И ДИП"}]
-    assert buyer.json()["gost_awg"] == [{"key": "0,35", "value": "22"}]  # not the buyer's map — kept
+    assert buyer.json()["gost_awg"] == []  # not the buyer's map, and not saved through the maps at all
     assert viewer.status_code == 403
     assert read.status_code == 200 and read.json()["can_edit"] == {"suppliers": False, "gost_awg": False}
 
@@ -276,24 +296,14 @@ def test_viewer_cannot_replace_maps(references_api):
     assert response.status_code == 403
 
 
-def test_gost_awg_map_is_validated_and_cannot_be_dropped_by_omission(references_api):
+def test_gost_awg_is_not_written_through_the_maps_and_still_must_be_sent(references_api):
+    """The map follows «Сечения AWG ↔ мм²» (save_gauge); the maps payload keeps the key for old clients."""
     saved = references_api.put("/api/references/maps", json={
         "suppliers": [], "countries": [],
         "gost_awg": [{"key": "0,35", "value": "22"}, {"key": "1,0", "value": "17"}],
     })
     omitted = references_api.put("/api/references/maps", json={"suppliers": [], "countries": []})
-    duplicate = references_api.put("/api/references/maps", json={
-        "suppliers": [], "countries": [],
-        "gost_awg": [{"key": "0,35", "value": "22"}, {"key": "0.35", "value": "20"}],
-    })
-    not_awg = references_api.put("/api/references/maps", json={
-        "suppliers": [], "countries": [], "gost_awg": [{"key": "0,35", "value": "двадцать"}],
-    })
 
     assert saved.status_code == 200
     assert omitted.status_code == 422
-    assert duplicate.status_code == 422
-    assert not_awg.status_code == 422
-    assert references_api.get("/api/references/maps").json()["gost_awg"] == [
-        {"key": "0,35", "value": "22"}, {"key": "1,0", "value": "17"},
-    ]
+    assert references_api.get("/api/references/maps").json()["gost_awg"] == []

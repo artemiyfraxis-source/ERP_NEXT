@@ -6,25 +6,27 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
-    Principal, require_section, shipping_manager_principal, shipping_view_principal, shipping_warehouse_principal,
+    Principal, require_section, section_allowed, shipping_manager_principal, shipping_view_principal,
+    shipping_warehouse_principal,
 )
 from app.shared.stored_files import decode_upload, file_response
 
 from .application import (
     AttachUpdCommand, attach_upd_file,
     AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
-    LayOutCommand, PackProjectCommand, QueueProjectCommand, RegisterGoodCommand, RequestedGood,
-    SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand, UnitOfWork, UnpickCommand,
-    UpdateDocumentsCommand, accept_good, cancel_shipment, close_shipment, create_shipment, drop_project,
-    edit_shipment_head, lay_out_shipment, mark_shipped, pack_project, pack_shipment, pick_shipment, queue_project,
-    register_good, set_project_addressee, set_requested, unpick_line, update_documents,
+    LayOutCommand, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
+    RequestedGood, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand, ShippingPermissionError,
+    UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, accept_good, cancel_shipment, close_shipment,
+    create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project, pack_shipment,
+    pick_shipment, queue_project, register_good, set_project_addressee, set_requested, ship_project, unpick_line,
+    update_documents,
 )
 from .documents import build_delivery_note, build_packing_lists
 from .domain import (
@@ -183,6 +185,48 @@ class UpdFilePayload(VersionPayload):
     content_base64: str = Field(min_length=1, max_length=28_000_000)
 
 
+class ProjectShipLinePayload(BaseModel):
+    good_id: UUID
+    version: int = Field(ge=1)
+    quantity: Quantity
+
+
+class ProjectShipAddresseePayload(BaseModel):
+    """Правленые поля карточки проекта; неприсланное не меняется, пустое стирает."""
+
+    receiver: str | None = Field(default=None, max_length=512)
+    shipping_point: str | None = Field(default=None, max_length=5000)
+    contact: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=128)
+    terms: DeliveryTerms | None = None
+    carrier: str | None = Field(default=None, max_length=255)
+    upd_type: UpdType | None = None
+
+
+class ProjectShipDocumentsPayload(BaseModel):
+    upd_number: str = Field(default="", max_length=255)
+    upd_date: date | None = None
+    deadline: date | None = None
+
+
+class UpdUploadPayload(BaseModel):
+    file_name: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(default="", max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
+
+
+class ProjectShipPayload(BaseModel):
+    """«Отгрузить» / «Упаковать, отгрузить позже»: всё, что раньше уходило четырьмя запросами."""
+
+    project: str = Field(min_length=1, max_length=255)
+    lines: list[ProjectShipLinePayload] = Field(min_length=1, max_length=500)
+    addressee_version: int = Field(ge=0)
+    addressee: ProjectShipAddresseePayload | None = None
+    documents: ProjectShipDocumentsPayload = Field(default_factory=ProjectShipDocumentsPayload)
+    upd_file: UpdUploadPayload | None = None
+    ship: bool = False
+
+
 def shipping_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
     factory = getattr(request.app.state, "shipping_uow_factory", None)
     if not callable(factory):
@@ -257,6 +301,8 @@ def _run(operation):
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentShippingUpdate as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except ShippingPermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
@@ -360,6 +406,40 @@ def pack_project_goods(
         actor=principal.actor, now=now,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
+
+
+@router.post("/project-ship")
+def ship_project_goods(
+    payload: ProjectShipPayload,
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """Карточка адресата, отправка, файл УПД и отгрузка — одна транзакция; повтор с тем же ключом не дублирует."""
+    if payload.ship and not section_allowed(principal, ("shipping_goods",), "edit"):
+        raise HTTPException(status_code=403, detail="Отгрузить может склад (раздел «Отгрузка — склад»)")
+    fields = payload.addressee.model_dump(exclude_unset=True) if payload.addressee is not None else {}
+    fields = {key: value.value if hasattr(value, "value") else value for key, value in fields.items()}
+    upload = None
+    if payload.upd_file is not None:
+        upload = UpdUpload(
+            file_name=payload.upd_file.file_name, content_type=payload.upd_file.content_type,
+            content=decode_upload(payload.upd_file.content_base64, "Файл УПД повреждён"),
+        )
+    result = _run(lambda: ship_project(ProjectShipCommand(
+        idempotency_key=idempotency_key, project=payload.project,
+        lines=tuple(ProjectShipLine(good_id=line.good_id, version=line.version, quantity=line.quantity) for line in payload.lines),
+        addressee_version=payload.addressee_version, addressee_fields=fields,
+        deadline=payload.documents.deadline, upd_number=payload.documents.upd_number, upd_date=payload.documents.upd_date,
+        upd_file=upload, ship=payload.ship, as_manager=section_allowed(principal, ("shipping",), "edit"),
+        actor=principal.actor, now=now,
+    ), uow_factory()))
+    status = result.shipment.status.value
+    return {
+        "shipment": _shipment_result(result.shipment), "shipped": status in {"Отгружена", "Закрыта"},
+        "closed": status == "Закрыта", "why": result.why, "replayed": result.replayed,
+    }
 
 
 @router.put("/project-addressee")
@@ -528,4 +608,4 @@ def download_file(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл не найден")
     meta, content = found
-    return file_response(content, meta.content_type, meta.file_name)
+    return file_response(content, meta.file_name)

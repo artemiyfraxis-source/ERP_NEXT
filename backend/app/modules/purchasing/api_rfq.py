@@ -14,15 +14,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal
+from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal, section_allowed
 from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
 
 from . import rfq as service
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
 
 
-def rfq_option(_principal: Annotated[Principal, Depends(procurement_view_principal)]) -> None:
-    """After the section gate: a token or a stranger is refused (401/403) before the option says 404."""
+def rfq_option(request: Request, principal: Annotated[Principal, Depends(procurement_view_principal)]) -> None:
+    """After the section gate: a token or a stranger is refused (401/403) before the option says 404, and a write by
+    someone who holds «Лист закупки» on view only is refused (403) before it too (view-mode contract, ID-6)."""
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and not section_allowed(principal, ("procurement",), "edit"):
+        raise HTTPException(status_code=403, detail="Раздел «Лист закупки» открыт вам только на просмотр.")
     require_option("procurement.rfq")
 
 

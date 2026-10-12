@@ -1,15 +1,19 @@
 import type { DataColumn } from "./DataTable";
 import type { ProcurementLine } from "./api";
 import { formatDay } from "./format";
+import { StatusChip } from "./StatusChip";
+import { DatasheetCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
+import { lineFilesColumn } from "./ProcurementLineDocuments";
+import { waitsForGrn } from "./ProcurementStockPicker";
 import { projectLabel } from "./internalProjects";
-import { ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 
 /* Колонки «Весь лист» — все колонки листа закупки в порядке блоков SUPPLYMAP (Config.gs SHEET_ORDER.PURCHASE):
    регистрация → классификация → что закупаем → поставщик → кол-во (расчёт и факт) → заказ → замена →
    документ качества → цены (расчёт, факт) → валюта → счёт и оплата → сроки → комментарий.
    Видны ключевые (на 16" вместе с «Комментарием» без прокрутки вбок), остальные включаются в «Колонках». System ID (колонка «ID») стоит первым, а не последним, как в листе:
    таблица широкая, первая колонка залипает слева и именно по ней строку узнают.
-   Нет в данных ERP, поэтому не показаны: ЦЕЛЬ, DATASHEET, файлы РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА. */
+   Даташит правится в своих строках закупщика, как «Комментарий»; «Файлы разрешения» и «Док. качества» — ссылки на
+   файлы, приложенные в карточке строки («Документы…»). */
 
 const MINUS = "−";
 
@@ -52,17 +56,6 @@ export function calculatedVatRate(line: ProcurementLine): number | null {
 const withUnit = (quantity: string | null | undefined, unit: string | null | undefined) =>
   quantity ? `${formatQuantity(quantity)} ${unit ?? ""}`.trim() : "";
 
-/** Stage → colour tone of its chip (option procurement.dense): waiting on us, on money, on the road, done. */
-export function stageTone(status: string | null | undefined): string {
-  const value = String(status ?? "").toLocaleLowerCase("ru");
-  if (value.startsWith("готово")) return "tone-done";
-  if (value.startsWith("отмен")) return "tone-off";
-  if (value.startsWith("карантин") || value.startsWith("согласование")) return "tone-alert";
-  if (value.startsWith("жду сч") || value.startsWith("в оплату")) return "tone-money";
-  if (value.startsWith("в пути")) return "tone-road";
-  return "tone-work";
-}
-
 const yesNo = (value: boolean | null) => (value === null ? "" : value ? "Да" : "Нет");
 const dayOf = (value: string | null | undefined) => formatDay(value);
 
@@ -84,9 +77,10 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
   return [
     // регистрация
     text("legacy_id", "ID", (line) => line.legacy_id, { hint: "System ID" }),
+    // «Готово · без ГРН»: закрыто «Есть на складе, без ГРН», партия ещё не привязана (как в «Моих позициях»).
     text("status", "Статус", (line) => line.status, {
       filter: true, hint: "СТАТУС ЗАПРОСА",
-      ...(edit?.dense ? { render: (line: ProcurementLine) => <span className={`stage-chip ${stageTone(line.status)}`}>{line.status}</span> } : {}),
+      render: (line) => (waitsForGrn(line) ? <><StatusChip status={line.status} /><small className="tone-info">без ГРН</small></> : <StatusChip status={line.status} />),
     }),
     text("revision", "Ревизия", (line) => line.revision, { hidden: true }),
     day("request_date", "Дата запроса", (line) => line.request_date, { hidden: true }),
@@ -97,6 +91,7 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("designation", "Назначение", (line) => line.designation, { hidden: true }),
     text("project", "Проект", (line) => projectLabel(line.project_reference), { hidden: !edit?.dense, filter: Boolean(edit?.dense) }),
     text("task_type", "Тип задачи", (line) => line.task_type, { filter: true, hidden: true }),
+    text("purpose", "Цель", (line) => line.purpose, { filter: true, hidden: true }),
     text("priority", "Приоритет", (line) => line.priority, { filter: true, hidden: true }),
     // что закупаем
     text("category", "Категория", (line) => line.category, { filter: true, hidden: true }),
@@ -109,6 +104,10 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("manufacturer", "Изготовитель", (line) => line.manufacturer, { hidden: true }),
     text("country", "Страна", (line) => line.country, { hidden: true }),
     link("link", "Ссылка", (line) => line.link, "открыть"),
+    text("datasheet", "Даташит", (line) => line.datasheet, {
+      hidden: true, wrap: true,
+      render: (line) => <DatasheetCell line={line} editing={edit?.editing} canEdit={own(line)} disabled={edit?.disabled} />,
+    }),
     // количество: расчёт и факт рядом
     { key: "calc_qty", title: "Кол-во (расчёт)", value: (line) => line.calculated_quantity, numeric: true, hidden: true, render: (line) => withUnit(line.calculated_quantity, line.calculated_unit) },
     text("calc_unit", "Ед. (расчёт)", (line) => line.calculated_unit, { hidden: true }),
@@ -123,7 +122,10 @@ export function buildSheetColumns(edit?: SheetEditing): DataColumn<ProcurementLi
     text("replacement_decision", "Реш. замены", (line) => line.replacement_decision, { hidden: true }),
     text("permission_number", "№ разрешения", (line) => line.permission_number, { hidden: true }),
     day("permission_date", "Дата разрешения", (line) => line.permission_date, { hidden: true }),
-    // документ по качеству
+    { key: "permit_files", title: "Файлы разрешения", hidden: true, wrap: true, ...lineFilesColumn("permit") },
+    // документ по качеству: нужен ли (из заявки; файл документа качества ставит «Да»), файлы, тип, №, дата
+    text("quality_required", "Нужен док. качества", (line) => line.quality_document, { hidden: true, filter: true }),
+    { key: "quality_files", title: "Док. качества", hidden: true, wrap: true, ...lineFilesColumn("quality") },
     text("quality_type", "Тип док.", (line) => line.quality_document_type, { hidden: true }),
     text("quality_number", "№ док. качества", (line) => line.quality_document_number, { hidden: true }),
     day("quality_date", "Дата док. качества", (line) => line.quality_document_date, { hidden: true }),

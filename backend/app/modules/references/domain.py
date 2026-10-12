@@ -18,14 +18,14 @@ class ReferenceKind(str, Enum):
     SUPPLIER = "supplier"
     COUNTRY = "country"
     GOST_AWG = "gost_awg"
-    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / other). Kept beside the maps, not on
-    # the record, so a mirror reload neither drops the move nor freezes the row's other cells.
+    # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / multi / other). Kept beside the
+    # maps, not on the record, so a mirror reload neither drops the move nor freezes the row's other cells.
     CABLE_KIND = "cable_kind"
 
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
 MAP_KINDS = (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY, ReferenceKind.GOST_AWG)
-CABLE_KIND_VALUES = ("coax", "wire", "other")
+CABLE_KIND_VALUES = ("coax", "wire", "multi", "other")
 
 
 class TechOperationTab(str, Enum):
@@ -91,6 +91,211 @@ SUPPLIER_BY_LINK: tuple[tuple[str, str], ...] = (
     ("prodiel.ru", 'ООО "Продиэл"'),
     ("dart.com.ru", 'ООО "Дарт Холдинг"'),
 )
+
+
+# Seed «Изготовитель → страна» (owner 12.10.2026: the map was empty on production). Country = the maker's home
+# country (HQ / brand origin), in Russian. The effective map is the saved entries plus this seed for every key not
+# saved (`merge_country_pairs`), so one manual row never hides the rest. Keys match by `normalized_manufacturer_key`
+# (case and spaces only), so spelling variants («Würth»/«Wurth», «ООО …») are separate rows.
+# Names typed in our reference data (БД.ТЕР / БД.МАТ / БД.ОБ / БД.КОАКС) whose country is certain:
+_COUNTRY_SEED_OUR_DATA: tuple[tuple[str, str], ...] = (
+    ("3M", "США"),
+    ("Agilent", "США"),
+    ("Bambu Lab", "Китай"),
+    ("Bixolon", "Южная Корея"),
+    ("Breks (Брянск)", "Россия"),
+    ("Chenzhen Aituo Automation Device", "Китай"),
+    ("Connfly", "Китай"),
+    ("CREALITY", "Китай"),
+    ("DKC", "Россия"),
+    ("Dremel", "США"),
+    ("Felder GmbH Loettechnik", "Германия"),
+    ("Henkel (Loctite)", "Германия"),
+    ("Hirose", "Япония"),
+    ("Hsuan Mao", "Тайвань"),
+    ("HSM (Hsuan Mao)", "Тайвань"),
+    ("Huber+Suhner", "Швейцария"),
+    ("I-PEX", "Япония"),
+    ("I-PEX (аналог)", "Япония"),
+    ("JAE", "Япония"),
+    ("Jonnesway", "Тайвань"),
+    ("JST", "Япония"),
+    ("Kafuter", "Китай"),
+    ("KLS Electronic", "Китай"),
+    ("Makita", "Япония"),
+    ("Ningbo Daai Machine", "Китай"),
+    ("Ningbo SMAN", "Китай"),
+    ("Raychman", "Россия"),
+    ("Raychman / Протон", "Россия"),
+    ("REMEZA", "Беларусь"),
+    ("REXANT", "Россия"),
+    ("Robatech", "Швейцария"),
+    ("Rosenberger", "Германия"),
+    ("Samtec", "США"),
+    ("Schlemmer", "Германия"),
+    ("Shenzhen Woer (WOER)", "Китай"),
+    ("Sumitomo", "Япония"),
+    ("Supvan technology", "Китай"),
+    ("TE", "Швейцария"),
+    ("TE Connectivity", "Швейцария"),
+    ("TE Connectivity / AMP", "Швейцария"),
+    ("TE Connectivity / Deutsch", "Швейцария"),
+    ("TE Connectivity / Raychem", "Швейцария"),
+    ("Testo", "Германия"),
+    ("TOPEX", "Польша"),
+    ("Ural PAK", "Россия"),
+    ("Vancol Electric (Китай)", "Китай"),
+    ("Wanptek", "Китай"),
+    ("Yueqing Chaodao", "Китай"),
+    ("Yueqing Vancol (Китай)", "Китай"),
+    ("Yueqing Vancol (Китай) / МПО Электромонтаж", "Китай"),
+    ("ВНИИР-Прогресс", "Россия"),
+    ("Зубр", "Россия"),
+    ("КВТ", "Россия"),
+    ("КВТ Калуга", "Россия"),
+    ("Лакокраска-Я", "Россия"),
+    ("СЦНК", "Россия"),
+    ("Технология-Пласт", "Россия"),
+    ("Электромонтаж", "Россия"),
+    ("Этиол / Спектр изопласт", "Россия"),
+    ("ДКС", "Россия"),
+)
+
+# Main makers of our field (connectors, RF, terminals, wire and cable, tools, heat-shrink, electronics). An ambiguous
+# brand takes its HQ country: TE / Raychem / Tyco / AMP / Deutsch → Швейцария, Weller → Германия.
+_COUNTRY_SEED_GENERAL: tuple[tuple[str, str], ...] = (
+    ("ABB", "Швейцария"),
+    ("Alpha Wire", "США"),
+    ("AMP", "Швейцария"),
+    ("Amphenol", "США"),
+    ("Anderson Power Products", "США"),
+    ("Balluff", "Германия"),
+    ("Belden", "США"),
+    ("Binder", "Германия"),
+    ("Bosch", "Германия"),
+    ("Bourns", "США"),
+    ("Cembre", "Италия"),
+    ("Cinch", "США"),
+    ("Deutsch", "Швейцария"),
+    ("Draka", "Нидерланды"),
+    ("Eaton", "Ирландия"),
+    ("Ersa", "Германия"),
+    ("Fischer Connectors", "Швейцария"),
+    ("Fluke", "США"),
+    ("General Cable", "США"),
+    ("Glenair", "США"),
+    ("Habia Cable", "Швеция"),
+    ("Hakko", "Япония"),
+    ("Harting", "Германия"),
+    ("Harwin", "Великобритания"),
+    ("Hellermann Tyton", "Германия"),
+    ("HellermannTyton", "Германия"),
+    ("Helukabel", "Германия"),
+    ("Hirschmann", "Германия"),
+    ("Hosiden", "Япония"),
+    ("Huber & Suhner", "Швейцария"),
+    ("Huber Suhner", "Швейцария"),
+    ("Igus", "Германия"),
+    ("Infineon", "Германия"),
+    ("ITT Cannon", "США"),
+    ("Klauke", "Германия"),
+    ("Klein Tools", "США"),
+    ("Knipex", "Германия"),
+    ("Lapp", "Германия"),
+    ("Legrand", "Франция"),
+    ("Lemo", "Швейцария"),
+    ("Leoni", "Германия"),
+    ("Littelfuse", "США"),
+    ("Lumberg", "Германия"),
+    ("Metcal", "США"),
+    ("Mini-Circuits", "США"),
+    ("Molex", "США"),
+    ("Murata", "Япония"),
+    ("Murrelektronik", "Германия"),
+    ("Neutrik", "Лихтенштейн"),
+    ("Nexans", "Франция"),
+    ("NXP", "Нидерланды"),
+    ("ODU", "Германия"),
+    ("Omron", "Япония"),
+    ("Panasonic", "Япония"),
+    ("Panduit", "США"),
+    ("Pasternack", "США"),
+    ("Pepperl+Fuchs", "Германия"),
+    ("Phoenix Contact", "Германия"),
+    ("Pressmaster", "Швейцария"),
+    ("Prysmian", "Италия"),
+    ("Radiall", "Франция"),
+    ("Raychem", "Швейцария"),
+    ("Rennsteig", "Германия"),
+    ("Rittal", "Германия"),
+    ("Schneider Electric", "Франция"),
+    ("Siemens", "Германия"),
+    ("Souriau", "Франция"),
+    ("Staubli", "Швейцария"),
+    ("Stäubli", "Швейцария"),
+    ("STMicroelectronics", "Швейцария"),
+    ("Sumitomo Electric", "Япония"),
+    ("Switchcraft", "США"),
+    ("TDK", "Япония"),
+    ("Telegaertner", "Германия"),
+    ("Telegartner", "Германия"),
+    ("Telegärtner", "Германия"),
+    ("Texas Instruments", "США"),
+    ("Times Microwave", "США"),
+    ("Turck", "Германия"),
+    ("Tyco Electronics", "Швейцария"),
+    ("Vishay", "США"),
+    ("Wago", "Германия"),
+    ("Weidmuller", "Германия"),
+    ("Weidmüller", "Германия"),
+    ("Weipu", "Китай"),
+    ("Weller", "Германия"),
+    ("Wiha", "Германия"),
+    ("Wurth Elektronik", "Германия"),
+    ("Würth Elektronik", "Германия"),
+    ("Yageo", "Тайвань"),
+    ("Yazaki", "Япония"),
+    ("Беларускабель", "Беларусь"),
+    ("Иркутсккабель", "Россия"),
+    ("Кабельный завод «Спецкабель»", "Россия"),
+    ("Камкабель", "Россия"),
+    ("Карачевский завод «Электродеталь»", "Россия"),
+    ("Кирскабель", "Россия"),
+    ("Кольчугинский завод", "Россия"),
+    ("Москабельмет", "Россия"),
+    ("Подольсккабель", "Россия"),
+    ("Рыбинсккабель", "Россия"),
+    ("Сарансккабель", "Россия"),
+    ("Севкабель", "Россия"),
+    ("Спецкабель", "Россия"),
+    ("Томсккабель", "Россия"),
+    ("Уралкабель", "Россия"),
+    ("Элекон", "Россия"),
+    ("Электродеталь", "Россия"),
+    ("Электрокабель Кольчугинский", "Россия"),
+    ("Электроконтакт", "Россия"),
+)
+
+COUNTRY_BY_MANUFACTURER: tuple[tuple[str, str], ...] = tuple(
+    sorted({
+        " ".join(name.casefold().split()): (name, country)
+        for name, country in _COUNTRY_SEED_GENERAL + _COUNTRY_SEED_OUR_DATA
+    }.values(), key=lambda pair: pair[0].casefold())
+)
+
+
+def merge_country_pairs(saved: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """The effective «Изготовитель → страна» map: the saved rows (as saved, in their order) and then every seed row
+    whose normalized key is not saved — saved wins per key, the seed fills the rest."""
+    result = [(key, value) for key, value in saved]
+    taken = set()
+    for key, _ in result:
+        try:
+            taken.add(normalized_manufacturer_key(key))
+        except ReferenceValidationError:
+            continue
+    result.extend((name, country) for name, country in COUNTRY_BY_MANUFACTURER if normalized_manufacturer_key(name) not in taken)
+    return result
 
 
 def pair_is_blank(key: str, value: str) -> bool:
@@ -162,7 +367,7 @@ class ReferenceEntry:
         if kind == ReferenceKind.GOST_AWG:
             clean_value = _awg_value(clean_value)
         if kind == ReferenceKind.CABLE_KIND and clean_value not in CABLE_KIND_VALUES:
-            raise ReferenceValidationError("Вкладка кабеля: коаксиальные, монтажные или прочие")
+            raise ReferenceValidationError("Вкладка кабеля: коаксиальные, монтажные, многожильные или прочие")
         normalized = _KEY_NORMALIZERS[kind](clean_key)
         return cls(uuid4(), kind, clean_key, normalized, clean_value, position)
 

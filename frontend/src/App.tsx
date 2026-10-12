@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import {
   AUTH_REQUIRED_EVENT,
   ApiError,
   accessLevelLabel,
+  failureText,
   identityApi,
   type Principal,
 } from "./api";
+import { DraftProvider, DraftStore } from "./formDrafts";
 import {
   accessLevelOf,
   canAct,
@@ -20,8 +22,9 @@ import {
   type NavItem,
   type Section,
 } from "./navigation";
-import { LoginPage } from "./LoginPage";
+import { LoginPage, SessionExpiredDialog } from "./LoginPage";
 import { UpdateFailure } from "./UpdateBanner";
+import { BlockIcon } from "./BlockIcon";
 import { FulfillmentPage } from "./FulfillmentPage";
 import { ProcurementPage } from "./ProcurementPage";
 import { ProductionPage } from "./ProductionPage";
@@ -37,6 +40,10 @@ import { NotificationBell } from "./NotificationBell";
 import { OperationsPage } from "./OperationsPage";
 import { TechcardsPage } from "./TechcardsPage";
 import { ProjectsPage } from "./ProjectsPage";
+// Экран чертежа жгута грузится отдельным куском — вместе с редактором, главный пакет не растёт.
+const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
+// «Библиотека компонентов» — тоже отдельным куском, открывается из чертежа жгута.
+const ComponentLibraryPage = lazy(() => import("./ComponentLibraryPage").then((module) => ({ default: module.ComponentLibraryPage })));
 import { StaffPage } from "./StaffPage";
 import { EmployeeCardPage } from "./EmployeeCardPage";
 import { AccessPage } from "./AccessPage";
@@ -46,12 +53,15 @@ import { ThemeSwitch } from "./ThemeSwitch";
 import { GlobalSearch } from "./CommandPalette";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
-type Place = { section: Section; block: BlockId | null; user?: string | null };
+type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean } };
 
 function placeFromUrl(): Place {
   const params = new URLSearchParams(window.location.search);
   const value = params.get("section");
   if (value === "warehouse") return { section: "stock", block: null };
+  if (value === "projects" && params.get("project") && params.get("harness")) {
+    return { section: value, block: null, harness: { project: params.get("project")!, index: params.get("harness")!, library: params.get("library") === "1" } };
+  }
   if (isSection(value)) return { section: value, block: null, user: params.get("user") || null };
   const block = params.get("block");
   return { section: "cabinet", block: isBlock(block) ? block : null };
@@ -66,16 +76,29 @@ export function App() {
   const [shellError, setShellError] = useState("");
   // On a tablet the sidebar is a drawer behind «☰»; any navigation closes it.
   const [navOpen, setNavOpen] = useState(false);
+  // The first «who am I» failed without a 401 (no network, deadline): the error and «Повторить», not the login form.
+  const [bootError, setBootError] = useState("");
+  // A background 401 (bell poll, any page) while signed in: the page stays mounted under the sign-in dialog.
+  const [expired, setExpired] = useState(false);
+  const principalRef = useRef<Principal | null>(null);
+  principalRef.current = principal;
+  // Unsent forms per user (F07); lives as long as the tab, never in browser storage.
+  const drafts = useRef(new DraftStore()).current;
 
-  useEffect(() => {
+  function loadPrincipal() {
+    setLoading(true);
+    setBootError("");
     identityApi
       .me()
       .then(setPrincipal)
       .catch((error) => {
-        if (!(error instanceof ApiError) || error.status !== 401) console.error(error);
+        if (error instanceof ApiError && error.status === 401) return;
+        setBootError(failureText(error, "ERP не ответила"));
       })
       .finally(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(loadPrincipal, []);
 
   useEffect(() => {
     const listener = () => { setPlace(placeFromUrl()); setVisit((count) => count + 1); };
@@ -84,7 +107,9 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const requireLogin = () => setPrincipal(null);
+    const requireLogin = () => {
+      if (principalRef.current) setExpired(true);
+    };
     window.addEventListener(AUTH_REQUIRED_EVENT, requireLogin);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, requireLogin);
   }, []);
@@ -100,6 +125,8 @@ export function App() {
     url.searchParams.delete("user");
     url.searchParams.delete("tab");
     url.searchParams.delete("q");
+    url.searchParams.delete("harness");
+    url.searchParams.delete("library");
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     if (next.user) url.searchParams.set("user", next.user);
@@ -146,12 +173,18 @@ export function App() {
 
   async function signOut() {
     setShellError("");
+    const leaving = principal;
+    const signedOut = () => {
+      if (leaving) drafts.clearUser(leaving.user.id);
+      setExpired(false);
+      setPrincipal(null);
+    };
     try {
       await identityApi.logout();
-      setPrincipal(null);
+      signedOut();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        setPrincipal(null);
+        signedOut();
         return;
       }
       setShellError(
@@ -162,17 +195,45 @@ export function App() {
     }
   }
 
+  // Signed in again over the kept page. The same user goes on where they were; someone else gets a fresh shell
+  // (the `key` below), and the first user's unsent forms stay keyed to them, out of the newcomer's sight.
+  function signInAgain(next: Principal) {
+    setExpired(false);
+    setPrincipal(next);
+  }
+
   if (loading) return <div className="screen-center muted">Загружаем ERP…</div>;
+  if (!principal && bootError) {
+    return <div className="screen-center boot-error">
+      <div className="error-banner" role="alert">{bootError}</div>
+      <button className="primary" onClick={loadPrincipal}>Повторить</button>
+    </div>;
+  }
   if (!principal) return <LoginPage onLogin={setPrincipal} />;
+  const relogin = expired && <SessionExpiredDialog onLogin={signInAgain} />;
   // A section or block the principal cannot open falls back to the home screen.
   const activeSection = visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
   // The level's name under the user (the backend adds «· режим» while the admin mode is on).
+  // Чертёж жгута — на весь экран, без меню: редактору нужна вся площадь.
+  if (place.harness && visibleNav.some(({ id }) => id === "projects")) {
+    return <>
+      <div key={principal.user.id} className="harness-host" inert={expired}>
+        <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
+          {place.harness.library
+            ? <ComponentLibraryPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
+            : <HarnessPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />}
+        </Suspense>
+      </div>
+      {relogin}
+    </>;
+  }
   const levelName = principal.role_label || (accessLevelOf(principal) ? accessLevelLabel(accessLevelOf(principal)) : "");
 
   return (
-    <div className={navOpen ? "app-shell shell nav-open" : "app-shell shell"}>
+    <DraftProvider store={drafts} userId={principal.user.id}>
+    <div key={principal.user.id} className={navOpen ? "app-shell shell nav-open" : "app-shell shell"} inert={expired}>
       <div className="topbar">
         <button className="nav-toggle" aria-label="Меню" aria-expanded={navOpen} onClick={() => setNavOpen((open) => !open)}>☰</button>
         <strong className="wordmark">FRAXIS</strong>
@@ -257,6 +318,8 @@ export function App() {
         {activeSection === "access" && <AccessPage />}
       </main>
     </div>
+    {relogin}
+    </DraftProvider>
   );
 }
 
@@ -301,7 +364,7 @@ function Home({
           const names = block.items.map((item) => item.label).join(" · ");
           return (
             <button className="tile block-tile" key={block.id} onClick={() => openBlock(block.id)} aria-label={block.title}>
-              <span className="tile-icon" aria-hidden="true">{block.icon}</span>
+              <span className="tile-icon" aria-hidden="true"><BlockIcon id={block.id} /></span>
               <span className="tile-body">
                 <strong className="t-h">{block.title}</strong>
                 {/* With few sections the block's promise would lie; print the sections themselves. */}
@@ -333,7 +396,7 @@ function BlockPage({
     <section className="page">
       <button className="link-button back-link" onClick={home}>← Главная</button>
       <header className="page-header">
-        <div><span className="eyebrow">Блок</span><h1><span aria-hidden="true">{block.icon}</span> {block.title}</h1><p>{block.sub}</p></div>
+        <div><span className="eyebrow">Блок</span><h1>{block.title}</h1><p>{block.sub}</p></div>
       </header>
       <div className="tiles section-tiles">
         {block.items.map((item) => (

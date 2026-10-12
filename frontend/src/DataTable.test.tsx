@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
-import { DataTable, compareCells, matchesWords, tableText, type DataColumn } from "./DataTable";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DataTable, columnClass, compareCells, matchesWords, searchHint, tableText, type DataColumn } from "./DataTable";
 
 interface Row { id: string; name: string; supplier: string; qty: number; status: string }
 
@@ -189,4 +189,99 @@ it("shows a custom group label with the selected count and hides inapplicable bu
   expect(screen.getByRole("button", { name: "Всегда" })).toBeTruthy();
   fireEvent.click(screen.getByLabelText("Выбрать 1"));
   expect(screen.getByRole("button", { name: "Только Чип" })).toBeTruthy();
+});
+
+it("hideSearch removes only the search box: filters, columns and the table stay", () => {
+  const props = { label: "Тест", rows, columns, rowKey: (row: Row) => row.id, storageKey: "t-hide" };
+  const { rerender } = render(<DataTable {...props} />);
+  expect(screen.getByRole("searchbox")).toBeInTheDocument();
+  rerender(<DataTable {...props} hideSearch />);
+  expect(screen.queryByRole("searchbox")).toBeNull();
+  expect(screen.getByRole("button", { name: "Фильтры" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Колонки" })).toBeInTheDocument();
+  expect(names()).toHaveLength(3);
+});
+
+describe("column sizing and number cells", () => {
+  interface Line { id: string; name: string; note: string; qty: number | string | null; code: string }
+  const lines: Line[] = [
+    { id: "1", name: "Разъём Molex Micro-Fit 3.0, 12 pin, корпус розетки", note: "", qty: "12345.500", code: "A-1" },
+    { id: "2", name: "Провод МГТФ", note: "срочно", qty: null, code: "" },
+  ];
+  const sized: DataColumn<Line>[] = [
+    { key: "code", title: "Код", value: (line) => line.code },
+    { key: "name", title: "Наименование", value: (line) => line.name, wrap: true, maxWidth: 420 },
+    { key: "qty", title: "Кол-во", value: (line) => line.qty, numeric: true },
+    { key: "note", title: "Примечание", value: (line) => line.note, width: 120 },
+  ];
+
+  it("sizes columns by content and gives the spare width to an empty last column", () => {
+    const { container } = render(<DataTable rows={lines} columns={sized} rowKey={(line) => line.id} label="Позиции" />);
+    const table = container.querySelector("table")!;
+    expect(table).toHaveClass("sized");
+    const heads = [...table.querySelectorAll("thead th")];
+    expect(heads.map((th) => th.className)).toEqual(["fit key", "text fit", "num fit", "", "dt-fill"]);
+    expect(heads[3]).toHaveStyle({ width: "120px" });
+    expect(heads[4]).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getAllByRole("columnheader")).toHaveLength(4); // the filler is not a column for a screen reader
+    for (const row of table.querySelectorAll("tbody tr")) expect(row.lastElementChild).toHaveClass("dt-fill");
+    const wrap = table.querySelector("td.text .cell-wrap") as HTMLElement;
+    expect(wrap.style.getPropertyValue("--cell-max")).toBe("420px");
+  });
+
+  it("lets a grow column take the spare width instead of the filler", () => {
+    const columns = sized.map((column) => (column.key === "name" ? { ...column, grow: true, minWidth: 300 } : column));
+    const { container } = render(<DataTable rows={lines} columns={columns} rowKey={(line) => line.id} />);
+    expect(container.querySelector(".dt-fill")).toBeNull();
+    expect(container.querySelector("thead th.grow")).toHaveTextContent("Наименование");
+    expect((container.querySelector("td.grow .cell-wrap") as HTMLElement).style.getPropertyValue("--cell-min")).toBe("300px");
+  });
+
+  it("spans the empty row and the group header over the filler too", () => {
+    const { container, rerender } = render(<DataTable rows={[]} columns={sized} rowKey={(line) => line.id} />);
+    expect(container.querySelector("td.empty")).toHaveAttribute("colspan", "5");
+    rerender(<DataTable rows={lines} columns={sized} rowKey={(line) => line.id} groupBy={() => "Все"} />);
+    expect(container.querySelector("tr.group-row td")).toHaveAttribute("colspan", "5");
+  });
+
+  it("keeps the screen's widths when its table has a fixed layout", () => {
+    const real = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      const style = real(element, pseudo);
+      return element instanceof HTMLTableElement ? { ...style, tableLayout: "fixed" } as CSSStyleDeclaration : style;
+    });
+    const { container } = render(<DataTable rows={lines} columns={sized} rowKey={(line) => line.id} />);
+    expect(container.querySelector("table")).not.toHaveClass("sized");
+    expect(container.querySelector(".fit, .dt-fill")).toBeNull();
+  });
+
+  it("writes numbers the Russian way, right-aligned, and an empty cell as a dash", () => {
+    const { container } = render(<DataTable rows={lines} columns={sized} rowKey={(line) => line.id} />);
+    const qty = [...container.querySelectorAll("tbody td.num")].map((td) => td.textContent);
+    expect(qty).toEqual(["12\u202f345,5", "—"]);
+    expect(container.querySelectorAll("tbody .cell-empty")).toHaveLength(3); // пустые кол-во, код и примечание
+    // Sorting and the Excel export still use the raw value.
+    expect(tableText(lines.slice(0, 1), sized.slice(2, 3))).toBe("Кол-во\r\n12345.500\r\n");
+  });
+
+  it("aligns a column on request and says what the search looks in", () => {
+    const column: DataColumn<Line> = { key: "code", title: "Код", value: (line) => line.code, align: "center" };
+    expect(columnClass(column, 1, true)).toBe("align-center fit");
+    expect(columnClass({ ...column, numeric: true, align: "right" }, 0, false)).toBe("num key");
+    expect(searchHint(sized)).toBe("Поиск: код, наименование, кол-во…");
+    expect(searchHint([{ key: "grn", title: "ГРН", value: () => "" }, { key: "n", title: "№", value: () => "" }])).toBe("Поиск: ГРН, №…");
+    render(<DataTable rows={lines} columns={sized} rowKey={(line) => line.id} label="Позиции" />);
+    expect(screen.getByLabelText("Поиск: Позиции")).toHaveAttribute("placeholder", "Поиск: код, наименование, кол-во…");
+  });
+});
+
+it("opens a clickable row from the keyboard", () => {
+  const onRowClick = vi.fn();
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} onRowClick={onRowClick} />);
+  const row = screen.getByText("Разъём Molex").closest("tr")!;
+  expect(row).toHaveAttribute("tabindex", "0");
+  fireEvent.keyDown(row, { key: "Enter" });
+  expect(onRowClick).toHaveBeenCalledWith(rows[2]);
+  fireEvent.keyDown(row, { key: "a" });
+  expect(onRowClick).toHaveBeenCalledTimes(1);
 });

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -17,6 +17,7 @@ from app.shared.http_auth import (
     procurement_edit_principal,
     procurement_view_principal,
     requests_form_principal,
+    section_allowed,
 )
 from app.workflows import purchasing_internal_projects as port
 
@@ -32,8 +33,11 @@ def internal_view(principal: Annotated[Principal, Depends(authenticated_principa
         return requests_form_principal(principal)
 
 
-def internal_option(_principal: Annotated[Principal, Depends(internal_view)]) -> None:
-    """After the gate: a token or a stranger is refused (401/403) before the option says 404."""
+def internal_option(request: Request, principal: Annotated[Principal, Depends(internal_view)]) -> None:
+    """After the gate: a token or a stranger is refused (401/403) before the option says 404, and so is a write by
+    someone who holds «Лист закупки» on view only (view-mode contract, ID-6)."""
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and not section_allowed(principal, ("procurement",), "edit"):
+        raise HTTPException(status_code=403, detail="Раздел «Лист закупки» открыт вам только на просмотр.")
     require_option("projects.internal")
 
 

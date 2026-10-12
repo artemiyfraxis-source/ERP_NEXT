@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import {
   failureText, productionApi, shippingApi, type FinishedGood, type FinishedGoodsReadyBox, type Principal, type ProjectAddressee,
   type Shipment,
@@ -7,6 +8,8 @@ import { canAct } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { openPrintSheets } from "./print";
 import { formatDate } from "./format";
+import { StatusChip as SharedChip } from "./StatusChip";
+import type { Tone } from "./statusTone";
 import { isoDay } from "./Gantt";
 
 /* Отгрузка: «К отгрузке» — что готово по заказчикам и проектам и одна кнопка «Отгрузить» с реквизитами
@@ -29,19 +32,15 @@ function overdue(shipment: Shipment) {
   return Boolean(shipment.deadline) && String(shipment.deadline) < today() && ACTIVE.includes(shipment.status);
 }
 
-const STATUS_TONE: Record<string, string> = {
-  // Серый — ждёт цех, бирюзовый — в работе склада, жёлтый — уехала, но не закрыта, зелёный — закрыта.
-  "Новая": "", "Собрана": "tone-work", "Упакована": "tone-work", "Отгружена": "tone-prep", "Закрыта": "tone-stock", "Отменена": "tone-done",
-};
 const STATUS_HINT: Record<string, string> = {
   "Новая": "ждёт сдачи цеха — ничего не набрано", "Собрана": "набрана, PL и DN не сформированы", "Упакована": "упакована, PL и DN готовы",
   "Отгружена": "уехала, не закрыта", "Закрыта": "уехала, документы на месте", "Отменена": "отменена, набранное вернулось на склад ГП",
 };
 function StatusChip({ status }: { status: string }) {
-  return <span className={`kit-status ${STATUS_TONE[status] ?? ""}`} title={STATUS_HINT[status]}>{status}</span>;
+  return <SharedChip status={status} title={STATUS_HINT[status]} />;
 }
 function Due({ day, late }: { day: string | null; late: boolean }) {
-  if (!day) return null;
+  if (!day) return <>—</>;
   return <span className={late ? "tone-danger" : undefined}>{formatDate(day)}{late && <small className="tone-danger">просрочена</small>}</span>;
 }
 
@@ -147,9 +146,9 @@ interface ProjectRow {
   waiting: number; waitingQty: number; stage: Stage;
 }
 type Stage = "ready" | "packed" | "noupd" | "prod" | "done";
-const STAGES: Record<Stage, [string, string]> = {
-  ready: ["Готово к отгрузке", "tone-stock"], packed: ["Упаковано — отгрузить", "tone-work"], noupd: ["Уехало без УПД", "tone-danger"],
-  prod: ["В производстве", "tone-prep"], done: ["Отгружено", "tone-done"],
+const STAGES: Record<Stage, [string, Tone]> = {
+  ready: ["Готово к отгрузке", "success"], packed: ["Упаковано — отгрузить", "info"], noupd: ["Отгружено без УПД", "warning"],
+  prod: ["В производстве", "info"], done: ["Отгружено", "neutral"],
 };
 const STAGE_ORDER: Stage[] = ["ready", "packed", "noupd", "prod", "done"];
 const isToShip = (row: ProjectRow) => row.ready > 0 || row.packed > 0;
@@ -192,7 +191,7 @@ function ReadyTab(context: Context & { rows: ProjectRow[] }) {
     { key: "project", title: "Проект", value: (row) => row.project, render: (row) => <strong>{row.project}</strong> },
     { key: "customer", title: "Заказчик", value: (row) => row.customer, filter: true, hidden: true },
     { key: "stage", title: "Состояние", value: (row) => STAGES[row.stage][0], filter: true,
-      render: (row) => <span className={`kit-status ${STAGES[row.stage][1]}`}>{STAGES[row.stage][0]}</span> },
+      render: (row) => <SharedChip tone={STAGES[row.stage][1]}>{STAGES[row.stage][0]}</SharedChip> },
     { key: "kb", title: "КБ", value: (row) => row.lines.map((line) => line.good.item_index).join(", ") },
     { key: "ready", title: "Готово", value: (row) => row.ready, numeric: true, hint: "На складе ГП и ещё не в отправке",
       render: (row) => row.ready > 0 ? <strong className="tone-ok">{row.ready}</strong> : <span className="muted">0</span> },
@@ -204,12 +203,12 @@ function ReadyTab(context: Context & { rows: ProjectRow[] }) {
     { key: "due", title: "Срок", value: (row) => row.due ?? "", render: (row) => <Due day={row.due} late={row.late} /> },
     { key: "point", title: "Куда", value: (row) => row.point, wrap: true,
       render: (row) => row.point || <span className="tone-danger">адрес не указан</span> },
-    { key: "noUpd", title: "Без УПД", value: (row) => row.noUpd.join(", "),
-      render: (row) => row.noUpd.length ? <span className="tone-danger">{row.noUpd.join(", ")}</span> : "" },
+    { key: "noUpd", title: "Отправки без УПД", value: (row) => row.noUpd.join(", "),
+      render: (row) => row.noUpd.length ? <span className="tone-danger" title="Отправка уехала, а номер или файл УПД не внесён">{row.noUpd.join(", ")}</span> : "—" },
   ];
   return <DataTable label="К отгрузке" storageKey="shipping-ready" rows={rows} columns={columns} rowKey={(row) => row.project}
     groupBy={(row) => row.customer || "Заказчик не указан"} exportName="Отгрузка — проекты"
-    presets={[{ label: "К отгрузке", test: isToShip }, { label: "Уехало без УПД", test: (row) => row.noUpd.length > 0 },
+    presets={[{ label: "К отгрузке", test: isToShip }, { label: "Отгружено без УПД", test: (row) => row.noUpd.length > 0 },
       { label: "В производстве", test: (row) => row.stage === "prod" }, { label: "Отгружено", test: (row) => row.stage === "done" }]}
     defaultPreset="К отгрузке"
     emptyText={rows.length ? "Отгружать нечего: готовое уже в отправках или уехало. Остальные проекты — в «Все»." : "Готовой продукции пока нет — КБ встают сюда при заведении проекта."}
@@ -242,6 +241,8 @@ function ShipPanel({ row, shipments, addressees, canManage, canWarehouse, canEdi
   const [docs, setDocs] = useState({ upd_number: "", upd_date: today(), deadline: "" });
   const [file, setFile] = useState<File | null>(null);
   const [problem, setProblem] = useState("");
+  // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже сделанную отгрузку, а не заведёт вторую.
+  const shipKey = useRef(crypto.randomUUID());
   const chosen = readyLines.filter((line) => marked[line.good.id] && num(qty[line.good.id]) > 0);
   const total = round2(chosen.reduce((sum, line) => sum + num(qty[line.good.id]), 0));
   const editCard = canManage;
@@ -257,30 +258,27 @@ function ShipPanel({ row, shipments, addressees, canManage, canWarehouse, canEdi
     if (over) { setProblem(`${over.good.item_index}: на складе только ${over.ready}`); return; }
     if (!card.shipping_point.trim()) { setProblem("Укажите адрес отгрузки"); return; }
     if (shipNow && card.upd_type !== "ЭДО" && !file) { setProblem("По бумажной УПД отгрузить можно только с файлом УПД — приложите его или выберите тип «ЭДО»"); return; }
-    const lines = chosen.map((line) => ({ good_id: line.good.id, quantity: qty[line.good.id] }));
+    const lines = chosen.map((line) => ({ good_id: line.good.id, version: line.good.version, quantity: qty[line.good.id] }));
     void mutate(`ship:${row.project}`, async () => {
-      if (editCard) {
-        const before = storedCard();
-        const changed = Object.fromEntries(Object.entries(card).filter(([key, value]) => value.trim() !== before[key as keyof CardDraft])
-          .map(([key, value]) => [key, (key === "terms" || key === "upd_type") ? value || null : value.trim()]));
-        if (Object.keys(changed).length) await shippingApi.saveAddressee({ project: row.project, version: stored?.version ?? 0, ...changed });
-      }
-      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта.
+      const before = storedCard();
+      const changed = editCard ? Object.fromEntries(Object.entries(card).filter(([key, value]) => value.trim() !== before[key as keyof CardDraft])
+        .map(([key, value]) => [key, (key === "terms" || key === "upd_type") ? value || null : value.trim()])) : {};
       const number = docs.upd_number.trim();
-      let { shipment } = canManage
-        ? await shippingApi.create({ lines, deadline: docs.deadline || null, upd_number: number, upd_date: number ? docs.upd_date || null : null, terms: null, upd_type: null, no_docs: false })
-        : await shippingApi.projectPack(row.project, lines);
-      try {
-        if (file) shipment = (await shippingApi.uploadUpd(shipment.id, shipment.version, await readFile(file))).shipment;
-        if (!shipNow) return { text: `Упаковано: ${shipment.number}${shipment.pl_number ? ` · ${shipment.pl_number}` : ""}` };
-        const result = await shippingApi.action(shipment.id, "ship", shipment.version);
-        return { text: result.closed ? `Отгружено и закрыто: ${shipment.number}` : `Отгружено: ${shipment.number}. ${notClosed(result.why)}` };
-      } catch (reason) {
-        return { warning: `${shipment.number} упакована, но не отгружена: ${failureText(reason, "операция не выполнена")}` };
-      }
-    }, (result) => {
-      const outcome = result as { text?: string; warning?: string };
-      return outcome.warning ? { warning: outcome.warning } : outcome.text ?? "";
+      const upload = file ? await readFile(file) : null;
+      // Один запрос — одна транзакция: карточка, отправка, файл УПД и отгрузка сохраняются вместе или никак.
+      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта.
+      const result = await shippingApi.projectShip({
+        project: row.project, addressee_version: stored?.version ?? 0, lines, ship: shipNow,
+        ...(Object.keys(changed).length ? { addressee: changed } : {}),
+        ...(canManage ? { documents: { upd_number: number, upd_date: number ? docs.upd_date || null : null, deadline: docs.deadline || null } } : {}),
+        ...(upload ? { upd_file: { file_name: upload.name, content_type: upload.type, content_base64: upload.base64 } } : {}),
+      }, shipKey.current);
+      shipKey.current = crypto.randomUUID();
+      return result;
+    }, (outcome) => {
+      const { shipment, shipped, closed, why } = outcome as { shipment: Shipment; shipped: boolean; closed: boolean; why: string };
+      if (!shipped) return `Упаковано: ${shipment.number}${shipment.pl_number ? ` · ${shipment.pl_number}` : ""}`;
+      return closed ? `Отгружено и закрыто: ${shipment.number}` : `Отгружено: ${shipment.number}. ${notClosed(why)}`;
     });
   };
 
@@ -389,7 +387,7 @@ function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, busy
   return <>
     {creating && <CreateShipment goods={goods} busy={busy} mutate={mutate} onDone={() => setCreating(false)} />}
     <DataTable label="Отправки" storageKey="shipping-shipments-v2" rows={rows} columns={columns} rowKey={(row) => row.id}
-      presets={[{ label: "В работе", test: (row) => ACTIVE.includes(row.status) }, { label: "Просрочены", test: overdue }, { label: "Уехало без УПД", test: (row) => row.status === "Отгружена" && (!row.upd_number || !row.upd_url) }]}
+      presets={[{ label: "В работе", test: (row) => ACTIVE.includes(row.status) }, { label: "Просрочены", test: overdue }, { label: "Отгружено без УПД", test: (row) => row.status === "Отгружена" && (!row.upd_number || !row.upd_url) }]}
       toolbar={canManage && !creating ? <button type="button" className="secondary small" onClick={() => setCreating(true)}>+ Заявка на отгрузку</button> : undefined}
       rowClassName={(row) => row.status === "Отменена" ? "cancelled" : ""} exportName="Отправки"
       emptyText="Отправок нет. Они появляются на вкладке «К отгрузке» — кнопками «Отгрузить» и «Упаковать»."
@@ -484,7 +482,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
         <td><strong>{line.project} · {line.item_index}</strong></td><td className="ship-name">{line.name}</td>
         <td className="num">{canEdit && open ? <input className="ship-qty" aria-label={`Заказано ${line.item_index}`} type="number" min="0.01" step="any" value={requested[line.id] ?? line.requested} onChange={(event) => setRequested({ ...requested, [line.id]: event.target.value })} onBlur={() => saveRequested(line.id, line.requested)} /> : `${line.requested} ${line.unit}`}</td>
         <td className="num">{line.picked}</td><td className={num(line.shortage) > 0 ? "num tone-warn" : "num"}>{line.shortage}</td><td>{line.grn || ""}</td>
-        {canWarehouse && <td>{num(line.picked) > 0 && ["Новая", "Собрана"].includes(shipment.status) && <button type="button" className="link-button danger-link" disabled={disabled} onClick={() => void mutate(`unpick:${line.id}`, () => shippingApi.unpick(shipment.id, shipment.version, line.id), "Позиция возвращена на склад ГП")}>Вернуть</button>}</td>}
+        {canWarehouse && <td>{num(line.picked) > 0 && ["Новая", "Собрана"].includes(shipment.status) && <button type="button" className="danger small" disabled={disabled} onClick={() => void mutate(`unpick:${line.id}`, () => shippingApi.unpick(shipment.id, shipment.version, line.id), "Позиция возвращена на склад ГП")}>Вернуть</button>}</td>}
       </tr>)}</tbody>
     </table></div>
     {printError && <div className="error-banner" role="alert">{printError}</div>}
@@ -495,7 +493,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, busy, muta
       {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" onClick={() => void print("dn")}>Печать DN</button></>}
       {canEdit && got && (ACTIVE.includes(shipment.status) || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
       {canEdit && open && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
-      {canManage && ACTIVE.includes(shipment.status) && <span className="ship-actions-end"><button type="button" className="link-button danger-link" disabled={disabled} onClick={() => void action("cancel", "Заявка отменена, отбор возвращён на склад ГП")}>Отменить</button></span>}
+      {canManage && ACTIVE.includes(shipment.status) && <span className="ship-actions-end"><button type="button" className="danger small" disabled={disabled} onClick={() => { if (window.confirm(`Отменить заявку ${shipment.number}? Набранное вернётся на склад ГП.`)) void action("cancel", "Заявка отменена, отбор возвращён на склад ГП"); }}>Отменить заявку</button></span>}
     </div>
     {layout && <BoxesEditor shipment={shipment} busy={busy} mutate={mutate} onDone={() => setLayout(false)} />}
     {canManage && open && <div className="ship-docs">
@@ -538,7 +536,7 @@ function ShipmentHead({ shipment, busy, mutate }: { shipment: Shipment; busy: st
     {HEAD_FIELDS.map(([key, label]) => <label key={key} className={key === "shipping_point" ? "ship-span2" : undefined}><span>{label}{mark(key)}</span><input aria-label={`${label} ${shipment.number}`} disabled={Boolean(busy)} placeholder={inherited(key) ? "" : "пусто — из карточки проекта"} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} onBlur={() => save(key)} /></label>)}
     <label><span>Условия доставки{mark("terms")}</span><select aria-label={`Условия доставки ${shipment.number}`} disabled={Boolean(busy)} value={draft.terms} onChange={(event) => setDraft({ ...draft, terms: event.target.value })} onBlur={() => save("terms")}><option value="">из карточки проекта</option><option>САМОВЫВОЗ</option><option>ДОСТАВКА ТК</option></select></label>
     <label>Срок отгрузки<input type="date" aria-label={`Дедлайн ${shipment.number}`} disabled={Boolean(busy)} value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} onBlur={() => save("deadline")} /></label>
-    <label className="ship-span2">Комментарий<input aria-label={`Комментарий ${shipment.number}`} disabled={Boolean(busy)} value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} onBlur={() => save("note")} /></label>
+    <label className="ship-span2">Комментарий<AutoTextarea aria-label={`Комментарий ${shipment.number}`} disabled={Boolean(busy)} value={draft.note} onChange={(note) => setDraft({ ...draft, note })} onBlur={() => save("note")} /></label>
   </div>;
 }
 

@@ -12,11 +12,13 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from app.shared.pdf_text import pdf_text
+from app.shared.pdf_text import PdfLimitExceeded, pdf_text
 
 # SUPPLYMAP sets no limit (Drive takes anything); ERP keeps the file in the database — 20 MB, as УПД.
 INVOICE_FILE_LIMIT = 20 * 1024 * 1024
 INVOICE_FILE_PATH = "/api/procurement/files/"
+# The PDF would unpack past the reading budget (audit F05): the file is kept, № and date are typed by hand.
+TOO_HEAVY_HINT = "Файл слишком тяжёлый для распознавания (превышен лимит обработки) — № и дату счёта впишите вручную."
 
 _SPACES = re.compile("[    ]")
 # «Счет [на оплату] № / No / N° / N <номер>»; {0,40} — чтобы не утянуть далёкую метку.
@@ -125,7 +127,10 @@ def kp_file_name(info: InvoiceInfo, supplier: str, order_number: str, original: 
 
 def recognise_invoice(content: bytes) -> tuple[InvoiceInfo, str]:
     """Text of the file and what it says; the hint is the one SUPPLYMAP shows when nothing was found."""
-    text = pdf_text(content)
+    try:
+        text = pdf_text(content)
+    except PdfLimitExceeded:
+        return InvoiceInfo(), TOO_HEAVY_HINT
     info = parse_invoice_text(text)
     if not text.strip():
         return info, "Текст из файла не читается (скан или картинка) — № и дату счёта впишите вручную."

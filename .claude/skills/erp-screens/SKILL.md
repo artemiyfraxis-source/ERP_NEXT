@@ -11,8 +11,8 @@ Google's visuals (owner, 2026-09-30: «не тяни дизайн из гугл�
 Visuals follow the ERP's own style (section 5) and should read better than the sheet. Every screen is judged by a fitter, a master, a technologist or a buyer who must read it at a glance
 on a 27" monitor (2560 px), a 16" laptop (~1536×864 CSS px — owner, 04.10: «на 16 дюймах склад не читаемый») or a
 12.7" tablet (~1400 px, touch). Every screen change is checked at all three; key columns fit 1536 px without sideways scroll. Generic design advice
-(`design-critique`) applies on top; where it conflicts, this file wins. `frontend-design` is for
-marketing pages — do not use it here.
+(`design-critique`) applies on top; where it conflicts, this file wins. Data-heavy screens (tables, boards, load
+charts) also follow `erp-dense-ui` — the style yardstick for density, type, color and numbers.
 
 ## 1. Words on the screen
 
@@ -106,6 +106,7 @@ the same order.
 4. **Change**, then **shots after**. LOOK at every PNG (Read tool): exit 0 proves nothing. Run the
    `design-critique` skill on the after-shots against the reference and fix every critical/moderate finding.
    Every lint finding is fixed or justified in the reply.
+   Then `ui-guidelines-audit` on the changed `.tsx`/`.css` (focus, keyboard, labels, tabular numbers) — fix or justify.
 5. `npm run check`, `erp-verifier`, merge. Reply to the owner with before/after links, 2–5 Russian lines.
 
 Hub: [[erp-next-hub]] · memory note `erp-screens-rules`.

@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPlanPage } from "./ProductionPlanPage";
-import { MIN_VISIBLE_DAYS, autoHiddenColumns, groupSheetRows, markText, projectColor, sheetDays, sheetMonths, todayScrollLeft } from "./PlanLoadSheet";
+import {
+  MIN_VISIBLE_DAYS, MIN_VISIBLE_WEEKS, autoHiddenColumns, deadlineSpan, groupSheetRows, markText, orderStatuses, periodWords, projectColor, sheetDays,
+  sheetMonths, sheetWeeks, startLabels, statusColumnWidth, todayScrollLeft, weekMarks,
+} from "./PlanLoadSheet";
 import type { Principal, ProductionPlanResult } from "./api";
 
 const principal: Principal = {
@@ -39,6 +42,13 @@ const plan: ProductionPlanResult = {
   }],
 };
 
+const stagePreview = (over: Record<string, unknown> = {}) => ({
+  project: "70К.26.13", value: "Отгружено", kb: "", direction: "forward", reason_required: false, error: "", message: "",
+  terminal: "", blocker: "", warnings: [],
+  kbs: [{ kb: "КБ1", label: "КБ1", from: "Новый", to: "Отгружено", skipped: [], change: true, note: "", warnings: [] }],
+  ...over,
+});
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -63,8 +73,8 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   await screen.findByRole("button", { name: "708К.4" });
   const heads = Array.from(document.querySelectorAll(".zg-table thead th.zg-col-head")).map((item) => item.textContent);
   expect(heads).toEqual([
-    "Комментарий", "Статус", "Готов", "План", "№", "Заказчик", "Дав.", "Пров.",
-    "Компл", "ЗКП", "Приход", "ТК", "С/Б", "Набр.", "Дн.", "Дедлайн",
+    "Статус", "Готов", "План", "№", "Заказчик", "Дав.", "Пров.",
+    "Компл", "ЗКП", "Приход", "ТК", "С/Б", "Набр.", "Дн.", "Дедлайн", "Комментарий",
   ]);
   // Календарь: сегодня −7 … +60 дней; над днями — строка месяцев, в шапке дня — число и день недели.
   const days = Array.from(document.querySelectorAll(".zg-table thead th.zg-day-head")).map((item) => item.textContent);
@@ -75,8 +85,9 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   ]);
   expect(screen.getByText("1", { selector: ".page-count" })).toBeInTheDocument();
   const row = sheetRow("708К.4");
-  // Статус — один чип и «+N», полный список в подсказке.
-  expect(Array.from(row.querySelectorAll(".zg-chip")).map((item) => item.textContent)).toEqual(["СТОП"]);
+  // Статус — главный (самый тревожный) чип целым словом и «+N», полный список словами ERP — в подсказке.
+  expect(Array.from(row.querySelectorAll(".zg-col-status .status-chip")).map((item) => item.textContent)).toEqual(["СТОП"]);
+  expect(row.querySelector(".zg-more")?.getAttribute("title")).toBe("СТОП, В работе");
   expect(row.querySelector(".zg-more")?.textContent).toBe("+1");
   expect(row.querySelector(".zg-col-ready")?.textContent).toBe("40%");
   expect(row.querySelector<HTMLElement>(".zg-ready i")?.style.getPropertyValue("--zg-ready")).toBe("40%");
@@ -103,21 +114,22 @@ it("keeps the sheet header to short one-line labels and gives the full sheet nam
   expect(heads.every((head) => head.textContent!.length <= 11 && !head.textContent!.includes("\n"))).toBe(true);
   // Все показанные колонки закреплены; последняя отделена от календаря границей с тенью.
   expect(heads.every((head) => head.classList.contains("zg-freeze"))).toBe(true);
-  expect(heads.filter((head) => head.classList.contains("zg-edge")).map((head) => head.textContent)).toEqual(["Дедлайн"]);
+  expect(heads.filter((head) => head.classList.contains("zg-edge")).map((head) => head.textContent)).toEqual(["Комментарий"]);
+  // Полные названия — словами ERP, а не сокращениями листа (ПП-11).
   expect(heads.map((head) => head.getAttribute("title")?.split(" — ")[0])).toEqual([
-    "Комментарий", "Статус", "% Готов", "В плане", "№ Проекта", "Наименование организации", "Есть давал", "Пров компл",
-    "Компл есть", "ЗКП", "Дата прихода компл.", "Тех кар", "Тест С/Б", "Компл набр", "Ост дн", "Дедлайн",
+    "Статус", "Готовность, %", "В плане", "№ проекта", "Заказчик", "Давальческое", "Комплект проверен",
+    "Комплект на складе", "ЗКП", "Приход комплектующих", "Техкарта выдана", "Тест С/Б", "Комплект набран", "Дней до дедлайна", "Дедлайн", "Комментарий",
   ]);
-  expect(heads[3].getAttribute("title")).toBe("В плане — на проект назначены операции");
-  expect(heads[7].getAttribute("title")).toBe("Пров компл — комплектация проверена");
+  expect(heads[2].getAttribute("title")).toBe("В плане — на проект назначены операции");
+  expect(heads[6].getAttribute("title")).toBe("Комплект проверен");
   // Ширина таблицы задана колонками, а не содержимым: длинный комментарий её не раздувает.
   expect(document.querySelector<HTMLElement>(".zg-table")!.style.width).toMatch(/^calc\(\d+px \+ 68 \* var\(--zg-day\)\)$/);
 
   const row = sheetRow("708К.4");
   expect(row.querySelector(".zg-col-comment")?.getAttribute("title")).toBe("ждём разъёмы");
   expect(row.querySelector(".zg-link")?.getAttribute("title")).toBe("Заказчик — журнал проекта");
-  expect(row.querySelector(".zg-col-status")?.getAttribute("title")).toBe("СТОП, В РАБОТЕ — СТОП: Ждём разъёмы");
-  expect(row.querySelector(".zg-col-kit_checked")?.getAttribute("title")).toBe("Пров компл — комплектация проверена");
+  expect(row.querySelector(".zg-col-status")?.getAttribute("title")).toBe("СТОП, В работе — СТОП: Ждём разъёмы");
+  expect(row.querySelector(".zg-col-kit_checked")?.getAttribute("title")).toBe("Комплект проверен");
   // Сегодня подсвечено и в шапке, и в строках.
   const today = document.querySelector(".zg-table thead th.zg-today");
   expect(today?.getAttribute("title")).toBe("вт 22.09.2026 · сегодня");
@@ -147,18 +159,18 @@ it("draws yes/no columns as narrow ✓ / — toggles with the full sheet name in
 
   const flags = Array.from(row.querySelectorAll<HTMLButtonElement>("button.zg-flag"));
   expect(flags.map((flag) => [flag.getAttribute("aria-label")?.split(" · ")[0], flag.textContent, flag.getAttribute("aria-checked")])).toEqual([
-    ["В плане", "✓", "true"], ["Пров компл", "—", "false"], ["Компл есть", "—", "false"], ["ЗКП", "✓", "true"],
-    ["Тех кар", "✓", "true"], ["Тест С/Б", "✓", "true"], ["Компл набр", "—", "false"],
+    ["В плане", "✓", "true"], ["Комплект проверен", "—", "false"], ["Комплект на складе", "—", "false"], ["ЗКП", "✓", "true"],
+    ["Техкарта выдана", "✓", "true"], ["Тест С/Б", "✓", "true"], ["Комплект набран", "—", "false"],
   ]);
   expect(flags.every((flag) => flag.getAttribute("role") === "checkbox")).toBe(true);
   // Короткая подпись в шапке, полное название и смысл — в подсказке.
   const head = (label: string) => Array.from(document.querySelectorAll(".zg-col-head")).find((item) => item.textContent === label)!;
   expect(head("С/Б").getAttribute("title")).toBe("Тест С/Б");
-  expect(head("Компл").getAttribute("title")).toBe("Компл есть — все комплектующие на складе");
+  expect(head("Компл").getAttribute("title")).toBe("Комплект на складе — все комплектующие на складе");
   expect(head("План").getAttribute("title")).toBe("В плане — на проект назначены операции");
   // «Давал»: «Ч/Т» коротко в ячейке, полные слова — в списке поверх неё.
   expect(row.querySelector(".zg-col-customer_supplied .zg-supplied")?.textContent).toBe("Ч/Т");
-  expect(screen.getByLabelText("Есть давал · 708К.4")).toHaveValue("авто");
+  expect(screen.getByLabelText("Давальческое · 708К.4")).toHaveValue("авто");
 });
 
 it("lets the viewer choose the sheet columns, keeps the sheet order and returns to the screen-width default", async () => {
@@ -170,10 +182,10 @@ it("lets the viewer choose the sheet columns, keeps the sheet order and returns 
 
   fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
   const chooser = screen.getByRole("group", { name: "Показывать колонки" });
-  expect(chooser.querySelector<HTMLInputElement>("input[disabled]")?.parentElement?.textContent).toBe("№ Проекта");
-  fireEvent.click(screen.getByLabelText("Ост дн"));
+  expect(chooser.querySelector<HTMLInputElement>("input[disabled]")?.parentElement?.textContent).toBe("№ проекта");
+  fireEvent.click(screen.getByLabelText("Дней до дедлайна"));
   fireEvent.click(screen.getByLabelText("ЗКП"));
-  expect(labels()).toEqual(["Комментарий", "Статус", "Готов", "План", "№", "Заказчик", "Дав.", "Пров.", "Компл", "Приход", "ТК", "С/Б", "Набр.", "Дедлайн"]);
+  expect(labels()).toEqual(["Статус", "Готов", "План", "№", "Заказчик", "Дав.", "Пров.", "Компл", "Приход", "ТК", "С/Б", "Набр.", "Дедлайн", "Комментарий"]);
   expect(screen.getByRole("button", { name: "Колонки · 14 из 16" })).toBeInTheDocument();
   expect(JSON.parse(window.localStorage.getItem("erp-zg-columns")!)).toEqual(["days_left", "zkp"]);
   // «Дн.» скрыта — светофор дедлайна переезжает в «Дедлайн».
@@ -189,6 +201,7 @@ it("sets the stage of a project without KBs through a journal mark with an empty
   const bare = { ...plan.rows[0], project: "70К.26.13", stage: "Новый", kits: [], blocker: null, events: [] };
   let payload: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).startsWith("/api/production/plan/stage-preview")) return json(stagePreview());
     if (String(input) === "/api/production/plan/events") {
       payload = JSON.parse(String(init?.body));
       return json({ event: plan.rows[0].events[0] }, 201);
@@ -200,8 +213,9 @@ it("sets the stage of a project without KBs through a journal mark with an empty
 
   expect(screen.queryByText(/набрано/)).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Этап проекта"), { target: { value: "Отгружено" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Сменить этап" }));
   await waitFor(() => expect(payload).toMatchObject({
-    project: "70К.26.13", kind: "stage", item_index: "", value: "Отгружено",
+    project: "70К.26.13", kind: "stage", item_index: "", value: "Отгружено", reason: "",
   }));
 });
 
@@ -227,7 +241,12 @@ it("adds a deadline through the native project journal", async () => {
 
 it("records manual kit stage and techcard review", async () => {
   const payloads: Record<string, unknown>[] = [];
+  const previews: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).startsWith("/api/production/plan/stage-preview")) {
+      previews.push(decodeURIComponent(String(input)));
+      return json(stagePreview({ direction: "back", reason_required: true }));
+    }
     if (String(input) === "/api/production/plan/events") {
       payloads.push(JSON.parse(String(init?.body)));
       return json({ event: plan.rows[0].events[0] }, 201);
@@ -238,8 +257,13 @@ it("records manual kit stage and techcard review", async () => {
   await openProject("708К.4");
 
   fireEvent.change(screen.getByLabelText("Этап КБ1"), { target: { value: "Отгружено" } });
+  const confirm = await screen.findByRole("button", { name: "Сменить этап" });
+  expect(previews[0]).toBe("/api/production/plan/stage-preview?project=708К.4&value=Отгружено&kb=КБ1");
+  expect(confirm).toBeDisabled(); // назад — без причины не отправить
+  fireEvent.change(screen.getByLabelText("Причина смены этапа"), { target: { value: "ошиблись кнопкой" } });
+  fireEvent.click(confirm);
   await waitFor(() => expect(payloads[0]).toMatchObject({
-    project: "708К.4", kind: "stage", item_index: "КБ1", value: "Отгружено",
+    project: "708К.4", kind: "stage", item_index: "КБ1", value: "Отгружено", reason: "ошиблись кнопкой",
   }));
   fireEvent.change(screen.getByLabelText("Проверка ТК КБ1"), { target: { value: "проверена" } });
   await waitFor(() => expect(payloads[1]).toMatchObject({
@@ -307,7 +331,7 @@ it("edits sheet cells inline: a checkbox, back to the ERP value, the status, a d
   render(<ProductionPlanPage principal={principal} />);
   await screen.findByRole("button", { name: "708К.4" });
 
-  fireEvent.click(screen.getByLabelText("Пров компл · 708К.4"));
+  fireEvent.click(screen.getByLabelText("Комплект проверен · 708К.4"));
   await waitFor(() => expect(payloads[0]).toMatchObject({ project: "708К.4", kind: "mark", field: "kit_checked", value: "да" }));
   // Тест С/Б marked by hand «да» over «нет»: unticking returns the ERP value.
   await waitFor(() => expect(screen.getByLabelText("Тест С/Б · 708К.4")).not.toBeDisabled());
@@ -317,7 +341,9 @@ it("edits sheet cells inline: a checkbox, back to the ERP value, the status, a d
   await waitFor(() => expect(screen.getByLabelText("Тест С/Б · 708К.4")).not.toBeDisabled());
   fireEvent.click(sheetRow("708К.4").querySelector(".zg-col-status")!);
   const dialog = await screen.findByRole("dialog", { name: "Правка: 708К.4" });
-  fireEvent.click(dialog.querySelector("label.t-pause input")!);
+  // Выбор статуса — теми же чипами и словами ERP, что в листе; в журнал уходит слово листа.
+  expect(dialog.querySelector('label[data-status="В РАБОТЕ"]')?.textContent).toBe("В работе");
+  fireEvent.click(dialog.querySelector('label[data-status="ПАУЗА"] input')!);
   fireEvent.click(screen.getByRole("button", { name: "Поставить статус" }));
   await waitFor(() => expect(payloads[2]).toMatchObject({ field: "status", value: "СТОП, В РАБОТЕ, ПАУЗА" }));
 
@@ -369,15 +395,21 @@ it("keeps sheet helpers stable", () => {
   expect(todayScrollLeft(days, "2027-01-01", 24)).toBe(0);
   expect(todayScrollLeft(days, "2026-10-04", 0)).toBe(0);
   // Узкий экран прячет реже нужные колонки, пока календарь не покажет MIN_VISIBLE_DAYS дней; широкий — ничего.
-  expect(MIN_VISIBLE_DAYS).toBeGreaterThanOrEqual(14);
+  // Комментарий скрывается первым (ПП-8), на 16" (лист 1192 px, день 16 px) календарь показывает пять недель (ПП-2).
+  expect(MIN_VISIBLE_DAYS).toBe(35);
   expect(autoHiddenColumns(2218, 24)).toEqual([]);
-  expect(autoHiddenColumns(1458, 24)).toEqual([]);
-  expect(autoHiddenColumns(1192, 24)).toEqual(["days_left", "zkp", "in_plan", "customer_supplied"]);
-  expect(autoHiddenColumns(600, 24)).toEqual(["days_left", "zkp", "in_plan", "customer_supplied", "test_sb", "kit_checked"]);
+  const laptop = autoHiddenColumns(1192, 16);
+  expect(laptop).toEqual(["comment", "days_left", "zkp", "in_plan", "customer_supplied", "test_sb", "kit_checked"]);
+  const frozenLeft = 998 - [160, 38, 38, 38, 40, 38, 38].reduce((sum, width) => sum + width, 0);
+  expect(Math.floor((1192 - frozenLeft) / 16)).toBeGreaterThanOrEqual(35);
+  expect(autoHiddenColumns(1192, 16, false, 104, MIN_VISIBLE_WEEKS)).toEqual([]);
+  expect(autoHiddenColumns(1192, 46, false, 104, MIN_VISIBLE_WEEKS)).toEqual(["comment", "days_left"]);
+  expect(autoHiddenColumns(600, 24)).toEqual(["comment", "days_left", "zkp", "in_plan", "customer_supplied", "test_sb", "kit_checked"]);
   expect(autoHiddenColumns(0, 24)).toEqual([]);
   expect(groupSheetRows([row({ project: "1", terminal: true, group: undefined }), row({ project: "2", group: undefined })]).closed.map((item) => item.project)).toEqual(["1"]);
   expect(markText({ field: "status", value: "ХОЛД", text: "" })).toBe("Статус: ХОЛД");
-  expect(markText({ field: "kit_arrival", value: "2026-10-09", text: "" })).toBe("Дата прихода компл.: 09.10.2026");
+  expect(markText({ field: "kit_arrival", value: "2026-10-09", text: "" })).toBe("Приход комплектующих: 09.10.2026");
+  expect(markText({ field: "status", value: "К ЗАПУСК, ОЖИД ИНФ", text: "" })).toBe("Статус: К запуску, ОЖИД ИНФ");
   expect(markText({ field: "in_plan", value: "авто", text: "" })).toBe("В плане: расчёт ERP");
   expect(markText({ field: "day:2026-10-06", value: "П", text: "" })).toBe("Отметка 06.10.2026: П");
   expect(markText({ field: "comment", value: "", text: "" })).toBe("Комментарий: очищено");
@@ -416,7 +448,7 @@ it("shows people load as hours per shift: tone by load, late marker, absence, fr
     const load = await screen.findByRole("region", { name: "Загрузка по людям" });
 
     await waitFor(() => expect(load.querySelector(".pl-table")).not.toBeNull());
-    expect(load.textContent).toContain("21.09–04.10");
+    expect(load.textContent).toContain("21 сентября – 4 октября 2026 · 2 нед.");
     const rows = Array.from(load.querySelectorAll(".pl-table tbody tr"));
     expect(rows.map((row) => row.querySelector("th b")?.textContent)).toEqual(["Алексеева А.", "Борисов Б."]);
     const mon = rows[0].querySelectorAll("td");
@@ -450,7 +482,7 @@ it("marks overload and lists the day's operations with ПЗ, hours and deadline 
     expect(cellButton.closest("td")!.className).toContain("over");
     fireEvent.click(cellButton);
     const detail = screen.getByRole("group", { name: "Что в дне: Алексеева А., 22.09" });
-    expect(detail.textContent).toContain("ПЗ-0001 · 708К.4КБ1");
+    expect(detail.textContent).toContain("ПЗ-0001 · 708К.4 · КБ1");
     expect(detail.textContent).toContain("1. Нарезка А");
     expect(detail.textContent).toContain("дедлайн 30.09");
     fireEvent.click(screen.getByRole("button", { name: "Закрыть день" }));
@@ -483,4 +515,164 @@ it("opens the project card from the project number, not a panel under the list",
   fireEvent.click(await screen.findByRole("button", { name: "708К.4" }));
   expect(opened).toEqual(["708К.4"]);
   expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("shows the main status as a whole word in the shared chip and sizes the column to the longest word (ПП-1, ПП-3)", async () => {
+  const mixed: ProductionPlanResult = { ...plan, rows: [
+    row({ project: "621К.2", group: "active", sheet: { ...sheet, status: cell("К ЗАПУСК, ОЖИД КОМПЛ") } }),
+    row({ project: "708К.2", group: "active", sheet: { ...sheet, status: cell("Новый") } }),
+    row({ project: "614К.1", group: "active", sheet: { ...sheet, status: cell("В РАБОТЕ") } }),
+  ] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(mixed));
+  render(<ProductionPlanPage principal={principal} />);
+  await screen.findByRole("button", { name: "621К.2" });
+
+  const chip = (project: string) => sheetRow(project).querySelector(".zg-col-status .status-chip")!;
+  // Блокер — первым и целиком, без многоточия; второй статус — «+1» со списком в подсказке.
+  expect(chip("621К.2").textContent).toBe("ОЖИД КОМПЛ");
+  expect(chip("621К.2").getAttribute("data-tone")).toBe("warning");
+  expect(sheetRow("621К.2").querySelector(".zg-more")?.textContent).toBe("+1");
+  expect(sheetRow("621К.2").querySelector(".zg-more")?.getAttribute("title")).toBe("ОЖИД КОМПЛ, К запуску");
+  // Один словарь: слова листа — словами этапов ERP, тем же чипом, что «Новый».
+  expect(chip("614К.1").textContent).toBe("В работе");
+  expect(chip("708К.2").textContent).toBe("Новый");
+  expect(new Set([chip("614К.1"), chip("708К.2"), chip("621К.2")].map((item) => item.className))).toEqual(new Set(["status-chip"]));
+  // Ширина колонки — по самому длинному главному слову с местом под «+N».
+  const width = Number.parseInt(document.querySelector<HTMLElement>(".zg-table col")!.style.width, 10);
+  expect(width).toBe(statusColumnWidth(mixed.rows));
+  expect(width).toBeGreaterThan(statusColumnWidth([mixed.rows[1]]));
+});
+
+it("orders statuses by alarm and estimates a column wide enough for each whole word", () => {
+  expect(orderStatuses("В РАБОТЕ, СТОП")).toEqual(["СТОП", "В РАБОТЕ"]);
+  expect(orderStatuses("К ЗАПУСК, ОЖИД КОМПЛ, ХОЛД")).toEqual(["ОЖИД КОМПЛ", "ХОЛД", "К ЗАПУСК"]);
+  const one = statusColumnWidth([{ sheet: { status: cell("ОЖИД КОМПЛ") } }]);
+  const two = statusColumnWidth([{ sheet: { status: cell("ОЖИД КОМПЛ, К ЗАПУСК") } }]);
+  expect(one).toBeGreaterThanOrEqual(104);
+  expect(two - one).toBe(26);
+  expect(statusColumnWidth([])).toBe(84);
+  expect(statusColumnWidth([{ sheet: { status: cell("Проверка комплекта, ОЖИД ИНФ") } }])).toBeLessThanOrEqual(200);
+});
+
+it("opens the project journal with an honest «no card» line when the project has no card in «Проекты» (ПП-5)", async () => {
+  const opened: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).startsWith("/api/techcards/kitsets")
+    ? json({ items: [{ project: "614К.1" }], statuses: [] }) : json(plan));
+  window.history.replaceState({}, "", "/?section=prodplan");
+  render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
+  const number = await screen.findByRole("button", { name: "708К.4" });
+  await waitFor(() => expect(number.getAttribute("title")).toBe("Карточки проекта нет — открыть журнал проекта"));
+  fireEvent.click(number);
+
+  expect(opened).toEqual([]);
+  const drawer = screen.getByRole("dialog", { name: "Проект 708К.4" });
+  expect(drawer.textContent).toContain("Карточки проекта 708К.4 в «Проектах» нет — создайте её из расчёта.");
+  expect(drawer.textContent).not.toContain("удалена");
+  expect(screen.queryByRole("button", { name: "Открыть карточку проекта" })).toBeNull();
+  const moved: string[] = [];
+  const listener = () => moved.push(window.location.search);
+  window.addEventListener("popstate", listener);
+  const link = screen.getByRole("link", { name: "Открыть «Проекты»" });
+  expect(link.getAttribute("href")).toBe("?section=projects");
+  fireEvent.click(link);
+  window.removeEventListener("popstate", listener);
+  expect(moved).toEqual(["?section=projects"]);
+  window.history.replaceState({}, "", "/");
+});
+
+it("opens the card from the project number when «Проекты» has it", async () => {
+  const opened: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).startsWith("/api/techcards/kitsets")
+    ? json({ items: [{ project: "708к.4" }], statuses: [] }) : json(plan));
+  render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
+  const number = await screen.findByRole("button", { name: "708К.4" });
+  await waitFor(() => expect(number.getAttribute("title")).toBe("Открыть карточку проекта"));
+  fireEvent.click(number);
+  expect(opened).toEqual(["708К.4"]);
+});
+
+it("hides the comment column first and shows a comment as a mark at the project number", async () => {
+  window.localStorage.setItem("erp-zg-columns", JSON.stringify(["comment"]));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
+  render(<ProductionPlanPage principal={principal} />);
+  const number = await screen.findByRole("button", { name: "708К.4" });
+  expect(number.querySelector(".zg-note-mark")).not.toBeNull();
+  expect(number.getAttribute("title")).toContain("Комментарий: ждём разъёмы");
+  expect(screen.getByText("комментарий", { selector: ".zg-legend span" })).toBeInTheDocument();
+});
+
+it("switches the calendar to weeks: one column a week, bar, launch and deadline inside the week, choice remembered", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
+  render(<ProductionPlanPage principal={principal} />);
+  await screen.findByRole("button", { name: "708К.4" });
+  fireEvent.click(screen.getByRole("button", { name: "Недели" }));
+
+  const heads = Array.from(document.querySelectorAll(".zg-table thead th.zg-week-head"));
+  // 15.09 (вт) … 21.11 (сб): первая и последняя неделя неполные.
+  expect(heads).toHaveLength(10);
+  expect(heads[0].textContent).toBe("15.09–20.09");
+  expect(heads[1].className).toContain("zg-today");
+  const weeks = Array.from(sheetRow("708К.4").querySelectorAll("td.zg-week"));
+  expect(weeks).toHaveLength(10);
+  expect(weeks[1].className).toContain("zg-work-start");
+  expect(weeks[1].textContent).toBe("10");
+  expect(weeks[2].querySelector(".zg-week-deadline")).not.toBeNull();
+  expect(window.localStorage.getItem("erp-zg-scale")).toBe(JSON.stringify("week"));
+  expect(screen.getByText("эта неделя")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Дни" }));
+  expect(document.querySelectorAll(".zg-table thead th.zg-week-head")).toHaveLength(0);
+  expect(window.localStorage.getItem("erp-zg-scale")).toBeNull();
+});
+
+it("opens a sheet cell editor from the keyboard and shows «—» in empty cells", async () => {
+  const bare = row({ project: "709К.1", deadline: null, days_left: null, group: "active", sheet: { ...sheet, ready: cell(""), kit_arrival: cell("") } });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ ...plan, rows: [bare] }));
+  render(<ProductionPlanPage principal={principal} />);
+  await screen.findByRole("button", { name: "709К.1" });
+  const status = sheetRow("709К.1").querySelector<HTMLElement>(".zg-col-status")!;
+  expect(status.tabIndex).toBe(0);
+  fireEvent.keyDown(status, { key: "Enter" });
+  expect(await screen.findByRole("dialog", { name: "Правка: 709К.1" })).toBeInTheDocument();
+  expect(["ready", "kit_arrival", "deadline"].map((key) => sheetRow("709К.1").querySelector(`.zg-col-${key}`)?.textContent)).toEqual(["—", "—", "—"]);
+});
+
+it("keeps calendar helpers: period in words, launch quantity on the first working day, weeks from Monday", () => {
+  expect(periodWords("2026-10-03", "2026-12-09")).toBe("3 октября – 9 декабря 2026");
+  expect(periodWords("2026-10-05", "2026-10-18")).toBe("5–18 октября 2026");
+  expect(periodWords("2026-12-28", "2027-01-10")).toBe("28 декабря 2026 – 10 января 2027");
+  // Запуск в субботу на полосе сб–пн: число встаёт на понедельник (ПП-4); одиночный выходной — остаётся на месте.
+  const days = sheetDays("2026-10-09", "2026-10-13");
+  expect(startLabels(days, new Set(["2026-10-10", "2026-10-11", "2026-10-12"]), { "2026-10-10": 140 })).toEqual({ "2026-10-12": 140 });
+  expect(startLabels(days, new Set(["2026-10-10"]), { "2026-10-10": 140 })).toEqual({ "2026-10-10": 140 });
+  expect(startLabels(days, new Set(["2026-10-09"]), { "2026-10-09": 5 })).toEqual({ "2026-10-09": 5 });
+  const weeks = sheetWeeks(sheetDays("2026-10-03", "2026-10-20"));
+  expect(weeks.map((week) => [week.from, week.to])).toEqual([
+    ["2026-10-03", "2026-10-04"], ["2026-10-05", "2026-10-11"], ["2026-10-12", "2026-10-18"], ["2026-10-19", "2026-10-20"],
+  ]);
+  const marks = weekMarks(weeks[1], { deadline: "2026-10-09", sheet: { kit_arrival: cell("2026-10-05") },
+    calendar: { work: ["2026-10-07", "2026-10-08"], starts: { "2026-10-07": 12 }, notes: { "2026-10-08": "П" } } });
+  expect(marks.bar).toEqual({ from: 2 / 7, to: 4 / 7 });
+  expect(marks.quantity).toBe(12);
+  expect(marks.deadline).toBe(5 / 7);
+  expect(marks.arrival).toBe(0);
+  expect(marks.notes).toEqual(["08.10: П"]);
+});
+
+it("полоса «срок»: сегодня → дедлайн, просрочка — от дедлайна до сегодня, без дедлайна нет", () => {
+  expect(deadlineSpan({ deadline: "2026-10-16", calendar: { work: [], starts: {}, notes: {} } }, "2026-10-12")).toEqual({ from: "2026-10-12", to: "2026-10-16", late: false });
+  expect(deadlineSpan({ deadline: "2026-10-16", calendar: { work: ["2026-10-09", "2026-10-13"], starts: {}, notes: {} } }, "2026-10-12")).toEqual({ from: "2026-10-09", to: "2026-10-16", late: false });
+  expect(deadlineSpan({ deadline: "2026-10-12", calendar: undefined }, "2026-10-12")).toEqual({ from: "2026-10-12", to: "2026-10-12", late: false });
+  expect(deadlineSpan({ deadline: "2026-10-08", calendar: { work: ["2026-10-13"], starts: {}, notes: {} } }, "2026-10-12")).toEqual({ from: "2026-10-08", to: "2026-10-12", late: true });
+  expect(deadlineSpan({ deadline: null, calendar: { work: ["2026-10-13"], starts: {}, notes: {} } }, "2026-10-12")).toBeNull();
+  // Недели: доли недели 12–18.10 и 19–20.10 для полосы 12.10–21.10 не нужны; проверяем частичную неделю и пустую.
+  const weeks = sheetWeeks(sheetDays("2026-10-03", "2026-10-20"));
+  const row = { deadline: "2026-10-14", sheet: undefined as never, calendar: { work: [], starts: {}, notes: {} } };
+  const span = deadlineSpan(row, "2026-10-08");
+  expect(weekMarks(weeks[0], row, span).span).toBeNull();
+  expect(weekMarks(weeks[1], row, span).span).toEqual({ from: 3 / 7, to: 1, late: false });
+  expect(weekMarks(weeks[2], row, span).span).toEqual({ from: 0, to: 3 / 7, late: false });
+  expect(weekMarks(weeks[3], row, span).span).toBeNull();
+  expect(weekMarks(weeks[1], row).span).toBeNull();
+  const late = deadlineSpan({ ...row, deadline: "2026-10-06" }, "2026-10-14");
+  expect(weekMarks(weeks[1], { ...row, deadline: "2026-10-06" }, late).span).toEqual({ from: 1 / 7, to: 1, late: true });
 });

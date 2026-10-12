@@ -12,6 +12,7 @@ from app.modules.production.plan import normalize_project_number
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
+    access_admin_principal,
     authenticated_principal,
     operations_view_principal,
     production_edit_principal,
@@ -24,13 +25,19 @@ from app.shared.http_auth import (
 
 from .application import (
     CloseProjectTaskCommand,
+    DeadLetterNotFound,
+    DeadLetterRetryRefused,
     MarkReadCommand,
+    RetryDeadLetterCommand,
     UnitOfWork,
+    background_health,
     close_project_task,
     delete_notification,
     delete_notifications,
     mark_notifications_read,
+    retry_dead_letter,
 )
+from .background import BackgroundHealth
 from .domain import ProjectTask, ProjectTaskError, task_module_label
 
 
@@ -154,23 +161,82 @@ def audit(
     } for row in rows]}
 
 
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def tls_exceptions(request: Request) -> list[str]:
+    """Supplier domains read without a certificate check (ERP_TLS_UNVERIFIED_HOSTS), set by the app at start."""
+    return list(getattr(request.app.state, "tls_exception_hosts", ()) or ())
+
+
+def background_payload(health: BackgroundHealth, counts: dict) -> dict:
+    """Audit U08: the worker's heartbeats and the age of the queue, as «Системный журнал» and /api/health show them."""
+    oldest = health.oldest_pending
+    return {
+        "ok": health.ok,
+        "problems": list(health.problems),
+        "groups": [{
+            "key": group.key,
+            "label": group.label,
+            "status": group.status,
+            "success_at": _iso(group.success_at),
+            "failure_at": _iso(group.failure_at),
+            "error": group.error,
+            "duration_ms": group.duration_ms,
+            "failures": group.failures,
+            "max_silence_seconds": int(group.max_silence.total_seconds()),
+        } for group in health.groups],
+        "topics": [{
+            "topic": topic.topic,
+            "count": topic.count,
+            "oldest_at": _iso(topic.oldest_at),
+            "age_seconds": int(topic.age.total_seconds()),
+            "status": topic.status,
+        } for topic in health.topics],
+        "oldest_pending_seconds": int(oldest.age.total_seconds()) if oldest is not None else None,
+        **{key: counts[key] for key in ("total", "published", "pending", "dead")},
+    }
+
+
 @router.get("/api/operations/outbox")
 def outbox(
-    _principal: Annotated[Principal, Depends(operations_view_principal)],
+    request: Request,
+    principal: Annotated[Principal, Depends(operations_view_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(operations_uow_factory)],
 ) -> dict:
-    with uow_factory() as uow:
-        health = uow.operations.outbox_health()
+    health, counts = background_health(now, uow_factory())
     return {
-        **{key: health[key] for key in ("total", "published", "pending", "dead")},
+        **background_payload(health, counts),
         "failures": [{
             "id": str(row["id"]),
             "topic": row["topic"],
             "attempts": row["attempts"],
             "error": row["error"],
             "dead": row["dead"],
-        } for row in health["failures"]],
+        } for row in counts["failures"]],
+        # «Повторить» on a stopped job: the administrator's command, journalled (POST …/retry).
+        "can_retry": principal.full_access and not principal.service,
+        "tls_exceptions": tls_exceptions(request),
     }
+
+
+@router.post("/api/operations/outbox/{message_id}/retry")
+def retry_outbox_message(
+    message_id: UUID,
+    principal: Annotated[Principal, Depends(access_admin_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(operations_uow_factory)],
+) -> dict:
+    """Retry a stopped (dead-lettered) background job as it is. Repeating the call is harmless."""
+    try:
+        requeued = retry_dead_letter(RetryDeadLetterCommand(message_id, principal.actor, now), uow_factory())
+    except DeadLetterNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except DeadLetterRetryRefused as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"id": str(message_id), "requeued": requeued}
 
 
 # ── Задачи модулям по проекту (ARCH-TRACK-3, C2) ─────────────────────────

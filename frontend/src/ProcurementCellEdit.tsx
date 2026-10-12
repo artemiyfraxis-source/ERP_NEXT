@@ -2,7 +2,7 @@ import { useState, type KeyboardEvent } from "react";
 import { ApiError, failureText, procurementApi, type ProcurementLine } from "./api";
 import { formatDay } from "./format";
 
-/* Правка «Комментария» и «Ожид. даты» строки закупки прямо в ячейке (SUPPLYMAP писал их в лист руками).
+/* Правка «Комментария», Даташит и дат строки закупки прямо в ячейке (SUPPLYMAP писал их в лист руками).
    Клик по ячейке открывает поле; Enter или уход из поля сохраняет строку по её версии, Esc отменяет.
    409 — строку уже изменили: ячейка говорит об этом, а страница перечитывает именно эту строку;
    422 — текст сервера. Права на строку (своя, подходящий статус) окончательно решает сервер:
@@ -27,7 +27,7 @@ export interface LineEditing {
   onConflict: (line: ProcurementLine) => void | Promise<unknown>;
 }
 
-export type LineField = "note" | "expected_arrival" | "actual_arrival";
+export type LineField = "note" | "datasheet" | "expected_arrival" | "actual_arrival";
 
 /** Сохраняет одно поле строки; при отказе бросает Error с текстом для ячейки. */
 export async function saveLineField(line: ProcurementLine, field: LineField, value: string, editing: LineEditing): Promise<void> {
@@ -35,6 +35,8 @@ export async function saveLineField(line: ProcurementLine, field: LineField, val
   try {
     const result = field === "note"
       ? await procurementApi.setNote(line.id, line.version, value)
+      : field === "datasheet"
+        ? await procurementApi.setDatasheet(line.id, line.version, value)
       : field === "actual_arrival"
         ? await procurementApi.setActualArrival(line.id, line.version, value)
         : await procurementApi.setExpectedArrival(line.id, line.version, value);
@@ -149,6 +151,34 @@ export function NoteCell({ line, editing, canEdit = true, disabled }: { line: Pr
       line={line} field="note" kind="text" label="Комментарий" value={line.note ?? ""} shown={line.note ?? ""}
       editing={editing} canEdit={canEdit && canEditNote(line)} disabled={disabled}
     />
+  );
+}
+
+const WEB_LINK = /^https?:\/\/\S+$/i;
+
+/** Даташит в покое: у ссылки — адрес сайта («example.com»), иначе текст как есть. */
+export function datasheetLabel(value: string | null | undefined): string {
+  const text = String(value ?? "").trim();
+  if (!WEB_LINK.test(text)) return text;
+  try { return new URL(text).hostname.replace(/^www\./, ""); } catch { return text; }
+}
+
+/** Даташит строки: ссылка на описание позиции или текст. Правится там же и тем же, что комментарий. */
+export function DatasheetCell({ line, editing, canEdit = true, disabled }: { line: ProcurementLine; editing?: LineEditing; canEdit?: boolean; disabled?: boolean }) {
+  const value = line.datasheet ?? "";
+  const link = WEB_LINK.test(value.trim()) ? value.trim() : "";
+  const open = link && <a className="cell-link" href={link} target="_blank" rel="noreferrer" title={link}>открыть</a>;
+  if (!editing || !canEdit || !canEditNote(line) || disabled) {
+    return link ? <a href={link} target="_blank" rel="noreferrer" title={link}>{datasheetLabel(value)}</a> : <>{value}</>;
+  }
+  return (
+    <>
+      <EditableCell
+        line={line} field="datasheet" kind="text" label="Даташит" value={value} shown={datasheetLabel(value)}
+        editing={editing} canEdit
+      />
+      {open}
+    </>
   );
 }
 

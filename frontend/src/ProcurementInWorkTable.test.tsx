@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ProcurementInWorkTable, linkHost, linkHref, positionsWord, LINK_HINT } from "./ProcurementInWorkTable";
+import { OPEN_GROUP_LIMIT, ProcurementInWorkTable, linkHost, linkHref, positionsWord, LINK_HINT } from "./ProcurementInWorkTable";
 import type { ProcurementLine } from "./api";
 
 function line(id: number, fields: Partial<ProcurementLine> = {}): ProcurementLine {
@@ -280,11 +280,11 @@ it("keeps every row action visible on the row (no «⋯» menu), without approva
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   const actions = within(screen.getByRole("group", { name: "Действия SM-1" }));
   expect(actions.getAllByRole("button").map((item) => item.textContent)).toEqual([
-    "Со склада", "Прослеж.…", "Отменить строку",
+    "Со склада", "Документы…", "Есть на складе, без ГРН", "Отменить строку",
   ]);
   // Полное название — в имени и подсказке кнопки: колонка действий узкая.
-  expect(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" })).toHaveAttribute("title", "Прослеживаемость, раздробить…");
-  fireEvent.click(actions.getByRole("button", { name: "Прослеживаемость, раздробить…" }));
+  expect(actions.getByRole("button", { name: "Документы, прослеживаемость…" })).toHaveAttribute("title", "Документы, прослеживаемость…");
+  fireEvent.click(actions.getByRole("button", { name: "Документы, прослеживаемость…" }));
   expect(screen.getByText("детали")).toBeInTheDocument();
 });
 
@@ -402,11 +402,68 @@ it("shows the covered quantity on the row and releases it from the menu", async 
   expect(posted).toEqual([`POST /api/procurement/${line(1).id}/stock-cover/release`]);
 });
 
-// 300 строк у 15 поставщиков: у поставщиков 1-5 по 40 строк (свёрнуты), у 6-15 по 10 (открыты).
+it("marks «Есть на складе, без ГРН» with the quantity to buy and an optional warehouse, no lot", async () => {
+  const posted: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (String(input).endsWith("/stock-cover") && init?.method === "POST") {
+      posted.push(JSON.parse(String(init.body)));
+      return jsonResponse({ line: line(1), cover: { ...cover, lot_id: null, grn: "", warehouse: "ЖУК", quantity: "2" } });
+    }
+    throw new Error(`Unexpected request: ${String(input)}`);
+  });
+  const onChanged = vi.fn();
+  renderTable([line(1)], { onChanged });
+
+  fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Есть на складе, без ГРН" }));
+  const form = screen.getByRole("form", { name: "Есть на складе, без ГРН SM-1" });
+  expect(within(form).queryByLabelText("Поиск на складе")).not.toBeInTheDocument();
+  expect((screen.getByLabelText("Количество без ГРН") as HTMLInputElement).value).toBe("2");
+  expect((screen.getByLabelText("Склад без ГРН") as HTMLSelectElement).value).toBe("");
+  fireEvent.change(screen.getByLabelText("Склад без ГРН"), { target: { value: "ЖУК" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Отметить со склада" }));
+
+  await waitFor(() => expect(posted).toEqual([{ version: 2, quantity: "2", warehouse: "ЖУК" }]));
+  await waitFor(() => expect(onChanged).toHaveBeenCalledWith("SM-1: есть на складе 2 шт, без ГРН"));
+  expect(screen.queryByRole("form", { name: "Есть на складе, без ГРН SM-1" })).not.toBeInTheDocument();
+});
+
+it("binds a ГРН to a cover made without one: the whole quantity, a lot with less is not offered", async () => {
+  const posted: string[] = [];
+  const lotless = { ...cover, id: "c9", lot_id: null, grn: "", warehouse: "", quantity: "3" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path.includes("/stock-candidates")) {
+      return jsonResponse({ line: line(1), query: "A-9", lots: [lot("1", { available: "2" }), lot("2")], covers: [lotless] });
+    }
+    if (path.endsWith("/stock-cover/c9/bind") && init?.method === "POST") {
+      posted.push(String(init.body));
+      return jsonResponse({ line: line(1), cover: { ...lotless, lot_id: "2", grn: "ГРН-2" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const onChanged = vi.fn();
+  renderTable([line(1, { stock_covered: "3", to_buy: "0" } as Partial<ProcurementLine>)], { onChanged });
+
+  fireEvent.click(within(screen.getByRole("group", { name: "Действия SM-1" })).getByRole("button", { name: "Со склада" }));
+  expect(await screen.findByText(/Без ГРН: 3 шт/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Привязать ГРН" }));
+  expect(screen.getByRole("button", { name: "Отменить привязку" })).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Партия ГРН-1"));
+  expect(screen.getByRole("button", { name: "Привязать ГРН ГРН-1" })).toBeDisabled();
+  fireEvent.click(screen.getByLabelText("Партия ГРН-2"));
+  expect(screen.getByLabelText("Количество со склада")).toBeDisabled();
+  expect((screen.getByLabelText("Количество со склада") as HTMLInputElement).value).toBe("3");
+  fireEvent.click(screen.getByRole("button", { name: "Привязать ГРН ГРН-2" }));
+
+  await waitFor(() => expect(posted).toEqual([JSON.stringify({ version: 2, lot_id: "2" })]));
+  await waitFor(() => expect(onChanged).toHaveBeenCalledWith("SM-1: ГРН ГРН-2 привязан, резерв 3 шт"));
+});
+
+// 62 строки у 4 поставщиков: у 1-2 по OPEN_GROUP_LIMIT+1 строк (свёрнуты), у 3-4 по 10 (открыты).
 function bigQueue(): ProcurementLine[] {
   const rows: ProcurementLine[] = [];
-  for (let s = 1; s <= 15; s += 1) {
-    const count = s <= 5 ? 40 : 10;
+  for (let s = 1; s <= 4; s += 1) {
+    const count = s <= 2 ? OPEN_GROUP_LIMIT + 1 : 10;
     for (let k = 0; k < count; k += 1) {
       const n = rows.length + 1;
       rows.push(line(n, { id: `row-${n}`, legacy_id: `SM-${n}`, supplier: `Поставщик ${String(s).padStart(2, "0")}`, status: "Готов к запросу" }));
@@ -420,35 +477,35 @@ const head = (title: string) => screen.getByRole("button", { name: `Группа
 it("starts groups of more than 20 rows folded without inputs and keeps open ones editable", () => {
   window.localStorage.clear();
   renderTable(bigQueue());
-  expect(document.querySelectorAll("tr.group-row")).toHaveLength(15);
+  expect(document.querySelectorAll("tr.group-row")).toHaveLength(4);
   expect(head("Поставщик 01")).toHaveAttribute("aria-expanded", "false");
-  expect(head("Поставщик 06")).toHaveAttribute("aria-expanded", "true");
-  // Свёрнутые: SM-1..SM-200 без полей; открытые: SM-201..SM-300 с полями.
+  expect(head("Поставщик 03")).toHaveAttribute("aria-expanded", "true");
+  // Свёрнутые: SM-1..SM-42 без полей; открытые: SM-43..SM-62 с полями.
   expect(screen.queryByLabelText("Кол-во факт SM-1")).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Кол-во факт SM-200")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("Кол-во факт SM-201")).toBeInTheDocument();
-  expect(screen.getAllByLabelText(/^Кол-во факт SM-/)).toHaveLength(100);
+  expect(screen.queryByLabelText("Кол-во факт SM-42")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Кол-во факт SM-43")).toBeInTheDocument();
+  expect(screen.getAllByLabelText(/^Кол-во факт SM-/)).toHaveLength(20);
   // Шапка свёрнутой группы держит число, сумму и «Сформировать запрос».
   const row = head("Поставщик 01").closest("tr")!;
-  expect(row).toHaveTextContent("40 позиций");
+  expect(row).toHaveTextContent("21 позиция");
   expect(within(row).getByRole("button", { name: "Сформировать запрос" })).toBeEnabled();
 });
 
-it("remembers an opened or folded group after remount", { timeout: 30_000 }, () => {
+it("remembers an opened or folded group after remount", () => {
   window.localStorage.clear();
   const first = renderTable(bigQueue());
   fireEvent.click(head("Поставщик 01"));
-  fireEvent.click(head("Поставщик 06"));
+  fireEvent.click(head("Поставщик 03"));
   expect(screen.getByLabelText("Кол-во факт SM-1")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Кол-во факт SM-201")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Кол-во факт SM-43")).not.toBeInTheDocument();
   first.unmount();
 
   renderTable(bigQueue());
   expect(head("Поставщик 01")).toHaveAttribute("aria-expanded", "true");
-  expect(head("Поставщик 06")).toHaveAttribute("aria-expanded", "false");
+  expect(head("Поставщик 03")).toHaveAttribute("aria-expanded", "false");
   expect(screen.getByLabelText("Кол-во факт SM-1")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Кол-во факт SM-201")).not.toBeInTheDocument();
-  expect(JSON.parse(window.localStorage.getItem("erp-table:procurement-inwork-groups")!).groups).toEqual({ "поставщик 01": true, "поставщик 06": false });
+  expect(screen.queryByLabelText("Кол-во факт SM-43")).not.toBeInTheDocument();
+  expect(JSON.parse(window.localStorage.getItem("erp-table:procurement-inwork-groups")!).groups).toEqual({ "поставщик 01": true, "поставщик 03": false });
 });
 
 it("still saves an edit made in a group that was folded afterwards", async () => {
@@ -459,13 +516,13 @@ it("still saves an edit made in a group that was folded afterwards", async () =>
     return new Response(JSON.stringify({ lines: [], saved: 1, ready: 1, skipped: [], failed: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
   });
   renderTable(bigQueue());
-  fireEvent.change(screen.getByLabelText("Артикул SM-201"), { target: { value: "A-201" } });
-  fireEvent.click(head("Поставщик 06"));
-  expect(screen.queryByLabelText("Артикул SM-201")).not.toBeInTheDocument();
-  expect(head("Поставщик 06").closest("tr")).toHaveTextContent("изменено: 1");
+  fireEvent.change(screen.getByLabelText("Артикул SM-43"), { target: { value: "A-43" } });
+  fireEvent.click(head("Поставщик 03"));
+  expect(screen.queryByLabelText("Артикул SM-43")).not.toBeInTheDocument();
+  expect(head("Поставщик 03").closest("tr")).toHaveTextContent("изменено: 1");
   fireEvent.click(screen.getByRole("button", { name: "Сохранить всё (1)" }));
   await waitFor(() => expect(sent).toHaveLength(1));
-  expect(sent[0].rows).toEqual([expect.objectContaining({ line_id: "row-201", design_article: "A-201" })]);
+  expect(sent[0].rows).toEqual([expect.objectContaining({ line_id: "row-43", design_article: "A-43" })]);
 });
 
 it("shows the editable comment cell of «В работе» like the order blocks: a bordered field with «добавить»", () => {

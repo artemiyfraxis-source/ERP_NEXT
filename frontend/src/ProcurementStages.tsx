@@ -9,6 +9,7 @@ import { useLineHistory } from "./LineHistory";
 import { ActualDateCell, ExpectedDateCell, NoteCell, type LineEditing } from "./ProcurementCellEdit";
 import { RowActions, type MenuItem } from "./ProcurementRowMenu";
 import { PriceHint, usePriceHistory } from "./PriceHistoryHint";
+import { waitsForGrn } from "./ProcurementStockPicker";
 import { formatAmount } from "./ProcurementSheetColumns";
 
 /* «Мои позиции» листа закупки — раздельные блоки, каждый сворачивается щелчком по заголовку (владелец, 05.10:
@@ -252,13 +253,14 @@ function groupHeading(group: OrderGroup) {
   };
 }
 
-// Что закупщик вводит сам до счёта: валюту, цену, цену с НДС и сумму выводит «Цена факт», наименование в счёт
-// подставляется при «Вставить счёт», ожидаемая дата вводится в форме счёта.
+// Денежные поля (валюта, цена, цена с НДС, сумма — их выводит «Цена факт»). Счёт без них не запрещён (владелец, 06.10:
+// «предупреждение, а не запрет») — строка уходит «В оплату» с пометкой «нет цены», «Оплачено» ждёт цену.
 const PRICE_FIELDS = new Set(["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)"]);
-const missingForInvoice = (line: ProcurementLine) => {
-  const rest = line.pay_missing.filter((name) => !PRICE_FIELDS.has(name) && name !== "ОЖИД. ДАТА" && name !== "НАИМЕНОВАНИЕ (Счет)");
-  return line.pay_missing.some((name) => PRICE_FIELDS.has(name)) ? ["Цена факт", ...rest] : rest;
-};
+const priceMissing = (line: ProcurementLine) => line.pay_missing.filter((name) => PRICE_FIELDS.has(name));
+// Что держит счёт: наименование в счёт подставляется при «Вставить счёт», ожидаемая дата вводится в окне счёта.
+const missingForInvoice = (line: ProcurementLine) =>
+  line.pay_missing.filter((name) => !PRICE_FIELDS.has(name) && name !== "ОЖИД. ДАТА" && name !== "НАИМЕНОВАНИЕ (Счет)");
+const PRICE_LATER = "Оплатить можно после цены — «Заменить счёт»";
 
 /** Ближайший рабочий день (сегодня, если будни; иначе понедельник) — ISO, по местному времени. */
 export function nearestWorkingDay(from = new Date()): string {
@@ -383,7 +385,13 @@ export function orderStatus(group: OrderGroup): { label: string; tone: string; t
   const stage = orderStage(group);
   if (stage === "awaiting") return { label: "Жду счёт", tone: "tone-info", title: group.date ? `Запрос отправлен ${formatDay(group.date)}` : "Запрос отправлен" };
   if (stage === "topay") return { label: "Ждёт оплаты", tone: "tone-warn" };
-  if (stage === "accepted") return { label: "Принято", tone: "tone-neutral" };
+  if (stage === "accepted") {
+    // Строка «Готово · без ГРН» в заказе: принято, но партию к ней ещё привязывают — заголовок говорит об этом сразу.
+    const lotless = group.lines.filter(waitsForGrn);
+    return lotless.length
+      ? { label: "Принято · без ГРН", tone: "tone-info", title: `Ждут «Привязать ГРН»: ${lotless.map((line) => line.legacy_id).join(", ")}` }
+      : { label: "Принято", tone: "tone-neutral" };
+  }
   const done = group.lines.filter((line) => line.status === DONE).length;
   const accepted = done ? `принято ${done} из ${group.lines.length}` : "";
   if (stage === "quarantine") {
@@ -408,16 +416,31 @@ export function orderGroups(lines: ProcurementLine[]): OrderGroup[] {
 
 const LINE_STATUS: Record<string, string> = { [AWAITING]: "Жду счёт", [TO_PAY]: "Ждёт оплаты", "Готово": "Принято" };
 
-/** «Статус» строки заказа и, мелко под ним, чего не хватает для счёта или оплаты. */
+/** «Статус» строки заказа и, мелко под ним, чего не хватает для счёта или оплаты; «нет цены» — предупреждение. */
 function lineStatus(line: ProcurementLine): ReactNode {
   const label = LINE_STATUS[line.status] ?? line.status;
+  const price = priceMissing(line);
+  if (waitsForGrn(line)) return <>{label}<small className="tone-warn">без ГРН</small></>;
   if (line.status === AWAITING) {
     const missing = missingForInvoice(line);
-    return <>{label}{missing.length > 0 && <small className="tone-warn">не хватает: {missing.join(", ")}</small>}</>;
+    return (
+      <>
+        {label}
+        {missing.length > 0 && <small className="tone-warn">не хватает: {missing.join(", ")}</small>}
+        {price.length > 0 && <small className="tone-warn">нет цены</small>}
+      </>
+    );
   }
   if (line.status === TO_PAY) {
-    const hint = !line.invoice_url ? "нет счёта" : line.pay_missing.length ? `не хватает: ${line.pay_missing.join(", ")}` : "";
-    return <>{label}{hint && <small className="tone-warn">{hint}</small>}</>;
+    if (!line.invoice_url) return <>{label}<small className="tone-warn">нет счёта</small></>;
+    const rest = line.pay_missing.filter((name) => !PRICE_FIELDS.has(name));
+    return (
+      <>
+        {label}
+        {price.length > 0 && <small className="tone-warn" title={PRICE_LATER}>нет цены: {price.join(", ")}</small>}
+        {rest.length > 0 && <small className="tone-warn">не хватает: {rest.join(", ")}</small>}
+      </>
+    );
   }
   if (line.status === "Карантин") return <span className="tone-warn" title="Приёмка нашла несоответствие — ждёт решения">Карантин</span>;
   return label;
@@ -454,7 +477,9 @@ function PaidOrderAction({ group, disabled, onPaidOrder }: {
   const [prompt, setPrompt] = useState<ManualRatePrompt | null>(null);
   const [rate, setRate] = useState("");
   const [busy, setBusy] = useState(false);
-  const notReady = group.lines.filter((line) => line.status === TO_PAY).some((line) => !payable(line) || line.pay_missing.length > 0);
+  const toPay = group.lines.filter((line) => line.status === TO_PAY);
+  const notReady = toPay.some((line) => !payable(line) || line.pay_missing.length > 0);
+  const unpriced = toPay.filter((line) => priceMissing(line).length > 0).map((line) => line.legacy_id);
 
   async function pay() {
     setBusy(true);
@@ -474,7 +499,8 @@ function PaidOrderAction({ group, disabled, onPaidOrder }: {
       )}
       <button
         type="button" className="primary small" disabled={disabled || busy || notReady || (Boolean(prompt) && !rate.trim())}
-        title={notReady ? "Оплата закрыта: у строк нет счёта или не заполнены суммы" : undefined} onClick={() => void pay()}
+        title={!notReady ? undefined : unpriced.length ? `Оплата закрыта — нет цены: ${unpriced.join(", ")}. Цену внесите через «Заменить счёт»` : "Оплата закрыта: у строк нет счёта или не заполнены суммы"}
+        onClick={() => void pay()}
       >
         {busy ? "Проводим…" : "Оплачено"}
       </button>
@@ -697,7 +723,8 @@ const isNumber = (value: string) => decimal(value) !== "" && Number.isFinite(Num
 /** Окно документа по заказу (владелец, 05.10: «вставка КП / счёта, и с него автоматом считывается цена»,
  *  «это должно быть окном, а не снизу»): файл → сервер распознаёт № и дату, цены строк и насколько уверенно
  *  нашёл каждую; цены правятся здесь же, если распознано не то. Подтверждение пишет все строки заказа или ни одной:
- *  КП — только цены, строки ждут счёт; счёт — цены и счёт, строки уходят «В оплату» (ожидаемая дата обязательна). */
+ *  КП — только цены, строки ждут счёт; счёт — цены и счёт, строки уходят «В оплату» (ожидаемая дата обязательна,
+ *  цена — нет: без неё окно предупреждает, «Оплачено» ждёт цену). */
 function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply, onClose }: {
   group: OrderGroup;
   /** Строки стадии, к которым относится документ: «Жду счет», а для «Заменить счёт» — «В оплату». */
@@ -749,8 +776,11 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
   const noPrice = lines.filter((line) => priceOf(line).trim() === "");
   const blocker = !result ? `Выберите файл ${invoice ? "счёта" : "КП"}`
     : badPrice.length ? `Цена не числом: ${badPrice.map((line) => line.legacy_id).join(", ")}`
-      : invoice && noPrice.length ? `Нет цены: ${noPrice.map((line) => line.legacy_id).join(", ")}`
-        : invoice && !expected ? "Укажите ожидаемую дату" : "";
+      : invoice && !expected ? "Укажите ожидаемую дату" : "";
+  // Счёт без цены строки не держится (владелец, 06.10): строка уходит «В оплату», «Оплачено» ждёт цену.
+  const priceWarning = invoice && result && noPrice.length
+    ? `Нет цены: ${noPrice.map((line) => line.legacy_id).join(", ")} — ${replace ? "счёт заменится, «Оплачено» — после цены" : "строки уйдут «В оплату», «Оплачено» — после цены («Заменить счёт»)"}`
+    : "";
 
   async function read(file: File) {
     setReading(true);
@@ -891,6 +921,7 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
                     <td className="num doc-price">
                       <input
                         aria-label={`Цена с НДС ${line.legacy_id}`} inputMode="decimal" disabled={sending} aria-invalid={badPrice.includes(line) || undefined}
+                        placeholder={invoice && result ? "нет цены" : undefined}
                         value={priceOf(line)} onChange={(event) => setPrices((current) => ({ ...current, [line.id]: event.target.value }))}
                       />
                     </td>
@@ -910,6 +941,7 @@ function OrderDocumentDialog({ group, lines, kind, replace, onRecognize, onApply
           </table>
         </div>
         {result?.hint && <div className="warning-inline" role="status">{result.hint}</div>}
+        {priceWarning && <div className="warning-inline" role="status">{priceWarning}</div>}
         {result && result.unmatched_items.length > 0 && (
           <div className="warning-inline doc-unmatched">
             <strong>В документе, но не найдено в заказе: {result.unmatched_items.length}</strong>
@@ -989,6 +1021,7 @@ export function BackorderStage({ lines, disabled, busyId, actionsOf, editing, on
         rowKey={(line) => line.id}
         storageKey="procurement-backorder"
         compactBelow={COMPACT_BELOW}
+        hideSearch
         emptyText="Дозавоза нет"
       />
       {panel.node}</>}
@@ -1021,6 +1054,7 @@ export function OtherStage({ lines, disabled, busyId, actionsOf, editing }: Stag
         rowKey={(line) => line.id}
         storageKey="procurement-other"
         compactBelow={COMPACT_BELOW}
+        hideSearch
       />
       {panel.node}</>}
     </section>

@@ -18,7 +18,16 @@ from typing import Any, Iterable
 
 from app.modules.fulfillment.domain import FulfillmentStatus
 from app.modules.operations.domain import task_module_label
-from app.modules.production.plan import kit_key_from_purpose, normalize_project_number, project_from_purpose
+from app.modules.production.plan import (
+    KIT_STAGES,
+    PLAN_KINDS,
+    PLAN_STAGE_AUTO,
+    PROJECT_TERMINALS,
+    kit_key_from_purpose,
+    normalize_project_number,
+    project_from_purpose,
+    stage_skipped,
+)
 from app.modules.techcards.kitsets import item_id, project_key
 from app.modules.techcards.project_cards import TechcardStatus
 from app.workflows.project_kitset import request_matches_project
@@ -35,8 +44,10 @@ MODULE_SHIPPING = "Отгрузка"
 # Задачи, которые арбитр поставил модулям по проекту (C2, `app.workflows.arbiter`).
 MODULE_TASKS = "Задачи"
 
-# Читаем всё, как `kitset_facts` (limit=10_000): у модулей нет выборки «по проекту», а фильтр нужен после нормализации.
-_LIMIT = 100_000
+# Каждый модуль отдаёт только записи этого проекта (`for_project`: точный ключ № проекта по индексу, U06), без общего
+# лимита: старый проект не пропадает за границей «первых N» всей ERP, а чтение растёт с проектом, а не со всей базой.
+# Задачи арбитра и так выбираются по проекту; их предел — на один проект, недостижимый на деле.
+_PROJECT_TASKS_LIMIT = 100_000
 
 
 @dataclass(frozen=True)
@@ -95,7 +106,7 @@ def _project_entries(uow, project: str) -> list[TrackEntry]:
         if kitset.updated_at > kitset.created_at:
             entries.append(TrackEntry(kitset.updated_at, MODULE_PROJECTS, "Карточка проекта", kitset.project, "Обновлена"))
     canon = project_key(project)
-    for card in sorted((card for card in uow.techcards.list() if project_key(card.project) == canon),
+    for card in sorted((card for card in uow.techcards.for_project(project) if project_key(card.project) == canon),
                        key=lambda card: (card.item_index, card.created_at)):
         ref = item_id(card.project, card.item_index)
         index = card.item_index.strip().upper()
@@ -112,7 +123,7 @@ def _project_entries(uow, project: str) -> list[TrackEntry]:
 def _request_entries(uow, canon: str, kb_of_request: dict[Any, str]) -> list[TrackEntry]:
     """Заявки проекта; `kb_of_request` заполняется для закупки: {id заявки: КБ}."""
     entries: list[TrackEntry] = []
-    for request in sorted((request for request in uow.requests.recent(_LIMIT) if request_matches_project(canon, request)),
+    for request in sorted((request for request in uow.requests.for_project(canon) if request_matches_project(canon, request)),
                           key=lambda request: (request.created_at, request.legacy_id)):
         index = _kb(request.purpose, request.designation)
         kb_of_request[request.id] = index
@@ -129,7 +140,7 @@ def _procurement_entries(
     """Строки закупки проекта — по заявке или по № проекта; `kb_of_line` заполняется для приёмки: {id строки: КБ}."""
     entries: list[TrackEntry] = []
     lines = [
-        line for line in uow.procurement.list(limit=_LIMIT)
+        line for line in uow.procurement.for_project(canon, tuple(kb_of_request))
         if line.source_request_id in kb_of_request
         or (line.project_reference and normalize_project_number(line.project_reference) == canon)
     ]
@@ -146,7 +157,7 @@ def _procurement_entries(
 def _receiving_entries(uow, canon: str, kb_of_line: dict[Any, str]) -> list[TrackEntry]:
     entries: list[TrackEntry] = []
     mine = [
-        line for line in uow.receiving.queue(limit=_LIMIT)
+        line for line in uow.receiving.for_project(canon, tuple(kb_of_line))
         if line.procurement_line_id in kb_of_line
         or canon in (project_from_purpose(line.purpose), project_from_purpose(line.goal))
     ]
@@ -168,7 +179,7 @@ def _receiving_entries(uow, canon: str, kb_of_line: dict[Any, str]) -> list[Trac
 
 def _fulfillment_entries(uow, canon: str) -> list[TrackEntry]:
     entries: list[TrackEntry] = []
-    mine = [request for request in uow.fulfillment.list(limit=_LIMIT) if project_from_purpose(request.purpose) == canon]
+    mine = [request for request in uow.fulfillment.for_project(canon) if project_from_purpose(request.purpose) == canon]
     for request in sorted(mine, key=lambda request: (request.created_at, request.number)):
         index = _kb(request.purpose)
         entries.append(TrackEntry(
@@ -184,7 +195,7 @@ def _fulfillment_entries(uow, canon: str) -> list[TrackEntry]:
 
 def _production_entries(uow, canon: str) -> list[TrackEntry]:
     tasks = sorted(
-        (task for task in uow.production.list(limit=_LIMIT) if normalize_project_number(task.project) == canon),
+        (task for task in uow.production.for_project(canon) if normalize_project_number(task.project) == canon),
         key=lambda task: (task.created_at, task.number),
     )
     # Операция выполнена, когда по ней сдано не меньше количества задания (`prodOpState_` в production/api.py).
@@ -210,13 +221,65 @@ def _production_entries(uow, canon: str) -> list[TrackEntry]:
     return entries
 
 
+def _by(event: Any) -> str:
+    return f" · {event.who}" if event.who else ""
+
+
+def _stage_entries(event: Any) -> list[TrackEntry]:
+    """Одна ручная смена этапа КБ журнала плана: пропущенные этапы (по одной строке), затем цель; назад и «авто» — одна."""
+    index = event.item_index
+    at = event.occurred_at
+    reason = f" · причина: {event.reason}" if event.reason else ""
+
+    def entry(ref: str, status: str) -> TrackEntry:
+        return TrackEntry(at, MODULE_PRODUCTION, "Этап КБ", ref, status, index)
+
+    if event.value == PLAN_STAGE_AUTO:
+        return [entry(PLAN_STAGE_AUTO, f"этап снова по фактам{_by(event)}{reason}")]
+    before = event.from_value
+    if before in KIT_STAGES and event.value in KIT_STAGES and KIT_STAGES.index(event.value) < KIT_STAGES.index(before):
+        return [entry(event.value, f"возврат вручную {before} → {event.value}{reason}{_by(event)}")]
+    rows = [entry(stage, f"пропущен вручную{_by(event)}") for stage in stage_skipped(before, event.value)]
+    rows.append(entry(event.value, f"выставлен вручную{_by(event)}{reason}"))
+    return rows
+
+
+def _plan_entries(uow, canon: str) -> list[TrackEntry]:
+    """Ручные этапы, блокеры и закрытые статусы из журнала плана производства; этапы по фактам идут отдельно."""
+    entries: list[TrackEntry] = []
+    for event in uow.plan_events.of_project(canon):
+        if event.kind == PLAN_KINDS["stage"]:
+            entries += _stage_entries(event)
+        elif event.kind == PLAN_KINDS["block"]:
+            text = f" · {event.text}" if event.text else ""
+            entries.append(TrackEntry(
+                event.occurred_at, MODULE_PRODUCTION, "Блокер", event.blocker, f"поставлен{_by(event)}{text}",
+            ))
+        elif event.kind == PLAN_KINDS["unblock"]:
+            entries.append(TrackEntry(
+                event.occurred_at, MODULE_PRODUCTION, "Блокер", event.blocker, f"снят{_by(event)}",
+            ))
+        elif event.kind == PLAN_KINDS["status"]:
+            reason = f" · причина: {event.reason}" if event.reason else ""
+            if event.value in PROJECT_TERMINALS:
+                entries.append(TrackEntry(
+                    event.occurred_at, MODULE_PRODUCTION, "Статус проекта", event.value, f"выставлен{_by(event)}{reason}",
+                ))
+            else:
+                entries.append(TrackEntry(
+                    event.occurred_at, MODULE_PRODUCTION, "Статус проекта", event.from_value,
+                    f"возвращён в работу{_by(event)}{reason}",
+                ))
+    return entries
+
+
 def _number(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
 def _good_entries(uow, canon: str) -> list[TrackEntry]:
     entries: list[TrackEntry] = []
-    mine = [good for good in uow.goods.list(limit=_LIMIT) if normalize_project_number(good.project) == canon]
+    mine = [good for good in uow.goods.for_project(canon) if normalize_project_number(good.project) == canon]
     for good in sorted(mine, key=lambda good: (good.item_index, good.article)):
         index = good.item_index.strip().upper()
         ref = good.grn or good.article or item_id(good.project, good.item_index)
@@ -233,7 +296,7 @@ def _good_entries(uow, canon: str) -> list[TrackEntry]:
 
 def _shipment_entries(uow, canon: str) -> list[TrackEntry]:
     entries: list[TrackEntry] = []
-    for shipment in sorted(uow.shipments.list(limit=_LIMIT), key=lambda shipment: (shipment.created_at, shipment.number)):
+    for shipment in sorted(uow.shipments.for_project(canon), key=lambda shipment: (shipment.created_at, shipment.number)):
         lines = [line for line in shipment.lines if normalize_project_number(line.project) == canon]
         if not lines:
             continue
@@ -254,7 +317,7 @@ def _task_entries(uow, canon: str) -> list[TrackEntry]:
     return [
         TrackEntry(task.created_at, MODULE_TASKS, task.title, task_module_label(task.module), task.status_label,
                    task.item_index)
-        for task in uow.project_tasks.list(project=canon, limit=_LIMIT)
+        for task in uow.project_tasks.list(project=canon, limit=_PROJECT_TASKS_LIMIT)
     ]
 
 
@@ -286,7 +349,7 @@ def project_track(
     entries += _read(procurement, lambda uow: _procurement_entries(uow, canon, kb_of_request, kb_of_line))
     entries += _read(receiving, lambda uow: _receiving_entries(uow, canon, kb_of_line))
     entries += _read(fulfillment, lambda uow: _fulfillment_entries(uow, canon))
-    entries += _read(production, lambda uow: _production_entries(uow, canon))
+    entries += _read(production, lambda uow: _production_entries(uow, canon) + _plan_entries(uow, canon))
     entries += _read(shipping, lambda uow: _good_entries(uow, canon) + _shipment_entries(uow, canon))
     entries += _read(tasks, lambda uow: _task_entries(uow, canon))
     return _order(entries)

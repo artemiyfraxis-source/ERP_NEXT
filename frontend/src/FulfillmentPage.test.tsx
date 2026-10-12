@@ -63,9 +63,15 @@ async function expand(number: string) {
   fireEvent.click((await screen.findAllByText(number))[0]);
 }
 
+/* «Выдача со списанием» opens on «Укомплектован» + «КБ Возвращена»; «Все» shows every stage of the screen. */
+async function showAll() {
+  fireEvent.click(await screen.findByRole("button", { name: /^Все · / }));
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
   window.localStorage.removeItem("erp.fulfillment.view");
+  window.localStorage.removeItem("erp.fulfillment.give.stages");
 });
 
 it("opens the lot search already filtered by the position name and binds the picked lot", async () => {
@@ -164,9 +170,10 @@ it("lets a technical lead with edit on handout hand a kit out", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<FulfillmentPage principal={director} mode="give" />);
+  await showAll();
   await expand("FRX-ISS-26-0001");
   fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
-  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/issue`]));
+  await waitFor(() => expect(posts).toEqual(["/api/issues/issue-batch"]));
 });
 
 it("prints the issue sheet and, once something is issued, offers the return sheet too", async () => {
@@ -458,6 +465,7 @@ it("closes an issued request without return on the handout screen", async () => 
 
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
   render(<FulfillmentPage principal={principal} mode="give" />);
+  await showAll();
   await expand("FRX-ISS-26-0001");
   // issMove_: every stage move asks first; «Отмена» in the dialog leaves the request as it is.
   fireEvent.click(await screen.findByRole("button", { name: "Готово" }));
@@ -481,11 +489,12 @@ it("warns that handing the kit out writes the stock off before it does", async (
   const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
   render(<FulfillmentPage principal={principal} mode="give" />);
+  await showAll();
   await expand("FRX-ISS-26-0001");
   fireEvent.click(await screen.findByRole("button", { name: "Выдать комплект" }));
 
   expect(confirm.mock.calls[0][0]).toContain("Количество спишется со склада");
-  await waitFor(() => expect(posts).toEqual([`/api/issues/${request.id}/issue`]));
+  await waitFor(() => expect(posts).toEqual(["/api/issues/issue-batch"]));
 });
 
 it("lets only the administrator delete a request", async () => {
@@ -741,4 +750,150 @@ it("marks one line «есть, не заведено», counts it as closed and 
   fireEvent.click(screen.getByRole("button", { name: "Снять отметку" }));
   expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
   expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
+});
+
+/* Owner 06.10.2026, project 33МФ.2: КБ1 and КБ2 «Укомплектован», КБ3 «Готов к выдаче» — issue any КБ or the whole order. */
+const order = (overrides: Partial<FulfillmentRequest>[]): FulfillmentRequest[] => overrides.map((item, index) => ({
+  ...request,
+  id: `o${index + 1}`,
+  number: `REQ.26.00000${19 + index}`,
+  purpose: `33МФ.2 · КБ${index + 1} · Жгут`,
+  project: "33МФ.2",
+  version: 5 + index,
+  lines: [boundLine],
+  ...item,
+}));
+
+function issueFetch(requests: FulfillmentRequest[], bodies: unknown[]) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST" && path === "/api/issues/issue-batch") {
+      bodies.push(JSON.parse(String(init.body)));
+      return json({ requests: [], message: "Выдано: КБ1 (REQ.26.0000019). Списано со склада позиций: 1." });
+    }
+    if (path === "/api/issues") return json({ requests, next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("offers «Выдать комплект» on a КБ that is only «Укомплектован» and issues it in one click", async () => {
+  const bodies: unknown[] = [];
+  issueFetch(order([{ status: "Укомплектован", handout_place: "1B3" }, { status: "Готов к выдаче", handout_location: "1B3" }]), bodies);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать комплект" }));
+
+  expect(confirm.mock.calls[0][0]).toContain("Комплект уйдёт на выдачу (место: 1B3) и сразу будет выдан.");
+  expect(confirm.mock.calls[0][0]).toContain("Количество спишется со склада");
+  await waitFor(() => expect(bodies).toEqual([{ requests: [{ id: "o1", version: 5 }] }]));
+  expect(await screen.findByText("Выдано: КБ1 (REQ.26.0000019). Списано со склада позиций: 1.")).toBeInTheDocument();
+  // «Отправить на выдачу» stays the picker's step on «Запросы на комплектацию», not a second button here.
+  expect(screen.queryByRole("button", { name: "Отправить на выдачу" })).not.toBeInTheDocument();
+});
+
+it("issues the ticked КБ of the whole order in one call; a КБ not picked is disabled with what is picked", async () => {
+  const bodies: unknown[] = [];
+  issueFetch(order([
+    { status: "Укомплектован" },
+    { status: "Готов к выдаче", handout_location: "1B3", at_picked: "2026-10-06T09:57:00" },
+    { status: "Недоукомплектован", lines: [boundLine, { ...request.lines[0], id: "waiting" }] },
+    { status: "КБ Выдана", at_issued: "2026-10-05T15:20:00", lines: [{ ...boundLine, reserved: "0", issued: "4" }] },
+  ]), bodies);
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+
+  const chooser = screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" });
+  expect(within(chooser).getByLabelText("Выдать КБ1")).toBeChecked();
+  expect(within(chooser).getByLabelText("Выдать КБ2")).toBeChecked();
+  expect(within(chooser).getByLabelText("Выдать КБ3")).toBeDisabled();
+  expect(within(chooser).getByLabelText("Выдать КБ3")).not.toBeChecked();
+  expect(within(chooser).getByText("набрано 1 из 2")).toBeInTheDocument();
+  expect(within(chooser).getByLabelText("Выдать КБ4")).toBeDisabled();
+  expect(within(chooser).getByText(/^выдана 05\.10\.2026/)).toBeInTheDocument();
+  expect(within(chooser).getByText("сейчас · Зона выдачи")).toBeInTheDocument();
+  expect(within(chooser).getByText(/^Спишется со склада: 1 поз\. по 2 КБ/)).toBeInTheDocument();
+
+  fireEvent.click(within(chooser).getByLabelText("Выдать КБ2"));
+  expect(within(chooser).getByText(/^Спишется со склада: 1 поз\. по 1 КБ/)).toBeInTheDocument();
+  fireEvent.click(within(chooser).getByRole("button", { name: "Выдать выбранные (1)" }));
+
+  await waitFor(() => expect(bodies).toEqual([{ requests: [{ id: "o1", version: 5 }] }]));
+  await waitFor(() => expect(screen.queryByRole("group", { name: "Выдать комплекты проекта 33МФ.2" })).not.toBeInTheDocument());
+});
+
+it("keeps the chooser open and names the КБ when the server refuses the batch", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") return new Response(JSON.stringify({ detail: "КБ2 (REQ.26.0000020): заявка изменилась после загрузки — обнови экран. Ничего не выдано." }), { status: 409, headers: { "Content-Type": "application/json" } });
+    if (path === "/api/issues") return json({ requests: order([{ status: "Укомплектован" }, { status: "Укомплектован" }]), next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Выдать выбранные (2)" }));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent("КБ2 (REQ.26.0000020): заявка изменилась после загрузки");
+  expect(screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" })).toBeInTheDocument();
+});
+
+it("gives no issue action without the handout right or on the picking screen", async () => {
+  issueFetch(order([{ status: "Укомплектован" }, { status: "Готов к выдаче" }]), []);
+  const picker: Principal = { ...principal, permissions: { fulfillment: "edit", handout: "view" } };
+
+  const { unmount } = render(<FulfillmentPage principal={picker} mode="give" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
+  expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
+  unmount();
+
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
+  expect(screen.queryByRole("button", { name: "Выдать…" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
+  expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();
+});
+
+it("opens «Выдача» on the stages that hold requests, «Готов к выдаче» first, when the saved ones are empty (В-1)", async () => {
+  issueFetch(order([{ status: "Готов к выдаче", handout_location: "1B3" }, { status: "КБ Выдана", project: "40К.1", purpose: "40К.1 · КБ1 · Жгут" }]), []);
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  const ready = await screen.findByRole("button", { name: "Готов к выдаче · 1" });
+  await waitFor(() => expect(ready).toHaveAttribute("aria-pressed", "true"));
+  expect(screen.getByRole("button", { name: "КБ Выдана · 1" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Укомплектован · 0" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByText(/заявок нет/)).not.toBeInTheDocument();
+});
+
+it("keeps the default «Выдача» stages when they hold requests", async () => {
+  issueFetch(order([{ status: "Укомплектован" }, { status: "Готов к выдаче" }]), []);
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  const kitted = await screen.findByRole("button", { name: "Укомплектован · 1" });
+  await waitFor(() => expect(kitted).toHaveAttribute("aria-pressed", "true"));
+  expect(screen.getByRole("button", { name: "Готов к выдаче · 1" })).toHaveAttribute("aria-pressed", "false");
+});
+
+it("draws «Отменить заявку» as a danger button and asks before cancelling (К-2)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [request], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  await expand(request.number);
+  const cancel = await screen.findByRole("button", { name: "Отменить заявку" });
+  expect(cancel).toHaveClass("danger");
+  fireEvent.click(cancel);
+  expect(confirm).toHaveBeenCalledTimes(1);
 });

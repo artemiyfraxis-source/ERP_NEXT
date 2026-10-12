@@ -110,7 +110,8 @@ it("launches a task only from an issued techcard picked in the launchable list",
   fireEvent.click(screen.getByRole("button", { name: /КБ1/ }));
   expect(screen.getByLabelText("Кол-во")).toHaveValue("25");
   fireEvent.change(screen.getByLabelText("Кол-во"), { target: { value: "12" } });
-  fireEvent.click(screen.getByRole("button", { name: "Запустить" }));
+  // Задание встаёт в работу сегодня — дата на кнопке (РП-5).
+  fireEvent.click(screen.getByRole("button", { name: /^Запустить сегодня, \d\d\.\d\d$/ }));
 
   await waitFor(() => expect(payload).toEqual({
     techcard_id: "80000000-0000-0000-0000-000000000001",
@@ -266,6 +267,30 @@ it("lays the shop calendar out in two blocks and lists what is saved with a way 
   expect(payload?.shift.weekdays).toEqual([1, 2, 3, 4, 5]);
 });
 
+it("shows a registered leave request in the calendar without a way to remove it and never saves it back", async () => {
+  let payload: { absences: unknown[] } | undefined;
+  const leave = {
+    id: "78000000-0000-0000-0000-000000000002", operator_id: "10000000-0000-0000-0000-000000000002",
+    from_date: "2026-10-12", to_date: "2026-10-25", kind: "Отпуск", leave_request_id: "79000000-0000-0000-0000-000000000001",
+  };
+  masterFetch((path, init) => {
+    if (path === "/api/production/calendar" && init?.method === "PUT") {
+      payload = JSON.parse(String(init.body));
+      return new Response(null, { status: 204 });
+    }
+    return path === "/api/production/calendar" ? json({ holidays: [], absences: [leave], shift: null }) : null;
+  });
+  render(<ProductionPage principal={principal} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Календарь цеха" }));
+
+  const offDays = await screen.findByRole("region", { name: "Нерабочие дни и отсутствия" });
+  const row = await within(offDays).findByRole("row", { name: /Отпуск.*по заявлению/ });
+  expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить календарь" }));
+  await waitFor(() => expect(payload).toBeDefined());
+  expect(payload?.absences).toEqual([]);
+});
+
 it("starts the first operation from an issued GRN and package", async () => {
   let payload: unknown;
   const operatorPrincipal: Principal = {
@@ -383,7 +408,7 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
   fireEvent.change(await screen.findByLabelText("Годные изделия"), { target: { value: "5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
 
-  const dialog = await screen.findByRole("dialog", { name: "Напиши на коробке" });
+  const dialog = await screen.findByRole("dialog", { name: "Напишите на коробке" });
   expect(dialog).toHaveTextContent("000007-5");
   expect(requests[0].body).toEqual({ inputs: ["000001-8", "000002-6"], materials: [] });
   fireEvent.click(screen.getByRole("button", { name: "Записал" }));
@@ -463,16 +488,17 @@ it("lets the master hand out operations of issued projects to installers and lau
   expect(screen.getByText("без исполнителя 1 из 2")).toBeInTheDocument();
   expect(await screen.findByText("к запуску 1")).toBeInTheDocument(); // счётчик запуска приходит отдельным запросом
   expect(screen.getByText("ООО «Тест»")).toBeInTheDocument();
-  expect(screen.getByText("ТК ✓")).toBeInTheDocument();
+  expect(screen.getByText("ТК на все КБ")).toBeInTheDocument();
 
   await openBoardProject("591K.3");
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
   expect(screen.getByText("Обжим")).toBeInTheDocument();
   expect(screen.getByText("22.09 10:00–14:00")).toBeInTheDocument();
-  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч")).toHaveTextContent("0/7");
+  // Свободный день — пустая ячейка, как в «Загрузке по людям» плана (РП-4).
+  expect(screen.getByTitle("Попов Игнат, 22.09: 0 из 7 ч").textContent).toBe("");
   // Клик по дню — раскладка по часам: у Рыбкиной 10:00–14:00 занято, выбор часа ставит операцию ровно с него.
   fireEvent.click(screen.getByRole("button", { name: "День Рыбкина Ольга 22.09" }));
-  expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3.КБ1")).toBeInTheDocument();
+  expect(screen.getByTitle("11:00–12:00: Обжим · 591K.3 · КБ1")).toBeInTheDocument();
   // Занятый час не принимает вторую операцию: на нём нет кнопки, свободные — есть. «Назначить на день» ставит после
   // работы этого дня (ничего не сдвигая) и показывает, до скольких: 10 шт × 60 с / 1,2 + 120 с на 8/7 → 12 мин.
   expect(screen.queryByRole("button", { name: "Назначить Рыбкина Ольга на 22.09 с 11:00" })).not.toBeInTheDocument();
@@ -496,7 +522,7 @@ it("lets the master hand out operations of issued projects to installers and lau
 
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");
-  fireEvent.click(await screen.findByRole("button", { name: "В работу" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Запустить сегодня" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: "/api/production/tasks",
     body: { techcard_id: "80000000-0000-0000-0000-000000000009", quantity: 5, deadline: "2026-10-10", fulfillment_request_id: null },
@@ -563,7 +589,7 @@ it("shows on the task Gantt where the assembly takes its parts from, and how man
   expect(screen.queryByText(/из 10/)).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /^2 Нарезка Б/ }));
-  expect(await screen.findByText(/591K.3.КБ1 × 10 · сдать 20 шт/)).toBeInTheDocument();
+  expect(await screen.findByText(/591K\.3 · КБ1 × 10 · сдать 20 шт/)).toBeInTheDocument();
 });
 
 it("keeps a chain task as it was: no «из этапов», the second stage reads «с этапа 1»", async () => {
@@ -862,6 +888,28 @@ it("opens the operation's ETK read-only on that operation through the production
   expect(screen.queryByRole("button", { name: /Пересобрать/ })).not.toBeInTheDocument();
 });
 
+it("loads the ETK sketches of the fitter's operation through the production endpoints, not the techcards ones", async () => {
+  const etk = {
+    id: "80000000-0000-0000-0000-000000000001", version: 1, project: "591K.3", item_index: "КБ1", product_name: "Жгут",
+    source_calculation: "", deadline: null, status: "Выдана", revision: 1, manual_operation_keys: [],
+    created_at: "2026-09-20T09:00:00+03:00", updated_at: "2026-09-20T09:00:00+03:00", issued_at: "2026-09-20T09:00:00+03:00",
+    document: { operations: [{ position: 1, code: "OP-01", title: "Разделка кабеля" }] },
+  };
+  const seen: string[] = [];
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: [] }, { code: "OP-01" }), (path) => {
+    seen.push(path);
+    if (path.endsWith("/etk")) return json({ card: etk, focus: { position: 1, code: "OP-01" } });
+    if (path.endsWith("/etk/sketches")) return json({ items: [{ operation_key: "OP-01::::", file_name: "a.png", size: 3, uploaded_by: "Технолог", uploaded_at: "2026-09-20T10:00:00+03:00" }] });
+    return null;
+  });
+  const { container } = render(<ProductionPage principal={fitter} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
+  await waitFor(() => expect(container.querySelector(".etk-sketch img")).not.toBeNull());
+  expect(container.querySelector(".etk-sketch img")?.getAttribute("src")).toMatch(/^\/api\/production\/my\/tasks\/.+\/operations\/.+\/etk\/sketches\/OP-01%3A%3A%3A%3A\?v=/);
+  expect(seen.some((path) => path.endsWith("/etk/sketches"))).toBe(true);
+  expect(seen.some((path) => path.includes("/api/techcards/") && path.includes("/sketches"))).toBe(false);
+});
+
 it("confirms every box waiting for the master with one button", async () => {
   const waiting = (id: string, number: string) => ({
     id, number, version: 2, task_id: task.id, operation_id: task.operations[0].id, item: task.item, operation_position: 1,
@@ -887,11 +935,11 @@ it("keeps «Начать» disabled with a reason until a box is chosen, then le
   fireEvent.click(await screen.findByRole("button", { name: "▶ Начать" }));
   const go = await screen.findByRole("button", { name: "Начать работу" });
   expect(go).toBeDisabled();
-  expect(screen.getByText("Выбери коробку или введи её номер")).toBeInTheDocument();
+  expect(screen.getByText("Выберите коробку или введите её номер")).toBeInTheDocument();
   expect(screen.queryByLabelText("Номера коробок")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /000011-1/ }));
   expect(go).toBeEnabled();
-  expect(screen.queryByText("Выбери коробку или введи её номер")).not.toBeInTheDocument();
+  expect(screen.queryByText("Выберите коробку или введите её номер")).not.toBeInTheDocument();
 });
 
 it("limits the «Годные» prefill by the taken input boxes", async () => {

@@ -23,6 +23,25 @@ from app.modules.techcards.kitsets import (
 )
 from app.workflows.project_kitset import generator_bom
 from tests.techcards.calc_sheets import calc_sheets, grid
+from app.modules.techcards import kitsets
+
+
+@pytest.fixture(autouse=True)
+def scrap_allowance_on(monkeypatch):
+    """These rules are written with the «% брака» allowance on; it is switched off for now («выдаём вровень», owner
+    10.10.2026) and the formula stays behind `SCRAP_APPLIED` — `test_kit_need_has_no_scrap_allowance_for_now` checks
+    the switched-off state."""
+    monkeypatch.setattr(kitsets, "SCRAP_APPLIED", True)
+
+
+def test_kit_need_has_no_scrap_allowance_for_now(monkeypatch):
+    monkeypatch.setattr(kitsets, "SCRAP_APPLIED", False)
+    wire = KitComponent(article="W", type="Провод", per_unit=Decimal("1.5"), scrap_pct=Decimal("5"))
+    piece = KitComponent(article="P", type="Разъём", per_unit=Decimal("0.333"), scrap_pct=Decimal("5"))
+    assert wire.scrap_pct == Decimal("5")  # the typed % is kept
+    assert wire.batch(Decimal("10")) == Decimal("15.00")  # 1,5 × 10, nothing on top
+    assert piece.batch(Decimal("3")) == Decimal("1")  # 0,999 → 1 шт
+    assert batch_quantity(Decimal("1.5"), Decimal("10"), Decimal("5"), "м") == Decimal("15.75")  # the formula itself
 
 
 def parse(sheets, title="708К.4 Расчет"):
@@ -162,6 +181,21 @@ def test_supply_takes_latest_stage_and_marks_stock_and_missing():
     assert lines["43030-0007"].stage == "со склада"
 
 
+def test_supply_line_without_purchase_is_from_stock_when_kitted_even_without_grn():
+    kitset = _replaced_wire_kitset()
+    kitted = [SupplyStock("GHR-04V-S", "Колодка 4pin 1.25мм", Decimal("20"))]
+    lines = {line.article: line for line in supply_lines(kitset, [], kitted=kitted)}
+    assert lines["GHR-04V-S"].stage == "со склада"
+    assert lines["Силиконовый 28AWG черный"].stage == "не заведено"
+    zero = {line.article: line for line in supply_lines(
+        kitset, [], kitted=[SupplyStock("GHR-04V-S", "Колодка 4pin 1.25мм", Decimal("0"))])}
+    assert zero["GHR-04V-S"].stage == "не заведено"
+    # A purchase row still wins over the kit.
+    bought = {line.article: line for line in supply_lines(
+        kitset, [SupplyRow("GHR-04V-S", "Закупка", "В работе")], kitted=kitted)}
+    assert bought["GHR-04V-S"].stage == "Закупка · В работе"
+
+
 def _replaced_wire_kitset():
     return manual_kitset(project="720К.1", customer="З", who="Т", now=NOW, assemblies=[{
         "index": "КБ1", "name": "Жгут", "run": "10", "components": [
@@ -261,6 +295,35 @@ def test_supply_short_is_need_less_free_stock_open_purchases_and_kits():
         Decimal("32"), Decimal("6"), Decimal("10"), Decimal("6"), Decimal("10"),
     )
     assert (wire.need, wire.ordered, wire.short) == (Decimal("15.75"), Decimal("20"), Decimal("0"))
+
+
+def test_supply_counts_stock_without_grn_once_less_what_kits_issued_off_book():
+    """«Есть на складе, без ГРН» covers the need like a lot does; a kit line issued «есть, не заведено» takes those
+    same unbooked goods, so it uses the «без ГРН» up instead of being counted next to it."""
+    kitset = write_from_calc(parse(calc_sheets(), "708К.4"), None, who="Т", now=NOW)
+    rows = [SupplyRow("43030-0007", "Закупка", "В работе", open_quantity=Decimal("18"))]
+    lotless = [SupplyStock("43030-0007", "Контакт", Decimal("12")), SupplyStock("", "Корпус Molex", Decimal("5"))]
+
+    lines = {line.article: line for line in supply_lines(kitset, rows, off_book=lotless)}
+
+    contact, molex = lines["43030-0007"], lines["43025-0400"]
+    assert (contact.need, contact.free, contact.off_book, contact.ordered, contact.short) == (
+        Decimal("32"), 0, Decimal("12"), Decimal("18"), Decimal("2"),
+    )
+    assert (molex.off_book, molex.short) == (Decimal("5"), Decimal("15"))  # matched by the spec name
+
+    issued = [
+        SupplyStock("43030-0007", "Контакт", Decimal("8"), off_book=True),  # «есть, не заведено», issued
+        SupplyStock("43030-0007", "Контакт", Decimal("3")),  # reserved on a lot
+    ]
+    kitted = {line.article: line for line in supply_lines(kitset, rows, kitted=issued, off_book=lotless)}
+    contact = kitted["43030-0007"]
+    assert (contact.kitted, contact.off_book, contact.short) == (Decimal("11"), Decimal("4"), Decimal("0"))
+    # need 32: 18 bought + 11 kitted + 4 still unbooked on the shelf = 33 — the 8 issued off-book count once
+
+    more = [SupplyStock("43030-0007", "Контакт", Decimal("20"), off_book=True)]
+    over = {line.article: line for line in supply_lines(kitset, rows, kitted=more, off_book=lotless)}["43030-0007"]
+    assert (over.kitted, over.off_book) == (Decimal("20"), Decimal("0"))  # never below zero
 
 
 def test_sort_kitsets_like_portal():

@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { selectRange } from "./bulk";
-import { displayCell } from "./format";
+import { EMPTY, displayCell, formatNumber } from "./format";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
    portalSaveUserCols): поиск по всем словам, фильтр по значениям колонки, сортировка по заголовку,
@@ -27,6 +27,16 @@ export interface DataColumn<T> {
   wrap?: boolean;
   /** Ширина колонки (px) — чтобы несколько таблиц одной страницы шли колонка в колонку. */
   width?: number | string;
+  /** Колонка забирает свободную ширину таблицы (длинное название, назначение, подробности). Без неё колонки идут
+      по содержимому, а остаток ширины уходит в пустую колонку справа. */
+  grow?: boolean;
+  /** Самая узкая ширина текста колонки с переносом (`wrap`); у `grow` по умолчанию 240 px. */
+  minWidth?: number | string;
+  /** С какой ширины текст колонки с переносом (`wrap`) переносится; по умолчанию — по экрану, 240–520 px. `width` у
+      такой колонки — нижняя граница: короче `maxWidth` текст идёт одной строкой. */
+  maxWidth?: number | string;
+  /** Выравнивание ячеек; числовая колонка — вправо. */
+  align?: "left" | "center" | "right";
   /** Подсказка при наведении на заголовок (например, полное название при сокращённом). */
   hint?: string;
 }
@@ -81,6 +91,8 @@ export interface DataTableProps<T> {
   /** Пока строк меньше — без строки поиска/фильтров/колонок и без «Показано N из N»: маленькой таблице они
       только мешают (блоки «Мои позиции» в листе закупки). По умолчанию всегда полная. */
   compactBelow?: number;
+  /** Прячет только форму поиска (фильтры/колонки/Excel остаются): поиск есть у раздела выше. */
+  hideSearch?: boolean;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -138,6 +150,45 @@ function utf16Bytes(text: string) {
   return bytes;
 }
 
+/** Ячейка без своего `render`: число — по-русски с разрядами («12 345,5»), ISO-дата — по-русски, пусто — «—». */
+export function cellContent<T>(column: DataColumn<T>, value: CellValue): ReactNode {
+  if (value === null || value === undefined || value === "") return <span className="cell-empty">{EMPTY}</span>;
+  if (column.numeric) return formatNumber(value);
+  return displayCell(value);
+}
+
+/** Подсказка поиска по умолчанию — что ищем: первые колонки таблицы («Поиск: №, проект, назначение…»). */
+export function searchHint<T>(columns: DataColumn<T>[]) {
+  const titles = columns.map((column) => column.title.trim()).filter(Boolean).slice(0, 3)
+    // «Проект» → «проект», а сокращения («ГРН», «КД», «№») — как есть.
+    .map((title) => (/^[А-ЯЁA-Z][а-яёa-z]/.test(title) ? title[0].toLowerCase() + title.slice(1) : title));
+  return titles.length ? `Поиск: ${titles.join(", ")}…` : "Поиск…";
+}
+
+/** Классы ячейки колонки. `fit` — по содержимому (ширина 1 px в автоматической раскладке таблицы: колонка не шире
+    своего текста), `grow` — забирает свободную ширину; в таблице с фиксированной раскладкой ширины задаёт экран. */
+export function columnClass<T>(column: DataColumn<T>, index: number, sized: boolean) {
+  return [
+    column.numeric ? "num" : column.wrap ? "text" : "",
+    column.align && column.align !== (column.numeric ? "right" : "left") ? `align-${column.align}` : "",
+    sized ? (column.grow ? "grow" : column.width === undefined ? "fit" : "") : "",
+    index === 0 ? "key" : "",
+  ].filter(Boolean).join(" ") || undefined;
+}
+
+function cssSize(value: number | string | undefined) {
+  return typeof value === "number" ? `${value}px` : value;
+}
+
+function wrapStyle<T>(column: DataColumn<T>): CSSProperties | undefined {
+  const style: Record<string, string> = {};
+  const min = cssSize(column.minWidth);
+  const max = cssSize(column.maxWidth);
+  if (min) style["--cell-min"] = min;
+  if (max) style["--cell-max"] = max;
+  return Object.keys(style).length ? style as CSSProperties : undefined;
+}
+
 export function readSaved(storageKey?: string): Saved {
   if (!storageKey) return {};
   try {
@@ -179,6 +230,7 @@ export function DataTable<T>({
   searchLabel,
   searchPlaceholder,
   compactBelow = 0,
+  hideSearch = false,
 }: DataTableProps<T>) {
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
@@ -198,6 +250,14 @@ export function DataTable<T>({
   // An opened row's card stays inside the visible part of a table wider than the screen (its cell spans
   // every column): the card is pinned to the left edge and as wide as the scroll box, not the table.
   const wrapRef = useRef<HTMLDivElement>(null);
+  // Columns size by their content and the spare width goes to a `grow` column or to an empty last column — in the
+  // automatic table layout. A screen that pins its widths with `table-layout: fixed` keeps them: no `fit`, no filler.
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [fixedLayout, setFixedLayout] = useState(false);
+  useLayoutEffect(() => {
+    const table = tableRef.current;
+    if (table && typeof window.getComputedStyle === "function") setFixedLayout(window.getComputedStyle(table).tableLayout === "fixed");
+  }, []);
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap || typeof ResizeObserver === "undefined") return;
@@ -304,7 +364,9 @@ export function DataTable<T>({
   }
 
   const selectable = bulkActions.length > 0;
-  const span = visible.length + (selectable ? 1 : 0);
+  const sized = !fixedLayout;
+  const filler = sized && !visible.some((column) => column.grow);
+  const span = visible.length + (selectable ? 1 : 0) + (filler ? 1 : 0);
   const filterValues = (column: DataColumn<T>) =>
     [...new Set(rows.map((row) => String(column.value(row) ?? "")))].sort((a, b) => compareCells(a, b));
 
@@ -321,25 +383,34 @@ export function DataTable<T>({
   function renderRow(row: T) {
     const key = rowKey(row);
     const open = expanded === key;
+    const activate = onRowClick ? () => onRowClick(row) : renderDetail ? () => setExpanded(open ? null : key) : undefined;
     return (
       <Fragment key={key}>
         <tr
-          className={[rowClassName?.(row) ?? "", renderDetail || onRowClick ? "clickable" : "", open ? "open" : ""].join(" ").trim() || undefined}
+          className={[rowClassName?.(row) ?? "", activate ? "clickable" : "", open ? "open" : ""].join(" ").trim() || undefined}
           title={rowTitle?.(row) || undefined}
-          onClick={onRowClick ? () => onRowClick(row) : renderDetail ? () => setExpanded(open ? null : key) : undefined}
+          onClick={activate}
+          // A clickable row opens from the keyboard too: Tab to it, Enter (erp-dense-ui «Enter opens a row»).
+          tabIndex={activate ? 0 : undefined}
+          aria-expanded={renderDetail && !onRowClick ? open : undefined}
+          onKeyDown={activate ? (event) => {
+            if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); activate(); }
+          } : undefined}
         >
           {selectable && (
             <td onClick={(event) => event.stopPropagation()}>
               <label className="sel-hit"><input type="checkbox" aria-label={rowLabel ? `Выбрать: ${rowLabel(row)}` : `Выбрать ${key}`} checked={selected.has(key)} onChange={() => undefined} onClick={(event) => toggleRow(key, event.currentTarget.checked, event.shiftKey)} /></label>
             </td>
           )}
-          {visible.map((column, index) => (
-            <td key={column.key} className={[column.numeric ? "num" : column.wrap ? "text" : "", index === 0 ? "key" : ""].join(" ").trim() || undefined}>
-              {column.wrap
-                ? <div className="cell-wrap">{column.render ? column.render(row) : displayCell(column.value(row)) ?? ""}</div>
-                : column.render ? column.render(row) : displayCell(column.value(row)) ?? ""}
-            </td>
-          ))}
+          {visible.map((column, index) => {
+            const content = column.render ? column.render(row) : cellContent(column, column.value(row));
+            return (
+              <td key={column.key} className={columnClass(column, index, sized)}>
+                {column.wrap ? <div className="cell-wrap" style={wrapStyle(column)}>{content}</div> : content}
+              </td>
+            );
+          })}
+          {filler && <td className="dt-fill" aria-hidden="true" />}
         </tr>
         {open && renderDetail && (
           <tr className="detail"><td colSpan={span}><div className="detail-body">{renderDetail(row)}</div></td></tr>
@@ -355,10 +426,10 @@ export function DataTable<T>({
   return (
     <section className="data-table" aria-label={label}>
       {!compact && <div className="filters table-toolbar">
-        <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
-          <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? "Поиск по всем колонкам"} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
+        {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
+          <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? searchHint(visible)} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
           {onSearch && <button type="submit" className="secondary small">Найти</button>}
-        </form>
+        </form>}
         {filterColumns.length > 0 && (
           <button type="button" className={activeFilters.length ? "secondary small filter-toggle active" : "secondary small filter-toggle"} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((open) => !open)}>
             Фильтры{activeFilters.length ? ` · ${activeFilters.length}` : ""}
@@ -421,20 +492,21 @@ export function DataTable<T>({
         </div>
       )}
       <div className="table-wrap" ref={wrapRef}>
-        <table className={selectable ? "grid wide selectable" : "grid wide"}>
+        <table ref={tableRef} className={["grid wide", selectable ? "selectable" : "", sized ? "sized" : ""].filter(Boolean).join(" ")}>
           <thead>
             <tr>
               {selectable && <th><label className="sel-hit"><input type="checkbox" aria-label="Выбрать все показанные" checked={allShownSelected} onChange={(event) => toggleAll(event.target.checked)} /></label></th>}
-              {visible.map((column) => {
+              {visible.map((column, index) => {
                 const direction = sort?.key === column.key ? sort.direction : 0;
                 return (
-                  <th key={column.key} className={column.numeric ? "num" : undefined} style={column.width ? { width: column.width } : undefined} title={column.hint} aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}>
+                  <th key={column.key} className={columnClass(column, index, sized)} style={column.width ? { width: column.width } : undefined} title={column.hint} aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}>
                     <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
                       {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
                     </button>
                   </th>
                 );
               })}
+              {filler && <th className="dt-fill" aria-hidden="true" />}
             </tr>
           </thead>
           <tbody>

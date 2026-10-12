@@ -7,6 +7,7 @@
  * Выход — тот же config, что форма отправляла portalTechmapGenerate, и его принимает
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
+import { markLabel, markSpecs, type MarkMat, type MarkRow, type MarkSpec } from "./tcGenMarks";
 
 /** `art` — what the row actually uses (selects, gauge, terminals, ETK); `kd` — the КД article it replaced, display only. */
 export type Comp = { id: string; type: string; name: string; art: string; kd?: string; qty: number | string; length?: number };
@@ -40,6 +41,8 @@ export type GenData = {
   wireDia: WireDia;
   coaxCableDia: CoaxCableDia;
   calcOps: CalcOp[];
+  /** Материалы маркировки из БД.МАТ (tcGenMarks.markMatsFromRecords) — выбор «Вид / материал» у меток. */
+  markMats?: MarkMat[];
 };
 
 export type Side = "A" | "B";
@@ -50,6 +53,8 @@ export type Endpoint = {
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
   label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
   pins?: Record<number, string>;
+  /** «Распиновка проверена»: подпись проверенной распиновки (pinoutCheck.ts); другая подпись — флаг снят. */
+  pinChecked?: string;
 };
 /** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
 export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };
@@ -82,6 +87,8 @@ export type GenState = {
   spl: { enabled: boolean; count: string; wires: string; tut: string; tutMat: string; strip: string; fold: boolean };
   hs: { enabled: boolean; manual: boolean; rows: Array<{ compId: string; len: string; cnt: string }> };
   mark: boolean;
+  /** Метки по КД (tcGenMarks); пусто — в маркировку идут бирки из состава, как раньше. */
+  markRows: MarkRow[];
   freeStrip: { enabled: boolean; len: string };
   cap: { enabled: boolean; tut: string; len: string };
   wrap: { enabled: boolean; slots: WrapSlot[] };
@@ -95,15 +102,20 @@ export type GenState = {
   manualTemplates: string[];
   times: Record<string, OpTimes>;
   materialsSheet: boolean;
+  /** Свой порядок операций (ключи opKey) — «Выше/Ниже» в схеме полуфабрикатов; пусто — порядок генератора. Уходит в
+      build_config.opOrder и возвращается из него при открытии карты. */
+  opOrder: string[];
 };
 
 export type OpSpec = {
-  type: string; opKey: string; label: string; side?: Side; ord?: number; epId?: string; crimpEpId?: string;
+  type: string; opKey: string; label: string; side?: Side; ord?: number; epId?: string; crimpEpId?: string; crimpEpIdB?: string;
   tmplHint?: string; cat?: string; termArt?: string; firstTerm?: boolean; wireIdxs?: number[];
+  /** Карта, которую операция хочет по правилу, когда tmplHint — замена за её отсутствием (CUT_WIRE+2crimp → +1crimp). */
+  tmplWant?: string;
   strip?: { a: boolean; lenA: string; b: boolean; lenB: string }; stripCount?: number;
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
   harness?: boolean; units?: number; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
-  wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number }>;
+  wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
   sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
 };
 
@@ -124,6 +136,9 @@ const CRIMP_CUT_MIN_WIRES_ = 300;
 // при резке — тот же расчёт без лужения (CUT_WIRE_auto 180 + 3,5 и PRS_TERMINAL_auto против CUT_WIRE+1crimp 3600 + 4).
 const CRIMP_TIN_CUT_MIN_WIRES_ = 90;
 export const CRIMP_TIN_CODE_ = "CUT_WIRE+1crimp+tin";
+/** Обжим обеих сторон на автомате резки: значение `crimpCutSide` и карта БД.ОП/шаблона (4,8 с/пр. против 4 у +1crimp). */
+export const CRIMP_BOTH_ = "AB";
+const CRIMP_BOTH_CODE_ = "CUT_WIRE+2crimp";
 
 /** Русское название операции генератора по её `type` (как `OPERATION_TYPE_NAMES` на сервере): когда в конфиге нет `label`. */
 const OP_TYPE_NAMES: Record<string, string> = {
@@ -168,6 +183,30 @@ const SOLDER_CONN_MAP: Array<[RegExp, string]> = [
 ];
 
 // ── Чистые помощники ──────────────────────────────────────────────────────
+/** «1 кабель», «4 кабеля», «5 кабелей». */
+export function pluralRu(n: number, one: string, few: string, many: string) {
+  const d = n % 10, dd = n % 100;
+  return d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many;
+}
+
+/** Свой порядок операций поверх порядка генератора: операции из `order` встают на места друг друга в его порядке,
+    новые (их в `order` нет) остаются там, куда их поставил генератор. «Первая опрессовка» — у первой по новому порядку. */
+export function applyOpOrder(ops: OpSpec[], order: string[]): OpSpec[] {
+  if (!order.length) return ops;
+  const rank = new Map(order.map((key, index) => [key, index]));
+  const known = ops.filter((op) => rank.has(op.opKey)).sort((a, b) => rank.get(a.opKey)! - rank.get(b.opKey)!);
+  let next = 0;
+  const sorted = ops.map((op) => (rank.has(op.opKey) ? known[next++] : op));
+  const firstPrs = sorted.find((op) => op.firstTerm !== undefined);
+  return sorted.map((op) => (op.firstTerm === undefined ? op : { ...op, firstTerm: op === firstPrs }));
+}
+
+/** Свой порядок операций сохранённой карты (`build_config.opOrder`); нет — порядок генератора. */
+export function opOrderFromConfig(config: unknown): string[] {
+  const raw = config && typeof config === "object" ? (config as { opOrder?: unknown }).opOrder : null;
+  return Array.isArray(raw) ? raw.filter((key): key is string => typeof key === "string" && key !== "") : [];
+}
+
 export function parseDecimal_(s: unknown): number {
   return parseFloat(String(s ?? "").replace(",", "."));
 }
@@ -264,6 +303,7 @@ export function emptyState(): GenState {
     spl: { enabled: false, count: "1", wires: "3", tut: "", tutMat: "", strip: "", fold: false },
     hs: { enabled: false, manual: false, rows: [] },
     mark: false,
+    markRows: [],
     freeStrip: { enabled: false, len: "" },
     cap: { enabled: true, tut: "", len: "" },
     wrap: { enabled: false, slots: WRAP_SLOTS_.map(() => ({ mat: "", kind: "tape" as WrapKind, len: "" })) },
@@ -273,7 +313,7 @@ export function emptyState(): GenState {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
       stripB: false, shield: "обжим", sideA: null, sideB: null,
     },
-    selectedTemplates: {}, manualTemplates: [], times: {}, materialsSheet: false,
+    selectedTemplates: {}, manualTemplates: [], times: {}, materialsSheet: false, opOrder: [],
   };
 }
 
@@ -534,17 +574,44 @@ export function makeGen(D: GenData, S: GenState) {
   function crimpCutSides_(): Side[] {
     return (["A", "B"] as Side[]).filter((side) => !crimpCutBlock_(side));
   }
+  /** Почему сторону с обжимом нельзя обжать на автомате резки: короткая строка для формы («сторона В: разные терминалы —
+   *  обжим вручную», «сторона В: у 2 проводов не выбран терминал») или "" — можно либо на стороне нечего обжимать. */
+  function crimpCutSideNote_(side: Side): string {
+    const eps = endpointsOnSide_(side);
+    if (!eps.some((e) => e.method === "crimp") || !crimpCutBlock_(side)) return "";
+    const tail = " — обжим вручную";
+    const head = `сторона ${sideRu_(side)}: `;
+    const wiresOf = (list: Endpoint[]) => {
+      const routed = new Set(list.flatMap(routedWireIdxs_));
+      return activeWires_().filter((w) => routed.has(w.idx)).reduce((n, w) => n + (Number(w.qty) || 1), 0);
+    };
+    const bare = eps.filter((e) => e.method === "crimp" && !e.termId);
+    if (bare.length) {
+      const n = wiresOf(bare);
+      // Без терминала опрессовки нет вовсе (ни на станке, ни вручную) — только напоминание выбрать терминал.
+      return `${head}у ${n} ${n % 10 === 1 && n % 100 !== 11 ? "провода" : "проводов"} не выбран терминал`;
+    }
+    if (eps.some((e) => e.method !== "crimp")) return `${head}есть пайка${tail}`;
+    if (new Set(eps.map((e) => e.termId)).size > 1) return `${head}разные терминалы${tail}`;
+    if (crimpCutBlock_(side) === "applicator") {
+      const t = getCompById(eps[0].termId);
+      return `${head}у ${t ? t.art || t.name : "терминала"} нет аппликатора автомата (A…)${tail}`;
+    }
+    return `${head}двойной обжим, сложенная жила, RJ, наконечник или кабель${tail}`;
+  }
+  const hasTemplateCode_ = (code: string) =>
+    (D.templates || []).some((t) => String(t.title || "").split("|")[0].trim().toLowerCase() === code.toLowerCase());
   /** Провода (idx), которые станок резки обжимает на стороне `side` и тут же лудит свободным концом (CUT_WIRE+1crimp+tin):
    *  стороны В нет, блок «Лужение» включён, провод лудится и заведён в разъёмы стороны. Без карты операции в библиотеке —
    *  пусто: лужение остаётся отдельной операцией. */
   function crimpTinWireIdxs_(side: Side | "" | null): Set<number> {
     if (!side || endpointsOnSide_("B").length || !S.tin.enabled) return new Set();
-    if (!(D.templates || []).some((t) => String(t.title || "").split("|")[0].trim().toLowerCase() === CRIMP_TIN_CODE_.toLowerCase())) return new Set();
+    if (!hasTemplateCode_(CRIMP_TIN_CODE_)) return new Set();
     const active = activeWires_();
     const tinned = new Set(tinWireIndices_().map((i) => active[i].idx));
     return new Set(endpointsOnSide_(side).flatMap(routedWireIdxs_).filter((i) => tinned.has(i)));
   }
-  const crimpCutTin_ = () => crimpTinWireIdxs_(crimpCutSideSelected_()).size > 0;
+  const crimpCutTin_ = () => { const s = crimpCutSideSelected_(); return s !== CRIMP_BOTH_ && crimpTinWireIdxs_(s).size > 0; };
   const crimpCutMinWires_ = () => (crimpCutTin_() ? CRIMP_TIN_CUT_MIN_WIRES_ : CRIMP_CUT_MIN_WIRES_);
   /** Терминал стороны А, из-за которого резка с обжимом и лужением недоступна (нет автоматического аппликатора), или "". */
   function crimpTinNoApplicator_() {
@@ -560,14 +627,20 @@ export function makeGen(D: GenData, S: GenState) {
   function crimpCutEnabled_() {
     return S.crimpCutManual ? S.crimpCut : batchWires_() > crimpCutMinWires_();
   }
-  function crimpCutSideSelected_(): Side | "" {
+  /** Выбранная сторона обжима при резке: "A" / "B", "AB" — обе (станок с двумя аппликаторами; только когда обе стороны
+   *  можно обжать на автомате), "" — обжимать нечего. Без выбора — обе стороны, если автомат может обжать обе
+   *  (владелец 10.10.2026: два контакта по спецификации — обжим с двух сторон), иначе единственная доступная. */
+  function crimpCutSideSelected_(): Side | typeof CRIMP_BOTH_ | "" {
     const sides = crimpCutSides_();
+    if ((S.crimpCutSide === CRIMP_BOTH_ || !S.crimpCutSide) && sides.length === 2) return CRIMP_BOTH_;
     return (sides.includes(S.crimpCutSide as Side) ? S.crimpCutSide : sides[0] || "") as Side | "";
   }
-  function crimpCutSide_(): Side | null {
-    if (S.tab === "coax" || !crimpCutEnabled_()) return null;
+  /** Стороны, которые обжимает автомат резки в этой схеме: [], [A], [B] или [A, B]. */
+  function crimpCutActiveSides_(): Side[] {
+    if (S.tab === "coax" || !crimpCutEnabled_()) return [];
     const s = crimpCutSideSelected_();
-    return s && crimpCutSides_().includes(s) ? s : null;
+    if (s === CRIMP_BOTH_) return ["A", "B"];
+    return s && crimpCutSides_().includes(s) ? [s] : [];
   }
   function harnessSleeves_() {
     if (!S.hs.enabled) return [];
@@ -943,7 +1016,11 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   // ── Маршрут межплатной / сложной сборки ──
+  /** Операции в порядке генератора, а поверх — свой порядок технолога (S.opOrder). */
   function getActiveOps(): OpSpec[] {
+    return applyOpOrder(autoOps(), S.opOrder || []);
+  }
+  function autoOps(): OpSpec[] {
     if (S.tab === "coax") return getActiveOpsCoax_();
     const ops: OpSpec[] = [];
     const activeWires = activeWires_();
@@ -967,12 +1044,12 @@ export function makeGen(D: GenData, S: GenState) {
       }
     }
     const tutSegs = Object.keys(tutByLen).map((len) => ({ len, count: tutByLen[len] }));
-    const crimpSide = crimpCutSide_();
-    const tinAtCut = crimpTinWireIdxs_(crimpSide);
+    const crimpSides = crimpCutActiveSides_();
+    const tinAtCut = crimpTinWireIdxs_(crimpSides.length === 1 ? crimpSides[0] : null);
 
     if (activeWires.length > 0) {
       const nameOf = (w: WireEntry) => { const c = getCompById(w.compId); return c ? (c.name || c.art) : "?"; };
-      const cutLabel = (ws: WireEntry[], pfx: string) => { const ns = ws.map(nameOf); return ns.length === 1 ? `${pfx} — ${ns[0]}` : `${pfx} — ${ns.length} кабелей`; };
+      const cutLabel = (ws: WireEntry[], pfx: string) => { const ns = ws.map(nameOf); return ns.length === 1 ? `${pfx} — ${ns[0]}` : `${pfx} — ${ns.length} ${pluralRu(ns.length, "кабель", "кабеля", "кабелей")}`; };
       const splAtCut = spliceStripAtCut_();
       const splLen = (S.spl.strip || "").trim() || "—";
       const tinIdx = tinWireIndices_();
@@ -986,7 +1063,7 @@ export function makeGen(D: GenData, S: GenState) {
         S.endpoints.forEach((e) => {
           if (!routedWireIdxs_(e).includes(w.idx)) return;
           let len: string | null = null;
-          if (e.side === crimpSide) len = (findTerRecord_((getCompById(e.termId) || ({} as Comp)).art) || ({} as TerRec)).strip || "—";
+          if (crimpSides.includes(e.side)) len = (findTerRecord_((getCompById(e.termId) || ({} as Comp)).art) || ({} as TerRec)).strip || "—";
           else if (e.method === "solder") len = (e.solderStrip || "").trim() || DEFAULT_LEN_MM_;
           else if (e.method === "crimp" && e.fold && isComplex_()) len = FOLD_STRIP_MM_;
           else if (e.method === "crimp" && isRjEndpoint_(e)) len = RJ_STRIP_MM_;
@@ -1007,16 +1084,18 @@ export function makeGen(D: GenData, S: GenState) {
         if (!b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = freeLen || "—";
         return { a, b };
       };
-      const crimpEp = crimpSide ? endpointsOnSide_(crimpSide)[0] : null;
-      const crimpSet = new Set(crimpSide ? endpointsOnSide_(crimpSide).flatMap(routedWireIdxs_) : []);
+      // Сторона, которую обжимает станок: её первый разъём (терминал на стороне один — crimpCutBlock_) и заведённые в
+      // неё провода. Провод, не заведённый в разъём этой стороны, на ней не обжимается.
+      const crimpEpOf = (side: Side) => (crimpSides.includes(side) ? endpointsOnSide_(side)[0] || null : null);
+      const crimpSets = (["A", "B"] as Side[]).map((side) => new Set(crimpEpOf(side) ? endpointsOnSide_(side).flatMap(routedWireIdxs_) : []));
       const rotor = S.rotor;
-      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; crimp: boolean; tin: boolean; rot: boolean }> = {};
+      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; crimp: Side[]; tin: boolean; rot: boolean }> = {};
       activeWires.forEach((w) => {
         const s = stripOf(w);
-        const crimp = crimpSet.has(w.idx);
-        const tin = crimp && tinAtCut.has(w.idx);
+        const crimp = (["A", "B"] as Side[]).filter((_, i) => crimpSets[i].has(w.idx));
+        const tin = crimp.length > 0 && tinAtCut.has(w.idx);
         const rot = rotor && isJacketedCable_(w);
-        const sig = `${s.a}|${s.b}|${crimp ? "C" : ""}${tin ? "T" : ""}|${rot ? "R" : ""}`;
+        const sig = `${s.a}|${s.b}|${crimp.join("")}${tin ? "T" : ""}|${rot ? "R" : ""}`;
         (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, crimp, tin, rot })).wires.push(w);
       });
       let ci = 0;
@@ -1025,7 +1104,17 @@ export function makeGen(D: GenData, S: GenState) {
         const hasA = g.a !== "", hasB = g.b !== "", n = (hasA ? 1 : 0) + (hasB ? 1 : 0);
         const key = ci === 0 ? "cutWire" : "cutWire" + ci; ci++;
         const strip = { a: hasA, lenA: g.a === "—" ? "" : g.a, b: hasB, lenB: g.b === "—" ? "" : g.b };
-        if (g.crimp && crimpEp && crimpSide) {
+        if (g.crimp.length === 2) {
+          // Обе стороны на станке с двумя аппликаторами: ручной опрессовки у этих концов нет. Терминалы сторон могут
+          // различаться — в названии оба. Карты CUT_WIRE+2crimp нет в библиотеке — норма и карта односторонней резки.
+          const epA = crimpEpOf("A")!, epB = crimpEpOf("B")!;
+          const artOf = (ep: Endpoint) => { const t = getCompById(ep.termId)!; return t.art || t.name; };
+          const terms = artOf(epA) === artOf(epB) ? artOf(epA) : `${artOf(epA)} / ${artOf(epB)}`;
+          ops.push({ type: "cutWireCrimp", opKey: key, side: "A", crimpEpId: epA.id, crimpEpIdB: epB.id,
+            label: cutLabel(ws, `Резка с обжимом А и В (${terms})`),
+            wireIdxs: ws.map((w) => w.idx), tmplHint: hasTemplateCode_(CRIMP_BOTH_CODE_) ? CRIMP_BOTH_CODE_ : "CUT_WIRE+1crimp", tmplWant: CRIMP_BOTH_CODE_, strip });
+        } else if (g.crimp.length === 1) {
+          const crimpSide = g.crimp[0], crimpEp = crimpEpOf(crimpSide)!;
           const term = getCompById(crimpEp.termId)!;
           // С лужением свободного конца тем же станком (BZW-5.0+Z) отдельной операции «Лужение» у этих проводов нет.
           ops.push({ type: "cutWireCrimp", opKey: key, side: crimpSide, crimpEpId: crimpEp.id,
@@ -1065,7 +1154,7 @@ export function makeGen(D: GenData, S: GenState) {
         ops.push({ type: "solderConn", opKey: endpointOpKey_(side, ord, "solder"), side, ord, epId: ep.id,
           label: `Пайка разъёма ${tag} — ${conn.art || conn.name}`, tmplHint: ep.sdrTmpl || detectSolderConn_(conn.art) || undefined });
       } else {
-        if (term && side !== crimpSide) {
+        if (term && !crimpSides.includes(side)) {
           ops.push({ type: "prsTerm", opKey: endpointOpKey_(side, ord, "prs"), side, ord, epId: ep.id,
             label: `Опрессовка ${LUG_RE_.test(term.art || term.name || "") ? "наконечников" : "терминалов"} ${tag}`
               + (ep.double ? ` (${epPer_(ep) > 2 ? "по " + epPer_(ep) + " провода" : "двойной обжим"})` : "") + (ep.fold && isComplex_() ? " (жила сложена)" : ""),
@@ -1124,8 +1213,11 @@ export function makeGen(D: GenData, S: GenState) {
       dress.push({ type: "insTut", opKey: "insHs", tmplHint: "INS_TUT", cat: "Монтаж", tutCount: hsCount, harness: true, label: `Надеть термоусадку на жгут — ${hsCount} шт` });
       dress.push({ type: "heatTut", opKey: "heatHs", tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: hsCount, harness: true, label: `Усадка термоусадки на жгуте — ${hsCount} шт` });
     }
-    const marks = S.mark ? markComps_() : [];
-    if (marks.length) {
+    const kdMarks = S.mark ? markSpecs(S.markRows || [], comps()) : [];
+    const marks = S.mark && !kdMarks.length ? markComps_() : [];
+    if (kdMarks.length) {
+      dress.push({ type: "insMark", opKey: "insMark", cat: "Монтаж маркировки", label: markLabel(kdMarks), marks: kdMarks });
+    } else if (marks.length) {
       dress.push({ type: "insMark", opKey: "insMark", cat: "Монтаж маркировки", label: `Маркировка — ${marks.map((m) => m.art || m.name).join(", ")}`,
         marks: marks.map((m) => ({ art: m.art || m.name || "", name: m.name || "", qty: qtyNum(m) || 1 })) });
     }
@@ -1282,7 +1374,7 @@ export function makeGen(D: GenData, S: GenState) {
       ...coaxDia_(rec), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
       lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType,
     } : null);
-    const ops = getActiveOpsCoax_().map((spec) => {
+    const ops = getActiveOps().map((spec) => {
       const row = opRow(spec);
       return { type: spec.type, side: spec.side || "", units: spec.units || 1, templateId: row.templateId,
         opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine };
@@ -1302,7 +1394,7 @@ export function makeGen(D: GenData, S: GenState) {
         sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : ""),
         sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : ""),
       },
-      ops,
+      ops, ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };
   }
   function applyTwistAllowance_(wires: Array<{ art: string; name: string; length: number }>, tw: { enabled: boolean; pitch: string; wireDia: string; mode: string; pairs: number[][]; wireIndices: number[] }) {
@@ -1387,6 +1479,8 @@ export function makeGen(D: GenData, S: GenState) {
       if (spec.type === "splice" || spec.type === "insHousing") op.units = spec.units || 1;
       if (spec.type === "seal") { op.sealArt = spec.sealArt; op.sealName = spec.sealName; op.sealQty = spec.sealQty; op.sealPlaces = spec.sealPlaces; }
       if (spec.crimpEpId) { op.side = spec.side; op.ep = epSnap(epById_(spec.crimpEpId)); }
+      // Обжим обеих сторон: `ep` — сторона А, `epB` — сторона В (etk_builder: терминалы обеих сторон в комплектующих).
+      if (spec.crimpEpIdB) op.epB = epSnap(epById_(spec.crimpEpIdB));
       if (spec.epId) {
         const ep = epById_(spec.epId)!;
         op.side = spec.side; op.firstTerm = !!spec.firstTerm; op.ep = epSnap(ep);
@@ -1416,6 +1510,7 @@ export function makeGen(D: GenData, S: GenState) {
     return {
       assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
       bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
+      ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };
   }
   function bomWarnings_(cfg: Record<string, unknown>) {
@@ -1449,12 +1544,17 @@ export function makeGen(D: GenData, S: GenState) {
 
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
-    endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
+    endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
-    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, asmLenFromName_, calcCutLengths_, freeEnds_,
+    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_,
+    /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
+    markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
+      const conn = getCompById(e.connId);
+      return { name: (e.label || "").trim() || endKey_(e), art: conn ? conn.art || conn.name || "" : "" };
+    })), asmLenFromName_, calcCutLengths_, freeEnds_,
     wireQtyFromTerms_: (wires: Comp[]) => {
       if (wires.length !== 1 || cableCoresFromName_(`${wires[0].name || ""} ${wires[0].art || ""}`) > 1) return 0;
       const conns = bomLists().conns.filter((c) => !/корпус|housing/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`));
@@ -1641,18 +1741,46 @@ export function applyCalcTin_(D: GenData, S: GenState): GenState {
   return { ...S, tin: { ...S.tin, enabled: true, stripLen: m ? m[1] : S.tin.stripLen } };
 }
 
-/** Строки чертежа TECHMAP-GRAPHER → «Кабели» (grapherApply_). compId — позиция состава, не найдено — пусто («выбери»). */
-export function applyGrapherGroups(S0: GenState, groups: Array<{ compId: string; qty: number; length: number; cores?: number; jacket?: string }>): GenState {
-  let S = S0;
+export type GrapherGroupIn = {
+  compId: string; qty: number; length: number; cores?: number; jacket?: string;
+  /** Длина реза из чертежа: длина + поправки концов, вверх до шага (TECHMAP-GRAPHER). */
+  cut?: number | null; correctionFrom?: number; correctionTo?: number;
+};
+
+/** Есть ли в строках чертежа поправки концов (тех. запас на контакт, владелец 06.10). */
+export function grapherHasCorrections(groups: Array<Pick<GrapherGroupIn, "correctionFrom" | "correctionTo">>): boolean {
+  return groups.some((g) => (Number(g.correctionFrom) || 0) !== 0 || (Number(g.correctionTo) || 0) !== 0);
+}
+
+const mmRu = (value: string | number) => String(Number(value)).replace(".", ",");
+
+/** «по чертежу 300 мм · резка 312 мм (+8/+4)» — обе длины строки чертежа. */
+export function grapherLengthText(g: { length_mm: string | number | null; cut_mm: string | number | null; correction_from_mm: string | number; correction_to_mm: string | number }): string {
+  if (g.length_mm == null) return "нет длины";
+  const a = Number(g.correction_from_mm) || 0, b = Number(g.correction_to_mm) || 0;
+  const base = `по чертежу ${mmRu(g.length_mm)} мм`;
+  if (!a && !b) return base;
+  const sg = (x: number) => (x >= 0 ? "+" : "−") + mmRu(Math.abs(x));
+  return `${base} · резка ${g.cut_mm == null ? "—" : mmRu(g.cut_mm)} мм (${sg(a)}/${sg(b)})`;
+}
+
+/** Строки чертежа TECHMAP-GRAPHER → «Кабели» (grapherApply_). compId — позиция состава, не найдено — пусто («выбери»).
+ *  Поправки концов в чертеже — тех. запас на контакт (владелец 06.10): если они есть, кабели режутся по длине реза
+ *  чертежа, а режим «длина реза» отключает наш припуск L+/L− из БД.ТЕР, чтобы запас не посчитался дважды.
+ *  Без поправок — как раньше: длина по чертежу и наш припуск. */
+export function applyGrapherGroups(S0: GenState, groups: GrapherGroupIn[]): GenState {
+  const byCut = grapherHasCorrections(groups);
+  let S: GenState = byCut ? { ...S0, measureMode: "cut" } : S0;
   let next = S.nextWireIdx;
+  const lengthOf = (g: GrapherGroupIn) => (byCut ? Number(g.cut ?? g.length) || 0 : g.length || 0);
   const wires = groups.map((g) => {
-    const w: WireEntry = { idx: next++, compId: g.compId || "", length: g.length || 0, qty: g.qty };
+    const w: WireEntry = { idx: next++, compId: g.compId || "", length: lengthOf(g), qty: g.qty };
     if ((g.cores || 0) > 1) w.cores = g.cores;
     if (g.jacket) w.jacket = String(g.jacket);
     return w;
   });
   S = { ...S, wires, nextWireIdx: next };
-  const lens = Array.from(new Set(groups.map((g) => g.length || 0)));
+  const lens = Array.from(new Set(groups.map(lengthOf)));
   if (lens.length === 1 && !S.advancedLength) return { ...S, drawingLength: lens[0], sharedLengthText: lens[0] ? String(lens[0]) : "" };
   if (!S.advancedLength) return { ...S, advancedLength: true };
   return S;

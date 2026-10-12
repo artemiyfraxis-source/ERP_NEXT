@@ -8,6 +8,8 @@ import re
 from typing import Collection, Iterable, Mapping
 from uuid import UUID, uuid4
 
+from app.shared.project_number import normalize_project_number, project_from_purpose  # noqa: F401 — зовут отсюда
+
 from .domain import ProductionValidationError
 
 
@@ -49,24 +51,8 @@ PLAN_MARK_FLAG_FIELDS = ("in_plan", "kit_checked", "kit_present", "zkp", "tc_rea
 PLAN_DAY_FIELD_PREFIX = "day:"
 PLAN_DAY_NOTE_MAX = 16
 _KIT_STAGE_FACTS = ("", "tc", "kit", "work", "stock", "shipped")
-_HOMOGLYPHS = str.maketrans("KCEOPAHTMBXY", "КСЕОРАНТМВХУ")
-
-
-def normalize_project_number(value: object) -> str:
-    normalized = re.sub(r"\s+", "", str(value or "").strip().upper()).translate(_HOMOGLYPHS)
-    if re.fullmatch(r"[1-9]\d*(?:К[А-Я]?|МФ)(?:\.[А-Я]{1,3})?\.?", normalized):
-        return normalized.rstrip(".") + ".1"
-    return normalized
-
-
+# № проекта сравнивается по `app.shared.project_number` (normalize_project_number / project_from_purpose выше).
 MANUAL_TECHCARD_PROJECTS = frozenset(("714К.1", "35К.М.34"))
-
-
-def project_from_purpose(value: object) -> str:
-    purpose = re.sub(r"[\s·,;:\-—]*КБ\s*\d+[\s\S]*$", "", str(value or "").strip(), flags=re.I)
-    token = re.split(r"[\s·,;]+", purpose)[0] if purpose else ""
-    token = re.sub(r"\.\d{3,}$", "", token)
-    return normalize_project_number(token) if token else ""
 
 
 def kit_stage_key(project: object, item_index: object) -> str:
@@ -91,6 +77,8 @@ class KitStage:
     # Facts next to the stage: a manual stage jumps the ladder and would hide them otherwise.
     tc: bool = False
     kit: bool = False
+    # Stages a manual pick jumped over and no fact covers since (ladder order): the card shows them as skipped.
+    skipped: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -105,6 +93,8 @@ class KitReview:
 class KitMark:
     stage: str | None = None
     review: KitReview | None = None
+    # Stages jumped by the manual picks since the last «авто» (ladder order), below the current manual stage.
+    skipped: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +103,17 @@ class ProjectStage:
     kits: tuple[KitStage, ...]
     # True when a journal stage mark with an empty KB set the stage of a project without KBs.
     manual: bool = False
+
+
+def _fact_index(key: str, facts: Mapping[str, Collection[str]], manual_tc: bool) -> int:
+    """Highest ladder stage the facts alone give the КБ (0 — «Новый»)."""
+    stage_index = len(KIT_STAGES) - 1
+    while stage_index > 0:
+        fact = _KIT_STAGE_FACTS[stage_index]
+        if key in facts.get(fact, ()) or (fact == "tc" and manual_tc):
+            break
+        stage_index -= 1
+    return stage_index
 
 
 def project_stage(
@@ -127,25 +128,22 @@ def project_stage(
     manual_tc = normalize_project_number(project) in facts.get("tc_project", ())
     for item_index in item_indexes:
         key = kit_stage_key(project, item_index)
-        stage_index = len(KIT_STAGES) - 1
-        while stage_index > 0:
-            fact = _KIT_STAGE_FACTS[stage_index]
-            if key in facts.get(fact, ()) or (fact == "tc" and manual_tc):
-                break
-            stage_index -= 1
+        stage_index = _fact_index(key, facts, manual_tc)
         mark = marks.get(key, KitMark())
         manual_index = KIT_STAGES.index(mark.stage) if mark.stage in KIT_STAGES else -1
         # Контрактное производство: отгрузка по проекту — последний статус, ручной этап её не перекрывает
         # (владелец 29.09; в SUPPLYMAP ручной этап перекрывал и отгрузку).
         if key in facts.get("shipped", ()):
             manual_index = -1
+        status_index = manual_index if manual_index >= 0 else stage_index
         stages.append(KitStage(
             str(item_index).strip().upper(),
-            KIT_STAGES[manual_index if manual_index >= 0 else stage_index],
+            KIT_STAGES[status_index],
             manual_index >= 0,
             mark.review,
             tc=key in facts.get("tc", ()) or manual_tc,
             kit=key in facts.get("kit", ()),
+            skipped=tuple(stage for stage in mark.skipped if stage_index < KIT_STAGES.index(stage) < status_index),
         ))
     project_index = min(
         (KIT_STAGES.index(stage.status) for stage in stages),
@@ -159,6 +157,189 @@ def project_stage(
     if not stages and project_mark.stage in KIT_STAGES:
         return ProjectStage(project_mark.stage, (), manual=True)
     return ProjectStage(KIT_STAGES[project_index], tuple(stages))
+
+
+# ── Ручная смена этапа: карточка проекта, этап КБ, «Производственный план» ─────────────────────────────────
+# Владелец 10.10: «быстро руками сменить… пропуская этап, который был пропущен вживую». Вперёд — без причины, назад —
+# с причиной; проект целиком только поднимает отставшие КБ и не понижает ушедшие вперёд; ниже факта отгрузки не
+# опускается. Смена этапа — только записи журнала: склад, отгрузки, задания цеха и заявки не трогаются.
+STAGE_FORWARD = "forward"
+STAGE_BACK = "back"
+STAGE_AUTO = "auto"
+STAGE_NONE = "none"
+
+
+@dataclass(frozen=True)
+class KitStageNow:
+    """A КБ's stage right now. ``item_index`` "" — a project without KBs (its stage is a project mark)."""
+
+    item_index: str
+    status: str
+    # A manual stage mark is set, even one a shipment hides (only «авто» clears it).
+    manual: bool
+    # The stage the facts alone give — what «авто» returns to.
+    auto_status: str
+    shipped: bool = False
+
+
+@dataclass(frozen=True)
+class KitStageChange:
+    item_index: str
+    from_stage: str
+    to_stage: str
+    # What the journal row stores: the stage, or «авто».
+    value: str
+    skipped: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class KitStageKept:
+    item_index: str
+    stage: str
+    note: str
+
+
+@dataclass(frozen=True)
+class StagePlan:
+    value: str
+    kb: str
+    direction: str
+    changes: tuple[KitStageChange, ...] = ()
+    kept: tuple[KitStageKept, ...] = ()
+    error: str = ""
+
+    @property
+    def reason_required(self) -> bool:
+        return self.direction == STAGE_BACK
+
+
+def stage_skipped(from_stage: object, to_stage: object) -> tuple[str, ...]:
+    """Stages strictly between two ladder stages when moving forward (ladder order); () otherwise."""
+    if from_stage not in KIT_STAGES or to_stage not in KIT_STAGES:
+        return ()
+    return KIT_STAGES[KIT_STAGES.index(from_stage) + 1:KIT_STAGES.index(to_stage)]
+
+
+def project_stage_now(
+    project: str,
+    item_indexes: Iterable[str],
+    facts: Mapping[str, Collection[str]],
+    marks: Mapping[str, KitMark] | None = None,
+) -> tuple[KitStageNow, ...]:
+    """Per КБ: the stage now, the stage the facts give, a manual mark, a shipment — the ladder of `project_stage`.
+    A project without KBs is one entry with an empty КБ (its project mark)."""
+    marks = marks or {}
+    manual_tc = normalize_project_number(project) in facts.get("tc_project", ())
+    kits: list[KitStageNow] = []
+    for item_index in dict.fromkeys(str(item or "").strip().upper() for item in item_indexes):
+        if not item_index:
+            continue
+        key = kit_stage_key(project, item_index)
+        fact_index = _fact_index(key, facts, manual_tc)
+        mark = marks.get(key, KitMark())
+        shipped = key in facts.get("shipped", ())
+        manual = mark.stage in KIT_STAGES
+        status = mark.stage if manual and not shipped else KIT_STAGES[fact_index]
+        kits.append(KitStageNow(item_index, status, manual, KIT_STAGES[fact_index], shipped))
+    if not kits:
+        mark = marks.get(kit_stage_key(project, ""), KitMark())
+        auto = KIT_STAGES[1 if manual_tc else 0]
+        manual = mark.stage in KIT_STAGES
+        kits.append(KitStageNow("", mark.stage if manual else auto, manual, auto))
+    return tuple(kits)
+
+
+def kit_label(item_index: str) -> str:
+    return item_index or "Проект"
+
+
+def plan_stage_change(kits: Iterable[KitStageNow], value: object, kb: object = "") -> StagePlan:
+    """What a manual pick of ``value`` (a ladder stage or «авто») does to one КБ (``kb``) or to the whole project.
+
+    A refused pick comes back with ``error`` (the preview shows it); an unknown stage or КБ raises."""
+    value = str(value or "").strip()
+    if value not in (*KIT_STAGES, PLAN_STAGE_AUTO):
+        raise ProductionValidationError("Неизвестный этап.")
+    kb = str(kb or "").strip().upper()
+    kits = tuple(kits)
+    if kb:
+        if not re.match(r"^КБ\d+", kb, flags=re.I):
+            raise ProductionValidationError("Укажи КБ.")
+        targets = tuple(kit for kit in kits if kit.item_index == kb)
+        if not targets:
+            raise ProductionValidationError(f"В проекте нет {kb}.")
+    else:
+        targets = kits
+    if value == PLAN_STAGE_AUTO:
+        changes = tuple(
+            KitStageChange(kit.item_index, kit.status, kit.auto_status, PLAN_STAGE_AUTO)
+            for kit in targets if kit.manual
+        )
+        kept = tuple(KitStageKept(kit.item_index, kit.status, "Этап и так по факту.") for kit in targets if not kit.manual)
+        return StagePlan(value, kb, STAGE_AUTO if changes else STAGE_NONE, changes, kept)
+
+    target = KIT_STAGES.index(value)
+
+    def change(kit: KitStageNow) -> KitStageChange:
+        forward = target > KIT_STAGES.index(kit.status)
+        return KitStageChange(kit.item_index, kit.status, value, value, stage_skipped(kit.status, value) if forward else ())
+
+    def kept(kit: KitStageNow, back: bool = False) -> KitStageKept:
+        current = KIT_STAGES.index(kit.status)
+        if current == target:
+            note = "Уже на этом этапе."
+        elif back:
+            note = "Отгружено по факту — ниже не опускаем."
+        else:
+            note = "Выше выбранного этапа — не понижаем."
+        return KitStageKept(kit.item_index, kit.status, note)
+
+    floor = min(KIT_STAGES.index(kit.status) for kit in targets)
+    if target == floor:
+        return StagePlan(value, kb, STAGE_NONE, (), tuple(kept(kit) for kit in targets))
+    if target > floor:
+        # Вперёд: поднимаются только отставшие КБ, ушедшие дальше не понижаются.
+        return StagePlan(
+            value, kb, STAGE_FORWARD,
+            tuple(change(kit) for kit in targets if KIT_STAGES.index(kit.status) < target),
+            tuple(kept(kit) for kit in targets if KIT_STAGES.index(kit.status) >= target),
+        )
+    # Назад: причина обязательна, ниже факта отгрузки не опускаем.
+    lowered = tuple(change(kit) for kit in targets if not kit.shipped)
+    held = tuple(kept(kit, back=True) for kit in targets if kit.shipped)
+    error = ""
+    if not lowered:
+        error = (
+            f"{kb} отгружена по факту — этап ниже «Отгружено» не ставится." if kb
+            else "Все КБ проекта отгружены по факту — этап ниже «Отгружено» не ставится."
+        )
+    return StagePlan(value, kb, STAGE_BACK, lowered, held, error)
+
+
+def stage_change_text(change: KitStageChange, reason: str = "") -> str:
+    """Journal text of one «Этап КБ» row: from → to, the skipped stages, the reason."""
+    text = f"{change.from_stage} → {change.to_stage}"
+    if change.value == PLAN_STAGE_AUTO:
+        text += " (авто)"
+    if change.skipped:
+        text += f" · пропущены: {', '.join(change.skipped)}"
+    if reason:
+        text += f" · причина: {reason}"
+    return text
+
+
+def stage_plan_message(plan: StagePlan) -> str:
+    if plan.error:
+        return plan.error
+    if not plan.changes:
+        return "Без изменений: " + "; ".join(f"{kit_label(item.item_index)} — {item.note}" for item in plan.kept)
+    parts = []
+    for change in plan.changes:
+        part = f"{kit_label(change.item_index)}: {change.from_stage} → {change.to_stage}"
+        if change.skipped:
+            part += f" (пропущены: {', '.join(change.skipped)})"
+        parts.append(part)
+    return "; ".join(parts) + "."
 
 
 def supply_bucket(status: object, in_purchase: bool) -> str:
@@ -251,6 +432,10 @@ class PlanEvent:
     id: UUID = field(default_factory=uuid4)
     # Колонка листа «ЗАГРУЗ» у записи «Отметка плана» (comment, status, … или day:ГГГГ-ММ-ДД).
     field: str = ""
+    # «Этап КБ»: этап до смены ("" — запись до 0100); «Статус проекта»: закрытый статус, из которого вернули в работу.
+    from_value: str = ""
+    # Причина ручной смены этапа (назад — обязательна).
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -331,11 +516,17 @@ def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
         current = marks.get(key, KitMark())
         if event.kind == PLAN_KINDS["stage"]:
             stage = None if event.value == PLAN_STAGE_AUTO else event.value
-            marks[key] = KitMark(stage=stage, review=current.review)
+            skipped: tuple[str, ...] = ()
+            if stage in KIT_STAGES:
+                # Пропущенное вживую копится по ручным шагам вперёд; шаг назад срезает то, что выше нового этапа.
+                jumped = (*current.skipped, *stage_skipped(event.from_value, stage))
+                skipped = tuple(item for item in KIT_STAGES[:KIT_STAGES.index(stage)] if item in jumped)
+            marks[key] = KitMark(stage=stage, review=current.review, skipped=skipped)
         else:
             marks[key] = KitMark(
                 stage=current.stage,
                 review=KitReview(event.value, event.text, event.who, event.occurred_at),
+                skipped=current.skipped,
             )
     return marks
 

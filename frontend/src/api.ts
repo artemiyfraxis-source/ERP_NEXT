@@ -183,6 +183,8 @@ export interface SkippedRequestLine {
 
 export interface ProcurementLine {
   id: string;
+  /** ЦЕЛЬ заявки, из которой строка (списки листа; в ответах на правки её нет). */
+  purpose?: string | null;
   legacy_id: string;
   revision: string;
   status: string;
@@ -224,6 +226,11 @@ export interface ProcurementLine {
   actual_arrival?: string | null;
   /** КОММЕНТАРИЙ: свободная заметка закупщика, от «В работе»; не на «Новый»/«Отменено» (setNote). */
   note?: string | null;
+  /** DATASHEET: ссылка или текст, правится как комментарий (setDatasheet). */
+  datasheet?: string | null;
+  /** Файлы РАЗРЕШЕНИЕ и ДОК. КАЧЕСТВА (только в списках: «Мои позиции», «Весь лист», «По поставщикам»). */
+  permit_files?: ProcurementFile[];
+  quality_files?: ProcurementFile[];
   invoice_url: string | null;
   paid_at: string | null;
   currency: string | null;
@@ -396,6 +403,9 @@ export interface WarehouseLot {
   balance: string;
   available: string;
   source_receiving_ids: string[];
+  /** Who holds the reserve: kit requests, techcards, procurement covers. Only lots with a reserve carry holders. */
+  reserve_holders?: Array<{ kind: string; label: string; quantity: string; unit: string }>;
+  reserve_note?: string;
   // Lot passport (SK-6); older payloads may lack it.
   unit_mass_g?: string | null;
   expiry_date?: string | null;
@@ -563,6 +573,8 @@ export interface FulfillmentRequest {
   purpose: string;
   deadline: string | null;
   status: string;
+  /** «main» — комплект КБ (одна живая заявка на КБ проекта); «extra» — «Довыдача» сверх выданного комплекта. */
+  kind?: "main" | "extra";
   handout_location: string | null;
   /** «Укомплектован» only: the place «Отправить на выдачу» offers — the last one used at the kit's site, else «Зона выдачи». */
   handout_place?: string;
@@ -740,6 +752,63 @@ export interface ProductionTask {
   planned_finish: string | null;
   assigned: number;
   operations: ProductionOperation[];
+  /** План задания (Цель 2): техкарта и ревизия норм, режим передачи, партия, «первые k раньше», команда. */
+  techcard_id?: string | null;
+  techcard_revision?: number | null;
+  flow_mode?: ProductionFlowMode;
+  transfer_batch?: number | null;
+  early_quantity?: number | null;
+  team?: string[];
+  /** «Сдано N шт» площадки без отменённых; null — не считалось в этом ответе. */
+  delivered?: number | null;
+}
+
+export type ProductionFlowMode = "sequential" | "parallel" | "mixed";
+
+export interface ProductionDelivery {
+  id: string;
+  site: string;
+  quantity: number;
+  delivered_at: string;
+  delivered_by: string;
+  cancelled_at: string | null;
+  cancelled_by: string | null;
+}
+
+export interface ProductionFlowStep {
+  operation_id: string;
+  position: number;
+  stage: string;
+  code: string;
+  people: string;
+  operator_ids: string[];
+  start: string;
+  first_out: string;
+  finish: string;
+  wait_seconds: number;
+}
+
+export interface ProductionFlow {
+  task: ProductionTask;
+  modes: { value: ProductionFlowMode; name: string }[];
+  thresholds: { notice: string; limit: string };
+  plan: {
+    anchor: string;
+    transfer_batch: number;
+    first_ready: string;
+    first_quantity: number;
+    finish: string;
+    baseline_finish: string;
+    baseline_early_ready: string | null;
+    delay_percent: string | null;
+    level: "" | "ok" | "notice" | "limit";
+    work_seconds: number;
+    warnings: string[];
+    steps: ProductionFlowStep[];
+  };
+  deliveries: ProductionDelivery[];
+  delivered: number;
+  norms: { techcard_id: string | null; revision: number | null; current_revision: number | null; outdated: boolean };
 }
 
 export interface ProductionPlanEvent {
@@ -755,6 +824,8 @@ export interface ProductionPlanEvent {
   value: string;
   /** Колонка листа «ЗАГРУЗ» у записи «Отметка плана». */
   field?: string;
+  from_value?: string;
+  reason?: string;
 }
 
 /** Ячейка листа «ЗАГРУЗ»: показанное значение, вычисленное ERP и признак ручной отметки поверх него. */
@@ -832,6 +903,10 @@ export interface ProductionAbsence {
   from_date: string;
   to_date: string;
   kind: string;
+  /** Отсутствие по зарегистрированному заявлению: календарь его показывает, но не правит и не сохраняет. */
+  leave_request_id?: string | null;
+  /** ФИО из справочника сотрудников (у заявления — любой сотрудник, не только монтажник). */
+  operator_name?: string | null;
 }
 
 export interface ProductionShift {
@@ -1129,14 +1204,78 @@ export interface ReferenceBase {
 export type TechOperationTab = "ob" | "op" | "ter" | "coax" | "prov" | "mat" | "kab_coax" | "kab_awg";
 
 /** «Кабели и провода»: the list a БД.ПРОВ row is in (backend `references/cables.py`). */
-export type CableKind = "coax" | "wire" | "other";
+export type CableKind = "coax" | "wire" | "multi" | "other";
 
 export interface BasesResult {
   bases: ReferenceBase[];
   /** Records per stored tab and per cable list — the counts on the tab chips. */
   tabs?: Partial<Record<TechOperationTab, number>>;
   cables?: Record<CableKind, number>;
+  /** Rows of «Сечения AWG ↔ мм²». */
+  gauges?: number;
 }
+
+/** «Сечения AWG ↔ мм²»: one conductor size (backend `references/cable_structure.py`). */
+export interface WireGauge {
+  id: string;
+  /** «28», «1/0»; empty — a ГОСТ-only size. */
+  awg: string;
+  section_mm2: number;
+  conductor_d_mm: number | null;
+  strands: string;
+  label: string;
+  /** Hook-up wires on this size. */
+  wires: number;
+}
+
+/** «Монтажные провода»: the structure of a БД.ПРОВ wire; the conductor is a size row. */
+export interface HookupWire {
+  series: string;
+  gauge_id: string;
+  insulation: string;
+  outer_d_mm: number | null;
+  voltage_v: number | null;
+  temp_min_c: number | null;
+  temp_max_c: number | null;
+  /** «медь луженая»; "" — not known yet. Filled by the hook-up wire file import. */
+  conductor_material?: string;
+  insulation_thickness_mm?: number | null;
+}
+
+export interface CoaxCard {
+  id: string;
+  name: string;
+  family: string;
+  layers: Array<{ layer: string; label: string; material: string; diameter_mm: number | null }>;
+  connectors: Array<{ family: string; max_ghz: number | null; max_note: string; span_to_ghz: number | null }>;
+  /** VSWR — an acceptance norm proposed for the VNA check, not a datasheet value. `peak` — the «Peak» marker. */
+  /** `vswr_ref` — what a reference assembly's datasheet guarantees (to settle a disputed reject). */
+  markers: Array<{ freq_mhz: number | null; peak: boolean; vswr_max: number | null; vswr_ref: number | null; note: string }>;
+  /** As the datasheet publishes it, plus the derived dB/m; `interpolated` + `basis` — not published at that frequency. */
+  attenuation: Array<{
+    freq_mhz: number; kind: "nominal" | "typical" | "max"; value: number; unit: string; ref_length_m: number;
+    temp_c: number | null; loss_db_m: number; derived: boolean; interpolated: boolean; source: string; basis: string;
+  }>;
+  span_from_mhz: number | null;
+  span_to_ghz: number | null;
+  span_note: string;
+  /** Cut-off of the first higher mode (TE11) — physics; not the rated limit `max_operating_ghz`. */
+  fc_ghz: number | null;
+  fc_note: string;
+  max_operating_ghz: number | null;
+  max_operating_note: string;
+  /** Datasheet wording behind a number («50 ±2», «>165 (EZ)»), and `mechanical` notes. */
+  param_notes: Record<string, string>;
+  notes: string;
+  sources: string[];
+  confidence: string;
+  verified: boolean;
+  changes: string[];
+  params: Partial<Record<CoaxParam, number>>;
+}
+
+export type CoaxParam = "impedance_ohm" | "velocity_pct" | "capacitance_pf_m" | "shielding_db" | "bend_static_mm"
+  | "bend_dynamic_mm" | "temp_min_c" | "temp_max_c" | "voltage_max_v" | "max_power_w" | "max_power_at_mhz" | "weight_g_m";
 
 /** The D1·D2·D3 row the ETK generator uses for a coax cable (СПР.КАБ · коаксиал). */
 export interface CableDiameters {
@@ -1159,12 +1298,30 @@ export interface CableRow {
   dia: CableDiameters | null;
   /** No own D row: the row of the same family («RG58» for «RG-58 A/U»), to copy from. */
   dia_hint: CableDiameters | null;
+  /** Coax: the card by the exact name (`card_exact`) or of the family («RG-58» for «RG-58 C/U»). */
+  card?: CoaxCard | null;
+  card_exact?: boolean;
+  /** Монтажный wire: its structure, or — not structured yet — why, and what the БД.ПРОВ row suggests. */
+  hookup?: HookupWire | null;
+  hookup_problem?: string;
+  hookup_suggestion?: Omit<HookupWire, "gauge_id"> & { gauge_id: string };
 }
 
 export interface CablesResult {
   columns: string[];
   counts: Record<CableKind, number>;
   rows: CableRow[];
+  gauges?: WireGauge[];
+}
+
+export interface HookupPayload {
+  series: string;
+  gauge_id: string;
+  insulation: string;
+  outer_d_mm: string;
+  voltage_v: string;
+  temp_min_c: string;
+  temp_max_c: string;
 }
 
 export interface TechOperationRecord {
@@ -1336,6 +1493,49 @@ export interface ConnectorFamily {
   housing: import("./connectorArt").ConnectorHousing & { conf?: string; note?: string };
 }
 
+/** «База данных → Разъёмы» по сериям (backend techcards/connector_series.py). */
+export interface ConnectorSeriesHousing {
+  article: string;
+  n: number;
+  housing: ConnectorFamily["housing"];
+  headers: Array<{ title: string; article: string }>;
+}
+
+export interface ConnectorTerminal {
+  article: string; maker: string; product: string; series: string; kind: string;
+  awg_from: string; awg_to: string; mm2_from: string; mm2_to: string; strip: string; applicator: string; crimp_height: string;
+  pull_force: string;
+}
+
+export interface ConnectorSeries {
+  id: string;
+  title: string;
+  maker: string;
+  variants: Array<{ title: string; family: string; housings: ConnectorSeriesHousing[] }>;
+  range_checked: boolean;
+  range_src: string;
+  datasheet: string;
+  note: string;
+  terminals: ConnectorTerminal[];
+  wire: { awg_thin?: number; awg_thick?: number; mm2_min?: number; mm2_max?: number } | null;
+  housing_count: number;
+  counts: number[];
+  pitch: number | null;
+  color: string | null;
+  checked: boolean;
+  sample: ConnectorSeriesHousing | null;
+  /** Раздел галереи: «Провод — плата», «Автомобильные», … — у каждой серии ровно один. */
+  category: string;
+  /** Артикулы БД.КОАКС для ВЧ-серий. */
+  catalog: Array<{ article: string; kind: string; maker: string; wire: string }>;
+}
+
+export interface ConnectorSeriesMatch {
+  series: string | null;
+  article: string | null;
+  housing: ConnectorFamily["housing"];
+}
+
 export interface OperationRecordEdit {
   name: string;
   safety: string;
@@ -1367,8 +1567,95 @@ export interface GrapherImportResult {
       component_id: string;
       mixed_corrections?: boolean;
     }>;
-  }>;
+  } & GrapherHarnessDetails>;
+  format?: { snapshot_format: number | null; source_commit: string };
+  catalog?: {
+    pinned: Array<{ source_kind: string; record_key: string; version: string; name: string; value: string; unit: string }>;
+    components: Array<{ snapshot_id: string; code: string; name: string; version: number | null; articles: string[] }>;
+    placements: Array<{ harness_id: string; article_key: string; entity_type: string; snapshot_id: string; component_code: string }>;
+  };
+  import_warnings?: string[];
 }
+
+/** Операция генератора, которую подразумевает провод чертежа (type — тип операции генератора; shared — общая для
+ *  нескольких проводов: сросток, пара, кабель, оболочка — брать один раз; block — строка маршрута чертежа). */
+export interface GrapherImpliedOp {
+  type: string; label: string; side: "" | "A" | "B"; shared: string; block: string; data: Record<string, unknown>;
+}
+
+export interface GrapherWireEnd {
+  type: "contact" | "junction" | "screen" | "free"; type_label: string; title: string;
+  connector_id: string; connector: string; part_number: string; contact_id: string; contact_number: number | null;
+  contact_name: string; contact_type: string; circuit: string; terminal_article: string; terminal: string;
+  terminal_l_plus_mm: number | null; terminal_l_minus_mm: number | null;
+  terminal_details: { manufacturer: string; series: string; description: string; article: string } | null;
+  junction_id: string; screen_id: string; screen_side: string; correction_mm: number; strip_profile: string;
+}
+
+type GrapherBlock = { id: string; title: string; index: string } | null;
+
+/** Полное чтение жгута TECHMAP-GRAPHER (модель жгута ERP, backend/app/modules/techcards/harness). Необязательные —
+ *  старый backend их не присылает. */
+export interface GrapherHarnessDetails {
+  id?: string;
+  format?: { schema_version: number; writer_contract: number | null };
+  wires?: Array<{
+    id: string; circuit: string; color: string; material: string; material_article: string; section: string;
+    component_id: string; cable_id: string; length_mm: number | null; correction_from_mm: number; correction_to_mm: number;
+    rounding_step_mm: number; unrounded_mm: number | null; cut_mm: number | null; label: string;
+    from: GrapherWireEnd; to: GrapherWireEnd; block: GrapherBlock; covering_ids: string[];
+    ops: GrapherImpliedOp[]; route_ops: GrapherImpliedOp[];
+  }>;
+  junctions?: Array<{ id: string; label: string; wire_ids: string[]; ending_wire_ids: string[]; circuits: string[] }>;
+  screens?: Array<{ id: string; label: string; wire_ids: string[]; terminal_side: string; drain_wire_ids: string[] }>;
+  diff_pairs?: Array<{ id: string; wire_ids: string[]; circuits: string[]; step: number | null; amplitude: number | null; variant: number }>;
+  twisted_groups?: Array<{ id: string; kind: string; label: string; wire_ids: string[] }>;
+  cables?: Array<{
+    id: string; label: string; material: string; material_article: string; component_id: string;
+    member_wire_ids: string[]; cores: number; length_mm: number | null; correction_from_mm: number; correction_to_mm: number;
+    rounding_step_mm: number; unrounded_mm: number | null; cut_mm: number | null;
+    sheath_strip: { from_mm: number | null; to_mm: number | null; cut_from_mm: number | null; cut_to_mm: number | null } | null;
+    block: GrapherBlock;
+  }>;
+  strip_profiles?: Array<{
+    wire_id: string; end: "from" | "to"; circuit: string; profile: string; source_key: string;
+    layers: Array<{ name: string; index: number; length_mm: number; step_mm: number; diameter_mm: number | null }>;
+  }>;
+  coverings?: Array<{
+    id: string; name: string; kind: string; kind_label: string; material: string; material_article: string;
+    component_id: string; color: string; length_mode: string; length_mm: number | null;
+    spans: Array<{ segment_id: string; from: number; to: number; from_connector: string; to_connector: string }>;
+    segment_ids: string[]; wire_ids: string[]; cable_ids: string[]; block: GrapherBlock; ops: GrapherImpliedOp[];
+  }>;
+  route_status?: string;
+  route_status_label?: string;
+  route_rows?: Array<{
+    id: string; kind: string; kind_label: string; role: string; index: string; title: string;
+    quantity: number | null; reserve: number | null; operation_time_min: number | null; comment: string; prepared: boolean;
+    depends_on: string[]; sources: Array<{ kind: string; id: string; label: string }>;
+    operations: Array<{ id: string; code: string; name: string; mode: string; note: string }>;
+    terminal_requirements: Array<{ wire_id: string; end: "from" | "to"; terminal_article: string; strip_length_mm: number | null }>;
+  }>;
+  connector_details?: Array<{
+    id: string; designation: string; part_number: string; library: string; template_code: string; template_name: string;
+    template_article: string; template_version: number | null;
+    contacts: Array<{
+      id: string; number: number | null; name: string; contact_type: string; circuit: string; terminal_article: string;
+      terminal: string; terminal_l_plus_mm: number | null; terminal_l_minus_mm: number | null; wire: string;
+      wire_section: string; color: string; status: string;
+    }>;
+  }>;
+  sheet_match?: Array<{
+    kind: string; name: string; article: string; unit: string; quantity: number | null; item_ids: string[];
+    sheet_id: string; sheet_quantity: number | null; matched_by: string;
+    status: "ok" | "quantity" | "not_in_sheet" | "not_in_drawing";
+  }>;
+  sheet_warnings?: string[];
+  import_warnings?: string[];
+}
+
+/** Строка «Данных из листа» для сверки с чертежом. */
+export type GrapherSheetRow = { id: string; type: string; name: string; article: string; kd: string; qty: number | string | null };
 
 export interface NotificationItem {
   id: string;
@@ -1390,6 +1677,30 @@ export interface AuditItem {
   details: Record<string, unknown>;
 }
 
+export type BackgroundStatus = "ok" | "warn" | "red";
+
+/** Группа фоновых работ воркера (аудит U08): последний успех, время прогона, сбои подряд. */
+export interface BackgroundGroup {
+  key: string;
+  label: string;
+  status: BackgroundStatus;
+  success_at: string | null;
+  failure_at: string | null;
+  error: string | null;
+  duration_ms: number;
+  failures: number;
+  max_silence_seconds: number;
+}
+
+/** Тема очереди с ожидающими сообщениями: сколько и сколько ждёт самое старое. */
+export interface BackgroundTopic {
+  topic: string;
+  count: number;
+  oldest_at: string;
+  age_seconds: number;
+  status: BackgroundStatus;
+}
+
 export interface OutboxHealth {
   total: number;
   published: number;
@@ -1402,6 +1713,14 @@ export interface OutboxHealth {
     error: string;
     dead: boolean;
   }>;
+  ok?: boolean;
+  groups?: BackgroundGroup[];
+  topics?: BackgroundTopic[];
+  oldest_pending_seconds?: number | null;
+  /** «Повторить» остановленное задание — только администратору. */
+  can_retry?: boolean;
+  /** Сайты поставщиков, которые читаются без проверки сертификата (ERP_TLS_UNVERIFIED_HOSTS). */
+  tls_exceptions?: string[];
 }
 
 export class ApiError extends Error {
@@ -1436,46 +1755,131 @@ function cookie(name: string): string {
 
 /** «Failed to fetch» (TypeError): ERP не ответила — перезапуск при обновлении или сеть. */
 export const NO_CONNECTION = "Нет связи с ERP: сервер перезапускается или недоступен. Обнови страницу через минуту.";
+/** Срок ответа на чтение; дольше — чтение обрывается понятным текстом, кнопки снова доступны. */
+export const READ_DEADLINE_MS = 20_000;
+/** Срок ответа на запись. Его истечение — не отказ: запись могла пройти (см. UnknownResultError). */
+export const WRITE_DEADLINE_MS = 120_000;
+export const READ_TIMEOUT_TEXT = "ERP не ответила за 20 с — проверьте связь и нажмите «Повторить».";
+export const UNKNOWN_RESULT_TEXT = "Результат неизвестен: ответ ERP не дошёл. Проверьте, записалось ли, прежде чем повторять.";
+
+/** Чтение не уложилось в срок (READ_DEADLINE_MS): ничего не записано, повтор безопасен. */
+export class ApiTimeoutError extends Error {
+  constructor(message = READ_TIMEOUT_TEXT) {
+    super(message);
+    this.name = "ApiTimeoutError";
+  }
+}
+
+/** Запись ушла, а ответ не пришёл (сеть оборвалась или истёк срок): она могла выполниться. Не повторять вслепую —
+ *  сверить состояние или повторить с тем же ключом идемпотентности; резерв и оплату сами не повторяем. */
+export class UnknownResultError extends Error {
+  constructor(message = UNKNOWN_RESULT_TEXT) {
+    super(message);
+    this.name = "UnknownResultError";
+  }
+}
+
+/** Чтение отменено, потому что его заменило более новое (`latestRead`): ни ошибку, ни данные показывать не нужно. */
+export function isAborted(reason: unknown): boolean {
+  return reason instanceof DOMException && reason.name === "AbortError";
+}
+
+/** Отмена устаревших чтений: каждый вызов отменяет предыдущий сигнал и выдаёт новый (поиск, перезагрузка списка). */
+export function latestRead(): () => AbortSignal {
+  let current: AbortController | null = null;
+  return () => {
+    current?.abort();
+    current = new AbortController();
+    return current.signal;
+  };
+}
+
 export function failureText(reason: unknown, fallback: string) {
   if (reason instanceof TypeError) return NO_CONNECTION;
   return reason instanceof Error ? reason.message : fallback;
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
+/** `timeoutMs`: свой срок ответа (null — без срока); `safe`: POST, который ничего не меняет или безопасен к повтору
+ *  (предпросмотр, вход, выход) — его срок и обрыв сети считаются как у чтения. */
+export type ApiInit = RequestInit & { timeoutMs?: number | null; safe?: boolean };
+
+const READ_METHODS = ["GET", "HEAD", "OPTIONS", "TRACE"];
+
+export async function api<T>(path: string, init: ApiInit = {}): Promise<T> {
+  const { timeoutMs, safe, signal: outer, ...request } = init;
+  const headers = new Headers(request.headers);
   // FormData (a file upload) sets its own multipart boundary — the header is left to the browser.
-  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const method = (init.method ?? "GET").toUpperCase();
-  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(method)) {
+  if (request.body && !(request.body instanceof FormData) && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const method = (request.method ?? "GET").toUpperCase();
+  if (!READ_METHODS.includes(method)) {
     const csrf = cookie("__Host-erp_csrf") || cookie("erp_csrf");
     if (csrf) headers.set("X-CSRF-Token", csrf);
   }
-  const response = await fetch(path, { ...init, headers, credentials: "include" });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/pin-login") {
-      window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+  const reading = safe ?? READ_METHODS.includes(method);
+  // A file upload has no deadline: a large scan over a slow link is not a hung request.
+  const deadline = timeoutMs !== undefined ? timeoutMs
+    : reading ? READ_DEADLINE_MS
+      : request.body instanceof FormData ? null : WRITE_DEADLINE_MS;
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  // Settles only on the deadline or the caller's cancel; it races the request, so a fetch that ignores the signal ends too.
+  const stop = new Promise<never>((_, reject) => {
+    if (deadline) {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(reading ? new ApiTimeoutError() : new UnknownResultError());
+      }, deadline);
     }
-    throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
+    if (outer) {
+      onAbort = () => {
+        controller.abort();
+        reject(new DOMException("Запрос заменён более новым", "AbortError"));
+      };
+      if (outer.aborted) onAbort();
+      else outer.addEventListener("abort", onAbort, { once: true });
+    }
+  });
+  async function send(): Promise<T> {
+    const response = await fetch(path, { ...request, headers, credentials: "include", signal: controller.signal });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/pin-login") {
+        window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+      }
+      throw new ApiError(errorMessage(payload.detail, response.status), response.status, payload.detail);
+    }
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
+  try {
+    return await Promise.race([send(), stop]);
+  } catch (reason) {
+    // A write whose connection broke may still have been applied on the server: not a failure, an unknown result.
+    if (!reading && reason instanceof TypeError) throw new UnknownResultError();
+    throw reason;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (outer && onAbort) outer.removeEventListener("abort", onAbort);
+  }
 }
 
 export const identityApi = {
   me: () => api<Principal>("/api/auth/me"),
+  // Sign-in, sign-out and the admin switch carry the target state: repeating them is harmless (`safe`).
   login: (login: string, password: string) =>
     api<Principal>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ login, password }),
+      safe: true,
     }),
   loginStaff: () => api<{ staff: LoginStaff[] }>("/api/auth/login-staff"),
   /** An empty PIN asks for «узнать PIN» (first sign-in); the answer is then a PinReveal, not a session. */
   pinLogin: (who: string, pin: string) =>
-    api<Principal | PinReveal>("/api/auth/pin-login", { method: "POST", body: JSON.stringify({ who, pin }) }),
+    api<Principal | PinReveal>("/api/auth/pin-login", { method: "POST", body: JSON.stringify({ who, pin }), safe: true }),
   adminMode: (on: boolean) =>
-    api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }) }),
-  logout: () => api<void>("/api/auth/logout", { method: "POST" }),
+    api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }), safe: true }),
+  logout: () => api<void>("/api/auth/logout", { method: "POST", safe: true }),
   profile: () => api<OwnProfile>("/api/auth/profile"),
   changePassword: (current: string, next: string) =>
     api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
@@ -1661,13 +2065,14 @@ export const internalProjectsApi = {
 
 export const requestsApi = {
   schema: () => api<RequestSchema>("/api/requests/schema"),
-  list: (q = "") =>
-    api<{ requests: RequestRow[] }>(q ? `/api/requests?q=${encodeURIComponent(q)}` : "/api/requests"),
+  list: (q = "", signal?: AbortSignal) =>
+    api<{ requests: RequestRow[] }>(q ? `/api/requests?q=${encodeURIComponent(q)}` : "/api/requests", { signal }),
   /** RQ-MINE: server-side filter by the authenticated initiator, paginated (replaces the client-side
    *  name match over the latest 200 rows). */
-  mine: (limit: number, offset: number, q = "") =>
+  mine: (limit: number, offset: number, q = "", signal?: AbortSignal) =>
     api<MineRequestsResult>(
       `/api/requests/mine?limit=${limit}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+      { signal },
     ),
   create: (request: Record<string, unknown>, idempotencyKey: string) =>
     api<{ requests: RequestRow[] }>("/api/requests", {
@@ -1692,12 +2097,16 @@ export const requestsApi = {
     api<CalcImportPreview>("/api/requests/import/calc", {
       method: "POST",
       body: JSON.stringify({ url }),
+      // A preview writes nothing; reading a Google sheet may take longer than a plain read.
+      safe: true,
+      timeoutMs: 60_000,
     }),
   /** Fallback when the server has no Google key: the ЗКП range pasted as a grid. */
   importParse: (grid: Array<Array<string | null>>) =>
     api<CalcImportPreview>("/api/requests/import/parse", {
       method: "POST",
       body: JSON.stringify({ grid }),
+      safe: true,
     }),
   importCreate: (
     payload: {
@@ -1782,6 +2191,18 @@ export interface ApplyOrderDocumentInput {
   lines: (OrderLineRef & { price_with_vat: string | null; invoice_item_name?: string | null })[];
 }
 
+/** Вид файла строки закупки: разрешение (на замену) или документ качества. */
+export type ProcurementFileKind = "permit" | "quality";
+
+export interface ProcurementFile {
+  id: string;
+  kind: ProcurementFileKind;
+  file_name: string;
+  url: string;
+  uploaded_by: string;
+  uploaded_at: string;
+}
+
 export interface InvoiceUpload {
   url: string;
   file_name: string;
@@ -1807,7 +2228,7 @@ export const procurementApi = {
       },
     ),
   saveKp: (reference: string, rows: KpRowInput[], invoiceUrl: string, manualExchangeRate?: string) =>
-    api<{ lines: ProcurementLine[]; invoice_error: string }>("/api/procurement/kp", {
+    api<{ lines: ProcurementLine[]; invoice_error: string; warnings?: string[] }>("/api/procurement/kp", {
       method: "POST",
       body: JSON.stringify({
         order_reference: reference,
@@ -1870,7 +2291,7 @@ export const procurementApi = {
   /** Проверенные цены документа — все строки заказа или ни одной (409 — набор устарел, 422 — сервер называет строку).
    *  КП: цены, строки остаются «Жду счет»; счёт: цены и счёт, строки уходят «В оплату». */
   applyOrderDocument: (orderNumber: string, input: ApplyOrderDocumentInput) =>
-    api<{ lines: ProcurementLine[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/apply-document`, {
+    api<{ lines: ProcurementLine[]; warnings?: string[] }>(`/api/procurement/orders/${encodeURIComponent(orderNumber)}/apply-document`, {
       method: "POST",
       body: JSON.stringify(input),
     }),
@@ -1915,6 +2336,17 @@ export const procurementApi = {
       method: "PATCH",
       body: JSON.stringify({ version, note }),
     }),
+  setDatasheet: (lineId: string, version: number, datasheet: string) =>
+    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/datasheet`, {
+      method: "PATCH",
+      body: JSON.stringify({ version, datasheet }),
+    }),
+  /** Файл разрешения или документа качества к строке; документ качества ставит «Док. качества: Да». */
+  uploadLineFile: (lineId: string, kind: ProcurementFileKind, file: { name: string; type: string; base64: string }) =>
+    api<{ file: ProcurementFile; line: ProcurementLine }>(`/api/procurement/${lineId}/files`, {
+      method: "POST",
+      body: JSON.stringify({ kind, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
+    }),
   setExpectedArrival: (lineId: string, version: number, expectedArrival: string) =>
     api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/expected-arrival`, {
       method: "PATCH",
@@ -1936,7 +2368,7 @@ export const procurementApi = {
     invoiceNumber = "",
     invoiceDate = "",
   ) =>
-    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/invoice`, {
+    api<{ line: ProcurementLine; warnings?: string[] }>(`/api/procurement/${lineId}/invoice`, {
       method: "POST",
       body: JSON.stringify({
         version,
@@ -1959,7 +2391,7 @@ export const procurementApi = {
     invoiceNumber: string,
     invoiceDate: string,
   ) =>
-    api<{ line: ProcurementLine }>(`/api/procurement/${lineId}/invoice/replace`, {
+    api<{ line: ProcurementLine; warnings?: string[] }>(`/api/procurement/${lineId}/invoice/replace`, {
       method: "POST",
       body: JSON.stringify({
         version,
@@ -2112,6 +2544,13 @@ export const receivingApi = {
     ),
 };
 
+export type WarehouseTotal = { balance: string; reserved: string; available: string; lots: number; units: string[] };
+export type WarehouseTotals = {
+  group: string;
+  groups: Array<WarehouseTotal & { group: string; articles: number }>;
+  articles: Array<WarehouseTotal & { group: string; article: string }>;
+};
+
 export const warehouseApi = {
   list: ({ after, query = "", includeZero = false, warehouse = "" }: {
     after?: string;
@@ -2126,6 +2565,21 @@ export const warehouseApi = {
     if (warehouse) params.set("warehouse", warehouse);
     const suffix = params.size ? `?${params}` : "";
     return api<{ lots: WarehouseLot[]; total: number; truncated: number; next_cursor: string | null }>(`/api/stock${suffix}`);
+  },
+  /** Sums per group and per article of a group over ALL lots of the filter (not just the loaded pages). */
+  totals: ({ group = "", query = "", includeZero = false, warehouse = "" }: {
+    group?: string;
+    query?: string;
+    includeZero?: boolean;
+    warehouse?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    if (group) params.set("group", group);
+    if (query.trim()) params.set("q", query.trim());
+    if (includeZero) params.set("zero", "true");
+    if (warehouse) params.set("warehouse", warehouse);
+    const suffix = params.size ? `?${params}` : "";
+    return api<WarehouseTotals>(`/api/stock/totals${suffix}`);
   },
   shelfPlaces: (warehouse: string, shelf: string) => api<WarehouseShelfPlaces>(
     `/api/stock/places?warehouse=${encodeURIComponent(warehouse)}&shelf=${encodeURIComponent(shelf)}`,
@@ -2257,10 +2711,12 @@ export const fulfillmentApi = {
       method: "POST",
       body: JSON.stringify(typeof place === "string" ? { version, handout_location: place } : { version, place }),
     }),
-  issue: (requestId: string, version: number) =>
-    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/issue`, {
+  /** «Выдать комплект» / «Выдать выбранные»: one transaction for every kit given, all or nothing. A «Укомплектован»
+      kit is sent to the handout point on the way (the place the server offers). */
+  issueBatch: (requests: Array<{ id: string; version: number }>) =>
+    api<{ requests: FulfillmentRequest[]; message: string }>("/api/issues/issue-batch", {
       method: "POST",
-      body: JSON.stringify({ version }),
+      body: JSON.stringify({ requests }),
     }),
   returned: (requestId: string, version: number, returnLocation: string) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/returned`, {
@@ -2283,6 +2739,22 @@ export const fulfillmentApi = {
   }),
   cancel: (requestId: string, version: number) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  /** «Довыдать»: заявка «Довыдача» на позиции выданного комплекта — с причиной, ждёт ГРН как новая. */
+  extra: (
+    requestId: string,
+    payload: { reason: string; deadline?: string | null; lines: Array<{ article: string; name: string; unit: string; quantity: string }> },
+    idempotencyKey: string,
+  ) => api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/extra`, {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  /** «Вернуть в комплектацию»: «Готов к выдаче» → «Укомплектован», резервы остаются на партиях. */
+  returnToKitting: (requestId: string, version: number) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/return-to-kitting`, {
       method: "POST",
       body: JSON.stringify({ version }),
     }),
@@ -2340,7 +2812,7 @@ export const productionApi = {
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
     method: "PUT",
-    body: JSON.stringify({ holidays, shift, absences: absences.map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
+    body: JSON.stringify({ holidays, shift, absences: absences.filter((item) => !item.leave_request_id).map(({ operator_id, from_date, to_date, kind }) => ({ operator_id, from_date, to_date, kind })) }),
   }),
   skills: () => api<{ skills: ProductionSkill[]; operation_codes?: Array<{ code: string; name: string }> }>("/api/production/skills"),
   launchable: () => api<{ items: ProductionLaunchable[] }>("/api/production/launchable"),
@@ -2380,7 +2852,31 @@ export const productionApi = {
       method: "POST",
       body: JSON.stringify({ version, site }),
     }),
-  schedule: (taskId: string, version: number, replan: boolean, maxCrew: number) =>
+  /** «План задания»: расчёт по этапам в датах смены, сдачи площадки, свежесть норм ЭТК. */
+  flow: (taskId: string) => api<ProductionFlow>(`/api/production/tasks/${taskId}/flow`),
+  updateFlow: (taskId: string, version: number, settings: { flow_mode: ProductionFlowMode; transfer_batch: number | null; early_quantity: number | null; team: string[] }) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/flow`, {
+      method: "PUT", body: JSON.stringify({ version, ...settings }),
+    }),
+  refreshNorms: (taskId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/norms/refresh`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Сдано N шт»; quantity null — весь остаток. */
+  deliver: (taskId: string, version: number, quantity: number | null) =>
+    api<{ task: ProductionTask; delivery: ProductionDelivery }>(`/api/production/tasks/${taskId}/deliveries`, {
+      method: "POST", body: JSON.stringify({ version, quantity }),
+    }),
+  cancelDelivery: (taskId: string, deliveryId: string, version: number) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/deliveries/${deliveryId}/cancel`, {
+      method: "POST", body: JSON.stringify({ version }),
+    }),
+  /** «Выполнено» (done) / «Вернуть в работу». */
+  setDone: (taskId: string, version: number, done: boolean) =>
+    api<{ task: ProductionTask }>(`/api/production/tasks/${taskId}/status`, {
+      method: "POST", body: JSON.stringify({ version, done }),
+    }),
+  schedule:(taskId: string, version: number, replan: boolean, maxCrew: number) =>
     api<{ variants: ProductionScheduleVariant[] }>(`/api/production/tasks/${taskId}/schedule`, {
       method: "POST", body: JSON.stringify({ version, replan, max_crew: maxCrew }),
     }),
@@ -2390,6 +2886,10 @@ export const productionApi = {
     }),
   execution: (operatorId = "") => api<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>(`/api/production/my/execution${operatorId ? `?operator_id=${operatorId}` : ""}`),
   /** ЭТК операции для монтажника: выданная карта ПЗ и операция, на которой её открыть (не требует раздела техкарт). */
+  operationEtkSketches: (taskId: string, operationId: string) =>
+    api<{ items: OperationSketch[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches`),
+  operationEtkSketchUrl: (taskId: string, operationId: string, operationKey: string, at = "") =>
+    `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string) =>
@@ -2448,6 +2948,8 @@ export const productionApi = {
 
 export const productionPlanApi = {
   load: () => api<ProductionPlanResult>("/api/production/plan"),
+  stagePreview: (project: string, value: string, kb = "") =>
+    api<StagePreview>(`/api/production/plan/stage-preview?project=${encodeURIComponent(project)}&value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   addEvent: (payload: {
     project: string;
     kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark";
@@ -2457,6 +2959,7 @@ export const productionPlanApi = {
     item_index?: string;
     value?: string;
     field?: string;
+    reason?: string;
   }) => api<{ event: ProductionPlanEvent }>("/api/production/plan/events", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -2510,6 +3013,19 @@ export const shippingApi = {
   projectPack: (project: string, lines: Array<{ good_id: string; quantity: string }>) => api<{ shipment: Shipment }>("/api/shipping/project-pack", {
     method: "POST", body: JSON.stringify({ project, lines }),
   }),
+  /** «Отгрузить» / «Упаковать, отгрузить позже» карточки проекта: карточка, отправка, УПД и отгрузка — одна транзакция.
+   * Тот же ключ с тем же телом возвращает уже сделанное, с другим — 409. */
+  projectShip: (payload: {
+    project: string;
+    addressee_version: number;
+    lines: Array<{ good_id: string; version: number; quantity: string }>;
+    addressee?: Record<string, string | null>;
+    documents?: { upd_number: string; upd_date: string | null; deadline: string | null };
+    upd_file?: { file_name: string; content_type: string; content_base64: string };
+    ship: boolean;
+  }, idempotencyKey: string) => api<{ shipment: Shipment; shipped: boolean; closed: boolean; why: string; replayed: boolean }>("/api/shipping/project-ship", {
+    method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload),
+  }),
 };
 
 export const referencesApi = {
@@ -2519,6 +3035,11 @@ export const referencesApi = {
     api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
   saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
     api<CableDiameters>("/api/references/cables/diameters", { method: "PUT", body: JSON.stringify(payload) }),
+  saveHookup: (recordId: string, payload: HookupPayload & { old: HookupPayload | null }) =>
+    api<{ hookup: HookupWire; record: TechOperationRecord }>(`/api/references/cables/${recordId}/hookup`, { method: "PUT", body: JSON.stringify(payload) }),
+  saveGauge: (gaugeId: string | null, payload: { awg: string; section_mm2: string; conductor_d_mm: string; strands: string }) =>
+    api<WireGauge>(gaugeId ? `/api/references/wire-gauges/${gaugeId}` : "/api/references/wire-gauges", { method: gaugeId ? "PUT" : "POST", body: JSON.stringify(payload) }),
+  deleteGauge: (gaugeId: string) => api<void>(`/api/references/wire-gauges/${gaugeId}`, { method: "DELETE" }),
   maps: () => api<ReferenceMaps>("/api/references/maps"),
   saveMaps: (maps: ReferenceMaps) => api<ReferenceMaps>("/api/references/maps", {
     method: "PUT",
@@ -2583,9 +3104,10 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, operation }),
     }),
-  importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = []) =>
+  importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = [],
+    sheet: GrapherSheetRow[] = []) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {
-      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components }),
+      method: "POST", body: JSON.stringify({ filename, content_base64: contentBase64, components, sheet }),
     }),
   create: (payload: {
     project: string;
@@ -2602,10 +3124,11 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, document }),
     }),
-  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string) =>
+  /** generatorOrigin — типовая сборка, из которой «Поправить вручную» сделало ручную (`generator_origin`, та же форма). */
+  autoBuild: (cardId: string, version: number, config: Record<string, unknown>, draftId?: string, generatorOrigin?: Record<string, unknown>) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/build`, {
       method: "POST",
-      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}) }),
+      body: JSON.stringify({ version, config, ...(draftId ? { draft_id: draftId } : {}), ...(generatorOrigin ? { generator_origin: generatorOrigin } : {}) }),
     }),
   issue: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/issue`, {
@@ -2625,8 +3148,10 @@ export const techcardsApi = {
   deleteSketch: (cardId: string, operationKey: string) =>
     api<{ deleted: number }>(`/api/techcards/projects/${cardId}/sketches/${encodeURIComponent(operationKey)}`, { method: "DELETE" }),
   /** База разъёмов: семейства корпусов с образцом артикула и раскладкой контактов. */
-  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null }>(
+  connectorFamilies: (article = "") => api<{ items: ConnectorFamily[]; match: ConnectorFamily["housing"] | null; series_count?: number }>(
     `/api/techcards/connector-families${article ? `?article=${encodeURIComponent(article)}` : ""}`),
+  connectorSeries: (article = "") => api<{ series: ConnectorSeries[]; match: ConnectorSeriesMatch | null }>(
+    `/api/techcards/connector-series${article ? `?article=${encodeURIComponent(article)}` : ""}`),
   discardDraft: (cardId: string, version: number) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/etk`, {
       method: "DELETE",
@@ -2657,6 +3182,9 @@ export const operationsApi = {
     return api<{ events: AuditItem[] }>(`/api/operations/audit${params.size ? `?${params}` : ""}`);
   },
   outbox: () => api<OutboxHealth>("/api/operations/outbox"),
+  /** Вернуть остановленное задание в очередь как есть (журналируется; повторный вызов ничего не меняет). */
+  retryOutbox: (id: string) =>
+    api<{ id: string; requeued: boolean }>(`/api/operations/outbox/${encodeURIComponent(id)}/retry`, { method: "POST" }),
 };
 
 /** Задача модулю по проекту: её ставит арбитр ERP по событию модуля (ARCH-TRACK-3). */
@@ -2727,6 +3255,8 @@ export type EmployeeCardProject = {
 export type EmployeeCardSkill = {
   /** Код операции из матрицы компетенций. */
   operation: string;
+  /** Название операции из выданных техкарт или запущенных операций; null — названия нет. */
+  name?: string | null;
   allowed: boolean;
   stars: number;
   /** Десятичная строка: "1.25". */
@@ -2777,6 +3307,122 @@ export const employeeCardApi = {
   me: () => api<EmployeeCard>("/api/employee-card/me"),
   /** Чужая — только с доступом к разделу «Сотрудники» (403 без него, 404 — нет такого сотрудника). */
   byId: (id: string) => api<EmployeeCard>(`/api/employee-card/${encodeURIComponent(id)}`),
+  /** «Рабочее время»: месяц ГГГГ-ММ (не задан — текущий) по дням и баланс года; чужой — по доступу к «Сотрудникам». */
+  worktime: (month?: string, id?: string) =>
+    api<WorkTimeView>(`/api/employee-card/${id ? encodeURIComponent(id) : "me"}/worktime${month ? `?month=${encodeURIComponent(month)}` : ""}`),
+};
+
+export type WorkTimeDay = {
+  date: string;
+  /** «пн» … «вс». */
+  weekday: string;
+  workday: boolean;
+  /** Вид отсутствия («отпуск», «Отгул» …) или null. */
+  absence: string | null;
+  day_off: boolean;
+  future: boolean;
+  norm_hours: number;
+  worked_hours: number | null;
+  overtime_hours: number | null;
+};
+export type WorkTimeBalance = {
+  year: number;
+  from: string;
+  to: string;
+  overtime_hours: number;
+  day_off_days: number;
+  day_off_hours: number;
+  balance_hours: number;
+  state: "debt" | "overtime" | "even";
+  label: string;
+};
+export type WorkTimeView = {
+  employee_id: string;
+  month: string;
+  /** «октябрь 2026». */
+  label: string;
+  as_of: string;
+  source: string;
+  note: string;
+  available: boolean;
+  /** «Нет данных: …» — когда available = false. */
+  no_data_reason: string | null;
+  shift_hours: number | null;
+  days: WorkTimeDay[];
+  totals: { norm_hours: number; worked_hours: number; overtime_hours: number } | null;
+  balance: WorkTimeBalance | null;
+};
+
+/**
+ * Заявления на отпуск и отгул («Моя карточка» → «Отпуска и заявления»): Сотрудник → Руководитель → Кадры, каждый шаг —
+ * подпись PIN или паролем. `version` — версия строки: шаг с чужой версией сервер отклоняет (409).
+ */
+export type LeaveKind = "vacation" | "day_off";
+export type LeaveStatus = "draft" | "signed" | "approved" | "registered" | "rejected" | "withdrawn";
+export type LeaveSignatureView = {
+  step: string;
+  step_label: string;
+  decision: string;
+  decision_label: string;
+  signer_name: string;
+  signed_at: string;
+  method_label: string;
+  content_version: number;
+  content_sha256: string;
+  comment: string;
+};
+export type LeaveRequestView = {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  kind: LeaveKind;
+  kind_label: string;
+  from_date: string;
+  to_date: string;
+  days: number;
+  comment: string;
+  status: LeaveStatus;
+  status_label: string;
+  /** Кто решает сейчас: ФИО руководителя (и замещающего) или «Кадры»; null — решений не ждёт. */
+  waiting_for: string | null;
+  content_version: number;
+  content_sha256: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  signatures: LeaveSignatureView[];
+  actions: { edit: boolean; sign: boolean; decide: boolean; withdraw: boolean };
+};
+export type LeaveBalance = { year: number; norm: number; registered: number; pending: number; left: number };
+export type LeaveOverview = {
+  today: string;
+  balance: LeaveBalance;
+  own: LeaveRequestView[];
+  /** Ждут решения этого человека (руководитель, замещающий, «Кадры»). */
+  inbox: LeaveRequestView[];
+  /** Журнал кадров (все, кроме черновиков); null — без доступа «Кадры». */
+  journal: LeaveRequestView[] | null;
+  hr: boolean;
+};
+export type LeaveDraft = { kind: LeaveKind; from_date: string; to_date: string; comment: string };
+
+export const leaveApi = {
+  overview: () => api<LeaveOverview>("/api/leave-requests"),
+  waiting: () => api<{ count: number }>("/api/leave-requests/waiting"),
+  create: (draft: LeaveDraft) =>
+    api<LeaveRequestView>("/api/leave-requests", { method: "POST", body: JSON.stringify(draft) }),
+  update: (id: string, version: number, draft: LeaveDraft) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ ...draft, version }) }),
+  sign: (id: string, version: number, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/sign`, { method: "POST", body: JSON.stringify({ version, secret }) }),
+  decide: (id: string, version: number, approve: boolean, comment: string, secret: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/decision`, {
+      method: "POST", body: JSON.stringify({ version, approve, comment, secret }),
+    }),
+  withdraw: (id: string, version: number, secret: string, comment: string) =>
+    api<LeaveRequestView>(`/api/leave-requests/${encodeURIComponent(id)}/withdraw`, {
+      method: "POST", body: JSON.stringify({ version, secret, comment }),
+    }),
 };
 
 /** «Проекты» — карточки наборов (SUPPLYMAP erptechmap, TcKitset.gs). */
@@ -2787,6 +3433,34 @@ export interface KitsetKbStage {
   tc: boolean;
   kit: boolean;
   review: { value: string; text: string; who: string } | null;
+  /** Этапы, которые ручная смена перескочила (в порядке лестницы) — «пропущен» в карточке. */
+  skipped?: string[];
+}
+
+/** Предпросмотр ручной смены этапа (GET …/status/preview и /api/production/plan/stage-preview). */
+export interface StagePreviewKb {
+  kb: string;
+  label: string;
+  from: string;
+  to: string;
+  skipped: string[];
+  change: boolean;
+  note: string;
+  warnings: string[];
+}
+
+export interface StagePreview {
+  project: string;
+  value: string;
+  kb: string;
+  direction: "forward" | "back" | "auto" | "none";
+  reason_required: boolean;
+  error: string;
+  message: string;
+  terminal: string;
+  blocker: string;
+  kbs: StagePreviewKb[];
+  warnings: string[];
 }
 
 export interface KitsetTile {
@@ -2808,6 +3482,18 @@ export interface KitsetLot {
   warehouse: string;
   grn: string;
   package: string;
+  /** Версия партии из списка ГРН: уходит вместе с выбором, устаревшая даёт 409. */
+  version?: number;
+}
+
+/** Что ГРН строки держит под КБ прямо сейчас; null — ничего не зарезервировано. */
+export interface KitsetReserve {
+  quantity: string;
+  unit: string;
+  lot_id: string;
+  warehouse: string;
+  grn: string;
+  package: string;
 }
 
 export interface KitsetComponent {
@@ -2821,6 +3507,7 @@ export interface KitsetComponent {
   /** шт / м — by type, as the calc import (ZPK_UNIT_BY_TYPE). */
   unit: string;
   lot: KitsetLot | null;
+  reserve?: KitsetReserve | null;
 }
 
 /** Строка реестра «КД» (SUPPLYMAP TcKd.gs): файл хранится в базе ERP (`stored`), его отдаёт `documentUrl`.
@@ -2834,6 +3521,91 @@ export interface KitsetDocument {
   url: string | null;
   uploaded_at: string;
   who: string;
+  /** «harness» — чертёж жгута, правится в ERP (`kitsetsApi.harness`); «harness_unlinked» — чертёж, отвязанный от позиции
+   *  (хранится, «Вернуть» — `kitsetsApi.restoreHarness`); «file» — вложенный файл. */
+  kind?: "harness" | "harness_unlinked" | "file";
+}
+
+/** Чертёж жгута позиции (документ TECHMAP-GRAPHER, schemaVersion 1) — строка КД с текущим чертежом и история версий.
+ *  `revision` — номер версии, с которым сохранять: чужое сохранение после него даёт 409. Чертежа нет — всё null.
+ *  `version` — прежнее имя того же номера (текстом), сервер отдаёт его один выпуск для открытых вкладок. */
+export interface HarnessDrawing {
+  document: KitsetDocument | null;
+  design: Record<string, unknown> | null;
+  revision: number | null;
+  version?: string | null;
+  warnings: string[];
+}
+
+/** Строка «Истории версий»: чертёж на версию `revision`; автосохранения одного сотрудника в пределах 10 минут —
+ *  одна строка (`first_revision`…`revision`, `started_at`…`saved_at`). Как появилась — сохранение, загрузка из
+ *  TECHMAP-GRAPHER, восстановление (`restored_from` — из какой), начальная (чертёж до истории); `closed` — закреплена
+ *  кнопкой «Сохранить версию». */
+export interface HarnessRevision {
+  revision: number;
+  first_revision: number;
+  started_at: string;
+  closed: boolean;
+  saved_at: string;
+  saved_by: string;
+  size: number;
+  kind: "saved" | "imported" | "restored" | "initial";
+  restored_from: number | null;
+}
+
+export interface HarnessRevisions {
+  document_id: string;
+  current: number;
+  total: number;
+  revisions: HarnessRevision[];
+}
+
+/** Документы чертежа жгута, построенные сервером из самого чертежа (techcards/harness/documents.py): ничего не хранится. */
+export type HarnessDocumentKind = "connections" | "cut" | "bom";
+
+/** Строка «Таблицы соединений» — один провод; пустое значение — «—». */
+export interface HarnessConnectionRow {
+  wire_id: string; index: string; mark: string; section: string; marking: string;
+  from: string; to: string; color: string; color_hex: string; length_mm: number | null; route: string;
+}
+
+export interface HarnessStripStep { index: number; diameter_mm: number | null; length_mm: number; step_mm: number }
+export interface HarnessCutEnd { label: string; profile: string | null; steps: HarnessStripStep[] }
+
+/** Заготовка «Карты резки»: провод вне кабеля, кабель или оболочка; длины — мм, метраж — м на все жгуты. */
+export interface HarnessCutItem {
+  id: string; kind: "wire" | "cable" | "covering"; title: string; material: string | null; material_key: string | null;
+  length_mm: number | null; correction_a_mm: number; correction_b_mm: number; rounding_step_mm: number;
+  cut_mm: number | null; unrounded_mm: number | null; pieces: number; total_m: number | null;
+  status: "ready" | "incomplete"; warnings: ("material-missing" | "length-missing")[];
+}
+
+/** Лист резки и разделки одной заготовки (провода или кабеля). */
+export interface HarnessCutSheet {
+  object_id: string; member_wire_ids: string[]; kind: "wire" | "cable"; title: string; material: string | null;
+  a: HarnessCutEnd; b: HarnessCutEnd;
+  sheath: { a_mm: number | null; b_mm: number | null; total_mm: number | null; complete: boolean } | null;
+  conductors: { id: string; a: HarnessCutEnd; b: HarnessCutEnd }[];
+  warnings: string[];
+}
+
+/** Строка «Спецификации»; `key` — тот же ключ, по которому на чертеже стоят позиции, порядок и правки текста. */
+export interface HarnessBomRow {
+  key: string; position: number; index: string; designation: string; name: string; amount: number | null;
+  unit: string; note: string; object_ids: string[];
+}
+
+export interface HarnessDocuments {
+  connections: { kind: "connections"; rows: HarnessConnectionRow[] };
+  cut: { kind: "cut"; quantity: number; items: HarnessCutItem[]; sheets: HarnessCutSheet[]; status: "ready" | "incomplete" };
+  bom: { kind: "bom"; quantity: number; rows: HarnessBomRow[] };
+}
+
+/** «Ручная сборка» из чертежа: build_config (операции с `origin` = `harness:<объект>:<код>`, блоки по маршруту КД) —
+ *  экран сливает её со схемой мастера через `rederive`. Ничего не сохраняется. */
+export interface HarnessDerived {
+  build_config: Record<string, unknown>;
+  warnings: string[];
 }
 
 export interface KitsetAssembly {
@@ -2845,6 +3617,14 @@ export interface KitsetAssembly {
   techcard: { card_id: string; status: string; issued: boolean; stages: number; revision: number } | null;
   kd: KitsetDocument[];
   components: KitsetComponent[];
+}
+
+/** КБ проекта перед отправкой на комплектацию: живая заявка — уже отправлена, второй раз не уйдёт. */
+export interface KitsetIssueAssembly {
+  index: string;
+  name: string;
+  has_items: boolean;
+  request: { id: string; no: string; status: string } | null;
 }
 
 export interface KitsetCard {
@@ -2876,10 +3656,13 @@ export interface KitsetJournalEvent {
   text: string;
   item_index: string;
   value: string;
+  /** Для смены этапа: что было и почему (назад — причина обязательна). */
+  from_value?: string;
+  reason?: string;
 }
 
 /** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
-export type ProjectStatusAction = { action: "status"; value: string; text?: string }
+export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string }
   | { action: "block"; value: string; text: string }
   | { action: "unblock"; text?: string };
 
@@ -2894,6 +3677,8 @@ export interface KitsetLoadResult {
   /** «Сразу создать заявки на закупку»: null — галочка не стояла или заявки не созданы (см. requests_error). */
   requests?: { created: number; existing: number; skipped: string[] } | null;
   requests_error?: string;
+  /** Не пусто — резерв ГРН пересчитался не полностью. */
+  reserve_error?: string;
 }
 
 export interface KitsetSupplyLine {
@@ -2920,6 +3705,8 @@ export interface KitsetStockLot {
   available: string;
   /** The part of `available` that is the project's own «Со склада» reserve (absent when none). */
   reserved?: string;
+  /** Версия партии: уходит с выбором в `lot.version`, устаревшая даёт 409. */
+  version?: number;
 }
 
 export interface KitsetLineEdit {
@@ -2940,6 +3727,8 @@ export interface KitsetDeleteResult {
   gp: { deleted: number; kept: number };
   /** Записи журнала проекта в производственном плане, снесённые вместе с проектом. */
   journal?: { deleted: number };
+  /** Не пусто — резерв ГРН вернулся на склад не полностью. */
+  reserve_error?: string;
   /** Хвосты без движения: журнал, запросы на комплектацию, задания, заявки на закупку; `message` — итог по-русски. */
   tails?: {
     fulfillment: { deleted: number; kept: number };
@@ -2954,6 +3743,7 @@ export interface KitsetDeleteResult {
 }
 
 const kitsetPath = (project: string) => `/api/techcards/kitsets/${encodeURIComponent(project)}`;
+const harnessPath = (project: string, index: string) => `${kitsetPath(project)}/harness/${encodeURIComponent(index)}`;
 
 /** Запись трека проекта: что создано в одном из модулей. `at` — ISO-время; null — события ещё нет (такие идут в конце). */
 export type ProjectTrackEntry = {
@@ -3000,13 +3790,18 @@ export const kitsetsApi = {
     ),
   lots: (query: string, project: string) =>
     api<{ lots: KitsetStockLot[] }>(`/api/techcards/kitsets/lots?q=${encodeURIComponent(query)}&project=${encodeURIComponent(project)}`),
+  /** Перед «Отправить на комплектацию»: по каждой КБ — её живая заявка (не «Отменена») или null. */
+  issueState: (project: string) =>
+    api<{ project: string; assemblies: KitsetIssueAssembly[] }>(`${kitsetPath(project)}/issue`),
   issue: (project: string, deadline: string) =>
-    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; message: string }>(
+    api<{ created: Array<{ no: string; index: string; shortfall: string[] }>; skipped: string[]; already?: Array<{ index: string; no: string; status: string }>; message: string; reserve_error?: string }>(
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
     ),
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
-  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string }) =>
+  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string }) =>
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
+  stagePreview: (project: string, value: string, kb = "") =>
+    api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   setStatus: (project: string, payload: ProjectStatusAction) =>
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
   journal: (project: string, payload: { kind: "note" | "deadline"; text: string; deadline?: string | null }) =>
@@ -3018,6 +3813,108 @@ export const kitsetsApi = {
     api<{ res: { deleted: number } }>(`${kitsetPath(project)}/documents/${encodeURIComponent(id)}`, { method: "DELETE" }),
   openTechcard: (project: string, index: string) =>
     api<{ card_id: string }>(`${kitsetPath(project)}/techcards/${encodeURIComponent(index)}`, { method: "POST", body: JSON.stringify({}) }),
+};
+
+/** Шаблон библиотеки компонентов жгута (последняя версия): разъём по ключу справочника и номеру версии. */
+export interface HarnessComponentSummary {
+  templateId: string;
+  version: number;
+  code: string;
+  name: string;
+  connectorRef: string;
+  articleBindings: { sourceId: string; entityType: string; articleKey: string }[];
+  createdUtc: string;
+  updatedUtc: string;
+  hasImage: boolean;
+}
+
+/** Версия шаблона целиком: модель TECHMAP-GRAPHER (v3–v5) и рисунки; соединитель на чертеже закрепляет
+ *  `templateId` + `version` + `versionSha256`. */
+export interface HarnessComponent extends HarnessComponentSummary {
+  versionSha256: string;
+  assets: { assetId: string; fileName: string; mediaType: "image/png"; sha256: string; sizeBytes: number }[];
+  content: Record<string, unknown>;
+}
+
+/** Тело записи шаблона: модель, код и название; картинка разъёма — по желанию. */
+export interface HarnessComponentInput {
+  code: string;
+  name: string;
+  model: Record<string, unknown>;
+  png_base64?: string;
+}
+
+/** Библиотечные соединители чертежа и закреплённые ими версии шаблонов; `unresolved` — соединители, чьей версии нет
+ *  ни в библиотеке, ни в копии старого чертежа (рисуются по своим контактам). */
+export interface HarnessPlacementGraph {
+  placements: Record<string, unknown>[];
+  snapshots: Record<string, unknown>[];
+  unresolved: string[];
+}
+
+const componentsPath = "/api/techcards/harness-components";
+const componentPath = (templateId: string, revision?: number) =>
+  `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
+
+/** Чертёж жгута позиции — единственный сетевой слой редактора жгута: чертёж и его история, документы, «Ручная сборка»,
+ *  обмен с TECHMAP-GRAPHER, справочники ERP для пикеров и библиотека компонентов. */
+export const harnessApi = {
+  /** Чертёж позиции; `revision` — номер версии, с которым сохранять (чертежа нет — всё null). */
+  drawing: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
+  /** Сохранить чертёж новой версией: `revision` — из последнего чтения (null — чертежа ещё нет; иначе 409, если его
+   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`). */
+  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+  /** «Сохранить версию»: текущая версия остаётся в истории отдельной строкой; `revision` — версия на экране (иначе 409). */
+  checkpoint: (project: string, index: string, revision: number | null) =>
+    api<{ revision: number | null; row: HarnessRevision | null }>(`${harnessPath(project, index)}/checkpoint`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «История версий» чертежа, новые сверху. */
+  revisions: (project: string, index: string) => api<HarnessRevisions>(`${harnessPath(project, index)}/revisions`),
+  /** Восстановить версию: она становится чертежом новой версией; `current` — версия на экране (иначе 409). */
+  restoreRevision: (project: string, index: string, revision: number, current: number | null) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/revisions/${revision}/restore`, { method: "POST", body: JSON.stringify({ revision: current }) }),
+  /** «Ручная сборка» из чертежа: переданного (несохранённого в редакторе) или сохранённого. */
+  derive: (project: string, index: string, design?: Record<string, unknown>) =>
+    api<HarnessDerived>(`${harnessPath(project, index)}/derive`, { method: "POST", body: JSON.stringify(design ? { design } : {}) }),
+  /** Документ чертежа: по чертежу из редактора (`design`, ещё не сохранённому) или по сохранённому. */
+  documents: <K extends HarnessDocumentKind>(project: string, index: string, kind: K, quantity = 1, design?: Record<string, unknown>) => {
+    const path = `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}`;
+    return design
+      ? api<HarnessDocuments[K]>(path, { method: "POST", body: JSON.stringify({ design }) })
+      : api<HarnessDocuments[K]>(path);
+  },
+  /** Документ сохранённого чертежа файлом для Excel. */
+  documentsExcelUrl: (project: string, index: string, kind: HarnessDocumentKind, quantity = 1) =>
+    `${harnessPath(project, index)}/documents?kind=${kind}&quantity=${quantity}&format=xlsx`,
+  /** «Отвязать» чертёж от позиции: строка КД и чертёж остаются, карточка показывает его с «Вернуть». */
+  unlink: (project: string, index: string, revision: number | null = null) =>
+    api<{ document: KitsetDocument }>(`${harnessPath(project, index)}/unlink`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
+  relink: (project: string, index: string, documentId: string) =>
+    api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+  /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
+  exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
+  /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */
+  import: (project: string, index: string, payload: { file_name: string; content_b64: string; revision: number | null }) =>
+    api<HarnessDrawing & { created: boolean }>(`${harnessPath(project, index)}/import`, { method: "POST", body: JSON.stringify(payload) }),
+  /** Справочники ERP для пикеров редактора (БД.ТЕР, БД.ПРОВ, СПР.КАБ, БД.КОАКС, БД.МАТ, разъёмы) — снимками. */
+  catalog: () => api<unknown>("/api/techcards/harness-catalog"),
+  /** Библиотека компонентов: последняя версия каждого шаблона. */
+  components: () => api<HarnessComponentSummary[]>(componentsPath),
+  /** Версия шаблона (без номера — последняя). */
+  component: (templateId: string, revision?: number) => api<HarnessComponent>(componentPath(templateId, revision)),
+  /** Новый шаблон библиотеки (версия 1): модель TECHMAP-GRAPHER, код и название; `png_base64` — картинка разъёма.
+   *  403 — нет права «Проекты: правка»; 422 — русская причина, по которой модель не принята. */
+  createComponent: (input: HarnessComponentInput) =>
+    api<HarnessComponent>(componentsPath, { method: "POST", body: JSON.stringify(input) }),
+  /** Новая версия шаблона (N+1); `base_revision` — версия, с которой правили (устаревшая — 409 «Шаблон уже изменил …»). */
+  publishComponentVersion: (templateId: string, baseRevision: number, input: HarnessComponentInput) =>
+    api<HarnessComponent>(`${componentPath(templateId)}/versions`, { method: "POST", body: JSON.stringify({ base_revision: baseRevision, ...input }) }),
+  /** Рисунок версии шаблона (PNG). */
+  componentAssetUrl: (templateId: string, revision: number, assetId: string) =>
+    `${componentPath(templateId, revision)}/assets/${encodeURIComponent(assetId)}`,
+  /** Библиотечные соединители сохранённого чертежа и закреплённые версии. */
+  placements: (project: string, index: string) => api<HarnessPlacementGraph>(`${harnessPath(project, index)}/components`),
 };
 
 /** «Чертёж → схема»: черновики «Ручной сборки» по позиции проекта; финал и урок — пара для корпуса образцов. */
@@ -3056,6 +3953,37 @@ export const assemblyApi = {
     api<{ id: string; name: string; url: string | null }>("/api/techcards/assembly/drawings", {
       method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, content_base64: contentBase64 }),
     }),
+  /** Несколько PDF в заданном порядке — один файл КД позиции; сервер читает все части и сохраняет всё или ничего. */
+  uploadMergedDrawing: (project: string, itemIndex: string, fileName: string, files: { file_name: string; content_base64: string }[]) =>
+    api<{ id: string; name: string; url: string | null; pages: { file_name: string; pages: number }[] }>("/api/techcards/assembly/drawings/merge", {
+      method: "POST", body: JSON.stringify({ project, item_index: itemIndex, file_name: fileName, files }),
+    }),
+};
+
+/* Черновик генератора ТК на сервере (владелец 11.10): недособранная форма генератора — своя у каждого человека за
+   проектом и КБ; сохраняется поверх версии (409 — изменён в другом месте). */
+export interface GeneratorDraftRecord {
+  project: string;
+  item_index: string;
+  payload: Record<string, unknown>;
+  build_fingerprint: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+export interface GeneratorDraftConflict { message: string; code: "generator_draft_conflict"; version: number; updated_at: string | null }
+
+const generatorDraftUrl = (project: string, itemIndex: string) =>
+  `/api/techcards/generator-draft?project=${encodeURIComponent(project)}&item_index=${encodeURIComponent(itemIndex)}`;
+
+export const generatorDraftApi = {
+  get: (project: string, itemIndex: string) => api<{ draft: GeneratorDraftRecord | null }>(generatorDraftUrl(project, itemIndex)),
+  /** Повтор безвреден (`safe`): запись идёт поверх версии. keepalive — при закрытии страницы: запрос доходит и после
+   *  её выгрузки. */
+  save: (project: string, itemIndex: string, body: { payload: unknown; build_fingerprint: string; base_version: number }, keepalive = false) =>
+    api<GeneratorDraftRecord>(generatorDraftUrl(project, itemIndex), { method: "PUT", body: JSON.stringify(body), keepalive, safe: true }),
+  remove: (project: string, itemIndex: string) =>
+    api<{ deleted: boolean }>(generatorDraftUrl(project, itemIndex), { method: "DELETE", safe: true }),
 };
 
 /* Токены API (генератор техкарт, черновики сборки): выпускает и отзывает только полный доступ. */
@@ -3084,4 +4012,79 @@ export const apiTokensApi = {
     api<ApiTokenIssued>("/api/auth/api-tokens", { method: "POST", body: JSON.stringify(payload) }),
   revoke: (id: string) =>
     api<ApiTokenRow>(`/api/auth/api-tokens/${encodeURIComponent(id)}/revoke`, { method: "POST", body: JSON.stringify({}) }),
+};
+
+/** «Документы с ознакомлением» (Личная карточка, фаза 3): PDF приходит и уходит base64 внутри JSON. */
+export type DocumentKind = "job_description" | "regulation" | "other";
+export type DocumentScope = "all" | "department" | "job_title";
+export type DocumentVersionView = {
+  id: string;
+  version_no: number;
+  file_name: string;
+  size: number;
+  sha256: string;
+  uploaded_by_name: string;
+  uploaded_at: string;
+};
+export type DocumentBase = {
+  id: string;
+  title: string;
+  kind: DocumentKind;
+  kind_label: string;
+  scope: DocumentScope;
+  scope_label: string;
+  scope_value: string;
+  /** «Все сотрудники» / «Отдел: Монтаж» / «Должность: Мастер». */
+  audience: string;
+  archived: boolean;
+  created_by_name: string;
+  created_at: string;
+  current: DocumentVersionView | null;
+};
+export type OwnDocument = DocumentBase & {
+  signed: { signed_at: string; method_label: string } | null;
+  /** Номер ранее подписанной редакции, когда текущая ещё не подписана. */
+  signed_earlier_version: number | null;
+};
+export type JournalDocument = DocumentBase & {
+  versions: DocumentVersionView[];
+  readers: number;
+  signed: number;
+};
+export type DocumentsOverview = { own: OwnDocument[]; journal: JournalDocument[] | null; hr: boolean };
+export type SheetRow = {
+  user_id: string;
+  name: string;
+  department: string | null;
+  job_title: string | null;
+  in_scope: boolean;
+  signed_at: string | null;
+  method_label: string | null;
+};
+export type DocumentSheet = DocumentBase & {
+  versions: DocumentVersionView[];
+  version: DocumentVersionView;
+  is_current: boolean;
+  readers: number;
+  signed: number;
+  rows: SheetRow[];
+};
+export type DocumentDraft = { title: string; kind: DocumentKind; scope: DocumentScope; scope_value: string };
+
+export const documentsApi = {
+  overview: () => api<DocumentsOverview>("/api/documents"),
+  pending: () => api<{ count: number }>("/api/documents/pending"),
+  fileUrl: (versionId: string) => `/api/documents/versions/${encodeURIComponent(versionId)}/file`,
+  create: (draft: DocumentDraft, file_name: string, content_base64: string) =>
+    api<DocumentSheet>("/api/documents", { method: "POST", body: JSON.stringify({ ...draft, file_name, content_base64 }) }),
+  sheet: (id: string, versionNo?: number) =>
+    api<DocumentSheet>(`/api/documents/${encodeURIComponent(id)}/sheet${versionNo ? `?version_no=${versionNo}` : ""}`),
+  addVersion: (id: string, file_name: string, content_base64: string) =>
+    api<DocumentSheet>(`/api/documents/${encodeURIComponent(id)}/versions`, { method: "POST", body: JSON.stringify({ file_name, content_base64 }) }),
+  archive: (id: string, archived: boolean) =>
+    api<DocumentSheet>(`/api/documents/${encodeURIComponent(id)}/archive`, { method: "POST", body: JSON.stringify({ archived }) }),
+  removeVersion: (versionId: string) =>
+    api<{ deleted_document: boolean; document: DocumentSheet | null }>(`/api/documents/versions/${encodeURIComponent(versionId)}`, { method: "DELETE" }),
+  acknowledge: (versionId: string, secret: string) =>
+    api<DocumentsOverview>(`/api/documents/versions/${encodeURIComponent(versionId)}/acknowledge`, { method: "POST", body: JSON.stringify({ secret }) }),
 };

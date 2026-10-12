@@ -33,6 +33,7 @@ from .application import (
     ConcurrentFulfillmentUpdate,
     CreateFulfillmentCommand,
     DeleteFulfillmentCommand,
+    IssueBatchCommand,
     MarkReadyCommand,
     MarkReturnedCommand,
     OffBookCommand,
@@ -51,15 +52,23 @@ from .application import (
     project_reserve_by_lot,
     complete_kit,
     complete_return,
+    CreateExtraIssueCommand,
+    ExtraIssueLine,
+    create_extra_issue,
     create_fulfillment,
     delete_fulfillment,
     handout_place,
+    issue_batch,
     issue_fulfillment,
+    kit_label,
     mark_ready,
     mark_returned,
+    return_to_kitting,
     unbind_lot,
 )
-from .domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError, project_of
+from .domain import (
+    DuplicateKitRequest, FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError, project_of,
+)
 
 
 router = APIRouter(prefix="/api/issues", tags=["fulfillment"])
@@ -90,6 +99,20 @@ class CalcPreviewPayload(BaseModel):
 
 class VersionPayload(BaseModel):
     version: int = Field(ge=1)
+
+
+class ExtraLinePayload(BaseModel):
+    article: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=1024)
+    unit: str = Field(min_length=1, max_length=32)
+    quantity: Quantity
+
+
+class ExtraIssuePayload(BaseModel):
+    """«Довыдать» on an issued kit: chosen positions with quantities and why."""
+    reason: str = Field(min_length=1, max_length=200)
+    deadline: date | None = None
+    lines: list[ExtraLinePayload] = Field(min_length=1, max_length=500)
 
 
 class BindPayload(VersionPayload):
@@ -162,6 +185,7 @@ def _result(request: FulfillmentRequest) -> dict:
         "purpose": request.purpose,
         "deadline": request.deadline.isoformat() if request.deadline else None,
         "status": request.status.value,
+        "kind": request.kind.value,
         "handout_location": request.handout_location,
         "return_location": request.return_location,
         "fully_reserved": request.fully_reserved,
@@ -200,9 +224,18 @@ def _result(request: FulfillmentRequest) -> dict:
     }
 
 
+def _conflict_detail(error: Exception) -> str:
+    """409 text of a write the database refused: the live-kit UNIQUE (two presses at once) gets its own words."""
+    if "uq_fulfillment_requests_live_kit" in str(error) or "fulfillment_requests.project_key" in str(error):
+        return "Заявка на эту КБ проекта уже есть (создана только что) — обнови экран"
+    return "Конкурентное изменение: обновите данные"
+
+
 def _run(operation) -> dict:
     try:
         request = operation()
+    except DuplicateKitRequest as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except (FulfillmentValidationError, WarehouseValidationError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentFulfillmentUpdate as error:
@@ -210,7 +243,7 @@ def _run(operation) -> dict:
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
-        raise HTTPException(status_code=409, detail="Конкурентное изменение: обновите данные") from error
+        raise HTTPException(status_code=409, detail=_conflict_detail(error)) from error
     return {"request": _result(request)}
 
 
@@ -462,6 +495,8 @@ def bind_lots_for_project(
             actor=principal.actor,
             now=now,
         ), uow_factory())
+    except DuplicateKitRequest as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except (FulfillmentValidationError, WarehouseValidationError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentFulfillmentUpdate as error:
@@ -589,6 +624,47 @@ def issue(
     ))
 
 
+class IssueBatchItem(BaseModel):
+    id: UUID
+    version: int = Field(ge=1)
+
+
+class IssueBatchPayload(BaseModel):
+    """«Выдать выбранные»: the kits ticked on the order (or one КБ), with the versions the screen showed."""
+    requests: list[IssueBatchItem] = Field(min_length=1, max_length=200)
+
+
+@router.post("/issue-batch")
+def issue_selected(
+    payload: IssueBatchPayload,
+    principal: Annotated[Principal, Depends(fulfillment_handout_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """Hand out the whole order or any of its КБ in one transaction (owner 06.10.2026): «Укомплектован» kits are sent
+    to the handout point on the way. Any kit refused → 422/409 naming its КБ, and nothing is issued."""
+    try:
+        issued = issue_batch(IssueBatchCommand(
+            versions=tuple((item.id, item.version) for item in payload.requests),
+            actor=principal.actor,
+            now=now,
+        ), uow_factory())
+    except (FulfillmentValidationError, WarehouseValidationError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ConcurrentFulfillmentUpdate as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error.args[0] if error.args else error)) from error
+    except (IntegrityError, StaleDataError) as error:
+        raise HTTPException(status_code=409, detail="Конкурентное изменение: обнови экран, ничего не выдано") from error
+    lines = sum(1 for request in issued for line in request.lines if not line.off_book and line.issued > 0)
+    return {
+        "requests": [_result(request) for request in issued],
+        "message": f"Выдано: {', '.join(kit_label(request) for request in issued)}. "
+                   f"Списано со склада позиций: {lines}.",
+    }
+
+
 @router.post("/{request_id}/returned")
 def returned(
     request_id: UUID,
@@ -627,6 +703,43 @@ def complete_return_route(
             storage_location=line.storage_location,
         ) for line in payload.lines),
     ), uow_factory()))
+
+
+@router.post("/{request_id}/extra")
+def extra_issue(
+    request_id: UUID,
+    payload: ExtraIssuePayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Довыдать»: an extra request («Довыдача») for positions of an issued kit, waiting for lots like a new one."""
+    return _run(lambda: create_extra_issue(CreateExtraIssueCommand(
+        request_id=request_id,
+        idempotency_key=idempotency_key,
+        reason=payload.reason,
+        deadline=payload.deadline,
+        lines=tuple(ExtraIssueLine(
+            article=line.article, name=line.name, unit=line.unit, quantity=line.quantity,
+        ) for line in payload.lines),
+        actor=principal.actor,
+        now=now,
+    ), uow_factory()))
+
+
+@router.post("/{request_id}/return-to-kitting")
+def back_to_kitting(
+    request_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Вернуть в комплектацию»: «Готов к выдаче» → «Укомплектован», reserves stay on their lots."""
+    return _run(lambda: return_to_kitting(
+        _version_command(request_id, payload, principal, now), uow_factory()
+    ))
 
 
 @router.post("/{request_id}/cancel")

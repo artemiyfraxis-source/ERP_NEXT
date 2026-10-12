@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -11,6 +12,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from .domain.route import (
     Block, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_totals,
 )
+from .etk_marking import apply_marking, mark_length
 from .operation_cards import OperationCardTemplate
 from .project_cards import CUSTOM_OP
 
@@ -83,6 +85,17 @@ def _endpoint(op: Mapping[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _endpoint_b(op: Mapping[str, Any]) -> dict[str, Any]:
+    """Side В of a cut that crimps both ends on the machine (`epB`, generator «Обе стороны»); {} for any other op."""
+    value = op.get("epB") if op.get("type") == "cutWireCrimp" else None
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _side_b_op(op: Mapping[str, Any]) -> dict[str, Any]:
+    """The side-В view of a both-sides cut: the same operation with `ep` = `epB`, for location and placeholders."""
+    return {**op, "side": "B", "ep": _endpoint_b(op)}
+
+
 def _side_label(op: Mapping[str, Any]) -> str:
     return "В" if op.get("side") == "B" else "А"
 
@@ -129,7 +142,7 @@ def _suffix(op: Mapping[str, Any]) -> str:
     if operation_type == "cutWireStrip":
         return "разделка"
     if operation_type == "cutWireCrimp":
-        return "обжим + лужение" if op.get("tin") else "обжим"
+        return "обжим + лужение" if op.get("tin") else "обжим А и В" if _endpoint_b(op) else "обжим"
     if operation_type == "cutTut":
         return str(op.get("tutArt") or "ТУТ")
     if operation_type == "insTut":
@@ -165,7 +178,9 @@ def _result_name(
         cut = "; ".join(filter(None, (_wire_name(item) for item in wires)))
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
         tinned = f"; {TINNED_END}" if op.get("tin") else ""
-        return f"{cut}; {_location(op, config)}: обжат терм. {terminal}{tinned}" if terminal else cut
+        side_b = _side_b_op(op)
+        crimped_b = f"; {_location(side_b, config)}: обжат терм. {_terminal(side_b)}" if _terminal(side_b) else ""
+        return f"{cut}; {_location(op, config)}: обжат терм. {terminal}{crimped_b}{tinned}" if terminal else cut
     if operation_type == "cutTut":
         material = str(op.get("tutArt") or op.get("tutName") or "ТУТ")
         segments = op.get("tutSegs") if isinstance(op.get("tutSegs"), list) else []
@@ -200,6 +215,39 @@ def _group_cut_components(wires: Sequence[Mapping[str, Any]], quantity: Decimal)
     return [{"art": row["art"], "name": row["name"], "norm": _format(row["meters"]), "unit": "М."} for row in grouped.values()]
 
 
+def _mark_items(op: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [item for item in op.get("marks") or [] if isinstance(item, Mapping)]
+
+
+def _kd_marks(marks: Sequence[Mapping[str, Any]]) -> bool:
+    """Метки по КД (генератор, «Маркировка по КД»): у строки есть надпись или что маркируем. Старая конфигурация —
+    бирки из состава (art/name/qty) — собирается как раньше."""
+    return any(str(item.get("text") or "").strip() or str(item.get("target") or "").strip() for item in marks)
+
+
+def _mark_materials(marks: Sequence[Mapping[str, Any]], quantity: Decimal) -> list[dict[str, str]]:
+    """Комплектующие маркировки: материал меток, сложенный по артикулу, на партию; метка без материала — без строки."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in marks:
+        art = str(item.get("art") or item.get("name") or "").strip()
+        if not art:
+            continue
+        row = grouped.setdefault(art, {"art": art, "name": str(item.get("name") or ""), "count": Decimal(0)})
+        row["count"] += _number(item.get("qty"), Decimal(1))
+    return [{"art": row["art"], "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."} for row in grouped.values()]
+
+
+def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Метки по КД для ЭТК: что маркируем, надпись, материал, где, сколько на изделие и на партию."""
+    quantity = _part_quantity(config)
+    return [{
+        "target": str(item.get("target") or "").strip(), "text": str(item.get("text") or "").strip(),
+        "material": str(item.get("name") or item.get("art") or "").strip(), "place": str(item.get("place") or "").strip(),
+        "qty": _format(_number(item.get("qty"), Decimal(1))), "batch": _format(_number(item.get("qty"), Decimal(1)) * quantity),
+        **({"length": _format(length)} if (length := mark_length(item)) else {}),
+    } for item in _mark_items(op) if str(item.get("text") or "").strip() or str(item.get("target") or "").strip()]
+
+
 def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> list[dict[str, str]]:
     if code in NO_COMPONENTS:
         return []
@@ -208,13 +256,16 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         rows = _group_cut_components(_wires(op, config), quantity)
         endpoint = _endpoint(op)
-        terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
-        if terminal:
-            count = sum((_number(wire.get("qty"), Decimal(1)) for wire in _wires(op, config)), Decimal(0))
-            rows.append({
-                "art": terminal, "name": str(endpoint.get("termName") or ""),
-                "norm": _format(count * quantity), "unit": "Шт.",
-            })
+        count = sum((_number(wire.get("qty"), Decimal(1)) for wire in _wires(op, config)), Decimal(0))
+        # Обжим обеих сторон: терминал каждой стороны по разу на провод; один артикул на обеих — одной строкой.
+        terminals: dict[str, dict[str, Any]] = {}
+        for side in (endpoint, _endpoint_b(op)):
+            art = str(side.get("termArt") or side.get("termName") or "")
+            if art:
+                row = terminals.setdefault(art, {"name": str(side.get("termName") or ""), "count": Decimal(0)})
+                row["count"] += count
+        rows.extend({"art": art, "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."}
+                    for art, row in terminals.items())
         return rows
     if operation_type == "cutTut":
         count = _decimal(op.get("tutCount")) * quantity
@@ -223,6 +274,9 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
         meters = _decimal(op.get("wrapLen")) * quantity / 1000
         return [{"art": str(op.get("wrapArt") or ""), "name": str(op.get("wrapName") or op.get("wrapArt") or ""), "norm": _format(meters), "unit": "М."}]
     if operation_type == "insMark":
+        marks = _mark_items(op)
+        if _kd_marks(marks):
+            return _mark_materials(marks, quantity)
         return [{"art": str(item.get("art") or item.get("name") or ""), "name": str(item.get("name") or ""), "norm": _format(_number(item.get("qty"), Decimal(1)) * quantity), "unit": "Шт."} for item in op.get("marks") or []]
     endpoint = _endpoint(op)
     kind = _kind(op)
@@ -245,6 +299,14 @@ def _row(name: str, norm: object) -> dict[str, str]:
 def _terminal(op: Mapping[str, Any]) -> str:
     endpoint = _endpoint(op)
     return str(endpoint.get("termArt") or endpoint.get("termName") or "")
+
+
+def _cut_terminal(op: Mapping[str, Any]) -> str:
+    """What a cut-with-crimp leaves on the wire: the side's terminal; both sides — «X с двух сторон» / «X (А) / Y (В)»."""
+    terminal, terminal_b = _terminal(op), _terminal(_side_b_op(op)) if _endpoint_b(op) else ""
+    if not (terminal and terminal_b):
+        return terminal
+    return f"{terminal} с двух сторон" if terminal == terminal_b else f"{terminal} (А) / {terminal_b} (В)"
 
 
 # Резка с обжимом и лужением (CUT_WIRE+1crimp+tin): второй конец провода станок лудит сам.
@@ -295,7 +357,7 @@ def _result_rows(
     if (kind in {"ins", "sdr"} or (kind == "prs" and not build_side)) and wires:
         return [_row(single, _format(quantity))]
     if (operation_type in CUT_TYPES or (kind == "prs" and build_side)) and wires:
-        terminal = _terminal(op) if kind or operation_type == "cutWireCrimp" else ""
+        terminal = _cut_terminal(op) if kind or operation_type == "cutWireCrimp" else ""
         return [_row(_wire_result_name(wire, terminal, bool(op.get("tin"))), _per_wire(wire, quantity)) for wire in wires]
     norm = ""
     if operation_type == "coaxCutTut":
@@ -367,7 +429,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         if kind in {"ins", "sdr"} or (kind == "prs" and op.get("side") == "B"):
             return [{"name": result_name, "norm": _format(operation_minutes * sum(map(units, wires)) * quantity + setup_minutes, 2)}]
         setup_per_wire = setup_minutes / len(wires)
-        terminal = str(_endpoint(op).get("termArt") or _endpoint(op).get("termName") or "") if operation_type == "cutWireCrimp" or kind else ""
+        terminal = _cut_terminal(op) if operation_type == "cutWireCrimp" or kind else ""
         return [{
             "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
             "norm": _format((operation_minutes * units(wire) * quantity if operation_minutes else units(wire) * quantity) + setup_per_wire, 2),
@@ -504,6 +566,8 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         side = side if isinstance(side, Mapping) else {}
         fields["coax"] = {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "", **{
             key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
+    if operation_type == "insMark" and _kd_marks(_mark_items(op)):
+        fields["marks"] = _mark_rows(op, config)
     wires = _wires(op, config)
     if _kind(op) or operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         pin_values = op.get("pins") if isinstance(op.get("pins"), list) else []
@@ -522,7 +586,89 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         for source, target in (("applicator", "applicator"), ("crimpHeight", "crimpHeight"), ("pullForce", "pullForce"), ("bySection", "crimpBySection")):
             if source in terminal_norm:
                 fields[target] = deepcopy(terminal_norm[source])
+    # Обе стороны с разными терминалами: станку нужны оба аппликатора, нормы — по сторонам. Один терминал — нормы те же.
+    terminal_norm_b = op.get("terminalNormB")
+    if isinstance(terminal_norm_b, Mapping) and _endpoint_b(op) and _terminal(_side_b_op(op)) != _terminal(op):
+        for key in ("applicator", "crimpHeight", "pullForce"):
+            value_a, value_b = str(fields.get(key) or ""), str(terminal_norm_b.get(key) or "")
+            if key == "applicator" and value_b and value_b != value_a:
+                fields[key] = f"{value_a}/{value_b}"
+            elif key != "applicator" and (value_a or value_b) and value_b != value_a:
+                fields[key] = f"{value_a or NOT_SET} (А) / {value_b or NOT_SET} (В)"
+    crimp_ends = _crimp_ends(op, fields, wires)
+    if crimp_ends:
+        fields["crimpEnds"] = crimp_ends
     return fields
+
+
+NOT_SET = "не задано"
+# references.technology NO_DATA_MARK: the terminal is not in БД.ТЕР — on a contact's spec line that is «не задано».
+_NO_DATA = "⚠ НЕТ ДАННЫХ"
+
+
+def _wire_group(labels: Sequence[str]) -> str:
+    """One name for the wires a contact crimps: the wire itself, or the words the colours of one grade share
+    («НВ4 0,2 белый», «НВ4 0,2 зелёный» → «НВ4 0,2»); nothing in common — «N пров.»."""
+    names = list(dict.fromkeys(label.strip() for label in labels if label.strip()))
+    if len(names) <= 1:
+        return names[0] if names else ""
+    common: list[str] = []
+    for column in zip(*(name.split() for name in names)):
+        if any(word != column[0] for word in column):
+            break
+        common.append(column[0])
+    return " ".join(common) or f"{len(names)} пров."
+
+
+def _crimp_ends(
+    op: Mapping[str, Any], fields: Mapping[str, Any], wire_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Crimp spec of every contact the operation crimps, per end and wire section — for the contact's line in
+    «Комплектующие» and the per-end header chips: ends A/B (one entry for both when the contact and its norms match),
+    wires and section, applicator, crimp height, pull force, strip. An empty value is not in БД.ТЕР («не задано»)."""
+    operation_type = str(op.get("type") or "")
+    if operation_type not in {"prsTerm", "cutWireCrimp"}:
+        return []
+    sides = [("B" if op.get("side") == "B" else "A", op, op.get("terminalNorm"))]
+    if _endpoint_b(op):
+        sides.append(("B", _side_b_op(op), op.get("terminalNormB")))
+    if not any(isinstance(norm, Mapping) for _, _, norm in sides):
+        return []
+    wires = [str(wire.get("art") or wire.get("name") or "") for wire in wire_rows]
+    strip = fields.get("strip") if isinstance(fields.get("strip"), Mapping) else {}
+    entries: list[dict[str, Any]] = []
+    for end, side_op, norm in sides:
+        art = _terminal(side_op)
+        if not art:
+            continue
+        norm = norm if isinstance(norm, Mapping) else {}
+        rows = [item for item in norm.get("bySection") or [] if isinstance(item, Mapping)]
+        machine_strip = str(strip.get(f"len{end}") or "").strip() if strip.get(end.lower()) else ""
+        common_applicator = str(norm.get("applicator") or "")
+        common_applicator = "" if common_applicator == _NO_DATA else common_applicator
+        for item in rows or [None]:
+            row = item or {}
+            applicator = str(row.get("applicator") or common_applicator)
+            if operation_type == "cutWireCrimp" and applicator:
+                applicator = _machine_applicator(applicator)
+            listed = row.get("wires")
+            section_wires = listed if isinstance(listed, list) else wires if len(rows) <= 1 else []
+            entries.append({
+                "ends": [end], "art": art, "name": str(_endpoint(side_op).get("termName") or ""),
+                "wire": _wire_group([str(value) for value in section_wires]), "section": str(row.get("section") or ""),
+                "applicator": applicator,
+                "crimpHeight": str((row if item else norm).get("crimpHeight") or ""),
+                "pullForce": str((row if item else norm).get("pullForce") or ""),
+                "strip": machine_strip or str(row.get("strip") or ""),
+            })
+    merged: list[dict[str, Any]] = []
+    for entry in entries:
+        twin = next((item for item in merged if {**item, "ends": [], "name": ""} == {**entry, "ends": [], "name": ""}), None)
+        if twin:
+            twin["ends"].extend(end for end in entry["ends"] if end not in twin["ends"])
+        else:
+            merged.append(entry)
+    return merged
 
 
 def _placeholder_map(
@@ -537,6 +683,9 @@ def _placeholder_map(
     }
     side_a = endpoint_side if endpoint and op.get("side") != "B" else config.get("sideA") or {}
     side_b = endpoint_side if endpoint and op.get("side") == "B" else config.get("sideB") or {}
+    endpoint_b = _endpoint_b(op)
+    if endpoint_b:
+        side_b = {**endpoint_side, **{key: endpoint_b.get(key) or "" for key in ("termName", "termArt", "connName", "connArt")}}
     values = {
         "index": config.get("assemblyIndex") or "", "name": config.get("assemblyName") or "",
         "wire_name": wire_data.get("name") or "", "wire_art": wire_data.get("art") or "",
@@ -688,18 +837,20 @@ def _card_warning(op: Mapping[str, Any], position: int, code: str) -> str:
 
 
 def _terminal_warning(op: Mapping[str, Any], position: int, code: str) -> str | None:
-    terminal_norm = op.get("terminalNorm")
-    if not isinstance(terminal_norm, Mapping):
-        return None
-    missing_sections = [
-        str(item.get("section") or "сечение не определено")
-        for item in terminal_norm.get("bySection") or []
-        if isinstance(item, Mapping) and not item.get("found")
-    ]
-    if not missing_sections:
-        return None
-    terminal = str(_endpoint(op).get("termArt") or _endpoint(op).get("termName") or "")
-    return f"Операция {position} ({code}): нет нормы терминала {terminal} для {', '.join(missing_sections)}"
+    messages = []
+    for norm_key, side_op in (("terminalNorm", op), ("terminalNormB", _side_b_op(op))):
+        terminal_norm = op.get(norm_key)
+        if not isinstance(terminal_norm, Mapping) or (norm_key == "terminalNormB" and not _endpoint_b(op)):
+            continue
+        missing_sections = [
+            str(item.get("section") or "сечение не определено")
+            for item in terminal_norm.get("bySection") or []
+            if isinstance(item, Mapping) and not item.get("found")
+        ]
+        terminal = _terminal(side_op)
+        if missing_sections and not any(terminal in message for message in messages):
+            messages.append(f"Операция {position} ({code}): нет нормы терминала {terminal} для {', '.join(missing_sections)}")
+    return "; ".join(messages) or None
 
 
 def _typed_connector(op: Mapping[str, Any], fallback: object) -> str:
@@ -722,7 +873,7 @@ def _typed_operation(
     if terminal_warning:
         warnings.append(terminal_warning)
     replacements = _placeholder_map(op, config, previous, result, wire_data, fields)
-    return {
+    operation = {
         "position": position, "code": code, "type": str(op.get("type") or ""),
         "side": str(op.get("side") or ""), "connector": connector,
         "connector_article": str(_endpoint(op).get("connArt") or _endpoint(op).get("connName") or ""),
@@ -735,6 +886,10 @@ def _typed_operation(
         "times": _times(op),
         "fields": fields,
     }
+    if op.get("type") == "insMark" and _kd_marks(_mark_items(op)):
+        # Маркировка по КД: ход операции, дефекты, оборудование и время — по видам меток (etk_marking).
+        apply_marking(operation, op, _mark_items(op), _part_quantity(config), warnings)
+    return operation
 
 
 def _times(op: Mapping[str, Any]) -> dict[str, str]:
@@ -1135,6 +1290,36 @@ def _manual_generator_operation(
     return operation
 
 
+def _etk_key(operation: Mapping[str, Any]) -> tuple[str, str, str]:
+    """The ETK operation key (project_cards.operation_key): code, connector, side."""
+    code, connector, side = (str(operation.get(field) or "").strip() for field in ("code", "connector", "side"))
+    return code, connector, side
+
+
+def _distinct_generator_keys(items: Sequence[_ManualOp], built: list[dict[str, Any]], seqs: Sequence[str]) -> None:
+    """Generator operations of one card, connector and side in a manual scheme — a scheme from the harness drawing has
+    them per route block (X1 crimped in two blocks, a strip cut per block) — would share the ETK key. Only those get a
+    tail on the connector: the operation's own connector when that tells them apart, else its `seq`. An operation whose
+    key is unique keeps it as it was, so saved techcards and issued ETKs keep their keys."""
+    counts = Counter(_etk_key(operation) for operation in built)
+    groups: dict[tuple[str, str, str], list[tuple[_ManualOp, dict[str, Any]]]] = defaultdict(list)
+    for item, operation in zip(items, built):
+        if item.generator and counts[_etk_key(operation)] > 1:
+            groups[_etk_key(operation)].append((item, operation))
+    taken = set(counts)
+    for (code, base, side), members in groups.items():
+        own = [str(_endpoint(item.source).get("connName") or _endpoint(item.source).get("connArt") or "").strip()
+               for item, _operation in members]
+        by_connector = all(name and name != base for name in own) and len(set(own)) == len(own)
+        for (item, operation), name in zip(members, own):
+            tail = name if by_connector else seqs[item.position - 1]
+            connector = f"{base} · {tail}" if base else tail
+            while (code, connector, side) in taken:
+                connector = f"{connector} · {item.position}"
+            taken.add((code, connector, side))
+            operation["connector"] = connector
+
+
 def _build_manual(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str, technology_source: Mapping[str, Any] | None,
@@ -1211,6 +1396,7 @@ def _build_manual(
             "fields": fields,
         })
 
+    _distinct_generator_keys(items, built, seqs)
     connections = _connections(config)
     document = {
         "schema_version": ETK_VERSION,

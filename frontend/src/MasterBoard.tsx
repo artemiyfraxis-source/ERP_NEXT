@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   kitsetsApi,
   productionApi,
@@ -12,8 +12,12 @@ import {
   type ProductionSkill,
   type ProductionTask,
 } from "./api";
+import { formatDayMonth, kbLabel } from "./format";
+import { LoadCell, LoadLegend, shiftCapacity } from "./PeopleLoad";
+import { periodWords } from "./PlanLoadSheet";
 import { KitTile } from "./ProjectCard";
-import { feedsText, upstreamIds } from "./productionGraph";
+import { deadlineChips, feedsText, operationPlanText, taskItemLabel, upstreamIds, windowText } from "./productionGraph";
+import { StatusChip } from "./StatusChip";
 
 // Экран мастера (владелец, 29.09): после выдачи техкарты проект приходит мастеру, разбитый на операции маршрута,
 // и мастер раздаёт их монтажникам. Слева проекты → задания → операции, справа монтажники с загрузкой.
@@ -38,11 +42,10 @@ function hours(seconds: number) {
   return `${(seconds / 3600).toLocaleString("ru-RU", { maximumFractionDigits: 1, minimumFractionDigits: 1 })} ч`;
 }
 
-function formatDay(value: string | null | undefined) {
-  if (!value) return "";
-  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
-}
+const formatDay = (value: string | null | undefined) => formatDayMonth(value);
+
+/** Дедлайн проекта из производственного плана: ключ — номер проекта строчными. */
+export type ProjectDeadlines = Record<string, { deadline: string | null; days_left: number | null }>;
 
 function isoDay(date: Date) {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -54,7 +57,7 @@ const done = (operation: ProductionOperation) => operation.state === "выпол
 // Прогресс операции для мастера (владелец, 05.10: «мастер видит, что сдано и что просрочено»). Всё считается из полей,
 // которые API уже отдаёт: fact.good, wip.closed (ждут подтверждения мастера), required_quantity, планы и дедлайн задания.
 export type OpFlag = "late" | "wait" | "over";
-export const FLAG_TEXT: Record<OpFlag, string> = { late: "не начато, план истёк", wait: "ждёт подтверждения", over: "позже дедлайна" };
+export const FLAG_TEXT: Record<OpFlag, string> = { late: "не начато, план истёк", wait: "ждёт подтверждения", over: "позже срока задания" };
 export type OpProgress = { required: number; good: number; waiting: number; percent: number; flags: OpFlag[] };
 
 export function opProgress(task: ProductionTask, operation: ProductionOperation, now: number = Date.now()): OpProgress {
@@ -148,6 +151,8 @@ export function installerLoad(operatorId: string, tasks: ProductionTask[], absen
 const HANDOVER_SITE = "ЖУК";
 export const DEFAULT_SHIFT: ProductionShift = { weekdays: [0, 1, 2, 3, 4], start: "09:00", finish: "17:30", breaks: [["13:00", "13:30"]], effective_hours: "7" };
 const WEEK_DAYS = 7;
+/** Ширина доски, с которой видно две недели (27"); уже — одна. */
+const TWO_WEEKS_FROM = 1500;
 
 function addDays(day: string, count: number) {
   const date = new Date(`${day}T00:00:00`);
@@ -305,7 +310,7 @@ export function daySlots(operatorId: string, day: string, tasks: ProductionTask[
     const a = new Date(`${day}T${clock(from)}:00`).getTime();
     const b = new Date(`${day}T${clock(to)}:00`).getTime();
     const busy = windows.filter((window) => window.start < b && a < window.finish)
-      .map((window) => `${window.operation.stage} · ${itemId(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
+      .map((window) => `${window.operation.stage} · ${taskItemLabel(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
     const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
     // Перерыв внутри часа (обед 13:00–13:30) — подписью в ячейке: работы в этом часу меньше.
     const inside = (shift.breaks ?? []).find(([x, y]) => minutes(x) < to && from < minutes(y));
@@ -319,20 +324,22 @@ function oneDecimal(value: number) {
   return value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
 }
 
-function planText(operation: ProductionOperation) {
-  if (!operation.planned_start || !operation.planned_finish) return "";
-  return windowText(operation.planned_start, operation.planned_finish);
+/** Ширина узла (ResizeObserver): по ней доска решает, сколько дней показать. */
+function useWidth() {
+  const [node, ref] = useState<HTMLElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (!node) return;
+    setWidth(node.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setWidth(node.clientWidth));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node]);
+  return { ref, width };
 }
 
-function windowText(from: string, to: string) {
-  const start = new Date(from);
-  const finish = new Date(to);
-  const time = (date: Date) => date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-  const day = (date: Date) => date.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
-  return day(start) === day(finish) ? `${day(start)} ${time(start)}–${time(finish)}` : `${day(start)} ${time(start)} – ${day(finish)} ${time(finish)}`;
-}
-
-export function MasterBoard({ tasks, operators, site = "", skills, absences, shift, holidays = [], canEdit, busy, mutate, openTask }: {
+export function MasterBoard({ tasks, operators, site = "", skills, absences, shift, holidays = [], projectDeadlines = {}, canEdit, busy, mutate, openTask }: {
   tasks: ProductionTask[];
   operators: ProductionOperator[];
   site?: string;
@@ -340,6 +347,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   absences: ProductionAbsence[];
   shift?: ProductionShift | null;
   holidays?: string[];
+  projectDeadlines?: ProjectDeadlines;
   canEdit: boolean;
   busy: string;
   mutate: Mutate;
@@ -356,6 +364,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   // Штук монтажнику (владелец, 30.09: «дробить операцию между людьми»): по умолчанию — нераспределённое.
   const [pieces, setPieces] = useState("");
   const keys = useRef(new Map<string, string>());
+  const board = useWidth();
 
   function setOpenProject(project: string) {
     lastProject = project;
@@ -377,9 +386,15 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const launchedKeys = new Set(live.map((task) => `${task.project.toLowerCase()}|${itemId(task).toUpperCase()}`));
   const waiting = ready.filter((item) => !item.launched && !launchedKeys.has(`${item.project.toLowerCase()}|${itemId({ project: item.project, item: item.index }).toUpperCase()}`));
   const projects = Array.from(new Set([...live.map((task) => task.project), ...waiting.map((item) => item.project)]));
-  const deadlineOf = (project: string) => [...live.filter((task) => task.project === project).map((task) => task.deadline),
-    ...waiting.filter((item) => item.project === project).map((item) => item.deadline)].filter(Boolean).sort()[0] ?? "";
+  // Два срока (РП-1): дедлайн проекта — из плана; срок задания — самый ранний у незавершённых заданий проекта.
+  const planOf = (project: string) => projectDeadlines[project.toLowerCase()];
+  const taskDeadlineOf = (project: string) => live.filter((task) => task.project === project && task.status !== "Выполнено")
+    .map((task) => task.deadline).filter((value): value is string => Boolean(value)).sort()[0] ?? "";
+  const deadlineOf = (project: string) => planOf(project)?.deadline || taskDeadlineOf(project)
+    || waiting.filter((item) => item.project === project).map((item) => item.deadline).filter(Boolean).sort()[0] || "";
   projects.sort((a, b) => (deadlineOf(a) || "9999").localeCompare(deadlineOf(b) || "9999") || a.localeCompare(b, "ru"));
+  const deadlineTags = (project: string) => deadlineChips(planOf(project), taskDeadlineOf(project))
+    .map((chip) => <StatusChip key={chip.kind} className="mb-deadline" tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>);
 
   const shown = projects.find((project) => project === openProject) ?? "";
   // Полоса «Сегодня»: операции живых заданий (не отданных на площадку) с каждым флагом; клик фильтрует список.
@@ -395,13 +410,12 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const freeOf = (project: string) => live.filter((item) => item.project === project && !item.handed_to)
     .reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
   function tileFacts(project: string) {
-    const deadline = deadlineOf(project);
     const free = freeOf(project);
     const total = live.filter((item) => item.project === project && !item.handed_to).reduce((sum, item) => sum + item.operations.length, 0);
     const toLaunch = waiting.filter((item) => item.project === project).length;
     const handed = live.filter((item) => item.project === project && item.handed_to).length;
     return <>
-      {deadline && <span className="mb-deadline">ДЛ {formatDay(deadline)}</span>}
+      {deadlineTags(project)}
       {total > 0 && <span className={free ? "mb-free" : "mb-done"}>{free ? `без исполнителя ${free} из ${total}` : `распределено ${total}`}</span>}
       {toLaunch > 0 && <span className="mb-launch">к запуску {toLaunch}</span>}
       {handed > 0 && <span className="mb-handed">в {HANDOVER_SITE}: {handed}</span>}
@@ -416,7 +430,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const unassigned = live.filter((item) => !item.handed_to).reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
 
   const workShift = shift ?? DEFAULT_SHIFT;
-  const days = Array.from({ length: WEEK_DAYS }, (_, index) => addDays(weekStart, index));
+  // На 27" доска во всю ширину — две недели, на 16" и планшете — одна (РП-3, РП-6); листают по неделе.
+  const dayCount = board.width >= TWO_WEEKS_FROM ? WEEK_DAYS * 2 : WEEK_DAYS;
+  const days = Array.from({ length: dayCount }, (_, index) => addDays(weekStart, index));
   const free = task && operation ? remainderOf(task, operation) : 0;
   const quantity = task ? Math.min(task.quantity, Math.max(0, Math.floor(Number(pieces) || 0))) : 0;
 
@@ -432,7 +448,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     const date = new Date(start);
     void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, personId, quantity, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`));
   }
-  const capacity = Number(workShift.effective_hours || 7);
+  const capacity = shiftCapacity(workShift);
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
     void mutate(op.id, () => productionApi.share(item.id, op.id, item.version, operatorId, null, null, true));
@@ -489,18 +505,21 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       {shown && [shown].map((project) => {
         const projectTasks = live.filter((item) => item.project === project);
         const projectReady = waiting.filter((item) => item.project === project);
-        const deadline = deadlineOf(project);
         return <div className="mb-project" key={project}>
-          <div className="mb-project-head"><button className="secondary small" onClick={() => setOpenProject("")}>← Все проекты</button><b>{project}</b>{deadline && <span className="mb-deadline">ДЛ {formatDay(deadline)}</span>}</div>
+          <div className="mb-project-head"><button className="secondary small" onClick={() => setOpenProject("")}>← Все проекты</button><b>{project}</b>{deadlineTags(project)}</div>
           {projectTasks.map((item) => {
             const operations = item.operations.filter((op) => (!onlyFree || (!done(op) && !op.operator_ids.length)) && hasFlag(item, op));
             if ((onlyFree || flagFilter) && !operations.length) return null;
             return <div className="mb-task" key={item.id}>
               <div className="mb-task-head">
                 <button className="link-button" onClick={() => openTask(item.id)}>{item.number} · Гант</button>
-                <span><b>{itemId(item)}</b> × {item.quantity}{item.name ? ` · ${item.name}` : ""}</span>
-                {item.handed_to
-                  ? <><span className="mb-handed">Отдано в {item.handed_to}</span>{canEdit && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, "")}>Вернуть на распределение</button>}</>
+                <span><b>{taskItemLabel(item)}</b> × {item.quantity}{item.name ? ` · ${item.name}` : ""}</span>
+                {item.status !== "Выполнено" && deadlineChips(planOf(project), item.deadline).filter((chip) => chip.kind === "task")
+                  .map((chip) => <StatusChip key={chip.kind} className="mb-deadline" tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>)}
+                {item.status === "Выполнено"
+                  ? <><span className="status status-done">Выполнено</span>{item.handed_to && <small>{item.handed_to}: сдано {item.delivered ?? item.quantity} из {item.quantity}</small>}</>
+                  : item.handed_to
+                  ? <><span className="mb-handed">Отдано в {item.handed_to}</span>{item.delivered ? <small>сдано {item.delivered} из {item.quantity}</small> : null}{canEdit && !item.delivered && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, "")}>Вернуть на распределение</button>}{canEdit && <button className="secondary small" onClick={() => openTask(item.id)}>Отметить сдачу</button>}</>
                   : <><small>назначено {item.assigned} из {item.operations.length}</small>{canEdit && <button className="secondary small" disabled={Boolean(busy)} onClick={() => handOver(item, HANDOVER_SITE)}>Отдать в {HANDOVER_SITE}</button>}</>}
               </div>
               <table className="mb-ops">
@@ -512,8 +531,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                   return <tr key={op.id} className={`${active ? "active" : ""}${done(op) ? " done" : ""}`}>
                     <td>{op.position}</td>
                     <td>{canEdit && !done(op) && !item.handed_to
-                      ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{op.stage}{op.code ? <small> {op.code}</small> : null}</button>
-                      : <span>{op.stage}{op.code ? <small> {op.code}</small> : null}</span>}
+                      ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{op.stage}</button>
+                      : <span>{op.stage}</span>}
+                      {op.code ? <small className="op-code">{op.code}</small> : null}
                       {feedsText(item, op) && <div className="ap-man">{feedsText(item, op)}</div>}
                       {op.fact && progress.required > 0 && <div className={`mb-progress tone-${progressTone(progress, done(op))}`}>
                         <span>сдано {progress.good}/{progress.required}{progress.waiting > 0 ? ` · ${progress.waiting} ждут подтверждения` : ""}</span>
@@ -524,47 +544,50 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                     <td>{done(op) ? <span className="mb-done">выполнена</span> : item.handed_to ? <span className="mb-handed-text">—</span> : <>
                       {people.map((person) => {
                         const own = sharesOf(op, person.id)[0];
-                        return <span className={`mb-chip${own?.finished_at ? " done" : ""}`} key={person.id} title={own?.planned_start ? planText({ ...op, planned_start: own.planned_start, planned_finish: own.planned_finish }) : undefined}>
+                        return <span className={`mb-chip${own?.finished_at ? " done" : ""}`} key={person.id} title={own?.planned_start ? windowText(own.planned_start, own.planned_finish) : undefined}>
                           {person.name}{own && pieceLabel(item, op, own) ? <b>{pieceLabel(item, op, own)}</b> : null}{own?.finished_at ? " ✓" : own?.started_at ? " · взял" : ""}
                           {canEdit && <button className="mb-chip-x" aria-label={`Снять ${person.name}`} title="Снять с операции" disabled={Boolean(busy)} onClick={() => unassign(item, op, person.id)}>×</button>}
                         </span>;
                       })}
                       {!people.length ? <span className="mb-free">не назначено</span> : remainderOf(item, op) > 0 ? <span className="mb-free">не распределено {remainderOf(item, op)} шт</span> : null}
                     </>}</td>
-                    <td className="mb-plan">{planText(op)}</td>
+                    <td className="mb-plan">{operationPlanText(op)}</td>
                   </tr>;
                 })}</tbody>
               </table>
             </div>;
           })}
           {!onlyFree && projectReady.map((item) => <div className="mb-ready" key={item.techcard_id}>
-            <span><b>{item.project}{item.index}</b>{item.name ? ` · ${item.name}` : ""}<small> · техкарта выдана, этапов {item.operations}, тираж {item.run || "—"}</small></span>
-            <button className="secondary small" disabled={Boolean(busy) || !/^\d+$/.test(item.run) || Number(item.run) <= 0} title={/^\d+$/.test(item.run) ? "" : "Тиража нет — запусти через «+ Запустить задание»"} onClick={() => launch(item)}>В работу</button>
+            <span><b>{kbLabel(item.project, item.index)}</b>{item.name ? ` · ${item.name}` : ""}<small> · техкарта выдана, этапов {item.operations}, тираж {item.run || "—"}{item.deadline ? `, срок ${formatDay(item.deadline)}` : ""}</small></span>
+            <button className="secondary small" disabled={Boolean(busy) || !/^\d+$/.test(item.run) || Number(item.run) <= 0} title={/^\d+$/.test(item.run) ? "" : "Тиража нет — запустите через «+ Запустить задание»"} onClick={() => launch(item)}>Запустить сегодня</button>
           </div>)}
         </div>;
       })}
     </section>
-    <aside className="panel mb-people" aria-label="Монтажники">
+    <aside className="panel mb-people" aria-label="Монтажники" ref={board.ref}>
       <div className="mb-head">
         <h2>Монтажники</h2><span className="mb-count">{site ? `${site} · ` : ""}{people.length}</span>
-        <div className="mb-week-nav">
-          <button className="secondary small" aria-label="Неделя назад" onClick={() => setWeekStart(addDays(weekStart, -WEEK_DAYS))}>‹</button>
-          <button className="secondary small" onClick={() => setWeekStart(today)}>Сегодня</button>
-          <button className="secondary small" aria-label="Неделя вперёд" onClick={() => setWeekStart(addDays(weekStart, WEEK_DAYS))}>›</button>
-        </div>
+        {site !== HANDOVER_SITE && <span className="mb-period" title="Период доски">{periodWords(days[0], days[days.length - 1])}</span>}
+        {site !== HANDOVER_SITE && <div className="mb-week-nav">
+          <button className="secondary small" onClick={() => setWeekStart(addDays(weekStart, -WEEK_DAYS))}>← неделя</button>
+          <button className="secondary small" onClick={() => setWeekStart(today)} disabled={weekStart === today}>Сегодня</button>
+          <button className="secondary small" onClick={() => setWeekStart(addDays(weekStart, WEEK_DAYS))}>неделя →</button>
+        </div>}
       </div>
       {site === HANDOVER_SITE ? null : task && operation
-        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {itemId(task)} × {task.quantity}. Нажми на день у монтажника.</small>
+        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {taskItemLabel(task)} × {task.quantity}. Нажмите на день у монтажника.</small>
           <label className="mb-pieces">Штук монтажнику<input type="number" min={1} max={task.quantity} step={1} value={pieces} aria-label="Штук монтажнику" onChange={(event) => setPieces(event.target.value)} /><span>из {task.quantity}{free > 0 && free < task.quantity ? ` · не распределено ${free}` : ""} · норма {hours(Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * quantity)}</span></label>
           {quantity > free && free < task.quantity && <small>Сверх нераспределённых штуки заберём у того, кто заканчивает позже.</small>}
           <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
-        : <div className="mb-target muted">{canEdit ? "Выберите операцию слева, затем день и час у монтажника. Занято/смена, ч." : "Занято/смена, ч. Нажмите на день — раскладка по часам."}</div>}
+        : <div className="mb-target muted">{canEdit ? "Выберите операцию в списке выше, затем день и час у монтажника." : "Нажмите на день — раскладка по часам."}</div>}
       {site === HANDOVER_SITE && <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам: сюда падают задания с пометкой «Отдано в {HANDOVER_SITE}».</div>}
       {site !== HANDOVER_SITE && <table className="mb-week">
         <thead><tr><th>Монтажник</th>{days.map((day) => {
           const date = new Date(`${day}T00:00:00`);
-          return <th key={day} className={`${workingDay(day, workShift, holidays) ? "" : "off"}${day === today ? " today" : ""}`}>
-            <span>{date.toLocaleDateString("ru-RU", { weekday: "short" })}</span>{formatDay(day)}
+          const working = workingDay(day, workShift, holidays);
+          return <th key={day} className={`${working ? "" : "off"}${day === today ? " today" : ""}`}
+            title={`${date.toLocaleDateString("ru-RU", { weekday: "short" })} ${formatDay(day)}${day === today ? " · сегодня" : working ? "" : " · выходной"}`}>
+            <b>{formatDay(day)}</b><span>{date.toLocaleDateString("ru-RU", { weekday: "short" })}</span>
           </th>;
         })}</tr></thead>
         <tbody>{people.map((person) => {
@@ -578,14 +601,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
               const absent = absences.find((item) => item.operator_id === person.id && item.from_date <= day && day <= item.to_date);
               const working = workingDay(day, workShift, holidays);
               const load = working && !absent ? dayHours(person.id, day, tasks, workShift) : 0;
-              const level = load <= 0.05 ? "free" : load < capacity * 0.5 ? "low" : load <= capacity + 0.05 ? "full" : "over";
-              const text = absent ? absent.kind.slice(0, 3).toLowerCase() : !working ? "вых" : `${oneDecimal(load)}/${oneDecimal(capacity)}`;
               const title = `${person.name}, ${formatDay(day)}: ${absent ? absent.kind : !working ? "нерабочий день" : `${oneDecimal(load)} из ${oneDecimal(capacity)} ч`}`;
-              const className = `mb-cell ${absent ? "absent" : !working ? "off" : level}${day === today ? " today" : ""}${expanded === day ? " picked" : ""}`;
-              return <td key={day} className={className}>{working && !absent
-                ? <button title={title} aria-label={`День ${person.name} ${formatDay(day)}`} aria-expanded={expanded === day}
-                  onClick={() => openPersonDay(person.id, day, expanded !== day)}>{text}</button>
-                : <span title={title}>{text}</span>}</td>;
+              // Та же ячейка, что в «Загрузке по людям» производственного плана (РП-4): свободный — пусто, выходной — штриховка.
+              return <LoadCell key={day} hours={load} capacity={capacity} working={working} absence={absent?.kind}
+                today={day === today} picked={expanded === day} title={title} label={`День ${person.name} ${formatDay(day)}`}
+                onClick={working && !absent ? () => openPersonDay(person.id, day, expanded !== day) : undefined} />;
             })}
           </tr>
           {expanded && <tr className="mb-day-row"><td colSpan={days.length + 1}>
@@ -626,11 +646,11 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                     </div>;
                   })}</div>
                   {operation && canEdit && <div className="mb-day-hint">
-                    {placed && <b className="mb-placed">Назначено: {windowText(placed.planned_start!, placed.planned_finish!)}{locked ? " · уже взял(а)" : here ? " · передвинуть — нажми свободный час" : ""}</b>}
+                    {placed && <b className="mb-placed">Назначено: {windowText(placed.planned_start!, placed.planned_finish!)}{locked ? " · уже взял(а)" : here ? " · передвинуть — нажмите свободный час" : ""}</b>}
                     {locked || here ? null : append != null && until != null
                       ? <><button className="primary small" disabled={Boolean(busy)} onClick={() => pick(append)}>{placed ? "Переставить" : "Назначить"} на {formatDay(expanded)} с {at(append)}</button>
                         <b className="mb-until">до {isoDay(new Date(until)) === expanded ? at(until) : `${formatDay(isoDay(new Date(until)))} ${at(until)}`}</b></>
-                      : <span className="danger-text">{hasFree ? "После работы этого дня места нет — нажми свободный час или выбери другой день." : "Свободных часов в этот день нет — выбери другой день."}</span>}
+                      : <span className="danger-text">{hasFree ? "После работы этого дня места нет — нажмите свободный час или выберите другой день." : "Свободных часов в этот день нет — выберите другой день."}</span>}
                     <span>Не влезает в день — хвост уйдёт на следующий рабочий день, работа монтажника после неё сдвинется.</span>
                   </div>}
                 </>;
@@ -640,7 +660,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
           </Fragment>;
         })}</tbody>
       </table>}
-      <div className="mb-legend"><span className="mb-cell free">0/7</span> свободен <span className="mb-cell low">3/7</span> частично <span className="mb-cell full">7/7</span> смена занята <span className="mb-cell over">9/7</span> перегруз <span className="mb-cell absent">отп</span> отсутствует</div>
+      {site !== HANDOVER_SITE && <LoadLegend capacity={capacity} late={false} />}
     </aside>
   </div>;
 }

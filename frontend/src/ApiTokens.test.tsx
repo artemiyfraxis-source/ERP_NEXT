@@ -60,6 +60,8 @@ it("shows the secret once after issuing and forgets it on close", async () => {
   expect(issue).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Название"), { target: { value: "Новый" } });
   fireEvent.click(screen.getByLabelText("Генератор техкарт"));
+  fireEvent.click(screen.getByLabelText("Загрузка в базу данных"));
+  expect(screen.getByLabelText("Чтение базы данных")).not.toBeChecked();
   expect(screen.getByLabelText("Срок, дней")).toHaveValue(90);
   fireEvent.click(issue);
 
@@ -68,7 +70,7 @@ it("shows the secret once after issuing and forgets it on close", async () => {
   expect(secret).toHaveAttribute("readonly");
   expect(screen.getByText(/Токен показывается один раз — сохраните его сейчас\./)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Скопировать" })).toBeInTheDocument();
-  expect(calls.find((call) => call.method === "POST")?.body).toEqual({ name: "Новый", scopes: ["tcgen"], days: 90 });
+  expect(calls.find((call) => call.method === "POST")?.body).toEqual({ name: "Новый", scopes: ["tcgen", "refs:write"], days: 90 });
 
   fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
   expect(screen.queryByLabelText("Токен")).toBeNull();

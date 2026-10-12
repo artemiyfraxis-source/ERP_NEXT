@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 /** The columns of the two stock tables: «Остатки по позициям» (one row per article) and «Таблица склада» (one row per lot). */
-export type ColumnKey = "type" | "grn" | "balance" | "lots" | "place" | "series" | "article" | "name" | "warehouse" | "available" | "purpose";
+export type ColumnKey = "type" | "grn" | "balance" | "lots" | "place" | "series" | "article" | "name" | "warehouse" | "available" | "reserved" | "purpose";
 export type TableKind = "grouped" | "flat";
 export interface ColumnLayout { order: ColumnKey[]; hidden: ColumnKey[] }
 export type ColumnLayouts = Record<TableKind, ColumnLayout>;
@@ -10,14 +10,15 @@ export type ColumnLayouts = Record<TableKind, ColumnLayout>;
 // first; the name is flexible and takes what is left, the warehouse closes the row. «Таблица склада» (ERP only) keeps
 // the same order with «Доступно» instead of «Партий».
 const DEFAULT_ORDER: Record<TableKind, ColumnKey[]> = {
-  grouped: ["type", "grn", "balance", "lots", "place", "series", "article", "name", "warehouse"],
-  flat: ["type", "grn", "balance", "available", "place", "series", "article", "name", "purpose", "warehouse"],
+  grouped: ["type", "grn", "balance", "reserved", "available", "lots", "place", "series", "article", "name", "warehouse"],
+  flat: ["type", "grn", "balance", "reserved", "available", "place", "series", "article", "name", "purpose", "warehouse"],
 };
-// «Назначение» (the project a lot is kept for) is the least needed column of the lot table: off until asked for.
-const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = { grouped: [], flat: ["purpose"] };
+// «Назначение» (the project a lot is kept for) is the least needed column of the lot table, «Доступно» of the article
+// table (the reserve beside the balance is enough there): off until asked for.
+const DEFAULT_HIDDEN: Record<TableKind, ColumnKey[]> = { grouped: ["available"], flat: ["purpose"] };
 
 export const COLUMN_TITLES: Record<ColumnKey, string> = {
-  name: "Наименование", article: "Артикул", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Доступно",
+  name: "Наименование", article: "Артикул", grn: "ГРН", balance: "Остаток", lots: "Партий", available: "Доступно", reserved: "Резерв",
   place: "Места", warehouse: "Склад", purpose: "Назначение", series: "Серия", type: "Тип",
 };
 
@@ -61,10 +62,21 @@ function readLayout(kind: TableKind, saved: unknown): ColumnLayout {
   const { order, hidden } = saved as Partial<Record<keyof ColumnLayout, unknown>>;
   const known = (key: unknown): key is ColumnKey => typeof key === "string" && DEFAULT_ORDER[kind].includes(key as ColumnKey);
   const savedOrder = Array.isArray(order) ? [...new Set(order.filter(known))] : [];
+  // A column the saved order does not know (added later) stands after its neighbour of the default order («Резерв»
+  // after «Остаток»), or at the end when that neighbour is not there.
+  const merged = [...savedOrder];
+  const added: ColumnKey[] = [];
+  DEFAULT_ORDER[kind].forEach((key, index) => {
+    if (merged.includes(key)) return;
+    added.push(key);
+    const before = merged.indexOf(DEFAULT_ORDER[kind][index - 1]);
+    merged.splice(before < 0 ? merged.length : before + 1, 0, key);
+  });
   return {
-    // A column the saved order does not know (added later) is appended in the default order.
-    order: [...savedOrder, ...DEFAULT_ORDER[kind].filter((key) => !savedOrder.includes(key))],
-    hidden: Array.isArray(hidden) ? [...new Set(hidden.filter(known))].filter((key) => key !== "name") : fallback.hidden,
+    order: merged,
+    hidden: Array.isArray(hidden)
+      ? [...new Set([...hidden.filter(known), ...added.filter((key) => DEFAULT_HIDDEN[kind].includes(key))])].filter((key) => key !== "name")
+      : fallback.hidden,
   };
 }
 

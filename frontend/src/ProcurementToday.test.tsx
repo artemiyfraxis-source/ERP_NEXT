@@ -33,8 +33,8 @@ it("has no «Сегодня» tab while the option is off", async () => {
   mockServer(false, []);
   render(<ProcurementPage />);
   await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/stage-options", expect.anything()));
-  expect(screen.getByRole("button", { name: "Очереди" })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Сегодня" })).not.toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Очереди" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Сегодня" })).not.toBeInTheDocument();
 });
 
 it("shows «Сегодня» first as a board of project cards; one project sits in several fields and opens its positions", async () => {
@@ -54,7 +54,7 @@ it("shows «Сегодня» first as a board of project cards; one project sits
     },
   ], { "591К.3": [line("1", "В пути", "Просрочена поставка"), line("2", "В пути", "Просрочена поставка"), line("3", "В оплату", "Ждёт оплаты"), line("4", "В работе", null)] });
   render(<ProcurementPage />);
-  const tab = await screen.findByRole("button", { name: "Сегодня" });
+  const tab = await screen.findByRole("tab", { name: "Сегодня" });
   expect(tab.parentElement?.firstElementChild).toBe(tab);
   const cards = await screen.findAllByRole("button", { name: /591К\.3/ });
   expect(cards).toHaveLength(2);

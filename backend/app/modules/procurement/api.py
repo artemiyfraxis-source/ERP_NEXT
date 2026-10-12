@@ -2,7 +2,7 @@
 
 import base64
 import binascii
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal
@@ -57,6 +57,7 @@ from .application import (
     MarkPaidBatchItem,
     SupplierDirectory,
     UnitOfWork,
+    StockCoverUnitOfWork,
     ConcurrentProcurementUpdate,
     available_procurement,
     buyer_procurement,
@@ -97,15 +98,27 @@ from .application import (
     invoice_supplier_order,
     pay_supplier_order,
     save_fact_prices_batch,
+    BindStockCoverCommand,
     CoverFromStockCommand,
     ReleaseStockCoverCommand,
+    bind_stock_cover,
     cover_from_stock,
     release_stock_cover,
     stock_candidates,
+    without_grn_quantities,
+    SetDatasheetCommand,
+    StoredInvoiceFile,
+    UploadLineDocumentCommand,
+    invoice_file_url,
+    line_documents,
+    set_procurement_datasheet,
+    upload_line_document,
 )
 from .domain import (
     ACTUAL_UNITS,
     BY_SUPPLIER_STAGES,
+    DATASHEET_MAX_LENGTH,
+    LINE_DOCUMENT_KINDS,
     NOTE_MAX_LENGTH,
     STATUS_ORDER,
     ProcurementStatus,
@@ -114,6 +127,7 @@ from .domain import (
     MoneyEntry,
     ProcurementFacts,
     ProcurementTraceability,
+    ProcurementAccessDenied,
     ProcurementLine,
     ProcurementValidationError,
     ReplacementDecision,
@@ -121,7 +135,7 @@ from .domain import (
     same_unit,
     normalize_invoice_url,
 )
-from app.modules.warehouse.domain import StockLot
+from .stock_port import StockLotView
 from app.workflows.receipt_stage import ReceivingStatusLookup
 from .exchange_rates import CbrExchangeRates
 from .kpi import build_kpi
@@ -314,8 +328,15 @@ class SplitInput(VersionInput):
 
 
 class StockCoverInput(VersionInput):
-    lot_id: UUID
+    # None — «Есть на складе, без ГРН»: covered without a reserve on any lot.
+    lot_id: UUID | None = None
     quantity: Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+    # Only without a lot, optional.
+    warehouse: Literal["ЦАР", "ЖУК", ""] = ""
+
+
+class StockCoverBindInput(VersionInput):
+    lot_id: UUID
 
 
 class StockCoverReleaseInput(VersionInput):
@@ -329,6 +350,20 @@ class BackorderConfirmInput(VersionInput):
 class NoteInput(VersionInput):
     # Coarse transport bound; the domain checks the trimmed note against NOTE_MAX_LENGTH with a Russian message.
     note: str = Field(default="", max_length=NOTE_MAX_LENGTH * 2)
+
+
+class DatasheetInput(VersionInput):
+    # Coarse transport bound; the domain checks the trimmed text against DATASHEET_MAX_LENGTH in Russian.
+    datasheet: str = Field(default="", max_length=DATASHEET_MAX_LENGTH * 2)
+
+
+class LineDocumentInput(BaseModel):
+    """РАЗРЕШЕНИЕ (`permit`) or ДОК. КАЧЕСТВА (`quality`) file of the line."""
+
+    kind: str = Field(min_length=1, max_length=16)
+    file_name: str = Field(min_length=1, max_length=512)
+    content_type: str = Field(default="", max_length=255)
+    content_base64: str = Field(min_length=1, max_length=28_000_000)
 
 
 class ExpectedArrivalInput(VersionInput):
@@ -480,6 +515,13 @@ def procurement_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
     return factory
 
 
+def procurement_stock_uow_factory(request: Request) -> Callable[[], StockCoverUnitOfWork]:
+    factory = getattr(request.app.state, "procurement_stock_uow_factory", None)
+    if not callable(factory):
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return factory
+
+
 def procurement_supplier_directory(request: Request) -> SupplierDirectory | None:
     return getattr(request.app.state, "procurement_supplier_directory", None)
 
@@ -488,6 +530,14 @@ def procurement_receiving(request: Request) -> ExpectedArrivalCopier | None:
     """Receiving's ОЖИД. ДАТА copy (`app.workflows.receipt_stage`); without Receiving wired the receipt tick copies."""
     factory = getattr(request.app.state, "receiving_uow_factory", None)
     return ReceivingStatusLookup(factory) if callable(factory) else None
+
+
+def procurement_purposes(request: Request) -> Callable[[Sequence[ProcurementLine]], dict[UUID, str]]:
+    """ЦЕЛЬ строк листа: `requests.purpose` по source_request_id, одним запросом на список (порт `app.workflows`)."""
+    lookup = getattr(request.app.state, "request_purpose_lookup", None)
+    if lookup is None:
+        return lambda lines: {}
+    return lambda lines: lookup.purposes_for([line.source_request_id for line in lines])
 
 
 def procurement_exchange_rates(request: Request) -> ExchangeRates:
@@ -502,8 +552,26 @@ def _decimal_result(value: Decimal | None) -> str | None:
     return format(value.normalize(), "f") if value is not None else None
 
 
-def _line_result(line: ProcurementLine) -> dict:
+def _file_result(stored: StoredInvoiceFile) -> dict:
     return {
+        "id": str(stored.id), "kind": stored.kind, "file_name": stored.file_name, "url": invoice_file_url(stored.id),
+        "uploaded_by": stored.uploaded_by, "uploaded_at": stored.uploaded_at.isoformat(),
+    }
+
+
+def _line_result(
+    line: ProcurementLine, purposes: Mapping[UUID, str] | None = None, *, without_grn: Decimal | None = None,
+    documents: Sequence[StoredInvoiceFile] | None = None,
+) -> dict:
+    """The line for the screens. `without_grn` and `documents` — only where the caller looked them up (the lists:
+    «Мои позиции», «Весь лист», «По поставщикам»); a command's answer leaves them out and the screen keeps its own."""
+    extra: dict = {} if without_grn is None else {"stock_without_grn": _decimal_result(without_grn)}
+    if documents is not None:
+        # «Файлы разрешения» / «Док. качества» of the sheet: the line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files.
+        extra["permit_files"] = [_file_result(item) for item in documents if item.kind == "permit"]
+        extra["quality_files"] = [_file_result(item) for item in documents if item.kind == "quality"]
+    return {
+        "purpose": (purposes or {}).get(line.source_request_id),
         "id": str(line.id),
         "legacy_id": line.legacy_id,
         "revision": line.revision,
@@ -545,6 +613,8 @@ def _line_result(line: ProcurementLine) -> dict:
         "actual_arrival": line.actual_arrival.isoformat() if line.actual_arrival else None,
         # КОММЕНТАРИЙ: the buyer's free note.
         "note": line.note,
+        # DATASHEET: a link or a text, edited like КОММЕНТАРИЙ.
+        "datasheet": line.datasheet,
         "invoice_url": line.invoice_url,
         "paid_at": line.paid_at.isoformat() if line.paid_at else None,
         "currency": line.money.currency,
@@ -582,6 +652,8 @@ def _line_result(line: ProcurementLine) -> dict:
         # «Со склада»: reserved on our lots for this line, and what is still to buy.
         "stock_covered": _decimal_result(line.stock_covered),
         "to_buy": _decimal_result(line.to_buy),
+        # «Есть на складе, без ГРН» still waiting for «Привязать ГРН» (present only where looked up).
+        **extra,
     }
 
 
@@ -598,11 +670,42 @@ def _retry_transaction(operation):
     raise AssertionError("unreachable")
 
 
-def _page_result(lines: list[ProcurementLine], limit: int) -> dict:
+def _page_result(
+    lines: list[ProcurementLine], limit: int, purposes_of=None,
+    without_grn: Callable[[list[ProcurementLine]], dict] | None = None,
+    documents: Callable[[list[ProcurementLine]], dict] | None = None,
+) -> dict:
     page = lines[:limit]
     return {
-        "lines": [_line_result(line) for line in page],
+        "lines": _lines_result(page, purposes_of, without_grn, documents),
         "next_cursor": str(page[-1].id) if len(lines) > limit else None,
+    }
+
+
+def _lines_result(
+    page: list[ProcurementLine], purposes_of=None,
+    without_grn: Callable[[list[ProcurementLine]], dict] | None = None,
+    documents: Callable[[list[ProcurementLine]], dict] | None = None,
+) -> list[dict]:
+    """A list of lines with what the list looks up in one query each: ЦЕЛЬ, «без ГРН», the РАЗРЕШЕНИЕ / ДОК.
+    КАЧЕСТВА files. A lookup left out leaves its keys out of the lines."""
+    purposes = purposes_of(page) if purposes_of else None
+    lotless = without_grn(page) if without_grn is not None else {}
+    files = documents(page) if documents is not None else None
+    return [
+        _line_result(
+            line, purposes, without_grn=lotless.get(line.id),
+            documents=None if files is None else files.get(line.id, []),
+        )
+        for line in page
+    ]
+
+
+def _list_lookups(uow_factory: Callable[[], UnitOfWork]) -> dict:
+    """«без ГРН» covers and the РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА files of a list — the same for every list view."""
+    return {
+        "without_grn": lambda page: without_grn_quantities(page, uow_factory()),
+        "documents": lambda page: line_documents([line.id for line in page], uow_factory()),
     }
 
 
@@ -612,6 +715,7 @@ def available_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     after: UUID | None = None,
 ) -> dict:
@@ -621,7 +725,7 @@ def available_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return _page_result(lines, limit)
+    return _page_result(lines, limit, purposes_of)
 
 
 @router.get("/mine")
@@ -630,6 +734,7 @@ def my_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     now: Annotated[datetime, Depends(moscow_now)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     after: UUID | None = None,
@@ -645,7 +750,9 @@ def my_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return _page_result(lines, limit)
+    # «Готово · без ГРН»: the screen offers «Привязать ГРН» on the lines that still have a cover without a lot;
+    # the line card lists the РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА files.
+    return _page_result(lines, limit, purposes_of, **_list_lookups(uow_factory))
 
 
 PRICE_HISTORY_OPTION = "procurement.price_history"
@@ -683,14 +790,15 @@ def price_history_batch(
 @router.get("/{line_id}/price-history")
 def price_history_one(
     line_id: UUID,
-    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
+    """A read: open on «Лист закупки» view like the sheet itself (view-mode contract, ID-6)."""
     _require_price_history()
     uow = uow_factory()
     with uow:
         row = uow.session.get(ProcurementLineRow, line_id)
-        if row is None or row.buyer_id != principal.actor.id:
+        if row is None:
             raise HTTPException(status_code=404, detail="Строка не найдена")
         return history_for_row(uow.session, row)
 
@@ -711,11 +819,12 @@ def _rfq_followups(principal: Principal, uow_factory: Callable[[], UnitOfWork], 
 
 @router.get("/today")
 def today_lines(
-    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """Stage option `procurement.today`: the buyer's prioritized to-do list, computed on read."""
+    """Stage option `procurement.today`: the buyer's prioritized to-do list, computed on read. A read, open on view
+    (ID-6): a viewer has no own lines, the board comes out empty."""
     _require_option("procurement.today")
     lines = buyer_procurement(principal.actor, uow_factory(), limit=5000)
     available = available_procurement(uow_factory(), limit=1000)
@@ -724,7 +833,7 @@ def today_lines(
 
 @router.get("/today/project")
 def today_project(
-    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
     now: Annotated[datetime, Depends(moscow_now)],
     project: Annotated[str, Query(min_length=1, max_length=128)],
@@ -782,6 +891,7 @@ def in_work_lines(
     uow_factory: Annotated[
         Callable[[], UnitOfWork], Depends(procurement_uow_factory)
     ],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     after: UUID | None = None,
 ) -> dict:
@@ -790,7 +900,7 @@ def in_work_lines(
         lines = in_work_procurement(uow_factory(), limit=limit + 1, after_id=after)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return _page_result(lines, limit)
+    return _page_result(lines, limit, purposes_of)
 
 
 @router.get("/meta")
@@ -809,6 +919,7 @@ def procurement_meta(
 def all_lines(
     _principal: Annotated[Principal, Depends(procurement_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    purposes_of: Annotated[Callable[[Sequence[ProcurementLine]], dict[UUID, str]], Depends(procurement_purposes)],
     q: Annotated[str, Query(max_length=200)] = "",
     status: Annotated[str | None, Query(max_length=32)] = None,
     buyer: Annotated[str | None, Query(max_length=255)] = None,
@@ -822,7 +933,7 @@ def all_lines(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return {**_page_result(lines, limit), "buyers": buyers}
+    return {**_page_result(lines, limit, purposes_of, **_list_lookups(uow_factory)), "buyers": buyers}
 
 
 @router.get("/by-supplier")
@@ -833,7 +944,7 @@ def lines_by_supplier(
     """`portalPurchaseBySupplier`: every buyer's open lines for the per-supplier overview."""
     lines = procurement_by_supplier(uow_factory())
     return {
-        "lines": [_line_result(line) for line in lines],
+        "lines": _lines_result(lines, **_list_lookups(uow_factory)),
         "stages": [status.value for status in BY_SUPPLIER_STAGES],
     }
 
@@ -984,6 +1095,23 @@ def _transition(operation) -> dict:
     return {"line": _line_result(_command_errors(operation))}
 
 
+def _price_warnings(lines: Sequence[ProcurementLine]) -> list[str]:
+    """«Счёт без цен — предупреждение, а не запрет» (owner, 06.10): the rows that went «В оплату» or got their invoice
+    replaced without a price; «Оплачено» waits for it."""
+    warnings = []
+    for line in lines:
+        missing = line.price_missing() if line.status is ProcurementStatus.TO_PAY else []
+        if missing:
+            warnings.append(f"{line.legacy_id} — нет цены: {', '.join(missing)}")
+    return warnings
+
+
+def _invoiced(operation) -> dict:
+    """`_transition` for a single-line invoice: the row and its price warning."""
+    line = _command_errors(operation)
+    return {"line": _line_result(line), "warnings": _price_warnings([line])}
+
+
 def _command_errors(operation):
     """Run a write command (retried once on a lost race) and map its errors to HTTP."""
     try:
@@ -1077,7 +1205,11 @@ def kp_save(
 
     _transition(operation)
     result = outcome["result"]
-    return {"lines": [_line_result(line) for line in result.lines], "invoice_error": result.invoice_error}
+    return {
+        "lines": [_line_result(line) for line in result.lines],
+        "invoice_error": result.invoice_error,
+        "warnings": _price_warnings(result.lines),
+    }
 
 
 @router.patch("/{line_id}/money")
@@ -1216,7 +1348,8 @@ def invoice_order(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
     """One invoice for the order: all its «Жду счет» rows go «В оплату», or all its «В оплату» rows get it
-    replaced; all or none (409 when the rows sent are not that set or a row is stale, 422 on the pay gate)."""
+    replaced; all or none (409 when the rows sent are not that set or a row is stale, 422 on the invoice gate). Rows
+    without a price still go «В оплату»; `warnings` names them."""
     lines = _command_errors(
         lambda: invoice_supplier_order(
             InvoiceSupplierOrderCommand(
@@ -1232,7 +1365,7 @@ def invoice_order(
             uow_factory(),
         )
     )
-    return {"lines": [_line_result(line) for line in lines]}
+    return {"lines": [_line_result(line) for line in lines], "warnings": _price_warnings(lines)}
 
 
 @router.post("/orders/{order_number}/paid")
@@ -1286,13 +1419,7 @@ def supplier_request_document(
         meta, content = supplier_order_document(order_number, uow_factory())
     except KeyError as error:
         raise HTTPException(status_code=404, detail="Документ запроса не найден") from error
-    disposition = "attachment" if download else "inline"
-    return Response(content=content, media_type=meta.content_type, headers={
-        "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(f'Запрос {order_number}.pdf')}",
-        # Без sandbox: он ломает встроенный просмотрщик PDF в Chrome. Скрипты и ресурсы файлу не нужны.
-        "Content-Security-Policy": "default-src 'none'",
-        "X-Content-Type-Options": "nosniff",
-    })
+    return file_response(content, f"Запрос {order_number}.pdf", download=download)
 
 
 @router.patch("/{line_id}/replacement")
@@ -1363,6 +1490,63 @@ def note(
             uow_factory(),
         )
     )
+
+
+@router.patch("/{line_id}/datasheet")
+def datasheet(
+    line_id: UUID,
+    payload: DatasheetInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """DATASHEET: a link or a text, by the line's buyer from «В работе» on; not on «Новый»/«Отменено»."""
+    return _transition(
+        lambda: set_procurement_datasheet(
+            SetDatasheetCommand(
+                line_id=line_id, expected_version=payload.version, datasheet=payload.datasheet,
+                actor=principal.actor, now=now,
+            ),
+            uow_factory(),
+        )
+    )
+
+
+@router.get("/{line_id}/files")
+def line_files(
+    line_id: UUID,
+    _principal: Annotated[Principal, Depends(procurement_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """The line's РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files with their kind, oldest first (invoices and КП are not listed)."""
+    found = line_documents([line_id], uow_factory()).get(line_id, [])
+    return {"files": [_file_result(item) for item in found]}
+
+
+@router.post("/{line_id}/files")
+def upload_line_file(
+    line_id: UUID,
+    payload: LineDocumentInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+) -> dict:
+    """A РАЗРЕШЕНИЕ or ДОК. КАЧЕСТВА file to the line; a quality document also sets ДОК. КАЧЕСТВА «Да». Answers with
+    the stored file and the line with all its files."""
+    if payload.kind not in LINE_DOCUMENT_KINDS:
+        raise HTTPException(status_code=422, detail="Вид файла: разрешение или документ качества")
+    content = decode_upload(payload.content_base64, "Файл повреждён")
+    line, stored = _command_errors(
+        lambda: upload_line_document(
+            UploadLineDocumentCommand(
+                line_id=line_id, kind=payload.kind, file_name=payload.file_name, content_type=payload.content_type,
+                content=content, actor=principal.actor, now=now,
+            ),
+            uow_factory(),
+        )
+    )
+    files = line_documents([line.id], uow_factory()).get(line.id, [])
+    return {"file": _file_result(stored), "line": _line_result(line, documents=files)}
 
 
 @router.patch("/{line_id}/expected-arrival")
@@ -1438,7 +1622,7 @@ def invoice(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    return _transition(
+    return _invoiced(
         lambda: record_invoice(
             RecordInvoiceCommand(
                 line_id=line_id,
@@ -1472,6 +1656,8 @@ def upload_invoice(
             ),
             uow_factory(),
         )
+    except ProcurementAccessDenied as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
     except ProcurementValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except KeyError as error:
@@ -1496,7 +1682,7 @@ def download_invoice(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл не найден")
     meta, content = found
-    return file_response(content, meta.content_type, meta.file_name)
+    return file_response(content, meta.file_name)
 
 
 # --- «Вставить КП» / «Вставить счёт» (owner, 05.10): prices read from the supplier's document --------------------
@@ -1630,7 +1816,8 @@ def apply_document(
 ) -> dict:
     """Prices from the document in one transaction, all rows or none; an invoice also goes on every order row
     («Жду счет» → «В оплату», or the invoice of «В оплату» rows is replaced). 409 — the order moved on or a row is
-    stale; 422 — a row refused (stage, pay gate) or a foreign-currency document."""
+    stale; 422 — a row refused (stage, invoice gate) or a foreign-currency document. A row without a price is not
+    refused: `warnings` names it («нет цены: …»)."""
     lines = _command_errors(
         lambda: apply_order_document(
             ApplyOrderDocumentCommand(
@@ -1653,7 +1840,7 @@ def apply_document(
             uow_factory(),
         )
     )
-    return {"kind": payload.kind, "lines": [_line_result(line) for line in lines]}
+    return {"kind": payload.kind, "lines": [_line_result(line) for line in lines], "warnings": _price_warnings(lines)}
 
 
 @router.post("/{line_id}/invoice/replace")
@@ -1664,7 +1851,7 @@ def invoice_replace(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
 ) -> dict:
-    return _transition(
+    return _invoiced(
         lambda: replace_invoice(
             ReplaceInvoiceCommand(
                 line_id=line_id,
@@ -1753,7 +1940,7 @@ def _offline(action: OfflineAction):
         payload: VersionInput,
         principal: Annotated[Principal, Depends(procurement_edit_principal)],
         now: Annotated[datetime, Depends(moscow_now)],
-        uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+        uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
     ) -> dict:
         return _transition(
             lambda: set_procurement_offline_status(
@@ -1815,7 +2002,7 @@ def _cover_result(cover: StockCover) -> dict:
         "id": str(cover.id),
         "line_id": str(cover.line_id),
         "label": cover.label,
-        "lot_id": str(cover.lot_id),
+        "lot_id": str(cover.lot_id) if cover.lot_id else None,
         "warehouse": cover.warehouse,
         "grn": cover.grn,
         "package": cover.package,
@@ -1840,7 +2027,7 @@ def _reserve_note(covers: list[StockCover]) -> str:
     )
 
 
-def _candidate_result(lot: StockLot, line: ProcurementLine, holders: list[StockCover]) -> dict:
+def _candidate_result(lot: StockLotView, line: ProcurementLine, holders: list[StockCover]) -> dict:
     return {
         "id": str(lot.id),
         "version": lot.version,
@@ -1867,7 +2054,7 @@ def _candidate_result(lot: StockLot, line: ProcurementLine, holders: list[StockC
 def stock_cover_candidates(
     line_id: UUID,
     _principal: Annotated[Principal, Depends(procurement_edit_principal)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
     q: Annotated[str, Query(max_length=255)] = "",
 ) -> dict:
     """«Со склада» — the lots that can cover the line (warehouse search by the typed text, otherwise by АРТИКУЛ,
@@ -1890,9 +2077,10 @@ def cover_line_from_stock(
     payload: StockCoverInput,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
 ) -> dict:
-    """«Со склада»: reserve `quantity` of lot `lot_id` for the line; all of it covered → «Готово», no money."""
+    """«Со склада»: reserve `quantity` of lot `lot_id` for the line; all of it covered → «Готово», no money.
+    Without `lot_id` — «Есть на складе, без ГРН»: the same line rules, no reserve (`warehouse` optional)."""
     covers: list[StockCover] = []
 
     def operation() -> ProcurementLine:
@@ -1902,6 +2090,38 @@ def cover_line_from_stock(
                 expected_version=payload.version,
                 lot_id=payload.lot_id,
                 quantity=payload.quantity,
+                actor=principal.actor,
+                now=now,
+                warehouse=payload.warehouse,
+            ),
+            uow_factory(),
+        )
+        covers[:] = [cover]
+        return line
+
+    result = _transition(operation)
+    return {**result, "cover": _cover_result(covers[0])}
+
+
+@router.post("/{line_id}/stock-cover/{cover_id}/bind")
+def bind_line_stock_cover(
+    line_id: UUID,
+    cover_id: UUID,
+    payload: StockCoverBindInput,
+    principal: Annotated[Principal, Depends(procurement_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
+) -> dict:
+    """«Привязать ГРН»: a cover «без ГРН» reserves its whole quantity on lot `lot_id`, or nothing (422)."""
+    covers: list[StockCover] = []
+
+    def operation() -> ProcurementLine:
+        line, cover = bind_stock_cover(
+            BindStockCoverCommand(
+                line_id=line_id,
+                expected_version=payload.version,
+                cover_id=cover_id,
+                lot_id=payload.lot_id,
                 actor=principal.actor,
                 now=now,
             ),
@@ -1920,7 +2140,7 @@ def release_line_stock_cover(
     payload: StockCoverReleaseInput,
     principal: Annotated[Principal, Depends(procurement_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(procurement_uow_factory)],
+    uow_factory: Annotated[Callable[[], StockCoverUnitOfWork], Depends(procurement_stock_uow_factory)],
 ) -> dict:
     """«Снять "Со склада"»: every active cover of the line (or only `cover_id`) goes back to its lot."""
     released: list[StockCover] = []

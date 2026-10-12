@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal, references_edit_principal, references_import_principal, references_maps_edit_principal,
-    references_maps_view_principal, references_view_principal,
+    references_maps_view_principal, references_view_principal, refuse_api_tokens,
 )
 
 from .application import (
@@ -21,9 +21,16 @@ from .application import (
     SetCableKindCommand, SetCoaxDiametersCommand, StaleRecordError, UnitOfWork, create_record, edit_record, list_cables,
     replace_maps, replace_snapshot, set_cable_kind, set_coax_diameters,
 )
+from .application import (
+    CableCatalog, SaveGaugeCommand, SaveHookupCommand, cable_catalog, delete_gauge, import_coax_cards, save_gauge,
+    save_hookup,
+)
+from .cable_structure import (
+    LAYER_LABELS, CoaxCard, HookupWire, WireGauge, parse_hookup,
+)
 from .cables import DIAMETERS, CableKind, CableRow, cable_counts
 from .domain import (
-    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
+    BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
     TechOperationTab,
 )
 from .technology import (
@@ -31,6 +38,7 @@ from .technology import (
     TerminalRecord,
     fold_wire_section,
     import_supplymap_snapshot,
+    normalize_terminal_fields,
     resolve_terminal,
     schema_keys,
     wire_section,
@@ -119,24 +127,32 @@ def _maps(entries) -> dict:
     }
 
 
+def _shown_maps(saved: dict) -> dict:
+    """What «Соответствия» shows: nothing saved yet → the SUPPLIER_BY_LINK seed (stored on the first save); the
+    country map is always saved rows + the COUNTRY_BY_MANUFACTURER seed for the keys not saved (owner 12.10.2026)."""
+    shown = dict(saved)
+    if not saved["suppliers"] and not saved["countries"]:
+        shown["suppliers"] = [{"key": key, "value": value} for key, value in SUPPLIER_BY_LINK]
+    shown["countries"] = [
+        {"key": key, "value": value} for key, value in merge_country_pairs((item["key"], item["value"]) for item in saved["countries"])
+    ]
+    return shown
+
+
 def _map_rights(principal: Principal) -> dict[str, bool]:
-    """Who changes which map: supplier/country — the buyer (portalCanWork_ = `procurement` edit), ГОСТ→AWG — the
-    reference book (`erpref` edit)."""
+    """Who changes which map: supplier/country — the buyer (portalCanWork_ = `procurement` edit). ГОСТ→AWG is not
+    saved here any more (owner 10.10.2026): it follows «Сечения AWG ↔ мм²» (`save_gauge`), so a maps save — often from
+    a page loaded before a size edit — never writes a stale copy back."""
     return {
         "suppliers": principal.permissions.get("procurement") == "edit",
-        "gost_awg": principal.permissions.get("erpref") == "edit",
+        "gost_awg": False,
     }
 
 
 @router.get("/maps")
 def maps(principal: Annotated[Principal, Depends(references_maps_view_principal)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)]) -> dict:
     with uow_factory() as uow: entries = uow.references.list()
-    result = _maps(entries)
-    # getReferences: nothing saved yet → the SUPPLIER_BY_LINK seed (shown, stored on the first save).
-    if not result["suppliers"] and not result["countries"]:
-        result["suppliers"] = [{"key": key, "value": value} for key, value in SUPPLIER_BY_LINK]
-    result["can_edit"] = _map_rights(principal)
-    return result
+    return {**_shown_maps(_maps(entries)), "can_edit": _map_rights(principal)}
 
 
 @router.put("/maps")
@@ -152,7 +168,7 @@ def save_maps(payload: MapsPayload, principal: Annotated[Principal, Depends(refe
         gost_awg=tuple(ReferencePair(item.key, item.value) for item in payload.gost_awg),
         actor=principal.actor, now=now, kinds=kinds,
     ), uow_factory()))
-    return {**_maps(entries), "can_edit": rights}
+    return {**_shown_maps(_maps(entries)), "can_edit": rights}
 
 
 def _columns(tab: TechOperationTab | None, records: Sequence[TechOperationRecord]) -> list[str]:
@@ -189,7 +205,8 @@ def tech_operations(
         "columns": _columns(tab, records),
         "records": [{
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
-            "source_sheet": item.source_sheet, "fields": item.fields,
+            "source_sheet": item.source_sheet,
+            "fields": normalize_terminal_fields(item.fields) if item.tab == TechOperationTab.TERMINAL else item.fields,
         } for item in records],
     }
 
@@ -318,6 +335,7 @@ def bases(
     templates live in «Шаблоны техкарт», so their count is not known here (null)."""
     with uow_factory() as uow:
         counts = uow.tech_operations.counts()
+        gauges = len(uow.cable_structure.gauges())
     return {
         "bases": [
             {
@@ -330,6 +348,7 @@ def bases(
         # Tab chips of «База данных»: every stored tab, and the three cable lists («Кабели и провода»).
         "tabs": {tab.value: counts.get(tab, 0) for tab in TechOperationTab},
         "cables": cable_counts(list_cables(uow_factory())),
+        "gauges": gauges,
     }
 
 
@@ -340,13 +359,73 @@ def _dia_json(record) -> dict | None:
             **{name: record.fields.get(name, "") for name in DIAMETERS}}
 
 
-def _cable_json(row: CableRow) -> dict:
+def _num(value) -> float | int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+def _gauge_json(gauge: WireGauge, usage: int = 0) -> dict:
+    return {"id": str(gauge.id), "awg": gauge.awg or "", "section_mm2": _num(gauge.section_mm2),
+            "conductor_d_mm": _num(gauge.conductor_d_mm), "strands": gauge.strands, "label": gauge.label, "wires": usage}
+
+
+def _hookup_json(wire: HookupWire | None) -> dict | None:
+    if wire is None:
+        return None
+    return {"id": str(wire.id), "series": wire.series, "gauge_id": str(wire.gauge_id), "insulation": wire.insulation,
+            "outer_d_mm": _num(wire.outer_d_mm), "voltage_v": wire.voltage_v, "temp_min_c": wire.temp_min_c,
+            "temp_max_c": wire.temp_max_c, "conductor_material": wire.conductor_material,
+            "insulation_thickness_mm": _num(wire.insulation_thickness_mm)}
+
+
+def _card_json(card: CoaxCard | None) -> dict | None:
+    if card is None:
+        return None
     return {
-        "id": str(row.record.id) if row.record else f"dia:{row.dia.id}",
+        "id": str(card.id), "name": card.name, "family": card.family,
+        "layers": [{"layer": item.layer, "label": LAYER_LABELS[item.layer], "material": item.material,
+                    "diameter_mm": _num(item.diameter_mm)} for item in card.layers],
+        "connectors": [{"family": item.family, "max_ghz": _num(item.max_ghz), "max_note": item.max_note,
+                        "span_to_ghz": _num(item.span_to_ghz)} for item in card.connectors],
+        "markers": [{"freq_mhz": _num(item.freq_mhz), "peak": item.freq_mhz is None, "vswr_max": _num(item.vswr_max),
+                     "vswr_ref": _num(item.vswr_ref), "note": item.note} for item in card.markers],
+        "attenuation": [{"freq_mhz": _num(item.freq_mhz), "kind": item.kind, "value": _num(item.value), "unit": item.unit,
+                         "ref_length_m": _num(item.ref_length_m), "temp_c": _num(item.temp_c),
+                         "loss_db_m": _num(item.loss_db_m), "derived": item.derived, "interpolated": item.interpolated,
+                         "source": item.source, "basis": item.basis} for item in card.attenuation],
+        "span_from_mhz": _num(card.span_from_mhz), "span_to_ghz": _num(card.span_to_ghz), "span_note": card.span_note,
+        "fc_ghz": _num(card.fc_ghz), "fc_note": card.fc_note, "max_operating_ghz": _num(card.max_operating_ghz),
+        "max_operating_note": card.max_operating_note, "notes": card.notes, "sources": list(card.sources),
+        "confidence": card.confidence, "verified": card.verified, "changes": list(card.changes),
+        "params": {key: _num(value) for key, value in card.params.items()}, "param_notes": dict(card.param_notes),
+    }
+
+
+def _cable_json(row: CableRow, catalog: CableCatalog | None = None) -> dict:
+    result = {
+        "id": str(row.record.id) if row.record else f"dia:{row.dia.id}" if row.dia else f"card:{row.card.id}",
         "kind": row.kind.value, "auto_kind": row.auto.value, "reason": row.reason, "manual": row.manual,
         "cable": row.cable, "record": _record_json(row.record) if row.record else None,
         "dia": _dia_json(row.dia), "dia_hint": _dia_json(row.dia_hint),
+        "card": _card_json(row.card), "card_exact": row.card_exact,
     }
+    if catalog is not None and row.kind == CableKind.WIRE:
+        wire = catalog.hookups.get(row.key)
+        result["hookup"] = _hookup_json(wire)
+        if wire is None:  # not structured yet: what the БД.ПРОВ row says, and why it was not parsed
+            parsed = parse_hookup(row.cable, row.record.fields if row.record else {}, catalog.gauges)
+            result["hookup_problem"] = parsed.problem or ("нет серии" if not parsed.series else "")
+            result["hookup_suggestion"] = {
+                "series": parsed.series, "gauge_id": str(parsed.gauge.id) if parsed.gauge else "",
+                "insulation": parsed.insulation, "outer_d_mm": _num(parsed.outer_d_mm), "voltage_v": parsed.voltage_v,
+                "temp_min_c": parsed.temp_min_c, "temp_max_c": parsed.temp_max_c,
+                "conductor_material": "", "insulation_thickness_mm": None,
+            }
+    return result
 
 
 @router.get("/cables")
@@ -354,12 +433,129 @@ def cables(
     _principal: Annotated[Principal, Depends(references_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """«Кабели и провода»: БД.ПРОВ rows split into коаксиальные / монтажные / прочие (`cables.auto_kind`, or where the
-    user moved them), each coax cable joined with the D1·D2·D3 row the generator uses for its name; D-table cables
-    without a БД.ПРОВ row are coax rows of their own."""
-    rows = list_cables(uow_factory())
-    return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]), "counts": cable_counts(rows),
-            "rows": [_cable_json(row) for row in rows]}
+    """«Кабели и провода»: БД.ПРОВ rows split into коаксиальные / монтажные / многожильные / прочие (`cables.auto_kind`,
+    or where the user moved them). A coax cable is joined with the D1·D2·D3 row the generator uses for its name and
+    its card; D-table cables and cards without a БД.ПРОВ row are coax rows of their own. A монтажный wire carries its
+    structure (series, size row, …) or, not structured yet, what its БД.ПРОВ row suggests. `gauges` — «Сечения AWG ↔
+    мм²» with the number of wires on each size."""
+    catalog = cable_catalog(uow_factory())
+    return {"columns": list(BASE_COLUMNS[TechOperationTab.WIRE]), "counts": cable_counts(catalog.rows),
+            "rows": [_cable_json(row, catalog) for row in catalog.rows],
+            "gauges": [_gauge_json(gauge, catalog.usage.get(gauge.id, 0)) for gauge in catalog.gauges]}
+
+
+class GaugePayload(BaseModel):
+    awg: str = Field(default="", max_length=8)
+    section_mm2: str = Field(min_length=1, max_length=32)
+    conductor_d_mm: str = Field(default="", max_length=32)
+    strands: str = Field(default="", max_length=64)
+
+
+def _save_gauge(gauge_id: UUID | None, payload: GaugePayload, principal: Principal, now: datetime, uow_factory) -> dict:
+    gauge = _run_edit(lambda: save_gauge(SaveGaugeCommand(
+        gauge_id=gauge_id, awg=payload.awg, section_mm2=payload.section_mm2, conductor_d_mm=payload.conductor_d_mm,
+        strands=payload.strands, actor=principal.actor, now=now,
+    ), uow_factory()))
+    return _gauge_json(gauge)
+
+
+@router.post("/wire-gauges", status_code=201)
+def create_wire_gauge(
+    payload: GaugePayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _save_gauge(None, payload, principal, now, uow_factory)
+
+
+@router.put("/wire-gauges/{gauge_id}")
+def update_wire_gauge(
+    gauge_id: UUID,
+    payload: GaugePayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _save_gauge(gauge_id, payload, principal, now, uow_factory)
+
+
+# A token never deletes (owner 12.10.2026): `refs:write` loads and edits rows, removing one stays with a person.
+@router.delete("/wire-gauges/{gauge_id}", status_code=204, dependencies=[Depends(refuse_api_tokens("Токен API не удаляет строки справочника."))])
+def remove_wire_gauge(
+    gauge_id: UUID,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> None:
+    _run_edit(lambda: delete_gauge(gauge_id, principal.actor, now, uow_factory()))
+
+
+class HookupValues(BaseModel):
+    series: str = Field(default="", max_length=255)
+    gauge_id: UUID
+    insulation: str = Field(default="", max_length=512)
+    outer_d_mm: str = Field(default="", max_length=32)
+    voltage_v: str = Field(default="", max_length=32)
+    temp_min_c: str = Field(default="", max_length=32)
+    temp_max_c: str = Field(default="", max_length=32)
+
+
+class HookupPayload(HookupValues):
+    # What the screen showed (null — the wire was not structured yet); a different current value → 409.
+    old: HookupValues | None = None
+    # Not sent — the stored value stays (the screen does not edit them yet; the file import fills them).
+    conductor_material: str | None = Field(default=None, max_length=255)
+    insulation_thickness_mm: str | None = Field(default=None, max_length=32)
+
+
+def _old_hookup(record_id: UUID, old: HookupValues | None, uow_factory) -> HookupWire | None:
+    if old is None:
+        return None
+    with uow_factory() as uow:
+        record = uow.tech_operations.get(record_id)
+    mark = str(record.fields.get("Марка") or record.display_text) if record else "?"
+    try:
+        return HookupWire.create(mark=mark, series=old.series, gauge_id=old.gauge_id, insulation=old.insulation,
+                                 outer_d_mm=old.outer_d_mm, voltage_v=old.voltage_v, temp_min_c=old.temp_min_c,
+                                 temp_max_c=old.temp_max_c)
+    except ReferenceValidationError as error:
+        raise HTTPException(status_code=409, detail="Провод уже поменяли — откройте его заново") from error
+
+
+@router.put("/cables/{record_id}/hookup")
+def save_hookup_wire(
+    record_id: UUID,
+    payload: HookupPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """«Монтажные провода»: the structure of a БД.ПРОВ wire; its БД.ПРОВ cells are written in step."""
+    old = _old_hookup(record_id, payload.old, uow_factory)
+    wire, record = _run_edit(lambda: save_hookup(SaveHookupCommand(
+        record_id=record_id, series=payload.series, gauge_id=payload.gauge_id, insulation=payload.insulation,
+        outer_d_mm=payload.outer_d_mm, voltage_v=payload.voltage_v, temp_min_c=payload.temp_min_c,
+        temp_max_c=payload.temp_max_c, old=old, actor=principal.actor, now=now,
+        conductor_material=payload.conductor_material, insulation_thickness_mm=payload.insulation_thickness_mm,
+    ), uow_factory()))
+    return {"hookup": _hookup_json(wire), "record": _record_json(record)}
+
+
+@router.post("/coax-cards/import")
+def import_coax(
+    principal: Annotated[Principal, Depends(references_import_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    """Reloads the coax cards from the committed file (`load_cables`), as the server does on every update."""
+    from .load_cables import read_seed
+
+    try:
+        document = read_seed()
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=422, detail=f"Файл карточек не прочитан: {error}") from error
+    return _run(lambda: import_coax_cards(document, principal.actor, now, uow_factory()))
 
 
 class CableKindPayload(BaseModel):

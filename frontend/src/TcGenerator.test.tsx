@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
+import { pressBuild } from "./test/pressBuild";
 
 const card: ProjectTechcard = {
   id: "40000000-0000-0000-0000-000000000001", version: 1, project: "P-100", item_index: "КБ1", product_name: "Жгут XHP 150мм",
@@ -58,7 +59,7 @@ it("seeds the form from the kit and sends the SUPPLYMAP config to the build", as
   expect(screen.getByText("Опрессовка терминалов А1")).toBeInTheDocument();
   expect(await screen.findAllByText(/Подбор по сечению: 0,12 мм² → S12/)).toHaveLength(2);
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  pressBuild();
 
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   const config = onBuild.mock.calls[0][0];
@@ -73,7 +74,7 @@ it("pairs the pin lists of both ends in order and shows the crossover under the 
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
   const [pinsA, pinsB] = await screen.findAllByPlaceholderText("1, 3 или 1-2");
   expect(screen.getAllByText(/Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне/)).toHaveLength(1);
-  expect(screen.queryByLabelText("Соединения по распиновке")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Соединения по распиновке")).not.toHaveTextContent("А1 → В1");
   fireEvent.change(pinsA, { target: { value: "1-2" } });
   fireEvent.change(pinsB, { target: { value: "2, 1" } });
   const links = await screen.findByLabelText("Соединения по распиновке");
@@ -116,7 +117,7 @@ it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCal
   await waitFor(() => expect(screen.getByLabelText("Длина по чертежу")).toHaveValue(150));
   expect(screen.queryByLabelText("Строки расчёта КБn")).not.toBeInTheDocument();
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0].wires[0].length).toBe(160);
 });
@@ -140,7 +141,7 @@ it("works off the wire replaced in the calc and shows the КД article under it"
   expect(resolved.map((body) => (body as { wires: string[] }).wires)).toContainEqual(["Силиконовый 30AWG черный"]);
   expect(JSON.stringify(resolved)).not.toContain("28AWG");
   vi.spyOn(window, "confirm").mockReturnValue(true);
-  fireEvent.click(screen.getByRole("button", { name: "Создать" }));
+  pressBuild();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
   expect(onBuild.mock.calls[0][0].wires[0]).toMatchObject({ name: "Силиконовый 30AWG черный", art: "Силиконовый 30AWG черный" });
 });
@@ -176,4 +177,85 @@ it("has one main button: «Создать» before the first issue, «Перес
   render(<TcGenerator card={{ ...card, status: "Выдана", revision: 1 }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
   expect(await screen.findByRole("button", { name: "Пересобрать" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Создать" })).not.toBeInTheDocument();
+});
+
+it("«Маркировка по КД»: fills marks by connectors and from the harness drawing and sends them to the build", async () => {
+  mockApi((path) => {
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [
+      { id: "cut", code: "CUT_WIRE_auto", side: "", title: "CUT_WIRE_auto | Резка", name: "Резка", category: "Резка", steps: 1, tooling: 1 },
+      { id: "mark", code: "INS_MARK_HARNESS", side: "", title: "INS_MARK_HARNESS | Маркировка жгута", name: "Маркировка жгута", category: "Монтаж маркировки", steps: 1, tooling: 1 },
+    ] });
+    if (path === `/api/techcards/kitsets/${encodeURIComponent("P-100")}/harness/${encodeURIComponent("КБ1")}`) return json({
+      document: null, version: "v1", warnings: [],
+      design: { connectors: [{ id: "x1", designation: "X1", partNumber: "XHP-2" }], wires: [{ id: "w1", circuit: "708К.4КБ1" }] },
+    });
+    return undefined;
+  });
+  const onBuild = vi.fn();
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()}
+    kit={kitOf("Жгут XHP 150мм", [...XH, { type: "Маркировка", name: "Маркировка", art: "Маркировка", qty: 1 }])} />);
+
+  expect(await screen.findByText("бирки из состава: Маркировка × 1")).toBeInTheDocument();
+  expect(screen.getByText(/Метки не заданы — в маркировку пойдут бирки из состава/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "По разъёмам" }));
+  expect(screen.getByLabelText("Надпись 1")).toHaveValue("А1");
+  expect(screen.getByLabelText("Материал 1")).toHaveValue("Маркировка");
+  fireEvent.click(screen.getByRole("button", { name: "Из чертежа жгута" }));
+  expect(await screen.findByDisplayValue("708К.4КБ1")).toBeInTheDocument();
+  expect(screen.getByLabelText("Материал 4")).toHaveValue("Маркировка");
+  expect(screen.getAllByRole("option", { name: "Хлястик" }).length).toBeGreaterThan(0);
+  fireEvent.change(screen.getByLabelText("Материал 4"), { target: { value: "Хлястик" } });
+  expect(screen.getByText("4 метки · 5 шт. на изделие")).toBeInTheDocument();
+
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  pressBuild();
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  const op = onBuild.mock.calls[0][0].ops.find((item: { type: string }) => item.type === "insMark");
+  expect(op.templateId).toBe("mark");
+  expect(op.marks.map((mark: { text: string; art: string; place: string; qty: number }) => [mark.text, mark.art, mark.place, mark.qty])).toEqual([
+    ["А1", "Маркировка", "у разъёма", 1], ["В1", "Маркировка", "у разъёма", 1], ["X1", "Маркировка", "у разъёма", 1],
+    ["708К.4КБ1", "Хлястик", "на обоих концах", 2],
+  ]);
+});
+
+it("«Термоусадка на жгут»: без ТТК/ТУТ в составе включённый переключатель говорит об этом, а не рисует пустую полоску", async () => {
+  mockApi();
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+
+  await screen.findByText("Резка — МГТФ 0,12");
+  fireEvent.click(screen.getByRole("switch", { name: /Термоусадка на жгут/ }));
+  expect(screen.getByText(/В составе проекта нет термоусадки \(ТТК\/ТУТ\)/)).toBeInTheDocument();
+});
+
+it("«Термоусадка на жгут»: ТТК из состава даёт поля отрезка и их количество", async () => {
+  mockApi();
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()}
+    kit={kitOf("Жгут XHP 150мм", [...XH, { type: "Трубка", name: "ТТК 6/3", art: "ТТК 6/3", qty: 2 }])} />);
+
+  await screen.findByText("Резка — МГТФ 0,12");
+  const toggle = screen.getByRole("switch", { name: /Термоусадка на жгут/ });
+  if (!(toggle as HTMLInputElement).checked) fireEvent.click(toggle);
+  expect(await screen.findByText(/ТТК 6\/3 — отрезок/)).toBeInTheDocument();
+  expect(screen.getByText("Отрезков на изделие")).toBeInTheDocument();
+  expect(screen.queryByText(/В составе проекта нет термоусадки/)).toBeNull();
+});
+
+it("«Маркировать изделие»: одна метка «На изделии» с хлястиком, повторное нажатие дубль не добавляет", async () => {
+  mockApi();
+  const onBuild = vi.fn();
+  render(<TcGenerator card={card} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
+
+  await screen.findByText("Резка — МГТФ 0,12");
+  fireEvent.click(screen.getByRole("switch", { name: /Маркировка жгута/ }));
+  fireEvent.click(screen.getByRole("button", { name: "+ Метка" }));
+  expect(screen.getByLabelText("Материал 1")).toHaveValue("Термотрубка");
+  const product = screen.getByRole("button", { name: "Маркировать изделие" });
+  fireEvent.click(product);
+  expect(screen.getByLabelText("Что маркируем 2")).toHaveValue("Изделие КБ1");
+  expect(screen.getByLabelText("Надпись 2")).toHaveValue("КБ1");
+  expect(screen.getByLabelText("Материал 2")).toHaveValue("Хлястик");
+  expect(screen.getByLabelText("Где 2")).toHaveValue("item");
+  expect(screen.getByLabelText("На изделие 2")).toHaveValue("1");
+  expect(product).toBeDisabled();
+  expect(screen.queryByLabelText("Надпись 3")).toBeNull();
 });

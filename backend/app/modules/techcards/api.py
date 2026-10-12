@@ -15,12 +15,13 @@ from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Security
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, Security
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
+from app.shared.file_types import sniffed_type
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
     TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
@@ -60,9 +61,22 @@ from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, T
 from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
+from .harness import SheetRow
+from .harness.rules import to_decimal
 from .connector_housings import attach_housings, connector_catalog, housing_of
+from .connector_series import connector_series, find_in_series
 from .assembly_schema import generator_to_assembly
+from .scheme_corrections import list_scheme_corrections
 from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
+from .generator_drafts import (
+    GeneratorDraft,
+    GeneratorDraftConflict,
+    GeneratorDraftTooLarge,
+    SaveGeneratorDraftCommand,
+    delete_generator_draft,
+    get_generator_draft,
+    save_generator_draft,
+)
 from .etk_builder import attach_route
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
@@ -106,6 +120,9 @@ class AutoBuildTechcardPayload(VersionPayload):
     config: dict[str, Any]
     # «Ручная сборка» opened from an agent's draft: the build finalises it (final config + revision, corpus example).
     draft_id: UUID | None = None
+    # «Поправить вручную»: the generator («Типовая») config the manual one came from. The server rebuilds the automatic
+    # scheme from it to log the master's corrections (techcards.scheme_corrected); it is never taken as the scheme.
+    generator_origin: dict[str, Any] | None = None
 
 
 class EditOperationPayload(VersionPayload):
@@ -173,10 +190,21 @@ class AssemblyFromGeneratorPayload(BaseModel):
     config: dict[str, Any]
 
 
+class GrapherSheetRowPayload(BaseModel):
+    """A row of «Данные из листа»: the drawing is checked against it."""
+    id: str = Field(min_length=1, max_length=255)
+    type: str = Field(default="", max_length=128)
+    name: str = Field(default="", max_length=512)
+    article: str = Field(default="", max_length=512)
+    kd: str = Field(default="", max_length=512)
+    qty: str | float | None = None
+
+
 class GrapherImportPayload(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
     content_base64: str = Field(min_length=1, max_length=42_000_000)
     components: list[GrapherComponentPayload] = Field(default_factory=list, max_length=5000)
+    sheet: list[GrapherSheetRowPayload] = Field(default_factory=list, max_length=5000)
 
 
 def _generator_gate(*scopes: str):
@@ -198,6 +226,9 @@ def _generator_gate(*scopes: str):
 # generator config into «Ручная сборка» is pure computation and serves both the generator and the drafting agent.
 assembly_principal = _generator_gate("assembly")
 generator_or_assembly_principal = _generator_gate("tcgen", "assembly")
+# The generator's draft on the server is a person's own scratch pad: the generator's gate, and no token at all (a token
+# acts for nobody, so it has no draft).
+generator_person_principal = _generator_gate()
 
 
 def techcards_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -325,6 +356,9 @@ def import_grapher_export(
         content = base64.b64decode(payload.content_base64, validate=True)
         return read_export(content, payload.filename, tuple(
             GrapherComponent(item.id, item.article, item.name) for item in payload.components
+        ), tuple(
+            SheetRow(item.id, item.type, item.name, item.article, item.kd, to_decimal(item.qty))
+            for item in payload.sheet
         ))
     except (binascii.Error, GrapherImportError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -598,6 +632,7 @@ def auto_build_project_etk(
         actor=principal.actor,
         now=now,
         technology_source=technology_source,
+        generator_origin=payload.generator_origin,
     ), uow_factory()))
     if payload.draft_id is not None:
         # The config as the master built it (before the reference norms are filled in) — the pair to the draft.
@@ -605,6 +640,18 @@ def auto_build_project_etk(
             payload.draft_id, payload.config, card.revision, principal.actor, now, uow_factory,
         ))
     return _card_result(card, identify)
+
+
+@router.get("/techcards/scheme-corrections", dependencies=[Depends(tcgen_principal)])
+def scheme_corrections(
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    since: date | None = None,
+    project: str = "",
+) -> dict:
+    """Журнал правок «Схемы полуфабрикатов» (techcards.scheme_corrected), новые сверху; токен `tcgen` читает."""
+    with uow_factory() as uow:
+        items = list_scheme_corrections(uow.session, since=since, project=project.strip())
+    return {"items": items}
 
 
 def _draft_run(operation):
@@ -744,7 +791,7 @@ def operation_sketch(
     if found is None:
         raise HTTPException(status_code=404, detail="Эскиз не найден")
     sketch, content = found
-    return file_response(content, sketch.content_type, sketch.file_name)
+    return file_response(content, sketch.file_name)
 
 
 @router.put("/techcards/projects/{card_id}/sketches/{operation_key:path}")
@@ -765,6 +812,10 @@ def put_operation_sketch(
         raise HTTPException(status_code=422, detail="Картинка пустая")
     if len(content) > MAX_SKETCH_BYTES:
         raise HTTPException(status_code=422, detail="Картинка эскиза больше 10 МБ")
+    # The bytes decide, not the declared type: a page or an SVG named «.png» is not a sketch (audit F04).
+    content_type = sniffed_type(content) or ""
+    if content_type not in SKETCH_TYPES:
+        raise HTTPException(status_code=422, detail="Файл не похож на картинку PNG, JPG, WEBP или GIF")
     with uow_factory() as uow:
         card = _card_or_404(uow, card_id)
         if operation_key not in _operation_keys(card):
@@ -797,7 +848,28 @@ def delete_operation_sketch(
 def connector_families(article: str = "") -> dict:
     """База разъёмов: семейства корпусов с рисунком по образцу артикула — чтобы видеть, что умеет схема.
     `article` — проверить свой артикул: какой корпус нарисует ЭТК (или None — серия не распознана)."""
-    return {"items": connector_catalog(), "match": housing_of(article[:255]) if article.strip() else None}
+    return {"items": connector_catalog(), "match": housing_of(article[:255]) if article.strip() else None,
+            "series_count": len(connector_series())}
+
+
+@router.get("/techcards/connector-series", dependencies=[Depends(tctemplates_view_principal)])
+def connector_series_view(
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+    article: str = "",
+) -> dict:
+    """«База данных → Разъёмы» по сериям: все корпуса серии (по таблицам каталога производителя), вилки на плату,
+    совместимые терминалы БД.ТЕР и диапазон провода. `article` — найти серию и корпус своего артикула."""
+    records: list[dict] = []
+    coax: list[dict] = []
+    if references_factory is not None:
+        with references_factory() as uow:
+            records = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
+            coax = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)]
+    series = connector_series(records, coax)
+    return {"series": series, "match": find_in_series(article[:255], series) if article.strip() else None}
 
 
 # ── жгут ────────────────────────────────────────────────────────────────────
@@ -919,3 +991,79 @@ def route_coax(body: КоаксIn) -> dict:
         strip_free_end=body.strip_free_end,
     )
     return _выдать(*построить_коакс(сборка))
+
+
+# ── Черновик генератора ТК на сервере (владелец 11.10.2026) ─────────────────────────────────────────────────────────
+# The unfinished generator form of the signed-in person for one position (КБ): read, save over a version, delete. Only
+# one's own draft — the person is the session's, never a parameter. No audit event per save (a scratch pad).
+
+
+class GeneratorDraftBody(BaseModel):
+    payload: dict[str, Any]
+    build_fingerprint: str = Field(default="", max_length=64)
+    # The version the browser saved over; 0 — it has none yet (the first save creates the draft).
+    base_version: int = Field(ge=0)
+
+
+def _generator_position(project: str, item_index: str) -> tuple[str, str]:
+    project, item_index = project.strip(), item_index.strip()
+    if not project or not item_index:
+        raise HTTPException(status_code=422, detail="Укажите проект и КБ черновика.")
+    return project, item_index
+
+
+def _generator_draft_json(draft: GeneratorDraft) -> dict:
+    return {
+        "project": draft.project, "item_index": draft.item_index, "payload": draft.payload,
+        "build_fingerprint": draft.build_fingerprint, "version": draft.version,
+        "created_at": draft.created_at.isoformat(), "updated_at": draft.updated_at.isoformat(),
+    }
+
+
+@router.get("/techcards/generator-draft")
+def read_generator_draft(
+    principal: Annotated[Principal, Depends(generator_person_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+    item_index: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    project, item_index = _generator_position(project, item_index)
+    draft = get_generator_draft(principal.actor.id, project, item_index, uow_factory)
+    return {"draft": None if draft is None else _generator_draft_json(draft)}
+
+
+@router.put("/techcards/generator-draft")
+def write_generator_draft(
+    payload: GeneratorDraftBody,
+    principal: Annotated[Principal, Depends(generator_person_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+    item_index: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    project, item_index = _generator_position(project, item_index)
+    try:
+        draft = save_generator_draft(SaveGeneratorDraftCommand(
+            user_id=principal.actor.id, project=project, item_index=item_index, payload=payload.payload,
+            build_fingerprint=payload.build_fingerprint, base_version=payload.base_version, now=now,
+        ), uow_factory)
+    except GeneratorDraftTooLarge as error:
+        raise HTTPException(status_code=413, detail=str(error)) from error
+    except GeneratorDraftConflict as error:
+        current = error.current
+        raise HTTPException(status_code=409, detail={
+            "message": str(error), "code": "generator_draft_conflict", "version": current.version,
+            "updated_at": current.updated_at.isoformat() if current.version else None,
+        }) from error
+    return _generator_draft_json(draft)
+
+
+@router.delete("/techcards/generator-draft")
+def remove_generator_draft(
+    principal: Annotated[Principal, Depends(generator_person_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    project: Annotated[str, Query(max_length=255)] = "",
+    item_index: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    project, item_index = _generator_position(project, item_index)
+    return {"deleted": delete_generator_draft(principal.actor.id, project, item_index, uow_factory)}

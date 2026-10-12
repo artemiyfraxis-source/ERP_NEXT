@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ApiError, failureText, productionApi, type AutoplanPreview, type AutoplanProposal, type AutoplanRequest, type ProductionTask } from "./api";
 import { formatDay } from "./format";
+import { taskItemLabel } from "./productionGraph";
 
 const STALE_TEXT = "План изменился — обновите предложение";
 
@@ -102,7 +104,6 @@ export function AutoplanPanel({ tasks, close, onApplied }: {
   const today = new Date();
   const [from, setFrom] = useState(isoDay(today));
   const [to, setTo] = useState(isoDay(addWorkingDays(today, 6)));
-  const [taskIds, setTaskIds] = useState<string[]>([]);
   const [replan, setReplan] = useState(false);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -110,7 +111,20 @@ export function AutoplanPanel({ tasks, close, onApplied }: {
   const [result, setResult] = useState<{ preview: AutoplanPreview; request: AutoplanRequest } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  const live = tasks.filter((task) => task.status !== "Отменено" && task.status !== "Выполнено");
+  const live = useMemo(() => tasks.filter((task) => task.status !== "Отменено" && task.status !== "Выполнено"), [tasks]);
+  // Все запущенные задания отмечены с самого начала; в запрос task_ids уходит, только если часть снята.
+  const [chosenTasks, setChosenTasks] = useState<Set<string>>(() => new Set(live.map((task) => task.id)));
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    dialogRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.stopPropagation(); closeRef.current(); } };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  const chosenLive = live.filter((task) => chosenTasks.has(task.id));
+  const taskIds = chosenLive.length < live.length ? chosenLive.map((task) => task.id) : [];
   const periodText = from && to ? `${shortDay(from)}–${shortDay(to)}` : "";
   const groups = useMemo(() => (result ? group(result.preview.proposals) : []), [result]);
 
@@ -161,30 +175,42 @@ export function AutoplanPanel({ tasks, close, onApplied }: {
       return next;
     });
   }
-  const toggleTask = (id: string) => setTaskIds((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
+  const toggleTask = (id: string) => setChosenTasks((current) => { const next = new Set(current); if (!next.delete(id)) next.add(id); return next; });
+  const setAllTasks = (on: boolean) => setChosenTasks(on ? new Set(live.map((task) => task.id)) : new Set());
   const stats = result?.preview.stats;
 
-  return <div className="plan-drawer" role="dialog" aria-label="Автоплан">
-    <div className="plan-drawer-scrim" onClick={close} />
-    <div className="plan-drawer-body autoplan-body">
-      <div className="manual-stock-head"><h2>Автоплан</h2><button className="link-button" onClick={close}>Закрыть</button></div>
-      <div className="autoplan-form">
-        <label>С<input aria-label="Период с" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-        <label>По<input aria-label="Период по" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
-        <button type="button" className="secondary small" onClick={() => { setFrom(isoDay(new Date())); setTo(isoDay(addWorkingDays(new Date(), 6))); }}>Неделя</button>
+  const proposeButton = <button className={result ? "secondary" : "primary"} disabled={loading || applying || !from || !to || to < from || (live.length > 0 && chosenLive.length === 0)} onClick={() => void run()}>Предложить план на {periodText}</button>;
+
+  return createPortal(<div className="dialog-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}>
+    <form ref={dialogRef} tabIndex={-1} className="move-dialog autoplan-dialog panel" role="dialog" aria-modal="true" aria-label="Автоплан" onSubmit={(event) => event.preventDefault()}>
+      <div className="autoplan-head">
+        <h2>Автоплан</h2>
+        <div className="autoplan-form">
+          <label>С<input aria-label="Период с" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
+          <label>По<input aria-label="Период по" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>
+          <button type="button" className="secondary small" onClick={() => { setFrom(isoDay(new Date())); setTo(isoDay(addWorkingDays(new Date(), 6))); }}>Неделя</button>
+        </div>
       </div>
-      <details className="autoplan-tasks">
-        <summary>Задания: {taskIds.length ? `выбрано ${taskIds.length}` : "все запущенные"}</summary>
+      <div className="autoplan-scroll">
+      <section className="autoplan-tasks" aria-label="Задания">
+        <div className="autoplan-tasks-bar">
+          <b>Задания</b>
+          <span className="autoplan-count">выбрано {chosenLive.length} из {live.length}</span>
+          <button type="button" className="link-button" onClick={() => setAllTasks(true)} disabled={chosenLive.length === live.length}>Выбрать все</button>
+          <button type="button" className="link-button" onClick={() => setAllTasks(false)} disabled={chosenLive.length === 0}>Снять все</button>
+        </div>
         <div className="autoplan-task-list">
-          {live.map((task) => <label key={task.id} className="autoplan-check">
-            <input type="checkbox" checked={taskIds.includes(task.id)} onChange={() => toggleTask(task.id)} />
-            <span>{task.number} · {task.item}{task.name ? ` · ${task.name}` : ""}</span>
-          </label>)}
+          {live.map((task) => {
+            const name = task.name ?? "";
+            return <label key={task.id} className="autoplan-check autoplan-task-line" title={[task.number, taskItemLabel(task), name].filter(Boolean).join(" · ")}>
+              <input type="checkbox" checked={chosenTasks.has(task.id)} onChange={() => toggleTask(task.id)} aria-label={`${task.number} · ${taskItemLabel(task)}${name ? ` · ${name}` : ""}`} />
+              <b>{task.number}</b><span className="autoplan-task-item">{taskItemLabel(task)}</span>{name && <span className="autoplan-task-name">{name}</span>}
+            </label>;
+          })}
           {!live.length && <small>Запущенных заданий нет.</small>}
         </div>
-      </details>
+      </section>
       <label className="autoplan-check"><input type="checkbox" checked={replan} onChange={(event) => setReplan(event.target.checked)} /><span>Пересчитать прежний автоплан</span></label>
-      <div className="form-actions"><button className="primary" disabled={loading || applying || !from || !to || to < from} onClick={() => void run()}>Предложить план на {periodText}</button></div>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {loading && <div className="empty">Считаем план…</div>}
       {result && !loading && <div className="autoplan-result">
@@ -214,8 +240,13 @@ export function AutoplanPanel({ tasks, close, onApplied }: {
           <h3>Не поместилось ({result.preview.unplaced.length})</h3>
           {result.preview.unplaced.map((item) => <div key={`${item.task_id}:${item.operation_id}`} className="autoplan-unplaced-row"><b>{item.task_number}{item.position ? ` · этап ${item.position}` : ""}</b> — {item.reason}</div>)}
         </section>}
-        <div className="form-actions autoplan-actions"><button className="primary" disabled={applying || selected.size === 0} onClick={() => void apply()}>Применить выбранное ({selected.size})</button></div>
       </div>}
-    </div>
-  </div>;
+      </div>
+      <div className="form-actions autoplan-actions">
+        <button type="button" className="secondary" onClick={close}>Отмена</button>
+        {result && !loading && proposeButton}
+        {result && !loading ? <button className="primary" disabled={applying || selected.size === 0} onClick={() => void apply()}>Применить выбранное ({selected.size})</button> : proposeButton}
+      </div>
+    </form>
+  </div>, document.body);
 }

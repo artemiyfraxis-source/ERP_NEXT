@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProcurementPage, migrateHiddenBlocks } from "./ProcurementPage";
 import type { OrderDocumentRecognition, ProcurementLine, RecognizedOrderLine } from "./api";
 
@@ -396,7 +396,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
     if (path === "/api/procurement/mine?limit=500") return json({ lines: [shipped], next_cursor: null });
     if (path.endsWith("/invoice/replace") && init?.method === "POST") {
       calls.push([path, JSON.parse(String(init.body))]);
-      return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 } });
+      return json({ line: { ...shipped, invoice_url: "https://files.test/invoice-v2.pdf", version: 4 }, warnings: ["REQ-1 — нет цены: ВАЛЮТА"] });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -414,6 +414,7 @@ it("replaces the invoice of a paid line without touching its payment", async () 
     `/api/procurement/${shipped.id}/invoice/replace`,
     { version: 3, invoice_url: "https://files.test/invoice-v2.pdf", invoice_number: "18", invoice_date: null },
   ]);
+  expect((await screen.findByText("REQ-1 — нет цены: ВАЛЮТА")).closest(".warning-banner")).toBeInTheDocument();
 });
 
 it("splits an own line into supplier copies with its optimistic version", async () => {
@@ -468,7 +469,7 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
     }
     if (path === "/api/procurement/kp" && init?.method === "POST") {
       saved = JSON.parse(String(init.body));
-      return json({ lines: [awaiting, other], invoice_error: "" });
+      return json({ lines: [awaiting, other], invoice_error: "", warnings: ["REQ-2 — нет цены: ВАЛЮТА, КУРС"] });
     }
     throw new Error(`Unexpected ${path}`);
   });
@@ -494,6 +495,8 @@ it("fills the whole supplier order from a КП file and sends one invoice for it
   expect(rows[0]).toMatchObject({ line_id: awaiting.id, version: 3, actual_quantity: "3", price: "100", vat_rate: "20", driver: "net", expected_arrival: "2026-10-01" });
   expect(rows[1]).toMatchObject({ line_id: other.id, version: 5, actual_quantity: "2", expected_arrival: "2026-10-01" });
   expect(await screen.findByText("Заказ PO-001: КП сохранено по 2 строкам, счёт передан в оплату")).toBeInTheDocument();
+  const warning = await screen.findByText("REQ-2 — нет цены: ВАЛЮТА, КУРС");
+  expect(warning.closest(".warning-banner")).toBeInTheDocument();
 });
 
 it("«Жду счёт»: the order menu opens «Внести КП» for that order only and prints the request document", async () => {
@@ -572,11 +575,11 @@ it("hides the retired substitution and quality-document fields on every stage", 
     menus[id] = rowActionNames(id);
   }
   // «Готов к запросу» стоит в блоке «В работе» с тем же меню; ручного «На согласование» нет нигде.
-  expect(menus["REQ-B"]).toEqual(["Со склада", "Прослеживаемость, раздробить…", "Отменить строку"]);
+  expect(menus["REQ-B"]).toEqual(["Со склада", "Документы, прослеживаемость…", "Есть на складе, без ГРН", "Отменить строку"]);
   for (const items of Object.values(menus)) {
     expect(items.filter((item) => /замен(а|у)(?! счёт)|качества|разрешен|согласован/i.test(item))).toEqual([]);
   }
-  await pickRowAction("REQ-A", /Прослеживаемость/);
+  await pickRowAction("REQ-A", /прослеживаемость/i);
   expect(await screen.findByLabelText("Изготовитель")).toBeInTheDocument();
   expect(screen.queryByLabelText("№ док. качества")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Тип док.")).not.toBeInTheDocument();
@@ -772,17 +775,15 @@ const orderLine = (n: number, status: string, extra: Partial<ProcurementLine> = 
 const headingNames = () => screen.getAllByRole("heading", { level: 2 })
   .map((heading) => BLOCK_NAMES.find((name) => heading.textContent?.replace(/^[▸▾]/, "").startsWith(name))).filter(Boolean);
 
-it("keeps every «Мои позиции» block on screen even with no data: seven headings in order, each with 0 and one grey line; «Прочие позиции» only with lines", async () => {
+it("collapses empty «Мои позиции» blocks into one grey line «Пусто: …» instead of eight empty cards", async () => {
   mockMine([]);
 
   const { container } = render(<ProcurementPage />);
-  await screen.findByText(/Нет строк в работе/);
-  expect(headingNames()).toEqual(FLOW_BLOCK_NAMES);
-  for (const name of FLOW_BLOCK_NAMES) expect(screen.getByRole("heading", { name: new RegExp(`^${name}`) })).toHaveTextContent(`${name === "Принято" ? "Принято за 30 дней" : name} 0`);
-  expect(screen.getByText(/Нет строк в работе/)).toHaveClass("stage-empty");
-  expect(container.querySelectorAll(".stage-empty")).toHaveLength(FLOW_BLOCK_NAMES.length);
-  expect(screen.queryByRole("region", { name: "Прочие позиции" })).not.toBeInTheDocument();
-  expect(screen.queryByRole("region", { name: /^Заказы/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Очереди" })); // выбор вкладки руками отменяет автопереход на «Весь лист»
+  await screen.findByText(/^Пусто:/);
+  expect(screen.getByText(/^Пусто:/)).toHaveTextContent("Пусто: В работе, Жду счёт, Ждёт оплаты, В пути, Карантин, Принято за 30 дней, Дозавоз, Прочие позиции");
+  expect(headingNames()).toEqual([]);
+  expect(container.querySelectorAll(".stage-empty")).toHaveLength(0);
   expect(container.querySelectorAll("table")).toHaveLength(0);
   // В «Блоках» «Прочие позиции» перечислены и тогда, когда строк нет.
   fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
@@ -827,8 +828,9 @@ it("migrates the old hidden «Оплачено» block key into the three new bl
   mockMine([orderLine(1, "В пути"), orderLine(2, "Готово")]);
 
   render(<ProcurementPage />);
-  await screen.findByRole("heading", { name: /^Жду счёт/ });
-  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "Дозавоз"]);
+  await screen.findByText(/^Пусто:/);
+  expect(screen.getByText(/^Пусто:/)).toHaveTextContent("Пусто: В работе, Жду счёт, Ждёт оплаты, Дозавоз");
+  expect(headingNames()).toEqual([]);
   expect(screen.getByText("скрыто: В пути 1, Принято за 30 дней 1")).toBeInTheDocument();
 });
 
@@ -840,13 +842,13 @@ it("«Блоки» hides blocks, the choice survives a remount, and a hidden blo
   fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Принято за 30 дней" }));
   fireEvent.click(screen.getByRole("checkbox", { name: "Прочие позиции" }));
-  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Дозавоз"]);
+  expect(headingNames()).toEqual(["Жду счёт"]);
   expect(screen.getByText("скрыто: Принято за 30 дней 2, Прочие позиции 1")).toBeInTheDocument();
   first.unmount();
 
   render(<ProcurementPage />);
   await screen.findByRole("heading", { name: /^Жду счёт/ });
-  expect(headingNames()).toEqual(["В работе", "Жду счёт", "Ждёт оплаты", "В пути", "Карантин", "Дозавоз"]);
+  expect(headingNames()).toEqual(["Жду счёт"]);
   expect(screen.getByText("скрыто: Принято за 30 дней 2, Прочие позиции 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Блоки" }));
   expect(screen.getByRole("checkbox", { name: "Принято за 30 дней" })).not.toBeChecked();
@@ -868,17 +870,41 @@ it("one search narrows every block and its counts (ID, name, supplier, order num
   fireEvent.change(search, { target: { value: "альфа" } });
   expect(heading("В работе")).toHaveTextContent("В работе 1");
   expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 1");
-  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+  expect(screen.queryByRole("heading", { name: /^Ждёт оплаты/ })).not.toBeInTheDocument();
   expect(heading("В пути")).toHaveTextContent("В пути 1");
 
   fireEvent.change(search, { target: { value: "сч-777" } });
   expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 1");
-  expect(heading("Жду счёт")).toHaveTextContent("Жду счёт 0");
-  expect(heading("В работе")).toHaveTextContent("В работе 0");
+  expect(screen.queryByRole("heading", { name: /^Жду счёт/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: /^В работе/ })).not.toBeInTheDocument();
 
   fireEvent.change(search, { target: { value: "po-003" } });
   expect(heading("В пути")).toHaveTextContent("В пути 1");
-  expect(heading("Ждёт оплаты")).toHaveTextContent("Ждёт оплаты 0");
+  expect(screen.queryByRole("heading", { name: /^Ждёт оплаты/ })).not.toBeInTheDocument();
+});
+
+it("«Дозавоз» and «Прочие позиции» keep «Колонки» but no search box of their own; the section search still filters them", async () => {
+  const base: ProcurementLine = { ...line, buyer: "Закупщик", supplier: "Поставщик", actual_quantity: "2", actual_unit: "шт" };
+  const many = (prefix: string, extra: Partial<ProcurementLine>) => Array.from({ length: 8 }, (_, index): ProcurementLine => ({
+    ...base, id: `30000000-0000-0000-0000-00000002${prefix.charCodeAt(0)}${index}`, legacy_id: `${prefix}-${index + 1}`,
+    status: "Согласование", ...extra,
+  }));
+  mockMine([
+    ...many("BO", { is_backorder: true, invoice_url: "https://files.test/i.pdf", invoice_number: "17" }),
+    ...many("OT", {}),
+  ]);
+
+  render(<ProcurementPage />);
+  const backorder = await screen.findByRole("region", { name: "Дозавоз" });
+  const other = await screen.findByRole("region", { name: "Прочие позиции" });
+  for (const block of [backorder, other]) {
+    expect(within(block).getByRole("button", { name: "Колонки" })).toBeInTheDocument();
+    expect(within(block).queryByRole("searchbox")).toBeNull();
+  }
+
+  fireEvent.change(screen.getByRole("searchbox", { name: "Поиск по моим позициям" }), { target: { value: "BO-3" } });
+  expect(within(screen.getByRole("region", { name: "Дозавоз" })).getByText("BO-3")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Дозавоз" })).queryByText("BO-4")).toBeNull();
 });
 
 it("shows orders · positions · расчёт / факт in a block heading", async () => {
@@ -1135,7 +1161,9 @@ it("groups waiting orders with their header totals and opens «Внести КП
   expect(within(one).queryByText("Кабель")).not.toBeInTheDocument();
   await openOrder("PO-001");
   expect(within(one).getByText("Кабель")).toBeInTheDocument();
-  expect(within(within(one).getByText("Кабель").closest("tr")!).getByText(/не хватает: Цена факт/)).toHaveClass("tone-warn");
+  // Цена счёт не держит (владелец, 06.10): у строки без цены — предупреждение, не «не хватает».
+  expect(within(within(one).getByText("Кабель").closest("tr")!).getByText("нет цены")).toHaveClass("tone-warn");
+  expect(within(within(one).getByText("Кабель").closest("tr")!).queryByText(/не хватает/)).not.toBeInTheDocument();
   expect(within(table).getAllByRole("button", { name: "Вставить счёт" })).toHaveLength(2);
   expect(within(table).getAllByRole("button", { name: "Вставить КП" })).toHaveLength(2);
 
@@ -1323,7 +1351,7 @@ it("saves traceability of an own line: maker, country, standard; the retired qua
 
   render(<ProcurementPage />);
   // «Готов к запросу» — строка блока «В работе»: прослеживаемость раскрывается под ней.
-  await pickRowAction("REQ-1", "Прослеживаемость, раздробить…");
+  await pickRowAction("REQ-1", "Документы, прослеживаемость…");
   fireEvent.change(await screen.findByLabelText("Изготовитель"), { target: { value: "Molex" } });
   fireEvent.change(screen.getByLabelText("Стандарт"), { target: { value: "ГОСТ 23587-96" } });
   expect(screen.queryByLabelText("Тип док.")).not.toBeInTheDocument();
@@ -1335,6 +1363,55 @@ it("saves traceability of an own line: maker, country, standard; the retired qua
     version: 3, manufacturer: "Molex", country: "", quality_document_type: "Паспорт", quality_document_number: "П-17",
     quality_document_date: "2026-09-01", standard: "ГОСТ 23587-96",
   }));
+});
+
+it("line card: saves Даташит, attaches a permit and a quality file, and the quality file turns «Док. качества» to «Да»", async () => {
+  const own: ProcurementLine = { ...line, status: "В работе", buyer: "Закупщик", quality_document: "Нет", datasheet: null, permit_files: [], quality_files: [] };
+  const quality = { id: "f2", kind: "quality", file_name: "Паспорт.pdf", url: "/api/procurement/files/f2", uploaded_by: "Закупщик", uploaded_at: "2026-10-09T10:00:00+03:00" };
+  const permit = { ...quality, id: "f1", kind: "permit", file_name: "Разрешение.pdf", url: "/api/procurement/files/f1" };
+  const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine?limit=500") return json({ lines: [own] });
+    if (path.endsWith("/datasheet") && init?.method === "PATCH") {
+      sent.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ line: { ...own, permit_files: undefined, quality_files: undefined, datasheet: "https://example.com/ds.pdf", version: 4 } });
+    }
+    if (path === `/api/procurement/${own.id}/files` && init?.method === "POST") {
+      const body = JSON.parse(String(init.body));
+      sent.push({ path, body: { kind: body.kind, file_name: body.file_name } });
+      return body.kind === "permit"
+        ? json({ file: permit, line: { ...own, datasheet: "https://example.com/ds.pdf", version: 4, permit_files: [permit] } })
+        : json({ file: quality, line: { ...own, datasheet: "https://example.com/ds.pdf", version: 5, quality_document: "Да", permit_files: [permit], quality_files: [quality] } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await pickRowAction("REQ-1", "Документы, прослеживаемость…");
+  const card = within(await screen.findByRole("form", { name: "Документы REQ-1" }));
+  expect(card.getByText("Документ качества · нужен: Нет")).toBeInTheDocument();
+  expect(card.getAllByText("нет файла")).toHaveLength(2);
+
+  fireEvent.change(card.getByLabelText("Даташит"), { target: { value: " https://example.com/ds.pdf " } });
+  fireEvent.click(card.getByRole("button", { name: "Сохранить Даташит" }));
+  expect(await screen.findByText("REQ-1: Даташит сохранён")).toBeInTheDocument();
+  expect(card.getByRole("button", { name: "Сохранить Даташит" })).toBeDisabled();
+
+  const pdf = (name: string) => new File(["%PDF"], name, { type: "application/pdf" });
+  fireEvent.change(card.getByLabelText("Файл разрешения REQ-1"), { target: { files: [pdf("Разрешение.pdf")] } });
+  expect(await card.findByRole("link", { name: "Разрешение.pdf" })).toHaveAttribute("href", "/api/procurement/files/f1");
+  fireEvent.change(card.getByLabelText("Документ качества REQ-1"), { target: { files: [pdf("Паспорт.pdf")] } });
+  expect(await card.findByRole("link", { name: "Паспорт.pdf" })).toHaveAttribute("href", "/api/procurement/files/f2");
+  expect(screen.getByText("REQ-1: документ качества «Паспорт.pdf» приложен · «Док. качества»: Да")).toBeInTheDocument();
+  expect(card.getByText("Документ качества · 1 · нужен: Да")).toBeInTheDocument();
+  expect(card.getAllByText("Приложить ещё")).toHaveLength(2);
+  expect(sent).toEqual([
+    { path: `/api/procurement/${own.id}/datasheet`, body: { version: 3, datasheet: "https://example.com/ds.pdf" } },
+    { path: `/api/procurement/${own.id}/files`, body: { kind: "permit", file_name: "Разрешение.pdf" } },
+    { path: `/api/procurement/${own.id}/files`, body: { kind: "quality", file_name: "Паспорт.pdf" } },
+  ]);
 });
 
 const UPLOADED = {
@@ -1612,7 +1689,7 @@ it("opens the buyer's own line of the whole sheet for editing by the signed-in n
   });
 
   render(<ProcurementPage buyerName="Артемий" />);
-  fireEvent.click(screen.getByRole("button", { name: "Весь лист" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Весь лист" }));
   expect(await screen.findByRole("button", { name: "Ожид. дата REQ-77" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Ожид. дата REQ-78" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Комментарий REQ-77" })).toBeInTheDocument();
@@ -1629,12 +1706,14 @@ it("shows «Неразобранные» only when there is something to take; v
   });
 
   const empty = render(<ProcurementPage />);
-  await screen.findByText(/Нет строк в работе/);
+  fireEvent.click(screen.getByRole("tab", { name: "Очереди" }));
+  await screen.findByText(/^Пусто:/);
   expect(screen.queryByRole("region", { name: "Неразобранные" })).not.toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /Неразобранные/ })).not.toBeInTheDocument();
   empty.unmount();
 
   render(<ProcurementPage readOnly />);
+  fireEvent.click(screen.getByRole("tab", { name: "Очереди" }));
   expect(await screen.findByRole("region", { name: "Неразобранные" })).toBeInTheDocument();
 });
 
@@ -1781,10 +1860,11 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   expect(row("REQ-3")).toHaveClass("doc-warn");
   expect(within(dialog).getByText(/В документе, но не найдено в заказе: 1/).closest(".warning-inline")).toHaveTextContent("Доставка · 1 · 500,00 ₽");
   expect(within(dialog).getByText(/в документе 844,00 ₽/)).toHaveClass("tone-warn");
-  // Без цены строки счёт не уходит; цена правится в окне.
-  expect(within(dialog).getByText("Нет цены: REQ-3")).toBeInTheDocument();
-  expect(within(dialog).getByRole("button", { name: "В оплату (3)" })).toBeDisabled();
+  // Без цены строки счёт не держится — предупреждение; цена правится в окне, и оно уходит.
+  expect(within(dialog).getByText(/^Нет цены: REQ-3 — строки уйдут «В оплату»/)).toHaveClass("warning-inline");
+  expect(within(dialog).getByRole("button", { name: "В оплату (3)" })).toBeEnabled();
   fireEvent.change(within(dialog).getByLabelText("Цена с НДС REQ-3"), { target: { value: "7,5" } });
+  expect(within(dialog).queryByText(/^Нет цены/)).not.toBeInTheDocument();
   expect(row("REQ-3")).toHaveTextContent("15,00");
   fireEvent.change(within(dialog).getByLabelText("№ счёта"), { target: { value: "58/1" } });
   fireEvent.change(within(dialog).getByLabelText("Ожидаемая дата *"), { target: { value: "2026-10-08" } });
@@ -1817,6 +1897,63 @@ it("«Вставить счёт» opens a window: recognised prices and match pe
   await waitFor(() => expect(same.querySelector(".order-chip")).toHaveTextContent("Ждёт оплаты"));
   expect(within(same).getByRole("button", { name: "Оплачено" })).toBeInTheDocument();
   expect(bodies).toHaveLength(3);
+});
+
+it("«Вставить счёт» without a price for a line warns and still sends the invoice; the row in payment says «нет цены» and «Оплачено» waits", async () => {
+  const first = { ...line, status: "Жду счет" as const, buyer: "Закупщик", supplier: "ООО А", order_number: "PO-001", order_date: "2026-10-01", actual_quantity: "2", actual_unit: "шт" };
+  const second = { ...first, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", calculated_name: "Кабель", version: 5 };
+  const priceFields = ["ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)"];
+  let invoiced = false;
+  const bodies: Record<string, unknown>[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+    if (path === "/api/procurement/mine?limit=500") {
+      if (!invoiced) return json({ lines: [first, second], next_cursor: null });
+      const toPay = { status: "В оплату", invoice_url: FILE_URL, expected_arrival: "2026-10-08", invoice_item_name: "Разъём" };
+      return json({ lines: [
+        { ...first, ...toPay, version: 4, pay_missing: [], actual_price_with_vat: "122", actual_sum: "244" },
+        { ...second, ...toPay, version: 6, pay_missing: priceFields },
+      ], next_cursor: null });
+    }
+    if (path === "/api/procurement/orders/PO-001/recognize" && init?.method === "POST") {
+      return json(recognized("invoice", [
+        { line_id: first.id, legacy_id: "REQ-1", version: 3, price_with_vat: "122", matched_name: "Разъём SMA-J", confidence: "article" },
+      ], { unmatched_lines: ["REQ-2"] }));
+    }
+    if (path === "/api/procurement/orders/PO-001/apply-document" && init?.method === "POST") {
+      bodies.push(JSON.parse(String(init.body)));
+      invoiced = true;
+      return json({ kind: "invoice", lines: [], warnings: ["REQ-2 — нет цены: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), СУММА (факт)"] });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  const group = await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
+  await waitFor(() => expect(within(group).getByRole("button", { name: "Вставить счёт" })).toBeEnabled());
+  fireEvent.click(within(group).getByRole("button", { name: "Вставить счёт" }));
+  const dialog = await screen.findByRole("dialog", { name: "Вставить счёт PO-001" });
+  fireEvent.change(within(dialog).getByLabelText("Файл счёта"), { target: { files: [new File(["%PDF"], "счёт.pdf", { type: "application/pdf" })] } });
+  expect(await within(dialog).findByText(/^Нет цены: REQ-2 — строки уйдут «В оплату», «Оплачено» — после цены/)).toHaveClass("warning-inline");
+  expect(within(dialog).getByLabelText("Цена с НДС REQ-2")).toHaveValue("");
+  expect(within(dialog).queryByText(/^Нет цены: REQ-2$/)).not.toBeInTheDocument();
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "В оплату (2)" }));
+  expect(await screen.findByText("PO-001: счёт передан в оплату, строк: 2")).toBeInTheDocument();
+  expect(bodies).toHaveLength(1);
+  expect((bodies[0].lines as { price_with_vat: string | null }[]).map((row) => row.price_with_vat)).toEqual(["122", null]);
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+  const same = await screen.findByRole("rowgroup", { name: "PO-001 от 01.10 · ООО А" });
+  await waitFor(() => expect(same.querySelector(".order-chip")).toHaveTextContent("Ждёт оплаты"));
+  await openOrder("PO-001");
+  const row = (id: string) => within(same).getByText(id).closest("tr")!;
+  expect(within(row("REQ-2")).getByText("нет цены: ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), СУММА (факт)")).toHaveClass("tone-warn");
+  expect(within(row("REQ-1")).queryByText(/нет цены/)).not.toBeInTheDocument();
+  const pay = within(same).getByRole("button", { name: "Оплачено" });
+  expect(pay).toBeDisabled();
+  expect(pay).toHaveAttribute("title", "Оплата закрыта — нет цены: REQ-2. Цену внесите через «Заменить счёт»");
 });
 
 it("«Убрать» in the invoice window drops the recognised file: the picker is back, prices and № / date return to the start", async () => {
@@ -2030,4 +2167,97 @@ it("on 409 from «Оплачено» says the order changed and rereads the queu
   fireEvent.click(screen.getByRole("button", { name: "Оплачено" }));
   expect(await screen.findByText(/Строки заказа изменились — список обновлён/)).toBeInTheDocument();
   await waitFor(() => expect(reads).toBe(2));
+});
+
+it("«Готово · без ГРН»: «Привязать ГРН» only on a line closed without a ГРН; the lot gets all of it and the action goes", async () => {
+  const done = { ...line, status: "Готово", buyer: "Закупщик", supplier: "ООО А", actual_quantity: "2", actual_unit: "шт", stock_covered: "2", to_buy: "0" };
+  const lotless = { ...done, stock_without_grn: "2" };
+  const fromLot = { ...done, id: "30000000-0000-0000-0000-000000000002", legacy_id: "REQ-2", stock_without_grn: "0" };
+  const cover = {
+    id: "c1", line_id: line.id, label: "REQ-1", lot_id: null, warehouse: "", grn: "", package: "", storage_location: "", unit: "шт",
+    quantity: "2", consumed: "0", consumed_by: null, active: true, created_at: "2026-10-06T09:00:00+03:00", created_by: "Закупщик", released_at: null,
+  };
+  const lot = (id: string, available: string) => ({
+    id, version: 1, warehouse: "ЦАР", grn: `ГРН-${id}`, package: "", article: "", series: "", name: "Разъём", item_type: "Комплектующие",
+    purpose: "", unit: "шт", storage_location: "A-1", balance: "5", reserved: "0", available, unit_matches: true, holders: [], reserve_note: "",
+  });
+  let bound = false;
+  const posted: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/procurement/available") return json({ lines: [] });
+    if (path === "/api/procurement/mine?limit=500") {
+      return json({ lines: [bound ? { ...lotless, version: 4, stock_without_grn: "0" } : lotless, fromLot] });
+    }
+    if (path === `/api/procurement/${line.id}/stock-candidates`) return json({ line: lotless, query: "Разъём", lots: [lot("1", "1"), lot("2", "5")], covers: [cover] });
+    if (path === `/api/procurement/${line.id}/stock-cover/c1/bind` && init?.method === "POST") {
+      posted.push(String(init.body));
+      bound = true;
+      return json({ line: { ...lotless, version: 4 }, cover: { ...cover, lot_id: "2", grn: "ГРН-2", warehouse: "ЦАР" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<ProcurementPage />);
+  await openPaidBlock(/^Принято/);
+  await openOrder("Без № заказа");
+  expect(rowActionNames("REQ-1")).toContain("Привязать ГРН");
+  expect(rowActionNames("REQ-2")).not.toContain("Привязать ГРН");
+  const statusOf = (id: string) => screen.getByText(id).closest("tr")!.querySelector(".status-cell")!.textContent;
+  expect(statusOf("REQ-1")).toBe("Принятобез ГРН");
+  expect(statusOf("REQ-2")).toBe("Принято");
+  // Заголовок заказа тоже говорит, что в нём есть строка без ГРН.
+  const chip = () => screen.getByRole("region", { name: "Заказы: Принято за 30 дней" }).querySelector(".order-chip");
+  expect(chip()?.textContent).toBe("Принято · без ГРН");
+  expect(chip()).toHaveClass("tone-info");
+
+  await pickRowAction("REQ-1", "Привязать ГРН");
+  expect(await screen.findByText(/Без ГРН: 2 шт — выберите партию ниже/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Зарезервировать" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Партия ГРН-1"));
+  expect(screen.getByRole("button", { name: "Привязать ГРН ГРН-1" })).toBeDisabled(); // доступно 1 < 2
+  fireEvent.click(screen.getByLabelText("Партия ГРН-2"));
+  fireEvent.click(screen.getByRole("button", { name: "Привязать ГРН ГРН-2" }));
+
+  await waitFor(() => expect(posted).toEqual([JSON.stringify({ version: 3, lot_id: "2" })]));
+  expect(await screen.findByText("REQ-1: ГРН ГРН-2 привязан, резерв 2 шт")).toBeInTheDocument();
+  await waitFor(() => expect(rowActionNames("REQ-1")).not.toContain("Привязать ГРН"));
+  expect(screen.queryByText(/Без ГРН: 2 шт/)).not.toBeInTheDocument();
+  expect(chip()?.textContent).toBe("Принято");
+});
+
+describe("«Лист закупки» без своих и свободных позиций", () => {
+  const sheetLine = { ...line, id: "30000000-0000-0000-0000-000000000099", legacy_id: "REQ-99", buyer: "Петров", status: "Жду счет" };
+  function mockEmptyQueues() {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/procurement/available") return json({ lines: [], next_cursor: null });
+      if (path === "/api/procurement/mine?limit=500") return json({ lines: [], next_cursor: null });
+      if (path === "/api/procurement/meta") return json({ units: ["шт"], statuses: ["Жду счет"] });
+      if (path === "/api/procurement/lines") return json({ lines: [sheetLine], next_cursor: null, buyers: ["Петров"] });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+  }
+
+  it("opens «Весь лист» with its rows instead of an empty queue and says why", async () => {
+    mockEmptyQueues();
+    render(<ProcurementPage />);
+    expect(await screen.findByText("REQ-99")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Весь лист" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { level: 1, name: "Лист закупки" })).toBeInTheDocument();
+    expect(screen.getByText(/показан весь лист/)).toBeInTheDocument();
+    // статус на листе — чип со словом ERP
+    expect(screen.getByText("Жду счёт")).toHaveClass("status-chip");
+  });
+
+  it("does not jump away when the buyer picked «Очереди» himself, and offers the sheet as an action", async () => {
+    mockEmptyQueues();
+    render(<ProcurementPage />);
+    fireEvent.click(screen.getByRole("tab", { name: "Очереди" }));
+    expect(await screen.findByText(/У вас нет позиций в работе/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Очереди" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Открыть весь лист" }));
+    expect(await screen.findByText("REQ-99")).toBeInTheDocument();
+    expect(screen.queryByText(/показан весь лист/)).not.toBeInTheDocument();
+  });
 });

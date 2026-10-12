@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RequestsPage } from "./RequestsPage";
 import type { Principal, RequestRow, RequestSchema } from "./api";
@@ -75,7 +75,8 @@ describe("RequestsPage", () => {
       target: { value: "Разъём" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("network disconnected");
+    // A broken connection on a write is an unknown result, not a failure: the same key is kept for the repeat.
+    expect(await screen.findByRole("alert")).toHaveTextContent("Результат неизвестен");
 
     fireEvent.click(screen.getByRole("button", { name: "Оформить 1 позицию" }));
     expect(await screen.findByText("Создана заявка REQ-1")).toBeInTheDocument();
@@ -90,6 +91,33 @@ describe("RequestsPage", () => {
     expect(secondHeaders.get("Idempotency-Key")).toBe(
       firstHeaders.get("Idempotency-Key"),
     );
+  });
+
+  it("ends a hung read of «Мои заявки» with the message and a working «Повторить» (U01)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let answer = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.startsWith("/api/requests/mine")) {
+        return answer ? json({ requests: [row], total: 1 }) : new Promise<Response>(() => undefined);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    try {
+      render(<RequestsPage principal={principal} view="mine" />);
+      expect(await screen.findByText("Загружаю…")).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(await screen.findByRole("alert")).toHaveTextContent("ERP не ответила за 20 с");
+      expect(screen.queryByText("Загружаю…")).not.toBeInTheDocument();
+      const retry = screen.getByRole("button", { name: "Повторить" });
+      expect(retry).toBeEnabled();
+      answer = true;
+      fireEvent.click(retry);
+      expect(await screen.findByText("REQ-1")).toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("hands a new request to procurement", async () => {
@@ -161,7 +189,7 @@ describe("RequestsPage", () => {
     render(<RequestsPage principal={principal} />);
     expect(await screen.findByRole("button", { name: "Ждут переноса · 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "В работе · 4" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ждут счет · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ждут счёт · 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ждут оплаты · 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Выполнено · 2" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Отменено · 1" })).toBeInTheDocument();
@@ -212,12 +240,29 @@ describe("RequestsPage", () => {
     render(<RequestsPage principal={principal} view="mine" />);
 
     expect(await screen.findByText("REQ-1")).toBeInTheDocument();
-    expect(screen.getByText("Жду счет")).toBeInTheDocument();
+    expect(screen.getByText("Жду счёт")).toHaveClass("status-chip");
     expect(screen.getByRole("heading", { name: "Мои заявки", level: 1 })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Оформить" })).not.toBeInTheDocument();
     // Server-side filter by actor id: the shared /api/requests list is never fetched for this view.
     expect(fetchMock.mock.calls.some(([input]) => String(input) === "/api/requests")).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith("/api/requests/mine?limit=50&offset=0", expect.anything());
+  });
+
+  it("СН-6: пустые «Мои заявки» предлагают «Оформить заявку» и ведут в раздел", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.startsWith("/api/requests/mine")) return json({ requests: [], total: 0, limit: 50, offset: 0 });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const popped = vi.fn();
+    window.addEventListener("popstate", popped);
+
+    render(<RequestsPage principal={{ ...principal, permissions: { ...principal.permissions, newrequest: "edit" } }} view="mine" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Оформить первую заявку" }));
+
+    expect(new URL(window.location.href).searchParams.get("section")).toBe("newrequest");
+    expect(popped).toHaveBeenCalled();
+    window.removeEventListener("popstate", popped);
   });
 
   it("RQ-MINE: «Показать ещё» loads the next page and appends it", async () => {
@@ -650,7 +695,7 @@ describe("RequestsPage", () => {
     expect(screen.getByText("ООО Ромашка")).toBeInTheDocument();
     expect(screen.getByText("З-17")).toBeInTheDocument();
     expect(screen.getByText("03.10.2026")).toBeInTheDocument();
-    expect(screen.getByText("1500.00")).toBeInTheDocument();
+    expect(screen.getByText("1\u202f500", { normalizer: (text) => text })).toBeInTheDocument(); // числовая колонка DataTable — по-русски: разряды, без «.00»
 
     fireEvent.change(screen.getByLabelText("Искать во всех моих заявках"), { target: { value: "кабель" } });
     fireEvent.click(screen.getByRole("button", { name: "Найти" }));

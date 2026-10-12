@@ -11,8 +11,8 @@ from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 import logging
 
-from app.modules.warehouse.domain import StockLot, WarehouseValidationError
 from app.shared.events import AuditEvent, OutboxMessage
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
 from app.shared.print_sheet import PrintSheet
@@ -23,6 +23,7 @@ from .invoice_file import (
 from .domain import (
     AUTOFILL_TOPIC,
     FACTS_EDITABLE,
+    LINE_DOCUMENT_KINDS,
     _PAID_STATUSES,
     KpEntry,
     MoneyEntry,
@@ -35,6 +36,7 @@ from .domain import (
     RECEIPT_STAGES,
     SupplierRequestGroup,
     ReplacementDecision,
+    STOCK_COVER_WAREHOUSES,
     StockCover,
     removal_blocker,
     requested_buyer,
@@ -60,6 +62,7 @@ from .money import ExchangeRate, FactMoney, is_foreign, normalize_currency, rate
 from .invoice_file import invoice_date as invoice_day
 from .document_items import SupplierDocument, read_supplier_document
 from .document_match import DocumentMatch, OrderLineCandidate, match_document_items
+from .stock_port import StockLotView, StockReservationError, StockReservationPort
 
 
 _log = logging.getLogger(__name__)
@@ -84,6 +87,7 @@ class ProcurementRepository(Protocol):
         self, limit: int, after_id: UUID | None = None
     ) -> Sequence[ProcurementLine]: ...
     def list(self, limit: int = 10_000) -> Sequence[ProcurementLine]: ...
+    def for_project(self, project: str, request_ids: Sequence[UUID] = ()) -> Sequence[ProcurementLine]: ...
     def legacy_ids_with_prefix(self, prefix: str) -> Sequence[str]: ...
     def ready_for_request(self) -> Sequence[ProcurementLine]: ...
     def order_numbers_with_prefix(self, prefix: str) -> Sequence[str]: ...
@@ -154,11 +158,14 @@ class StoredInvoiceFile:
     size: int
     uploaded_by: str
     uploaded_at: datetime
+    # «other» — invoices, КП, order documents; «permit» / «quality» — РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА of the line.
+    kind: str = "other"
 
 
 class InvoiceFileRepository(Protocol):
     def add(self, stored: StoredInvoiceFile, content: bytes) -> None: ...
     def get(self, file_id: UUID) -> tuple[StoredInvoiceFile, bytes] | None: ...
+    def of_lines(self, line_ids: Sequence[UUID], kinds: Sequence[str]) -> list[StoredInvoiceFile]: ...
 
 
 class UnitOfWork(Protocol):
@@ -882,15 +889,20 @@ def _supplier_map(suppliers: SupplierDirectory) -> dict[str, str]:
 
 
 def _autofilled_event(
-    line: ProcurementLine, fields: Sequence[str], actor: Actor, now: datetime
+    line: ProcurementLine, fields: Sequence[str], actor: Actor, now: datetime, *, source: str = "", tls_checked: bool = True,
 ) -> AuditEvent:
+    details: dict = {"legacy_id": line.legacy_id, "fields": list(fields)}
+    if source:  # where the values came from (audit U09): the site after redirects, and a certificate not checked
+        details["source"] = source
+    if not tls_checked:
+        details["tls"] = "не проверен"
     return AuditEvent(
         id=uuid4(),
         aggregate_id=line.id,
         event_type="procurement.autofilled",
         actor=actor,
         occurred_at=now,
-        details={"legacy_id": line.legacy_id, "fields": list(fields)},  # type: ignore[dict-item]
+        details=details,
     )
 
 
@@ -900,6 +912,10 @@ class PageInfo:
 
     title: str = ""
     brand: str = ""
+    # Where the page really came from (the host after redirects) and whether its certificate was checked — a site whose
+    # certificate fails (or one in ERP_TLS_UNVERIFIED_HOSTS) is read without the check, and the journal says so.
+    source: str = ""
+    tls_checked: bool = True
 
 
 class PageInfoFetcher(Protocol):
@@ -929,6 +945,8 @@ class ApplyAutofillCommand:
     manufacturer: str
     country: str
     now: datetime
+    source: str = ""
+    tls_checked: bool = True
 
 
 def next_autofill_request(now: datetime, uow: DispatchUnitOfWork) -> AutofillRequest | None:
@@ -990,7 +1008,9 @@ def apply_autofill(command: ApplyAutofillCommand, uow: DispatchUnitOfWork) -> tu
             )
             if written:
                 uow.procurement.add(filled)
-                uow.audit.add(_autofilled_event(filled, written, SYSTEM_ACTOR, command.now))
+                uow.audit.add(_autofilled_event(
+                    filled, written, SYSTEM_ACTOR, command.now, source=command.source, tls_checked=command.tls_checked,
+                ))
         uow.outbox.mark_published(request.message_id, command.now)
         uow.commit()
         return written
@@ -1342,6 +1362,106 @@ def set_procurement_note(command: SetNoteCommand, uow: UnitOfWork) -> Procuremen
         return result
 
 
+@dataclass(frozen=True)
+class SetDatasheetCommand:
+    line_id: UUID
+    expected_version: int
+    datasheet: str | None
+    actor: Actor
+    now: datetime
+
+
+def set_procurement_datasheet(command: SetDatasheetCommand, uow: UnitOfWork) -> ProcurementLine:
+    """DATASHEET of one line: a link or a text, edited like КОММЕНТАРИЙ."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        updated = current.set_datasheet(command.datasheet, command.actor)
+        result = _save_transition(
+            current,
+            updated,
+            event_type="procurement.datasheet_saved",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={"datasheet": updated.datasheet or ""},
+        )
+        if result != current:
+            uow.commit()
+        return result
+
+
+@dataclass(frozen=True)
+class UploadLineDocumentCommand:
+    """A РАЗРЕШЕНИЕ (`permit`) or ДОК. КАЧЕСТВА (`quality`) file chosen in the line card."""
+
+    line_id: UUID
+    kind: str
+    file_name: str
+    content_type: str
+    content: bytes
+    actor: Actor
+    now: datetime
+
+
+def upload_line_document(command: UploadLineDocumentCommand, uow: UnitOfWork) -> tuple[ProcurementLine, StoredInvoiceFile]:
+    """Store the file under its kind with the line, in one transaction. A quality document sets ДОК. КАЧЕСТВА «Да»
+    on the line (`attach_document`) — no version is asked: adding a file never overwrites what the buyer typed."""
+    if command.kind not in LINE_DOCUMENT_KINDS:
+        raise ProcurementValidationError("Вид файла: разрешение или документ качества")
+    if not command.content:
+        raise ProcurementValidationError("Файл не передан")
+    if len(command.content) > INVOICE_FILE_LIMIT:
+        raise ProcurementValidationError("Файл больше 20 МБ")
+    with uow:
+        current = uow.procurement.get(command.line_id)
+        if current is None:
+            raise KeyError("Строка закупки не найдена")
+        updated = current.attach_document(command.kind, command.actor)
+        stored = StoredInvoiceFile(
+            id=uuid4(),
+            line_id=current.id,
+            file_name=str(command.file_name or "").strip()[:512] or "файл",
+            content_type=stored_content_type(command.content),
+            size=len(command.content),
+            uploaded_by=command.actor.name,
+            uploaded_at=command.now,
+            kind=command.kind,
+        )
+        uow.files.add(stored, command.content)
+        if updated != current:
+            uow.procurement.add(updated)
+        uow.audit.add(
+            AuditEvent(
+                id=uuid4(),
+                aggregate_id=current.id,
+                event_type="procurement.document_file_uploaded",
+                actor=command.actor,
+                occurred_at=command.now,
+                details={
+                    "legacy_id": current.legacy_id,
+                    "file_id": str(stored.id),
+                    "kind": command.kind,
+                    "name": stored.file_name,
+                    "quality_document": updated.quality_document,
+                },
+            )
+        )
+        uow.commit()
+    return updated, stored
+
+
+def line_documents(line_ids: Sequence[UUID], uow: UnitOfWork) -> dict[UUID, list[StoredInvoiceFile]]:
+    """РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА files of a list of lines — one query for the whole list."""
+    if not line_ids:
+        return {}
+    with uow:
+        found = uow.files.of_lines(list(line_ids), tuple(LINE_DOCUMENT_KINDS))
+    result: dict[UUID, list[StoredInvoiceFile]] = {}
+    for stored in found:
+        result.setdefault(stored.line_id, []).append(stored)
+    return result
+
+
 def set_procurement_actual_arrival(command: SetActualArrivalCommand, uow: UnitOfWork) -> ProcurementLine:
     """ФАКТ. ДАТА by hand (optional): the buyer fills or corrects it; receiving's tick keeps filling it too."""
     with uow:
@@ -1480,6 +1600,16 @@ def invoice_file_url(file_id: UUID) -> str:
     return f"{INVOICE_FILE_PATH}{file_id}"
 
 
+def _invoice_upload_line(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> ProcurementLine:
+    line = uow.procurement.get(command.line_id)
+    if line is None:
+        raise KeyError("Строка закупки не найдена")
+    line._require_owner(command.actor)
+    if line.status is ProcurementStatus.CANCELLED:
+        raise ProcurementValidationError("Счёт отменённой строки не загружается")
+    return line
+
+
 def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> UploadedInvoice:
     """`uploadInvoice`, first half: recognise № and date, store the file named after them.
 
@@ -1491,21 +1621,19 @@ def upload_invoice_file(command: UploadInvoiceFileCommand, uow: UnitOfWork) -> U
         raise ProcurementValidationError("Файл не передан")
     if len(command.content) > INVOICE_FILE_LIMIT:
         raise ProcurementValidationError("Файл счёта больше 20 МБ")
+    # Access first, then the (budgeted) reading outside any transaction, then the store re-checks the line (audit F05).
+    with uow:
+        _invoice_upload_line(command, uow)
     info, hint = recognise_invoice(command.content)
     with uow:
-        line = uow.procurement.get(command.line_id)
-        if line is None:
-            raise KeyError("Строка закупки не найдена")
-        line._require_owner(command.actor)
-        if line.status is ProcurementStatus.CANCELLED:
-            raise ProcurementValidationError("Счёт отменённой строки не загружается")
+        line = _invoice_upload_line(command, uow)
         stored = StoredInvoiceFile(
             id=uuid4(),
             line_id=line.id,
             file_name=invoice_file_name(
                 info, line.supplier or "", line.designation, line.order_number or "", command.file_name,
             ),
-            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(command.content),
             size=len(command.content),
             uploaded_by=command.actor.name,
             uploaded_at=command.now,
@@ -1883,7 +2011,7 @@ def _invoice_steps(
     arrival = expected_arrival or current.expected_arrival
     if arrival is None and current.status is ProcurementStatus.AWAITING_INVOICE:
         raise ProcurementValidationError(
-            "Нельзя загрузить счёт — сначала заполните: " + ", ".join(current.pay_missing())
+            "Нельзя загрузить счёт — сначала заполните: " + ", ".join(named.invoice_missing())
         )
     updated = named.record_invoice(
         invoice_url, arrival or current.created_at.date(), actor,
@@ -1993,7 +2121,7 @@ _OFFLINE_EVENTS = {
 }
 
 
-def set_procurement_offline_status(command: ProcurementOfflineCommand, uow: UnitOfWork) -> ProcurementLine:
+def set_procurement_offline_status(command: ProcurementOfflineCommand, uow: StockCoverUnitOfWork) -> ProcurementLine:
     with uow:
         current = _load_versioned(command.line_id, command.expected_version, uow)
         if command.action is OfflineAction.APPROVAL:
@@ -2091,36 +2219,35 @@ class StockCoverRepository(Protocol):
     def get(self, cover_id: UUID) -> StockCover | None: ...
     def for_line(self, line_id: UUID) -> Sequence[StockCover]: ...
     def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[StockCover]: ...
+    def active_without_lot(self, line_ids: Sequence[UUID]) -> Sequence[StockCover]: ...
     def reserved_on_lot(self, lot_id: UUID) -> Decimal: ...
     def add(self, cover: StockCover) -> None: ...
 
 
-class StockLotRepository(Protocol):
-    """Port to the warehouse lots: the cover reserves on the lot through the lot's own РЕЗЕРВ rules."""
-
-    def get(self, lot_id: UUID) -> StockLot | None: ...
-    def list(
-        self,
-        limit: int = 200,
-        after_id: UUID | None = None,
-        query: str = "",
-        warehouse: str | None = None,
-        include_zero: bool = False,
-    ) -> Sequence[StockLot]: ...
-    def add(self, lot: StockLot) -> None: ...
-
-
 class StockCoverUnitOfWork(UnitOfWork, Protocol):
     stock_covers: StockCoverRepository
-    warehouse: StockLotRepository
+    stock: StockReservationPort
 
 
 @dataclass(frozen=True)
 class CoverFromStockCommand:
     line_id: UUID
     expected_version: int
-    lot_id: UUID
+    # None — «Есть на складе, без ГРН»: the line is covered, no lot holds a reserve.
+    lot_id: UUID | None
     quantity: Decimal
+    actor: Actor
+    now: datetime
+    # Only without a lot, optional: ЦАР / ЖУК / "" (otherwise the lot's own warehouse).
+    warehouse: str = ""
+
+
+@dataclass(frozen=True)
+class BindStockCoverCommand:
+    line_id: UUID
+    expected_version: int
+    cover_id: UUID
+    lot_id: UUID
     actor: Actor
     now: datetime
 
@@ -2139,7 +2266,7 @@ class ReleaseStockCoverCommand:
 class StockCandidates:
     line: ProcurementLine
     query: str
-    lots: list[StockLot]
+    lots: list[StockLotView]
     # Active «Со склада» covers on the listed lots (who already holds their РЕЗЕРВ), by lot id.
     holders: dict[UUID, list[StockCover]]
     covers: list[StockCover]
@@ -2188,9 +2315,9 @@ def stock_candidates(
             text for text in (str(line.design_article or "").strip(), line.calculated_name.strip()) if text
         ]
         used = ""
-        found: list[StockLot] = []
+        found: list[StockLotView] = []
         for text in searches:
-            found = list(uow.warehouse.list(limit=500, query=text))
+            found = list(uow.stock.list(limit=500, query=text))
             used = text
             if found:
                 break
@@ -2206,46 +2333,55 @@ def stock_candidates(
         return StockCandidates(line=line, query=used, lots=lots, holders=holders, covers=covers)
 
 
+def without_grn_quantities(lines: Sequence[ProcurementLine], uow: StockCoverUnitOfWork) -> dict[UUID, Decimal]:
+    """How much of each line is covered «Есть на складе, без ГРН» and still waits for «Привязать ГРН» (0 when
+    nothing). Only lines with «Со склада» are looked up; a unit of work without covers (test fakes) gives zeros."""
+    result = {line.id: Decimal("0") for line in lines}
+    covered = [line.id for line in lines if line.stock_covered > 0]
+    if not covered:
+        return result
+    with uow:
+        covers = getattr(uow, "stock_covers", None)
+        found = list(covers.active_without_lot(covered)) if covers is not None else []
+    for cover in found:
+        if cover.lot_id is None and cover.line_id in result:
+            result[cover.line_id] += cover.quantity
+    return result
+
+
 def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) -> tuple[ProcurementLine, StockCover]:
     """«Со склада»: reserve `quantity` of one lot for the line in the same transaction as the line moves.
 
     The reserve is the lot's РЕЗЕРВ (as kitting reserves), so ДОСТУПНО drops for everyone and a reserve over
     what is available is refused. All of КОЛ-ВО (Расчет) covered → «Готово» without money; a part → the rest
-    stays to buy (one line, `stock_covered` + `to_buy`, no split)."""
+    stays to buy (one line, `stock_covered` + `to_buy`, no split).
+
+    Without `lot_id` — «Есть на складе, без ГРН» (owner, 06.10): the same line rules (stages, buyer, no more than
+    is left to buy) in the line's own unit, but no lot is touched and nothing is reserved."""
     with uow:
         current = _load_versioned(command.line_id, command.expected_version, uow)
-        lot = uow.warehouse.get(command.lot_id)
-        if lot is None:
-            raise KeyError(f"Warehouse lot not found: {command.lot_id}")
-        updated, trimmed = current.cover_from_stock(command.quantity, lot.unit, command.actor)
         quantity = Decimal(command.quantity)
-        try:
-            reserved = lot.reserve(quantity)
-        except WarehouseValidationError as error:
-            raise ProcurementValidationError(
-                f"На партии {_lot_label(lot.grn, lot.package)} доступно {_shown(max(lot.available, Decimal('0')))}"
-                f" {lot.unit} — зарезервировать {_shown(quantity)} нельзя"
-            ) from error
-        cover = StockCover(
-            id=uuid4(),
-            line_id=current.id,
-            legacy_id=current.legacy_id,
-            project_reference=current.project_reference,
-            lot_id=lot.id,
-            warehouse=lot.warehouse,
-            grn=lot.grn,
-            package=lot.package,
-            storage_location=lot.storage_location,
-            unit=lot.unit,
-            quantity=quantity,
-            trimmed=trimmed,
-            created_at=command.now,
-            created_by=command.actor.name,
-            created_by_id=command.actor.id,
-        )
-        uow.warehouse.add(reserved)
+        if command.lot_id is None:
+            warehouse = str(command.warehouse or "").strip()
+            if warehouse and warehouse not in STOCK_COVER_WAREHOUSES:
+                raise ProcurementValidationError(f"Склад «{warehouse}» неизвестен — ЦАР, ЖУК или не указан")
+            updated, trimmed = current.cover_from_stock(command.quantity, current.calculated_unit, command.actor)
+            cover = _new_cover(
+                current, command, trimmed, lot_id=None, warehouse=warehouse, grn="", package="", storage_location="",
+                unit=current.calculated_unit,
+            )
+        else:
+            lot = uow.stock.get(command.lot_id)
+            if lot is None:
+                raise KeyError(f"Warehouse lot not found: {command.lot_id}")
+            updated, trimmed = current.cover_from_stock(command.quantity, lot.unit, command.actor)
+            _reserve_on(lot, quantity, uow.stock)
+            cover = _new_cover(
+                current, command, trimmed, lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
+                storage_location=lot.storage_location, unit=lot.unit,
+            )
+            _lot_audit(lot.id, "warehouse.reserved_for_procurement", cover, quantity, command.actor, command.now, uow)
         uow.stock_covers.add(cover)
-        _lot_audit(lot.id, "warehouse.reserved_for_procurement", cover, quantity, command.actor, command.now, uow)
         _save_transition(
             current,
             updated,
@@ -2255,10 +2391,10 @@ def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) 
             uow=uow,
             details={
                 "cover_id": str(cover.id),
-                "lot_id": str(lot.id),
-                "warehouse": lot.warehouse,
-                "grn": lot.grn,
-                "package": lot.package,
+                "lot_id": str(cover.lot_id or ""),
+                "warehouse": cover.warehouse,
+                "grn": cover.grn,
+                "package": cover.package,
                 "quantity": _shown(quantity),
                 "stock_covered": _shown(updated.stock_covered),
                 "to_buy": _shown(updated.to_buy),
@@ -2268,25 +2404,109 @@ def cover_from_stock(command: CoverFromStockCommand, uow: StockCoverUnitOfWork) 
         return updated, cover
 
 
+def _new_cover(
+    line: ProcurementLine, command: CoverFromStockCommand, trimmed: Decimal, *, lot_id: UUID | None, warehouse: str,
+    grn: str, package: str, storage_location: str, unit: str,
+) -> StockCover:
+    return StockCover(
+        id=uuid4(),
+        line_id=line.id,
+        legacy_id=line.legacy_id,
+        project_reference=line.project_reference,
+        lot_id=lot_id,
+        warehouse=warehouse,
+        grn=grn,
+        package=package,
+        storage_location=storage_location,
+        unit=unit,
+        quantity=Decimal(command.quantity),
+        trimmed=trimmed,
+        created_at=command.now,
+        created_by=command.actor.name,
+        created_by_id=command.actor.id,
+    )
+
+
+def _reserve_on(lot: StockLotView, quantity: Decimal, stock: StockReservationPort) -> None:
+    """Reserve against the validated lot version, or return the buyer-facing refusal."""
+    try:
+        stock.reserve(lot.id, quantity, expected_version=lot.version)
+    except StockReservationError as error:
+        lot = error.lot
+        raise ProcurementValidationError(
+            f"На партии {_lot_label(lot.grn, lot.package)} доступно {_shown(max(lot.available, Decimal('0')))}"
+            f" {lot.unit} — зарезервировать {_shown(quantity)} нельзя"
+        ) from error
+
+
+def bind_stock_cover(command: BindStockCoverCommand, uow: StockCoverUnitOfWork) -> tuple[ProcurementLine, StockCover]:
+    """«Привязать ГРН» to a cover made «Есть на складе, без ГРН»: the chosen lot reserves the whole covered quantity
+    with the checks of «Со склада» (unit, ДОСТУПНО) — a lot with less is refused, never a partial binding. The line
+    keeps its quantities and stage; its version moves so a stale form gets 409."""
+    with uow:
+        current = _load_versioned(command.line_id, command.expected_version, uow)
+        cover = uow.stock_covers.get(command.cover_id)
+        if cover is None or cover.line_id != current.id:
+            raise KeyError(f"Stock cover not found: {command.cover_id}")
+        lot = uow.stock.get(command.lot_id)
+        if lot is None:
+            raise KeyError(f"Warehouse lot not found: {command.lot_id}")
+        updated = current.bind_stock_cover(lot.unit, command.actor)
+        bound = cover.bind_lot(
+            lot_id=lot.id, warehouse=lot.warehouse, grn=lot.grn, package=lot.package,
+            storage_location=lot.storage_location, unit=lot.unit,
+        )
+        _reserve_on(lot, bound.quantity, uow.stock)
+        uow.stock_covers.add(bound)
+        _lot_audit(lot.id, "warehouse.reserved_for_procurement", bound, bound.quantity, command.actor, command.now, uow)
+        _save_transition(
+            current,
+            updated,
+            event_type="procurement.stock_cover_bound",
+            actor=command.actor,
+            now=command.now,
+            uow=uow,
+            details={
+                "cover_id": str(bound.id),
+                "lot_id": str(lot.id),
+                "warehouse": lot.warehouse,
+                "grn": lot.grn,
+                "package": lot.package,
+                "quantity": _shown(bound.quantity),
+            },
+        )
+        uow.commit()
+        return updated, bound
+
+
+def _cover_place(cover: StockCover) -> str:
+    if cover.lot_id is None:
+        return f"{cover.warehouse} без ГРН".strip()
+    return f"{cover.warehouse} {_lot_label(cover.grn, cover.package)}"
+
+
 def _release_covers(
     line: ProcurementLine, covers: Sequence[StockCover], actor: Actor, now: datetime, uow,
 ) -> tuple[Decimal, Decimal, list[StockCover]]:
-    """Give each cover's held quantity back to its lot. → (released, КОЛ-ВО (факт) to give back, the covers)."""
+    """Give each cover's held quantity back to its lot; a cover «без ГРН» holds none, only the cover closes.
+    → (released, КОЛ-ВО (факт) to give back, the covers)."""
     released = Decimal("0")
     restore = Decimal("0")
     done: list[StockCover] = []
     for cover in covers:
-        lot = uow.warehouse.get(cover.lot_id)
-        if lot is None:
-            raise KeyError(f"Warehouse lot not found: {cover.lot_id}")
-        try:
-            uow.warehouse.add(lot.release_reserve(cover.quantity))
-        except WarehouseValidationError as error:
-            raise ProcurementValidationError(
-                f"На партии {_lot_label(lot.grn, lot.package)} резерв меньше, чем держит «Со склада» — "
-                "проверьте РЕЗЕРВ на складе"
-            ) from error
-        _lot_audit(lot.id, "warehouse.procurement_reserve_released", cover, cover.quantity, actor, now, uow)
+        if cover.lot_id is not None:
+            lot = uow.stock.get(cover.lot_id)
+            if lot is None:
+                raise KeyError(f"Warehouse lot not found: {cover.lot_id}")
+            try:
+                uow.stock.release(lot.id, cover.quantity, expected_version=lot.version)
+            except StockReservationError as error:
+                lot = error.lot
+                raise ProcurementValidationError(
+                    f"На партии {_lot_label(lot.grn, lot.package)} резерв меньше, чем держит «Со склада» — "
+                    "проверьте РЕЗЕРВ на складе"
+                ) from error
+            _lot_audit(lot.id, "warehouse.procurement_reserve_released", cover, cover.quantity, actor, now, uow)
         released += cover.quantity
         restore += min(cover.trimmed, cover.quantity)
         done.append(cover.release(now))
@@ -2320,7 +2540,7 @@ def release_stock_cover(
             uow=uow,
             details={
                 "cover_ids": ", ".join(str(cover.id) for cover in covers),
-                "lots": ", ".join(f"{cover.warehouse} {_lot_label(cover.grn, cover.package)}" for cover in covers),
+                "lots": ", ".join(_cover_place(cover) for cover in covers),
                 "quantity": _shown(total),
                 "stock_covered": _shown(updated.stock_covered),
                 "to_buy": _shown(updated.to_buy),
@@ -2910,6 +3130,9 @@ def recognise_order_document(command: RecogniseOrderDocumentCommand, uow: UnitOf
         raise ProcurementValidationError("Файл не передан")
     if len(command.content) > INVOICE_FILE_LIMIT:
         raise ProcurementValidationError("Файл больше 20 МБ")
+    # The buyer's order lines first, the (budgeted) reading outside any transaction, then the store (audit F05).
+    with uow:
+        _document_lines(reference, command.actor, uow)
     document = read_supplier_document(command.file_name, command.content, kind)
     with uow:
         lines = _document_lines(reference, command.actor, uow)
@@ -2923,7 +3146,7 @@ def recognise_order_document(command: RecogniseOrderDocumentCommand, uow: UnitOf
                 if kind == "invoice"
                 else kp_file_name(info, first.supplier or "", reference, command.file_name)
             ),
-            content_type=str(command.content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(command.content),
             size=len(command.content),
             uploaded_by=command.actor.name,
             uploaded_at=command.now,
@@ -2988,8 +3211,9 @@ def apply_order_document(command: ApplyOrderDocumentCommand, uow: UnitOfWork) ->
     КП: «Цена факт» (with the document's НДС rate and net price) on the rows sent, which stay where they are; the КП
     file is named in each row's audit event (the line has no КП field). Invoice: the same prices, then the order-wide
     invoice (`invoice_supplier_order` rules) — the rows sent must be exactly the order's «Жду счет» rows (they go
-    «В оплату») or exactly its «В оплату» rows (the invoice is replaced). A row refused by its stage, the pay gate or a
-    foreign-currency document refuses the whole call; a stale row is `ConcurrentProcurementUpdate`."""
+    «В оплату») or exactly its «В оплату» rows (the invoice is replaced). A row refused by its stage, the invoice gate
+    (prices are not part of it — a row without one goes on with a warning) or a foreign-currency document refuses the
+    whole call; a stale row is `ConcurrentProcurementUpdate`."""
     kind = _document_kind(command.kind)
     reference = _order_reference(command.order_number)
     refs = [OrderLineRef(row.line_id, row.expected_version) for row in command.rows]

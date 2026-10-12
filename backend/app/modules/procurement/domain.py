@@ -35,6 +35,11 @@ class ProcurementValidationError(ValueError):
     """A procurement operation violates a business invariant."""
 
 
+class ProcurementAccessDenied(ProcurementValidationError):
+    """The line belongs to another buyer. Still a validation error for the commands that answer 422; the invoice
+    upload answers 403 before reading the file (audit F05)."""
+
+
 class _Unset:
     pass
 
@@ -110,6 +115,8 @@ BY_SUPPLIER_CLOSED = frozenset(
 )
 # «Со склада» is set and taken off while the line is with its buyer, before the supplier request is formed.
 STOCK_COVER_STAGES = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
+# «Есть на складе, без ГРН»: the warehouse is optional ("" — not said).
+STOCK_COVER_WAREHOUSES = ("ЦАР", "ЖУК")
 # The buyer's desk before the supplier request (owner, 05.10): the facts are edited inline in both stages and the
 # stage follows them — complete facts are «Готов к запросу», anything missing sends the line back to «В работе».
 FACTS_EDITABLE = frozenset({ProcurementStatus.IN_WORK, ProcurementStatus.READY})
@@ -119,6 +126,10 @@ FACT_PRICE_VAT = Decimal("22")
 # keeps a cancelled line closed (решено агентом — проверить). «Согласование» is a parked line, still noted.
 NOTE_EDITABLE = frozenset(set(ProcurementStatus) - {ProcurementStatus.NEW, ProcurementStatus.CANCELLED})
 NOTE_MAX_LENGTH = 2000
+# DATASHEET (a link or a text) — edited in the КОММЕНТАРИЙ window by the line's buyer.
+DATASHEET_MAX_LENGTH = 2000
+# Files the buyer attaches to a line besides invoices and КП: РАЗРЕШЕНИЕ and ДОК. КАЧЕСТВА (procurement_files.kind).
+LINE_DOCUMENT_KINDS = {"permit": "Разрешение", "quality": "Документ качества"}
 # ОЖИД. ДАТА: `gateAwaitInvoice_` (Guards.gs:523-560) opens it once the order is placed («Жду счет»); the ETA floats
 # until the goods are in, so the buyer moves it through «Карантин» (решено агентом — проверить: «Готово» is closed).
 EXPECTED_ARRIVAL_EDITABLE = frozenset(
@@ -207,6 +218,10 @@ class KpEntry:
 
 
 MONEY_EDITABLE = frozenset({ProcurementStatus.AWAITING_INVOICE, ProcurementStatus.TO_PAY})
+
+# The money fields of the pay gate (owner, 06.10: «счёт без цен — предупреждение, а не запрет»): the invoice takes the
+# line «В оплату» without them, with a warning; «Оплачено» still needs every one of them.
+PRICE_FIELDS = ("ВАЛЮТА", "ЦЕНА (факт)", "ЦЕНА С НДС (факт)", "СУММА (факт)")
 
 
 _PAID_STATUSES = frozenset({ProcurementStatus.IN_TRANSIT, ProcurementStatus.QUARANTINE, ProcurementStatus.DONE})
@@ -301,6 +316,8 @@ class ProcurementLine:
     note: str | None = None
     # ФАКТ. ДАТА (OwnerTick.gs syncActualArrival_): the latest inspection date of the line's deliveries.
     actual_arrival: date | None = None
+    # DATASHEET: a link to the item's datasheet (or a text) the buyer keeps on the line.
+    datasheet: str | None = None
 
     @property
     def to_buy(self) -> Decimal:
@@ -320,6 +337,14 @@ class ProcurementLine:
             invoice_item_name=self.invoice_item_name,
             expected_arrival=expected_arrival or self.expected_arrival,
         )
+
+    def invoice_missing(self, expected_arrival: date | None = None) -> list[str]:
+        """What still blocks the invoice: the pay gate without the money fields (`PRICE_FIELDS`)."""
+        return [name for name in self.pay_missing(expected_arrival) if name not in PRICE_FIELDS]
+
+    def price_missing(self) -> list[str]:
+        """The money fields still empty: the invoice warns about them, «Оплачено» refuses."""
+        return [name for name in self.pay_missing() if name in PRICE_FIELDS]
 
     def take_in_work(self, actor: Actor) -> ProcurementLine:
         """«Новый» → the buyer's desk. КОЛ-ВО / ЕД.ИЗМ (факт) start from what is to buy (owner, 05.10) when empty,
@@ -546,7 +571,8 @@ class ProcurementLine:
             raise ProcurementValidationError("Ожидаемая дата поступления не может быть раньше заказа")
         if self.status is not ProcurementStatus.AWAITING_INVOICE:
             raise ProcurementValidationError("Счёт принимается только на этапе «Жду счет»")
-        missing = self.pay_missing(expected_arrival)
+        # Prices are not required here: the line goes «В оплату» with a warning, «Оплачено» waits for them.
+        missing = self.invoice_missing(expected_arrival)
         if missing:
             raise ProcurementValidationError("Нельзя загрузить счёт — сначала заполните: " + ", ".join(missing))
         return replace(
@@ -591,7 +617,7 @@ class ProcurementLine:
         if self.status is ProcurementStatus.CANCELLED:
             raise ProcurementValidationError("Счёт отменённой строки не заменяется")
         # ОЖИД. ДАТА is not part of the invoice: a backorder line clears it until the resend is confirmed.
-        missing = [name for name in self.pay_missing() if name != "ОЖИД. ДАТА"]
+        missing = [name for name in self.invoice_missing() if name != "ОЖИД. ДАТА"]
         if missing:
             raise ProcurementValidationError("Нельзя загрузить счёт — сначала заполните: " + ", ".join(missing))
         updated = replace(
@@ -818,6 +844,37 @@ class ProcurementLine:
             return self
         return replace(self, note=text, version=self.version + 1)
 
+    def _require_sheet_edit(self, actor: Actor, what: str) -> None:
+        """The buyer's own sheet fields (DATASHEET, РАЗРЕШЕНИЕ / ДОК. КАЧЕСТВА files): the same window as КОММЕНТАРИЙ."""
+        _validate_actor(actor)
+        if self.status is ProcurementStatus.NEW:
+            raise ProcurementValidationError(
+                f"Сначала поставьте статус «{ProcurementStatus.IN_WORK.value}» — возьмите строку в работу"
+            )
+        if self.status not in NOTE_EDITABLE:
+            raise ProcurementValidationError(f"Строка отменена — {what} не меняется")
+        self._require_owner(actor)
+
+    def set_datasheet(self, datasheet: str | None, actor: Actor) -> ProcurementLine:
+        """DATASHEET: a link or a text on the line, in the same window and for the same buyer as КОММЕНТАРИЙ."""
+        text = _text(datasheet) or None
+        if text is not None and len(text) > DATASHEET_MAX_LENGTH:
+            raise ProcurementValidationError(f"DATASHEET длиннее {DATASHEET_MAX_LENGTH} символов")
+        self._require_sheet_edit(actor, "DATASHEET")
+        if text == self.datasheet:
+            return self
+        return replace(self, datasheet=text, version=self.version + 1)
+
+    def attach_document(self, kind: str, actor: Actor) -> ProcurementLine:
+        """A РАЗРЕШЕНИЕ or ДОК. КАЧЕСТВА file on the line. A quality document attached means the goods go with one:
+        ДОК. КАЧЕСТВА turns «Да» (receiving then checks it) — a new version; a permit or a line already «Да» stays."""
+        if kind not in LINE_DOCUMENT_KINDS:
+            raise ProcurementValidationError("Вид файла: разрешение или документ качества")
+        self._require_sheet_edit(actor, "файл")
+        if kind != "quality" or _norm(self.quality_document) == "да":
+            return self
+        return replace(self, quality_document="Да", version=self.version + 1)
+
     def set_expected_arrival(self, expected_arrival: date, actor: Actor) -> ProcurementLine:
         """ОЖИД. ДАТА by hand: the supplier's ETA, from «Жду счет» (`gateAwaitInvoice_`) until the goods are in.
         Receiving's open deliveries follow it (`syncExpectedDateToWaitlist_`, OwnerTick.gs:973-1000)."""
@@ -969,11 +1026,7 @@ class ProcurementLine:
         supplier request is out the cover stays: the order was formed for the remainder only."""
         self._require_owner(actor)
         amount = _stock_quantity(quantity)
-        closed_by_cover = self.status is ProcurementStatus.DONE and self.paid_at is None
-        if self.status not in STOCK_COVER_STAGES and not closed_by_cover:
-            raise ProcurementValidationError(
-                "Заказ поставщику уже сформирован — «Со склада» на этой строке не снимается"
-            )
+        closed_by_cover = self._require_cover_open("«Со склада» на этой строке не снимается")
         if amount > self.stock_covered:
             raise ProcurementValidationError("Снимаем больше, чем закрыто со склада")
         actual = self.actual_quantity
@@ -982,6 +1035,24 @@ class ProcurementLine:
         reopened = replace(self, stock_covered=self.stock_covered - amount, actual_quantity=actual)
         status = reopened._stage_from_data() if closed_by_cover else self.status
         return replace(reopened, status=status, version=self.version + 1)
+
+    def bind_stock_cover(self, lot_unit: str, actor: Actor) -> ProcurementLine:
+        """«Привязать ГРН» to a cover made «Есть на складе, без ГРН»: the line keeps its quantities, only its version
+        moves (a stale form gets 409). Same buyer and the same stages as «Снять "Со склада"»."""
+        self._require_owner(actor)
+        self._require_cover_open("ГРН к «Со склада» уже не привязывается")
+        if not same_unit(self.calculated_unit, lot_unit):
+            raise ProcurementValidationError(
+                f"Единицы не совпадают: в строке «{self.calculated_unit}», у партии «{lot_unit}»"
+            )
+        return replace(self, version=self.version + 1)
+
+    def _require_cover_open(self, refused: str) -> bool:
+        """A cover changes before the supplier request or on a line it closed («Готово», unpaid). → closed by it."""
+        closed_by_cover = self.status is ProcurementStatus.DONE and self.paid_at is None
+        if self.status not in STOCK_COVER_STAGES and not closed_by_cover:
+            raise ProcurementValidationError(f"Заказ поставщику уже сформирован — {refused}")
+        return closed_by_cover
 
     def reconcile_rate(self, rate: ExchangeRate, actor: Actor) -> ProcurementLine:
         """Replace a manually typed rate with the CBR one for the same day and replay the amounts."""
@@ -999,7 +1070,7 @@ class ProcurementLine:
     def _require_owner(self, actor: Actor) -> None:
         _validate_actor(actor)
         if not _same_actor(self.buyer, actor):
-            raise ProcurementValidationError("Закупщик может изменять только свои строки")
+            raise ProcurementAccessDenied("Закупщик может изменять только свои строки")
 
 
 # Удаление проекта (owner 04.10, «заявки не удалились при сносе проекта»): a line still on the buyer's own desk
@@ -1575,6 +1646,8 @@ def split_line(
                 calculated_price_with_vat=source.calculated_price_with_vat,
                 calculated_sum=source.calculated_sum,
                 initiator_id=source.initiator_id,
+                # The same item: its DATASHEET goes with every copy.
+                datasheet=source.datasheet,
             )
         )
     if buyer is None:
@@ -1602,13 +1675,17 @@ class StockCover:
     The lot's РЕЗЕРВ carries `quantity` (the same counter kitting reserves through, so ДОСТУПНО = БАЛАНС − РЕЗЕРВ
     stays one number). A kit request of the same project takes it over (`consume`): the reserve moves to the kit
     line without leaving the lot, `consumed`/`consumed_by` keep the trace. `trimmed` is how much КОЛ-ВО (факт)
-    of the line the cover cut, given back on release."""
+    of the line the cover cut, given back on release.
+
+    «Есть на складе, без ГРН» (owner, 06.10): `lot_id` None — the line is covered but no lot holds a reserve (empty
+    ГРН/упаковка/место, unit of the line, warehouse optional). A kit never takes it over (kits find covers by lot);
+    «Привязать ГРН» (`bind_lot`) later reserves the whole quantity on one lot."""
 
     id: UUID
     line_id: UUID
     legacy_id: str
     project_reference: str | None
-    lot_id: UUID
+    lot_id: UUID | None
     warehouse: str
     grn: str
     package: str
@@ -1641,6 +1718,19 @@ class StockCover:
         if not self.active:
             raise ProcurementValidationError("Резерв «Со склада» уже снят")
         return replace(self, quantity=Decimal("0"), released_at=now, version=self.version + 1)
+
+    def bind_lot(
+        self, *, lot_id: UUID, warehouse: str, grn: str, package: str, storage_location: str, unit: str,
+    ) -> StockCover:
+        """«Привязать ГРН»: the cover made without a lot now sits on this one (the caller reserves its quantity)."""
+        if self.lot_id is not None:
+            raise ProcurementValidationError("У «Со склада» уже есть ГРН")
+        if not self.active:
+            raise ProcurementValidationError("«Со склада» уже снято")
+        return replace(
+            self, lot_id=lot_id, warehouse=warehouse, grn=grn, package=package, storage_location=storage_location,
+            unit=unit, version=self.version + 1,
+        )
 
     def consume(self, quantity: Decimal, request_number: str) -> StockCover:
         amount = _stock_quantity(quantity)

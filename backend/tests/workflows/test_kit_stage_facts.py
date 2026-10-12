@@ -1,7 +1,10 @@
 from datetime import date
 from decimal import Decimal
 
-from app.modules.production.plan import kit_stage_key
+from types import SimpleNamespace
+
+from app.modules.fulfillment.domain import FulfillmentStatus
+from app.modules.production.plan import kit_stage_key, project_stage
 from app.modules.shipping.domain import FinishedGood
 from app.workflows.production_plan import kit_stage_facts
 
@@ -28,3 +31,49 @@ def test_partial_shipment_before_erp_is_not_a_shipped_kb():
 
     assert key not in _facts(good.ship_before_erp(Decimal("154")))["shipped"]
     assert key in _facts(good.ship_before_erp(Decimal("10270")))["shipped"]
+
+
+def _kit_facts(status: FulfillmentStatus) -> dict[str, set[str]]:
+    request = SimpleNamespace(status=status, purpose="33МФ.2-КБ1 жгут")
+    facts, _marks = kit_stage_facts(cards=(), tasks=(), fulfillment=(request,), goods=(), marks={})
+    return facts
+
+
+def test_issued_kit_means_work_started_picked_kit_does_not():
+    key = kit_stage_key("33МФ.2", "КБ1")
+    for status in (FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE):
+        facts = _kit_facts(status)
+        assert key in facts["kit"] and key in facts["work"]
+        assert project_stage("33МФ.2", ("КБ1",), facts).status == "В работе"
+    for status in (FulfillmentStatus.COMPLETE, FulfillmentStatus.READY):
+        facts = _kit_facts(status)
+        assert key in facts["kit"] and key not in facts["work"]
+        assert project_stage("33МФ.2", ("КБ1",), facts).status == "КБ набрана"
+
+
+def test_issued_kit_does_not_hold_back_later_stages():
+    key = kit_stage_key("33МФ.2", "КБ1")
+    facts = _kit_facts(FulfillmentStatus.ISSUED)
+    facts["stock"].add(key)
+    assert project_stage("33МФ.2", ("КБ1",), facts).status == "КБ на складе"
+
+
+def test_issued_techcard_keeps_the_stages_a_manual_pick_skipped():
+    from datetime import datetime
+
+    from app.modules.production.plan import KitMark
+    from app.modules.techcards.project_cards import ProjectTechcard
+
+    now = datetime(2026, 10, 10, 12, 0)
+    card = ProjectTechcard.create(
+        project="708К.4", item_index="КБ1", product_name="Жгут", source_calculation="", deadline=None, now=now,
+    ).rebuild({"operations": [{"code": "10", "connector": "A", "name": "Резка"}]}, now).issue(now)
+    key = kit_stage_key("708К.4", "КБ1")
+    mark = KitMark(stage="В работе", review=None, skipped=("ТК готова", "КБ набрана"))
+
+    facts, marks = kit_stage_facts(cards=(card,), tasks=(), fulfillment=(), goods=(), marks={key: mark})
+
+    assert key in facts["tc"]
+    assert marks[key].skipped == ("ТК готова", "КБ набрана")
+    assert marks[key].stage == "В работе"
+    assert marks[key].review is not None and marks[key].review.text == "ТК выдана"

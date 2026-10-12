@@ -14,6 +14,7 @@ from app.modules.procurement.infrastructure import (
     ProcurementLineRow,
     SqlAlchemyProcurementUnitOfWork,
 )
+from app.workflows.procurement_stock import SqlAlchemyProcurementStockUnitOfWork
 from app.modules.requests.api import moscow_now
 from app.shared.events import OutboxMessage
 from app.shared.http_auth import Principal, authenticated_principal
@@ -64,6 +65,7 @@ def procurement_api():
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
     factory = lambda: SqlAlchemyProcurementUnitOfWork(sessions)
     app.state.procurement_uow_factory = factory
+    app.state.procurement_stock_uow_factory = lambda: SqlAlchemyProcurementStockUnitOfWork(sessions)
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Петров", department="Закупки"),
         email="petrov@example.test",
@@ -76,6 +78,7 @@ def procurement_api():
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     del app.state.procurement_uow_factory
+    del app.state.procurement_stock_uow_factory
     engine.dispose()
 
 
@@ -302,14 +305,15 @@ def rates():
     del app.state.procurement_exchange_rates
 
 
-def test_invoice_waits_for_fact_money_typed_as_in_invoices(procurement_api, rates):
+def test_invoice_waits_for_the_invoice_name_and_takes_fact_money_typed_as_in_invoices(procurement_api, rates):
     client, line, _ = procurement_api
     version = awaiting_invoice(client, line)
     invoice = {"invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25"}
 
     refused = client.post(f"/api/procurement/{line.id}/invoice", json={"version": version, **invoice})
     assert refused.status_code == 422
-    assert refused.json()["detail"].startswith("Нельзя загрузить счёт — сначала заполните: ВАЛЮТА")
+    # Prices are not part of the invoice gate (owner, 06.10): only НАИМЕНОВАНИЕ (Счет) is named.
+    assert refused.json()["detail"] == "Нельзя загрузить счёт — сначала заполните: НАИМЕНОВАНИЕ (Счет)"
 
     saved = client.patch(
         f"/api/procurement/{line.id}/money",
@@ -328,6 +332,7 @@ def test_invoice_waits_for_fact_money_typed_as_in_invoices(procurement_api, rate
     invoiced = client.post(f"/api/procurement/{line.id}/invoice", json={"version": body["version"], **invoice})
     assert invoiced.status_code == 200
     assert invoiced.json()["line"]["status"] == "В оплату"
+    assert invoiced.json()["warnings"] == []
 
 
 @pytest.mark.parametrize("field,value", [("price", "abc"), ("price", "-1"), ("sum", "1.005")])
@@ -1081,24 +1086,43 @@ def test_order_invoice_moves_every_awaiting_row_to_payment_and_then_replaces_it(
     )] == [2, 2, 2]
 
 
-def test_order_invoice_is_all_or_none_and_names_the_row_the_pay_gate_refuses(procurement_api):
+def test_order_invoice_takes_a_row_without_price_with_a_warning_and_payment_waits_for_it(procurement_api):
+    """«Счёт без цен — предупреждение, а не запрет» (owner, 06.10): «Оплачено» still needs every price."""
     client, _, sessions = procurement_api
     number, lines = formed_order(client, sessions)
     first, second = lines.values()
     priced = price_rows(client, {first["id"]: first})
+    no_price = "ВАЛЮТА, ЦЕНА (факт), ЦЕНА С НДС (факт), СУММА (факт)"
 
     response = client.post(f"/api/procurement/orders/{number}/invoice", json={
         "invoice_url": "https://files.test/invoice.pdf", "expected_arrival": "2026-09-25",
         "lines": refs({**priced, second["id"]: second}),
     })
 
-    assert response.status_code == 422
-    assert response.json()["detail"].startswith(f"{second['legacy_id']}: Нельзя загрузить счёт — сначала заполните: ")
-    assert "ЦЕНА (факт)" in response.json()["detail"]
-    mine = {line["id"]: line for line in client.get("/api/procurement/mine").json()["lines"]}
-    assert (mine[first["id"]]["status"], mine[first["id"]]["invoice_url"]) == ("Жду счет", None)
-    assert mine[first["id"]]["invoice_item_name"] is None  # nothing written, the default name included
-    assert "procurement.invoice_recorded" not in audit_types(sessions)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["warnings"] == [f"{second['legacy_id']} — нет цены: {no_price}"]
+    invoiced = {line["id"]: line for line in body["lines"]}
+    assert {line["status"] for line in invoiced.values()} == {"В оплату"}
+    assert invoiced[first["id"]]["pay_missing"] == []
+    assert invoiced[second["id"]]["pay_missing"] == no_price.split(", ")
+    assert invoiced[second["id"]]["invoice_item_name"]  # the order-wide invoice named the row
+
+    order_paid = client.post(f"/api/procurement/orders/{number}/paid", json={"lines": refs(invoiced)})
+    line_paid = client.post(f"/api/procurement/{second['id']}/paid", json={"version": invoiced[second["id"]]["version"]})
+    assert order_paid.status_code == 422
+    assert order_paid.json()["detail"] == (
+        f"{second['legacy_id']}: Нельзя провести оплату — сначала заполните: {no_price}"
+    )
+    assert line_paid.status_code == 422
+    assert line_paid.json()["detail"] == f"Нельзя провести оплату — сначала заполните: {no_price}"
+    assert "procurement.paid" not in audit_types(sessions)
+
+    # The price comes later, in «В оплату»; then the order is paid.
+    invoiced.update(price_rows(client, {second["id"]: invoiced[second["id"]]}))
+    paid = client.post(f"/api/procurement/orders/{number}/paid", json={"lines": refs(invoiced)})
+    assert paid.status_code == 200, paid.text
+    assert {line["status"] for line in paid.json()["lines"]} == {"В пути"}
 
 
 def test_order_is_paid_once_for_every_row_in_payment(procurement_api):

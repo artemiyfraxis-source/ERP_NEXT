@@ -48,6 +48,7 @@ from .application import (
     lot_destinations,
     return_writeoff,
     warehouse_lots,
+    warehouse_totals,
     write_off,
 )
 from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseValidationError
@@ -274,23 +275,48 @@ def _procurement_reserve(request: Request, lot_id: UUID) -> Decimal:
 
 
 def _reserve_holders(request: Request, lots: list[StockLot]) -> dict[UUID, list[dict]]:
-    """Who holds each lot's РЕЗЕРВ through «Со склада»: «SM-20261002-01 / 591К.3 — 80 шт» (owner 2026-10-04)."""
-    factory = getattr(request.app.state, "procurement_uow_factory", None)
-    if not callable(factory) or not lots:
+    """Who holds each lot's РЕЗЕРВ: procurement «Со склада» covers («SM-20261002-01 / 591К.3 — 80 шт», owner
+    2026-10-04), techcard reserves («728К.2 · КБ1 · техкарта — 10 шт») and kit requests («REQ-… · назначение — 5 шт»).
+    Each module is read through its own unit of work factory, no import of it here; a module that is not wired
+    (or has no such repository) adds nothing."""
+    if not lots:
         return {}
+    ids = [lot.id for lot in lots]
     holders: dict[UUID, list[dict]] = {}
-    with factory() as uow:
-        covers = getattr(uow, "stock_covers", None)
-        if covers is None:
-            return {}
-        for cover in covers.active_on_lots([lot.id for lot in lots]):
-            holders.setdefault(cover.lot_id, []).append({
-                "kind": "procurement",
-                "label": cover.label,
-                "procurement_line_id": str(cover.line_id),
-                "quantity": _number(cover.quantity),
-                "unit": cover.unit,
-            })
+    factory = getattr(request.app.state, "procurement_uow_factory", None)
+    if callable(factory):
+        with factory() as uow:
+            covers = getattr(uow, "stock_covers", None)
+            for cover in covers.active_on_lots(ids) if covers is not None else ():
+                holders.setdefault(cover.lot_id, []).append({
+                    "kind": "procurement",
+                    "label": cover.label,
+                    "procurement_line_id": str(cover.line_id),
+                    "quantity": _number(cover.quantity),
+                    "unit": cover.unit,
+                })
+    factory = getattr(request.app.state, "fulfillment_uow_factory", None)
+    if callable(factory):
+        with factory() as uow:
+            reserves = getattr(uow, "kit_reserves", None)
+            for reserve in reserves.active_on_lots(ids) if reserves is not None else ():
+                holders.setdefault(reserve.lot_id, []).append({
+                    "kind": "techcard",
+                    "label": f"{reserve.label} · техкарта",
+                    "project": reserve.project,
+                    "item_index": reserve.item_index,
+                    "quantity": _number(reserve.quantity),
+                    "unit": reserve.unit,
+                })
+            for request_id, number, purpose, lot_id, unit, reserved in uow.fulfillment.holders_on_lots(ids):
+                holders.setdefault(lot_id, []).append({
+                    "kind": "kit",
+                    "label": f"{number} · {purpose}".rstrip(" ·"),
+                    "request_id": str(request_id),
+                    "request_number": number,
+                    "quantity": _number(reserved),
+                    "unit": unit,
+                })
     return holders
 
 
@@ -336,6 +362,35 @@ def lots(
         "total": total,
         "truncated": max(0, total - len(page)),
         "next_cursor": str(page[-1].id) if len(lots) > limit else None,
+    }
+
+
+def _totals(item) -> dict:
+    return {
+        "balance": _number(item.balance),
+        "reserved": _number(item.reserved),
+        "available": _number(item.available),
+        "lots": item.lots,
+        "units": sorted(item.units),
+    }
+
+
+@router.get("/totals")
+def totals(
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+    group: Annotated[str, Query(pattern="^(type|place|name|series|grn)?$")] = "",
+    q: Annotated[str, Query(max_length=255)] = "",
+    zero: bool = False,
+    warehouse: Annotated[str | None, Query(pattern="^(ЦАР|ЖУК)$")] = None,
+) -> dict:
+    """Sums per group and per article inside a group over ALL lots of the filter (q/zero/warehouse as in the list):
+    balance, reserve, available, lot count. The grouped table shows them whatever number of lots it has loaded."""
+    groups, articles = warehouse_totals(uow_factory(), group=group, query=q, warehouse=warehouse, include_zero=zero)
+    return {
+        "group": group,
+        "groups": [{"group": key, "articles": len(item.articles), **_totals(item)} for key, item in groups.items()],
+        "articles": [{"group": key[0], "article": key[1], **_totals(item)} for key, item in articles.items()],
     }
 
 

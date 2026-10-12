@@ -37,12 +37,13 @@ it("draws the blocks and arrows of a branched scheme with time and inputs", () =
   const blocks = within(screen.getByRole("group", { name: "Блоки схемы" })).getAllByRole("button");
   expect(blocks).toHaveLength(5);
   expect(screen.getByText("автоматическая")).toBeInTheDocument();
-  expect(screen.getByText(/5 блоков/)).toHaveTextContent("5 блоков · 5 оп. · на изделие 4 мин");
+  expect(screen.getByText(/5 блоков/)).toHaveTextContent("5 блоков · 5 операций · на изделие 4 мин");
   // «Надеть ТУТ» берёт два входа: 0,6 мин на штуку, со входами 3 мин (0,6 + 2 + 0,4).
   const insTut = screen.getByRole("button", { name: /Надеть ТУТ/ });
   expect(insTut).toHaveTextContent("1 оп. · 0,6 мин/шт · с входами 3");
   expect(insTut.querySelector(".route-block-no")).toHaveTextContent("3");
-  expect(screen.getByRole("button", { name: /Жгут XH/ })).toHaveTextContent("итог");
+  // Итог назван своей операцией (последняя операция не пропадает), изделие — строкой «итог: …».
+  expect(screen.getByRole("button", { name: /Жгут XH/ })).toHaveTextContent("Усадка ТУТитог: Жгут XH");
   // стрелки: резка → надеть, резка ТУТ → надеть, надеть → пайка, пайка → усадка
   expect(screen.getAllByRole("textbox")).toHaveLength(4);
   expect(screen.getByLabelText("Штук из «Резка ТУТ» на один «Надеть ТУТ»")).toHaveValue("1");
@@ -84,7 +85,7 @@ it("merges two adjacent blocks into one with both operations and the downstream 
 it("splits a block after the chosen operation and gives the inputs to the first part", () => {
   const onChange = mount({ value: manual });
   fireEvent.click(screen.getByRole("button", { name: /Жгут XH/ }));
-  const panel = screen.getByRole("region", { name: "Блок «Жгут XH»" });
+  const panel = screen.getByRole("region", { name: "Блок «Усадка ТУТ»" });
   fireEvent.change(within(panel).getByLabelText("Разделить после операции"), { target: { value: "4" } });
   fireEvent.click(within(panel).getByRole("button", { name: "Разделить" }));
   const route = lastRoute(onChange);
@@ -97,7 +98,7 @@ it("splits a block after the chosen operation and gives the inputs to the first 
 it("moves an operation to another block and renames a block", () => {
   const onChange = mount({ value: manual, renderOp: (position) => <div>настройка операции {position}</div> });
   fireEvent.click(screen.getByRole("button", { name: /Жгут XH/ }));
-  const panel = screen.getByRole("region", { name: "Блок «Жгут XH»" });
+  const panel = screen.getByRole("region", { name: "Блок «Усадка ТУТ»" });
   expect(within(panel).getByText("настройка операции 4")).toBeInTheDocument();
   expect(within(panel).getByText("настройка операции 5")).toBeInTheDocument();
   fireEvent.change(within(panel).getByLabelText("Перенести операцию 4 в блок"), { target: { value: "b3" } });
@@ -131,7 +132,7 @@ it("refuses an edit that leaves a block without a way to the product and says wh
 it("adds a second input to a block from a block that is not after it", () => {
   const onChange = mount({ value: manual });
   fireEvent.click(screen.getByRole("button", { name: /Жгут XH/ }));
-  const panel = screen.getByRole("region", { name: "Блок «Жгут XH»" });
+  const panel = screen.getByRole("region", { name: "Блок «Усадка ТУТ»" });
   const select = within(panel).getByLabelText("Добавить вход из блока");
   expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["— выберите —", "Резка провода", "Резка ТУТ"]);
   fireEvent.change(select, { target: { value: "b1" } });
@@ -171,7 +172,7 @@ it("shows the server's text in an error banner and opens the scheme", () => {
 it("shows no time when the card has never been built", () => {
   mount({ ops: OPS.map((op) => ({ ...op, minutes: null })) });
   expect(screen.queryByText(/мин\/шт/)).not.toBeInTheDocument();
-  expect(screen.getByText(/5 блоков/)).toHaveTextContent("5 блоков · 5 оп.");
+  expect(screen.getByText(/5 блоков/)).toHaveTextContent("5 блоков · 5 операций");
   expect(screen.getByText(/5 блоков/)).not.toHaveTextContent("на изделие");
 });
 
@@ -197,4 +198,61 @@ it("numbers a block by the range of its operations", () => {
   expect(numberRange([4])).toBe("4");
   expect(numberRange([2, 5])).toBe("2, 5");
   expect(numberRange([])).toBe("");
+});
+
+const CODED: RouteOp[] = [
+  { position: 1, key: "cutWire", type: "cutWireCrimp", code: "CUT_WIRE+1crimp", label: "Резка с обжимом А и В — 4 кабеля", minutes: null, codeNote: "вместо CUT_WIRE+2crimp — нет карты" },
+  { position: 2, key: "insTermA1", type: "insTerm", code: "INS_terminal_2.50", label: "Монтаж в разъём А1 — XHP-4", minutes: null },
+  { position: 3, key: "twist", type: "twist", code: "TWIST", label: "Свивка", minutes: null },
+  { position: 4, key: "insTermB1", type: "insTerm", code: "INS_terminal_2.50", label: "Монтаж в разъём В1 — XHP-4", minutes: null },
+];
+
+it("starts every block with its card codes, notes a replaced card and keeps the last operation in the final block", () => {
+  mount({ ops: CODED, finalName: "Кабель USB", defaultOpen: true });
+  const chain = screen.getByRole("list", { name: "Блоки схемы" });
+  const blocks = within(chain).getAllByRole("button", { pressed: false });
+  expect(blocks.map((item) => item.querySelector(".route-block-code")?.textContent)).toEqual(["CUT_WIRE+1crimp", "INS_terminal_2.50", "TWIST", "INS_terminal_2.50"]);
+  expect(blocks[0]).toHaveTextContent("вместо CUT_WIRE+2crimp — нет карты");
+  expect(blocks[3]).toHaveTextContent("Монтаж в разъём В1 — XHP-4");
+  expect(blocks[3].querySelector(".route-block-product")).toHaveTextContent("итог: Кабель USB");
+  expect(screen.getByText(/4 блока/)).toHaveTextContent("4 блока · 4 операции");
+  expect(within(chain).getAllByText("берёт")).toHaveLength(3);
+});
+
+it("«Изменить схему» shows «Выше/Ниже» on the blocks and hands over the new operation order", () => {
+  const onMove = vi.fn();
+  mount({ ops: CODED, finalName: "Кабель USB", onMove });
+  expect(screen.queryByRole("button", { name: /Выше: блок/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Изменить схему" }));
+  expect(screen.getByRole("status")).toHaveTextContent("порядок операций в ЭТК");
+  expect(screen.getByRole("button", { name: "Выше: блок «Резка с обжимом А и В — 4 кабеля»" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Выше: блок «Свивка»" }));
+  // Свивка встаёт перед монтажом А1; схема автоматическая — её выведут заново.
+  expect(onMove).toHaveBeenCalledWith([1, 3, 2, 4], null);
+  // В панели блока — те же «Выше / Ниже».
+  fireEvent.click(screen.getByTitle("Монтаж в разъём А1 — XHP-4"));
+  fireEvent.click(within(screen.getByRole("region", { name: "Блок «Монтаж в разъём А1 — XHP-4»" })).getByRole("button", { name: "↓ Ниже" }));
+  expect(onMove).toHaveBeenLastCalledWith([1, 3, 2, 4], null);
+  fireEvent.click(screen.getByRole("button", { name: "Готово" }));
+  expect(screen.queryByRole("button", { name: /Выше: блок/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Изменить схему" })).toBeInTheDocument();
+});
+
+it("moves a hand-edited scheme with its blocks: the operations get new numbers, blocks and arrows stay", () => {
+  const onMove = vi.fn();
+  mount({ value: manual, onMove });
+  fireEvent.click(screen.getByRole("button", { name: "Изменить схему" }));
+  fireEvent.click(screen.getByRole("button", { name: "Ниже: блок «Надеть ТУТ»" }));
+  const [order, route] = onMove.mock.calls[0];
+  expect(order).toEqual([1, 2, 4, 5, 3]);
+  expect((route as Route).blocks.map((item) => [item.key, item.ops])).toEqual([["b1", [1]], ["b2", [2]], ["b4", [3, 4]], ["b3", [5]]]);
+  expect((route as Route).edges).toEqual(manual.edges);
+});
+
+it("offers «Вернуть порядок генератора» when the order is the technologist's own", () => {
+  const onResetOrder = vi.fn();
+  mount({ ops: CODED, orderChanged: true, onResetOrder });
+  expect(screen.getByText("свой порядок операций")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть порядок генератора" }));
+  expect(onResetOrder).toHaveBeenCalled();
 });

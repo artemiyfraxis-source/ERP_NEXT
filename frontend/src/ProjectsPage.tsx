@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ApiError,
   failureText,
+  harnessApi,
   kitsetsApi,
   requestsApi,
   type KitsetAssembly,
   type KitsetCard,
   type KitsetComponent,
   type KitsetDeleteResult,
+  type KitsetIssueAssembly,
+  type KitsetJournalEvent,
   type KitsetLoadResult,
   type KitsetLot,
+  type KitsetReserve,
   type KitsetStockLot,
   type KitsetTile,
   type Principal,
@@ -18,7 +23,13 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
 import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
+import { AutoTextarea } from "./AutoTextarea";
+import { formatDate, formatDateTime, formatDay, formatMoment } from "./format";
+import { StatusChip } from "./StatusChip";
+import { openHarness } from "./harnessNav";
+import { useLatestSearch } from "./useLatestSearch";
 import { ProjectStatus } from "./ProjectStatus";
+import { StageChangeDialog, STAGE_AUTO } from "./StageChangeDialog";
 import { ProjectTrack } from "./ProjectTrack";
 import { InternalProjectsTab } from "./InternalProjectsTab";
 import { canAct } from "./navigation";
@@ -55,8 +66,8 @@ function hidden(item: KitsetTile, hide: Record<HideKey, boolean>, status: string
   const { total, tc, unreviewed } = tcProgress(item);
   // Статус «Отгружено», выбранный в фильтре явно, важнее переключателя.
   if (hide.shipped && item.status === "Отгружено" && status !== "Отгружено") return true;
-  if (hide.tcReady && total > 0 && tc === total) return true;             // бейдж «ТК ✓»
-  if (hide.tcChecked && total > 0 && tc === total && !unreviewed) return true; // «ТК ✓» без «не проверено»
+  if (hide.tcReady && total > 0 && tc === total) return true;             // чип «ТК на все КБ»
+  if (hide.tcChecked && total > 0 && tc === total && !unreviewed) return true; // и ни одной «не проверена»
   if (hide.blocked && item.blocker) return true;                           // ХОЛД, СТОП, ОЖИД ИНФ, ОЖИД КОМПЛ, ПАУЗА
   return false;
 }
@@ -80,16 +91,32 @@ export function readFileBase64(file: File): Promise<string> {
   });
 }
 
-/** Mirror of the server `batch_quantity`: расход × тираж × (1 + брак/100), до сотых; штучное — затем вверх до
- *  целого (половинки штуки не бывает, Василий 04.10), метры остаются до сотых — «На партию» при вводе. */
+/** «Выдаём вровень» (владелец, 10.10.2026): запас на брак пока не добавляется — как `SCRAP_APPLIED` на сервере. */
+export const KIT_SCRAP_APPLIED = false;
+
+/** Mirror of the server `KitComponent.batch`: расход × тираж (× (1 + брак/100), когда запас включён), до сотых;
+ *  штучное — затем вверх до целого (половинки штуки не бывает, Василий 04.10), метры до сотых — «На партию» при вводе. */
 export function kitBatch(per: string, run: string, scrap: string, unit: string) {
   const num = (value: string) => {
     const parsed = parseFloat(String(value ?? "").replace(/\s/g, "").replace(",", "."));
     return Number.isFinite(parsed) ? parsed : 0;
   };
-  const batch = Math.round(num(per) * num(run) * (1 + num(scrap) / 100) * 100) / 100;
+  const allowance = KIT_SCRAP_APPLIED ? num(scrap) / 100 : 0;
+  const batch = Math.round(num(per) * num(run) * (1 + allowance) * 100) / 100;
   return unit === "шт" ? Math.ceil(batch) : batch;
 }
+
+/** Ячейка «ГРН склада»: выбранный ГРН и сколько из «на партию» уже в резерве под КБ. Выбран ГРН, а резерва нет
+ *  (единицы партии и позиции не сходятся) — «резерв при комплектации». ГРН не выбран — пусто. */
+export function lotLabel(lot: KitsetLot | null, reserve: KitsetReserve | null | undefined, batch: number) {
+  if (!lot?.grn) return "";
+  const grn = `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}`;
+  return reserve && reserve.grn === lot.grn
+    ? `${grn} · резерв ${reserve.quantity} из ${batch}`
+    : `${grn} · резерв при комплектации`;
+}
+
+const STALE_LOT_TEXT = "Партия изменилась — обновите список ГРН";
 
 /** «Генератор» карточки проекта (SUPPLYMAP renderGen_ / mountGen_): сверху сборки проекта, ниже генератор выбранной.
     Карточку ТК сборки заводит открытие генератора (kitsetsApi.openTechcard). */
@@ -102,6 +129,9 @@ function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: 
   const { card: techcard, setCard: setTechcard, error: loadError } = useTechcard(cardId);
   const assembly = card.assemblies.find((item) => item.index === index);
   const known = assembly?.techcard?.card_id || "";
+  // Одна-две сборки — генератор первой открывается сразу, без лишнего клика (аудит 10.10, ПР-10).
+  const first = !index && card.assemblies.length > 0 && card.assemblies.length <= 2 ? card.assemblies[0].index : "";
+  useEffect(() => { if (first) pick(first); }, [first]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let live = true;
     setError("");
@@ -116,8 +146,8 @@ function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: 
   return <div className="kit-pane">
     <div className="seg-tabs sub" role="tablist" aria-label="Сборка">{card.assemblies.map((item) =>
       <button key={item.index} role="tab" aria-selected={item.index === index} className={item.index === index ? "on" : ""} onClick={() => pick(item.index)}>{item.index}</button>)}</div>
-    {!index && <div className="empty">Выбери сборку — генератор откроется здесь.</div>}
-    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}</p>}
+    {!index && !first && <div className="empty">{card.assemblies.length ? "Выберите сборку — генератор откроется здесь." : "В проекте нет сборок."}</div>}
+    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}{assembly.kd.some((document) => document.kind === "harness") && <> · <button className="link-button" onClick={() => openHarness(card.project, assembly.index)}>Чертёж жгута</button></>}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
     {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange}
@@ -152,7 +182,8 @@ export function deleteSummary(res: KitsetDeleteResult) {
   for (const [name, count] of Object.entries(res.erp || {})) parts.push(`${name.toLowerCase()} ${count}`);
   if (res.cards?.cards) parts.push(`техкарты ${res.cards.cards}`);
   if (res.gp?.deleted) parts.push(`склад ГП ${res.gp.deleted}`);
-  const card = `Снесено строк: ${parts.join(", ")}` + (res.gp?.kept ? `. На складе ГП осталось с движением: ${res.gp.kept}` : "");
+  const card = `Снесено строк: ${parts.join(", ")}` + (res.gp?.kept ? `. На складе ГП осталось с движением: ${res.gp.kept}` : "")
+    + (res.reserve_error ? `. Резерв ГРН вернулся не полностью: ${res.reserve_error}` : "");
   // Журнал проекта и хвосты без движения: итог по-русски собирает сервер («Удалено: 4 записи журнала проекта, …») —
   // тот же текст печатает команда purge_project_tails.
   const tails = [res.tails?.message, res.tails_error].filter(Boolean).join(" ");
@@ -167,14 +198,20 @@ const DELETE_TEXT = "Проект уйдёт целиком: состав и с�
   + "комплект, работа в цеху или задание, отданное в ЖУК, заявка в закупке, приход или отгрузка готовой продукции. "
   + "После удаления будет видно, что осталось и почему.";
 
+/** Итог, с которым карточка возвращает к списку (удаление проекта): текст и тон баннера. */
+type Flash = { text: string; tone: "ok" | "warn" };
+
 export function ProjectsPage({ principal }: { principal: Principal }) {
   const canEdit = principal.permissions.projects === "edit";
   const [open, setOpen] = useState(() => new URLSearchParams(window.location.search).get("project") || "");
+  const [flash, setFlash] = useState<Flash | null>(null);
   const canRequest = principal.permissions.newrequest === "edit";
   const internalOn = useStageOption("projects.internal");
   const [tab, setTab] = useState<"commercial" | "internal">(() => new URLSearchParams(window.location.search).get("tab") === "internal" ? "internal" : "commercial");
-  if (open) return <KitsetCardView project={open} principal={principal} canEdit={canEdit} canRequest={canRequest} back={() => setOpen("")} />;
-  const hub = <KitsetHub canEdit={canEdit} canRequest={canRequest} user={principal.user.id} openProject={setOpen} />;
+  if (open) return <KitsetCardView project={open} principal={principal} canEdit={canEdit} canRequest={canRequest}
+    back={(result) => { setFlash(result ?? null); setOpen(""); }} />;
+  const hub = <KitsetHub canEdit={canEdit} canRequest={canRequest} user={principal.user.id} flash={flash}
+    openProject={(project) => { setFlash(null); setOpen(project); }} />;
   if (!internalOn) return hub;
   // Stage option projects.internal: «Коммерческие» is the page as it was; «Внутренние» are the company's own projects.
   return <>
@@ -186,7 +223,9 @@ export function ProjectsPage({ principal }: { principal: Principal }) {
   </>;
 }
 
-function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolean; canRequest: boolean; user: string; openProject: (project: string) => void }) {
+function KitsetHub({ canEdit, canRequest, user, flash, openProject }: {
+  canEdit: boolean; canRequest: boolean; user: string; flash: Flash | null; openProject: (project: string) => void;
+}) {
   const [all, setAll] = useState<KitsetTile[] | null>(null);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [lists, setLists] = useState<{ stages?: string[]; terminals?: string[]; blockers?: string[] }>({});
@@ -195,7 +234,8 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
   const [hide, setHide] = useState(() => Object.fromEntries(HIDES.map(([key, , on]) =>
     [key, stored(`kitHide.${key}.${user}`, on ? "1" : "0") === "1"])) as Record<HideKey, boolean>);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(flash?.tone === "ok" ? flash.text : "");
+  const [warning, setWarning] = useState(flash?.tone === "warn" ? flash.text : "");
   const [creating, setCreating] = useState(false);
 
   async function load() {
@@ -211,19 +251,6 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
   const activeFilter = all && filter && !all.some((item) => item.status === filter) ? "" : filter;
   const list = (all || []).filter((item) => (!activeFilter || item.status === activeFilter) && !hidden(item, hide, activeFilter));
 
-  async function remove(project: string) {
-    if (!window.confirm(`Удалить карточку «${project}»?\n\n${DELETE_TEXT}`)) return;
-    setError(""); setNotice("");
-    try {
-      const result = await kitsetsApi.remove(project);
-      setNotice(deleteSummary(result.res));
-    } catch (reason) {
-      if (gone(reason)) setNotice("Карточка уже удалена — список обновлён");
-      else setError(message(reason, "Не удалось удалить проект"));
-    }
-    await load();
-  }
-
   return <section className="page projects-page">
     <header className="page-head"><h1>Проекты</h1>{all && <span className="page-count">{all.length}</span>}
       {canEdit && <div className="page-actions"><button className="primary" onClick={() => setCreating(true)}>Создать проект из расчёта</button></div>}</header>
@@ -234,6 +261,7 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
     }} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+    {warning && <div className="warning-banner" role="alert">{warning}</div>}
     {all === null && !error && <div className="empty">Загрузка…</div>}
     {all && !all.length && <div className="empty">Проектов пока нет — создайте первый из расчёта.</div>}
     {all && all.length > 0 && <>
@@ -254,7 +282,7 @@ function KitsetHub({ canEdit, canRequest, user, openProject }: { canEdit: boolea
         <span className="muted">показано {list.length} из {all.length}</span>
       </div>
       {list.length ? <div className="tiles kit-tiles">
-        {list.map((item) => <KitTile key={item.project} item={item} statuses={statuses} canEdit={canEdit} open={() => openProject(item.project)} remove={() => void remove(item.project)}
+        {list.map((item) => <KitTile key={item.project} item={item} statuses={statuses} canEdit={canEdit} open={() => openProject(item.project)}
           lists={lists} statusChanged={() => void load()} />)}
       </div> : <div className="empty">Нет проектов под выбранные фильтры.</div>}
     </>}
@@ -301,7 +329,7 @@ function CreateFromCalc({ canRequest, close, done }: {
 
   async function submit() {
     if (busy) return;
-    if (!url.trim()) { setError("Вставь ссылку на расчёт"); return; }
+    if (!url.trim()) { setError("Вставьте ссылку на расчёт"); return; }
     if (withRequests && !(purchase.purpose && purchase.delivery_point && purchase.procurement_deadline)) {
       setError("Для заявок нужны назначение, точка отгрузки и дедлайн закупки"); return;
     }
@@ -319,6 +347,7 @@ function CreateFromCalc({ canRequest, close, done }: {
         res.ship_to_error && `адресат не сохранён: ${res.ship_to_error}`,
         res.ship_error && `очередь отгрузки: ${res.ship_error}`,
         res.requests_error && `заявки не созданы: ${res.requests_error}`,
+        res.reserve_error && `резерв ГРН: ${res.reserve_error}`,
       ].filter(Boolean);
       const made = requestsNote(res);
       done(res.project, `Проект «${res.project}»: сборок ${res.assemblies}, позиций ${res.lines}` + (made ? `, ${made}` : "")
@@ -338,7 +367,7 @@ function CreateFromCalc({ canRequest, close, done }: {
       <label>Дедлайн<input type="date" value={form.deadline} onChange={(event) => setForm({ ...form, deadline: event.target.value })} /></label>
       <label>Контактное лицо<input value={form.contact} placeholder="кто принимает" onChange={(event) => setForm({ ...form, contact: event.target.value })} /></label>
       <label>Телефон<input value={form.phone} placeholder="для связи" onChange={(event) => setForm({ ...form, phone: event.target.value })} /></label>
-      <label className="wide">Адрес отгрузки<input value={form.shipping_point} placeholder="можно позже — в окне «Отгрузить»" onChange={(event) => setForm({ ...form, shipping_point: event.target.value })} /></label>
+      <label className="wide">Адрес отгрузки<AutoTextarea value={form.shipping_point} maxRows={4} placeholder="можно позже — в окне «Отгрузить»" onChange={(value) => setForm({ ...form, shipping_point: value })} /></label>
       {canRequest && <label className="wide check-inline"><input type="checkbox" checked={withRequests} onChange={(event) => setWithRequests(event.target.checked)} />Сразу создать заявки на закупку по листу ЗКП</label>}
       {withRequests && <>
         <label>Назначение заявок<select aria-label="Назначение заявок" value={purchase.purpose} onChange={(event) => setPurchase({ ...purchase, purpose: event.target.value })}>
@@ -360,52 +389,71 @@ function CreateFromCalc({ canRequest, close, done }: {
 
 type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${string}`;
 
-function KitsetCardView({ project, principal, canEdit, canRequest, back }: { project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: () => void }) {
+function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
+  project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: (result?: Flash) => void;
+}) {
   const [genIndex, setGenIndex] = useState("");
   // Собрано по черновику с чертежа, урок не записан: по индексу сборки, переживает переход «Генератор» → «ТК КБn».
   const [builtDrafts, setBuiltDrafts] = useState<Record<string, string>>({});
   const [card, setCard] = useState<KitsetCard | null>(null);
+  const [missing, setMissing] = useState(false);
   const [tab, setTab] = useState<Tab>("sostav");
   const [error, setError] = useState("");
   const [note, setNote] = useState("");
+  const [warning, setWarning] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   /* kitRefresh: перечитать расчёт по сохранённой ссылке. Номер карточки передаётся явно: в ячейке расчёта он бывает
      короче («720К.»), и обновление завело бы рядом вторую карточку. */
   async function refresh() {
     if (!card || refreshing) return;
-    setRefreshing(true); setError("");
+    setRefreshing(true); setError(""); setWarning("");
     try {
-      await kitsetsApi.load({ url: card.calc_source, number: card.project });
+      const { res } = await kitsetsApi.load({ url: card.calc_source, number: card.project });
+      if (res.reserve_error) setWarning(`Резерв ГРН пересчитан не полностью: ${res.reserve_error}`);
       await load();
     } catch (reason) { setError(message(reason, "Расчёт не прочитан")); }
     finally { setRefreshing(false); }
   }
 
   async function load() {
-    try { setCard(await kitsetsApi.get(project)); }
+    try { setCard(await kitsetsApi.get(project)); setMissing(false); }
     catch (reason) {
-      if (gone(reason)) { setError("Карточка уже удалена — возвращаю к списку…"); window.setTimeout(back, 1200); }
+      // 404 «gone»: проекта с таким номером в ERP нет — удалён или номер в ссылке не тот. Без автоперехода: человек
+      // читает, что случилось, и сам идёт к списку (аудит 10.10).
+      if (gone(reason)) { setCard(null); setMissing(true); }
       else setError(message(reason, "Не удалось открыть проект"));
     }
   }
   useEffect(() => { void load(); }, [project]);
 
+  /** Удаление после подтверждения в окне: итог уходит баннером в список проектов. */
   async function remove() {
-    if (!window.confirm(`Удалить карточку «${project}»?\n\n${DELETE_TEXT}`)) return;
     try {
       const result = await kitsetsApi.remove(project);
-      window.alert(deleteSummary(result.res));
-      back();
+      back({ text: `Проект «${project}» удалён. ${deleteSummary(result.res)}`, tone: result.res.reserve_error ? "warn" : "ok" });
     } catch (reason) {
-      if (gone(reason)) back(); else setError(message(reason, "Не удалось удалить проект"));
+      if (!gone(reason)) throw reason;
+      back({ text: `Проекта «${project}» в ERP уже нет — список обновлён.`, tone: "ok" });
     }
   }
 
   function openGen(index: string) { setGenIndex(index); setTab("gen"); }
 
+  const toList = <button className="secondary small" onClick={() => back()}>← Проекты</button>;
+  if (missing) return <section className="page projects-page">
+    <header className="page-head">{toList}<h1>{project}</h1></header>
+    <div className="warning-inline kit-missing" role="alert">
+      <p>Проекта «{project}» в ERP нет: его удалили или в ссылке другой номер.</p>
+      <div className="page-actions">
+        <button className="primary small" onClick={() => back()}>К списку проектов</button>
+        <button className="secondary small" onClick={() => { setMissing(false); void load(); }}>Проверить ещё раз</button>
+      </div>
+    </div>
+  </section>;
   if (!card) return <section className="page projects-page">
-    <header className="page-head"><button className="secondary small" onClick={back}>← Назад</button><h1>{project}</h1></header>
+    <header className="page-head">{toList}<h1>{project}</h1></header>
     {error ? <div className="error-banner" role="alert">{error}</div> : <div className="empty">Загрузка…</div>}
   </section>;
 
@@ -421,28 +469,31 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
   /* Шапка и вкладки — как карточка проекта SUPPLYMAP (kitCardRender_): строка «заказчик · расчёт · обновлено»,
      небольшие кнопки действий и сегментные вкладки Состав / Снабжение / Спецификация / Генератор / ТК КБn. */
   return <section className="page projects-page kit-card">
-    <header className="page-head kit-head"><button className="secondary small" onClick={back}>← Назад</button><h1>📋 {card.project}</h1>
+    <header className="page-head kit-head">{toList}<h1>{card.project}</h1>
       <ProjectStatus project={card.project} status={card.status} blocker={card.blocker} canEdit={canEdit}
         stages={card.stages} terminals={card.terminals} blockers={card.blockers} onChanged={setCard} onError={setError} />
     </header>
-    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.deadline && <> · дедлайн {new Date(card.deadline).toLocaleDateString("ru-RU")}</>} · обновлено {new Date(card.updated_at).toLocaleString("ru-RU")} {card.updated_by}</p>
-    {blockerInfo && <p className="kit-blocker">⛔ {blockerInfo.type} с {new Date(blockerInfo.since).toLocaleDateString("ru-RU")} · {blockerInfo.text} — {blockerInfo.who}</p>}
+    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.deadline && <> · дедлайн {formatDay(card.deadline)}</>} · обновлено {formatDateTime(card.updated_at)} {card.updated_by}</p>
+    {blockerInfo && <p className="kit-blocker"><StatusChip status={blockerInfo.type} /> <span>с {formatDay(blockerInfo.since)} · {blockerInfo.text} — {blockerInfo.who}</span></p>}
     <div className="kit-actions">
-      {canEdit && <button className="secondary small" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "🔄 Обновить из расчёта"}</button>}
-      {canEdit && <button className="secondary small" onClick={() => void remove()}>🗑 Удалить карточку</button>}
-      <button className="secondary small" onClick={() => openSection("shipping", { ship_project: card.project })}>🚚 Отгрузить</button>
+      {canEdit && <button className="secondary small" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
+      <button className="secondary small" onClick={() => openSection("shipping", { ship_project: card.project })}>Отгрузить</button>
       {/* Заявка — отдельный шаг, как в SUPPLYMAP (заведение создаёт её только по галочке «Сразу создать заявки»);
           кнопка открывает «Оформить заявку → Из расчёта» с этой ссылкой и номером, оператор проверяет строки. */}
-      {canRequest && card.calc_source && <button className="secondary small" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>📝 Оформить заявку из расчёта</button>}
+      {canRequest && card.calc_source && <button className="secondary small" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>Оформить заявку из расчёта</button>}
+      {/* Удаление — отдельно от рабочих кнопок, в «Ещё», красным и только через окно подтверждения (аудит 10.10, ПР-2). */}
+      {canEdit && <CardMoreMenu project={card.project} onDelete={() => setDeleting(true)} />}
       {note && <span className="muted">{note}</span>}
     </div>
+    {deleting && <DeleteProjectDialog project={card.project} remove={remove} onClose={() => setDeleting(false)} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
+    {warning && <div className="warning-banner" role="alert">{warning}</div>}
     <div className="seg-tabs" role="tablist">
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
     {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} />}
     {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline} />}
-    {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} />}
+    {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} setWarning={setWarning} reload={load} />}
     {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex} builtId={builtDrafts[genIndex] || ""}
       onBuiltChange={(id) => setBuiltDrafts((current) => ({ ...current, [genIndex]: id }))}
       done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
@@ -454,6 +505,64 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: { pro
       return <div className="kit-pane"><TcTab key={assembly.techcard.card_id} assembly={assembly} principal={principal} rebuild={() => openGen(assembly.index)} changed={() => void load()} builtId={builtDrafts[assembly.index]} /></div>;
     })()}
   </section>;
+}
+
+/** «Ещё ▾» карточки проекта: редкие и опасные действия подальше от рабочих кнопок. Пока одно — «Удалить проект…». */
+function CardMoreMenu({ project, onDelete }: { project: string; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: MouseEvent) => { if (root.current && !root.current.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", outside);
+    return () => document.removeEventListener("mousedown", outside);
+  }, [open]);
+  return <div className="more-menu kit-more" ref={root} onKeyDown={(event) => {
+    if (event.key !== "Escape" || !open) return;
+    setOpen(false);
+    root.current?.querySelector<HTMLButtonElement>(".more-menu-trigger")?.focus();
+  }}>
+    <button type="button" className="secondary small more-menu-trigger" aria-haspopup="menu" aria-expanded={open}
+      aria-label={`Ещё действия с проектом ${project}`} onClick={() => setOpen((value) => !value)}>Ещё ▾</button>
+    {open && <div className="more-menu-list" role="menu">
+      <button type="button" role="menuitem" className="kit-more-danger" autoFocus onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>
+    </div>}
+  </div>;
+}
+
+/** Подтверждение удаления проекта: что уйдёт и что останется (DELETE_TEXT), красная кнопка с номером проекта; фокус —
+ *  на «Отмена», Enter по ошибке ничего не удаляет. */
+function DeleteProjectDialog({ project, remove, onClose }: { project: string; remove: () => Promise<void>; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try { await remove(); }
+    catch (reason) { setError(message(reason, "Не удалось удалить проект")); setBusy(false); }
+  }
+  return createPortal(<div className="dialog-overlay" onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); } }}
+    onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <div className="move-dialog panel kit-delete-dialog" role="dialog" aria-modal="true" aria-label={`Удалить проект ${project}`}>
+      <h2>Удалить проект {project}?</h2>
+      <p className="page-sub">{DELETE_TEXT}</p>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions page-actions">
+        <button type="button" className="danger" disabled={busy} onClick={() => void submit()}>{busy ? "Удаляю…" : `Удалить проект ${project}`}</button>
+        <button type="button" className="secondary" autoFocus disabled={busy} onClick={onClose}>Отмена</button>
+      </div>
+    </div>
+  </div>, document.body);
+}
+
+/** Запись смены этапа: сервер уже пишет «В работе → Отгружено · пропущены: КБ на складе · причина: …». Старая запись без
+ *  «→» (этап поставили до истории) собирается из значения и причины. */
+export function journalText(event: KitsetJournalEvent) {
+  if (event.kind !== "stage" || event.text.includes("→")) return event.text;
+  const parts = [`${event.from_value ? `${event.from_value} → ` : ""}${event.value === "авто" ? "Авто" : event.value}`];
+  const reason = event.reason || event.text;
+  if (reason) parts.push(`причина: ${reason}`);
+  return parts.join(" · ");
 }
 
 /** Журнал проекта в карточке — то, что раньше было только в нижней панели «Производственного плана»:
@@ -478,20 +587,22 @@ function JournalTab({ card, canEdit, changed }: { card: KitsetCard; canEdit: boo
 
   const events = card.journal || [];
   return <div className="kit-pane kit-journal">
+    {/* Одна строка: [вид][дедлайн][текст][Записать] (аудит 10.10, ПР-5); Enter в тексте записывает. */}
     {canEdit && <form className="kit-journal-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
       <select aria-label="Вид записи" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)}>
         <option value="note">Комментарий</option><option value="deadline">Дедлайн</option>
       </select>
       {kind === "deadline" && <input type="date" aria-label="Дедлайн" value={deadline} onChange={(event) => setDeadline(event.target.value)} />}
-      <input aria-label="Текст записи" placeholder={kind === "deadline" ? "почему сдвинули (необязательно)" : "что происходит с проектом"} value={text} onChange={(event) => setText(event.target.value)} />
+      <AutoTextarea aria-label="Текст записи" maxRows={4} placeholder={kind === "deadline" ? "почему сдвинули (необязательно)" : "что происходит с проектом"} value={text} onChange={setText}
+        onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
       <button type="submit" className="primary small" disabled={busy || !valid}>Записать</button>
     </form>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     <ul className="kit-journal-list">
       {events.map((event) => <li key={event.id}>
-        <time>{new Date(event.occurred_at).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</time>
-        <b>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}{event.item_index ? ` · ${event.item_index}` : ""}{event.value ? ` · ${event.value}` : ""}</b>
-        <span>{event.text}</span><small>{event.who}</small>
+        <time>{formatMoment(event.occurred_at)}</time>
+        <b>{event.kind}{event.blocker ? ` · ${event.blocker}` : ""}{event.item_index ? ` · ${event.item_index}` : ""}{event.kind === "stage" ? "" : event.value ? ` · ${event.value}` : ""}</b>
+        <span>{journalText(event)}</span><small>{event.who}</small>
       </li>)}
       {!events.length && <li className="empty">Записей пока нет.</li>}
     </ul>
@@ -506,6 +617,14 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kdIndex, setKdIndex] = useState("");
+  const [stagePick, setStagePick] = useState<{ assembly: KitsetAssembly; value: string } | null>(null);
+
+  async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string) {
+    const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason });
+    setStagePick(null);
+    setNote(result.msg || `${assembly.index}: этап — ${value === STAGE_AUTO ? "по фактам" : value}`);
+    await reload();
+  }
 
   async function markKb(assembly: KitsetAssembly, kind: "stage" | "tcReview", value: string) {
     let text = "";
@@ -533,28 +652,59 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
     } catch (reason) { setError(message(reason, "КД не приложена")); }
   }
 
+  // Чертёж жгута не удаляется: «Отвязать» оставляет его в КД позиции отвязанным, «Вернуть» привязывает обратно.
+  async function unlinkHarness(index: string) {
+    if (!window.confirm(`Отвязать чертёж жгута от ${index}? Он останется в КД отвязанным — вернуть можно кнопкой «Вернуть».`)) return;
+    try { await harnessApi.unlink(card.project, index); setNote(`${index}: чертёж жгута отвязан.`); await reload(); }
+    catch (reason) { setError(message(reason, "Чертёж не отвязан")); }
+  }
+
+  async function restoreHarness(index: string, documentId: string) {
+    try { await harnessApi.relink(card.project, index, documentId); setNote(`${index}: чертёж жгута возвращён.`); await reload(); }
+    catch (reason) { setError(message(reason, "Чертёж не возвращён")); }
+  }
+
   async function detach(documentId: string) {
     if (!window.confirm("Отвязать КД? Файл и строка вложения удалятся из ERP.")) return;
     try { await kitsetsApi.removeDocument(card.project, documentId); setNote("Отвязано."); await reload(); }
     catch (reason) { setError(message(reason, "КД не отвязана")); }
   }
 
-  const kdCell = (assembly: KitsetAssembly) => <>
-    {assembly.kd.map((document) => <div key={document.id} className="kit-kd">
+  const kdCell = (assembly: KitsetAssembly) => {
+    const harness = assembly.kd.find((document) => document.kind === "harness");
+    const unlinked = assembly.kd.filter((document) => document.kind === "harness_unlinked");
+    return <>
+    {harness && <div className="kit-kd">
+      <button className="link-button" onClick={() => openHarness(card.project, assembly.index)}>Чертёж жгута</button>
+      {canEdit && <button className="link-button kit-kd-action" onClick={() => void unlinkHarness(assembly.index)}>Отвязать</button>}
+    </div>}
+    {unlinked.map((document) => <div key={document.id} className="kit-kd kit-kd-unlinked">
+      <span className="muted">Отвязанный чертёж жгута · сохранён {formatDate(document.uploaded_at)}</span>
+      {canEdit && <button className="link-button kit-kd-action" disabled={Boolean(harness)}
+        title={harness ? "У позиции уже есть чертёж — сначала отвяжите его" : undefined}
+        onClick={() => void restoreHarness(assembly.index, document.id)}>Вернуть</button>}
+    </div>)}
+    {assembly.kd.filter((document) => document.kind !== "harness" && document.kind !== "harness_unlinked").map((document) => <div key={document.id} className="kit-kd">
       {document.stored || !document.url
         ? <a href={kitsetsApi.documentUrl(card.project, document.id)} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a>
         : <><a href={document.url} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a> <span className="muted">на Диске (архив)</span></>}
       {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
     </div>)}
+    {canEdit && !harness && <button className="kit-file" onClick={() => openHarness(card.project, assembly.index)}>Создать в редакторе</button>}
     {canEdit && <button className="kit-file" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}
   </>;
+  };
+
+  /** Этап КБ перескочили ручной сменой («сделали вживую»): метка с перечнем пропущенных. */
+  const skippedMark = (assembly: KitsetAssembly) => assembly.stage?.skipped?.length
+    ? <span className="stage-skipped-mark" title={`Пропущены: ${assembly.stage.skipped.join(", ")}`}>пропущен</span> : null;
 
   const stageCell = (assembly: KitsetAssembly) => canEdit
-    ? <select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => void markKb(assembly, "stage", event.target.value)}>
+    ? <><select aria-label={`Этап ${assembly.index}`} value={assembly.stage?.manual ? assembly.stage.status : "авто"} onChange={(event) => setStagePick({ assembly, value: event.target.value })}>
       <option value="авто">авто: {assembly.stage?.manual ? "по фактам" : assembly.stage?.status || "—"}</option>
       {card.stages.map((stage) => <option key={stage} value={stage}>{stage}</option>)}
-    </select>
-    : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted" title="выставлен вручную"> ✍</span>}</>;
+    </select>{skippedMark(assembly)}</>
+    : <>{assembly.stage?.status || "—"}{assembly.stage?.manual && <span className="muted"> · вручную</span>}{skippedMark(assembly)}</>;
 
   const reviewCell = (assembly: KitsetAssembly) => {
     const review = assembly.stage?.review || { value: "не проверена", text: "" };
@@ -572,7 +722,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
      открывает генератор этой сборки; «готова · N эт.» ведёт на вкладку её ТК. */
   return <div className="kit-pane">
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
-    {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table aria-label="Состав проекта">
+    {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table className="grid" aria-label="Состав проекта">
       <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
       <tbody>{card.assemblies.map((assembly) => <tr key={assembly.index} title={`Открыть генератор ${assembly.index}`} onClick={(event) => {
         // Внутри строки свои кликабельные вещи — ссылка на КД, «＋ файл», выпадающие списки.
@@ -591,10 +741,14 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
         <td>{reviewCell(assembly)}</td>
       </tr>)}</tbody>
     </table></div>}
+    {stagePick && <StageChangeDialog project={card.project} kb={stagePick.assembly.index}
+      current={stagePick.assembly.stage?.status || "—"} value={stagePick.value}
+      loadPreview={() => kitsetsApi.stagePreview(card.project, stagePick.value, stagePick.assembly.index)}
+      apply={(reason) => applyKbStage(stagePick.assembly, stagePick.value, reason)} onClose={() => setStagePick(null)} />}
   </div>;
 }
 
-/* «Снабжение»: Нужно / Свободно / В закупке / Не хватает по каждой позиции. Позиции, где не хватает, отмечаются
+/* «Снабжение»: Нужно / Свободно / Без ГРН / В закупке / Не хватает по каждой позиции. Позиции, где не хватает, отмечаются
    галочкой, и одна кнопка «Заказать недостающее» оформляет на них заявки на закупку (ничего не отмечено — на все). */
 function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder: boolean; deadline?: string | null }) {
   const [lines, setLines] = useState<SupplyLine[] | null>(null);
@@ -616,9 +770,16 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
   const count = chosen.length || shortLines.length;
   const missing = lines.filter((line) => line.stage === "не заведено").length;
   const received = lines.filter((line) => line.received).length;
-  const stock = lines.filter((line) => line.stage === "со склада").length;
-  const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : line.stage === "со склада" ? "info" : "warn";
+  // Закрыто «Есть на складе, без ГРН» — тоже со склада, без закупки (стадия «Закупка · Готово · без ГРН»).
+  const fromStock = (line: SupplyLine) => line.stage === "со склада" || line.stage.endsWith("без ГРН");
+  const stock = lines.filter(fromStock).length;
+  const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : fromStock(line) ? "info" : "warn";
   const zeroDash = (value: string) => Number(value) ? value : "—";
+  // «Готово · без ГРН»: партию к строке привязывает её закупщик — подсказка говорит, где.
+  const grnHint = (line: SupplyLine) => {
+    const row = line.rows.find((item) => item.status.endsWith("без ГРН"));
+    return row ? `ГРН привязывает закупщик: Закупка → Мои позиции → ${row.source_id} → «Привязать ГРН»` : undefined;
+  };
 
   function toggle(art: string, on: boolean) {
     setPicked((current) => {
@@ -648,27 +809,29 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
       render: (line: SupplyLine) => isShort(line)
         ? <label className="sel-hit"><input type="checkbox" aria-label={`Заказать ${line.art}`} checked={picked.has(line.art)} onChange={(event) => toggle(line.art, event.target.checked)} /></label>
         : null }] : []),
-    { key: "art", title: "Артикул КД", width: 210, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
-    { key: "name", title: "Наименование", width: 300, value: (line) => line.name, wrap: true },
-    { key: "need", title: "Нужно", width: 84, value: (line) => line.need, numeric: true },
+    { key: "art", title: "Артикул КД", width: 170, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
+    { key: "name", title: "Наименование", width: 170, value: (line) => line.name, wrap: true },
+    { key: "need", title: "Нужно", width: 72, value: (line) => line.need, numeric: true },
     { key: "free", title: "Свободно", width: 90, value: (line) => zeroDash(line.free), numeric: true, hint: "Свободно на складе, с резервами самого проекта" },
-    { key: "ordered", title: "В закупке", width: 92, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
-    { key: "kitted", title: "В комплектации", width: 120, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
+    { key: "off_book", title: "Без ГРН", width: 76, value: (line) => zeroDash(line.off_book || "0"), numeric: true, hint: "Закупка отметила «Есть на складе, без ГРН»: лежит на полке, но не заведено в партию и не в резерве" },
+    { key: "ordered", title: "В закупке", width: 84, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
+    { key: "kitted", title: "В комплектации", width: 132, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
     { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,
       render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
     { key: "unit", title: "Ед.", width: 48, value: (line) => line.unit },
-    { key: "kbs", title: "КБ", wrap: true, value: (line) => line.kbs.join(" · ") },
-    { key: "stage", title: "Стадия", width: 210, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`}>
+    { key: "kbs", title: "КБ", width: 72, wrap: true, value: (line) => line.kbs.join(" · ") },
+    { key: "stage", title: "Стадия", width: 170, wrap: true, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`} title={grnHint(line)}>
       {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
     </span> },
     { key: "rows", title: "Строк", width: 64, hidden: true, value: (line) => line.rows.length || "—", numeric: true },
   ];
 
   return <div className="kit-pane">
-    <div className="kit-supply-summary">
+    {/* Счётчики одной строкой (аудит 10.10, ПР-8): число — цветом своего тона, ноль — серым. */}
+    <dl className="kit-supply-summary" aria-label="Итог по снабжению">
       {([["Принято на склад", received, "ok"], ["В работе снабжения", lines.length - missing - received - stock, "warn"], ["Со склада, без закупки", stock, "info"], ["Не заведено", missing, "danger"], ["Не хватает", shortLines.length, "danger"]] as Array<[string, number, string]>).map(([label, value, toneName]) =>
-        <div key={label} className="panel kit-supply-count"><strong className={`tone-${toneName}`}>{value}</strong><span>{label}</span></div>)}
-    </div>
+        <div key={label} className="kit-supply-count"><dt>{label}</dt><dd className={value ? `tone-${toneName}` : "muted"}>{value}</dd></div>)}
+    </dl>
     {result && <div className={result.bad ? "error-banner" : "success-banner"} role={result.bad ? "alert" : "status"}>{result.text}</div>}
     <DataTable
       rows={lines}
@@ -680,7 +843,7 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
       toolbar={canOrder ? <>
         <label className="check-inline">Срок закупки <input type="date" aria-label="Срок закупки" value={until} onChange={(event) => setUntil(event.target.value)} /></label>
         <button type="button" className="primary small" disabled={ordering || !count || !until} onClick={() => void order()}
-          title={until ? undefined : "Укажи срок закупки"}>
+          title={until ? undefined : "Укажите срок закупки"}>
           {ordering ? "Оформляю заявки…" : `Заказать недостающее (${count})`}
         </button>
       </> : undefined}
@@ -691,7 +854,9 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
 type Draft = { per: string; scrap: string; name: string; link: string; lot: KitsetLot | null };
 type SpecRow = { assembly: KitsetAssembly; component: KitsetComponent };
 
-function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolean; setNote: (text: string) => void }) {
+function SpecTab({ card, canEdit, setNote, setWarning, reload }: {
+  card: KitsetCard; canEdit: boolean; setNote: (text: string) => void; setWarning: (text: string) => void; reload: () => Promise<void>;
+}) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [autosave, setAutosave] = useState("правки сохраняются сами");
   const [picking, setPicking] = useState<{ assembly: KitsetAssembly; component: KitsetComponent } | null>(null);
@@ -705,7 +870,7 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
   }
 
   /* Автосохранение ОДНОЙ строки (владелец 02.09.2026): правка одной ячейки не перезаписывает соседние двадцать. */
-  async function save(assembly: KitsetAssembly, component: KitsetComponent, patch: Partial<Draft> = {}) {
+  async function save(assembly: KitsetAssembly, component: KitsetComponent, patch: Partial<Draft> = {}): Promise<string> {
     const draft = { ...draftOf(assembly, component), ...patch };
     setAutosave("сохраняю…");
     try {
@@ -714,52 +879,76 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
         name: draft.name, link: draft.link, lot: draft.lot,
       }]);
       setAutosave(`сохранено ${new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`);
-    } catch (reason) { setAutosave(`не сохранено: ${message(reason, "ошибка")}`); }
+      if (patch.lot !== undefined) await reload();  // резерв под выбранный ГРН уже стоит: ячейка покажет его
+      return "";
+    } catch (reason) {
+      // 409: партию успели изменить с момента, когда список ГРН был загружен — выбор не принят.
+      const text = reason instanceof ApiError && reason.status === 409 ? STALE_LOT_TEXT : message(reason, "ошибка");
+      setAutosave(`не сохранено: ${text}`);
+      return text;
+    }
+  }
+
+  /** Выбор ГРН: пока сохранение не прошло, выбор в строке не остаётся; пустая строка — принято. */
+  async function pickLot(row: SpecRow, lot: KitsetLot | null): Promise<string> {
+    const before = draftOf(row.assembly, row.component).lot;
+    edit(row.assembly, row.component, { lot });
+    const failure = await save(row.assembly, row.component, { lot });
+    if (failure) edit(row.assembly, row.component, { lot: before });
+    return failure;
   }
 
   const specRows: SpecRow[] = card.assemblies.flatMap((assembly) => assembly.components.map((component) => ({ assembly, component })));
   const specColumns: DataColumn<SpecRow>[] = [
-    { key: "art", title: "Артикул КД", width: 240, wrap: true, value: ({ component }) => component.art },
-    { key: "type", title: "Тип", width: 130, filter: true, value: ({ component }) => component.type },
+    { key: "art", title: "Артикул КД", width: 170, wrap: true, value: ({ component }) => component.art },
+    { key: "type", title: "Тип", width: 90, filter: true, value: ({ component }) => component.type },
     { key: "name", title: "Наименование", value: ({ assembly, component }) => draftOf(assembly, component).name,
       render: ({ assembly, component }) => <input aria-label={`Наименование ${component.art}`} value={draftOf(assembly, component).name} disabled={!canEdit} onChange={(event) => edit(assembly, component, { name: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "link", title: "Ссылка", width: 340, value: ({ assembly, component }) => draftOf(assembly, component).link, render: ({ assembly, component }) => {
+    { key: "link", title: "Ссылка", width: 180, value: ({ assembly, component }) => draftOf(assembly, component).link, render: ({ assembly, component }) => {
       const link = draftOf(assembly, component).link;
       return <div className="kit-link">
         <input aria-label={`Ссылка ${component.art}`} value={link} placeholder="—" disabled={!canEdit} onChange={(event) => edit(assembly, component, { link: event.target.value })} onBlur={() => void save(assembly, component)} />
         {/^https?:\/\//i.test(link) && <a href={link} target="_blank" rel="noopener" title="Открыть">↗</a>}
       </div>;
     } },
-    { key: "per", title: "На 1 шт", width: 96, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).per,
+    { key: "per", title: "На 1 шт", width: 72, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).per,
       render: ({ assembly, component }) => <input aria-label={`На 1 шт ${component.art}`} value={draftOf(assembly, component).per} disabled={!canEdit} onChange={(event) => edit(assembly, component, { per: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "scrap", title: "% брака", width: 96, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).scrap,
+    { key: "scrap", title: "% брака", width: 72, numeric: true, value: ({ assembly, component }) => draftOf(assembly, component).scrap,
       render: ({ assembly, component }) => <input aria-label={`% брака ${component.art}`} value={draftOf(assembly, component).scrap} disabled={!canEdit} onChange={(event) => edit(assembly, component, { scrap: event.target.value })} onBlur={() => void save(assembly, component)} /> },
-    { key: "batch", title: "На партию", width: 104, numeric: true, value: ({ assembly, component }) => {
+    { key: "batch", title: "На партию", width: 84, numeric: true, value: ({ assembly, component }) => {
       const draft = draftOf(assembly, component);
       return kitBatch(draft.per, assembly.run, draft.scrap, component.unit);
     } },
-    { key: "unit", title: "Ед.", width: 56, value: ({ component }) => component.unit },
-    { key: "lot", title: "ГРН склада", width: 230, value: ({ assembly, component }) => {
-      const lot = draftOf(assembly, component).lot;
-      return lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "";
-    }, render: ({ assembly, component }) => {
-      const lot = draftOf(assembly, component).lot;
+    { key: "unit", title: "Ед.", width: 44, value: ({ component }) => component.unit },
+    { key: "lot", title: "ГРН склада", width: 300, value: ({ assembly, component }) => lotLabel(
+      draftOf(assembly, component).lot, component.reserve, kitBatch(draftOf(assembly, component).per, assembly.run, draftOf(assembly, component).scrap, component.unit),
+    ), render: ({ assembly, component }) => {
+      const draft = draftOf(assembly, component);
+      const text = lotLabel(draft.lot, component.reserve, kitBatch(draft.per, assembly.run, draft.scrap, component.unit));
       return <button className="secondary small" disabled={!canEdit} onClick={() => setPicking({ assembly, component })}>
-        {lot?.grn ? `${lot.grn}${lot.package ? ` / ${lot.package}` : ""}` : "выбрать со склада"}
+        {text || "выбрать со склада"}
       </button>;
     } },
   ];
 
   return <div className="kit-pane">
-    <p className="page-sub">«ГРН склада» резервируется при отправке на комплектацию; без ГРН позиция ждёт поставки. Правки сохраняются сами.</p>
+    <p className="page-sub">«ГРН склада» резервируется сразу при выборе; без ГРН позиция ждёт поставки. Правки сохраняются сами.{KIT_SCRAP_APPLIED ? "" : " Выдаём вровень: «% брака» пока не добавляется к «На партию», нехватку довыдают."}</p>
     {canEdit
       ? <div className="page-actions"><button className="primary" onClick={() => setIssuing(true)}>Отправить на комплектацию</button><span className="muted kit-autosave">{autosave}</span></div>
       : <p className="page-sub">Раздел открыт на просмотр — править и отправлять нельзя.</p>}
-    {issuing && <IssueDialog project={card.project} close={() => setIssuing(false)} done={(text) => { setIssuing(false); setNote(text); }} />}
+    {issuing && <IssueDialog project={card.project} close={() => setIssuing(false)} done={(text, reserveError) => {
+      setIssuing(false); setNote(text);
+      setWarning(reserveError ? `Резерв ГРН пересчитан не полностью: ${reserveError}` : "");
+      void reload();
+    }} />}
     {picking && <LotPicker project={card.project} component={picking.component} batch={kitBatch(draftOf(picking.assembly, picking.component).per, picking.assembly.run, draftOf(picking.assembly, picking.component).scrap, picking.component.unit)}
       current={draftOf(picking.assembly, picking.component).lot}
       close={() => setPicking(null)}
-      pick={(lot) => { edit(picking.assembly, picking.component, { lot }); void save(picking.assembly, picking.component, { lot }); setPicking(null); }} />}
+      pick={async (lot) => {
+        const failure = await pickLot(picking, lot);
+        if (!failure) setPicking(null);
+        return failure;
+      }} />}
     {card.assemblies.map((assembly) => <div key={assembly.index} className="kit-spec">
       <p><strong>{assembly.index}</strong> {assembly.name} <span className="muted">кол-во {assembly.run}</span></p>
       <DataTable
@@ -776,20 +965,26 @@ function SpecTab({ card, canEdit, setNote }: { card: KitsetCard; canEdit: boolea
 }
 
 function LotPicker({ project, component, batch, current, close, pick }: {
-  project: string; component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => void;
+  project: string; component: KitsetComponent; batch: number; current: KitsetLot | null; close: () => void; pick: (lot: KitsetLot | null) => Promise<string>;
 }) {
   const [query, setQuery] = useState(component.name || component.art);
-  const [lots, setLots] = useState<KitsetStockLot[] | null>(null);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      kitsetsApi.lots(query, project).then((result) => setLots(result.lots)).catch((reason) => setError(message(reason, "Склад не ответил")));
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [query, project]);
+  const [pickError, setError] = useState("");
+  const [stamp, setStamp] = useState(0);
+  const [busy, setBusy] = useState(false);
+  // Only the answer to the current query/project is shown; «Выбрать» waits while the list belongs to an older one.
+  const found = useLatestSearch(() => kitsetsApi.lots(query, project).then((result) => result.lots), [query, project, stamp], { fallback: "Склад не ответил" });
+  const lots = found.data;
+  const error = pickError || found.error;
+  /* Отказ сохранения (партия изменилась): окно остаётся, текст отказа сверху, список ГРН перечитывается. */
+  async function choose(lot: KitsetLot | null) {
+    if (busy) return;
+    setBusy(true); setError("");
+    const failure = await pick(lot);
+    if (failure) { setError(failure); setStamp((value) => value + 1); setBusy(false); }
+  }
   return <div className="panel kit-modal" role="dialog" aria-label="Выбор ГРН">
     <h3>ГРН для «{component.name || component.art}»</h3>
-    <p className="page-sub">Нужно на партию: {batch}. Выбранный ГРН зарезервируется при отправке на комплектацию.</p>
+    <p className="page-sub">Нужно на партию: {batch}. Выбранный ГРН резервируется сразу при выборе.</p>
     <input aria-label="Поиск по складу" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="наименование, артикул, ГРН" />
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="table-wrap"><table>
@@ -797,39 +992,63 @@ function LotPicker({ project, component, batch, current, close, pick }: {
       <tbody>{(lots || []).map((lot) => <tr key={lot.lot_id} className={current?.grn === lot.grn && (current?.package || "") === lot.package ? "selected" : ""}>
         <td>{lot.warehouse}</td><td>{lot.grn}</td><td>{lot.package}</td><td>{lot.name}</td><td>{lot.storage_location}</td>
         <td className="num">{lot.available} {lot.unit}{lot.reserved && <div className="muted">из них резерв проекта {lot.reserved} {lot.unit}</div>}</td>
-        <td><button className="secondary small" onClick={() => pick({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package })}>Выбрать</button></td>
+        <td><button className="secondary small" disabled={busy || found.loading} onClick={() => void choose({ lot_id: lot.lot_id, warehouse: lot.warehouse, grn: lot.grn, package: lot.package, version: lot.version })}>Выбрать</button></td>
       </tr>)}</tbody>
     </table></div>
-    {lots && !lots.length && <div className="empty">Ничего не нашлось — сотри слова и ищи по своим.</div>}
+    {found.loading && <div className="empty" role="status">Ищу…</div>}
+    {lots && !found.loading && !lots.length && <div className="empty">Ничего не нашлось — сократите запрос или ищите по артикулу.</div>}
     <div className="page-actions">
-      {current && <button className="secondary" onClick={() => pick(null)}>Снять привязку</button>}
+      {current && <button className="secondary" disabled={busy} onClick={() => void choose(null)}>Снять привязку</button>}
       <button className="secondary" onClick={close}>Закрыть</button>
     </div>
   </div>;
 }
 
-function IssueDialog({ project, close, done }: { project: string; close: () => void; done: (text: string) => void }) {
+/* «Отправить на комплектацию» уходит по одной заявке на КБ; КБ с живой заявкой (не «Отменена») второй раз не уходит
+   (прод 180К.11, 10.10.2026: двойное нажатие задвоило КБ1 и её резерв) — окно показывает их с номером заявки. */
+function IssueDialog({ project, close, done }: { project: string; close: () => void; done: (text: string, reserveError: string) => void }) {
   const [deadline, setDeadline] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [kbs, setKbs] = useState<KitsetIssueAssembly[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    kitsetsApi.issueState(project)
+      .then((result) => { if (live && Array.isArray(result.assemblies)) setKbs(result.assemblies); })
+      .catch(() => undefined);  // без списка окно работает как раньше: повтор КБ отклонит сервер
+    return () => { live = false; };
+  }, [project]);
+  const sent = (kbs ?? []).filter((item) => item.request);
+  const toSend = (kbs ?? []).filter((item) => !item.request && item.has_items);
+  const nothingLeft = sent.length > 0 && !toSend.length;
   async function submit() {
     if (busy) return;
-    if (!deadline) { setError("Укажи дедлайн."); return; }
+    if (!deadline) { setError("Укажите дедлайн."); return; }
     setBusy(true); setError("");
     try {
       const result = await kitsetsApi.issue(project, deadline);
       const numbers = result.created.map((item) => item.no + (item.shortfall.length ? " (недобор)" : "")).join(", ");
-      done(`${result.message} ${numbers}`.trim());
+      done(`${result.message} ${numbers}`.trim(), result.reserve_error || "");
     } catch (reason) { setError(message(reason, "Заявки не созданы")); }
     finally { setBusy(false); }
   }
   return <div className="panel kit-modal" role="dialog" aria-label="Отправить на комплектацию">
     <h3>Отправить на комплектацию</h3>
     <p className="page-sub">По заявке на каждую КБ проекта {project}. Позиции с ГРН встают в резерв, остальные ждут поставки.</p>
-    <label>Дедлайн<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+    {kbs && kbs.length > 0 && <ul className="issue-kbs" aria-label="КБ проекта">
+      {kbs.map((item) => <li key={item.index} className={item.request || !item.has_items ? "muted" : undefined} aria-disabled={Boolean(item.request) || !item.has_items}>
+        <strong>{item.index}</strong> <span>{item.name}</span>
+        <span className={item.request ? "issue-kb-state" : item.has_items ? "issue-kb-state tone-ok" : "issue-kb-state"}>
+          {item.request ? `уже отправлена: ${item.request.no} · ${item.request.status}` : item.has_items ? "уйдёт" : "нет состава"}
+        </span>
+      </li>)}
+    </ul>}
+    {nothingLeft
+      ? <div className="warning-inline">Все КБ уже отправлены: {sent.map((item) => `${item.index} (${item.request!.no})`).join(", ")}. Чтобы отправить КБ заново, отмените её заявку в «Комплектации».</div>
+      : <label>Дедлайн<input type="date" value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="page-actions">
-      <button className="primary" disabled={busy} onClick={() => void submit()}>Отправить</button>
+      <button className="primary" disabled={busy || nothingLeft} onClick={() => void submit()}>{toSend.length && sent.length ? `Отправить ${toSend.map((item) => item.index).join(", ")}` : "Отправить"}</button>
       <button className="secondary" onClick={close}>Отмена</button>
     </div>
   </div>;

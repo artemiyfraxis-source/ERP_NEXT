@@ -35,6 +35,7 @@ from app.modules.identity.level_migration import (
     OLD_FULL_ACCESS_ROLES,
     OLD_ROLE_LABELS,
     OLD_SECTIONS,
+    TRANSFER_SECTIONS,
     ROLE_TO_LEVEL,
     Person,
     Snapshot,
@@ -151,7 +152,7 @@ def test_level_row_is_the_intersection_and_exceptions_restore_each_person_exactl
     for person in PEOPLE:
         level = result.people[person.id].access_level
         assert person_permissions_after(result, person.id) == (
-            {section: "edit" for section in LEVEL_SECTION_LABELS} if level in ("superadmin", "admin")
+            {section: "edit" for section in TRANSFER_SECTIONS} if level in ("superadmin", "admin")
             else result.usable[person.id]
         ), person.login
     # Masters, the storekeeper and the controller share only filing and the reference book.
@@ -166,7 +167,7 @@ def test_level_row_is_the_intersection_and_exceptions_restore_each_person_exactl
     # The former full-access roles keep everything through exceptions (the plan's risk: shown by the report).
     assert result.exceptions[by_login["buyer"]]["procurement"] == "edit"
     assert result.exceptions[by_login["prodhead"]]["shipping"] == "edit"
-    everything = {section: "edit" for section in LEVEL_SECTION_LABELS}
+    everything = {section: "edit" for section in TRANSFER_SECTIONS}
     assert result.levels["superadmin"] == result.levels["admin"] == everything
     assert result.exceptions[by_login["tech"]] == result.exceptions[by_login["gd"]] == {}
 
@@ -283,7 +284,8 @@ def test_frozen_old_model_matches_the_legacy_data():
     assert set(notifications.LEGACY_ROLE_AUDIENCES.values()) == notifications.AUDIENCES
     assert set(owner_alerts.OWNER_AUDIENCES) | set(owner_alerts.DISPOSAL_AUDIENCES) <= notifications.AUDIENCES
     new_sections = {"myops", "quality", "shipping_goods"}
-    assert set(LEVEL_SECTION_LABELS) == (set(domain.SECTION_LABELS) - {"staffdir"}) | new_sections
+    assert set(TRANSFER_SECTIONS) == (set(domain.SECTION_LABELS) - {"staffdir"}) | new_sections
+    assert set(LEVEL_SECTION_LABELS) == set(TRANSFER_SECTIONS) | {"hr"}
 
 
 # ── Migration 0086 on SQLite ───────────────────────────────────────────────────────────────────────
@@ -495,4 +497,4 @@ def test_usable_follows_the_role_lists():
         "newrequest": "edit", "myrequests": "edit", "requests": "edit", "receiving": "view", "warehouse": "view",
         "myops": "edit", "erpref": "view",
     }
-    assert usable("buyer", {}) == {section: "edit" for section in LEVEL_SECTION_LABELS}
+    assert usable("buyer", {}) == {section: "edit" for section in TRANSFER_SECTIONS}

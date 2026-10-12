@@ -1,4 +1,4 @@
-"""Tables of the purchasing hybrid (migration 0089_purchasing_hybrid) and its unit of work.
+"""Tables of the purchasing hybrid (migration 0104_purchasing_hybrid) and its unit of work.
 
 Repositories live next to the feature that needs them (settings.py, suppliers.py, items.py, rfq.py); they take the
 unit of work's session. Cross-module reads (procurement lines) go through app/workflows/purchasing_*.py."""
@@ -131,7 +131,7 @@ class LineItemRow(Base):
 
 
 class LotItemRow(Base):
-    """Explicit lot → item link (migration 0090): lots without the receiving chain, or a choice that overrides it."""
+    """Explicit lot → item link (migration 0105): lots without the receiving chain, or a choice that overrides it."""
 
     __tablename__ = "purchasing_lot_items"
     __table_args__ = (
@@ -147,7 +147,7 @@ class LotItemRow(Base):
 
 
 class InternalProjectRow(_Who, Base):
-    """«Внутренний проект» (migration 0091): a project of the company itself, numbered «ВП-001»; requests and lines
+    """«Внутренний проект» (migration 0106): a project of the company itself, numbered «ВП-001»; requests and lines
     refer to it through `project_reference` like to a commercial «591К.3»; its purpose decides the GRN prefix."""
 
     __tablename__ = "purchasing_internal_projects"

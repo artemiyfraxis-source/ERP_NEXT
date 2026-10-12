@@ -112,6 +112,21 @@ def test_engineer_imports_grapher_snapshot_without_mutating_card(operation_libra
     assert response.json()["harnesses"][0]["groups"][0]["material"] == "ПВАМ 0,35"
 
 
+def test_grapher_import_checks_the_drawing_against_sheet_rows(operation_library_api):
+    from . import grapher_fixture as fx
+
+    encoded = base64.b64encode(json.dumps(fx.snapshot(), ensure_ascii=False).encode()).decode()
+    response = operation_library_api.post("/api/techcards/grapher/import", json={
+        "filename": "snapshot.json", "content_base64": encoded, "components": [], "sheet": fx.SHEET,
+    })
+    assert response.status_code == 200, response.text
+    harness = response.json()["harnesses"][0]
+    assert "Терминал SHF-001T-0.8BS: в чертеже 6 шт, в листе 4" in harness["sheet_warnings"]
+    by_sheet = {item["sheet_id"]: item for item in harness["sheet_match"] if item["sheet_id"]}
+    assert by_sheet["s-x2"]["matched_by"] == "kd" and by_sheet["s-tut"]["quantity"] == 0.08
+    assert harness["wires"][0]["cut_mm"] == 312
+
+
 def test_library_import_replaces_previous_snapshot(operation_library_api):
     operation_library_api.put(
         "/api/techcards/templates/supplymap-library",

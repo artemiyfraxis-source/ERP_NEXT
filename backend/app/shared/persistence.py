@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text, Uuid, select
+from sqlalchemy import JSON, DateTime, Integer, String, Text, Uuid, event, inspect, select
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, SessionTransaction, mapped_column
+from sqlalchemy.orm.exc import StaleDataError
 
 from .events import AuditEvent, OutboxMessage
 
@@ -43,6 +44,64 @@ class OutboxMessageRow(Base):
     next_attempt_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     dead_lettered_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
+
+
+class StockVersionConflict(StaleDataError):
+    """A stock row (procurement line, «Со склада» cover, warehouse lot) changed after this transaction read it.
+
+    The compare-and-swap of `add()` lost: nothing of the command may be written, the caller rolls back and the API
+    answers 409 (after its single retry). It subclasses StaleDataError only so the existing 409 / retry / outbox
+    handlers keep catching it; callers name this type, never the SQLAlchemy one."""
+
+
+_READ_VERSIONS = "erp_read_versions"
+
+
+def track_read_versions(row_class: type) -> None:
+    """Remember, per database transaction, the version each `row_class` row had when the session first read it.
+
+    `get()` hands out a domain snapshot and lets the ORM row go; `add()` fetches the row again. Without this record a
+    commit by someone else in between would be the version `add()` checks against, and the stale snapshot would
+    overwrite it (audit F01). The record outlives the row in the identity map and is dropped when the transaction
+    ends."""
+
+    def remember(row: Any, session: Session | None) -> None:
+        version = inspect(row).dict.get("version")
+        if session is not None and version is not None:
+            session.info.setdefault(_READ_VERSIONS, {}).setdefault((type(row), row.id), version)
+
+    @event.listens_for(row_class, "load")
+    def _loaded(row, context):
+        remember(row, context.session)
+
+    @event.listens_for(row_class, "refresh")
+    def _refreshed(row, context, attrs):
+        if attrs is None or "version" in attrs:
+            remember(row, context.session)
+
+
+def check_read_version(session: Session, stored: Any, incoming_version: int) -> None:
+    """Compare-and-swap before `add()` copies a snapshot onto its stored row: the row must still have the version this
+    transaction read it at, and the snapshot may not carry an older version than the row (a stale snapshot written
+    after a newer one). A concurrent commit that lands after this check is refused by the ORM's version-guarded
+    UPDATE at flush."""
+    read = session.info.get(_READ_VERSIONS, {}).get((type(stored), stored.id))
+    if (read is not None and stored.version != read) or incoming_version < stored.version:
+        raise StockVersionConflict(
+            f"{stored.__tablename__} {stored.id}: прочитана версия {read}, сейчас {stored.version}, "
+            f"записывается {incoming_version}"
+        )
+
+
+def note_written_version(session: Session, stored: Any) -> None:
+    """After `add()`: the transaction's own write is the version its later reads and writes compare against."""
+    session.info.setdefault(_READ_VERSIONS, {})[(type(stored), stored.id)] = stored.version
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _forget_read_versions(session: Session, transaction: SessionTransaction) -> None:
+    if transaction.parent is None:
+        session.info.pop(_READ_VERSIONS, None)
 
 
 class SqlAlchemyAuditRepository:
@@ -158,5 +217,6 @@ def create_schema(engine: Engine) -> None:
     from app.modules.references import infrastructure as _references  # noqa: F401
     from app.modules.operations import infrastructure as _operations  # noqa: F401
     from app.modules.techcards import assembly_drafts_infrastructure as _assembly_drafts  # noqa: F401
+    from app.modules.techcards import generator_drafts_infrastructure as _generator_drafts  # noqa: F401
 
     Base.metadata.create_all(engine)

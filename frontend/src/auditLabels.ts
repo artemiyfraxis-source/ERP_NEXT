@@ -117,6 +117,7 @@ const EVENT_NAMES: Record<string, string> = {
   "production.instrument_registered": "Средство измерения добавлено",
   "production.calendar_replaced": "Календарь цеха сохранён",
   "production.skills_replaced": "Компетенции сохранены",
+  "production.stage_changed": "Смена этапа проекта",
   "production.plan_event_added": "Запись в журнале проекта",
   "production.plan_events_deleted": "Журнал проекта удалён",
   "production.plan_projects_replaced": "Проекты плана обновлены",
@@ -148,11 +149,14 @@ const EVENT_NAMES: Record<string, string> = {
   "techcards.project_created": "Открыт генератор ТК",
   "techcards.project_auto_built": "ТК собрана генератором",
   "techcards.project_rebuilt": "ТК пересобрана",
+  "techcards.scheme_corrected": "Схема ТК исправлена",
   "techcards.project_imported": "ТК перенесена",
   "techcards.project_issued": "ЭТК выдана",
   "techcards.project_draft_discarded": "Черновик ТК удалён",
   "techcards.operation_edited": "Операция ТК исправлена",
   "techcards.operation_record_edited": "Строка БД.ОП исправлена",
+  "techcards.harness_component_created": "Шаблон компонента создан",
+  "techcards.harness_component_published": "Опубликована версия шаблона",
   "techcards.operation_library_replaced": "Библиотека операций обновлена",
   "techcards.template_sheet_saved": "Шаблон-лист сохранён",
   "techcards.template_sheet_deleted": "Шаблон-лист удалён",
@@ -161,6 +165,10 @@ const EVENT_NAMES: Record<string, string> = {
   "techcards.kitset_deleted": "Проект удалён",
   "techcards.kitset_document_added": "КД приложена",
   "techcards.kitset_document_removed": "КД убрана",
+  "techcards.kitset_harness_saved": "Чертёж жгута сохранён",
+  "techcards.kitset_harness_imported": "Чертёж жгута загружен из TECHMAP-GRAPHER",
+  "techcards.kitset_harness_unlinked": "Чертёж жгута отвязан",
+  "techcards.kitset_harness_restored": "Чертёж жгута возвращён",
 
   "references.tech_snapshot_replaced": "Снимок базы данных обновлён",
   "references.tech_record_created": "Запись базы данных добавлена",
@@ -185,9 +193,16 @@ const EVENT_NAMES: Record<string, string> = {
   "identity.level_access_saved": "Доступы уровней сохранены",
   "identity.access_levels_migrated": "Роли переведены в уровни доступа",
   "identity.dormant_access_archived": "Исключения прежней роли с полным доступом убраны в архив",
+  "identity.level_view_defaults_seeded": "Уровням открыт просмотр склада, закупки и приёмки",
   "identity.user_access_saved": "Исключения доступа сохранены",
   "identity.admin_mode_on": "Режим администратора включён",
   "identity.admin_mode_off": "Режим администратора выключен",
+  "identity.login_lock_released": "Блокировка входа снята",
+  // Темы очереди фоновых заданий (их показывают «Ошибки фоновых заданий» и «Фоновые процессы»).
+  "procurement.autofill_requested": "Автозаполнение строки закупки",
+  "notification.requested": "Уведомление",
+  "arbiter.trigger": "Задача модулю по проекту",
+  "operations.outbox_retried": "Фоновое задание запущено повторно",
 };
 
 const DETAIL_LABELS: Record<string, string> = {
@@ -208,6 +223,7 @@ const DETAIL_LABELS: Record<string, string> = {
   level: "уровень", access_level: "уровень доступа", shop_worker: "монтажник", site_master: "мастер площадки",
   login: "логин", role: "прежняя роль", changes: "изменения", exceptions: "исключения", levels: "уровни", people: "люди",
   note: "примечание",
+  source: "сайт", tls: "сертификат", topic: "задание", attempts: "попыток", error: "ошибка", released: "снято",
 };
 
 /* Уровни доступа по ключу: `level` и `access_level` в деталях событий хранят ключ, а не подпись. */
@@ -264,7 +280,8 @@ export function auditDetails(details: Record<string, unknown>): string {
     .filter(([key]) => !HIDDEN_KEY.test(key) && !UUID.test(key))
     .map(([key, value]) => [
       DETAIL_LABELS[key] ?? key.replace(/_/g, " "),
-      LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value) : shown(value),
+      LEVEL_KEYS.has(key) && typeof value === "string" ? LEVEL_NAMES[value] ?? shown(value)
+        : key === "topic" && typeof value === "string" ? auditEventName(value) : shown(value),
     ] as const)
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`);

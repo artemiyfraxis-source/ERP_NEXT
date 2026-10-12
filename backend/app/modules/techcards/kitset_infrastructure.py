@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, select, update
+from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, select, text, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
@@ -51,6 +51,15 @@ class KitDocumentRow(Base):
     url: Mapped[str] = mapped_column(String(1024), nullable=False)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     uploaded_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+# At most one LINKED harness drawing per position (migration 0089): two «Вернуть» or two first saves at once — the
+# second one hits this index instead of leaving the position with two drawings.
+_LINKED_HARNESS = text("content_type = 'application/vnd.fraxis.harness+json'")
+Index(
+    "ux_techcard_kitset_documents_linked_harness", KitDocumentRow.project, func.upper(KitDocumentRow.item_index),
+    unique=True, sqlite_where=_LINKED_HARNESS, postgresql_where=_LINKED_HARNESS,
+)
 
 
 def _component_json(component: KitComponent) -> dict[str, Any]:
@@ -178,6 +187,40 @@ class SqlAlchemyKitsetRepository:
             update(KitDocumentRow)
             .where(KitDocumentRow.id == document_id, KitDocumentRow.content.is_(None))
             .values(content=content, content_type=content_type, size=len(content))
+        )
+        return result.rowcount or 0
+
+    def replace_content(
+        self, project: str, document_id: UUID, *, file_name: str, content_type: str, content: bytes,
+        uploaded_at: datetime, uploaded_by: str, expected_uploaded_at: datetime,
+    ) -> int:
+        """A document edited inside ERP (the harness drawing) saved over itself — one register row per document, not
+        a row per save. 0 when the row is gone or someone saved it after `expected_uploaded_at` (read from this row
+        in the same transaction): the caller reports a conflict instead of overwriting their save."""
+        result = self.session.execute(
+            update(KitDocumentRow)
+            .where(
+                KitDocumentRow.id == document_id, KitDocumentRow.project == project,
+                KitDocumentRow.uploaded_at == expected_uploaded_at,
+            )
+            .values(
+                file_name=file_name, content_type=content_type, content=content, size=len(content),
+                uploaded_at=uploaded_at, uploaded_by=uploaded_by,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        return result.rowcount or 0
+
+    def relabel_document(self, project: str, document_id: UUID, *, from_type: str, to_type: str) -> int:
+        """Change the content type of a register row that still has `from_type` (the harness drawing unlinked from its
+        position and linked back — the row and its bytes stay). 0 when the row is gone or already relabelled."""
+        result = self.session.execute(
+            update(KitDocumentRow)
+            .where(
+                KitDocumentRow.id == document_id, KitDocumentRow.project == project,
+                KitDocumentRow.content_type == from_type,
+            )
+            .values(content_type=to_type)
         )
         return result.rowcount or 0
 

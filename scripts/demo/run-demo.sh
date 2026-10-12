@@ -16,9 +16,10 @@ export ERP_DATABASE_URL="sqlite+pysqlite:///demo.db" ERP_COOKIE_SECURE=0 DEMO_BA
 "$PY" -m alembic upgrade head
 printf 'Preview-2026!\nPreview-2026!\n' | "$PY" -m app.identity_admin create-user --login preview \
   --email preview@example.com --name 'Артемий' --department 'Руководство' --role admin
-"$PY" -m app.modules.references.load_mirror --source "${SUPPLYMAP_SOURCE_REPOSITORY:-$ROOT/../SUPPLYMAP}"
+"$PY" -m app.modules.references.load_mirror  # справочники из снимка backend/data/reference-mirror
 "$PY" -m app.modules.techcards.seed_library
 "$PY" -m app.modules.references.erp_corrections
+"$PY" -m app.modules.references.load_cables  # монтажные провода по таблице сечений + карточки коаксиалов
 nohup "$PY" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" > "$BACKEND/demo-api.log" 2>&1 &
 echo $! > "$BACKEND/demo-api.pid"
 for _ in $(seq 60); do curl -fs "http://127.0.0.1:$PORT/api/health" >/dev/null && break; sleep 1; done

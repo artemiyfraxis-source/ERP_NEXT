@@ -5,11 +5,13 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, select
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, Uuid, delete, or_, select
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
+from app.shared.project_number import normalize_project_number
 
+from .harness_infrastructure import SqlAlchemyHarnessComponentRepository, SqlAlchemyHarnessRevisionRepository
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
@@ -37,8 +39,16 @@ class ProjectTechcardRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     issued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # № проекта для сравнения (`normalize_project_number` ≡ `kitsets.project_key`): карты проекта — по индексу.
+    # Ставится при записи `project`; NULL — строка мимо ORM (читается и сверяется в Python).
+    project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+    @validates("project")
+    def _keep_project_key(self, _name: str, value: str) -> str:
+        self.project_key = normalize_project_number(value)
+        return value
 
 
 class TechcardRevisionRow(Base):
@@ -190,6 +200,23 @@ class SqlAlchemyTechcardRepository:
             )
         )
         return [self._domain(row) for row in rows]
+
+    def for_project(self, project: str) -> list[ProjectTechcard]:
+        """Карты одного проекта точно по ключу (по индексу `project_key`), в порядке `list()`."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        rows = self.session.scalars(
+            select(ProjectTechcardRow)
+            .where(or_(ProjectTechcardRow.project_key == key, ProjectTechcardRow.project_key.is_(None)))
+            .order_by(
+                ProjectTechcardRow.deadline.is_(None),
+                ProjectTechcardRow.deadline,
+                ProjectTechcardRow.project,
+                ProjectTechcardRow.item_index,
+            )
+        )
+        return [self._domain(row) for row in rows if normalize_project_number(row.project) == key]
 
     def save(self, card: ProjectTechcard) -> None:
         row = self.session.get(ProjectTechcardRow, card.id)
@@ -517,6 +544,8 @@ class SqlAlchemyTechcardsUnitOfWork:
         self.techcards = SqlAlchemyTechcardRepository(self.session)
         self.operation_cards = SqlAlchemyOperationCardRepository(self.session)
         self.kitsets = SqlAlchemyKitsetRepository(self.session)
+        self.harness_revisions = SqlAlchemyHarnessRevisionRepository(self.session)
+        self.harness_components = SqlAlchemyHarnessComponentRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
 

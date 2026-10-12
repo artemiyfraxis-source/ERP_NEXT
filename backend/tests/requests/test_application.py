@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -165,6 +166,75 @@ def test_handoff_is_idempotent_and_writes_procurement_audit_and_outbox_atomicall
         "buyer_id": str(buyer.id), "buyer_name": "Петров", "buyer_department": "Закупки",
     }
     assert uow.commits == 2, "create and first handoff each commit exactly once; retry is read-only"
+
+
+def test_create_to_procurement_hands_off_in_the_same_transaction_without_a_buyer():
+    uow = FakeUnitOfWork()
+    command = CreateRequestsCommand(
+        creation_key="kitset-missing:708К.4:abc",
+        drafts=(draft(), draft("Кабель")),
+        actor=Actor(name="Технолог", department="Производство"),
+        now=datetime(2026, 9, 15, 10, 30),
+        designation_base="708К.4",
+        source="kitset-missing",
+        to_procurement=True,
+    )
+
+    first = create_requests(command, uow)
+    retry = create_requests(command, uow)
+
+    assert uow.commits == 1, "requests, audit and outbox go in one commit; the retry is read-only"
+    assert [item.id for item in retry] == [item.id for item in first]
+    for request in first:
+        stored = uow.requests.get(request.id)
+        assert (stored.status, stored.version, stored.procurement_actor) == (RequestStatus.IN_WORK, 2, None)
+    assert [request.status for request in first] == [RequestStatus.IN_WORK] * 2
+    assert sorted(event.event_type for event in uow.audit.items) == [
+        "request.created", "request.created", "request.sent_to_procurement", "request.sent_to_procurement",
+    ]
+    assert [message.topic for message in uow.outbox.items] == ["procurement.requested"] * 2
+    assert {message.idempotency_key for message in uow.outbox.items} == {
+        f"request:{request.id}:procurement:v2" for request in first
+    }
+    for message in uow.outbox.items:
+        # The one who filed it is not the buyer: the line lands «Новый» in «Неразобранные».
+        assert (message.payload["buyer_id"], message.payload["buyer_name"], message.payload["buyer_department"]) == (
+            None, None, None,
+        )
+        assert message.payload["initiator"] == "Технолог"
+        assert message.payload["designation"] == "708К.4.001"
+
+
+def test_create_without_to_procurement_stays_new_and_writes_no_outbox():
+    uow = FakeUnitOfWork()
+
+    (request,) = create_requests(
+        CreateRequestsCommand(
+            creation_key="import:one", drafts=(draft(),), actor=Actor(name="Иванов", department="РНД"),
+            now=datetime(2026, 9, 15, 10, 30), designation_base="708К.4", source="import",
+        ),
+        uow,
+    )
+
+    assert (request.status, request.version) == (RequestStatus.NEW, 1)
+    assert [event.event_type for event in uow.audit.items] == ["request.created"]
+    assert uow.outbox.items == []
+
+
+def test_to_procurement_retry_of_a_batch_filed_before_the_switch_matches_its_key():
+    """The flag is not part of the fingerprint: a batch filed «Новый» earlier is returned, not refused."""
+    uow = FakeUnitOfWork()
+    base = CreateRequestsCommand(
+        creation_key="kitset-requests:708К.4", drafts=(draft(),), actor=Actor(name="Иванов", department="РНД"),
+        now=datetime(2026, 9, 15, 10, 30), designation_base="708К.4", source="import",
+    )
+    (earlier,) = create_requests(base, uow)
+
+    (again,) = create_requests(replace(base, to_procurement=True), uow)
+
+    assert again.id == earlier.id
+    assert again.status is RequestStatus.NEW
+    assert uow.outbox.items == []
 
 
 def test_handoff_event_without_a_known_buyer_carries_nobody():

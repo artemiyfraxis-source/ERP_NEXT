@@ -24,6 +24,7 @@
   /* Тоны статусов (те же, что у .tone-ok/.tone-warn/.tone-danger) и мягкие фоны; формы генератора. */
   --tone-ok: #15803d;
   --tone-warn: #a16207;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
   --tone-danger: #b91c1c;
   --warn-soft: #fff7e6;
   --warn-border: #f0b44c;
@@ -175,6 +176,34 @@
   --fg-blue-7: #3a4250;
   --fg-purple-1: #5b3aa6;
   --fg-amber-1: #7a5800;
+  /* Токены, на которые уже ссылались правила, но которых не было (аудит 10.10, Общ-9). */
+  --danger: var(--tone-danger);
+  --muted: var(--panel-soft);
+  --chip-ok-bg: var(--chip-success-bg);
+  --tone-info: #1d4ed8;
+  --tone-neutral: #5f6b6d;
+  /* Чип статуса (StatusChip): приглушённый фон тона и тёмный текст того же тона, контраст ≥ 4,5:1. */
+  --chip-success-bg: #e6f4ea;
+  --chip-success-fg: #1e6b3c;
+  --chip-info-bg: #e5eefb;
+  --chip-info-fg: #1d4f91;
+  --chip-warning-bg: #fdf3d8;
+  --chip-warning-fg: #7f5300;
+  --chip-danger-bg: #fdecea;
+  --chip-danger-fg: #a8231a;
+  --chip-neutral-bg: #eef1f2;
+  --chip-neutral-fg: #4b5563;
+  /* Элементы управления одной высоты: поля, списки и кнопки — 32 px, под палец — 40 px. */
+  --control-h: 32px;
+  --control-h-cell: 28px;
+  --control-radius: 8px;
+  --focus-ring: 2px solid var(--primary);
+  --danger-soft: #fdecea;
+  --disabled-bg: #e4e8e9;
+  --disabled-fg: #5f6b6d;
+  /* Таблица: шапка 12 px обычным регистром; текст колонки с переносом переносится с этой ширины. */
+  --table-head-size: 12px;
+  --dt-wrap-max: clamp(240px, 26vw, 520px);
 }
 
 /* Тёмная тема: включается опцией ui.dark_theme (ThemeSwitch ставит data-theme на <html>). */
@@ -357,13 +386,29 @@
   --zg-flag-off: #6a7d79; --zg-track: #2a3735; --zg-late: #f08080; --zg-late-bg: #3a1e1e;
   --zg-soon-bg: #33290f; --zg-soon: #e0b04a; --zg-ok-bg: #12301f; --zg-ok: #6fcf97; --zg-arrival: #7fb2f0;
   --zg-shadow: rgba(0, 0, 0, .5);
+  /* main 12.10: status chips, info/neutral tones, disabled controls — dark values. */
+  --tone-info: #7aa7ff; --tone-neutral: #94a3a0;
+  --chip-success-bg: #163a26; --chip-success-fg: #86d9a6;
+  --chip-info-bg: #172a45; --chip-info-fg: #9ab9ff;
+  --chip-warning-bg: #3a2e10; --chip-warning-fg: #f0c46a;
+  --chip-danger-bg: #3d1a18; --chip-danger-fg: #f4a59d;
+  --chip-neutral-bg: #232d2c; --chip-neutral-fg: #c2ccca;
+  --danger-soft: #3d1a18; --disabled-bg: #26302f; --disabled-fg: #8a9896;
 }
+@media (pointer: coarse) { :root { --control-h: 40px; --control-h-cell: 40px; } }
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--background); }
 button, input, select, textarea { font: inherit; font-size: 14px; }
 button { cursor: pointer; }
-button:disabled { cursor: wait; opacity: .55; }
+/* Неактивная кнопка — «нельзя», а не «грузится» (Общ-4); «ждёт» — только у занятой (aria-busy). */
+button:disabled { cursor: not-allowed; opacity: .55; }
+button[aria-busy="true"] { cursor: progress; }
+/* Видимый фокус с клавиатуры на всём, что нажимается (Общ-7); поля показывают фокус рамкой (ниже). */
+:where(button, a, summary, [role="button"], [tabindex]:not([tabindex="-1"]), input[type="checkbox"], input[type="radio"]):focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
 
 .app-shell { height: 100dvh; display: flex; overflow: hidden; }
 .sidebar { width: 240px; flex: none; height: 100%; padding: 18px 12px; color: var(--foreground); background: var(--card); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
@@ -372,11 +417,11 @@ button:disabled { cursor: wait; opacity: .55; }
 .notif-bell { margin-left: auto; position: relative; background: none; border: 0; padding: 4px 6px; font-size: 18px; line-height: 1; cursor: pointer; }
 .notif-badge { position: absolute; top: -4px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--bg-red-10); color: var(--on-accent); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; letter-spacing: 0; }
 .brand .mod, .logo-row .mod { color: var(--muted-foreground); font-size: 11px; letter-spacing: .09em; text-transform: uppercase; }
-.brand-mark { width: 38px; height: 38px; border-radius: 12px; display: inline-grid; place-items: center; background: #dbff57; color: #10281d; font-weight: 900; }
+.brand-mark { width: 38px; height: 38px; border-radius: 12px; display: inline-grid; place-items: center; background: #dbff57; color: var(--ink); font-weight: 900; }
 .brand-mark.large { width: 56px; height: 56px; font-size: 24px; }
 nav { display: block; }
 .nav-group { margin: 16px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
-.nav-group h4 { margin: 0 0 6px; padding: 0 9px; color: var(--muted-foreground); font-size: 10px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
+.nav-group h4 { margin: 0 0 6px; padding: 0 9px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
 .nav-item { width: 100%; display: flex; align-items: center; border: 0; border-radius: 6px; padding: 8px 9px; color: var(--foreground); background: transparent; text-align: left; font-size: 13px; }
 .nav-item:hover { background: var(--accent); }
 .nav-item.active { color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, transparent); box-shadow: inset 2px 0 var(--primary); font-weight: 500; }
@@ -411,9 +456,10 @@ h3 { font-size: 15px; font-weight: 600; }
 .panel + .panel, .table-wrap + .panel, .panel + .table-wrap, .panel + .data-table { margin-top: 16px; }
 .split-layout > .panel { margin-top: 0; }
 .page-header p { margin: 0; color: var(--muted-foreground); font-size: 13px; }
-.eyebrow { display: block; margin-bottom: 6px; color: var(--muted-foreground); font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+.eyebrow { display: block; margin-bottom: 6px; color: var(--muted-foreground); font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
 .counter, .queue-summary span { border-radius: 999px; padding: 9px 13px; background: var(--bg-green-9); color: var(--fg-gray-11); font-size: 13px; }
-.queue-summary { display: flex; gap: 9px; margin: -12px 0 20px; }
+.queue-summary { display: flex; align-items: center; gap: 9px; margin: 0 0 14px; }
+.empty-stages { margin: 0 0 10px; color: var(--muted-foreground); font-size: 13px; }
 .queue-summary strong { color: var(--ink); }
 
 .panel { border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
@@ -435,7 +481,13 @@ label { display: grid; gap: 6px; color: var(--muted-foreground); font-size: 12.5
 /* A field inside a label keeps normal text, not the label's weight. */
 label input, label select, label textarea { color: var(--foreground); font-size: 14px; font-weight: 400; }
 label.wide { grid-column: 1 / -1; }
-input, select, textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; color: var(--foreground); background: var(--card); outline: none; }
+input, select, textarea { width: 100%; border: 1px solid var(--border); border-radius: var(--control-radius); padding: 5px 10px; color: var(--foreground); background: var(--card); outline: none; }
+/* Поле и список одной высоты с кнопкой (Общ-5): 32 px, под палец — 40 px. :where — без веса: плотные поля в
+   ячейках таблиц (24–30 px) задают свою высоту своими правилами. */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), select) { height: var(--control-h); }
+/* В строке таблицы поле ниже — 28 px, строка остаётся плотной. */
+:where(td) :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]), select) { height: var(--control-h-cell); }
+input:disabled, select:disabled, textarea:disabled { color: var(--disabled-fg); background: var(--accent); cursor: not-allowed; }
 input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
 .suggest-list { position: fixed; z-index: 1000; max-height: 256px; overflow: auto; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 8px 24px rgba(0, 26, 24, .12); }
 .suggest-list li { padding: 7px 10px; border-radius: 6px; color: var(--foreground); font-size: 14px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -443,17 +495,28 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .suggest-list .suggest-desc { color: var(--muted-foreground); }
 .suggest-list li.active { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 @media (pointer: coarse) { .suggest-list li { padding: 11px 12px; } }
-textarea { resize: vertical; }
-.primary, .secondary { border: 1px solid transparent; border-radius: 10px; padding: 10px 16px; font-weight: 600; }
+textarea { resize: vertical; padding: 8px 10px; }
+textarea.auto-textarea { display: block; resize: none; overflow-y: hidden; line-height: 20px; padding-top: 8px; padding-bottom: 8px; box-sizing: border-box; }
+/* Кнопки: основная (одна на блок), обычная, опасная (удалить, отменить — отдельно и с подтверждением), значок-текст
+   (✕, ▾, ⋯ с aria-label вместо эмодзи). Высота поля, 32 px (5 + 20 + 5 + рамка); .small — 28 px, в строке таблицы. */
+.primary, .secondary { border: 1px solid transparent; border-radius: var(--control-radius); padding: 5px 14px; font-weight: 600; line-height: 20px; }
 .primary { color: var(--primary-foreground); background: var(--primary); }
-.primary:hover { opacity: .88; }
+.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 86%, #000); }
 .secondary { border-color: var(--border); color: var(--foreground); background: var(--card); }
-.compact { width: auto; padding: 9px 16px; }
-.small { padding: 7px 11px; font-size: 12.5px; }
+.secondary:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+.primary:disabled, .secondary:disabled { opacity: 1; border-color: transparent; color: var(--disabled-fg); background: var(--disabled-bg); }
+button.danger { border: 1px solid color-mix(in srgb, var(--tone-danger) 40%, var(--border)); color: var(--tone-danger); background: var(--card); }
+button.danger:hover:not(:disabled) { border-color: var(--tone-danger); background: var(--danger-soft); }
+button.primary.danger { border-color: var(--tone-danger); color: var(--primary-foreground); background: var(--tone-danger); }
+button.primary.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--tone-danger) 86%, #000); }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; min-width: var(--control-h); min-height: var(--control-h); padding: 0 6px; border: 1px solid transparent; border-radius: var(--control-radius); color: var(--muted-foreground); background: transparent; font-size: 16px; line-height: 1; }
+.icon-button:hover:not(:disabled) { color: var(--foreground); background: var(--accent); }
+.compact { width: auto; padding: 5px 16px; }
+.small { padding: 4px 10px; font-size: 12.5px; line-height: 18px; }
+@media (pointer: coarse) { .primary, .secondary { min-height: var(--control-h); } }
 
 /* RQ-IMPORT-UI: the three ways to create a request (SUPPLYMAP openCreate), and the Excel/calc panels. */
-.mode-tabs { display: flex; gap: 8px; padding: 0 20px 14px; flex-wrap: wrap; }
-.mode-tabs .active { border-color: var(--primary); color: var(--primary-foreground); background: var(--primary); }
+.mode-tabs { margin: 0 20px 14px; }
 .import-panel { padding: 0 20px 18px; display: grid; gap: 12px; }
 .import-panel .form-grid { padding: 0; }
 .rc-tsv { min-height: 90px; font-family: ui-monospace, monospace; font-size: 12px; }
@@ -461,11 +524,12 @@ textarea { resize: vertical; }
 .table-scroll { overflow: auto; }
 .table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th { color: var(--muted-foreground); background: var(--card); font-size: 10.5px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
+/* Шапка таблицы — одна на приложение (Общ-2): 12 px, приглушённая, обычным регистром. */
+th { color: var(--table-head-fg); background: var(--card); font-size: var(--table-head-size); font-weight: 600; letter-spacing: 0; text-transform: none; }
 th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; white-space: nowrap; }
 .grid.wide { width: 100%; }
 .grid td.text { min-width: 220px; max-width: 340px; white-space: normal; }
-.grid .num { min-width: 64px; text-align: right; }
+.grid .num { min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
 .filters { position: sticky; top: -30px; z-index: 8; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; padding: 4px 0; background: var(--background); }
 .filters .search { flex: 1 1 260px; min-width: 180px; }
 .filters select { width: auto; }
@@ -481,6 +545,14 @@ th, td { padding: 11px 14px; border-bottom: 1px solid var(--border); text-align:
 .manual-stock-head h2 { font-size: 16px; font-weight: 600; }
 details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 13px; font-weight: 600; }
 .manual-stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; align-items: end; margin-bottom: 14px; }
+/* «Быстрый ввод»: плотная форма как в остальных — поля 32 px, на 16" и шире четыре в ряд без дыр (1+1+1+1 / 2+1+1 / 1+3). */
+.manual-stock-form label { gap: 4px; }
+.manual-stock-form input, .manual-stock-form select { height: 32px; padding: 5px 9px; font-size: 13px; }
+@media (min-width: 1500px) {
+  .manual-stock-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-flow: dense; gap: 8px 12px; }
+  .manual-stock-grid .span-3 { grid-column: span 3; }
+}
+@media (pointer: coarse) { .manual-stock-form input, .manual-stock-form select { height: 40px; } }
 .place-busy { background: var(--bg-amber-5); border-color: var(--ln-amber-2); }
 /* «Переместить» (SUPPLYMAP wh05Move): a modal over the stock list, opened from a lot card or the toolbar. */
 .dialog-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(0, 26, 24, .35); }
@@ -515,6 +587,8 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .error-banner, .success-banner { margin-bottom: 16px; border-radius: 11px; padding: 11px 14px; font-size: 13px; }
 .error-banner { color: var(--fg-red-6); background: var(--bg-red-8); }
 .success-banner { color: var(--fg-green-5); background: var(--bg-green-7); }
+.warning-banner { margin-bottom: 16px; border-radius: 11px; padding: 11px 14px; font-size: 13px; color: var(--fg-orange-8); background: var(--bg-orange-4); white-space: pre-line; }
+.warning-banner ul { margin: 4px 0 0; padding-left: 18px; }
 
 .work-list { margin-top: 25px; display: grid; gap: 14px; }
 .work-list > .panel-heading { padding-left: 2px; }
@@ -535,6 +609,16 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-meta dd { margin: 0; font-weight: 500; }
 .fulfillment-progress { margin: 8px 0 0; font-size: 13px; color: var(--muted-foreground); }
 .fulfillment-create, .fulfillment-project { padding: 18px 20px; margin-bottom: 16px; }
+.fulfillment-head-actions { display: flex; gap: 8px; align-items: center; }
+.issue-chooser { margin: 12px 0 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 12px 0; }
+.issue-chooser h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.issue-chooser th.check, .issue-chooser td.check { width: 36px; text-align: center; }
+.issue-chooser td.check input { width: 16px; height: 16px; margin: 0; }
+.issue-chooser tr.muted-row td { color: var(--muted-foreground); }
+.issue-writeoff { margin-top: 10px; font-size: 13px; }
+.issue-writeoff summary { cursor: pointer; font-weight: 500; }
+.issue-writeoff .table-wrap { margin-top: 8px; }
+@media (pointer: coarse) { .issue-chooser td.check input { width: 22px; height: 22px; } }
 .lot-picker { display: grid; gap: 8px; }
 .lot-picker .status { margin-left: 6px; }
 .danger-link { color: var(--fg-red-2); }
@@ -614,7 +698,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .production-calendar .calendar-block + .calendar-block { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
 .production-calendar .calendar-block h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 .production-calendar .form-grid { padding: 0; }
-.production-calendar .field-group { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.production-calendar .field-group, .lv-form .field-group { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
 .production-calendar .weekday-toggles { justify-self: start; margin: 0; }
 @media (min-width: 1600px) { .production-calendar .form-grid > .weekdays { grid-column: span 3; } }
 .production-calendar .calendar-add { margin-bottom: 10px; }
@@ -628,6 +712,7 @@ fieldset.form-grid { padding: 16px 18px 18px; }
 .holiday-chip button { border: 0; border-radius: 999px; padding: 2px 7px; color: var(--fg-red-2); background: transparent; font-size: 15px; line-height: 1; }
 .holiday-chip button:hover { background: var(--bg-red-6); }
 .cal-empty { color: var(--muted-foreground); font-size: 12.5px; }
+.cal-leave { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
 .calendar-absences .row-end { text-align: right; }
 .calendar-absences .link-button { padding: 0; }
 @media (pointer: coarse) { .weekday-toggles button, .holiday-chip button { min-height: 40px; min-width: 40px; } }
@@ -718,6 +803,7 @@ table.ship-lines td:first-child { width: 1%; }
 .db-tab-count { border-radius: 999px; padding: 0 7px; color: var(--muted-foreground); background: var(--accent); font-size: 11px; font-weight: 400; }
 .db-tab.active .db-tab-count { color: var(--primary); }
 .db-clamp { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.db-clip { display: block; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-cell-input { width: 100%; min-width: 160px; }
 .db-dirty { color: var(--muted-foreground); font-size: 12px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
@@ -737,6 +823,45 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-clip { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cable-card { padding: 4px 0; }
 .cable-card small { font-size: 11px; text-transform: none; }
+/* Structured cable reference (10.10.2026): the coax card a tester reads at the VNA, «разобрать позже». */
+.db-later { align-self: center; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; }
+.hookup-form { padding-bottom: 10px; border-bottom: 1px solid var(--sheet-line); }
+.hookup-form select { min-width: 0; }
+.coax-card { display: grid; gap: 12px; min-width: 0; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--sheet-line); font-variant-numeric: tabular-nums; }
+.coax-card-head { display: grid; gap: 8px; }
+.coax-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+.coax-title h3 { margin: 0; font-size: 16px; }
+.coax-title h3 small { font-weight: 400; color: var(--muted-foreground); font-size: 13px; }
+.coax-desc { flex: 1 1 280px; min-width: 0; color: var(--muted-foreground); font-size: 14px; overflow-wrap: anywhere; }
+.coax-flag { padding: 2px 8px; border-radius: 999px; font-size: 12px; background: var(--accent); white-space: nowrap; }
+.coax-flag.tone-warn { background: var(--warn-soft); }
+.coax-flag.tone-ok { background: var(--chip-ok-bg); }
+.coax-facts { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; padding: 6px 0; border-top: 1px solid var(--sheet-line); border-bottom: 1px solid var(--sheet-line); }
+.coax-facts div { display: flex; align-items: baseline; gap: 6px; }
+.coax-facts dt { color: var(--muted-foreground); font-size: 12px; }
+.coax-facts dd { margin: 0; font-size: 14px; font-weight: 600; }
+.coax-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px 24px; align-items: start; }
+.coax-col { display: grid; gap: 16px; min-width: 0; }
+.coax-wide { min-width: 0; }
+/* Specificity doubled on purpose: inside DataTable's detail row `.data-table …th/td` rules pin headers and force nowrap. */
+.coax-card.coax-card .coax-mini { width: 100%; border-collapse: collapse; font-size: 13px; background: var(--card); }
+.coax-card.coax-card .coax-mini caption { padding: 0 0 4px; text-align: left; font-weight: 600; font-size: 14px; }
+.coax-card.coax-card .coax-mini caption small { margin-left: 8px; font-weight: 400; color: var(--muted-foreground); font-size: 12px; }
+.coax-card.coax-card .coax-mini th { position: static; padding: 4px 8px; text-align: left; vertical-align: bottom; background: var(--table-head); box-shadow: none; color: var(--table-head-fg); font-size: 12px; font-weight: 500; white-space: normal; }
+.coax-card.coax-card .coax-mini tbody th { background: none; color: var(--foreground); font-size: 13px; font-weight: 400; vertical-align: top; border-top: 1px solid var(--sheet-line); }
+.coax-card.coax-card .coax-mini td { padding: 4px 8px; border-top: 1px solid var(--sheet-line); border-bottom: 0; white-space: nowrap; }
+.coax-card.coax-card .coax-mini td.wrap { white-space: normal; overflow-wrap: anywhere; }
+.coax-card.coax-card .coax-mini th.num, .coax-card.coax-card .coax-mini td.num { text-align: right; }
+.coax-card.coax-card .coax-mini tbody tr:nth-child(even) td, .coax-card.coax-card .coax-mini tbody tr:nth-child(even) th { background: var(--table-zebra); }
+.coax-card.coax-card .coax-mini td.coax-est { color: var(--muted-foreground); }
+.coax-card.coax-card .coax-mini tr.coax-peak td { border-top-color: var(--sheet-hover); color: var(--muted-foreground); }
+.coax-card.coax-card table.coax-mini thead th:first-child { position: static; z-index: auto; box-shadow: none; background: var(--table-head); }
+.coax-card.coax-card .coax-datasheet { max-width: 820px; }
+.coax-card.coax-card .coax-datasheet td:last-child { white-space: normal; overflow-wrap: anywhere; }
+.coax-note { margin: 0; font-size: 14px; line-height: 1.45; }
+.coax-legend { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.coax-sources { display: flex; flex-wrap: wrap; gap: 4px 24px; font-size: 12px; color: var(--muted-foreground); }
+.coax-sources a { margin-left: 6px; }
 
 .reference-tiles .tile { min-height: 0; }
 .notifications-page .data-table .cell-wrap { max-width: min(920px, 60vw); }
@@ -749,6 +874,7 @@ table.ship-lines td:first-child { width: 1%; }
 .notifications-page .row-actions { display: inline-flex; gap: 14px; opacity: .5; transition: opacity .12s; }
 .notifications-page tr:hover .row-actions, .notifications-page tr:focus-within .row-actions, .notifications-page tr.open .row-actions { opacity: 1; }
 .notifications-page .row-actions .link-button { padding: 0; }
+@media (max-width: 1600px) { .notifications-page .data-table .cell-wrap { max-width: min(520px, 40vw); } .notifications-page .row-actions { flex-direction: column; gap: 2px; } }
 @media (hover: none) { .notifications-page .row-actions { opacity: 1; } }
 @media (pointer: coarse) { .notifications-page .row-actions .link-button { min-height: 40px; } }
 .operations-metrics { display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 12px; margin: 18px 0; }
@@ -758,7 +884,16 @@ table.ship-lines td:first-child { width: 1%; }
 .operations-metrics .metric.danger { border-color: var(--ln-red-2); color: var(--fg-red-6); background: var(--bg-red-8); }
 .operations-failures { margin-bottom: 18px; padding: 18px; }
 .operations-failures h2 { margin: 0 0 10px; font-size: 16px; }
-.operations-failures > div { display: grid; grid-template-columns: 180px 1fr auto; gap: 10px; border-top: 1px solid var(--border); padding: 9px 0; font-size: 12px; }
+.operations-failures > div { display: grid; grid-template-columns: 180px 1fr auto auto; align-items: center; gap: 10px; border-top: 1px solid var(--border); padding: 9px 0; font-size: 12px; }
+/* «Фоновые процессы» (аудит U08): группа воркера — состояние, последний успех, прогон, последняя ошибка. */
+.operations-background { margin-bottom: 18px; padding: 18px; }
+.panel.operations-background > h2:first-child, .panel.operations-failures > h2:first-child { margin: 0 0 10px; padding: 0; font-size: 16px; }
+.operations-background .error-banner { margin-bottom: 10px; }
+.operations-bg-row { display: grid; align-items: center; grid-template-columns: minmax(200px, 1.2fr) 150px minmax(170px, 1fr) 80px minmax(200px, 2fr); gap: 10px; border-top: 1px solid var(--border); padding: 7px 0; font-size: 13px; }
+.operations-bg-head { border-top: 0; padding-top: 0; color: var(--muted-foreground); font-size: 12px; }
+.operations-bg-error { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.operations-bg-queue { margin: 10px 0 0; font-size: 13px; }
+.operations-background .warning-inline { margin-top: 10px; }
 .facts-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 18px 0; }
 .facts-grid .wide { grid-column: span 2; }
 .card-footer { border-top: 1px solid var(--ln-gray-2); padding-top: 14px; color: var(--fg-gray-3); }
@@ -794,13 +929,14 @@ table.ship-lines td:first-child { width: 1%; }
 .etk-block > span { display: grid; gap: 2px; border-top: 1px solid var(--ln-gray-3); padding-top: 5px; }
 .etk-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .etk-chips span { padding: 4px 10px; border-radius: 10px; background: var(--bg-gray-3); border: 1px solid var(--border); font-size: 12.5px; font-weight: 600; }
-.etk-chips small { display: block; font-size: 10px; font-weight: 400; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .04em; }
+.etk-chips small { display: block; font-size: 11px; font-weight: 400; color: var(--muted-foreground); }
 .etk-figure { margin-top: 12px; background: var(--card); border: 1px solid var(--border); }
 .etk-fig svg { max-width: 760px; height: auto; }
 .etk-steps { display: grid; gap: 8px; margin: 12px 0 0; padding-left: 28px; }
 .etk-steps li { padding-left: 4px; white-space: pre-line; font-size: 12px; }
 .etk-steps li > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
 .etk-steps li > small { display: block; margin-top: 3px; color: var(--muted-foreground); }
+.etk-steps li > small.tone-danger { color: var(--tone-danger); font-weight: 600; }
 .housing-view { display: grid; justify-items: center; gap: 6px; margin-top: 14px; padding: 12px; border-radius: 10px; background: var(--bg-gray-3); }
 .housing-view > small { color: var(--muted-foreground); text-align: center; }
 .housing-grid { display: grid; gap: 5px; padding: 12px; border: 2px solid var(--ln-teal-1); border-radius: 8px; }
@@ -857,7 +993,8 @@ table.ship-lines td:first-child { width: 1%; }
 .tr-paper { display: grid; gap: 12px; }
 .tr-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
 .tr-head > div { display: grid; gap: 2px; }
-.tr-head small, .tr-sec-h { color: var(--muted-foreground); font-size: 11px; text-transform: uppercase; }
+.tr-head small { color: var(--muted-foreground); font-size: 11px; }
+.tr-sec-h { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
 .tr-block { display: grid; gap: 6px; font-size: 12px; }
 .tr-block h4 { margin: 0; font-size: 13px; }
 .tr-block textarea { width: 100%; }
@@ -998,15 +1135,21 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-row-title { display: flex; gap: 6px; align-items: baseline; white-space: nowrap; overflow: hidden; }
 .plan-customer { color: var(--muted-foreground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .plan-tags { display: flex; gap: 4px; flex-wrap: wrap; margin: 3px 0 2px; }
-.plan-tag { font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); white-space: nowrap; }
-.plan-tag.stage { background: color-mix(in srgb, var(--primary) 12%, var(--card)); color: var(--fg-teal-3); }
-.plan-tag.blocker { background: var(--bg-red-11); color: var(--on-accent); }
+.plan-tag { font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); white-space: nowrap; }
+.plan-tag.stage { background: color-mix(in srgb, var(--primary) 12%, white); color: var(--fg-teal-3); }
+.plan-tag.blocker { background: var(--bg-red-11); color: var(--primary-foreground); }
 .plan-tag.late { background: var(--bg-red-5); color: var(--fg-red-1); }
 .plan-tag.soon { background: var(--bg-amber-3); color: var(--fg-orange-9); }
 .plan-tag.ok { background: var(--bg-green-3); color: var(--fg-green-1); }
 .plan-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Проект без карточки в «Проектах»: честная строка и переход (аудит 10.10, ПП-5). */
+.plan-no-card { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; }
+.plan-link-button { display: inline-flex; align-items: center; text-decoration: none; }
+.plan-link-button:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.plan-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 
-.gantt-nav { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; }
+.gantt-nav { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 8px; }
+.gantt-period { margin-right: 4px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .gantt-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
 .gantt-grid { display: block; min-width: max-content; }
 .gantt-row { display: flex; border-bottom: 1px solid var(--border); min-height: 40px; }
@@ -1014,11 +1157,11 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .gantt-label { position: sticky; left: 0; z-index: 3; flex: 0 0 380px; width: 380px; padding: 6px 10px; background: var(--card); border-right: 1px solid var(--border); font-size: 13px; overflow: hidden; }
 .gantt-sub, .gantt-note { color: var(--muted-foreground); font-size: 11.5px; }
 .gantt-note { font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gantt-late { display: inline-block; margin-top: 2px; font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--bg-red-5); color: var(--fg-red-1); }
+.gantt-late { display: inline-block; margin-top: 2px; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--bg-red-5); color: var(--fg-red-1); }
 .gantt-track { position: relative; flex: 1 0 auto; }
 .gantt-head { min-height: 34px; background: var(--bg-teal-3); }
 .gantt-head .gantt-label { background: var(--bg-teal-3); font-weight: 600; }
-.gantt-day { position: absolute; top: 3px; text-align: center; font-size: 10.5px; line-height: 1.25; color: var(--muted-foreground); }
+.gantt-day { position: absolute; top: 3px; text-align: center; font-size: 11px; line-height: 1.25; color: var(--muted-foreground); }
 .gantt-bg { position: absolute; top: 0; bottom: 0; }
 .gantt-bg.off { background: var(--bg-gray-4); }
 .gantt-bg.today { box-shadow: inset 2px 0 0 var(--primary); }
@@ -1033,7 +1176,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .gantt-row.dim { opacity: .55; }
 .production-plan-gantt .gantt-row { min-height: 64px; }
 @media (max-width: 640px) { .gantt-label { flex-basis: 230px; width: 230px; } }
-.plan-blocker { padding: 8px 10px; border-radius: 8px; background: var(--bg-red-3); color: var(--fg-red-5); font-size: 12px; font-weight: 700; }
+.plan-blocker { padding: 8px 10px; border-radius: 8px; background: var(--chip-danger-bg); color: var(--chip-danger-fg); font-size: 13px; font-weight: 600; }
+.plan-blocker[data-tone="warning"] { background: var(--chip-warning-bg); color: var(--chip-warning-fg); }
+.plan-blocker[data-tone="neutral"], .plan-blocker[data-tone="info"] { background: var(--chip-neutral-bg); color: var(--chip-neutral-fg); }
 .production-plan-details { padding: 20px; display: grid; gap: 18px; }
 .production-plan-details h2, .production-plan-details h3, .production-plan-details p { margin: 0; }
 .production-plan-details section { display: grid; gap: 7px; padding-top: 14px; border-top: 1px solid var(--border); }
@@ -1042,11 +1187,11 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .plan-kit-stages span { font-size: 12px; color: var(--muted-foreground); }
 .plan-kit-mark label { display: grid; gap: 3px; font-size: 11px; color: var(--muted-foreground); }
 .plan-kit-mark select, .plan-kit-mark textarea { min-width: 0; font-size: 12px; }
-.plan-kit-mark textarea { min-height: 54px; resize: vertical; }
+.plan-kit-mark textarea.auto-textarea { min-height: 0; }
 .plan-note-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
 .plan-note-grid label { display: grid; gap: 5px; font-size: 12px; color: var(--muted-foreground); }
 .plan-note-text { grid-column: 1 / -1; }
-.plan-note-text textarea { min-height: 72px; resize: vertical; }
+.plan-note-text textarea.auto-textarea { min-height: 0; }
 .plan-journal article { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .plan-journal article > div { display: flex; justify-content: space-between; gap: 12px; }
 .plan-journal time, .plan-journal small { color: var(--muted-foreground); font-size: 12px; }
@@ -1060,6 +1205,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .login-card label { text-transform: uppercase; letter-spacing: .08em; font-size: 10px; }
 .login-card form { display: grid; gap: 15px; }
 .login-card select { width: 100%; }
+/* «Сессия истекла»: вход поверх страницы; подложка непрозрачна — введённое под ней не видно до входа. */
+.relogin-backdrop { position: fixed; inset: 0; z-index: 2000; overflow: auto; }
+.harness-host { display: contents; }
+.boot-error { align-content: center; gap: 12px; padding: 20px; }
 .pin-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.45); z-index: 50; }
 .pin-card { width: min(420px, 100%); padding: 24px; border-radius: 12px; background: var(--card); display: grid; gap: 10px; text-align: center; }
 .pin-card h2 { margin: 0; font-size: 18px; }
@@ -1132,7 +1281,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .genealogy-edges > div { grid-template-columns: 1fr; }
   .ship-form > .ship-span2, .ship-accept > strong { grid-column: auto; }
   .operation-assign { grid-column: auto; }
-  .operations-metrics, .operations-failures > div { grid-template-columns: 1fr; }
+  .operations-metrics, .operations-failures > div, .operations-bg-row { grid-template-columns: 1fr; }
+  .operations-bg-head { display: none; }
   .etk-flow { grid-template-columns: 1fr; }
   .etk-wrap, .tr-head { grid-template-columns: 1fr; }
   .plan-row-metrics, .plan-note-grid { grid-template-columns: 1fr; }
@@ -1202,6 +1352,18 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .panel.kit-pane, .panel.kit-modal { padding: 16px 18px; }
 .kit-modal { margin: 0 0 16px; display: grid; gap: 10px; }
 .kit-modal h3 { margin: 0; font-size: 16px; font-weight: 600; }
+/* «Отправить на комплектацию»: КБ проекта — уйдёт / уже отправлена (номер заявки) / нет состава. */
+.issue-kbs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+.issue-kbs li { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 10px; }
+.issue-kbs li + li { border-top: 1px solid var(--border); }
+.issue-kbs li.muted { color: var(--muted-foreground); background: var(--accent); }
+.issue-kb-state { white-space: nowrap; }
+/* «Довыдать»: короткое поле количества с единицей в строке, причина — не на всю ширину. */
+.extra-issue td.num { white-space: nowrap; }
+.extra-issue td.num input { width: 96px; text-align: right; }
+.extra-issue > label { max-width: 720px; }
+/* Отменённая КБ в карточке проекта «Комплектации»: след остаётся, вкладкой не открывается. */
+.calendar-chip.chip-cancelled { color: var(--muted-foreground); background: transparent; border: 1px dashed var(--border); cursor: default; }
 .kit-modal > div.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 13px 16px; }
 .kit-modal > div.grid > label:first-child { grid-column: 1 / -1; }
 .page-actions + .kit-modal, .page-sub + .page-actions { margin-top: 12px; }
@@ -1211,7 +1373,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
    только «Наименование». Числа и поля с числами — вправо, под своими заголовками. */
 .kit-pane .data-table table.grid.wide { width: 100%; table-layout: fixed; }
 .kit-pane .data-table table.grid.wide { min-width: 1180px; }
-.kit-spec .data-table table.grid.wide { min-width: 1600px; }
+.kit-spec .data-table table.grid.wide { min-width: 1180px; }
 .kit-spec td.num input { text-align: right; font-variant-numeric: tabular-nums; }
 .kit-pane .data-table td.num { font-variant-numeric: tabular-nums; }
 .kit-spec td input { padding: 5px 8px; }
@@ -1219,9 +1381,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .kit-supply-summary .panel + .panel { margin-top: 0; }
 .kit-link { display: flex; gap: 4px; align-items: center; }
 .kit-kd { display: flex; gap: 6px; align-items: center; }
-.kit-supply-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; margin-bottom: 14px; }
-.kit-supply-count { padding: 14px 16px; display: grid; gap: 4px; }
-.kit-supply-count strong { font-size: 24px; }
+.kit-kd .kit-kd-action { font-size: 12px; color: var(--muted-foreground); }
+.kit-kd .kit-kd-action:not(:disabled):hover { color: var(--primary); }
+.kit-kd-unlinked { font-size: 12px; }
+@media (pointer: coarse) { .kit-kd .kit-kd-action { min-height: 40px; padding: 0 8px; } }
+.kit-supply-summary { display: flex; flex-wrap: wrap; gap: 4px 24px; align-items: baseline; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); font-size: 13px; }
+.kit-supply-count { display: inline-flex; gap: 8px; align-items: baseline; }
+.kit-supply-count dt { color: var(--muted-foreground); }
+.kit-supply-count dd { margin: 0; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .kit-autosave { font-size: 12px; }
 
 /* DataTable: общая таблица разделов (поиск, фильтры, сортировка, чипы, группы, массовые действия). */
@@ -1229,6 +1396,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table .filters { margin-bottom: 0; }
 .data-table .sort-head { padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
 .data-table tr.clickable { cursor: pointer; }
+.data-table tr.clickable:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
 .data-table tr.clickable:hover td, .data-table tr.open td { background: var(--accent); }
 .data-table tr.detail > td { white-space: normal; background: var(--background); }
 /* The card of an opened row: pinned left, as wide as the visible scroll box (DataTable sets --detail-width). */
@@ -1242,6 +1410,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
    pinned while the rows scroll inside the card, columns as wide as their content, the first column as the row key. */
 .data-table .table-wrap { width: auto; max-height: calc(100dvh - 190px); overflow: auto; }
 .data-table table.grid.wide { width: max-content; min-width: 100%; }
+/* Ширина по содержимому (Общ-3): колонка `fit` не шире своего текста, свободное место — колонке `grow` или пустой
+   колонке справа (`dt-fill`), а не поровну всем. Колонка с переносом идёт одной строкой до --dt-wrap-max. */
+.data-table table.grid.wide .fit { width: 1px; }
+.data-table table.grid.wide th.fit .sort-head { white-space: nowrap; }
+.data-table table.grid.wide td.fit:not(.text) :where(*) { flex-wrap: nowrap; white-space: nowrap; }
+.data-table table.grid.wide:has(> thead th.grow) { width: 100%; }
+.data-table table.grid.wide .dt-fill { width: auto; min-width: 0; padding: 0; }
+.data-table .cell-empty { color: var(--muted-foreground); }
+.data-table td.num, .data-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table .align-center { text-align: center; }
+.data-table .align-right { text-align: right; }
 .data-table table.selectable > thead > tr > th:first-child { width: 36px; padding-right: 4px; }
 .data-table table.selectable > tbody > tr:not(.detail):not(.group-row) > td:first-child { width: 36px; padding-right: 4px; }
 .data-table th, .data-table td, .table-wrap .grid th, .table-wrap .grid td { padding: 6px 12px; line-height: 1.35; }
@@ -1262,12 +1441,26 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table td small { margin-top: 1px; color: var(--muted-foreground); font-size: 11.5px; }
 .data-table .grid td.text { min-width: 0; max-width: none; }
 /* Long text wraps only past ~40 characters, so short values keep their column narrow. */
-.data-table .cell-wrap { max-width: 340px; white-space: normal; }
+.data-table .cell-wrap { min-width: var(--cell-min, 0); max-width: var(--cell-max, var(--dt-wrap-max)); white-space: normal; }
+.data-table table.sized td.text:not(.grow) > .cell-wrap { width: max-content; }
+.data-table table.grid.wide .grow > .cell-wrap { min-width: var(--cell-min, 240px); max-width: none; }
 .data-table .table-footer { font-size: 12px; color: var(--muted-foreground); }
 .calendar-chip.active { color: var(--primary-foreground); background: var(--primary); }
 .column-chooser { display: flex; flex-wrap: wrap; gap: 10px 16px; margin: 0; padding: 10px 14px; border: 1px solid var(--border); border-radius: 12px; }
 .bulk-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--accent); }
 .table-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--muted-foreground); font-size: 12px; }
+.table-toolbar .small { min-height: var(--control-h); }
+
+/* Чип статуса (StatusChip, statusTone.ts) — один вид на всё приложение (Общ-1): приглушённый фон тона, слово не
+   обрезается. Тон — атрибутом data-tone, чтобы старые .tone-* и .chip экранов его не перебивали. */
+.status-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 20px; padding: 0 8px; border-radius: 999px; color: var(--chip-neutral-fg); background: var(--chip-neutral-bg); font-size: 12px; font-weight: 600; line-height: 20px; letter-spacing: 0; text-transform: none; white-space: nowrap; vertical-align: middle; }
+.status-chip[data-tone="success"] { color: var(--chip-success-fg); background: var(--chip-success-bg); }
+.status-chip[data-tone="info"] { color: var(--chip-info-fg); background: var(--chip-info-bg); }
+.status-chip[data-tone="warning"] { color: var(--chip-warning-fg); background: var(--chip-warning-bg); }
+.status-chip[data-tone="danger"] { color: var(--chip-danger-fg); background: var(--chip-danger-bg); }
+.status-chip.is-empty { padding: 0; color: var(--muted-foreground); background: none; font-weight: 400; }
+.status-chip-count { color: inherit; font-weight: 400; opacity: .8; }
+@media (pointer: coarse) { .status-chip { height: 24px; line-height: 24px; } }
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .supplier-return { margin-bottom: 18px; }
 
@@ -1316,7 +1509,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mo-card.run { box-shadow: inset 3px 0 0 var(--tone-ok); }
 .mo-tag { padding: 0 8px; border-radius: 10px; font-size: 12px; font-weight: 600; background: var(--accent); color: var(--tone-ok); }
 .mo-h { display: flex; gap: 8px; align-items: baseline; }
-.mo-time { margin-left: auto; color: var(--muted-foreground); }
+.mo-name { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; min-width: 0; }
+.mo-name .op-code { flex-basis: 100%; }
+.mo-time { margin-left: auto; color: var(--muted-foreground); font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .mo-s, .mo-d { color: var(--muted-foreground); }
 .mo-fact { font-size: 13px; }
 /* Генератор техкарт (порт SUPPLYMAP TcGenInline.html; дизайн — владелец 04.10). Слева ввод секциями (на широком —
@@ -1386,8 +1581,50 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gsw-text { display: grid; gap: 1px; min-width: 0; }
 .tcgen .gsw-text small { color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
 .tcgen .gopt-body { display: grid; gap: 8px; margin-left: 15px; padding: 4px 0 4px 24px; border-left: 2px solid color-mix(in srgb, var(--primary) 30%, transparent); }
-.tcgen .proc-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 6px 24px; align-items: start; }
+/* Группы «Обработки»: до ~700 px одна колонка (Концы, Жгут, Автомат), шире — слева Концы и Автомат, справа Жгут. */
+.tcgen .gen-proc { container-type: inline-size; }
+.tcgen .proc-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px 24px; align-items: start; }
+@container (min-width: 700px) {
+  .tcgen .proc-groups:not(.solo) { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto 1fr; }
+  .tcgen .proc-groups .pg-ends, .tcgen .proc-groups .pg-machine { grid-column: 1; }
+  .tcgen .proc-groups .pg-harness { grid-column: 2; grid-row: 1 / span 2; }
+}
 .tcgen .proc-group { display: grid; min-width: 0; }
+/* «Маркировка по КД»: таблица меток во всю ширину «Обработки», поля прямо в ячейках. */
+.tcgen .gen-marks { display: grid; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); container-type: inline-size; }
+.tcgen .gen-marks-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.tcgen .gen-marks-bar .gopt { flex: 1 1 260px; min-width: 0; border: 0; padding: 0; }
+.tcgen .gen-marks-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.tcgen .gen-marks-head h4 { margin: 0; }
+.tcgen .gen-marks-head .muted { font-size: 12px; }
+.tcgen .gen-marks-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.tcgen .gen-marks .gtable-wrap { max-height: none; overflow-x: auto; }
+.tcgen .gen-marks .gtable { table-layout: fixed; min-width: 640px; }
+.tcgen .gen-marks .gtable td { padding: 3px 4px; vertical-align: top; }
+.tcgen .gen-marks .gtable td:first-child { padding: 9px 6px 0 10px; color: var(--muted-foreground); }
+.tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select { width: 100%; height: 28px; }
+.tcgen .gen-marks .gtable input.num { text-align: right; }
+.tcgen .gen-marks .gtable textarea.auto-textarea { width: 100%; height: 28px; min-height: 28px; line-height: 18px; padding-top: 4px; padding-bottom: 4px; }
+.tcgen .gen-marks .gtable td small { padding: 1px 2px 0; }
+.tcgen .gen-marks col.c-n { width: 34px; }
+.tcgen .gen-marks col.c-target { width: 17%; }
+.tcgen .gen-marks col.c-text { width: 38%; }
+.tcgen .gen-marks col.c-mat { width: 13%; }
+.tcgen .gen-marks col.c-place { width: 20%; }
+.tcgen .gen-marks col.c-qty { width: 64px; }
+.tcgen .gen-marks col.c-len { width: 84px; }
+.tcgen .gen-marks col.c-x { width: 32px; }
+.tcgen .gen-marks-place { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 4px; }
+.tcgen .gen-marks-place > select:only-child { grid-column: 1 / -1; }
+.tcgen .gen-marks .btn-x { width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); font-size: 16px; cursor: pointer; }
+.tcgen .gen-marks .btn-x:hover { color: var(--tone-danger); }
+@media (pointer: coarse) {
+  .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select, .tcgen .gen-marks .btn-x { height: 40px; }
+  .tcgen .gen-marks .gtable textarea.auto-textarea { min-height: 40px; padding-top: 10px; }
+  .tcgen .gen-marks .btn-x { width: 40px; }
+  .tcgen .gen-marks .gtable td:first-child { padding-top: 15px; }
+  .tcgen .gen-marks col.c-x { width: 44px; }
+}
 
 /* Чип-флажок: провод, конец, параметр разъёма. */
 .tcgen .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1491,6 +1728,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-side-head h3 { font-size: 15px; }
 .tcgen .gen-foot { position: sticky; bottom: -30px; z-index: 3; flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--border); border-radius: 0 0 10px 10px; background: var(--card); }
 .tcgen .gen-foot > .primary { min-width: 180px; }
+/* Черновик формы: восстановленный и состояние автосохранения — строкой над кнопкой, всегда на виду. */
+.tcgen .gen-draft { flex: none; display: grid; gap: 2px; padding: 8px 14px 0; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .gen-draft + .gen-foot { border-top: 0; }
+.tcgen .gen-draft .link-button { padding: 0; font-size: inherit; }
 .tcgen > .gen-error { margin: 0 0 10px; }
 .tcgen .gen-status { flex: 1; color: var(--muted-foreground); font-size: 12.5px; }
 .tcgen .gen-foot-sum { display: none; margin-right: auto; color: var(--muted-foreground); font-size: 12.5px; }
@@ -1618,6 +1859,23 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .route-act .field-label { flex: 1; min-width: 0; }
 .tcgen .route-inputs { display: grid; gap: 2px; font-size: 12px; }
 .tcgen .route-input-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* Схема генератора: коды карт БД.ОП первой строкой блока, пометка о замене карты, «итог: изделие», «берёт N шт». */
+.tcgen .route-block-code { overflow: hidden; color: var(--muted-foreground); font-family: var(--font-mono); font-size: 11.5px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .route-block.is-final .route-block-code, .tcgen .route-block.is-selected .route-block-code { color: var(--foreground); }
+.tcgen .route-block-body .route-block-note { color: var(--tone-warn); }
+.tcgen .route-block-body .route-block-product { color: var(--foreground); font-weight: 600; }
+.tcgen .route-per-lead { padding-left: 6px; color: var(--muted-foreground); font-size: 11.5px; }
+.tcgen .route-head-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.tcgen .route-head-actions .route-toggle { margin-left: 0; }
+.tcgen .route-order { display: flex; align-items: end; gap: 8px; }
+.tcgen .route-tool:disabled { opacity: .35; cursor: default; }
+.tcgen .route-tool:disabled:hover { border-color: var(--border); color: var(--muted-foreground); }
+/* ↑ ↓ + → — квадратом 2×2 в правом верхнем углу блока; у пустого блока — строкой. */
+.tcgen .route-node.has-many-tools .route-tools { display: grid; grid-template-columns: repeat(2, 28px); gap: 2px; }
+.tcgen .route-node.has-many-tools .route-block { min-height: 62px; }
+.tcgen .route-node.has-many-tools.is-empty-node .route-tools { grid-template-columns: repeat(4, 28px); }
+.tcgen .route-node.has-many-tools.is-empty-node .route-block { min-height: 0; }
+.tcgen .route-node.has-many-tools.is-empty-node .route-block.is-empty { padding-right: 128px; }
 
 /* Ручная сборка (владелец 04.10): свой список операций — строка на операцию, поля сеткой, текст своей операции в три
    колонки, выбор карточки — таблица библиотеки с категориями. */
@@ -1646,6 +1904,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .drafts .draft-pair { display: flex; flex-wrap: wrap; gap: 4px 32px; margin: 0; }
 .tcgen .drafts .draft-pair dt { color: var(--muted-foreground); font-size: 11.5px; }
 .tcgen .drafts .draft-pair dd { margin: 0; font-weight: 600; }
+.tcgen .drafts.is-drop { outline: 2px dashed var(--primary); outline-offset: -2px; }
+.tcgen .drafts .draft-stage { display: grid; gap: 8px; padding: 8px 0; max-width: 720px; }
+.tcgen .drafts .draft-stage-list { display: grid; margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: 8px; }
+.tcgen .drafts .draft-stage-list li { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 2px 8px; }
+.tcgen .drafts .draft-stage-list li:nth-child(even) { background: var(--accent); }
+.tcgen .drafts .draft-stage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .drafts .draft-stage-size { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.tcgen .drafts .draft-stage-tools { display: flex; gap: 4px; }
+.tcgen .drafts .draft-stage-tools .small { min-width: 30px; padding: 2px 8px; }
+.tcgen .drafts .draft-stage-foot { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.tcgen .drafts .draft-stage-foot .gfield { flex: 1; min-width: 240px; }
 .tcgen .drafts .draft-built, .draft-strip { display: grid; gap: 6px; padding: 8px 0; }
 .draft-strip { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .draft-strip .draft-lesson { display: grid; gap: 6px; max-width: 720px; }
@@ -1696,6 +1965,21 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* Схема сборки (владелец 05.10): под схемой — выбранный блок: название, входы, его операции. */
 .tcgen .manual-assembly { display: grid; gap: 10px; }
 .tcgen .manual-block { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+/* Панель блока — справа от схемы, когда места хватает (27"), ниже — на узком. */
+.tcgen .manual-assembly { container-type: inline-size; }
+.tcgen .manual-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 20px; align-items: start; }
+.tcgen .manual-diagram { display: grid; gap: 8px; min-width: 0; }
+.tcgen .manual-keys { margin: 0; background: transparent; padding: 0; color: var(--muted-foreground); }
+@container (min-width: 1100px) {
+  .tcgen .manual-body.has-pane { grid-template-columns: minmax(0, 1fr) minmax(520px, 1.1fr); }
+  .tcgen .manual-body.has-pane .manual-block { padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .tcgen .manual-body.has-pane .manual-block-head { grid-template-columns: minmax(0, 1fr) auto; }
+  .tcgen .manual-body.has-pane .manual-block-delete { justify-self: start; }
+}
+.tcgen .manual-block-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.tcgen .manual-block-bar strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.tcgen .manual-block-order { display: flex; gap: 6px; }
+.tcgen select.manual-op-move { width: auto; max-width: 150px; height: 30px; min-height: 0; padding: 0 6px; font-size: 12px; }
 .tcgen .manual-block-head { display: grid; grid-template-columns: minmax(220px, 360px) minmax(0, 1fr) auto; gap: 8px 20px; align-items: start; }
 .tcgen .manual-block-delete { align-self: end; color: var(--tone-danger); }
 .tcgen .manual-inputs { display: grid; gap: 4px; min-width: 0; }
@@ -1765,6 +2049,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen .manual-comp input[inputmode] { height: 36px; }
   .tcgen .route-per-chip { height: 40px; }
   .tcgen .route-tool { width: 40px; height: 40px; font-size: 18px; }
+  .tcgen .route-node.has-many-tools .route-tools { grid-template-columns: repeat(2, 40px); }
+  .tcgen .route-node.has-many-tools .route-block { min-height: 86px; }
+  .tcgen .route-node.has-many-tools .route-block-body { padding-right: 90px; }
+  .tcgen .route-node.has-many-tools.is-empty-node .route-tools { grid-template-columns: repeat(4, 40px); }
+  .tcgen .route-node.has-many-tools.is-empty-node .route-block.is-empty { padding-right: 176px; }
+  .tcgen select.manual-op-move, .tcgen .manual-block-bar .small { min-height: 40px; }
   .tcgen .route-node.has-tools .route-block-body { padding-right: 90px; }
   .tcgen .route-node.has-tools .route-block.is-empty { padding-right: 96px; }
   .tcgen .route-edge-pill { height: 40px; padding: 0 14px; }
@@ -1820,7 +2110,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tr-toolbar-end { margin-left: auto; }
 
 /* Экран мастера: проекты → операции слева, монтажники с загрузкой справа. */
-.master-board { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.master-board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
 .master-board > .panel { margin: 0; padding: 14px 16px; }
 .mb-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .mb-head h2 { margin: 0; font-size: 17px; }
@@ -1828,7 +2118,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-toggle { margin-left: auto; white-space: nowrap; display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted-foreground); }
 .mb-project { border-top: 1px solid var(--border); padding: 10px 0 4px; }
 .mb-project-head { display: flex; gap: 10px; align-items: baseline; font-size: 15px; margin-bottom: 6px; }
-.mb-deadline { font-size: 12px; font-weight: 600; color: var(--fg-red-4); background: var(--bg-red-2); border-radius: 6px; padding: 1px 7px; }
 .mb-task { margin: 0 0 10px 0; padding-left: 10px; border-left: 3px solid var(--accent); }
 .mb-task-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
 .mb-task-head small { color: var(--muted-foreground); }
@@ -1848,7 +2137,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-done { color: var(--primary); font-size: 12px; }
 .mb-ready { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 10px; margin-bottom: 8px; border: 1px dashed var(--border); border-radius: 8px; font-size: 13px; }
 .mb-ready small { color: var(--muted-foreground); }
-.mb-people { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow-y: auto; }
 .mb-target { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; margin-bottom: 8px; border-radius: 8px; background: var(--bg-teal-9); font-size: 13px; }
 .mb-target.muted { background: var(--accent); color: var(--muted-foreground); }
 .mb-target .link-button { align-self: flex-start; }
@@ -1859,13 +2147,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-person { display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
 .mb-person small { color: var(--muted-foreground); }
 .mb-person small.danger-text { color: var(--fg-red-4); }
-@media (max-width: 1100px) {
-  .master-board { grid-template-columns: minmax(0, 1fr) 280px; }
-}
 @media (max-width: 820px) {
   .mb-ops th:nth-child(2) { width: auto; }
-  .master-board { grid-template-columns: 1fr; }
-  .mb-people { position: static; max-height: none; order: -1; }
 }
 /* List toolbar: one search, «Фильтры» opens the column filters, chosen filters show as removable tags,
    «Колонки» and «Excel» sit at the right. */
@@ -1901,6 +2184,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-page .page-actions { flex-wrap: wrap; align-items: center; }
 .stock-page .page-actions > button, .stock-page .more-menu > button, .stock-toolbar button { height: 36px; padding: 0 14px; font-size: 13px; white-space: nowrap; }
 .stock-toolbar { align-items: center; gap: 8px 14px; margin-bottom: 8px; }
+.table-more { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin: 8px 0; }
 .stock-toolbar .search, .stock-toolbar select { height: 36px; padding: 0 10px; font-size: 13px; }
 .stock-toolbar .inline-select { display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; }
 .stock-toolbar .inline-select select { width: auto; }
@@ -1945,6 +2229,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-col-balance { width: 98px; }
 .stock-col-lots { width: 76px; }
 .stock-col-available { width: 96px; }
+.stock-col-reserved { width: 92px; }
+.stock-table td.stock-dim { color: var(--muted-foreground); }
 .stock-col-place { width: 12%; }
 .stock-col-warehouse { width: 92px; }
 .stock-col-purpose { width: 104px; }
@@ -1955,6 +2241,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .stock-table > tbody > tr.stock-group-row > td { background: var(--bg-teal-10); color: var(--fg-teal-1); text-transform: none; letter-spacing: 0; font-size: 12.5px; }
 /* The group header stays in view when the table is scrolled sideways: its label is pinned, the band spans the row. */
 .stock-group-label { position: sticky; left: 10px; }
+.stock-group-sum { font-weight: 400; color: var(--muted-foreground); }
 .stock-article-row.open td { background: var(--bg-teal-8); }
 .stock-table > tbody > tr.stock-cards-row > td { background: var(--bg-gray-1); padding: 12px 16px; white-space: normal; }
 .stock-cards-row .lot-cards { position: sticky; left: 16px; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 32px); }
@@ -2011,12 +2298,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .seg-tabs button { border: 0; border-radius: 9px; padding: 7px 14px; background: transparent; color: var(--seg-fg); font-size: 13px; font-weight: 600; }
 .seg-tabs button:hover { color: var(--foreground); }
 .seg-tabs button.on { background: var(--card); color: var(--primary); box-shadow: 0 1px 3px rgba(0, 26, 24, .12); }
-.kit-sostav table { font-size: 12.5px; }
-.kit-sostav th, .kit-sostav td { padding: 8px 12px; }
-.kit-sostav thead th { background: var(--bg-teal-17); color: var(--on-accent); font-weight: 600; letter-spacing: .04em; }
+/* «Состав»: шапка и строки как у DataTable (класс .grid, аудит 10.10 ПР-3), ширина по содержимому — на 27" таблица
+   не растягивается на весь экран, растёт только «Наименование». */
+.kit-sostav { width: fit-content; max-width: 100%; }
+.kit-sostav table { width: auto; }
 .kit-sostav tbody tr { cursor: pointer; }
-.kit-sostav tbody tr:hover td { background: color-mix(in srgb, var(--primary) 6%, var(--card)); }
-.kit-sostav td.wrap { white-space: normal; min-width: 260px; }
+.kit-sostav td.wrap { white-space: normal; min-width: 260px; max-width: 520px; }
 .kit-sostav th.num, .kit-sostav td.num { text-align: right; }
 .kit-sostav select { width: auto; min-width: 130px; padding: 3px 6px; font-size: 12.5px; border-radius: 6px; }
 .kit-sostav .link-button { padding: 0; }
@@ -2064,7 +2351,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-op .etk-flow { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0; gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .etk-op .etk-block { border-radius: 0; background: none; padding: 10px 12px; font-size: 12.5px; border-left: 1px solid var(--border); }
 .etk-op .etk-block:first-child { border-left: 0; }
-.etk-op .etk-block > strong { font-size: 11px; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; }
+.etk-op .etk-block > strong { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
 .etk-op .etk-block > span { border-top: 0; padding-top: 0; }
 .etk-sec h4 { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
 .etk-op .etk-steps { margin: 0; gap: 6px; padding-left: 22px; }
@@ -2078,14 +2365,48 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-sketch:focus-visible, .etk-sketch:focus { border-color: var(--primary); }
 .etk-sketch img { display: block; max-width: 100%; max-height: 520px; margin: 0 auto; border-radius: 6px; background: var(--card); }
 .etk-sketch-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.conn-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
-.conn-card { display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
-.conn-card svg { display: block; width: 100%; height: auto; }
-.conn-card b { font-size: 13px; }
-.conn-card small { display: block; color: var(--muted-foreground); font-size: 12px; }
-.conn-card .conn-face { grid-column: 1 / -1; display: flex; justify-content: center; }
-.conn-card .conn-face svg { width: auto; max-width: 100%; }
-.conn-card small.conn-warn { color: var(--fg-red-3); }
+/* «База данных → Разъёмы»: список серий → серия со всеми корпусами (ConnectorGallery.tsx). */
+.conn-base { display: grid; gap: 12px; }
+.conn-base svg { display: block; max-width: 100%; height: auto; }
+.conn-warn { color: var(--tone-danger); }
+.conn-muted { color: var(--muted-foreground); font-size: 12px; }
+.conn-cats { margin: 0; }
+.conn-sections { display: grid; gap: 14px; }
+.conn-section h3 { margin: 0 0 6px; font-size: 14px; }
+.conn-section h3 .muted { font-weight: 400; }
+.conn-series-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.conn-series { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; min-height: 72px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; }
+.conn-series:hover, .conn-series:focus-visible { border-color: var(--primary); background: var(--accent); }
+.conn-series-pic { display: flex; align-items: center; justify-content: center; height: 56px; }
+.conn-series-pic svg { max-height: 56px; width: auto; }
+.conn-series-text { display: grid; gap: 1px; min-width: 0; }
+.conn-series-text b { font-size: 14px; }
+.conn-series-text small { font-size: 12px; color: var(--muted-foreground); }
+.conn-series-text small.conn-warn { color: var(--tone-danger); }
+.conn-series-text small.tone-warn { color: var(--tone-warn); }
+.conn-series-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.conn-series-head h2 { margin: 0; font-size: 18px; }
+.conn-series-head a { color: var(--primary); font-weight: 600; }
+.conn-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 6px; }
+.conn-series-view { display: grid; gap: 12px; }
+.conn-variant h3 { margin: 4px 0 8px; font-size: 14px; }
+.conn-variant h3 .muted { font-weight: 400; }
+.conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.conn-grid-wide { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); margin-top: 8px; }
+.conn-grid-wide .conn-face svg { max-height: 150px; }
+.conn-housing { display: grid; grid-template-columns: 1fr 130px; grid-template-areas: "head model" "face face" "boards boards"; gap: 4px 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.conn-housing.conn-hit { border-color: var(--primary); box-shadow: 0 0 0 2px var(--accent); }
+.conn-housing-head { grid-area: head; align-self: start; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.conn-housing-head b { font-size: 13px; }
+.conn-housing-head span { font-size: 12px; color: var(--muted-foreground); }
+.conn-housing-head small { font-size: 12px; }
+.conn-housing-model { grid-area: model; display: flex; justify-content: center; }
+.conn-housing .conn-face { grid-area: face; display: flex; justify-content: center; }
+.conn-housing .conn-face svg { max-height: 120px; width: auto; }
+.conn-housing-model svg { max-height: 84px; width: auto; }
+.conn-headers { grid-area: boards; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--foreground); }
+.conn-headers i { font-style: normal; color: var(--muted-foreground); }
+.conn-base .warning-inline .conn-grid { margin-top: 8px; }
 .etk-op .tr-tooling { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
 .etk-op .tr-tooling .tr-sec { margin: 0; padding: 10px 12px; border-left: 1px solid var(--border); align-content: start; }
 .etk-op .tr-tooling .tr-sec:first-child { border-left: 0; }
@@ -2096,12 +2417,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-safety > div { margin-top: 6px; white-space: pre-line; line-height: 1.45; }
 .etk-solder { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .etk-solder > div { display: grid; gap: 2px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--ln-red-1); background: var(--bg-orange-1); font-size: 13px; min-width: 220px; }
-.etk-solder small { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-orange-3); }
-.etk-assumed { justify-self: start; padding: 1px 6px; border-radius: 999px; background: var(--bg-amber-6); color: var(--fg-orange-5); font-size: 10.5px; cursor: help; }
-.etk-defects > summary { cursor: pointer; list-style: none; }
-.etk-defects > summary::-webkit-details-marker { display: none; }
-.etk-defects > summary h4::after { content: "▾"; color: var(--muted-foreground); font-weight: 400; }
-.etk-defects:not([open]) > summary h4::after { content: "▸"; }
+.etk-solder small { font-size: 11px; color: var(--fg-orange-3); }
+.etk-assumed { justify-self: start; padding: 1px 6px; border-radius: 999px; background: var(--bg-amber-6); color: var(--fg-orange-5); font-size: 11px; cursor: help; }
+/* Любой блок ЭТК сворачивается по заголовку: ▾ открыт, ▸ свёрнут. */
+.etk-fold > summary { cursor: pointer; list-style: none; }
+.etk-fold > summary::-webkit-details-marker { display: none; }
+.etk-fold > summary h4::after { content: "▾"; color: var(--muted-foreground); font-weight: 400; }
+.etk-fold:not([open]) > summary h4::after { content: "▸"; }
+.etk-fold:not([open]) > summary h4 { margin-bottom: 0; }
 .etk-def-intro { display: block; margin-bottom: 8px; color: var(--muted-foreground); font-size: 11.5px; }
 .etk-def-group { display: grid; gap: 6px; margin-bottom: 10px; }
 .etk-def-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 8px; }
@@ -2114,8 +2437,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
 /* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
 .etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(220px, 280px); gap: 10px; align-items: start; }
+/* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
+.etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
+.etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
+.etk-marks th { padding: 6px 10px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); white-space: nowrap; }
+.etk-marks td { padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+.etk-marks .num { width: 1%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.etk-marks td.num:not(:first-child) { font-weight: 600; }
 .etk-result-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
-.etk-result-table th { padding: 6px 12px; text-align: left; font-size: 11px; font-weight: 700; color: var(--muted-foreground); text-transform: uppercase; letter-spacing: .06em; background: var(--accent); }
+.etk-result-table th { padding: 6px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); }
 .etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }
 .etk-result-table .num, .etk-time .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
 .etk-result-table th:not(:first-child) { text-align: right; width: 1%; white-space: nowrap; }
@@ -2125,7 +2455,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-links td { padding: 4px 12px; }
 .etk-time { display: grid; gap: 2px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .etk-time > small { font-size: 11px; color: var(--muted-foreground); }
-.etk-time > small:first-child { font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.etk-time > small:first-child { font-size: 12px; font-weight: 600; }
 .etk-time > b { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .etk-time > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
 .etk-time ul { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; }
@@ -2149,14 +2479,20 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .iss-tile .t-in { font-size: 13px; }
 .iss-tile .t-warn { color: var(--fg-orange-2); font-size: 12.5px; }
 .iss-chip-wrap { display: inline-flex; align-items: center; gap: 3px; }
-.iss-chip { display: inline-block; padding: 2px 8px; border-radius: 999px; color: var(--on-accent); font-size: 12px; font-weight: 600; }
 .fulfillment-open { display: grid; gap: 10px; justify-items: start; }
 .fulfillment-open > .fulfillment-card { justify-self: stretch; }
 
 /* Статус проекта в один клик (ProjectStatus): бейдж-кнопка и меню — плитка списка и шапка карточки. */
 .proj-status { position: relative; display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.proj-status-btn { border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5; }
-.proj-status-btn:hover { filter: brightness(.96); box-shadow: 0 0 0 1px currentColor inset; }
+.proj-status-btn { display: inline-flex; padding: 0; border: 0; border-radius: 999px; background: none; cursor: pointer; font: inherit; }
+.proj-status-btn:hover .status-chip { box-shadow: 0 0 0 1px currentColor inset; }
+.proj-status-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.proj-status-caret { margin-left: 2px; font-size: 10px; }
+.psm-item[data-tone="success"] { color: var(--chip-success-fg); }
+.psm-item[data-tone="info"] { color: var(--chip-info-fg); }
+.psm-item[data-tone="warning"] { color: var(--chip-warning-fg); }
+.psm-item[data-tone="danger"] { color: var(--chip-danger-fg); }
+.psm-item[data-tone="neutral"] { color: var(--chip-neutral-fg); }
 .proj-status-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; width: min(420px, 86vw); display: grid; gap: 6px; padding: 10px 12px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card, var(--card)); box-shadow: 0 10px 30px rgba(0,0,0,.14); cursor: default; }
 .psm-head { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); margin-top: 2px; }
 .psm-row { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -2167,10 +2503,15 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .psm-reason input { flex: 1; min-width: 0; }
 .psm-error { color: var(--tone-danger); font-size: 12px; }
 .kit-head { align-items: center; gap: 12px; }
-.kit-head .proj-status-btn { font-size: 13px; padding: 4px 12px; }
-.kit-blocker { margin: -4px 0 8px; padding: 6px 10px; border-left: 3px solid var(--tone-danger); background: var(--bg-red-4); color: var(--fg-red-7); font-size: 13px; border-radius: 0 6px 6px 0; }
-.kit-journal-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-.kit-journal-form input:not([type=date]) { flex: 1; min-width: 220px; }
+.kit-head .status-chip { height: 24px; padding: 0 10px; font-size: 13px; line-height: 24px; }
+.kit-blocker { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: -4px 0 8px; padding: 6px 10px; border-left: 3px solid var(--chip-danger-fg); background: var(--chip-danger-bg); color: var(--foreground); font-size: 13px; border-radius: 0 6px 6px 0; }
+/* «Журнал»: одна строка [вид 180][дедлайн][текст][Записать] (аудит 10.10, ПР-5). */
+.kit-journal-form { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; }
+.kit-journal-form select { flex: 0 0 180px; width: 180px; }
+.kit-journal-form input[type=date] { flex: 0 0 160px; width: 160px; }
+.kit-journal-form .auto-textarea { flex: 1; min-width: 0; }
+.kit-journal-form button { flex: none; }
+@media (max-width: 700px) { .kit-journal-form { flex-wrap: wrap; } .kit-journal-form .auto-textarea { flex-basis: 100%; } }
 .kit-journal-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .kit-journal-list li { display: grid; grid-template-columns: 96px minmax(160px, auto) 1fr auto; gap: 10px; align-items: baseline; padding: 6px 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .kit-journal-list time, .kit-journal-list small { color: var(--muted-foreground); font-size: 12px; }
@@ -2179,12 +2520,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 /* «Производственный план»: проект без карточки открывает журнал сбоку поверх списка, а не под ним. */
 .plan-drawer { position: fixed; inset: 0; z-index: 45; }
 .plan-drawer-scrim { position: absolute; inset: 0; background: rgba(0, 26, 24, .25); }
-.plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; background: var(--background, var(--bg-gray-1)); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
+.plan-drawer-body { position: absolute; top: 0; right: 0; bottom: 0; width: min(620px, 100vw); overflow: auto; overscroll-behavior: contain; background: var(--background, var(--bg-gray-1)); box-shadow: -8px 0 30px rgba(0,0,0,.15); padding: 12px; }
 .plan-details-close { position: absolute; right: 18px; top: 18px; z-index: 1; }
+.plan-drawer-body .plan-detail-head { padding-right: 96px; }
 .psm-note { font-size: 12px; color: var(--muted-foreground); }
 
 /* Экран мастера: неделя монтажников — часы по дням, клик по дню ставит выбранную операцию. */
-.master-board { grid-template-columns: minmax(0, 1fr) minmax(470px, 36%); }
 .mb-week-nav { margin-left: auto; display: flex; gap: 4px; }
 .mb-week-nav .small { padding: 3px 9px; }
 .mb-week { width: 100%; border-collapse: separate; border-spacing: 2px; table-layout: fixed; font-size: 12px; }
@@ -2211,7 +2552,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-cell.absent { background: repeating-linear-gradient(135deg, var(--bg-red-7) 0 4px, var(--card) 4px 8px); color: var(--fg-red-4); font-size: 11px; }
 .mb-cell.today { box-shadow: inset 0 0 0 1px var(--primary); }
 .mb-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 8px; font-size: 11px; color: var(--muted-foreground); }
-.mb-legend .mb-cell { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 18px; font-size: 10px; }
+.mb-legend .mb-cell { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 18px; font-size: 11px; }
 .mb-chip { display: inline-flex; align-items: center; gap: 2px; }
 .mb-chip-x { all: unset; cursor: pointer; padding: 0 3px; color: var(--muted-foreground); font-size: 13px; line-height: 1; border-radius: 4px; }
 .mb-chip-x:hover { color: var(--fg-red-4); background: var(--bg-red-7); }
@@ -2219,8 +2560,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .mb-ops th:nth-child(5), .mb-ops td:nth-child(5) { width: 170px; }
 .mb-ops th:nth-child(2) { width: 36%; }
 @media (max-width: 1600px) {
-  .master-board { grid-template-columns: 1fr; }
-  .mb-people { position: static; max-height: none; }
   .mb-week thead th:first-child { width: 190px; }
 }
 .mb-week th { text-transform: none; letter-spacing: 0; }
@@ -2265,19 +2604,18 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .table-wrap tr.clickable { cursor: pointer; }
 .table-wrap tr.clickable:hover td { background: var(--accent); }
 
-.staff-departments .staff-dep-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px; padding: 0 20px 18px; }
-.staff-dep-list { display: grid; gap: 8px; width: min(100%, 420px); }
+.staff-departments .staff-dep-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 24px; padding: 0 16px 16px; }
+@media (max-width: 1100px) { .staff-departments .staff-dep-body { grid-template-columns: minmax(0, 1fr); } }
+.staff-dep-list, .staff-dep-heads { display: grid; gap: 8px; min-width: 0; }
+.staff-dep-list h3, .staff-dep-heads h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.staff-dep-list textarea { width: 100%; resize: vertical; }
 .staff-dep-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.staff-dep-rename input { width: 240px; }
-/* «Личная карточка»: руководители отделов — compact table + one picker row. */
-.staff-dep-heads { display: grid; gap: 8px; width: min(100%, 560px); }
 .staff-dep-heads .table-wrap { max-height: 320px; overflow-y: auto; }
-.staff-dep-heads th, .staff-dep-heads td { padding: 6px 12px; }
+.staff-dep-heads th, .staff-dep-heads td { padding: 4px 12px; }
 .staff-dep-heads tr.selected td { background: var(--accent); }
-.staff-dep-heads .staff-dep-rename { flex-wrap: nowrap; }
-.staff-dep-heads .staff-dep-rename select { flex: 1 1 150px; width: auto; min-width: 0; }
-.staff-dep-heads .staff-dep-rename input { flex: 1 1 200px; width: auto; min-width: 0; }
-.staff-dep-heads .staff-dep-rename button { flex: none; }
+.staff-dep-rename select { flex: 1 1 150px; width: auto; min-width: 0; }
+.staff-dep-rename input { flex: 1 1 180px; width: auto; min-width: 0; }
+.staff-dep-rename button { flex: none; }
 /* A табельный номер («FRX-0017») never breaks at its hyphen. */
 .staff-page td.tab-no { white-space: nowrap; }
 /* The employee form has two titled blocks, «Кадры» (personnel facts) and «Доступ в ERP» (what the person may open),
@@ -2369,6 +2707,9 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .stock-picker { display: grid; gap: 6px; }
 .stock-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .stock-search input { height: 26px; min-width: 260px; }
+/* «Привязать ГРН» в панели строки: поиск и «Найти» в одну строку, без растянутого на всю ширину поля. */
+.stock-search.bind-search { max-width: none; }
+.stock-search.bind-search input { width: 360px; }
 .stock-reserve { display: flex; align-items: end; gap: 8px; }
 .stock-reserve input { width: 110px; height: 26px; }
 .stock-lots tr.muted { color: var(--muted-foreground); }
@@ -2544,6 +2885,19 @@ input.cell-edit-input[type="date"] { width: 130px; min-width: 0; }
 textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .data-table td small.cell-edit-error, .cell-edit-error { display: block; margin-top: 2px; color: var(--fg-red-6); font-size: 11.5px; white-space: normal; }
 .order-lines td.note-cell { min-width: 120px; max-width: 220px; white-space: normal; }
+/* DATASHEET и файлы строки закупки (ProcurementLineDocuments): ссылки по одной в строку, длинное имя — многоточием. */
+.cell-link { font-size: 12px; }
+.file-links { display: flex; flex-direction: column; gap: 1px; min-width: 0; max-width: 220px; }
+.file-links a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.line-documents { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.line-documents .file-links { max-width: none; }
+.line-doc-datasheet { display: flex; align-items: center; gap: 10px; }
+.line-doc-datasheet a { font-weight: 400; white-space: nowrap; }
+.line-doc-field { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.line-doc-title { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.line-doc-empty { color: var(--muted-foreground); font-size: 13px; }
+.line-doc-field .file-button { display: inline-flex; align-items: center; cursor: pointer; }
+.line-doc-field .file-button.disabled { opacity: .6; cursor: default; }
 .order-lines td.missing-cell { min-width: 120px; max-width: 220px; white-space: normal; }
 .procurement-sheet td.num { font-variant-numeric: tabular-nums; }
 /* Весь лист и стадии: ключевые колонки вместе с «Комментарием» должны влезать в 16" без прокрутки вбок —
@@ -2566,8 +2920,9 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
   --zg-month-h: 18px;
   --zg-days-h: 30px;
   --zg-font: 12px;
-  --zg-font-sm: 10.5px;
-  --zg-font-xs: 10px;
+  --zg-font-sm: 11px;
+  --zg-font-xs: 11px;
+  --zg-week: 46px;
   --zg-head-font: 11px;
   --zg-today-bg: color-mix(in srgb, var(--primary) 9%, transparent);
   --zg-today-head: color-mix(in srgb, var(--primary) 68%, black);
@@ -2586,7 +2941,11 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
   --zg-ok-bg: #e6f4ea;
   --zg-ok: #1e7e34;
   --zg-arrival: #1565c0;
+  --zg-span-pct: 32%;
+  --zg-note: #6b7689;
 }
+/* 16" и уже: день — 16 px, чтобы рядом с колонками листа календарь показал пять недель (аудит 10.10, ПП-2). */
+@media (max-width: 1700px) { :root { --zg-day: 16px; } }
 .zg-panel .plan-section-head { display: flex; align-items: baseline; gap: 12px; }
 .zg-span { color: var(--muted-foreground); font-size: var(--zg-font); }
 .zg-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 8px 0 6px; }
@@ -2596,12 +2955,20 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-legend { display: inline-flex; flex-wrap: nowrap; gap: 10px; margin-left: auto; font-size: var(--zg-font-sm); color: var(--muted-foreground); white-space: nowrap; }
 .zg-legend > span { display: inline-flex; align-items: center; gap: 4px; }
 .zg-legend i { display: inline-block; font-style: normal; }
-.zg-key-bar { width: 16px; height: 8px; border-radius: 3px; background: var(--zg-c0); }
-.zg-key-qty { min-width: 16px; height: 12px; padding: 0 2px; border-radius: 3px; background: var(--zg-c0); color: var(--primary-foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 12px; text-align: center; }
+.zg-key-bar { width: 18px; height: 8px; border-radius: 3px; background: linear-gradient(90deg, var(--zg-c0) 0 33%, var(--zg-c2) 33% 66%, var(--zg-c3) 66%); }
+.zg-key-qty { min-width: 16px; height: 14px; padding: 0 3px; border-radius: 3px; background: var(--card); box-shadow: 0 0 0 1px var(--zg-c0); color: var(--foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 14px; text-align: center; }
+.zg-key-off { width: 10px; height: 12px; border-radius: 2px; background: var(--zg-off-head); }
+.zg-key-today { width: 10px; height: 12px; border-radius: 2px; border: 1px solid var(--primary); background: var(--zg-today-bg); }
+.zg-key-note { width: 6px; height: 6px; border-radius: 50%; background: var(--zg-note); }
 .zg-key-arrival { width: 6px; height: 6px; border-radius: 50%; background: var(--zg-arrival); }
-.zg-key-deadline { width: 2px; height: 12px; background: var(--zg-late); }
+.zg-key-span { width: 18px; height: 8px; border-radius: 3px; background: color-mix(in srgb, var(--zg-c0) var(--zg-span-pct), transparent); }
+.zg-key-deadline { width: 3px; height: 12px; background: var(--zg-late); }
 .zg-key-manual { width: 0; height: 0; border-top: 6px solid var(--primary); border-left: 6px solid transparent; }
 .zg-toolbar .zg-columns { padding: 4px 10px; font-size: var(--zg-font); }
+.zg-scale { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--seg-bg); }
+.zg-scale button { min-height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--seg-fg); font-size: var(--zg-font); font-weight: 600; }
+.zg-scale button.on { background: var(--card); color: var(--zg-today-head); box-shadow: 0 1px 2px rgba(0, 26, 24, .12); }
+.zg-scale button:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
 .zg-toolbar .zg-columns.active { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); color: var(--zg-today-head); }
 .zg-chooser { align-items: center; margin: 0 0 6px; padding: 6px 12px; border-radius: 8px; gap: 6px 14px; }
 .zg-chooser .check-inline { font-size: var(--zg-font); }
@@ -2628,7 +2995,9 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-month-head span { position: sticky; left: calc(var(--zg-frozen, 0px) + 1px); display: inline-block; padding: 0 6px; line-height: calc(var(--zg-month-h) - 1px); }
 .zg-table thead th.zg-day-head { padding: 0; border-right-color: var(--zg-grid); line-height: 1.1; }
 .zg-day-head b { display: block; font-size: var(--zg-head-font); font-weight: 600; font-variant-numeric: tabular-nums; }
-.zg-day-head span { display: block; color: var(--muted-foreground); font-size: 9.5px; font-weight: 400; }
+.zg-day-head span { display: block; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 400; }
+.zg-week-col { width: var(--zg-week); }
+.zg-table thead th.zg-week-head b { font-size: var(--zg-head-font); }
 .zg-table thead th.zg-day-head.zg-off { background: var(--zg-off-head); color: var(--muted-foreground); }
 .zg-table thead th.zg-day-head.zg-today { background: var(--zg-today-head); color: var(--primary-foreground); }
 .zg-table thead th.zg-day-head.zg-today span { color: var(--primary-foreground); opacity: .85; }
@@ -2645,6 +3014,7 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-group-hold .zg-group-label { color: var(--fg-gray-9); }
 .zg-edit { cursor: pointer; }
 .zg-edit:hover { outline: 1px solid color-mix(in srgb, var(--primary) 55%, transparent); outline-offset: -1px; }
+.zg-edit:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 .zg-manual::after { content: ""; position: absolute; top: 0; right: 0; border-top: 7px solid var(--primary); border-left: 7px solid transparent; }
 .zg-center { text-align: center; }
 .zg-table td.zg-center { padding: 0 2px; }
@@ -2655,23 +3025,15 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-table td.zg-col-project { padding: 0; background: color-mix(in srgb, var(--zg-color) 18%, var(--card)); }
 .zg-project { width: 100%; height: 100%; min-height: 0; border: 0; background: none; padding: 0 4px 0 9px; color: var(--foreground); font-size: var(--zg-font); font-weight: 700; text-align: left; box-shadow: inset 4px 0 0 var(--zg-color); }
 .zg-project:hover { text-decoration: underline; }
+.zg-project { position: relative; }
+.zg-note-mark { position: absolute; top: 50%; right: 5px; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--zg-note); }
 
-/* Статус: один цветной чип и «+N», полный список — в подсказке. */
-.zg-chips { display: flex; align-items: center; gap: 3px; overflow: hidden; }
-.zg-chips .zg-chip { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.zg-more { flex: none; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 600; }
-.zg-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border-radius: 4px; font-size: var(--zg-font-sm); font-weight: 700; line-height: 17px; white-space: nowrap; background: var(--accent); color: var(--muted-foreground); }
-.zg-chip.t-hold { background: var(--bg-blue-9); color: var(--fg-blue-7); }
-.zg-chip.t-stop { background: var(--bg-red-11); color: var(--on-accent); }
-.zg-chip.t-pause { background: var(--bg-orange-5); color: var(--fg-orange-10); }
-.zg-chip.t-check { background: var(--bg-purple-1); color: var(--fg-purple-1); }
-.zg-chip.t-launch { background: var(--bg-blue-8); color: var(--fg-blue-5); }
-.zg-chip.t-work { background: var(--bg-green-8); color: var(--fg-green-2); }
-.zg-chip.t-wait { background: var(--bg-amber-8); color: var(--fg-amber-1); }
-.zg-chip.t-qc { background: var(--bg-teal-13); color: var(--fg-teal-3); }
-.zg-chip.t-ship { background: var(--bg-blue-7); color: var(--fg-blue-6); }
-.zg-chip.t-ready { background: var(--bg-green-11); color: var(--on-accent); }
-.zg-chip.t-shipped { background: var(--bg-blue-6); color: var(--fg-blue-4); }
+/* Статус: главный статус — общим чипом и целым словом (ширина колонки — по самому длинному слову), «+N» —
+   остальные, полный список — в подсказке (аудит 10.10, ПП-1, ПП-3). */
+.zg-chips { display: flex; align-items: center; gap: 4px; }
+.zg-col-status .status-chip { flex: none; max-width: none; overflow: visible; }
+.zg-more { flex: none; color: var(--muted-foreground); font-size: var(--zg-font-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
+.zg-empty-mark { color: var(--muted-foreground); }
 
 /* Готовность: тонкая полоса и число справа. */
 .zg-ready { display: flex; align-items: center; gap: 4px; }
@@ -2709,18 +3071,32 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 /* Календарь: тонкая сетка, полоса работ цветом проекта со скруглёнными концами. */
 .zg-table td.zg-day { position: relative; padding: 0; border-right-color: var(--zg-grid); text-align: center; font-size: var(--zg-font-sm); font-weight: 700; color: var(--fg-blue-7); overflow: visible; text-overflow: clip; }
 .zg-bar { position: absolute; top: 6px; bottom: 6px; left: 0; right: -1px; background: var(--zg-color); }
-.zg-off > .zg-bar { background: color-mix(in srgb, var(--zg-color) 50%, var(--card)); }
+/* Срок: полоса цветом проекта (светлее работ) до дедлайна; просрочка — тоном «опоздание». Работы рисуются поверх. */
+.zg-span-bar { position: absolute; top: 6px; bottom: 6px; left: 0; right: -1px; background: color-mix(in srgb, var(--zg-color) var(--zg-span-pct), transparent); }
+.zg-span-bar.zg-span-late { background: color-mix(in srgb, var(--zg-late) var(--zg-span-pct), transparent); }
+.zg-week > .zg-span-bar { left: var(--zg-span-from, 0%); right: min(var(--zg-span-to, 0%), 100%); }
+.zg-off > .zg-bar { background: color-mix(in srgb, var(--zg-color) 50%, white); }
 .zg-work-start > .zg-bar { left: 2px; border-radius: 4px 0 0 4px; }
 .zg-work-end > .zg-bar { right: 2px; border-radius: 0 4px 4px 0; }
 .zg-work-start.zg-work-end > .zg-bar { border-radius: 4px; }
-.zg-day-text { position: relative; z-index: 1; padding: 0 2px; }
+.zg-day-text { position: relative; z-index: 1; padding: 0 2px; font-size: var(--zg-font-xs); }
 .zg-work > .zg-day-text { color: var(--primary-foreground); }
-.zg-work-start > .zg-day-text { position: absolute; top: 0; bottom: 0; left: 4px; display: flex; align-items: center; }
+.zg-work.zg-off > .zg-day-text { color: var(--foreground); }
+/* Количество запуска — плашкой с обводкой цветом проекта: читается на полосе, на выходном и за краем полосы (ПП-4). */
+.zg-qty { position: absolute; top: 50%; left: 1px; z-index: 1; padding: 0 3px; border-radius: 3px; background: var(--card); box-shadow: 0 0 0 1px var(--zg-color); color: var(--foreground); font-size: var(--zg-font-xs); font-weight: 700; line-height: 14px; font-variant-numeric: tabular-nums; transform: translateY(-50%); pointer-events: none; }
 /* Сегодня: колонка календаря с рамкой и лёгкой заливкой, шапка — цветом бренда. */
 .zg-table td.zg-today { border-left: 1px solid var(--primary); border-right-color: var(--primary); background-image: linear-gradient(var(--zg-today-bg), var(--zg-today-bg)); }
 .zg-table thead th.zg-today { border-left: 1px solid var(--primary); border-right-color: var(--primary); }
 .zg-deadline::before { content: ""; position: absolute; top: 0; bottom: 0; right: -1px; width: 3px; background: var(--zg-late); z-index: 1; }
-.zg-arrival::after { content: ""; position: absolute; left: 2px; bottom: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--zg-arrival); box-shadow: 0 0 0 1.5px var(--ln-gray-1); z-index: 1; }
+.zg-arrival::after { content: ""; position: absolute; left: 2px; bottom: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--zg-arrival); box-shadow: 0 0 0 1.5px #fff; z-index: 1; }
+/* Масштаб «Недели»: полоса — с первого по последний рабочий день недели, дедлайн и приход — на своём дне. */
+.zg-week > .zg-bar { left: 0; right: -1px; }
+.zg-week.zg-work-start > .zg-bar { left: calc(var(--zg-from, 0%) + 1px); border-radius: 4px 0 0 4px; }
+.zg-week.zg-work-end > .zg-bar { right: min(calc(var(--zg-to, 0%) + 1px), calc(100% - var(--zg-from, 0%) - 9px)); border-radius: 0 4px 4px 0; }
+.zg-week.zg-work-start.zg-work-end > .zg-bar { border-radius: 4px; }
+.zg-week-deadline { position: absolute; top: 0; bottom: 0; left: calc(var(--zg-deadline-at) - 2px); z-index: 1; width: 3px; background: var(--zg-late); }
+.zg-week-arrival { position: absolute; bottom: 2px; left: calc(var(--zg-arrival-at) + 1px); z-index: 1; width: 7px; height: 7px; border-radius: 50%; background: var(--zg-arrival); box-shadow: 0 0 0 1.5px #fff; }
+.zg-week > .zg-qty { left: 2px; }
 .zg-table td.zg-empty { height: calc(var(--zg-row) + 8px); padding: 0; color: var(--muted-foreground); text-align: left; overflow: visible; border-bottom: 0; }
 .zg-empty-text { position: sticky; left: 0; display: inline-block; padding: 0 12px; line-height: calc(var(--zg-row) + 8px); }
 
@@ -2730,18 +3106,18 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .zg-pop-head span { color: var(--muted-foreground); font-size: 12px; }
 .zg-pop-head .link-button { margin-left: auto; }
 .zg-pop input:not([type="checkbox"]), .zg-pop textarea { width: 100%; height: 30px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
-.zg-pop textarea { height: 72px; resize: vertical; }
+.zg-pop textarea.auto-textarea { min-height: 36px; resize: none; }
 .zg-pop-row { display: flex; gap: 6px; }
 .zg-pop-row input { flex: 1; }
 .zg-pop-acts { display: flex; flex-wrap: wrap; gap: 6px; }
 .zg-status-pick { display: flex; flex-wrap: wrap; gap: 5px; }
-.zg-status-pick .zg-chip { cursor: pointer; padding: 3px 7px; opacity: .55; }
-.zg-status-pick .zg-chip.on { opacity: 1; box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 35%, transparent); }
-.zg-status-pick input { width: 12px; height: 12px; margin: 0; }
+.zg-pick { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 2px; border-radius: 999px; cursor: pointer; opacity: .6; }
+.zg-pick.on { opacity: 1; box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 35%, transparent); }
+.zg-status-pick input { width: 14px; height: 14px; margin: 0; }
 @media (pointer: coarse) {
-  :root { --zg-row: 40px; --zg-day: 30px; --zg-days-h: 34px; }
+  :root { --zg-row: 40px; --zg-day: 26px; --zg-week: 52px; --zg-days-h: 34px; }
   .zg-table .zg-project, .zg-table .zg-link { min-height: 0; }
-  .zg-bar { top: 9px; bottom: 9px; }
+  .zg-bar, .zg-span-bar { top: 9px; bottom: 9px; }
   .zg-toolbar > input { height: 40px; }
   .zg-toggle input { width: 20px; height: 20px; }
   .zg-pop button { min-height: 40px; }
@@ -2796,6 +3172,42 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .ec-now { margin-left: 8px; border-radius: 999px; padding: 1px 8px; background: var(--bg-amber-4); color: var(--fg-orange-9); font-size: 11px; font-weight: 600; }
 .ec-body .link-button { padding: 0; font-size: 13px; font-weight: 600; }
 .ec-body > .link-button { justify-self: start; margin-top: 4px; }
+/* «Отпуска и заявления» в «Моей карточке»: норма года, форма заявления, таблицы (входящие, свои, журнал кадров) и
+   раскрытая строка с подписями и действиями. */
+.ec-tab-count { margin-left: 6px; border-radius: 999px; padding: 0 7px; background: var(--primary); color: var(--primary-foreground); font-size: 11px; font-weight: 700; }
+.lv-page { display: grid; gap: 12px; align-content: start; }
+.lv-page > .panel { margin-top: 0; }
+.lv-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; padding: 12px 16px; }
+.lv-summary h2 { margin: 0; }
+.lv-balance { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; flex: 1; }
+.lv-balance div { display: flex; align-items: baseline; gap: 6px; }
+.lv-balance dt { color: var(--muted-foreground); font-size: 12.5px; }
+.lv-balance dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.lv-balance .lv-left dd { color: var(--primary); }
+.lv-block > h2:first-child, .lv-form > h2:first-child { display: flex; align-items: center; gap: 8px; padding: 12px 16px 8px; margin: 0; }
+.lv-block > .empty { padding: 0 16px 14px; }
+.lv-form .form-actions { padding: 0 20px 16px; margin-top: 0; justify-content: flex-start; }
+.lv-form .warning-inline { margin: 0 20px 10px; }
+.lv-form textarea { min-height: 42px; height: 42px; resize: vertical; }
+.lv-form .field-group .seg-tabs { justify-self: start; margin: 0; }
+.lv-days { display: grid; gap: 6px; align-content: start; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.lv-days strong { padding: 9px 0; color: var(--foreground); font-size: 16px; font-variant-numeric: tabular-nums; }
+.lv-page .kit-status.tone-ok { background: var(--chip-ok-bg); }
+.lv-page .kit-status.tone-info { background: var(--chip-info-bg); }
+.lv-page .kit-status.tone-neutral { background: var(--chip-neutral-bg); }
+.lv-detail { display: grid; gap: 8px; max-width: 1100px; font-size: 13px; cursor: default; }
+.lv-hash { margin-left: 6px; color: var(--muted-foreground); font-family: ui-monospace, monospace; font-size: 11px; }
+.lv-signatures { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
+.lv-signatures li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 4px 0; border-top: 1px solid var(--border); }
+.lv-signatures li:first-child { border-top: 0; }
+.lv-step { min-width: 7.5em; color: var(--muted-foreground); font-weight: 600; }
+.lv-signatures small { color: var(--muted-foreground); }
+.lv-comment { flex-basis: 100%; padding-left: calc(7.5em + 10px); color: var(--foreground); }
+.lv-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 10px; }
+.lv-actions label { min-width: 220px; }
+.lv-actions .lv-reason { flex: 1; max-width: 420px; }
+.lv-actions input { padding: 6px 10px; }
+@media (pointer: coarse) { .lv-actions button, .lv-form button { min-height: 40px; } }
 /* «Мои позиции»: лента заказов под группами поставщиков (OrderList) — заголовок заказа свёрнут, щелчок раскрывает
    строки; плашка статуса меняется на месте. Переключатель «Заказы: Все · Активные · Скрыть» — в заголовке блока. */
 :root { --chip-info-bg: #e5edfb; --chip-warn-bg: #fdf3d8; --chip-ok-bg: #e3f5e8; --chip-neutral-bg: #eceff0; }
@@ -2876,15 +3288,25 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .data-table.order-list .table-wrap { max-height: none; }
 
 /* Автоплан */
-.autoplan-body { width: min(780px, 100vw); }
-.autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 8px; }
+.autoplan-dialog { display: flex; flex-direction: column; gap: 10px; width: min(880px, 100%); height: auto; max-height: calc(100vh - 32px); overflow: hidden; padding: 16px 20px; outline: none; }
+.autoplan-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.autoplan-head h2 { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
+.autoplan-scroll { display: grid; gap: 10px; align-content: start; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
+.autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .autoplan-form label { display: grid; gap: 3px; font-size: 12px; }
-.autoplan-tasks { margin-bottom: 8px; font-size: 13px; }
-.autoplan-tasks summary { cursor: pointer; padding: 4px 0; }
-.autoplan-task-list { display: grid; gap: 2px; max-height: 180px; overflow: auto; padding: 4px 0; }
+.autoplan-tasks { font-size: 13px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.autoplan-tasks-bar { display: flex; align-items: center; gap: 14px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.autoplan-tasks-bar .link-button { padding: 0; margin: 0; }
+.autoplan-tasks-bar .link-button:disabled { color: var(--muted-foreground); }
+.autoplan-count { margin-right: auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.autoplan-task-list { display: grid; max-height: 240px; overflow: auto; padding: 2px 10px; }
+.autoplan-check.autoplan-task-line { display: grid; grid-template-columns: 20px 84px minmax(110px, 190px) minmax(0, 1fr); gap: 8px; min-height: 28px; font-variant-numeric: tabular-nums; }
+.autoplan-task-line b { font-weight: 600; white-space: nowrap; }
+.autoplan-task-item, .autoplan-task-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autoplan-task-name { color: var(--muted-foreground); }
 .autoplan-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
-.autoplan-check input { width: auto; margin: 0; }
-.autoplan-result { display: grid; gap: 8px; margin-top: 8px; }
+.autoplan-check input { width: auto; margin: 0; justify-self: start; }
+.autoplan-result { display: grid; gap: 8px; }
 .autoplan-summary { font-size: 14px; font-weight: 600; padding: 8px 10px; border-radius: 8px; background: var(--accent); }
 .autoplan-fitter { border: 1px solid var(--border); border-radius: 8px; background: var(--card); padding: 8px 10px; }
 .autoplan-fitter h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 14px; }
@@ -2901,9 +3323,9 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-unplaced { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--card); }
 .autoplan-unplaced h3 { margin: 0 0 4px; font-size: 14px; }
 .autoplan-unplaced-row { font-size: 13px; padding: 2px 0; }
-.autoplan-actions { position: sticky; bottom: 0; background: var(--background, var(--bg-gray-1)); padding: 8px 0; }
-@media (max-width: 700px) { .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
-@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-body button { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
+.autoplan-dialog .autoplan-actions { margin: 0; padding: 10px 0 0; border-top: 1px solid var(--border); flex-wrap: nowrap; }
+@media (max-width: 700px) { .autoplan-task-line { grid-template-columns: 20px 76px minmax(0, 1fr); } .autoplan-task-name { grid-column: 3; } .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
+@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"] { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
 
 /* Вид сотрудника: выбор рядом с заголовком, заметная полоса «только просмотр» */
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -2911,18 +3333,24 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 @media (pointer: coarse) { .view-strip button { min-height: 40px; } }
 /* Производственный план → Загрузка по людям: сетка «часы/смена» на языке «Монтажников». */
 .pl-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
-.pl-period { font-size: 14px; }
+.pl-period { font-size: 13px; color: var(--muted-foreground); }
+.pl-period b { color: var(--foreground); font-size: 14px; font-weight: 600; }
 .pl-only { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; min-height: 30px; cursor: pointer; white-space: nowrap; }
 .pl-only input { width: auto; margin: 0; }
 .pl-table tbody th { padding: 2px 6px; }
 .pl-table thead th:first-child { width: 220px; }
+.pl-table thead th { font-size: 12px; }
+.pl-table thead th b { display: block; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pl-table thead th.off { background: var(--zg-off-head); border-radius: 4px; }
+.pl-table thead th.today { background: var(--zg-today-head); border-radius: 4px; color: var(--primary-foreground); }
+.pl-table thead th.today span { color: var(--primary-foreground); }
 .pl-table tr.pl-free th b { font-weight: 500; color: var(--muted-foreground); }
 .pl-table tr.pl-free th small { color: var(--fg-blue-1); }
 .pl-table .mb-cell { font-size: 12px; }
 .pl-table .mb-cell.absent { font-size: 11px; white-space: nowrap; overflow: hidden; }
 .pl-table .mb-cell.free { background: var(--bg-blue-1); }
-.pl-legend { font-size: 12px; }
-.pl-legend .mb-cell { width: auto; min-width: 26px; height: 20px; padding: 0 4px; font-size: 12px; }
+.pl-legend { font-size: 12px; cursor: help; }
+.pl-legend .mb-cell { width: auto; min-width: 26px; height: 20px; margin-left: 6px; padding: 0 4px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .pl-legend .mb-cell.late { font-weight: 700; }
 .pl-table .mb-cell > button { position: relative; }
 .mb-cell.late { box-shadow: inset 0 0 0 2px var(--tone-danger); }
@@ -3071,6 +3499,215 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .order-lines th { white-space: normal; vertical-align: bottom; }
 .procurement-stage .data-table td.menu { min-width: 150px; }
 
+/* Чертёж жгута на весь экран: шапка в одну строку, редактор занимает остальную высоту. */
+.harness-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; padding: 8px 12px 0; background: var(--background); }
+.harness-page-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; min-width: 0; }
+.harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.harness-page-head > .muted, .harness-save { white-space: nowrap; }
+.harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex-shrink: 0; }
+.harness-page-note { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.harness-conflict { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--warn-border); border-radius: 6px; background: var(--warn-soft); color: var(--foreground); font-size: 13px; }
+.harness-conflict > span { flex: 1; min-width: 0; }
+.harness-page .button-link { display: inline-flex; align-items: center; text-decoration: none; }
+.harness-save { font-size: 13px; font-weight: 600; }
+.harness-page-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.harness-page-body > .harness-root { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+/* Редактор сам по себе во весь экран (100dvh); здесь под шапкой страницы — ровно оставшаяся высота, иначе низ поля
+   (масштаб «100% · Ctrl + колесо», окна таблиц снизу) уходит за край экрана на высоту шапки. */
+.harness-page-body > .harness-root > .he-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.harness-page-body > .harness-root > .he-host > .harness-editor { flex: 1; height: auto; min-height: 0; }
+/* «История версий» чертежа: сбоку поверх редактора; строка выбирается кликом, действие одно — в шапке. */
+.harness-history-actions { display: flex; align-items: center; gap: 12px; }
+.harness-history-current { margin-left: 8px; font-size: 12px; font-weight: 500; }
+.harness-history .data-table tr.selected td, .harness-history .data-table tr.selected:hover td { background: var(--sheet-selected); }
+.harness-history .data-table tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+
+/* ── Обход на 16" ноутбуке (1536×864): всё меню и профиль без прокрутки меню; действия строки сотрудника в одну строку ── */
+@media (hover: hover) and (pointer: fine) and (min-width: 901px) and (max-height: 960px) {
+  .sidebar { padding: 12px 12px 10px; }
+  .brand { padding-bottom: 8px; }
+  .nav-group { margin-top: 6px; padding-top: 5px; }
+  .nav-group h4 { margin-bottom: 3px; }
+  .nav-item { padding-top: 4px; padding-bottom: 4px; }
+  .profile { padding-top: 8px; gap: 2px; }
+  .profile .link-button { padding-top: 2px; }
+}
+.row-action-cell .row-actions { flex-direction: row; align-items: center; width: auto; max-width: none; }
+.staff-page .data-table td strong, .staff-page .data-table td small { white-space: nowrap; }
+.staff-page .data-table td small { display: block; }
+
+/* Цель 2: «План задания» и «Сдача ЖУК» в карточке задания (JobPlan.tsx). */
+.status.status-done { color: var(--tone-ok); background: color-mix(in srgb, var(--tone-ok) 14%, transparent); }
+.status.status-cancelled { color: var(--muted-foreground); background: var(--accent); }
+.job-plan { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.jp-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.jp-head h2 { margin: 0; font-size: 16px; }
+.jp-head small { color: var(--muted-foreground); }
+.jp-norms { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px; }
+.jp-controls { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 10px; }
+.jp-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+.jp-controls select { min-width: 300px; }
+.jp-controls input { width: 120px; }
+.jp-error { color: var(--tone-danger); font-size: 12px; margin-top: 6px; }
+.jp-team { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; }
+.jp-label { font-size: 12px; color: var(--muted-foreground); margin-right: 4px; }
+.jp-person { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; white-space: nowrap; font-size: 13px; color: var(--foreground); border: 1px solid var(--border); border-radius: 999px; cursor: pointer; }
+.jp-person.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
+.jp-person input { margin: 0; width: auto; min-height: 0; flex: none; }
+.jp-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
+.jp-summary > div { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--accent); }
+.jp-summary span { font-size: 12px; color: var(--muted-foreground); }
+.jp-summary b { font-size: 15px; }
+.jp-summary small { font-size: 11px; color: var(--muted-foreground); }
+.jp-summary .jp-late b { color: var(--tone-danger); }
+.jp-warnings { margin: 10px 0 0; padding: 8px 12px 8px 26px; border-radius: 8px; color: var(--tone-warn); background: var(--warn-soft); font-size: 12px; }
+.jp-warnings.limit { color: var(--tone-danger); background: var(--sheet-invalid-bg); }
+.jp-steps tbody tr { cursor: default; }
+.jp-steps td small { color: var(--muted-foreground); }
+.jp-code { display: block; font-size: 11px; }
+.jp-cancelled td { color: var(--muted-foreground); text-decoration: line-through; }
+.jp-cancelled td:last-child { text-decoration: none; }
+.jp-empty { display: block; margin-top: 8px; color: var(--muted-foreground); }
+@media (max-width: 1100px) { .jp-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .jp-controls select { min-width: 0; } }@media (pointer: coarse) { .jp-person { min-height: 40px; padding: 4px 14px; } .jp-controls input, .jp-controls select { min-height: 40px; } }
+
+/* Смена этапа: окно подтверждения с предпросмотром (StageChangeDialog) и метка «пропущен». */
+.stage-dialog { width: min(720px, 100%); }
+.stage-dialog-change { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stage-dialog-kbs { width: 100%; border-collapse: collapse; font-size: 13px; }
+.stage-dialog-kbs th, .stage-dialog-kbs td { padding: 4px 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.stage-dialog-kbs thead th { font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.stage-dialog-kbs tbody th { font-size: 13px; font-weight: 600; text-transform: none; letter-spacing: 0; white-space: nowrap; color: var(--foreground); }
+.stage-dialog-kbs .stage-keep td { color: var(--muted-foreground); }
+.stage-skipped { color: #a15c00; margin-right: 8px; }
+.stage-dialog-warn ul { margin: 0; padding-left: 18px; }
+.stage-skipped-mark { margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; font-size: 11px; color: #a15c00; cursor: help; white-space: nowrap; }
+/* «Документы», «Компетенции», «Рабочее время» в «Моей карточке» (фаза 3). */
+.ec-tabs .seg-tabs { flex-wrap: wrap; }
+.lv-block h2 .ed-add { margin-left: auto; }
+.lv-block td a, .lv-detail a { color: var(--primary); font-weight: 600; text-decoration: none; }
+.lv-block td a:hover, .lv-detail a:hover { text-decoration: underline; }
+.ed-form { padding: 0 16px 12px; display: grid; gap: 8px; }
+.ed-form .form-actions { padding: 0; justify-content: flex-start; }
+.ed-archived td { color: var(--muted-foreground); }
+.ed-detail .ed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.ed-upload { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.ed-confirm { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+.ed-versions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.ed-versions label { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
+.ed-versions select { width: auto; }
+.ed-sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 32px; }
+@media (max-width: 1100px) { .ed-sheet { grid-template-columns: 1fr; } }
+.wt-picker { display: flex; align-items: center; gap: 8px; }
+.wt-picker input[type="month"] { width: auto; }
+.wt-label { min-width: 8em; font-size: 14px; text-transform: capitalize; }
+.wt-nodata { padding: 12px 16px; margin: 0; }
+.wt-balance .wt-source { flex-basis: 100%; margin: 0; }
+.wt-state { font-weight: 600; }
+.wt-state.tone-danger { color: var(--fg-red-4); }
+.wt-state.tone-ok { color: var(--tone-ok); }
+tr.wt-future td { color: var(--muted-foreground); opacity: .7; }
+tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--card)); }
+
+/* Б3 · Проекты, карточка проекта, ЭТК (аудит дизайна 10.10). */
+.kit-review { color: var(--muted-foreground); }
+.kit-review-success { color: var(--chip-success-fg); }
+.kit-review-warning { color: var(--chip-warning-fg); }
+.kit-review-danger { color: var(--chip-danger-fg); }
+.kit-meta .kit-calc-link { color: var(--primary); text-decoration: none; }
+.kit-meta .kit-calc-link:hover { text-decoration: underline; }
+/* «Ещё ▾» за чертой после рабочих кнопок: удаление отдельно от них (ПР-2). */
+.kit-actions .kit-more { margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--border); }
+.kit-more .more-menu-list button.kit-more-danger { color: var(--tone-danger); }
+.kit-more .more-menu-list button.kit-more-danger:hover { background: var(--danger-soft); }
+.kit-delete-dialog .page-sub { line-height: 1.5; }
+.kit-missing { display: grid; gap: 8px; max-width: 720px; }
+.kit-missing p { margin: 0; }
+.kit-missing .page-actions { margin: 0; justify-content: flex-start; }
+/* ЭТК в «Техкартах проектов»: строка о карте не прижата к рамке панели (ЭТК-5). */
+.panel.project-etk { padding: 12px 16px 16px; }
+/* «Вход»: название слева, количество справа крупной цифрой (ЭТК-2). */
+.etk-in-row { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; padding: 4px 0; border-top: 1px solid var(--border); }
+.etk-block > strong + .etk-in-row { border-top: 0; }
+.etk-in-name { display: grid; gap: 1px; min-width: 0; }
+.etk-in-name small { color: var(--muted-foreground); font-size: 11px; }
+.etk-in-name small.etk-spec { font-variant-numeric: tabular-nums; }
+.etk-in-qty { flex: none; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* «Оснастка»: пустой раздел — «нет» серым (ЭТК-1). */
+.tr-none { color: var(--muted-foreground); font-size: 12px; }
+@media (pointer: coarse) { .proj-status-btn .status-chip { min-height: 32px; } .kit-more .more-menu-list button { min-height: 40px; } }
+.kit-supply-count dd.muted { color: var(--muted-foreground); font-weight: 400; }
+
+/* ── Ресурсное планирование и «Задания» (аудит дизайна 10.10, пакет Б2) ── */
+/* Код операции — мелкой серой второй строкой под русским названием (РП-8, erp-screens §1). */
+.op-code { display: block; margin-top: 1px; font-size: 11px; font-weight: 400; line-height: 1.3; color: var(--muted-foreground); }
+.gantt-label .op-code { margin-left: 0; }
+/* Доска монтажников — во всю ширину под проектами на любом экране (РП-6); на 27" — две недели. */
+.mb-people { position: static; max-height: none; }
+.mb-people .mb-week thead th:first-child { width: 200px; }
+.mb-period { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mb-people .mb-legend { margin-top: 10px; }
+/* Сроки на плитке, в шапке проекта и задания: дедлайн проекта и срок задания — разными словами (РП-1, РП-2). */
+.mb-tile-extra .status-chip, .mb-project-head .status-chip, .mb-task-head .status-chip { height: 20px; font-size: 12px; }
+.task-deadlines { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.launch-hint { color: var(--muted-foreground); font-size: 12px; }
+.production-launch-grid { align-items: start; }
+/* Карточка задания: кнопки действий одной высоты, не растянуты по самой высокой. */
+.production-card > .page-actions { flex-wrap: wrap; align-items: flex-start; margin: 8px 0 12px; }
+.production-card > .page-actions > .schedule-planner { margin: 0; }
+.production-launch-grid > label { align-content: start; }
+/* «Задания»: чип статуса коробки — по своему слову, не на всю ширину карточки (РП-11). */
+.production-box > .status-chip { justify-self: start; }
+.execution-actions .defect-text { flex: 1 1 280px; min-width: 240px; }
+.start-work .defect-text { flex: 1 1 280px; min-width: 240px; }
+
+/* Б6 (аудит 10.10): «Техкарты проектов» и «База данных». */
+.tc-gen-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.data-table td .tr-code { color: var(--muted-foreground); font-size: 12px; }
+.data-table td .tr-edited { font-size: 12px; }
+
+/* Снабжение (аудит дизайна 10.10, Б5): пустое состояние с действием, таблица без второй рамки, шапка сетки заявки. */
+.procurement-empty { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 10px; padding: 10px 14px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted-foreground); font-size: 13px; }
+.panel.procurement-flat > .data-table .table-wrap { border: 0; border-radius: 0; }
+.rg-col-quality_document { width: 120px; }
+.rg-hint, .procurement-auto-note { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
+.procurement-stages { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.panel.procurement-flat > .procurement-empty { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 14px 16px; }
+
+/* Б7 · управление, ОТК, личный кабинет (аудит дизайна 10.10: М-1 … М-8, Ж-3). */
+.row-action-menu { display: inline-block; }
+.row-action-open { min-width: var(--control-h-cell); height: var(--control-h-cell); padding: 0 6px; border: 1px solid transparent; border-radius: var(--control-radius); background: transparent; color: var(--muted-foreground); font-size: 16px; line-height: 1; }
+.row-action-open:hover:not(:disabled), .row-action-open[aria-expanded="true"] { border-color: var(--border); background: var(--card); color: var(--foreground); }
+.row-action-popup { z-index: 60; display: grid; min-width: 180px; padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); box-shadow: 0 4px 16px rgba(0, 0, 0, .15); }
+.row-action-popup button { min-height: 32px; padding: 4px 10px; border: 0; background: none; color: var(--foreground); font-size: 13px; text-align: left; cursor: pointer; }
+.row-action-popup button:hover:not(:disabled), .row-action-popup button:focus-visible { background: var(--accent); }
+.row-action-popup button.danger { color: var(--tone-danger); }
+.row-action-popup button:disabled { color: var(--muted-foreground); cursor: not-allowed; }
+@media (pointer: coarse) { .row-action-popup button { min-height: 40px; } }
+.staff-page .data-table td:last-child { text-align: right; }
+
+.audit-event { display: inline-flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.audit-code { color: var(--muted-foreground); font-size: 11px; }
+@media (max-width: 1799px) { .audit-event > strong + .audit-code { display: none; } }
+.operations-page .data-table td { vertical-align: middle; }
+
+.tile-icon { color: var(--primary); }
+.block-icon { display: block; }
+
+.quality-page .box-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.quality-page .production-box { gap: 6px; padding: 10px; }
+.quality-page .production-box > strong { font-size: 15px; }
+.quality-page .danger-text { color: var(--tone-danger); }
+
+.ec-legend { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+
+/* Обжим по сечениям (вкладка «Терминалы», карточка серии): сечение написано один раз, значения — столбиками. */
+.crimp { display: grid; gap: 1px; }
+.crimp-row { display: grid; grid-template-columns: repeat(var(--crimp-n, 1), minmax(11ch, auto)); gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crimp-row.has-awg { grid-template-columns: 9ch repeat(var(--crimp-n, 1), minmax(11ch, auto)); }
+.crimp-awg { color: var(--muted-foreground); font-weight: 600; border-right: 1px solid var(--border); padding-right: 8px; }
+.crimp-val { text-align: right; }
+.crimp-unit { font-style: normal; color: var(--muted-foreground); }
+@media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }
 /* Опции стенда (Витя): «Было / Новое» по блокам; на проде не показывается. */
 .stage-options-card { display: grid; gap: 10px; margin: 6px 0; padding: 10px; border: 1px dashed var(--border); border-radius: 10px; background: var(--card); font-size: 12px; }
 .stage-options-card section { display: grid; gap: 6px; }
@@ -3154,19 +3791,12 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 .rg-common-v2 .rg-apply { grid-column: span 2; align-self: start; padding-top: 19px; }
 .rg-table-v2 .rg-col-category { width: 124px; } .rg-table-v2 .rg-col-quality_document { width: 124px; }
 
-/* Option procurement.dense (Витя): Roller_Buyer-like density — one-line queue header, readable headers and buttons, stage chips. */
+/* Option procurement.dense (Витя): readable headers and row buttons; stage chips come from main's StatusChip. */
 .proc-dense-head { margin-bottom: 6px; align-items: center; }
 .proc-dense-head .eyebrow, .proc-dense-head p { display: none; }
 .proc-dense-head h1 { font-size: 18px; margin: 0; }
 .proc-dense th { white-space: normal; line-height: 1.2; vertical-align: bottom; }
 .proc-dense td button, .proc-dense td .secondary, .proc-dense td .primary { white-space: nowrap; max-width: none; }
-.stage-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
-.stage-chip.tone-work { background: var(--accent); color: var(--foreground); border-color: var(--border); }
-.stage-chip.tone-money { background: var(--warn-soft); color: var(--tone-warn); border-color: var(--warn-border); }
-.stage-chip.tone-road { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
-.stage-chip.tone-alert { background: color-mix(in srgb, var(--tone-danger) 12%, transparent); color: var(--tone-danger); }
-.stage-chip.tone-done { background: color-mix(in srgb, var(--tone-ok) 14%, transparent); color: var(--tone-ok); }
-.stage-chip.tone-off { background: transparent; color: var(--muted-foreground); border-color: var(--border); text-decoration: line-through; }
 .proc-dense .row-actions { max-width: none; width: auto; }
 .proc-dense td .row-actions .row-actions-main button { flex: 0 0 auto; overflow: visible; }
 .proc-dense td .secondary.small, .proc-dense td .primary.small { overflow: visible; text-overflow: clip; max-width: none; }

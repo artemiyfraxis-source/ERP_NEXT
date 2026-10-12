@@ -13,10 +13,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import ipaddress
+import os
 import re
 import socket
+import ssl
 from typing import Protocol
 
+import httpcore
 import httpx
 
 from .kitsets import Kitset
@@ -116,33 +119,198 @@ class PageFetcher(Protocol):
         """`fetchPageInfo_(url).title`: сетевая ошибка или код ≥ 400 → ''."""
 
 
+# TLS (audit U09, 10.10.2026): the certificate is checked first. A site whose certificate fails the check is still read
+# without it (owner, 10.10.2026: autofill must keep working, as in SUPPLYMAP — some suppliers' certificates are
+# broken), and a field filled from such a page says so in the journal. Domains listed here by hand skip the first,
+# checked attempt — comma-separated, a domain covers its subdomains (`shop.example` → `www.shop.example`); the list is
+# shown on «Системный журнал» and in /api/health?detail.
+TLS_EXCEPTIONS_ENV = "ERP_TLS_UNVERIFIED_HOSTS"
+
+
+def tls_exception_hosts(raw: str | None = None) -> tuple[str, ...]:
+    """The configured domains read without a certificate check, lower-case, without dots at the ends."""
+    text = os.getenv(TLS_EXCEPTIONS_ENV, "") if raw is None else raw
+    hosts = {part.strip().strip(".").lower() for part in text.split(",")}
+    return tuple(sorted(host for host in hosts if host))
+
+
+def tls_unverified(host: str, exceptions: tuple[str, ...]) -> bool:
+    name = (host or "").strip(".").lower()
+    return any(name == entry or name.endswith("." + entry) for entry in exceptions)
+
+
+def system_resolver(host: str, port: int) -> list[str]:
+    """`socket.getaddrinfo`, looked up at call time (tests substitute it)."""
+    return [info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)]
+
+
+def _public_ip(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        ip = ipaddress.ip_address(address.split("%")[0])
+    except ValueError:
+        return None
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:  # ::ffff:10.0.0.1 is 10.0.0.1
+        ip = mapped
+    return ip if ip.is_global else None
+
+
+def public_addresses(host: str, port: int, resolver=system_resolver) -> list[str]:
+    """Resolve `host` and return its addresses only when EVERY one is public; otherwise refuse. The caller connects to
+    exactly these addresses — the answer that was checked is the one used (no second lookup to rebind)."""
+    try:
+        addresses = list(dict.fromkeys(resolver(host, port)))
+    except OSError as error:
+        raise httpcore.ConnectError(f"host {host} does not resolve") from error
+    if not addresses:
+        raise httpcore.ConnectError(f"host {host} does not resolve")
+    checked = [_public_ip(address) for address in addresses]
+    if any(ip is None for ip in checked):
+        raise httpcore.ConnectError(f"host {host} is not public")
+    return [str(ip) for ip in checked]
+
+
+class PinnedPublicBackend(httpcore.NetworkBackend):
+    """httpcore network backend that resolves the host itself, refuses internal addresses and connects to the checked
+    IP. TLS still runs against the host name (SNI and the certificate check use the URL's host, the Host header is the
+    URL's), so a site behind a CDN works as before. Every new connection — the redirect hops included — goes through
+    here, so a redirect to an internal host or a DNS answer that changed after a check never reaches the network."""
+
+    def __init__(self, resolver=None, inner: httpcore.NetworkBackend | None = None):
+        self._resolver = resolver or system_resolver
+        self._inner = inner or httpcore.SyncBackend()
+
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        last: Exception | None = None
+        for address in public_addresses(host, port, self._resolver):
+            try:
+                return self._inner.connect_tcp(
+                    address, port, timeout=timeout, local_address=local_address, socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as error:
+                last = error
+        assert last is not None
+        raise last
+
+    def connect_unix_socket(self, path, timeout=None, socket_options=None):
+        raise httpcore.ConnectError("unix sockets are not fetched")
+
+    def sleep(self, seconds: float) -> None:
+        self._inner.sleep(seconds)
+
+
+TLS_UNVERIFIED_EXTENSION = "erp_tls_unverified"
+
+
+def _certificate_failed(error: BaseException) -> bool:
+    """The connect error came from a certificate that failed the check (expired, self-signed, wrong host name)."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
+class SupplierSiteTransport(httpx.BaseTransport):
+    """The transport of the supplier-site client: pinned public addresses, certificates verified, and a separate pool
+    without the check for a site whose certificate failed (and for the listed domains at once). A response read
+    without the check carries `extensions[TLS_UNVERIFIED_EXTENSION] = True`."""
+
+    def __init__(
+        self,
+        *,
+        resolver=None,
+        backend: httpcore.NetworkBackend | None = None,
+        exceptions: tuple[str, ...] | None = None,
+    ):
+        network = PinnedPublicBackend(resolver, backend)
+        self.exceptions = tls_exception_hosts() if exceptions is None else exceptions
+        self._verified = self._transport(httpx.create_ssl_context(verify=True), network)
+        self._unverified = self._transport(httpx.create_ssl_context(verify=False), network)
+
+    @staticmethod
+    def _transport(ssl_context, network: httpcore.NetworkBackend) -> httpx.HTTPTransport:
+        transport = httpx.HTTPTransport(trust_env=False)
+        # httpx has no public knob for the network backend: its pool is rebuilt with ours (a test pins this).
+        transport._pool = httpcore.ConnectionPool(
+            ssl_context=ssl_context, network_backend=network, max_connections=20, max_keepalive_connections=5,
+            keepalive_expiry=5.0,
+        )
+        return transport
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        https = request.url.scheme == "https"
+        if not (https and tls_unverified(request.url.host, self.exceptions)):
+            try:
+                return self._verified.handle_request(request)
+            except httpx.ConnectError as error:
+                if not (https and _certificate_failed(error)):
+                    raise
+        response = self._unverified.handle_request(request)
+        response.extensions = {**response.extensions, TLS_UNVERIFIED_EXTENSION: True}
+        return response
+
+    def close(self) -> None:
+        self._verified.close()
+        self._unverified.close()
+
+
+def supplier_client(transport: httpx.BaseTransport | None = None) -> httpx.Client:
+    """The one client shape for supplier sites: redirects, browser UA, timeouts, no proxies from the environment."""
+    return httpx.Client(
+        transport=transport or SupplierSiteTransport(), timeout=TIMEOUT, follow_redirects=True, trust_env=False,
+        headers={"User-Agent": USER_AGENT}, event_hooks={"request": [_refuse_private_host]},
+    )
+
+
+@dataclass(frozen=True)
+class FetchedPage:
+    """A page's text and where it really came from (the host after redirects, whether its certificate was checked)."""
+
+    text: str
+    host: str
+    tls_checked: bool
+
+
+def fetch_page(client: httpx.Client, url: str) -> FetchedPage | None:
+    """GET the page (tracking parameters stripped), at most 2 MB; a network error or a code >= 400 is None."""
+    try:
+        with client.stream("GET", strip_tracking_params(url)) as response:
+            if response.status_code >= 400:
+                return None
+            body = bytearray()
+            for chunk in response.iter_bytes():
+                body.extend(chunk)
+                if len(body) >= MAX_BODY_BYTES:
+                    break
+            return FetchedPage(
+                text=page_text(bytes(body), response.headers.get("content-type", "")),
+                host=response.url.host,
+                tls_checked=not response.extensions.get(TLS_UNVERIFIED_EXTENSION, False),
+            )
+    except Exception:  # noqa: BLE001 — любая сетевая ошибка = «сайт не отдал название»
+        return None
+
+
 class HttpPageFetcher:
     """httpx-адаптер `fetchPageInfo_`: редиректы, браузерный UA, тайм-ауты, тело не больше 2 МБ.
 
-    Сертификаты не проверяются, как в SUPPLYMAP (validateHttpsCertificates: false) — у части поставщиков они
-    кривые. В отличие от UrlFetchApp запрос идёт из сети ERP, поэтому адреса внутренней сети (localhost,
-    10/8, 169.254/16 …) не запрашиваются ни напрямую, ни через редирект.
+    Сертификат сначала проверяется (аудит U09); сайт с плохим сертификатом читается без проверки, и журнал это
+    отмечает (владелец, 10.10.2026: автозаполнение не должно ломаться). В отличие
+    от UrlFetchApp запрос идёт из сети ERP, поэтому адреса внутренней сети (localhost, 10/8, 169.254/16 …) не
+    запрашиваются ни напрямую, ни через редирект, ни через DNS-ответ, сменившийся после проверки: соединение идёт на
+    проверенный IP (`PinnedPublicBackend`).
     """
 
     def __init__(self, client: httpx.Client | None = None):
-        self._client = client or httpx.Client(
-            timeout=TIMEOUT, follow_redirects=True, verify=False,  # noqa: S501 — как FETCH_OPTS_
-            headers={"User-Agent": USER_AGENT}, event_hooks={"request": [_refuse_private_host]},
-        )
+        self._client = client or supplier_client()
 
     def title(self, url: str) -> str:
-        try:
-            with self._client.stream("GET", strip_tracking_params(url)) as response:
-                if response.status_code >= 400:
-                    return ""
-                body = bytearray()
-                for chunk in response.iter_bytes():
-                    body.extend(chunk)
-                    if len(body) >= MAX_BODY_BYTES:
-                        break
-                return page_title(page_text(bytes(body), response.headers.get("content-type", "")))
-        except Exception:  # noqa: BLE001 — любая сетевая ошибка = «сайт не отдал название»
-            return ""
+        page = fetch_page(self._client, url)
+        return page_title(page.text) if page is not None else ""
 
 
 class PrivateHostRefused(httpx.RequestError):
@@ -150,14 +318,15 @@ class PrivateHostRefused(httpx.RequestError):
 
 
 def _refuse_private_host(request: httpx.Request) -> None:
+    """Early refusal before any connection (an internal literal, a name that resolves inside). The transport checks
+    again at connect time, on the address it really connects to."""
     host = request.url.host
     try:
         addresses = {info[4][0] for info in socket.getaddrinfo(host, None)}
     except OSError as error:
         raise PrivateHostRefused(f"host {host} does not resolve", request=request) from error
     for address in addresses:
-        ip = ipaddress.ip_address(address.split("%")[0])
-        if not ip.is_global:
+        if _public_ip(address) is None:
             raise PrivateHostRefused(f"host {host} is not public", request=request)
 
 

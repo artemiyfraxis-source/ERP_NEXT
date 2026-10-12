@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Iterable, Mapping
@@ -174,21 +174,25 @@ def kit_stage_facts(
                 current.review.occurred_at is not None
                 and _utc_timestamp(current.review.occurred_at) < _utc_timestamp(card.updated_at)
             ):
-                marks[key] = KitMark(
-                    stage=current.stage,
-                    review=KitReview("не проверена", "ТК выдана", "генератор", card.updated_at),
+                marks[key] = replace(
+                    current, review=KitReview("не проверена", "ТК выдана", "генератор", card.updated_at),
                 )
     picked = {
         FulfillmentStatus.COMPLETE, FulfillmentStatus.READY, FulfillmentStatus.ISSUED,
         FulfillmentStatus.RETURNED, FulfillmentStatus.DONE,
     }
+    started = {FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE}
     for request in fulfillment:
         if request.status in picked:
             key = kit_key_from_purpose(request.purpose)
             if key:
                 facts["kit"].add(key)
+                # Комплект выдан монтажнику — работа началась (решено агентом 06.10, проект 33МФ.2): ISSUED и дальше = «В работе».
+                if request.status in started:
+                    facts["work"].add(key)
     for task in tasks:
-        if task.status is ProductionStatus.RUNNING:
+        # Выполненное задание тоже значит «работа шла» (Цель 2: статус «Выполнено»).
+        if task.status in (ProductionStatus.RUNNING, ProductionStatus.DONE):
             facts["work"].add(kit_stage_key(task.project, task.item))
     for good in goods:
         key = kit_stage_key(good.project, good.item_index)

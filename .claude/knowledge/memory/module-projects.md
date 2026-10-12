@@ -10,4 +10,4 @@ metadata:
 - A request is created from the project: button «Оформить заявку из расчёта» (PR #79) → [[module-procurement]].
 - Project KD is stored in the ERP DB, not on Drive → [[google-wiring]].
 - Kit sets and names back-fill (PK-1), checked against SUPPLYMAP together with tech cards (PR #80) → [[module-techcards]].
-- Go-live block by 05.10 → [[launch-plan]]. Decisions to review: [[runlog-decisions]]. Hub: [[erp-next-hub]].
+- Decisions to review: [[runlog-decisions]]. Hub: [[erp-next-hub]].

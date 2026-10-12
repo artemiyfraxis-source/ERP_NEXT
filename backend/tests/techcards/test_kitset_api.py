@@ -17,6 +17,7 @@ from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
 from app.modules.requests.infrastructure import SqlAlchemyUnitOfWork
 from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from app.modules.techcards import kitsets
 from app.modules.warehouse.domain import StockLot
 from app.shared.clock import moscow_now, moscow_today
 from app.shared.http_auth import Principal, authenticated_principal
@@ -72,6 +73,46 @@ def kitset_api():
 
 
 CALC = "https://docs.google.com/spreadsheets/d/1AbC-calc_id/edit#gid=0"
+
+
+@pytest.fixture()
+def scrap_allowance_on(monkeypatch):
+    """Tests written with the «% брака» allowance on (switched off for now — «выдаём вровень», owner 10.10.2026)."""
+    monkeypatch.setattr(kitsets, "SCRAP_APPLIED", True)
+
+
+def test_the_kit_goes_out_exactly_to_the_need_without_the_scrap_allowance(kitset_api):
+    """«Выдаём вровень» (owner 10.10.2026): «% брака» 5 of the wire stays on the card, «На партию» and the issued need
+    are расход × тираж; a shortage goes out later as «Довыдача»."""
+    client, _lot = kitset_api
+    _load(client)
+    wire = client.get("/api/techcards/kitsets/708К.4").json()["assemblies"][0]["components"][0]
+    assert (wire["unit"], wire["scrap"], wire["batch"]) == ("м", "5", "15")
+
+    issued = client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"})
+    assert issued.status_code == 200, issued.text
+    with app.state.fulfillment_uow_factory() as uow:
+        kb1 = next(request for request in uow.fulfillment.list(limit=10) if "КБ1" in request.purpose)
+    assert sum(line.requirement for line in kb1.lines if line.name == "UL1007 22AWG") == Decimal("15")
+
+
+def test_a_second_send_creates_nothing_and_the_state_lists_the_sent_kb(kitset_api):
+    client, _lot = kitset_api
+    _load(client)
+    assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
+
+    again = client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"})
+
+    assert again.status_code == 409
+    assert again.json()["detail"] == (
+        "Все КБ проекта 708К.4 уже отправлены: КБ1 (REQ.26.0000001), КБ2 (REQ.26.0000002)."
+    )
+    state = client.get("/api/techcards/kitsets/708К.4/issue").json()
+    assert [(row["index"], row["request"]["no"], row["request"]["status"]) for row in state["assemblies"]] == [
+        ("КБ1", "REQ.26.0000001", "Новая"), ("КБ2", "REQ.26.0000002", "Новая"),
+    ]
+    with app.state.fulfillment_uow_factory() as uow:
+        assert len(uow.fulfillment.list(limit=10)) == 2
 
 
 def _load(client, **extra):
@@ -136,7 +177,7 @@ def test_spec_edits_survive_refresh_and_issue_reserves_picked_lot(kitset_api):
     assert sum(line.requirement for line in kb1.lines if line.name == "Корпус Molex") == Decimal("20")
 
 
-def test_piece_lines_default_to_no_scrap_and_batch_in_whole_pieces_up_to_the_issue(kitset_api):
+def test_piece_lines_default_to_no_scrap_and_batch_in_whole_pieces_up_to_the_issue(kitset_api, scrap_allowance_on):
     """Василий, 04.10: «округлять шт, половинки быть не может. Пока даём без брака»."""
     client, _lot = kitset_api
     _load(client)
@@ -191,7 +232,7 @@ def test_supply_marks_documents_bom_techcard_and_cascade_delete(kitset_api):
     card = client.get("/api/techcards/kitsets/708К.4").json()
     assert card["assemblies"][0]["kd"] == [{
         "id": document["id"], "index": "КБ1", "name": "708К.4КБ1 — Чертёж.pdf", "size": 13, "stored": True,
-        "url": None, "uploaded_at": "2026-09-29T10:00:00", "who": "Технолог",
+        "url": None, "uploaded_at": "2026-09-29T10:00:00", "who": "Технолог", "kind": "file",
     }]
     # Файл — в базе ERP: карточка ведёт на выдачу байтов, открывается во вкладке под своим именем.
     downloaded = client.get(f"/api/techcards/kitsets/708К.4/documents/{document['id']}")
@@ -290,7 +331,7 @@ def test_kd_historical_drive_row_is_a_read_only_link(kitset_api):
     assert card["assemblies"][0]["kd"] == [{
         "id": str(row_id), "index": "КБ1", "name": "708К.4КБ1 — Старый.pdf", "size": None, "stored": False,
         "url": "https://drive.google.com/file/d/drive-old/view?usp=drivesdk",
-        "uploaded_at": "2026-09-29T09:00:00", "who": "Технолог",
+        "uploaded_at": "2026-09-29T09:00:00", "who": "Технолог", "kind": "file",
     }]
     assert client.get(f"/api/techcards/kitsets/708К.4/documents/{row_id}").status_code == 404
     removed = client.delete(f"/api/techcards/kitsets/708К.4/documents/{row_id}")
@@ -449,6 +490,85 @@ def test_project_status_in_one_click(kitset_api):
     assert [event["kind"] for event in card["journal"][:2]] == ["Дедлайн", "Этап КБ"]
 
 
+def _side_effects(lot):
+    """What a stage change must never touch: kit requests, the lot's stock and reserve, shop tasks, goods."""
+    with app.state.fulfillment_uow_factory() as uow:
+        requests = sorted((str(item.id), item.status.value, item.version) for item in uow.fulfillment.list(limit=100))
+        stock = uow.warehouse.get(lot.id)
+    with app.state.production_uow_factory() as uow:
+        tasks = len(uow.production.list(limit=100))
+    with app.state.shipping_uow_factory() as uow:
+        goods = len(uow.goods.list(limit=100))
+    return requests, (stock.balance, stock.reserved, stock.version), tasks, goods
+
+
+def test_manual_stage_change_previews_skips_needs_a_reason_back_and_touches_nothing_else(kitset_api):
+    client, lot = kitset_api
+    _load(client)
+    assert client.post("/api/techcards/kitsets/708К.4/issue", json={"deadline": "2026-10-10"}).status_code == 200
+    before = _side_effects(lot)
+
+    preview = client.get("/api/techcards/kitsets/708К.4/status/preview", params={"value": "Отгружено"})
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert (body["direction"], body["reason_required"], body["error"]) == ("forward", False, "")
+    assert [(kb["kb"], kb["from"], kb["to"], kb["skipped"]) for kb in body["kbs"]] == [
+        ("КБ1", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
+        ("КБ2", "Новый", "Отгружено", ["ТК готова", "КБ набрана", "В работе", "КБ на складе"]),
+    ]
+    assert body["kbs"][0]["warnings"] == ["Живых заявок на комплектацию: 1 — смена этапа их не трогает."]
+    # Предпросмотр ничего не пишет.
+    assert client.get("/api/techcards/kitsets/708К.4").json()["status"] == "Новый"
+
+    # КБ2 руками вперёд, затем проект на «КБ на складе»: КБ1 поднимается, КБ2 (уже выше) не понижается.
+    kb2 = client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ2", "kind": "stage", "value": "Отгружено"})
+    assert kb2.status_code == 200, kb2.text
+    staged = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "КБ на складе"})
+    assert staged.status_code == 200, staged.text
+    assert staged.json()["change"]["kbs"][1]["note"] == "Выше выбранного этапа — не понижаем."
+    card = staged.json()["card"]
+    stages = {item["index"]: item["stage"] for item in card["assemblies"]}
+    assert (stages["КБ1"]["status"], stages["КБ2"]["status"]) == ("КБ на складе", "Отгружено")
+    assert stages["КБ1"]["skipped"] == ["ТК готова", "КБ набрана", "В работе"]
+    assert card["journal"][0]["from_value"] == "Новый" and card["journal"][0]["value"] == "КБ на складе"
+
+    # Назад — только с причиной (и для проекта, и для КБ).
+    refused = client.post("/api/techcards/kitsets/708К.4/status", json={"action": "status", "value": "В работе"})
+    assert refused.status_code == 422 and refused.json()["detail"] == "Этап назад — напишите причину."
+    refused = client.post("/api/techcards/kitsets/708К.4/marks", json={"kb": "КБ2", "kind": "stage", "value": "Новый"})
+    assert refused.status_code == 422 and refused.json()["detail"] == "Этап назад — напишите причину."
+    back = client.post("/api/techcards/kitsets/708К.4/status", json={
+        "action": "status", "value": "В работе", "reason": "вернули на доработку",
+    })
+    assert back.status_code == 200, back.text
+    assert back.json()["change"]["direction"] == "back" and back.json()["events"] == 2
+    assert back.json()["card"]["journal"][0]["reason"] == "вернули на доработку"
+
+    assert _side_effects(lot) == before
+
+
+def test_plan_page_stage_goes_through_the_same_service(kitset_api):
+    client, _lot = kitset_api
+    _load(client)
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "production": "edit"})
+
+    preview = client.get("/api/production/plan/stage-preview", params={"project": "708К.4", "value": "В работе", "kb": "КБ1"})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["kbs"][0]["skipped"] == ["ТК готова", "КБ набрана"]
+
+    saved = client.post("/api/production/plan/events", json={
+        "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "В работе",
+    })
+    assert saved.status_code == 201, saved.text
+    assert (saved.json()["event"]["from_value"], saved.json()["event"]["value"]) == ("Новый", "В работе")
+    back = client.post("/api/production/plan/events", json={
+        "project": "708К.4", "kind": "stage", "item_index": "КБ1", "value": "Новый",
+    })
+    assert back.status_code == 422 and back.json()["detail"] == "Этап назад — напишите причину."
+    unknown = client.get("/api/production/plan/stage-preview", params={"project": "999К", "value": "В работе"})
+    assert unknown.status_code == 422 and unknown.json()["detail"] == "Проект не найден в реестре."
+
+
 class FakeZpk:
     """«Из расчёта» reader fake: the ЗКП sheet of the same calculation."""
 
@@ -566,7 +686,7 @@ def _supply(client):
     return {line["art"]: line for line in lines}
 
 
-def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cover(kitset_api):
+def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cover(kitset_api, scrap_allowance_on):
     client, _lot = kitset_api  # 15 шт of 43025-0400 lie free on the shelf
     app.dependency_overrides[authenticated_principal] = _principal({"projects": "edit", "newrequest": "edit"})
     assert _load(client, deadline="2026-10-20").status_code == 200
@@ -613,7 +733,7 @@ def test_order_missing_orders_only_what_stock_and_existing_purchases_do_not_cove
     }
 
 
-def test_order_missing_picked_lines_deadline_and_rights(kitset_api):
+def test_order_missing_picked_lines_deadline_and_rights(kitset_api, scrap_allowance_on):
     client, _lot = kitset_api
     assert _load(client).status_code == 200  # no deadline on the project
     refused = client.post("/api/techcards/kitsets/708К.4/order-missing", json={})

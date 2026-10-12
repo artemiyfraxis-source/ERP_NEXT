@@ -12,7 +12,10 @@ from datetime import date, datetime
 from sqlalchemy import JSON, Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
-from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.persistence import (
+    AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository, check_read_version,
+    note_written_version, track_read_versions,
+)
 from app.shared import stage_options
 from app.shared.events import AuditEvent
 from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
@@ -54,6 +57,9 @@ class StockLotRow(Base):
     certificate: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+track_read_versions(StockLotRow)
 
 
 class WriteOffEntryRow(Base):
@@ -333,6 +339,19 @@ class SqlAlchemyWarehouseRepository:
         )
         return int(self.session.scalar(statement) or 0)
 
+    def filtered(
+        self,
+        query: str = "",
+        warehouse: str | None = None,
+        include_zero: bool = False,
+    ) -> list[StockLot]:
+        """Every lot under the same filters as `list`, no paging (the source of the group totals)."""
+        rows = self.session.scalars(select(StockLotRow).where(*self._filters(warehouse, include_zero)))
+        lots = [_domain(row) for row in rows]
+        if str(query or "").strip():
+            lots = [lot for lot in lots if self._matches(lot, query)]
+        return lots
+
     def every(self) -> list[StockLot]:
         """Every lot, zero balance included, ЦАР before ЖУК (the sheet order of SUPPLYMAP), then by ГРН and пакет."""
         rows = self.session.scalars(select(StockLotRow).order_by(StockLotRow.grn, StockLotRow.package))
@@ -402,9 +421,12 @@ class SqlAlchemyWarehouseRepository:
         if stored is None:
             self.session.add(incoming)
             return
+        # Compare-and-swap against the version this transaction read (StockVersionConflict on a lost race).
+        check_read_version(self.session, stored, lot.version)
         for column in StockLotRow.__table__.columns:
             if column.name != "id":
                 setattr(stored, column.name, getattr(incoming, column.name))
+        note_written_version(self.session, stored)
 
 
 class SqlAlchemyWarehouseUnitOfWork:

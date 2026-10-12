@@ -174,7 +174,9 @@ def _fail(uow_factory, who: str, client_key: str = "client:test") -> None:
         login(who, "wrong-password", NOW, uow_factory(), client_key=client_key)
 
 
-def test_thirty_failures_over_all_accounts_close_the_login_and_alert_admins(identity_database):
+def test_thirty_failures_over_all_accounts_alert_admins_but_lock_nobody_out(identity_database):
+    """Audit U09: the overall count no longer closes the login for everyone — the right password from an address that
+    has not failed still signs in; the administrators are alerted as before."""
     uow_factory = factory(identity_database)
     for index in range(29):
         _fail(uow_factory, f"nobody{index}", client_key=f"client:{index}")
@@ -182,16 +184,98 @@ def test_thirty_failures_over_all_accounts_close_the_login_and_alert_admins(iden
         assert session.scalars(select(OutboxMessageRow)).first() is None
     _fail(uow_factory, "nobody-last", client_key="client:last")
 
-    with pytest.raises(AuthenticationRateLimited, match="Вход временно закрыт"):
-        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:fresh")
+    assert login("petrov", "correct-password", NOW, uow_factory(), client_key="client:fresh").principal
     with identity_database() as session:
         assert session.get(IdentityLoginThrottleRow, "global:login").failures == 30
         alerts = list(session.scalars(select(OutboxMessageRow)))
         failed = list(session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "identity.login_failed")))
     assert len(alerts) == 1
     assert alerts[0].payload["recipient_audiences"] == "technologist" and alerts[0].payload["type"] == "security"
-    assert "всего — 30" in alerts[0].payload["body"]
+    assert "всего — 30" in alerts[0].payload["body"] and "усиленный режим" in alerts[0].payload["body"]
     assert len(failed) == 30 and failed[-1].details["total"] == "30"
+
+
+def test_many_addresses_guessing_one_account_close_that_account_only(identity_database):
+    """Abuse: a distributed guess at one account — every attempt from a new address. The account closes after 10, the
+    right password included; other accounts are untouched."""
+    uow_factory = factory(identity_database)
+    for index in range(10):
+        _fail(uow_factory, "petrov", client_key=f"client:bot{index}")
+    with pytest.raises(AuthenticationRateLimited, match="Слишком много попыток"):
+        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:bot-new")
+    with pytest.raises(AuthenticationRateLimited, match="Слишком много попыток"):
+        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:office")
+    # 11th and later guesses are refused before the password is even checked, so the count stops growing
+    with identity_database() as session:
+        assert session.get(IdentityLoginThrottleRow, "login:petrov").failures == 10
+
+
+def test_one_address_fanning_out_over_many_accounts_is_closed_at_thirty(identity_database):
+    """Abuse: one address tries a few PINs on every account, staying under the per-account limit. The address closes
+    after 30 failures; the same accounts from another address still sign in."""
+    uow_factory = factory(identity_database)
+    for index in range(30):
+        _fail(uow_factory, f"user{index % 15}", client_key="client:scanner")
+    with pytest.raises(AuthenticationRateLimited, match="с этого устройства"):
+        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:scanner")
+    assert login("petrov", "correct-password", NOW, uow_factory(), client_key="client:office").principal
+
+
+def test_guarded_mode_closes_a_failing_address_early_but_not_a_clean_one(identity_database):
+    """After 30 failures overall, an address with 3 failures of its own is refused; one with none signs in."""
+    uow_factory = factory(identity_database)
+    for index in range(30):
+        _fail(uow_factory, f"nobody{index}", client_key=f"client:bot{index // 2}")  # 2 per address, under any limit
+    _fail(uow_factory, "nobody-x", client_key="client:typo")
+    _fail(uow_factory, "nobody-y", client_key="client:typo")
+    _fail(uow_factory, "nobody-z", client_key="client:typo")
+    with pytest.raises(AuthenticationRateLimited, match="с этого устройства"):
+        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:typo")
+    assert login("petrov", "correct-password", NOW, uow_factory(), client_key="client:clean").principal
+    with identity_database() as session:
+        limited = list(session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "identity.login_rate_limited")
+        ))
+    assert [event.details["limited_by"] for event in limited] == ["guarded"]
+
+
+def test_the_window_ends_every_lock(identity_database):
+    from datetime import timedelta
+
+    uow_factory = factory(identity_database)
+    for index in range(10):
+        _fail(uow_factory, "petrov", client_key=f"client:{index}")
+    later = NOW + timedelta(minutes=10, seconds=1)
+    assert login("petrov", "correct-password", later, uow_factory(), client_key="client:x").principal
+
+
+def test_an_administrator_releases_one_account_or_every_lock_and_it_is_journalled(identity_database):
+    from app.modules.identity.application import release_login_locks
+
+    uow_factory = factory(identity_database)
+    admin = Actor(name="Администратор", department="ERP")
+    for index in range(10):
+        _fail(uow_factory, "petrov", client_key=f"client:{index}")
+    for index in range(30):
+        _fail(uow_factory, f"user{index}", client_key="client:scanner")
+
+    assert release_login_locks(admin, NOW, uow_factory(), login="  PETROV ") == 1
+    assert login("petrov", "correct-password", NOW, uow_factory(), client_key="client:office").principal
+    with pytest.raises(AuthenticationRateLimited):  # the address lock is a separate counter
+        login("petrov", "correct-password", NOW, uow_factory(), client_key="client:scanner")
+    assert release_login_locks(admin, NOW, uow_factory(), login="petrov") == 0  # idempotent: nothing left to lift
+
+    assert release_login_locks(admin, NOW, uow_factory()) >= 2  # every counter: addresses and the overall count
+    assert login("petrov", "correct-password", NOW, uow_factory(), client_key="client:scanner").principal
+    with identity_database() as session:
+        released = list(session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "identity.login_lock_released")
+            .order_by(AuditEventRow.occurred_at)
+        ))
+    assert [(event.details["login"], event.actor_name) for event in released] == [
+        ("petrov", "Администратор"), ("petrov", "Администратор"), ("все", "Администратор"),
+    ]
+    assert [event.details["released"] for event in released][:2] == ["1", "0"]
 
 
 def test_ten_failures_on_one_account_alert_once(identity_database):
@@ -203,6 +287,41 @@ def test_ten_failures_on_one_account_alert_once(identity_database):
     with identity_database() as session:
         alerts = list(session.scalars(select(OutboxMessageRow)))
     assert len(alerts) == 1 and "«petrov» — 10" in alerts[0].payload["body"]
+
+
+def test_release_over_http_is_for_administrators_only(access_api):  # noqa: F811
+    admin = _client("admin", "admin-password")
+    buyer = _client("buyer", "buyer-password")
+    robot = TestClient(app, client=("198.51.100.9", 50000))
+    for _ in range(10):
+        assert robot.post("/api/auth/login", json={"login": "receiver", "password": "nope-nope"}).status_code == 401
+    assert robot.post("/api/auth/login", json={"login": "receiver", "password": "recv-password"}).status_code == 429
+
+    assert buyer.post("/api/auth/login-locks/release", json={"login": "receiver"}).status_code == 403
+    released = admin.post("/api/auth/login-locks/release", json={"login": "receiver"})
+
+    assert released.status_code == 200 and released.json() == {"released": 1}
+    assert _client("receiver", "recv-password").get("/api/auth/me").status_code == 200
+
+
+def test_release_from_the_server_console(access_api, capsys):  # noqa: F811
+    from argparse import Namespace
+
+    from app.identity_admin import CONSOLE_ACTOR_NAME, release_login
+    from app.modules.identity.infrastructure import SqlAlchemyIdentityUnitOfWork
+
+    uow_factory = lambda: SqlAlchemyIdentityUnitOfWork(access_api)  # noqa: E731
+    for index in range(10):
+        _fail(uow_factory, "admin", client_key=f"client:{index}")
+    with pytest.raises(SystemExit):
+        release_login(Namespace(login="", all=False), access_api)
+    release_login(Namespace(login="admin", all=False), access_api)
+
+    assert "Блокировки входа сняты («admin»): 1" in capsys.readouterr().out
+    assert _client("admin", "admin-password").get("/api/auth/me").status_code == 200
+    with access_api() as session:
+        (event,) = session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == "identity.login_lock_released"))
+    assert event.actor_name == CONSOLE_ACTOR_NAME
 
 
 # ── Own password and profile ───────────────────────────────────────────────────────────────────────

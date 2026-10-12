@@ -23,7 +23,7 @@ const FULL: EmployeeCard = {
     { project: "512А.1", roles: ["Инициатор заявок"], deadline: null },
   ],
   skills: [
-    { operation: "CUT_WIRE", allowed: true, stars: 3, coefficient: "1.25" },
+    { operation: "CUT_WIRE", name: "Резка провода", allowed: true, stars: 3, coefficient: "1.25" },
     { operation: "PRS_TERM", allowed: false, stars: 0, coefficient: "1" },
   ],
   absences: {
@@ -63,9 +63,6 @@ function serve(card: EmployeeCard, seen: string[] = []) {
     const path = String(input);
     seen.push(path);
     if (path.startsWith("/api/employee-card/")) return json(card);
-    if (path === "/api/production/skills") {
-      return json({ skills: [], operation_codes: [{ code: "CUT_WIRE", name: "Резка провода" }, { code: "PRS_TERM", name: "" }] });
-    }
     throw new Error(`Unexpected request: ${path}`);
   });
   return seen;
@@ -86,7 +83,7 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
   expect(screen.getByText("доступ: Мастер")).toBeInTheDocument();
   expect(screen.getByText("Карточка активна")).toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Обзор" })).toBeInTheDocument();
-  expect(screen.getAllByRole("tab")).toHaveLength(1);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Обзор", "Отпуска и заявления", "Документы", "Компетенции", "Рабочее время"]);
   expect(screen.getByText("Сведения на 04.10.2026")).toBeInTheDocument();
 
   const titles = screen.getAllByRole("heading", { level: 2 }).map((heading) => heading.firstChild?.textContent);
@@ -126,10 +123,14 @@ it("shows the own card: header, the «Обзор» tab and the cards in the conc
 });
 
 it("names the competences in Russian, the allowed ones first, with the code as a small second line", async () => {
-  serve(FULL);
+  const seen = serve(FULL);
   render(<EmployeeCardPage principal={principal()} />);
   const skills = await screen.findByRole("region", { name: "Компетенции" });
   expect(await within(skills).findByText("Резка провода")).toBeInTheDocument();
+  expect(seen).not.toContain("/api/production/skills");
+  // Код без названия: «операция без названия», код — только в подсказке.
+  expect(within(skills).getByText("операция без названия")).toHaveAttribute("title", "PRS_TERM");
+  expect(within(skills).queryByText("PRS_TERM")).toBeNull();
   expect(within(skills).getByText("CUT_WIRE")).toBeInTheDocument();
   expect(within(skills).getByLabelText("3 из 5")).toBeInTheDocument();
   expect(within(skills).getByText(/×1,25/)).toBeInTheDocument();
@@ -137,6 +138,17 @@ it("names the competences in Russian, the allowed ones first, with the code as a
   const rows = within(skills).getAllByRole("listitem").map((row) => row.textContent);
   expect(rows[0]).toContain("Резка провода");
   expect(rows[1]).toContain("нет допуска");
+  // Звёзды без легенды нечитаемы (аудит М-4): одна строка говорит, что они значат.
+  expect(within(skills).getByText(/уровень владения операцией, от 1 до 5/)).toBeInTheDocument();
+});
+
+it("does not print «0 ч» for a month with work sessions but no counted hours", async () => {
+  serve({ ...FULL, hours_this_month: { month: "2026-10", label: "октябрь 2026", hours: 0, sessions: 2 } });
+  render(<EmployeeCardPage principal={principal()} />);
+  const time = await screen.findByRole("region", { name: "Рабочее время" });
+  expect(time).toHaveTextContent("рабочих сессий: 2, учтённых часов нет");
+  expect(within(time).queryByText(/^0\s*ч$/)).toBeNull();
+  expect(within(time).getByText("нет данных")).toBeInTheDocument();
 });
 
 it("says «нет данных» for every section the modules gave nothing for, never a zero", async () => {
@@ -275,4 +287,54 @@ it("shows the server's refusal instead of an empty card", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Чужая карточка открыта только с доступом к разделу «Сотрудники»." }, 403));
   render(<EmployeeCardPage principal={principal()} userId={OTHER} />);
   expect(await screen.findByRole("alert")).toHaveTextContent("Чужая карточка открыта только с доступом");
+});
+
+it("opens «Отпуска и заявления» on the own card with the count of requests waiting for a decision", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith("/api/employee-card/")) return json(FULL);
+    if (path === "/api/leave-requests/waiting") return json({ count: 2 });
+    if (path === "/api/leave-requests") {
+      return json({ today: "2026-10-04", balance: { year: 2026, norm: 28, registered: 0, pending: 0, left: 28 }, own: [], inbox: [], journal: null, hr: false });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<EmployeeCardPage principal={principal()} />);
+
+  const tab = await screen.findByRole("tab", { name: /Отпуска и заявления/ });
+  expect(await within(tab).findByLabelText("ждут решения: 2")).toHaveTextContent("2");
+  fireEvent.click(tab);
+  expect(await screen.findByText("Заявлений нет — нажмите «Новое заявление».")).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Проекты" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Обзор" }));
+  expect(screen.getByRole("region", { name: "Проекты" })).toBeInTheDocument();
+});
+
+it("offers no leave tab on someone else's card", async () => {
+  serve({ ...FULL, header: { ...FULL.header, id: OTHER } });
+  render(<EmployeeCardPage principal={principal({}, "admin")} userId={OTHER} />);
+  await screen.findByRole("heading", { level: 1 });
+  expect(screen.queryByRole("tab", { name: /Отпуска/ })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Обзор", "Компетенции", "Рабочее время"]);
+});
+
+it("opens the new tabs by ?tab= and shows the unread-documents counter on «Документы»", async () => {
+  window.history.pushState({}, "", "/?section=card&tab=worktime");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/employee-card/me") return json(FULL);
+    if (path === "/api/documents/pending") return json({ count: 2 });
+    if (path.startsWith("/api/employee-card/me/worktime")) {
+      return json({ available: false, no_data_reason: "Нет данных: нет сессий.", month: "2026-10", label: "октябрь 2026", days: [], totals: null, balance: null, source: "", note: "" });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<EmployeeCardPage principal={principal()} />);
+
+  expect(await screen.findByText("Нет данных: нет сессий.")).toBeInTheDocument();
+  expect(screen.getByRole("tab", { name: "Рабочее время" })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByLabelText("ждут ознакомления: 2")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Компетенции" }));
+  expect(screen.getByRole("region", { name: "Допуски к операциям" })).toHaveTextContent("Резка провода");
+  window.history.pushState({}, "", "/");
 });

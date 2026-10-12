@@ -41,14 +41,14 @@ it("has no «Показатели» tab while the option is off", async () => {
   mockServer(false);
   render(<ProcurementPage />);
   await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/stage-options", expect.anything()));
-  expect(screen.queryByRole("button", { name: "Показатели" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Показатели" })).not.toBeInTheDocument();
 });
 
 it("shows the table with buyer rows and a total, and refetches on a buyer filter", async () => {
   const requests: string[] = [];
   mockServer(true, requests);
   render(<ProcurementPage />);
-  fireEvent.click(await screen.findByRole("button", { name: "Показатели" }));
+  fireEvent.click(await screen.findByRole("tab", { name: "Показатели" }));
   expect(await screen.findByRole("cell", { name: "Петров" })).toBeInTheDocument();
   expect(screen.getByText("Итого")).toBeInTheDocument();
   expect(screen.getAllByText(/50,0% \(1 из 2\)/)).toHaveLength(2);

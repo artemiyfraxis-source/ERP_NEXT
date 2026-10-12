@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
+from hashlib import sha256
 from typing import Protocol, Sequence
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from app.shared.events import AuditEvent
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.shared.notifications import (
     PROJECT_MANAGER_AUDIENCE,
@@ -19,13 +22,17 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine, ShipmentStatus,
     ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index, plan_project_queue,
 )
 
 
 class ConcurrentShippingUpdate(RuntimeError):
     pass
+
+
+class ShippingPermissionError(PermissionError):
+    """Часть команды, которую этой роли делать нельзя: отказ всей команде (HTTP 403)."""
 
 
 # SUPPLYMAP ограничения не задаёт (Drive принимает что угодно); ERP держит файл в базе — 20 МБ.
@@ -39,6 +46,7 @@ class FinishedGoodsRepository(Protocol):
     def add(self, good: FinishedGood) -> None: ...
     def reserve_grn(self, year: int) -> str: ...
     def by_project(self, project: str) -> Sequence[FinishedGood]: ...
+    def for_project(self, project: str) -> Sequence[FinishedGood]: ...
     def in_shipments(self, good_ids: Sequence[UUID]) -> set[UUID]: ...
     def remove(self, good_id: UUID) -> None: ...
 
@@ -46,10 +54,12 @@ class FinishedGoodsRepository(Protocol):
 class ShipmentRepository(Protocol):
     def get(self, shipment_id: UUID) -> Shipment | None: ...
     def list(self, limit: int = 200) -> Sequence[Shipment]: ...
+    def for_project(self, project: str) -> Sequence[Shipment]: ...
     def reserve_number(self, day: date) -> str: ...
     def document_sequence(self, project: str) -> int: ...
     def add(self, shipment: Shipment) -> None: ...
     def open_for_project(self, project: str) -> Sequence[Shipment]: ...
+    def created_details(self, shipment_id: UUID) -> dict | None: ...
 
 
 class ProjectAddresseeRepository(Protocol):
@@ -356,48 +366,58 @@ def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
 
 def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment:
     with uow:
-        if len({line.good_id for line in command.lines}) != len(command.lines):
-            raise ShippingValidationError("Позиция готовой продукции указана дважды")
-        lines = []
-        customers: list[str] = []
-        for requested in command.lines:
-            good = uow.goods.get(requested.good_id)
-            if good is None:
-                raise KeyError(f"Finished good not found: {requested.good_id}")
-            lines.append(ShipmentLine.create(good, requested.quantity))
-            customers.append(good.customer)
-        if not lines:
-            raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
-        # The shipment's project is its first line's (`shipHeadEff_`).
-        address = effective_address(
-            receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
-            phone=command.phone, terms=command.terms, carrier=command.carrier, upd_type=command.upd_type,
-            project=uow.addressees.get(lines[0].project),
-            customer_fallback=command.customer or next((name for name in customers if name), ""),
-        )
-        if not address.shipping_point:
-            raise ShippingValidationError("Укажите точку отгрузки в заявке или в карточке проекта")
-        shipment = Shipment.create(
-            number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
-            customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
-            contact=address.contact, phone=address.phone, terms=address.terms,
-            carrier=address.carrier, deadline=command.deadline, upd_type=address.upd_type,
-            upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
-            manager=command.actor.name, note=command.note, lines=tuple(lines),
-            manager_id=command.actor.id, inherited=_unset_fields(command),
-        )
-        uow.shipments.add(shipment)
-        _remember_addressees(shipment, command, uow)
-        _audit(shipment.id, "shipping.created", command.actor, command.now, {
-            "number": shipment.number, "inherited": sorted(address.inherited),
-        }, uow)
-        # Shipment.gs shipRequestCreate_: набор сразу при заведении, затем PL/DN → «Упакована»;
-        # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт.
-        shipment, taken = _pick(shipment, command.actor, command.now, uow)
-        if taken and not command.no_docs:
-            shipment = _pack(shipment, command.actor, command.now, uow)
+        shipment = _create_shipment(command, uow)
         uow.commit()
         return shipment
+
+
+def _create_shipment(
+    command: CreateShipmentCommand, uow: UnitOfWork, *, shipment_id: UUID | None = None, details: dict | None = None,
+) -> Shipment:
+    """Заведение отправки без фиксации: её фиксирует вызывающий вместе с остальными шагами."""
+    if len({line.good_id for line in command.lines}) != len(command.lines):
+        raise ShippingValidationError("Позиция готовой продукции указана дважды")
+    lines = []
+    customers: list[str] = []
+    for requested in command.lines:
+        good = uow.goods.get(requested.good_id)
+        if good is None:
+            raise KeyError(f"Finished good not found: {requested.good_id}")
+        lines.append(ShipmentLine.create(good, requested.quantity))
+        customers.append(good.customer)
+    if not lines:
+        raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
+    # The shipment's project is its first line's (`shipHeadEff_`).
+    address = effective_address(
+        receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
+        phone=command.phone, terms=command.terms, carrier=command.carrier, upd_type=command.upd_type,
+        project=uow.addressees.get(lines[0].project),
+        customer_fallback=command.customer or next((name for name in customers if name), ""),
+    )
+    if not address.shipping_point:
+        raise ShippingValidationError("Укажите точку отгрузки в заявке или в карточке проекта")
+    shipment = Shipment.create(
+        number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
+        customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
+        contact=address.contact, phone=address.phone, terms=address.terms,
+        carrier=address.carrier, deadline=command.deadline, upd_type=address.upd_type,
+        upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
+        manager=command.actor.name, note=command.note, lines=tuple(lines),
+        manager_id=command.actor.id, inherited=_unset_fields(command), id=shipment_id,
+    )
+    uow.shipments.add(shipment)
+    if shipment.upd_url:
+        _notify_upd(shipment, command.now, uow)
+    _remember_addressees(shipment, command, uow)
+    _audit(shipment.id, "shipping.created", command.actor, command.now, {
+        "number": shipment.number, "inherited": sorted(address.inherited), **(details or {}),
+    }, uow)
+    # Shipment.gs shipRequestCreate_: набор сразу при заведении, затем PL/DN → «Упакована»;
+    # noDocs → остаётся «Собрана». Цех ещё ничего не сдал — заявка «Новая» и ждёт.
+    shipment, taken = _pick(shipment, command.actor, command.now, uow)
+    if taken and not command.no_docs:
+        shipment = _pack(shipment, command.actor, command.now, uow)
+    return shipment
 
 
 def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
@@ -458,31 +478,38 @@ def _remember_addressees(shipment: Shipment, command: CreateShipmentCommand, uow
 
 
 def set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork) -> ProjectAddressee:
-    project = str(command.project or "").strip()
     with uow:
-        current = uow.addressees.get(project) or ProjectAddressee.empty(project)
-        if command.expected_version is not None and command.expected_version != current.version:
-            raise ConcurrentShippingUpdate("Адресат проекта изменился после загрузки формы")
-        try:
-            edited = current.edit(command.fields)
-        except ValueError as error:
-            if isinstance(error, ShippingValidationError):
-                raise
-            raise ShippingValidationError("Недопустимое значение поля адресата") from error
-        if not edited.differs(current):
-            return current
-        updated = replace(edited, version=current.version + 1, updated_by=command.actor.name, updated_at=command.now)
-        uow.addressees.add(updated)
-        _audit(_addressee_id(project), "shipping.addressee_set", command.actor, command.now, {
-            "project": project, "fields": sorted(command.fields),
-        }, uow)
-        for shipment in uow.shipments.open_for_project(project):
-            followed = shipment.follow(updated)
-            if followed is not shipment:
-                uow.shipments.add(followed)
-                _audit(shipment.id, "shipping.head_followed_project", command.actor, command.now, {"project": project}, uow)
-        uow.commit()
+        current, updated = _set_project_addressee(command, uow)
+        if updated is not current:
+            uow.commit()
         return updated
+
+
+def _set_project_addressee(command: SetProjectAddresseeCommand, uow: UnitOfWork) -> tuple[ProjectAddressee, ProjectAddressee]:
+    """Правка карточки без фиксации: (было, стало); без изменений — тот же объект."""
+    project = str(command.project or "").strip()
+    current = uow.addressees.get(project) or ProjectAddressee.empty(project)
+    if command.expected_version is not None and command.expected_version != current.version:
+        raise ConcurrentShippingUpdate("Адресат проекта изменился после загрузки формы")
+    try:
+        edited = current.edit(command.fields)
+    except ValueError as error:
+        if isinstance(error, ShippingValidationError):
+            raise
+        raise ShippingValidationError("Недопустимое значение поля адресата") from error
+    if not edited.differs(current):
+        return current, current
+    updated = replace(edited, version=current.version + 1, updated_by=command.actor.name, updated_at=command.now)
+    uow.addressees.add(updated)
+    _audit(_addressee_id(project), "shipping.addressee_set", command.actor, command.now, {
+        "project": project, "fields": sorted(command.fields),
+    }, uow)
+    for shipment in uow.shipments.open_for_project(project):
+        followed = shipment.follow(updated)
+        if followed is not shipment:
+            uow.shipments.add(followed)
+            _audit(shipment.id, "shipping.head_followed_project", command.actor, command.now, {"project": project}, uow)
+    return current, updated
 
 
 def _card(shipment: Shipment, uow: UnitOfWork) -> ProjectAddressee | None:
@@ -551,22 +578,29 @@ def _notify_documents(before: Shipment, after: Shipment, now: datetime, uow: Uni
             user_ids=(after.manager_id,),
             audiences=() if after.manager_id else (PROJECT_MANAGER_AUDIENCE,),
         ))
-    # Shipment.gs:888 `shipUpdAttach_`: storekeepers print the УПД, so a newly attached file goes to them.
     if after.upd_url and after.upd_url != before.upd_url:
-        items = ", ".join(f"{line.item_index} × {line.requested.normalize():f}" for line in after.lines)
-        publish_notification(uow.outbox, notification_requested(
-            key=f"shipping:{after.id}:upd:v{after.version}",
-            now=now,
-            title=f"УПД к отправке {after.number}",
-            body=(
-                f"Менеджер приложил УПД{f' № {after.upd_number}' if after.upd_number else ''} к отправке "
-                f"{after.number}{of_project} ({items}).\nФайл: {after.upd_url}"
-                "\n\nОткрыть: портал → Отгрузка → карточка проекта."
-            ),
-            kind="ship",
-            reference=after.number,
-            audiences=(STOREKEEPER_AUDIENCE,),
-        ))
+        _notify_upd(after, now, uow)
+
+
+def _notify_upd(shipment: Shipment, now: datetime, uow: UnitOfWork) -> None:
+    """Shipment.gs:888 `shipUpdAttach_`: storekeepers print the УПД, so a newly attached file goes to them — also
+    a УПД link given already in the new shipment (OP-1: before, nobody heard of that file)."""
+    project = shipment.lines[0].project if shipment.lines else ""
+    of_project = f" проекта {project}" if project else ""
+    items = ", ".join(f"{line.item_index} × {line.requested.normalize():f}" for line in shipment.lines)
+    publish_notification(uow.outbox, notification_requested(
+        key=f"shipping:{shipment.id}:upd:v{shipment.version}",
+        now=now,
+        title=f"УПД к отправке {shipment.number}",
+        body=(
+            f"Менеджер приложил УПД{f' № {shipment.upd_number}' if shipment.upd_number else ''} к отправке "
+            f"{shipment.number}{of_project} ({items}).\nФайл: {shipment.upd_url}"
+            "\n\nОткрыть: портал → Отгрузка → карточка проекта."
+        ),
+        kind="ship",
+        reference=shipment.number,
+        audiences=(STOREKEEPER_AUDIENCE,),
+    ))
 
 
 @dataclass(frozen=True)
@@ -582,30 +616,41 @@ def upd_file_url(file_id: UUID) -> str:
 
 def attach_upd_file(command: AttachUpdCommand, uow: UnitOfWork) -> Shipment:
     """`shipUpdAttach_`: файл кладётся в хранилище, ссылка встаёт в отправку, кладовщикам — уведомление."""
-    if not command.content:
-        raise ShippingValidationError("Файл не передан.")
-    if len(command.content) > UPD_FILE_LIMIT:
-        raise ShippingValidationError("Файл УПД больше 20 МБ.")
+    _check_upd_file(command.content)
     with uow:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
-        original = str(command.file_name or "").strip()
-        extension = original[original.rfind("."):] if "." in original else ""
-        project = shipment.lines[0].project if shipment.lines else ""
-        name = " ".join(part for part in (
-            "УПД", f"№ {shipment.upd_number}" if shipment.upd_number else "", project, shipment.number,
-        ) if part) + extension
-        stored = StoredFile(
-            id=uuid4(), shipment_id=shipment.id, file_name=name,
-            content_type=str(command.content_type or "").strip() or "application/octet-stream",
-            size=len(command.content), uploaded_by=command.actor.name, uploaded_at=command.now,
-        )
-        updated = shipment.attach_upd(upd_file_url(stored.id))
-        uow.files.add(stored, command.content)
-        uow.shipments.add(updated)
-        _audit(shipment.id, "shipping.upd_attached", command.actor, command.now, {"file_id": str(stored.id), "name": name}, uow)
-        _notify_documents(shipment, updated, command.now, uow)
+        updated = _attach_upd(shipment, command.file_name, command.content_type, command.content, command.actor, command.now, uow)
         uow.commit()
         return updated
+
+
+def _check_upd_file(content: bytes) -> None:
+    if not content:
+        raise ShippingValidationError("Файл не передан.")
+    if len(content) > UPD_FILE_LIMIT:
+        raise ShippingValidationError("Файл УПД больше 20 МБ.")
+
+
+def _attach_upd(
+    shipment: Shipment, file_name: str, content_type: str, content: bytes, actor: Actor, now: datetime, uow: UnitOfWork,
+) -> Shipment:
+    original = str(file_name or "").strip()
+    extension = original[original.rfind("."):] if "." in original else ""
+    project = shipment.lines[0].project if shipment.lines else ""
+    name = " ".join(part for part in (
+        "УПД", f"№ {shipment.upd_number}" if shipment.upd_number else "", project, shipment.number,
+    ) if part) + extension
+    stored = StoredFile(
+        id=uuid4(), shipment_id=shipment.id, file_name=name,
+        content_type=stored_content_type(content),
+        size=len(content), uploaded_by=actor.name, uploaded_at=now,
+    )
+    updated = shipment.attach_upd(upd_file_url(stored.id))
+    uow.files.add(stored, content)
+    uow.shipments.add(updated)
+    _audit(shipment.id, "shipping.upd_attached", actor, now, {"file_id": str(stored.id), "name": name}, uow)
+    _notify_documents(shipment, updated, now, uow)
+    return updated
 
 
 def update_documents(command: UpdateDocumentsCommand, uow: UnitOfWork) -> Shipment:
@@ -627,29 +672,34 @@ def mark_shipped(command: ShipmentCommand, uow: UnitOfWork) -> ShippedResult:
     """`shipShipped_`: одна кнопка склада — дата отгрузки и сразу «Закрыта», если для этого всё есть."""
     with uow:
         shipment = _shipment(command.shipment_id, command.expected_version, uow)
-        updated = shipment.mark_shipped(command.now.date())
-        uow.shipments.add(updated)
-        sent: dict[UUID, Decimal] = {}
-        for line in updated.lines:
-            if line.picked > 0:
-                sent[line.finished_good_id] = sent.get(line.finished_good_id, Decimal("0")) + line.picked
-        for good_id, quantity in sent.items():
-            good = uow.goods.get(good_id)
-            if good is None:
-                raise ShippingValidationError("Позиция готовой продукции больше не существует")
-            uow.goods.add(good.dispatch(quantity))
-        _audit(shipment.id, "shipping.shipped", command.actor, command.now, {}, uow)
-        why = ""
-        try:
-            closed = updated.close()
-        except ShippingValidationError as error:
-            why = str(error)
-        else:
-            updated = closed
-            uow.shipments.add(updated)
-            _audit(shipment.id, "shipping.closed", command.actor, command.now, {"auto": True}, uow)
+        result = _mark_shipped(shipment, command.actor, command.now, uow)
         uow.commit()
-        return ShippedResult(shipment=updated, why=why)
+        return result
+
+
+def _mark_shipped(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> ShippedResult:
+    updated = shipment.mark_shipped(now.date())
+    uow.shipments.add(updated)
+    sent: dict[UUID, Decimal] = {}
+    for line in updated.lines:
+        if line.picked > 0:
+            sent[line.finished_good_id] = sent.get(line.finished_good_id, Decimal("0")) + line.picked
+    for good_id, quantity in sent.items():
+        good = uow.goods.get(good_id)
+        if good is None:
+            raise ShippingValidationError("Позиция готовой продукции больше не существует")
+        uow.goods.add(good.dispatch(quantity))
+    _audit(shipment.id, "shipping.shipped", actor, now, {}, uow)
+    why = ""
+    try:
+        closed = updated.close()
+    except ShippingValidationError as error:
+        why = str(error)
+    else:
+        updated = closed
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.closed", actor, now, {"auto": True}, uow)
+    return ShippedResult(shipment=updated, why=why)
 
 
 def set_requested(command: SetRequestedCommand, uow: UnitOfWork) -> Shipment:
@@ -711,6 +761,157 @@ def pack_project(command: PackProjectCommand, uow: UnitOfWork) -> Shipment:
         terms=None, carrier="", deadline=None, upd_type=None, upd_number="", upd_date=None, upd_url="",
         note="", lines=tuple(lines), actor=command.actor, now=command.now, no_docs=True,
     ), uow)
+
+
+@dataclass(frozen=True)
+class ProjectShipLine:
+    good_id: UUID
+    version: int
+    quantity: Decimal
+
+
+@dataclass(frozen=True)
+class UpdUpload:
+    file_name: str
+    content_type: str
+    content: bytes
+
+
+@dataclass(frozen=True)
+class ProjectShipCommand:
+    """«Отгрузить» / «Упаковать, отгрузить позже» в карточке проекта — одной транзакцией.
+
+    Карточка адресата (если правлена), отправка, файл УПД и, при `ship`, отгрузка с автозакрытием либо
+    записываются все, либо ничего. `as_manager` — у пользователя «Отгрузка» на правку: он заводит отправку
+    с № УПД и сроком (сразу «Упакована»); кладовщик упаковывает из склада ГП (остаётся «Собрана»).
+    """
+
+    idempotency_key: str
+    project: str
+    lines: tuple[ProjectShipLine, ...]
+    addressee_version: int
+    addressee_fields: dict
+    deadline: date | None
+    upd_number: str
+    upd_date: date | None
+    upd_file: UpdUpload | None
+    ship: bool
+    as_manager: bool
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class ProjectShipResult:
+    shipment: Shipment
+    why: str
+    replayed: bool = False
+
+
+# Отправка «Отгрузить» получает id из ключа повтора: первичный ключ сам не даст завести её дважды.
+PROJECT_SHIP_NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:shipping:project-ship")
+
+
+def project_ship_id(idempotency_key: str) -> UUID:
+    return uuid5(PROJECT_SHIP_NAMESPACE, idempotency_key)
+
+
+def project_ship_fingerprint(command: ProjectShipCommand) -> str:
+    """Отпечаток тела запроса: тот же ключ с другим телом — отказ, а не чужой результат."""
+    body = {
+        "actor": str(command.actor.id), "project": str(command.project or "").strip(),
+        "lines": [[str(line.good_id), line.version, format(Decimal(line.quantity).normalize(), "f")] for line in command.lines],
+        "addressee_version": command.addressee_version,
+        "addressee": {key: command.addressee_fields[key] for key in sorted(command.addressee_fields)},
+        "deadline": command.deadline.isoformat() if command.deadline else None,
+        "upd_number": str(command.upd_number or "").strip(),
+        "upd_date": command.upd_date.isoformat() if command.upd_date else None,
+        "upd_file": None if command.upd_file is None else [
+            command.upd_file.file_name, command.upd_file.content_type, sha256(command.upd_file.content).hexdigest(),
+        ],
+        "ship": command.ship, "as_manager": command.as_manager,
+    }
+    return sha256(json.dumps(body, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _replayed(shipment: Shipment) -> ProjectShipResult:
+    why = ""
+    if shipment.status == ShipmentStatus.SHIPPED:
+        try:
+            shipment.close()
+        except ShippingValidationError as error:
+            why = str(error)
+    return ProjectShipResult(shipment=shipment, why=why, replayed=True)
+
+
+def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipResult:
+    key = str(command.idempotency_key or "").strip()
+    if not key:
+        raise ShippingValidationError("Не передан ключ повтора (Idempotency-Key)")
+    project = str(command.project or "").strip()
+    if not project:
+        raise ShippingValidationError("Не указан проект")
+    if command.upd_file is not None:
+        _check_upd_file(command.upd_file.content)
+    if not command.as_manager and (command.addressee_fields or command.upd_number.strip() or command.upd_date or command.deadline):
+        raise ShippingPermissionError("Карточку проекта, № УПД и срок отгрузки заполняет менеджер (раздел «Отгрузка»)")
+    fingerprint = project_ship_fingerprint(command)
+    shipment_id = project_ship_id(key)
+    with uow:
+        existing = uow.shipments.get(shipment_id)
+        if existing is not None:
+            if (uow.shipments.created_details(shipment_id) or {}).get("fingerprint") != fingerprint:
+                raise ConcurrentShippingUpdate("Этот ключ повтора уже использован для другой отгрузки — обновите страницу")
+            return _replayed(existing)
+
+        # Всё проверяется до первой записи: версия КБ, проект, остаток, версия карточки.
+        if not command.lines:
+            raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
+        if len({line.good_id for line in command.lines}) != len(command.lines):
+            raise ShippingValidationError("Позиция готовой продукции указана дважды")
+        requested: list[RequestedGood] = []
+        for line in command.lines:
+            good = _good(line.good_id, line.version, uow)
+            if good.project != project:
+                raise ShippingValidationError(f"{good.item_index} не относится к проекту {project}")
+            quantity = Decimal(line.quantity)
+            if not quantity > 0:
+                raise ShippingValidationError(f"{good.item_index}: количество должно быть больше нуля")
+            if quantity > good.remaining:
+                raise ConcurrentShippingUpdate(f"{good.item_index}: на складе ГП только {format(good.remaining.normalize(), 'f')} {good.unit}")
+            requested.append(RequestedGood(good_id=good.id, quantity=quantity))
+        current = uow.addressees.get(project) or ProjectAddressee.empty(project)
+        if current.version != command.addressee_version:
+            raise ConcurrentShippingUpdate("Адресат проекта изменился после загрузки формы")
+
+        addressee = current
+        if command.addressee_fields:
+            _, addressee = _set_project_addressee(SetProjectAddresseeCommand(
+                project=project, fields=command.addressee_fields, expected_version=command.addressee_version,
+                actor=command.actor, now=command.now,
+            ), uow)
+        customer = next((good.customer for good in uow.goods.by_project(project) if good.customer), "")
+        # Адресат не копируется, а наследуется: правка карточки дойдёт до отправки, пока она открыта.
+        shipment = _create_shipment(CreateShipmentCommand(
+            customer=customer, receiver="" if addressee.receiver or customer else project,
+            shipping_point="", contact="", phone="", terms=None, carrier="", upd_type=None,
+            deadline=command.deadline if command.as_manager else None,
+            upd_number=command.upd_number.strip() if command.as_manager else "",
+            upd_date=command.upd_date if command.as_manager and command.upd_number.strip() else None,
+            upd_url="", note="", lines=tuple(requested), actor=command.actor, now=command.now,
+            no_docs=not command.as_manager,
+        ), uow, shipment_id=shipment_id, details={"idempotency_key": key, "fingerprint": fingerprint, "project": project})
+        if command.upd_file is not None:
+            shipment = _attach_upd(
+                shipment, command.upd_file.file_name, command.upd_file.content_type, command.upd_file.content,
+                command.actor, command.now, uow,
+            )
+        why = ""
+        if command.ship:
+            shipped = _mark_shipped(shipment, command.actor, command.now, uow)
+            shipment, why = shipped.shipment, shipped.why
+        uow.commit()
+        return ProjectShipResult(shipment=shipment, why=why)
 
 
 def close_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:

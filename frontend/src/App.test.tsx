@@ -58,6 +58,20 @@ it("opens procurement by the section grant alone: the level's name decides nothi
   expect(screen.getByRole("button", { name: "Заявки" })).toBeInTheDocument();
 });
 
+it("draws the block tiles with line icons, never emoji (audit М-6)", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json(principal));
+
+  render(<App />);
+
+  await screen.findByText("Добрый день, Сотрудник");
+  const tiles = document.querySelectorAll(".block-tile");
+  expect(tiles.length).toBeGreaterThan(0);
+  tiles.forEach((tile) => {
+    expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
+    expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
+  });
+});
+
 it("closes procurement without a grant on it, whatever the level", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ ...principal, permissions: { requests: "view" } }));
 
@@ -402,7 +416,8 @@ it("NAV-1: handout is its own route and shows only requests waiting for the shop
     if (path === "/api/auth/me") return json(as("foreman", { handout: "view" }));
     if (path === "/api/issues") return json({ requests: [
       { ...base, id: "i1", number: "FRX-ISS-1", status: "Новая" },
-      { ...base, id: "i2", number: "FRX-ISS-2", status: "Готов к выдаче" },
+      // The handout screen opens on «Укомплектован» + «КБ Возвращена» (owner, 10.10.2026).
+      { ...base, id: "i2", number: "FRX-ISS-2", status: "Укомплектован" },
     ], next_cursor: null });
     throw new Error(`Unexpected request: ${path}`);
   });

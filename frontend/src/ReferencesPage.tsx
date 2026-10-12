@@ -5,8 +5,11 @@ import { EquipmentCards } from "./EquipmentCards";
 import { WireLookup } from "./WireLookup";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
-import { CableTable } from "./CableTables";
+import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
+import { CableTable, kindSelect } from "./CableTables";
+import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { operationCardCount } from "./TechcardsPage";
+import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
   failureText,
   referencesApi,
@@ -27,8 +30,8 @@ import {
    references read like one database. Project techcards (ЭТК) stay with the projects. */
 
 type MapTab = "suppliers" | "countries";
-type CableTab = "cab_coax" | "cab_wire" | "cab_other";
-export type DbTab = "templates" | "connectors" | TechOperationTab | MapTab | CableTab;
+type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_other";
+export type DbTab = "templates" | "connectors" | "gauges" | TechOperationTab | MapTab | CableTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
@@ -46,15 +49,17 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "coax", label: "Коаксиальные разъёмы", base: "coax" },
     { id: "ter", label: "Терминалы", base: "ter" },
   ] },
-  // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки». БД.ПРОВ and the coax D1·D2·D3 table
-  // (СПР.КАБ) are joined by the server (references/cables.py). The AWG table (СПР.КАБ · AWG) is the монтажные wires'
-  // own reference — Ø of insulation per mark and «ГОСТ → AWG», as SUPPLYMAP gostAwgMap_ derives it — so it sits right
-  // after them as a chip of its own: its rows are AWG sizes, not wires, and it keeps its own count and Excel.
+  // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»; 10.10.2026: сечения — отдельной
+  // таблицей, у монтажных жила из неё, многожильные — в отдельную вкладку. БД.ПРОВ, the coax D1·D2·D3 table and the coax
+  // cards are joined by the server (references/cables.py, cable_structure.py). «Сечения AWG ↔ мм²» is the size table
+  // the монтажные wires reference; «Ø изоляции по маркам» is the СПР.КАБ AWG sheet the ETK generator reads.
   { title: "Кабели и провода", tabs: [
     { id: "cab_coax", label: "Коаксиальные кабели" },
     { id: "cab_wire", label: "Монтажные провода" },
-    { id: "kab_awg", label: "AWG ↔ сечение ↔ Ø" },
+    { id: "gauges", label: "Сечения AWG ↔ мм²" },
+    { id: "cab_multi", label: "Многожильные кабели" },
     { id: "cab_other", label: "Прочие кабели" },
+    { id: "kab_awg", label: "Ø изоляции по маркам" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
   { title: "Материалы", tabs: [
@@ -65,7 +70,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "countries", label: "Изготовитель → страна" },
   ] },
 ];
-const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_other: "other" };
+const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_other: "other" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
 // D1 · D2 · D3» → коаксиальные кабели.
 const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax" };
@@ -81,13 +86,58 @@ const TAB_STORAGE = "erp-db-tab";
 const FIELD_TITLES: Record<string, string> = {
   baseValue: "Для базы", obType: "Тип",
   opNumber: "Номер", opName: "Название", tOp: "Время операции, с", tPrep: "Время подготовки, с", tMachine: "Время машины, с/оп; с/м",
-  terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Product Name", connType: "Тип разъёма",
+  terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Наименование", connType: "Тип разъёма",
   terType: "Тип контакта", artISL: "Артикул ISL", artSAG: "Артикул SAG", terArticle: "Артикул контакта", terLPlus: "L+",
   terLMinus: "L−", terStep: "Шаг", terApplicator: "Аппликатор", terStrip: "Длина зачистки, мм",
-  terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, N", terPullForceMax: "Усилие обрыва до, N",
+  terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, Н", terPullForceMax: "Усилие обрыва до, Н",
   coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
 };
-const fieldTitle = (field: string) => FIELD_TITLES[field] ?? field;
+const headerKey = (field: string) => cleanHeader(field).toLocaleLowerCase("ru-RU");
+
+function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields: string[]): DataColumn<TechOperationRecord>[] {
+  // Колонки бывают под заголовком листа («Высота обжима проводника , мм») или под ключом схемы (terCrimpHeight).
+  const find = (test: (key: string) => boolean) => fields.find((field) => test(headerKey(fieldTitle(field))) || test(field.toLowerCase()));
+  const conductor = find((key) => key.startsWith("высота обжима проводника"));
+  const insulation = find((key) => key.startsWith("высота обжима изоляции"));
+  const pull = find((key) => key.startsWith("усилие обрыва") && !key.startsWith("усилие обрыва до"));
+  const pullMax = find((key) => key.startsWith("усилие обрыва до") || key === "terpullforcemax");
+  const awgFrom = find((key) => key === "от awg" || key === "awgfrom");
+  const awgTo = find((key) => key === "до awg" || key === "awgto");
+  const crimpFields = [conductor, insulation, pull, pullMax].filter((field): field is string => Boolean(field));
+  const get = (record: TechOperationRecord, field?: string) => (field ? record.fields[field] ?? "" : "");
+  const pullText = (record: TechOperationRecord) => {
+    const low = get(record, pull).trim();
+    const high = get(record, pullMax).trim();
+    return high && low && high !== low && !low.includes(":") ? `${low}–${high}` : low || high;
+  };
+  const crimpValues = (record: TechOperationRecord) => ({ conductor: get(record, conductor), insulation: get(record, insulation), pull: pullText(record) });
+  const awgText = (record: TechOperationRecord) => {
+    const from = get(record, awgFrom).trim();
+    const to = get(record, awgTo).trim();
+    return from && to && from !== to ? `${from}–${to}` : from || to;
+  };
+  const merged: Record<string, DataColumn<TechOperationRecord>> = {};
+  if (crimpFields.length > 0) merged[crimpFields[0]] = {
+    key: "__crimp", title: CRIMP_COLUMN_TITLE, value: (record) => crimpText(crimpValues(record)),
+    render: (record) => <CrimpCell values={crimpValues(record)} />,
+  };
+  if (awgFrom || awgTo) merged[(awgFrom ?? awgTo) as string] = { key: "__awg", title: "AWG", value: awgText, render: (record) => awgText(record) || "—" };
+  const folded = new Set([...crimpFields, awgFrom, awgTo].filter(Boolean) as string[]);
+  // Обжим и AWG стоят сразу за артикулом контакта: на планшете (~1400 px) таблица шире экрана, и всё, что правее
+  // «Длины зачистки», уходит за край.
+  const moved = Object.values(merged);
+  const rest = columns.map((column) => (folded.has(column.key) ? { ...column, hidden: true } : column));
+  const anchor = rest.findIndex((column) => headerKey(column.title).startsWith("артикул контакта"));
+  if (moved.length === 0) return rest;
+  if (anchor < 0) return [...moved, ...rest];
+  return [...rest.slice(0, anchor + 1), ...moved, ...rest.slice(anchor + 1)];
+}
+
+// Заголовки листа, которых нет в карте: без переносов строк, русские слова вместо английских (referenceLabels.ts).
+const fieldTitle = (field: string) => FIELD_TITLES[field] ?? headerLabel(field);
+// Столбцы БД.ТЕР, нужные редко (ссылка, источник, материал, диаметры изоляции, пневма): в «Колонках», по умолчанию скрыты —
+// остальные (артикулы, шаг, обжим) укладываются в ширину ноутбука (аудит БД-3).
+const TER_RARE = new Set(["пневма автомат", "отр", "диаметр изоляции от, мм", "диаметр изоляции до, мм", "материал контакта", "ссылка на datasheet на сайте производителя", "источник высоты обжима"]);
 // БД.КОАКС (owner 29.09.2026): Ø belong to the cable (СПР.КАБ · коаксиал), the connector row keeps only lengths;
 // D1–D3 come from СПР.КАБ by «Провод», as the sheet's D1 formula does. Same key as the generator's coaxCableDiaLookup_.
 const CABLE_DIAMETERS = ["D1", "D2", "D3"];
@@ -127,13 +177,15 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [bases, setBases] = useState<BasesResult>({ bases: [] });
   const [cables, setCables] = useState<CablesResult | null>(null);
   const [awgRecords, setAwgRecords] = useState<TechOperationRecord[] | null>(null);
+  // Вкладка, чьи записи уже пришли: таблица строится по готовым колонкам (иначе «скрыты по умолчанию» не сработает).
+  const [techReady, setTechReady] = useState("");
   const [opCount, setOpCount] = useState<number | null>(null);
   const [connectorCount, setConnectorCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
-  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" ? tab : null;
+  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" ? tab : null;
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
@@ -163,6 +215,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     } catch (reason) {
       setTech({ metadata: null, records: [] });
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить базу техопераций");
+    } finally {
+      setTechReady(next);
     }
   }
 
@@ -175,7 +229,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     try {
       setCables(await referencesApi.cables());
     } catch (reason) {
-      setCables({ columns: [], counts: { coax: 0, wire: 0, other: 0 }, rows: [] });
+      setCables({ columns: [], counts: { coax: 0, wire: 0, multi: 0, other: 0 }, rows: [], gauges: [] });
       setError(failureText(reason, "Не удалось загрузить кабели и провода"));
     }
   }
@@ -197,7 +251,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         techcardsApi.templates(),
         canRefs ? referencesApi.techOperations("op", "", 5000) : Promise.resolve({ records: [] as TechOperationRecord[] }),
       ]).then(([library, ops]) => setOpCount(operationCardCount(library.items, ops.records))).catch(() => setOpCount(null));
-      techcardsApi.connectorFamilies().then((result) => setConnectorCount(result.items.length)).catch(() => setConnectorCount(null));
+      techcardsApi.connectorFamilies().then((result) => setConnectorCount(result.series_count ?? result.items.length)).catch(() => setConnectorCount(null));
     }
   }, [canRefs, canTemplates]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -206,7 +260,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     setEditing(null);
     setNotice("");
     if (techTab) void loadTech(techTab);
-    if (cableKind && cables === null) void loadCables();
+    if ((cableKind || tab === "gauges") && cables === null) void loadCables();
     if (cableKind === "wire" && awgRecords === null) {
       referencesApi.techOperations("kab_awg", "", 5000).then((result) => setAwgRecords(result.records)).catch(() => setAwgRecords([]));
     }
@@ -217,6 +271,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     if (def.id === "templates") return opCount;
     if (def.id === "connectors") return connectorCount;
     if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
+    if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
     if (def.id === tab && techTab) return tech.records.length;
     return bases.tabs?.[def.id as TechOperationTab] ?? bases.bases.find((base) => base.id === def.base)?.count ?? null;
   }
@@ -265,7 +320,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns
     .filter((key) => key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
     .map((key) => [key, record.fields[key]]));
-  const techColumns: DataColumn<TechOperationRecord>[] = [
+  const sheetColumns: DataColumn<TechOperationRecord>[] = [
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
     ...fieldColumns.map((field): DataColumn<TechOperationRecord> => {
       if (coaxTab && CABLE_DIAMETERS.includes(field)) return {
@@ -277,22 +332,26 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
             ? <span className="muted" title={`У кабеля «${record.fields["Провод"] ?? record.fields.coaxWire ?? ""}» нет D1–D3 — задайте их во вкладке «Коаксиальные кабели»`}>нет у кабеля</span>
             : <span className="muted" title="У разъёма не указан кабель («Провод»)">—</span>,
       };
+      const shown = (record: TechOperationRecord) => valueLabel(field, record.fields[field] ?? "");
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
       const long = values.some((value) => value.length > 40);
       return {
-        key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
-        // Long text (datasheet links, sources) is cut to three lines so one cell does not stretch the row; full text on hover.
-        render: long ? (record) => <span className="db-clamp" title={record.fields[field] ?? ""}>{record.fields[field] ?? ""}</span> : undefined,
-        wrap: long,
+        key: field, title: fieldTitle(field), value: shown,
+        // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
+        render: long ? (record) => <span className="db-clip" title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
+        hidden: techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU")),
         numeric: values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };
     }),
     { key: "__source", title: "Источник", value: (record) => record.source_sheet || "", hidden: true },
-    ...(canEdit ? [{
-      key: "__edit", title: "", value: () => "",
-      render: (record: TechOperationRecord) => <button className="secondary small" onClick={() => setEditing({ id: record.id, values: editValues(record) })}>Править</button>,
-    }] : []),
   ];
+  // БД.ТЕР: обжим одной колонкой «по сечениям» и «От AWG / До AWG» одной колонкой «AWG» (владелец 12.10); исходные
+  // колонки остаются в «Колонках» и в выгрузке, но скрыты.
+  const techColumns = techTab === "ter" ? mergeTerminalColumns(sheetColumns, fieldColumns) : sheetColumns;
+  function startEdit(record: TechOperationRecord) {
+    setEditing({ id: record.id, values: editValues(record) });
+    window.scrollTo?.({ top: 0, behavior: "smooth" });
+  }
   const current = groups.flatMap((group) => group.tabs).find((def) => def.id === tab);
   const editingRecord = editing?.id ? tech.records.find((record) => record.id === editing.id) : null;
 
@@ -342,9 +401,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         records={tech.records}
         operations={obOps}
         canEdit={canEdit}
-        onEdit={(record) => { setEditing({ id: record.id, values: editValues(record) }); window.scrollTo?.({ top: 0, behavior: "smooth" }); }}
+        onEdit={startEdit}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
-      /> : <DataTable
+      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}
@@ -353,21 +412,36 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         storageKey={`db:${techTab}`}
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
+        // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел).
+        onRowClick={canEdit ? startEdit : undefined}
+        rowTitle={canEdit ? (record) => `Править: ${record.display_text}` : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
       />}
       {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}
     </>}
 
-    {cableKind && (cables === null
-      ? <div className="empty">Загрузка…</div>
-      : <CableTable
-        kind={cableKind}
-        data={cables}
-        awgRecords={awgRecords ?? []}
-        canEdit={principal.permissions.erpref === "edit"}
-        onSaved={cablesSaved}
-        onError={(message) => { setNotice(""); setError(message); }}
-      />)}
+    {(cableKind || tab === "gauges") && cables === null && <div className="empty">Загрузка…</div>}
+    {tab === "gauges" && cables !== null && <GaugeTable
+      gauges={cables.gauges ?? []}
+      canEdit={principal.permissions.erpref === "edit"}
+      onSaved={cablesSaved}
+      onError={(message) => { setNotice(""); setError(message); }}
+    />}
+    {cableKind === "wire" && cables !== null && <HookupWireTable
+      data={cables}
+      canEdit={principal.permissions.erpref === "edit"}
+      onSaved={cablesSaved}
+      onError={(message) => { setNotice(""); setError(message); }}
+      kindSelect={kindSelect}
+    />}
+    {cableKind && cableKind !== "wire" && cables !== null && <CableTable
+      kind={cableKind}
+      data={cables}
+      awgRecords={awgRecords ?? []}
+      canEdit={principal.permissions.erpref === "edit"}
+      onSaved={cablesSaved}
+      onError={(message) => { setNotice(""); setError(message); }}
+    />}
   </section>;
 }
 

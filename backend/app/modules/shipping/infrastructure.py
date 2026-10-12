@@ -9,10 +9,11 @@ from decimal import Decimal
 from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, select
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, or_, select
+from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
-from app.shared.persistence import Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
+from app.shared.project_number import normalize_project_number
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentBox,
     ShipmentLine, ShipmentStatus, StoredFile, UpdType,
@@ -39,7 +40,15 @@ class FinishedGoodRow(Base):
     note: Mapped[str] = mapped_column(Text(), nullable=False)
     sent: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
     before_erp: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
+    # № проекта для сравнения (`normalize_project_number`): трек проекта читает по индексу; ставится при записи
+    # `project`, NULL — строка мимо ORM (читается и сверяется в Python).
+    project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+    @validates("project")
+    def _keep_project_key(self, _name: str, value: str) -> str:
+        self.project_key = normalize_project_number(value)
+        return value
 
 
 class ShipmentRow(Base):
@@ -105,6 +114,13 @@ class ShipmentLineRow(Base):
     picked: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     unit: Mapped[str] = mapped_column(String(64), nullable=False)
     grn: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Как у FinishedGoodRow: отправки проекта находятся по индексу ключа позиций.
+    project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+
+    @validates("project")
+    def _keep_project_key(self, _name: str, value: str) -> str:
+        self.project_key = normalize_project_number(value)
+        return value
 
 
 class ProjectAddresseeRow(Base):
@@ -165,6 +181,15 @@ class SqlAlchemyFinishedGoodsRepository:
             row = ShippingSequenceRow(name=key, value=0); self.session.add(row); self.session.flush()
         row.value += 1
         return f"ГП.{year % 100:02d}.{row.value:07d}"
+    def for_project(self, project: str) -> list[FinishedGood]:
+        """ГП одного проекта точно по `normalize_project_number` (по индексу ключа), а не первые N всей таблицы."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        rows = self.session.scalars(select(FinishedGoodRow).where(
+            or_(FinishedGoodRow.project_key == key, FinishedGoodRow.project_key.is_(None)),
+        ).order_by(FinishedGoodRow.project, FinishedGoodRow.item_index))
+        return [_good(row) for row in rows if normalize_project_number(row.project) == key]
     def by_project(self, project: str) -> list[FinishedGood]:
         rows = self.session.scalars(select(FinishedGoodRow).where(FinishedGoodRow.project == project).order_by(FinishedGoodRow.item_index))
         return [_good(row) for row in rows]
@@ -212,6 +237,21 @@ class SqlAlchemyShipmentRepository:
     def list(self, limit: int = 200) -> list[Shipment]:
         rows = self.session.scalars(select(ShipmentRow).order_by(ShipmentRow.created_at.desc(), ShipmentRow.id.desc()).limit(limit))
         return [self._domain(row) for row in rows]
+    def for_project(self, project: str) -> list[Shipment]:
+        """Отправки, где есть позиция проекта (точно по `normalize_project_number`, по индексу ключа позиций)."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        ids = select(ShipmentLineRow.shipment_id).where(
+            or_(ShipmentLineRow.project_key == key, ShipmentLineRow.project_key.is_(None)),
+        )
+        rows = self.session.scalars(
+            select(ShipmentRow).where(ShipmentRow.id.in_(ids)).order_by(ShipmentRow.created_at, ShipmentRow.id)
+        )
+        return [
+            shipment for shipment in map(self._domain, rows)
+            if any(normalize_project_number(line.project) == key for line in shipment.lines)
+        ]
     def open_for_project(self, project: str) -> list[Shipment]:
         """Незакрытые отправки проекта (проект отправки — по первой позиции, `shipHeadEff_`)."""
         ids = select(ShipmentLineRow.shipment_id).where(ShipmentLineRow.project == project)
@@ -219,6 +259,12 @@ class SqlAlchemyShipmentRepository:
             ShipmentRow.id.in_(ids), ShipmentRow.status.not_in((ShipmentStatus.CLOSED.value, ShipmentStatus.CANCELLED.value)),
         ).order_by(ShipmentRow.created_at, ShipmentRow.id))
         return [shipment for shipment in map(self._domain, rows) if shipment.lines and shipment.lines[0].project == project]
+    def created_details(self, shipment_id: UUID) -> dict | None:
+        """Подробности события «shipping.created» отправки: в них ключ повтора и отпечаток тела «Отгрузить»."""
+        details = self.session.scalar(select(AuditEventRow.details).where(
+            AuditEventRow.aggregate_id == shipment_id, AuditEventRow.event_type == "shipping.created",
+        ).order_by(AuditEventRow.occurred_at).limit(1))
+        return dict(details) if isinstance(details, dict) else None
     def reserve_number(self, day: date) -> str:
         stamp = day.strftime("%Y%m%d"); key = f"shipment-{stamp}"
         row = self.session.scalar(select(ShippingSequenceRow).where(ShippingSequenceRow.name == key).with_for_update())

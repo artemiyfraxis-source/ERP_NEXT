@@ -15,6 +15,7 @@ from app.modules.procurement.domain import StockCover, project_key
 from app.modules.warehouse.domain import (
     ISSUE_WRITEOFF_AUTHOR,
     StockLot,
+    WarehouseValidationError,
     WriteOffEntry,
     issue_writeoff_reason,
 )
@@ -25,6 +26,9 @@ from app.shared.print_sheet import PrintSheet
 
 from .domain import (
     DEFAULT_HANDOUT_PLACE,
+    EXTRA_AFTER,
+    DuplicateKitRequest,
+    FulfillmentKind,
     FulfillmentLine,
     FulfillmentRequest,
     FulfillmentStatus,
@@ -45,8 +49,10 @@ class ConcurrentFulfillmentUpdate(RuntimeError):
 class FulfillmentRepository(Protocol):
     def get(self, request_id: UUID) -> FulfillmentRequest | None: ...
     def by_idempotency_key(self, key: str) -> FulfillmentRequest | None: ...
-    def numbers(self, year: int) -> Sequence[str]: ...
+    def next_number(self, year: int) -> str: ...
+    def live_kit_request(self, project_key: str, item_index: str) -> FulfillmentRequest | None: ...
     def list(self, limit: int = 200, after_id: UUID | None = None) -> Sequence[FulfillmentRequest]: ...
+    def for_project(self, project: str) -> Sequence[FulfillmentRequest]: ...
     def add(self, request: FulfillmentRequest) -> None: ...
     def delete(self, request_id: UUID) -> None: ...
     def open_requests(self) -> Sequence[FulfillmentRequest]: ...
@@ -80,6 +86,7 @@ class KitReserveRepository(Protocol):
     """Techcard reserves of a project КБ; optional on the unit of work (`kit_reserves`), see `_kit_reserves`."""
 
     def active_on_lots(self, lot_ids: Sequence[UUID]) -> Sequence[KitReserve]: ...
+    def for_project(self, project: str) -> Sequence[KitReserve]: ...
     def add(self, reserve: KitReserve) -> None: ...
 
 
@@ -117,6 +124,8 @@ class CreateFulfillmentCommand:
     lot_ids: tuple[UUID | None, ...] = ()
     # shortNote of queueIssueRequest: shortfalls known already while picking («нет на складе» of the calculation form).
     short_note: tuple[str, ...] = ()
+    # MAIN — the kit of a КБ (one live per project + КБ); EXTRA — «Довыдача» on top of an issued kit.
+    kind: FulfillmentKind = FulfillmentKind.MAIN
 
 
 @dataclass(frozen=True)
@@ -205,14 +214,29 @@ class ProjectBindResult:
     requests: tuple[FulfillmentRequest, ...]
 
 
-def next_request_number(year: int, existing: Sequence[str]) -> str:
+def next_request_number(year: int, existing: Sequence[str], last_issued: int = 0) -> str:
+    """The next REQ.YY.NNNNNNN: above every number of the year that exists and above the last one ever given out
+    (`last_issued`, the year's counter), so a deleted request's number is never given out again."""
     prefix = f"REQ.{year % 100:02d}."
     used = [
         int(value[len(prefix) :])
         for value in existing
         if value.startswith(prefix) and value[len(prefix) :].isdigit()
     ]
-    return f"{prefix}{max(used, default=0) + 1:07d}"
+    return f"{prefix}{max(max(used, default=0), last_issued) + 1:07d}"
+
+
+def request_sequence(number: str) -> int:
+    """REQ.26.0000018 → 18."""
+    tail = str(number or "").rsplit(".", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
+
+
+def kit_key(purpose: str | None) -> tuple[str, str] | None:
+    """The project and КБ a kit request is for, normalized as the app compares them: НАЗНАЧЕНИЕ «180К.11 · КБ1 · …» →
+    ('180К.11', 'КБ1'). A request without a project or without a КБ → None (any number of those may exist)."""
+    project, kb = project_key(project_of(purpose or "")), kb_of(purpose or "")
+    return (project, item_index_key(kb)) if project and kb else None
 
 
 def _picked_lots(command: CreateFulfillmentCommand) -> tuple[UUID | None, ...]:
@@ -236,6 +260,7 @@ def _creation_fingerprint(command: CreateFulfillmentCommand) -> str:
             for line, lot_id in zip(command.lines, _picked_lots(command))
         ],
         **({"short_note": list(command.short_note)} if command.short_note else {}),
+        **({"kind": command.kind.value} if command.kind is not FulfillmentKind.MAIN else {}),
     }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
@@ -310,6 +335,193 @@ def project_reserve_by_lot(
 def free_for_project(lot: StockLot, held: dict[UUID, Decimal]) -> Decimal:
     """What a kit of the project can take from the lot: ДОСТУПНО plus the project's own reserve on it."""
     return max(lot.available, Decimal("0")) + held.get(lot.id, Decimal("0"))
+
+
+# ── Резерв техкарты: ГРН, выбранный в спецификации проекта (T1, 06.10.2026) ────
+
+
+@dataclass(frozen=True)
+class HoldKitReserveCommand:
+    """One spec row (project + КБ + article) wants `quantity` («на партию», in the row's `unit`) from `lot_id`.
+    `lot_id` None — the row holds nothing (ГРН cleared, units differ, the КБ already went to kitting).
+    `expected_lot_version` — the lot version the picker showed: a pick against a lot changed since is refused."""
+
+    project: str
+    item_index: str
+    article: str
+    lot_id: UUID | None
+    quantity: Decimal
+    unit: str
+    actor: Actor
+    now: datetime
+    expected_lot_version: int | None = None
+
+
+def same_unit(left: str | None, right: str | None) -> bool:
+    """«шт» ≡ «Шт.», «м» ≡ «м»: a spec row and a lot measured differently never reserve each other."""
+
+    def key(value: str | None) -> str:
+        return str(value or "").strip().rstrip(".").casefold()
+
+    return bool(key(left)) and key(left) == key(right)
+
+
+def active_kit_reserves(uow, project: str) -> list[KitReserve]:
+    """The project's techcard reserves that still hold something (every КБ). No port or no project → []."""
+    reserves = getattr(uow, "kit_reserves", None)
+    if reserves is None or not str(project or "").strip():
+        return []
+    return [reserve for reserve in reserves.for_project(project) if reserve.active]
+
+
+def _row_reserves(uow, project: str, item_index: str, article: str) -> list[KitReserve]:
+    kb, art = item_index_key(item_index), str(article or "").strip()
+    return [
+        reserve for reserve in active_kit_reserves(uow, project)
+        if item_index_key(reserve.item_index) == kb and reserve.article.strip() == art
+    ]
+
+
+def kit_requests_by_kb(uow, project: str) -> dict[str, FulfillmentRequest]:
+    """`item_index_key` → the kit request of that КБ of the project (any status but «Отменена»; the first one created
+    if an old duplicate is still there)."""
+    key = project_key(project)
+    found: dict[str, FulfillmentRequest] = {}
+    if not key:
+        return found
+    after, size = None, 500
+    while True:
+        page = list(uow.fulfillment.list(limit=size, after_id=after))
+        for request in page:
+            kb = kb_of(request.purpose)
+            if (
+                request.kind is FulfillmentKind.MAIN and request.status is not FulfillmentStatus.CANCELLED and kb
+                and project_key(project_of(request.purpose)) == key
+            ):
+                found.setdefault(item_index_key(kb), request)
+        if len(page) < size:
+            return found
+        after = page[-1].id
+
+
+def kit_requested_kbs(uow, project: str) -> set[str]:
+    """`item_index_key` of every КБ of the project that already has a kit request (any status but «Отменена»): its
+    kit holds the lots itself, a techcard reserve next to it would count the same goods twice."""
+    return set(kit_requests_by_kb(uow, project))
+
+
+def refuse_duplicate_kits(requests: Sequence[FulfillmentRequest]) -> None:
+    """Two live requests of one project for the same КБ would each take the item's full need from the same lots —
+    the reserve doubles (prod 180К.11). Refuse before anything is written; the extra request is cancelled by hand."""
+    by_kb: dict[tuple[str, str], list[FulfillmentRequest]] = {}
+    for request in requests:
+        key = kit_key(request.purpose)
+        if key is not None and request.kind is FulfillmentKind.MAIN and request.status is not FulfillmentStatus.CANCELLED:
+            by_kb.setdefault(key, []).append(request)
+    doubled = [
+        f"у {kb} {'две' if len(items) == 2 else len(items)} заявки {'/'.join(sorted(item.number for item in items))}"
+        for (_, kb), items in sorted(by_kb.items(), key=lambda pair: _natural_key(pair[0][1]))
+        if len(items) > 1
+    ]
+    if doubled:
+        raise DuplicateKitRequest("; ".join(doubled) + " — отмените лишнюю, ничего не привязано")
+
+
+def _reserve_details(reserve: KitReserve, quantity: Decimal) -> dict:
+    return {
+        "quantity": format(quantity.normalize(), "f"), "unit": reserve.unit, "holder": reserve.label,
+        "article": reserve.article, "grn": reserve.grn, "kit_reserve_id": str(reserve.id),
+    }
+
+
+def release_kit_reserves(
+    reserves: Sequence[KitReserve], actor: Actor, now: datetime, uow, lots: dict[UUID, StockLot] | None = None,
+) -> dict[UUID, StockLot]:
+    """Give the reserves back to their lots: РЕЗЕРВ goes down by what each still holds, the reserve keeps its trace
+    (`released_at`). The lot is saved under its version, so a concurrent move of the lot refuses the whole step.
+    → the lots as saved (a caller reserving next on one of them goes on from that version)."""
+    lots = {} if lots is None else lots
+    for reserve in reserves:
+        if not reserve.active:
+            continue
+        lot = lots.get(reserve.lot_id) or uow.warehouse.get(reserve.lot_id)
+        if lot is not None:
+            lot = lot.release_reserve(reserve.quantity)
+            lots[lot.id] = lot
+            uow.warehouse.add(lot)
+        details = _reserve_details(reserve, reserve.quantity)
+        uow.kit_reserves.add(reserve.release(now))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=reserve.lot_id, event_type="warehouse.kit_reserve_released",
+            actor=actor, occurred_at=now, details=details,
+        ))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=reserve.id, event_type="fulfillment.kit_reserve_released",
+            actor=actor, occurred_at=now, details=details,
+        ))
+    return lots
+
+
+def _project_covered(uow, lot: StockLot, project: str) -> Decimal:
+    """What the project's procurement «Со склада» covers already hold on the lot: its kit takes them first, so the
+    techcard reserve does not hold that part a second time."""
+    covers = getattr(uow, "stock_covers", None)
+    if covers is None or lot.reserved <= 0:
+        return Decimal("0")
+    return sum(
+        (cover.quantity for cover in covers.active_on_lots([lot.id]) if cover.serves_project(project)), Decimal("0"),
+    )
+
+
+def hold_kit_reserve(command: HoldKitReserveCommand, uow) -> KitReserve | None:
+    """The spec row's techcard reserve follows its ГРН: one active reserve per project + КБ + article. Holds
+    min(«на партию» − the project's covers on the lot, ДОСТУПНО + what this row already holds there) — partial when
+    the lot has less; a lot in another unit holds nothing. A re-pick moves the reserve, `lot_id` None releases it, an
+    unchanged row is left alone. The caller commits. → the active reserve, or None."""
+    if getattr(uow, "kit_reserves", None) is None:
+        return None
+    project, item_index = str(command.project or "").strip(), str(command.item_index or "").strip()
+    article = str(command.article or "").strip()
+    if not project or not item_index or not article:
+        raise FulfillmentValidationError("Для резерва техкарты нужны проект, КБ и артикул")
+    current = _row_reserves(uow, project, item_index, article)
+    lot = None
+    if command.lot_id is not None:
+        lot = uow.warehouse.get(command.lot_id)
+        if lot is None:
+            raise FulfillmentValidationError("Партия склада не найдена — выберите ГРН заново")
+        if command.expected_lot_version is not None and lot.version != command.expected_lot_version:
+            raise ConcurrentFulfillmentUpdate("Партия на складе изменилась после загрузки списка — обновите и выберите снова")
+    wanted = Decimal("0")
+    if lot is not None and command.quantity > 0 and same_unit(command.unit, lot.unit):
+        own = sum((reserve.quantity for reserve in current if reserve.lot_id == lot.id), Decimal("0"))
+        need = command.quantity - _project_covered(uow, lot, project)
+        wanted = max(min(need, max(lot.available, Decimal("0")) + own), Decimal("0"))
+    if lot is not None and len(current) == 1 and current[0].lot_id == lot.id and current[0].quantity == wanted:
+        return current[0]
+    if not current and wanted <= 0:
+        return None
+    lots = release_kit_reserves(current, command.actor, command.now, uow, {lot.id: lot} if lot is not None else None)
+    if wanted <= 0:
+        return None
+    held = lots[lot.id].reserve(wanted)
+    uow.warehouse.add(held)
+    reserve = KitReserve(
+        id=uuid4(), project=project, item_index=item_index, article=article, lot_id=held.id,
+        warehouse=held.warehouse, grn=held.grn, package=held.package, unit=held.unit, quantity=wanted,
+        created_at=command.now, created_by=command.actor.name,
+    )
+    uow.kit_reserves.add(reserve)
+    details = _reserve_details(reserve, wanted)
+    uow.audit.add(AuditEvent(
+        id=uuid4(), aggregate_id=held.id, event_type="warehouse.kit_reserve_held",
+        actor=command.actor, occurred_at=command.now, details=details,
+    ))
+    uow.audit.add(AuditEvent(
+        id=uuid4(), aggregate_id=reserve.id, event_type="fulfillment.kit_reserve_held",
+        actor=command.actor, occurred_at=command.now, details=details,
+    ))
+    return reserve
 
 
 def _take_over_covers(
@@ -469,8 +681,14 @@ def create_fulfillment(
                     "Idempotency key уже использован для другой заявки"
                 )
             return existing
+        kit = kit_key(command.purpose) if command.kind is FulfillmentKind.MAIN else None
+        live = uow.fulfillment.live_kit_request(*kit) if kit is not None else None
+        if live is not None:
+            raise DuplicateKitRequest(
+                f"Заявка на {kit[1]} проекта {project_of(command.purpose)} уже есть: {live.number} ({live.status.value})"
+            )
         request = FulfillmentRequest.create(
-            number=next_request_number(command.now.year, uow.fulfillment.numbers(command.now.year)),
+            number=uow.fulfillment.next_number(command.now.year),
             source_idempotency_key=key,
             source_fingerprint=fingerprint,
             requester=command.actor.name,
@@ -479,6 +697,7 @@ def create_fulfillment(
             deadline=command.deadline,
             lines=command.lines,
             created_at=command.now,
+            kind=command.kind,
         )
         # issueCreateTasks_: a line with a picked lot reserves min(need, БАЛАНС − РЕЗЕРВ) right away; what the lot
         # does not cover becomes a row without a lot (waits for a delivery, shows in НЕДОБОР); a lot that is gone or
@@ -517,6 +736,67 @@ def create_fulfillment(
         }, uow)
         uow.commit()
         return request
+
+
+@dataclass(frozen=True)
+class ExtraIssueLine:
+    article: str
+    name: str
+    unit: str
+    quantity: Decimal
+
+
+@dataclass(frozen=True)
+class CreateExtraIssueCommand:
+    """«Довыдать»: positions of an issued kit handed out on top of it, with the reason (owner, 10.10.2026: the kit
+    goes out exactly to the need, a shortage is added later)."""
+
+    request_id: UUID
+    idempotency_key: str
+    reason: str
+    lines: tuple[ExtraIssueLine, ...]
+    actor: Actor
+    now: datetime
+    deadline: date | None = None
+
+
+def create_extra_issue(command: CreateExtraIssueCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    """An extra request («Довыдача») for chosen positions of a main kit that went to the shop: the same project and КБ,
+    НАЗНАЧЕНИЕ «<kit> · Довыдача: <reason>», lines waiting for a lot like any new request. Not bound by the one-live-
+    request-per-КБ rule; a КБ may get several. Positions are those of the kit (article + name + unit)."""
+    reason = re.sub(r"\s+", " ", str(command.reason or "")).strip()
+    if not reason:
+        raise FulfillmentValidationError("Укажи причину довыдачи")
+    if not command.lines:
+        raise FulfillmentValidationError("Выбери позиции и количество для довыдачи")
+    with uow:
+        main = uow.fulfillment.get(command.request_id)
+        if main is None:
+            raise KeyError(f"Fulfillment request not found: {command.request_id}")
+    if main.kind is not FulfillmentKind.MAIN:
+        raise FulfillmentValidationError("Довыдают по основной заявке КБ, а не по довыдаче")
+    if main.status not in EXTRA_AFTER:
+        raise FulfillmentValidationError(
+            f"Довыдать можно после выдачи комплекта, а заявка {main.number} — «{main.status.value}»"
+        )
+    known = {_item_key(line.article, line.name) + (line.unit.strip().casefold(),): line for line in main.lines}
+    lines = []
+    for item in command.lines:
+        line = known.get(_item_key(item.article, item.name) + (str(item.unit or "").strip().casefold(),))
+        if line is None:
+            raise FulfillmentValidationError(f"«{item.name or item.article}» нет в комплекте {main.number}")
+        lines.append(FulfillmentLine.create(
+            article=line.article, name=line.name, unit=line.unit, requirement=item.quantity,
+        ))
+    return create_fulfillment(CreateFulfillmentCommand(
+        idempotency_key=command.idempotency_key,
+        purpose=f"{main.purpose} · Довыдача: {reason}"[:512],
+        deadline=command.deadline or command.now.date(),
+        lines=tuple(lines),
+        actor=command.actor,
+        now=command.now,
+        kind=FulfillmentKind.EXTRA,
+    ), uow)
 
 
 def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
@@ -692,11 +972,12 @@ def bind_project_lots(command: BindProjectLotsCommand, uow: UnitOfWork) -> Proje
         def waiting(line: FulfillmentLine) -> bool:
             return line.waiting and _item_key(line.article, line.name) == wanted_item
 
+        project_requests = [
+            request for request in uow.fulfillment.open_requests() if project_key(project_of(request.purpose)) == key
+        ]
+        refuse_duplicate_kits(project_requests)
         requests = sorted(
-            (
-                request for request in uow.fulfillment.open_requests()
-                if project_key(project_of(request.purpose)) == key and any(waiting(line) for line in request.lines)
-            ),
+            (request for request in project_requests if any(waiting(line) for line in request.lines)),
             key=_kit_order,
         )
         if not requests:
@@ -825,11 +1106,14 @@ def bind_arrived_lot(command: BindArrivedLotCommand, uow: UnitOfWork) -> Arrived
     def waiting(line: FulfillmentLine) -> bool:
         return line.waiting and arrival_matches(line, command.articles, command.names)
 
+    project_requests = [
+        request for request in uow.fulfillment.open_requests() if project_key(project_of(request.purpose)) == key
+    ]
+    # A doubled КБ refuses the whole arrival: the consumer marks the message failed and retries it later, after the
+    # storekeeper cancelled the extra request.
+    refuse_duplicate_kits(project_requests)
     requests = sorted(
-        (
-            request for request in uow.fulfillment.open_requests()
-            if project_key(project_of(request.purpose)) == key and any(waiting(line) for line in request.lines)
-        ),
+        (request for request in project_requests if any(waiting(line) for line in request.lines)),
         key=_kit_order,
     )
     current_lots = {lot.id: lot}
@@ -862,24 +1146,35 @@ def bind_arrived_lot(command: BindArrivedLotCommand, uow: UnitOfWork) -> Arrived
     return ArrivedLotResult(kits=tuple(kits), bound=tuple(bound), short=short)
 
 
-def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
-    with uow:
-        request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_ready(command.handout_location).stamped(command.now)
-        uow.fulfillment.add(updated)
-        sites = _kit_sites(uow)
-        site = sites.site_of(updated) if sites is not None else ""
+def _send_to_handout(
+    request: FulfillmentRequest,
+    handout_location: str,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+    *,
+    notify: bool = True,
+) -> FulfillmentRequest:
+    """«Укомплектован» → «Готов к выдаче» inside the caller's unit of work (no commit). `notify=False` — the kit is
+    handed out in the same action, so nobody is told to come and pick it up; the audit keeps the place and the site."""
+    updated = request.mark_ready(handout_location).stamped(now)
+    uow.fulfillment.add(updated)
+    sites = _kit_sites(uow)
+    site = sites.site_of(updated) if sites is not None else ""
+    details: dict = {"handout_location": updated.handout_location}
+    if site:  # `last_handout` of the site reads it back for the next kit
+        details["site"] = site
+    if not notify:
+        details["with_issue"] = True
+    _audit(updated, "fulfillment.ready", actor, now, details, uow)
+    if notify:
         masters = tuple(sites.masters(site)) if sites is not None else ()
-        details: dict = {"handout_location": updated.handout_location}
-        if site:  # `last_handout` of the site reads it back for the next kit
-            details["site"] = site
-        _audit(updated, "fulfillment.ready", command.actor, command.now, details, uow)
         # Issue.gs:459-474: the requester learns the kit is ready and where to pick it up; the masters of the kit's
         # site learn it too (owner, G1-T3 05.10.2026). One message, recipients de-duplicated: a master who requested
         # the kit himself gets it once.
         publish_notification(uow.outbox, notification_requested(
             key=f"fulfillment:{updated.id}:ready:v{updated.version}",
-            now=command.now,
+            now=now,
             title=f"Заявка {updated.number} готова к получению",
             body=(
                 f"Заявка {updated.number} укомплектована и ждёт выдачи, место: {updated.handout_location}."
@@ -889,8 +1184,69 @@ def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest
             reference=updated.number,
             user_ids=(updated.requester_id, *masters),
         ))
+    return updated
+
+
+def mark_ready(command: MarkReadyCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    with uow:
+        request = _versioned(command.request_id, command.expected_version, uow)
+        updated = _send_to_handout(request, command.handout_location, command.actor, command.now, uow)
         uow.commit()
         return updated
+
+
+def _hand_out(
+    request: FulfillmentRequest,
+    actor: Actor,
+    now: datetime,
+    uow: UnitOfWork,
+    lots: dict[UUID, StockLot],
+) -> FulfillmentRequest:
+    """«Готов к выдаче» → «КБ Выдана» inside the caller's unit of work (no commit): reserve → списано on every lot,
+    one СПИСАНИЕ row per position. `lots` holds each lot as posted so far in this transaction — two kits of one batch
+    on the same lot write off one after the other, never from the same stale balance."""
+    updated = request.mark_issued().stamped(now)
+    posted: dict[UUID, StockLot] = {}
+    for line in request.lines:
+        if line.off_book:  # «есть, но не заведено»: no lot, no stock movement, no СПИСАНИЕ row
+            continue
+        if line.lot is None:
+            raise FulfillmentValidationError("У позиции не выбрана партия")
+        lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
+        if lot is None:
+            raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
+        lots[lot.id] = posted[lot.id] = lot.issue_reserved(line.reserved)
+        uow.warehouse.add(lots[lot.id])
+    # Issue.gs:475-502: one СПИСАНИЕ row per issued position, ОСТАТОК ПОСЛЕ = the lot balance once the
+    # whole request is posted (two positions on one lot both show the final balance).
+    for line in request.lines:
+        if line.off_book or line.reserved <= 0:
+            continue
+        lot = posted[line.lot.lot_id]
+        uow.writeoffs.add(WriteOffEntry.for_lot(
+            lot,
+            kind="issue",
+            quantity=line.reserved,
+            name=line.name,
+            reason=issue_writeoff_reason(request.number),
+            purpose="",
+            author=ISSUE_WRITEOFF_AUTHOR,
+            actor_id=actor.id,
+            actor_name=actor.name,
+            occurred_at=now,
+            remaining_after=lot.balance,
+            source_key=f"fulfillment-issue:{line.id}",
+        ))
+    uow.fulfillment.add(updated)
+    off_book = [
+        {"line_id": str(line.id), "article": line.article, "name": line.name,
+         "quantity": _display_number(line.issued), "unit": line.unit}
+        for line in updated.lines if line.off_book
+    ]
+    _audit(updated, "fulfillment.issued", actor, now, {
+        "lines": len(updated.lines), **({"off_book": off_book} if off_book else {}),
+    }, uow)
+    return updated
 
 
 def issue_fulfillment(
@@ -899,49 +1255,81 @@ def issue_fulfillment(
 ) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.mark_issued().stamped(command.now)
-        lots: dict[UUID, StockLot] = {}
-        for line in request.lines:
-            if line.off_book:  # «есть, но не заведено»: no lot, no stock movement, no СПИСАНИЕ row
-                continue
-            if line.lot is None:
-                raise FulfillmentValidationError("У позиции не выбрана партия")
-            lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
-            if lot is None:
-                raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
-            lots[lot.id] = lot.issue_reserved(line.reserved)
-            uow.warehouse.add(lots[lot.id])
-        # Issue.gs:475-502: one СПИСАНИЕ row per issued position, ОСТАТОК ПОСЛЕ = the lot balance once the
-        # whole request is posted (two positions on one lot both show the final balance).
-        for line in request.lines:
-            if line.off_book or line.reserved <= 0:
-                continue
-            lot = lots[line.lot.lot_id]
-            uow.writeoffs.add(WriteOffEntry.for_lot(
-                lot,
-                kind="issue",
-                quantity=line.reserved,
-                name=line.name,
-                reason=issue_writeoff_reason(request.number),
-                purpose="",
-                author=ISSUE_WRITEOFF_AUTHOR,
-                actor_id=command.actor.id,
-                actor_name=command.actor.name,
-                occurred_at=command.now,
-                remaining_after=lot.balance,
-                source_key=f"fulfillment-issue:{line.id}",
-            ))
-        uow.fulfillment.add(updated)
-        off_book = [
-            {"line_id": str(line.id), "article": line.article, "name": line.name,
-             "quantity": _display_number(line.issued), "unit": line.unit}
-            for line in updated.lines if line.off_book
-        ]
-        _audit(updated, "fulfillment.issued", command.actor, command.now, {
-            "lines": len(updated.lines), **({"off_book": off_book} if off_book else {}),
-        }, uow)
+        updated = _hand_out(request, command.actor, command.now, uow, {})
         uow.commit()
         return updated
+
+
+# What «Выдать комплект» takes (owner 06.10.2026): a fully picked kit, sent to the handout point or not yet.
+ISSUABLE = frozenset({FulfillmentStatus.COMPLETE, FulfillmentStatus.READY})
+
+
+def kit_label(request: FulfillmentRequest) -> str:
+    """«КБ2 (REQ.26.0000020)» — how a batch names the kit it stopped on; a request without a КБ — its number."""
+    kb = kb_of(request.purpose)
+    return f"{kb} ({request.number})" if kb else request.number
+
+
+@dataclass(frozen=True)
+class IssueBatchCommand:
+    """«Выдать выбранные»: the kits of one screen, each with the version the screen showed."""
+
+    versions: tuple[tuple[UUID, int], ...]
+    actor: Actor
+    now: datetime
+
+
+def _refuse_status(request: FulfillmentRequest) -> str:
+    if request.status in {FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED}:
+        total = len(request.lines)
+        if request.open_lines():
+            return f"комплект не собран, набрано {total - len(request.open_lines())} из {total} позиций"
+        return "комплект не отмечен «Укомплектован»"
+    if request.status in {FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE}:
+        return "уже выдана"
+    return f"заявку в статусе «{request.status.value}» не выдают"
+
+
+def issue_batch(command: IssueBatchCommand, uow: UnitOfWork) -> tuple[FulfillmentRequest, ...]:
+    """Hand out several kits at once — the whole order or the КБ ticked (owner 06.10.2026) — in one transaction.
+
+    Every kit is checked before anything moves: it exists, still has the version the screen showed (a repeated or
+    double-clicked call finds the version moved on and is refused, so nothing is written off twice) and is fully
+    picked. A «Укомплектован» kit is sent to the handout point first (place: `handout_place`, «Отправлена на выдачу»
+    stamped, no «готов к получению» message) and handed out at once. Any refusal names the КБ and rolls the whole
+    batch back: nothing is issued."""
+    with uow:
+        if not command.versions:
+            raise FulfillmentValidationError("Не выбрано ни одной заявки для выдачи")
+        if len({request_id for request_id, _ in command.versions}) != len(command.versions):
+            raise FulfillmentValidationError("Заявка указана в выдаче дважды")
+        requests: list[FulfillmentRequest] = []
+        for request_id, version in command.versions:
+            request = uow.fulfillment.get(request_id)
+            if request is None:
+                raise KeyError("Заявка на выдачу не найдена — обнови экран")
+            if request.version != version:
+                raise ConcurrentFulfillmentUpdate(
+                    f"{kit_label(request)}: заявка изменилась после загрузки — обнови экран. Ничего не выдано."
+                )
+            if request.status not in ISSUABLE or not request.fully_reserved:
+                reason = _refuse_status(request) if request.status not in ISSUABLE else "комплект собран не целиком"
+                raise FulfillmentValidationError(f"{kit_label(request)}: {reason}. Ничего не выдано.")
+            requests.append(request)
+        lots: dict[UUID, StockLot] = {}
+        issued: list[FulfillmentRequest] = []
+        for request in sorted(requests, key=_kit_order):
+            try:
+                current = request
+                if current.status is FulfillmentStatus.COMPLETE:
+                    current = _send_to_handout(
+                        current, handout_place(current, uow), command.actor, command.now, uow, notify=False,
+                    )
+                issued.append(_hand_out(current, command.actor, command.now, uow, lots))
+            except (FulfillmentValidationError, WarehouseValidationError) as error:
+                raise type(error)(f"{kit_label(request)}: {error}. Ничего не выдано.") from error
+        uow.commit()
+        return tuple(issued)
 
 
 def mark_returned(command: MarkReturnedCommand, uow: UnitOfWork) -> FulfillmentRequest:
@@ -1016,6 +1404,19 @@ def cancel_fulfillment(
             uow.warehouse.add(lot.release_reserve(line.reserved))
         uow.fulfillment.add(updated)
         _audit(updated, "fulfillment.cancelled", command.actor, command.now, {}, uow)
+        uow.commit()
+        return updated
+
+
+def return_to_kitting(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    """«Вернуть в комплектацию»: «Готов к выдаче» → «Укомплектован», the reserves stay where they are."""
+    with uow:
+        request = _versioned(command.request_id, command.expected_version, uow)
+        updated = request.return_to_kitting().stamped(command.now)
+        uow.fulfillment.add(updated)
+        _audit(updated, "fulfillment.returned_to_kitting", command.actor, command.now, {
+            "handout_location": request.handout_location or "", "status": updated.status.value,
+        }, uow)
         uow.commit()
         return updated
 

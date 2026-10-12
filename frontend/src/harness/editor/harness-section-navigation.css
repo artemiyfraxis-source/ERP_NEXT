@@ -1,0 +1,116 @@
+/* Scoped under .harness-root: generated from TECHMAP-GRAPHER CSS (e63befb), UI colours mapped to ERP tokens. */
+.harness-root .harness-section-navigation {
+  box-sizing: border-box;
+  min-width: 0;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.harness-root .harness-section-links {
+  min-width: max-content;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.harness-root .harness-section-navigation::-webkit-scrollbar {
+  display: none;
+}
+
+.harness-root .harness-section-navigation button {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  height: 30px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 1px solid transparent !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+  font: 600 13px/1.25 "Segoe UI", Arial, sans-serif !important;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.harness-root .harness-section-navigation button:hover:not(:disabled) {
+  border-color: var(--border) !important;
+  background: var(--accent) !important;
+  color: var(--foreground) !important;
+}
+
+.harness-root .harness-section-navigation button.active,
+.harness-root .harness-section-navigation button[aria-current="page"] {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--card)) !important;
+  background: color-mix(in srgb, var(--primary) 12%, var(--card)) !important;
+  color: var(--primary) !important;
+}
+
+.harness-root .harness-section-navigation button:disabled {
+  cursor: default !important;
+  opacity: 1 !important;
+}
+
+.harness-root .harness-section-navigation button[aria-current="page"]:disabled {
+  opacity: 1 !important;
+}
+
+.harness-root .harness-section-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  border-color: var(--border) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+}
+
+.harness-root .harness-section-home > span:first-child {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.harness-root .harness-editor .harness-section-navigation {
+  width: calc(100% + 28px);
+  margin-inline: -14px;
+  padding: 4px 14px;
+  border-bottom: 0;
+}
+
+.harness-root .harness-editor .harness-section-navigation button {
+  color: var(--muted-foreground);
+}
+
+.harness-root .harness-editor .harness-section-navigation button.active,
+.harness-root .harness-editor .harness-section-navigation button[aria-current="page"] {
+  color: var(--primary);
+}
+
+.harness-root .manufacturing-route-panel > .harness-section-navigation {
+  margin: -28px clamp(-52px, -3vw, -20px) 16px;
+  padding-inline: 14px;
+}
+
+.harness-root .route-v2-panel > .harness-section-navigation,
+.harness-root .uml-panel > .harness-section-navigation {
+  margin: -18px -22px 18px;
+  padding-inline: 14px;
+}
+
+.harness-root .he-save-state-utility {
+  align-self: flex-start;
+  width: max-content;
+  min-height: 29px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}

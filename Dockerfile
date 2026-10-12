@@ -4,8 +4,14 @@
 FROM node:22-slim AS web
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# Lockfile-only layer: cached while package*.json is unchanged. The npm cache mount (BuildKit) survives failed builds,
+# and fetch retries ride out a flaky network (a one-off `npm ci` exit 146 on the server, 06.10).
+RUN --mount=type=cache,target=/root/.npm     npm config set fetch-retries 5 && npm config set fetch-retry-mintimeout 20000 && npm config set fetch-retry-maxtimeout 120000     && npm ci --no-audit --no-fund
 COPY frontend/ ./
+# The harness library seed is shared with the backend; tsc -b type-checks the test that imports it.
+COPY backend/data/harness-library/ /src/backend/data/harness-library/
+# Cap the V8 heap so the tsc/vite build stays predictable on a small host instead of being OOM-killed.
+ENV NODE_OPTIONS=--max-old-space-size=6144
 RUN npm run build && npm run build:tcgen
 
 FROM python:3.12-slim
@@ -23,4 +29,6 @@ RUN useradd --system --uid 10001 erp && chown -R erp /app
 USER erp
 EXPOSE 8000
 # main.py serves /app/frontend/dist itself (parents[2] of app/main.py), so one process covers site + API.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+# The entrypoint starts uvicorn only when the database is at this image's migration head (or ERP_AUTO_MIGRATE=1 on a
+# first install); migrations on a live server go through deploy/update.sh (backup → rehearsal → check).
+CMD ["sh", "/app/backend/docker-entrypoint.sh"]

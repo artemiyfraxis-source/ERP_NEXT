@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { urlParam } from "./navigation";
 import {
   ApiError,
@@ -27,13 +27,16 @@ import { PurchasingItems } from "./PurchasingItems";
 import { PurchasingRfq } from "./PurchasingRfq";
 import { PurchasingSettings } from "./PurchasingSettings";
 import { PurchasingSuppliers } from "./PurchasingSuppliers";
+import { ProcurementStockPicker, waitsForGrn } from "./ProcurementStockPicker";
 import {
   BackorderStage, COMPACT_BELOW, OrderStageBlock, OtherStage, StageHeading, orderGroups, orderStage,
   type BulkState, type OrderGroup, type RowAction,
 } from "./ProcurementStages";
 import { runInPool } from "./bulk";
 import { formatDate } from "./format";
+import { StatusChip } from "./StatusChip";
 import type { LineEditing } from "./ProcurementCellEdit";
+import { LineDocumentsForm, readBase64 } from "./ProcurementLineDocuments";
 
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
@@ -125,7 +128,7 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, render: (line) => <><strong>{line.legacy_id}</strong><small>{projectLabel(line.project_reference) || line.designation}</small></> },
   { key: "name", title: "Позиция", value: (line) => line.calculated_name, render: (line) => <>{line.calculated_name}<small>{line.actual_quantity ?? line.calculated_quantity} {line.actual_unit ?? line.calculated_unit}</small></> },
   { key: "buyer", title: "Закупщик", value: (line) => line.buyer },
-  { key: "status", title: "Статус", value: (line) => line.status, filter: true },
+  { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <StatusChip status={line.status} /> },
   { key: "supplier", title: "Поставщик · заказ", value: (line) => line.supplier, render: (line) => <>{line.supplier || "—"}<small>{line.order_number || ""}</small></> },
   { key: "eta", title: "Ожидается", value: (line) => line.expected_arrival },
 ];
@@ -140,49 +143,65 @@ function initialTab(): ProcurementTab | null {
 /** `readOnly` — «режим просмотра» (ID-6): free lines and every buyer's lines in work are read, nothing is taken
  *  or changed (SUPPLYMAP «Лист закупки — просмотр, что едет»: portalApplyAccess_ drops edit and canWork). */
 export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly?: boolean; buyerName?: string } = {}) {
-  // Stage options: «Сегодня» (first, and the default only when on; the buyer's own list, so not in view mode)
-  // and «Показатели».
+  // Stage options: «Сегодня» (first, and the default only when on; the buyer's own list, so not in view mode),
+  // «Показатели», and the purchasing hybrid (Roller_Buyer): requests for quotes, supplier and item directories, settings.
   useInternalProjects(); // option projects.internal: «ВП-001 · Название» in the project columns
   const todayOn = useStageOption("procurement.today") && !readOnly;
   const kpiOn = useStageOption("procurement.kpi");
-  const [picked, setTab] = useState<ProcurementTab | null>(initialTab);
-  const [rfqFocus, setRfqFocus] = useState<string | undefined>(undefined); // «Сегодня» → the request to open in «Запросы КП»
-  // Purchasing hybrid (Roller_Buyer): requests for quotes, the supplier and item directories, their settings.
   const rfqOn = useStageOption("procurement.rfq");
   const directoryOn = useStageOption("references.suppliers");
   const itemsOn = useStageOption("references.items");
   const settingsOn = rfqOn || directoryOn || itemsOn;
   const shown: Record<string, boolean> = { today: todayOn, kpi: kpiOn, rfq: rfqOn, directory: directoryOn, items: itemsOn, settings: settingsOn };
-  const tab: ProcurementTab = picked && shown[picked] === false ? "queues" : picked ?? (todayOn ? "today" : "queues");
+  const [picked, setPicked] = useState<ProcurementTab | null>(initialTab);
+  const [rfqFocus, setRfqFocus] = useState<string | undefined>(undefined); // «Сегодня» → the request to open in «Запросы КП»
+  // Своих и свободных позиций нет — очереди пусты: первым открывается «Весь лист», а не пустой экран (аудит 10.10, СН-1).
+  const [autoOpened, setAutoOpened] = useState(false);
+  const pickedByHand = useRef(picked !== null); // a tab from the URL counts as chosen by hand
+  const pick = (next: ProcurementTab) => { pickedByHand.current = true; setAutoOpened(false); setPicked(next); };
+  const openSheetWhenIdle = () => {
+    if (pickedByHand.current) return;
+    setAutoOpened(true);
+    setPicked("sheet");
+  };
+  // The sheet opened by itself (empty queues while the options were still loading) gives way to «Сегодня».
+  const tab: ProcurementTab = picked && shown[picked] === false ? "queues"
+    : autoOpened && todayOn ? "today" : picked ?? (todayOn ? "today" : "queues");
+  const groups: Array<Array<[ProcurementTab, string, boolean]>> = [
+    [["today", "Сегодня", todayOn], ["queues", "Очереди", true], ["sheet", "Весь лист", true], ["suppliers", "По поставщикам", true], ["kpi", "Показатели", kpiOn]],
+    [["rfq", "Запросы КП", rfqOn]],
+    [["directory", "Поставщики", directoryOn], ["items", "Номенклатура", itemsOn], ["settings", "Настройки", settingsOn]],
+  ];
+  const visibleGroups = groups.map((group) => group.filter(([, , on]) => on)).filter((group) => group.length);
   return (
     <>
-      <nav className="shipping-tabs" aria-label="Разделы закупки">
-        {todayOn && <button type="button" className={`secondary small${tab === "today" ? " active" : ""}`} aria-pressed={tab === "today"} onClick={() => setTab("today")}>Сегодня</button>}
-        <button type="button" className={`secondary small${tab === "queues" ? " active" : ""}`} aria-pressed={tab === "queues"} onClick={() => setTab("queues")}>Очереди</button>
-        <button type="button" className={`secondary small${tab === "sheet" ? " active" : ""}`} aria-pressed={tab === "sheet"} onClick={() => setTab("sheet")}>Весь лист</button>
-        <button type="button" className={`secondary small${tab === "suppliers" ? " active" : ""}`} aria-pressed={tab === "suppliers"} onClick={() => setTab("suppliers")}>По поставщикам</button>
-        {kpiOn && <button type="button" className={`secondary small${tab === "kpi" ? " active" : ""}`} aria-pressed={tab === "kpi"} onClick={() => setTab("kpi")}>Показатели</button>}
-        {rfqOn && <span className="tab-sep" aria-hidden="true" />}
-        {rfqOn && <button type="button" className={`secondary small${tab === "rfq" ? " active" : ""}`} aria-pressed={tab === "rfq"} onClick={() => setTab("rfq")}>Запросы КП</button>}
-        {(directoryOn || itemsOn) && <span className="tab-sep" aria-hidden="true" />}
-        {directoryOn && <button type="button" className={`secondary small${tab === "directory" ? " active" : ""}`} aria-pressed={tab === "directory"} onClick={() => setTab("directory")}>Поставщики</button>}
-        {itemsOn && <button type="button" className={`secondary small${tab === "items" ? " active" : ""}`} aria-pressed={tab === "items"} onClick={() => setTab("items")}>Номенклатура</button>}
-        {settingsOn && <button type="button" className={`secondary small${tab === "settings" ? " active" : ""}`} aria-pressed={tab === "settings"} onClick={() => setTab("settings")}>Настройки</button>}
-      </nav>
-      {tab === "today" && <ProcurementToday onOpenQueues={() => setTab("queues")} onOpenRfq={rfqOn ? (id) => { setRfqFocus(id); setTab("rfq"); } : undefined} />}
+      <header className="page-head"><h1>Лист закупки</h1></header>
+      {readOnly && <p className="page-sub">Лист закупки открыт вам только на просмотр: что свободно и что едет.</p>}
+      <div className="seg-tabs" role="tablist" aria-label="Разделы закупки">
+        {visibleGroups.map((group, index) => (
+          <Fragment key={group[0][0]}>
+            {index > 0 && <span className="tab-sep" aria-hidden="true" />}
+            {group.map(([key, label]) => (
+              <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "on" : undefined} onClick={() => pick(key)}>{label}</button>
+            ))}
+          </Fragment>
+        ))}
+      </div>
+      {tab === "sheet" && autoOpened && <p className="page-sub procurement-auto-note">У вас нет позиций в работе и свободных позиций нет — показан весь лист. Свои позиции появятся во вкладке «Очереди».</p>}
+      {tab === "today" && <ProcurementToday onOpenQueues={() => pick("queues")} onOpenRfq={rfqOn ? (id) => { setRfqFocus(id); pick("rfq"); } : undefined} />}
       {tab === "kpi" && <ProcurementKpi />}
       {tab === "rfq" && <PurchasingRfq readOnly={readOnly} focusId={rfqFocus} />}
       {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} />}
       {tab === "items" && <PurchasingItems readOnly={readOnly} />}
       {tab === "settings" && <PurchasingSettings readOnly={readOnly} />}
-      {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} />}
+      {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} onIdle={openSheetWhenIdle} onOpenSheet={() => pick("sheet")} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}
     </>
   );
 }
 
-function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerName: string }) {
+function ProcurementQueues({ readOnly, buyerName, onIdle, onOpenSheet }: { readOnly: boolean; buyerName: string; onIdle?: () => void; onOpenSheet?: () => void }) {
   const [units, setUnits] = useState<string[]>(DEFAULT_UNITS);
   // «Заказы: Все · Активные · Скрыть» — у каждого закупщика свой выбор в этом браузере.
   // Только что взятые строки → их версия при взятии: пока сервер не дозаполнил строку, на ней «заполняется…».
@@ -198,6 +217,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const [mineCursor, setMineCursor] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Предупреждения сервера к последнему действию («<ID> — нет цены: ВАЛЮТА, …»): живут рядом с итогом, до следующего действия.
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const say = (text: string, warns: string[] = []) => { setNotice(text); setWarnings(warns); };
   const [busyId, setBusyId] = useState("");
   // Строки, что в запрос не попали, и почему: остаются на экране, пока их не закроют.
   const [skippedRequests, setSkippedRequests] = useState<{ text: string }[]>([]);
@@ -206,6 +228,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   const [hiddenBlocks, setHiddenBlocks] = useState<string[]>(() => migrateHiddenBlocks(readSaved(BLOCKS_KEY).hidden ?? []));
   const [choosingBlocks, setChoosingBlocks] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const idleChecked = useRef(false);
   const [loadingMore, setLoadingMore] = useState<"available" | "mine" | "">("");
   const kpReference = kpQueue[0] ?? "";
   const loadingQueue = refreshing || Boolean(loadingMore);
@@ -235,6 +258,10 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       setAvailableCursor(availableResult.next_cursor);
       setMineCursor(cursor);
       setLoaded(true);
+      if (!idleChecked.current) {
+        idleChecked.current = true;
+        if (!availableResult.lines.length && !mineLines.length) onIdle?.();
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Ошибка загрузки закупки");
     } finally {
@@ -311,7 +338,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     try {
       const result = await procurementApi.take(lines.map((line) => line.id));
       const skipped = result.skipped ?? [];
-      setNotice(`Взято в работу: ${result.lines.length}` + (skipped.length ? `; пропущено (уже в работе или дальше): ${skipped.join(", ")}` : ""));
+      say(`Взято в работу: ${result.lines.length}` + (skipped.length ? `; пропущено (уже в работе или дальше): ${skipped.join(", ")}` : ""));
       watchAutofill(result.lines);
       await reload(true);
     } catch (reason) {
@@ -333,11 +360,12 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     setBusyId(`order:${group.number}`);
     setError("");
     try {
-      await procurementApi.applyOrderDocument(group.number, input);
+      const result = await procurementApi.applyOrderDocument(group.number, input);
       const count = input.lines.length;
-      setNotice(input.kind === "kp"
+      say(input.kind === "kp"
         ? `${group.number}: цены из КП внесены, строк: ${count}`
-        : replace ? `${group.number}: счёт заменён, строк: ${count}` : `${group.number}: счёт передан в оплату, строк: ${count}`);
+        : replace ? `${group.number}: счёт заменён, строк: ${count}` : `${group.number}: счёт передан в оплату, строк: ${count}`,
+      result.warnings ?? []);
       await reload(true);
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 409) {
@@ -358,7 +386,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     const rows = group.lines.filter((line) => line.status === "В оплату");
     try {
       await procurementApi.orderPaid(group.number, rows.map((line) => ({ line_id: line.id, version: line.version })), manualRate);
-      setNotice(`${group.number}: оплачено, строк в пути: ${rows.length}`);
+      say(`${group.number}: оплачено, строк в пути: ${rows.length}`);
       await reload(true);
       return null;
     } catch (reason) {
@@ -382,7 +410,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     setError("");
     try {
       const result = await procurementApi.take([line.id]);
-      setNotice(result.skipped?.length ? `${line.legacy_id} пропущена: уже в работе или дальше` : `${line.legacy_id} взята в работу`);
+      say(result.skipped?.length ? `${line.legacy_id} пропущена: уже в работе или дальше` : `${line.legacy_id} взята в работу`);
       watchAutofill(result.lines);
       await reload(true);
     } catch (reason) {
@@ -401,8 +429,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     setBusyId(line.id);
     setError("");
     try {
-      await operation();
-      setNotice(message);
+      const result = await operation();
+      const warns = (result as { warnings?: unknown } | null | undefined)?.warnings;
+      say(message, Array.isArray(warns) ? warns.filter((item): item is string => typeof item === "string") : []);
       await reload(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Переход закупки не выполнен");
@@ -457,7 +486,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       const parts = [`Сформировано запросов: ${result.orders.length}`];
       if (result.orders.length) parts.push(notSaved.length ? `файл не сохранился: ${notSaved.join(", ")}` : "PDF запросов скачаны файлами");
       if (result.other_buyer) parts.push(`строк других закупщиков не тронуто: ${result.other_buyer}`);
-      setNotice(parts.join("; "));
+      say(parts.join("; "));
       const names = new Map([...mine, ...(lines ?? [])].map((line) => [line.id, line.legacy_id]));
       setSkippedRequests(result.skipped.map((item: SkippedRequestLine | string) => {
         const entry = typeof item === "string" ? { line_id: item, reason: "" } : item;
@@ -495,6 +524,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   };
   const hiddenWithData = BLOCKS.filter((block) => hiddenBlocks.includes(block.key) && blockCount[block.key] > 0);
   const showBlock = (key: string) => !hiddenBlocks.includes(key);
+  // Пустые стадии не рисуются карточками: одна строка «Пусто: …», непустые — как были.
+  const showFilled = (key: string) => showBlock(key) && blockCount[key] > 0;
+  const emptyTitles = BLOCKS.filter((block) => showBlock(block.key) && blockCount[block.key] === 0).map((block) => block.title);
   const toggleBlock = (key: string, shown: boolean) => setHiddenBlocks((current) => {
     const next = shown ? current.filter((item) => item !== key) : [...current.filter((item) => item !== key), key];
     writeSaved(BLOCKS_KEY, { hidden: next });
@@ -512,7 +544,12 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Действия строки видны на ней (без меню «⋯»); формы раскрываются под таблицей стадии.
   const form = (line: ProcurementLine) => ({ line, busy: busyId === line.id, disabled: interactionLocked, onAdvance: advance });
   const traceability = (line: ProcurementLine): RowAction => ({ label: "Прослеживаемость…", short: "Прослеж.…", panel: () => <TraceabilityForm {...form(line)} /> });
-  const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", panel: () => <SplitAction {...form(line)} /> });
+  // Даташит, файлы разрешения и документа качества строки.
+  const documents = (line: ProcurementLine): RowAction => ({
+    label: "Документы…", short: "Документы…", title: "Даташит, файл разрешения, документ качества",
+    panel: () => <LineDocumentsForm line={line} editing={editing} disabled={interactionLocked} onMessage={say} />,
+  });
+  const split = (line: ProcurementLine): RowAction => ({ label: "Раздробить по поставщикам…", short: "Раздробить…", panel: () => <SplitAction {...form(line)} /> });
   const cancel = (line: ProcurementLine): RowAction => ({ label: "Отменить строку", run: () => cancelLine(line) });
   const replaceInvoice = (line: ProcurementLine): RowAction[] => (
     line.invoice_url ? [{ label: "Заменить счёт…", short: "Заменить…", panel: () => <InvoiceReplaceForm {...form(line)} /> }] : []
@@ -530,7 +567,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
         </>
       ),
     },
-    traceability(line), split(line), cancel(line),
+    traceability(line), documents(line), split(line), cancel(line),
   ];
   const toPayActions = (line: ProcurementLine): RowAction[] => [
     {
@@ -546,7 +583,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       title: "Если ЦБ не отдал курс, его можно ввести вручную",
       panel: () => <PaymentAction {...form(line)} disabled={interactionLocked || line.pay_missing.length > 0} />,
     },
-    ...replaceInvoice(line), traceability(line), split(line), cancel(line),
+    ...replaceInvoice(line), traceability(line), documents(line), split(line), cancel(line),
   ];
   const backorderActions = (line: ProcurementLine): RowAction[] => [
     {
@@ -557,14 +594,27 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
     },
     ...replaceInvoice(line), split(line),
   ];
+  // «Готово · без ГРН» (закрыта «Есть на складе, без ГРН»): партию выбирают потом — резерв встаёт на неё целиком.
+  const bindGrn = (line: ProcurementLine): RowAction[] => waitsForGrn(line) ? [{
+    label: "Привязать ГРН",
+    short: "ГРН…",
+    title: "Закрыто «Есть на складе, без ГРН» — выберите партию, всё количество зарезервируется на ней",
+    panel: () => (
+      <ProcurementStockPicker
+        line={line} bindOnly disabled={interactionLocked}
+        onDone={(message) => { if (message) say(message); void reload(true); }}
+      />
+    ),
+  }] : [];
   const paidActions = (line: ProcurementLine): RowAction[] => [
+    ...bindGrn(line),
     ...(line.exchange_rate_manual ? [{
       label: "Сверить курс с ЦБ",
       short: "Курс с ЦБ",
       title: "Курс введён вручную — сверьте с ЦБ, когда он ответит",
       run: () => run(line, () => procurementApi.reconcileRate(line.id, line.version), `${line.legacy_id}: курс сверен с ЦБ`),
     }] : []),
-    ...replaceInvoice(line), split(line),
+    ...replaceInvoice(line), documents(line), split(line),
   ];
   const orderActions = (line: ProcurementLine): RowAction[] => (
     line.status === "Жду счет" ? awaitingActions(line) : line.status === "В оплату" ? toPayActions(line) : paidActions(line)
@@ -579,7 +629,8 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
   // Комментарий и ожидаемая дата правятся в ячейке: свежая строка встаёт на место без перезагрузки очереди,
   // а 409 перечитывает очередь (другая правка успела раньше).
   const editing: LineEditing = {
-    onSaved: (saved) => setMine((current) => current.map((item) => (item.id === saved.id ? saved : item))),
+    // Слияние, а не замена: ответ правки ячейки не несёт полей «Моих позиций» (сколько ждёт «Привязать ГРН»).
+    onSaved: (saved) => setMine((current) => current.map((item) => (item.id === saved.id ? { ...item, ...saved } : item))),
     onConflict: () => reload(true),
   };
   const openKp = (references: string[]) => {
@@ -592,18 +643,14 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
 
   return (
     <section className={dense ? "page proc-dense" : "page"}>
-      <header className={dense ? "page-header proc-dense-head" : "page-header"}>
-        <div>
-          <span className="eyebrow">{readOnly ? "Просмотр" : "Рабочая очередь"}</span>
-          <h1>Закупка</h1>
-          <p>{readOnly ? "Лист закупки открыт вам только на просмотр: что свободно и что едет." : "Позиции в работе по поставщикам, запросы поставщикам, счета и оплата по заказам."}</p>
-        </div>
-        <button className="secondary" onClick={() => void reload()} disabled={interactionLocked}>
-          {refreshing ? "Обновляем…" : "Обновить"}
-        </button>
-      </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
+      {warnings.length > 0 && (
+        <div className="warning-banner" role="alert">
+          <strong>Есть предупреждения</strong>
+          <ul>{warnings.map((item) => <li key={item}>{item}</li>)}</ul>
+        </div>
+      )}
       {skippedRequests.length > 0 && (
         <div className="warning-inline" role="alert">
           <strong>В запросы не попало строк: {skippedRequests.length}</strong>
@@ -615,6 +662,9 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
       <div className="queue-summary">
         {(readOnly || available.length > 0) && <span><strong>{available.length}</strong> доступно</span>}
         <span><strong>{mine.length}</strong> {readOnly ? "в работе" : "у меня"}</span>
+        <button className="secondary small page-actions" onClick={() => void reload()} disabled={interactionLocked}>
+          {refreshing ? "Обновляем…" : "Обновить"}
+        </button>
       </div>
 
       {(readOnly || available.length > 0 || Boolean(availableCursor)) && <section className="panel table-panel procurement-stage">
@@ -682,7 +732,14 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             ))}
           </fieldset>
         )}
-        {showBlock("inwork") && <ProcurementInWorkTable
+        {!mine.length && !needle && (
+          <div className="procurement-empty">
+            <span>{readOnly ? "Сейчас никто не ведёт позиций." : "У вас нет позиций в работе. Возьмите позицию из «Неразобранных» или посмотрите, что на листе."}</span>
+            {onOpenSheet && <button type="button" className="secondary small" onClick={onOpenSheet}>Открыть весь лист</button>}
+          </div>
+        )}
+        {emptyTitles.length > 0 && <p className="empty-stages">Пусто: {emptyTitles.join(", ")}</p>}
+        {showFilled("inwork") && <ProcurementInWorkTable
           lines={inWorkBlock}
           units={units}
           disabled={interactionLocked}
@@ -690,7 +747,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
           editing={editing}
           filling={autofill}
           {...bulkOf("inwork")}
-          onChanged={(message) => { setNotice(message); void reload(true); }}
+          onChanged={(message) => { say(message); void reload(true); }}
           onError={setError}
           onCancel={cancelLine}
           onCancelMany={cancelMany}
@@ -698,13 +755,14 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
           renderDetail={(line) => (
             <>
               <TraceabilityForm {...form(line)} />
+              <LineDocumentsForm line={line} editing={editing} disabled={interactionLocked} onMessage={say} />
               <SplitAction {...form(line)} />
             </>
           )}
         />}
         {ORDER_BLOCKS.map(({ stage, title, hint, initiallyCollapsed }) => {
           const groups = ordersAt(stage);
-          return showBlock(stage) && (
+          return showFilled(stage) && (
             <OrderStageBlock
               key={stage} stage={stage}
               {...stageProps} {...(stage === "transit" ? bulkOf("orders") : {})}
@@ -726,15 +784,15 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             reference={kpReference}
             queue={kpTotal > 1 ? { index: kpTotal - kpQueue.length + 1, total: kpTotal } : undefined}
             onClose={() => setKpQueue([])}
-            onSaved={(message, failure) => {
-              setNotice(message);
+            onSaved={(message, failure, warns) => {
+              say(message, warns);
               setError(failure);
               setKpQueue((current) => current.slice(1));
               void reload(true);
             }}
           />
         )}
-        {showBlock("backorder") && (
+        {showFilled("backorder") && (
           <BackorderStage
             {...stageProps}
             lines={backorders}
@@ -742,7 +800,7 @@ function ProcurementQueues({ readOnly, buyerName }: { readOnly: boolean; buyerNa
             onConfirmBackorder={(line, date) => run(line, () => procurementApi.confirmBackorder(line.id, line.version, date), `${line.legacy_id}: досыл подтверждён, передано в приёмку`)}
           />
         )}
-        {showBlock("other") && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
+        {showFilled("other") && <OtherStage {...stageProps} lines={other} actionsOf={otherActions} />}
         {mineCursor && (
           <button className="secondary" disabled={interactionLocked} onClick={() => void loadMore("mine", mineCursor)}>
             {loadingMore === "mine" ? "Загружаем…" : "Ещё мои"}
@@ -1112,22 +1170,13 @@ const KP_COLUMNS: { field: KpField; label: string; type?: string; fillAll?: bool
   { field: "invoice_date", label: "Дата счёта", type: "date", fillAll: true },
 ];
 
-function readBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
-    reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
-    reader.readAsDataURL(file);
-  });
-}
-
 /** SUPPLYMAP «Внести КП» (Kp.gs, KpForm.html): every «Жду счет» line of one supplier order at once. */
 function KpForm({ reference, queue, onClose, onSaved }: {
   reference: string;
   /** Несколько выбранных заказов идут по очереди: этот — `index` из `total`. */
   queue?: { index: number; total: number };
   onClose: () => void;
-  onSaved: (message: string, failure: string) => void;
+  onSaved: (message: string, failure: string, warnings: string[]) => void;
 }) {
   const [lines, setLines] = useState<ProcurementLine[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Record<KpField, string>>>({});
@@ -1211,6 +1260,7 @@ function KpForm({ reference, queue, onClose, onSaved }: {
       onSaved(
         result.invoice_error ? saved : invoiceUrl.trim() ? `${saved}, счёт передан в оплату` : saved,
         result.invoice_error ? `Счёт не принят, данные КП сохранены: ${result.invoice_error}` : "",
+        result.warnings ?? [],
       );
     } catch (reason) {
       const ratePrompt = manualRatePrompt(reason);

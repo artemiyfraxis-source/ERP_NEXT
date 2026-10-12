@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { AutoTextarea } from "./AutoTextarea";
 import { ApiError, failureText, receivingApi, type DeliveryDeviation, type DeliveryLinePayload, type ReceivingLine, type ReceivingQuery } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDate } from "./format";
+import { StatusChip } from "./StatusChip";
 import { openPrintSheet } from "./print";
 import { useStageOption } from "./StageOptions";
 import { projectLabel, useInternalProjects } from "./internalProjects";
@@ -17,14 +19,14 @@ const MANUAL_CHECKS = [
 
 const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "legacy_id", title: "ID", value: (line) => line.legacy_id, hidden: true },
-  { key: "name", title: "Наименование", value: (line) => itemTitle(line), wrap: true, width: 210 },
+  { key: "name", title: "Наименование", value: (line) => itemTitle(line), wrap: true, grow: true, minWidth: 200 },
   { key: "supplier", title: "Поставщик", value: (line) => line.supplier, filter: true },
   { key: "order", title: "№ заказа", value: (line) => line.order_number ?? "" },
   { key: "expected", title: "Ожид. дата", value: (line) => line.expected_arrival ?? "" },
   { key: "purpose", title: "Назначение", value: (line) => line.purpose, filter: true, wrap: true, width: 140, hidden: true },
   { key: "goal", title: "Проект", value: (line) => projectLabel(line.goal), filter: true, wrap: true, width: 140, hidden: true },
   { key: "ordered", title: "Заказано", value: (line) => line.ordered_quantity, numeric: true, render: (line) => `${line.ordered_quantity} ${line.unit}` },
-  { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <span className="status">{line.status}</span> },
+  { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <StatusChip status={line.status} /> },
   { key: "document", title: "УПД", value: (line) => [line.document_number, formatDate(line.document_date)].filter(Boolean).join(" от ") || (line.shipping_document_note ? "ждём по ЭДО" : ""), wrap: true, width: 100 },
   { key: "grn", title: "ГРН", value: (line) => line.grn ? `${line.grn}${line.package ? ` / ${line.package}` : ""}` : "" },
   { key: "location", title: "Место", value: (line) => line.storage_location ?? "", hidden: true },
@@ -111,6 +113,9 @@ const QUEUE_CHIPS: { label: string; query: ReceivingQuery }[] = [
   { label: "Возврат", query: { status: ["Возврат"] } },
   { label: "Архив ВК", query: { preset: "archive" } },
 ];
+
+/** Эти очереди целиком входят в «открытое» (`waiting`), по ним счётчик на чипе известен без лишнего запроса. */
+const COUNTED_CHIPS = new Set(["В пути", "Ожидание", "Карантин"]);
 
 /** «Внести УПД»: all but «Архив ВК» and «Возврат» — УПД по ЭДО приходит и после приёмки. */
 const UPD_STATUSES = new Set(["В пути", "Ожидание", "Карантин", "Принято"]);
@@ -327,7 +332,7 @@ function DeliveryPanel({ group, onClose, onDone }: {
       <div className="upd-row delivery-head">
         <DocumentField lineId={group.lines[0].id} kind="upd" label="Документ УПД" value={url} disabled={busy || done} inline onChange={setUrl} />
         <label>УПД №<input value={number} disabled={busy || done} onChange={(event) => setNumber(event.target.value)} /></label>
-        <label>от<input type="date" value={date} disabled={busy || done} onChange={(event) => setDate(event.target.value)} /></label>
+        <label>Дата УПД<input type="date" value={date} disabled={busy || done} onChange={(event) => setDate(event.target.value)} /></label>
         <label>Место для всех<input placeholder="1F4" title={placeHint.busy ? BUSY_TITLE : undefined} value={commonPlace} disabled={busy || done} onChange={(event) => setCommonPlace(event.target.value)} /></label>
       </div>
       <p className="page-sub">УПД по ЭДО можно внести позже — «Внести УПД».</p>
@@ -356,7 +361,7 @@ function DeliveryPanel({ group, onClose, onDone }: {
                     {row.deviation === "brak" && <input type="number" min="0.000001" step="any" className="qty" placeholder={`N ${row.line.unit}`} aria-label={`Брак, ${row.line.unit}: ${itemTitle(row.line)}`} value={row.deviationQuantity} disabled={locked} onChange={(event) => edit(row.line.id, { deviationQuantity: event.target.value })} />}
                     {row.deviation === "expired" && <input type="date" aria-label={`Срок годности: ${itemTitle(row.line)}`} value={row.expiry} disabled={locked} onChange={(event) => edit(row.line.id, { expiry: event.target.value })} />}
                   </td>
-                  {done && <td className="num">{row.ticked ? (result?.grn ? <strong>{result.grn}</strong> : <span className="status">{result?.status ?? "—"}</span>) : ""}{result && Number(result.backorder_quantity) > 0 && <span className="delivery-short">недовоз {result.backorder_quantity} {result.unit} → дозавоз</span>}</td>}
+                  {done && <td className="num">{row.ticked ? (result?.grn ? <strong>{result.grn}</strong> : <StatusChip status={result?.status} />) : ""}{result && Number(result.backorder_quantity) > 0 && <span className="delivery-short">недовоз {result.backorder_quantity} {result.unit} → дозавоз</span>}</td>}
                 </tr>
               );
             })}
@@ -364,8 +369,8 @@ function DeliveryPanel({ group, onClose, onDone }: {
         </table>
       </div>
       <div className="header-actions">
-        {!done && <button type="submit" className="primary" disabled={busy || !chosen.length}>{busy ? "Проводим…" : `Провести поставку (${chosen.length} поз.)`}</button>}
-        <button type="button" className="secondary" disabled={busy} onClick={onClose}>{done ? "Закрыть" : "Отмена"}</button>
+        {!done && <button type="submit" className="primary small" disabled={busy || !chosen.length}>{busy ? "Проводим…" : `Провести поставку (${chosen.length} поз.)`}</button>}
+        <button type="button" className="secondary small" disabled={busy} onClick={onClose}>{done ? "Закрыть" : "Отмена"}</button>
       </div>
     </form>
   );
@@ -594,7 +599,7 @@ export function ReceivingPage({ readOnly = false }: { readOnly?: boolean } = {})
       <div className="calendar-chips queue-chips" role="group" aria-label="Быстрый отбор">
         <button type="button" className={`calendar-chip${chip ? "" : " active"}`} aria-pressed={!chip} onClick={() => setChip("")}>Все</button>
         {QUEUE_CHIPS.map((item) => (
-          <button type="button" key={item.label} className={`calendar-chip${chip === item.label ? " active" : ""}`} aria-pressed={chip === item.label} onClick={() => setChip(chip === item.label ? "" : item.label)}>{item.label}</button>
+          <button type="button" key={item.label} className={`calendar-chip${chip === item.label ? " active" : ""}`} aria-pressed={chip === item.label} onClick={() => setChip(chip === item.label ? "" : item.label)}>{item.label}{COUNTED_CHIPS.has(item.label) ? ` · ${waiting.filter((line) => line.status === item.label).length}` : ""}</button>
         ))}
       </div>
       <DataTable
@@ -746,7 +751,7 @@ function ReceivingCard({
     <article className="panel receiving-card">
       <div className="procurement-title">
         <div><strong>{line.legacy_id} · {itemTitle(line)}</strong><small>{line.supplier} · заказано {line.ordered_quantity} {line.unit} · {line.warehouse}</small></div>
-        <span className="status">{line.status}</span>
+        <StatusChip status={line.status} />
       </div>
       {line.nonconformities.length > 0 && <p className="nonconformity">{line.nonconformities.join(" · ")}</p>}
       {line.nonconformity_description && <p className="nonconformity">{line.nonconformity_description}</p>}
@@ -782,8 +787,8 @@ function ReceivingCard({
               ? <label title="Назначение не распознано — ГРН получит выбранный идентификатор">Идентификатор ГРН *<select required value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">— выберите —</option><option>CSM</option><option>PPM</option></select></label>
               : <label>Идентификатор ГРН<select value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">{line.grn_prefix ? `Автоматически: ${line.grn_prefix}` : "Автоматически"}</option><option>CSM</option><option>PPM</option></select></label>)}
             <label className="check-field"><input type="checkbox" checked={historical} onChange={(event) => setHistorical(event.target.checked)} />Историческая приёмка: срок годности сверяется с датой УПД</label>
-            <label className="wide">Примечание<input value={note} onChange={(event) => setNote(event.target.value)} /></label>
-            <label className="wide">Описание несоответствия<input value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+            <label className="wide">Примечание<AutoTextarea value={note} onChange={setNote} /></label>
+            <label className="wide">Описание несоответствия<AutoTextarea value={description} onChange={setDescription} /></label>
             <fieldset className="check-field wide"><legend>Несоответствия ручной проверки</legend>{MANUAL_CHECKS.map((item) => <label key={item}><input type="checkbox" checked={manual.includes(item)} onChange={(event) => setManual((current) => event.target.checked ? [...current, item] : current.filter((value) => value !== item))} />{item}</label>)}</fieldset>
           </div>
           {batchMode && (

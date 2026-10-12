@@ -1,7 +1,11 @@
 # Third-party skills — sources & licenses
 
 Copied 2026-09-29 from SUPPLYMAP `.claude/skills` (commit d0a030b) — only the skills that fit ERP_NEXT;
-the table below is SUPPLYMAP's and also names skills not copied here. `migrate-next`, `migrate-cloud`, `erp-screens` are ERP_NEXT's own.
+the table below is SUPPLYMAP's and also names skills not copied here. `erp-screens` is ERP_NEXT's own.
+
+Removed 2026-10-06 (token economy, duplicates of `orchestrate` / `diagnosing-bugs` or legacy): `migrate-next`,
+`migrate-cloud`, `supplymap-pipeline`, `supplymap-schema`, `frontend-design`, `webapp-testing`, `executing-plans`,
+`writing-plans`, `subagent-driven-development`, `dispatching-parallel-agents`, `systematic-debugging` — see git history.
 
 Added 2026-09-30: `design-critique` from github.com/anthropics/knowledge-work-plugins (`design/skills`,
 commit da38ec1), Apache-2.0 (`LICENSE.txt`). Changed: the CONNECTORS.md pointer line replaced by a pointer to
@@ -21,3 +25,11 @@ Bodies are agent-facing guidance; bundled scripts are NOT auto-run.
 Native repo skills (code-review, codebase-design, diagnosing-bugs, domain-modeling, grilling,
 implement, prototype, research, wayfinder, writing-great-skills, to-spec, to-tickets, triage,
 supplymap-*) are project-owned — not third-party.
+
+## ui-guidelines-audit
+Adapted from https://github.com/vercel-labs/agent-skills (`skills/web-design-guidelines`, commit 063bee9) and
+https://github.com/vercel-labs/web-interface-guidelines (`command.md`, pinned 10.10.2026). MIT License, © Vercel.
+
+## erp-dense-ui
+Adapted from https://github.com/educlopez/ui-craft (`skills/ui-craft-dense-dashboard`, commit ceecc8e).
+MIT License, © educlopez.

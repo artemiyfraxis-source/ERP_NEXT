@@ -319,7 +319,7 @@ it("groups article rows by manufacturer series", async () => {
   await screen.findByText("GHR-04V-S");
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "series" } });
 
-  expect(screen.getByText("LOT-2409 · 1")).toBeInTheDocument();
+  expect(screen.getByText(/^LOT-2409 · 1\sартикул$/)).toBeInTheDocument();
   expect(screen.getByText("GHR-04V-S")).toBeInTheDocument();
 });
 
@@ -331,7 +331,7 @@ it("groups article rows by ГРН, packages of one ГРН under one header", asy
   await screen.findByText("GHR-04V-S");
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "grn" } });
 
-  expect(screen.getByText("FRX.26.0000001 · 2")).toBeInTheDocument();
+  expect(screen.getByText(/^FRX\.26\.0000001 · 2\sартикула$/)).toBeInTheDocument();
   expect(screen.getByText("GHR-06V-S")).toBeInTheDocument();
 });
 
@@ -532,19 +532,108 @@ it("fills name, series, and type from the current article catalog", async () => 
   expect(screen.getByRole("status")).toHaveTextContent("разбор кода");
 });
 
-it("loads every cursor page before calculating article totals", async () => {
-  const second = { ...lot, id: "40000000-0000-0000-0000-000000000002", grn: "FRX.26.0000002", balance: "5", available: "4" };
+const page2 = { ...lot, id: "40000000-0000-0000-0000-000000000002", grn: "FRX.26.0000002", balance: "5", available: "4" };
+
+it("shows the first server page at once and joins the next page on «Показать ещё»", async () => {
+  const paths: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && path !== "/api/stage-options") paths.push(path);
     if (path === "/api/stock") return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
-    if (path === "/api/stock?after=cursor-1") return json({ lots: [second], total: 2, truncated: 1, next_cursor: null });
+    if (path === "/api/stock?after=cursor-1") { await gate; return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null }); }
     throw new Error(`Unexpected request: ${path}`);
   });
 
   render(<WarehousePage />);
 
+  // The first page is on screen while the page2 was never asked for.
+  expect(await screen.findByRole("button", { name: "Показать партии (1)" })).toBeInTheDocument();
+  expect(paths).toEqual(["/api/stock"]);
+  expect(screen.getByRole("status")).toHaveTextContent("Показано 1 из 2");
+
+  fireEvent.click(screen.getByRole("button", { name: "Показать ещё" }));
+  expect(await screen.findByRole("button", { name: "Загружаем…" })).toBeDisabled();
+  release();
   expect(await screen.findByRole("button", { name: "Показать партии (2)" })).toBeInTheDocument();
   expect(screen.getByText(/^15\b/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
+});
+
+it("«Загрузить всё» reads every remaining page", async () => {
+  const third = { ...lot, id: "40000000-0000-0000-0000-000000000003", grn: "FRX.26.0000003" };
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path !== "/api/stock/item-types" && !path.startsWith("/api/stock/totals") && path !== "/api/stage-options") paths.push(path);
+    if (path === "/api/stock") return json({ lots: [lot], total: 3, truncated: 2, next_cursor: "c1" });
+    if (path === "/api/stock?after=c1") return json({ lots: [page2], total: 3, truncated: 1, next_cursor: "c2" });
+    if (path === "/api/stock?after=c2") return json({ lots: [third], total: 3, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Загрузить всё" }));
+  expect(await screen.findByRole("button", { name: "Показать партии (3)" })).toBeInTheDocument();
+  expect(paths).toEqual(["/api/stock", "/api/stock?after=c1", "/api/stock?after=c2"]);
+});
+
+it("shows the same group and article totals on page 1 as after «Загрузить всё», the numbers come from the server", async () => {
+  const totals = {
+    group: "series",
+    groups: [{ group: "LOT-2409", articles: 1, balance: "15", reserved: "0", available: "14", lots: 2, units: ["шт"] }],
+    articles: [{ group: "LOT-2409", article: "ghr-04v-s", balance: "15", reserved: "0", available: "14", lots: 2, units: ["шт"] }],
+  };
+  const requested: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    requested.push(path);
+    if (path.startsWith("/api/stock/totals")) return json(totals);
+    if (path === "/api/stock") return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "cursor-1" });
+    if (path === "/api/stock?after=cursor-1") return json({ lots: [page2], total: 2, truncated: 0, next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  const header = await screen.findByText(/2\sпартии · остаток 15 шт/);
+  expect(screen.getByText(/^LOT-2409 · 1\sартикул$/)).toBeInTheDocument();
+  const row = screen.getByRole("button", { name: "Показать партии (1)" }).closest("tr")!;
+  const cells = () => within(row).getAllByRole("cell").map((cell) => cell.textContent);
+  expect(cells()).toContain("15 шт");           // 10 loaded, 15 on the shelf: the server number, not the loaded sum
+  expect(cells()).toContain("2");
+  expect(screen.getByRole("status")).not.toHaveTextContent("по показанным");
+  const sums = (texts: Array<string | null>) => texts.filter((text) => text === "15 шт" || text === "2");
+  const onPageOne = [header.textContent, sums(cells())];
+
+  fireEvent.click(screen.getByRole("button", { name: "Загрузить всё" }));
+  await screen.findByRole("button", { name: "Показать партии (2)" });
+  expect(screen.getByText(/2\sпартии · остаток 15 шт/).textContent).toBe(onPageOne[0]);
+  expect(sums(within(screen.getByRole("button", { name: "Показать партии (2)" }).closest("tr")!).getAllByRole("cell").map((cell) => cell.textContent))).toEqual(onPageOne[1]);
+  expect(requested.filter((path) => path.startsWith("/api/stock/totals")).length).toBeGreaterThan(0);
+});
+
+it("updates only the edited row after a write-off and does not re-read the list", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path !== "/api/stock/item-types") paths.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/stock") return json({ lots: [lot, page2], total: 2, truncated: 0, next_cursor: null });
+    if (path.endsWith("/writeoff")) return json({ lot: { ...lot, version: 5, written_off: "2", balance: "8", available: "8" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (2)" }));
+  fireEvent.click((await screen.findAllByRole("button", { name: "− Списать" }))[0]);
+  fireEvent.change(await screen.findByLabelText("Количество"), { target: { value: "2" } });
+  fireEvent.change(screen.getByLabelText("Назначение списания"), { target: { value: "FRX.001" } });
+  fireEvent.change(screen.getByLabelText("Основание"), { target: { value: "Выдача в производство" } });
+  fireEvent.click(screen.getByRole("button", { name: "Списать" }));
+
+  await waitFor(() => expect(paths.some((entry) => entry.endsWith("/writeoff"))).toBe(true));
+  await waitFor(() => expect(screen.getByText("8 шт", { exact: false })).toBeInTheDocument());
+  expect(paths.filter((entry) => entry === "GET /api/stock")).toHaveLength(1);
 });
 
 const layout = { layout: { racks: 20, shelves: 6, perRack: {} } };
@@ -655,7 +744,7 @@ it("writes an old address as is from the lot operations and shows a lot without 
 
   render(<WarehousePage />);
   fireEvent.change(await screen.findByLabelText("Группировка склада"), { target: { value: "place" } });
-  expect(await screen.findByText("Без места · 1")).toBeInTheDocument();
+  expect(await screen.findByText(/^Без места · 1\sартикул$/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Показать партии (1)" }));
   expect(screen.getByText("без места")).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
@@ -829,7 +918,7 @@ it("ID-6: view mode reads the stock with no entry, move, writeoff or edit contro
   expect(screen.getByRole("button", { name: "Обновить" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Таблица склада" })).toBeInTheDocument();
   // The page only reads (the stage-options probe is a read too).
-  expect(requested.every((call) => call === "GET /api/stock" || call === "GET /api/stage-options")).toBe(true);
+  expect(requested.every((call) => call === "GET /api/stock" || call === "GET /api/stage-options" || call.startsWith("GET /api/stock/totals"))).toBe(true);
 });
 
 it("«История» on a lot opens a window with the journal of its ГРН only (administrator)", async () => {
@@ -978,10 +1067,10 @@ it("the default order is the one of the SUPPLYMAP stock view: тип, ГРН, о
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
   // Grouped by series (the default): «Серия» is the group header, not a column.
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
 
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Партий", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
 });
 
 it("«Колонки» switches the optional columns off and remembers the choice; the name stays", async () => {
@@ -994,13 +1083,13 @@ it("«Колонки» switches the optional columns off and remembers the choic
   expect(chooser.queryByLabelText("Серия")).not.toBeInTheDocument();
   fireEvent.click(chooser.getByLabelText("Места"));
   fireEvent.click(chooser.getByLabelText("Тип"));
-  expect(headerNames()).toEqual(["ГРН", "Остаток", "Партий", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Артикул", "Наименование", "Склад"]);
   expect(screen.getByText("GHR-04V-S")).toBeInTheDocument();
   unmount();
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["ГРН", "Остаток", "Партий", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Артикул", "Наименование", "Склад"]);
 });
 
 it("↑/↓ in «Колонки» move a column one step; the order is remembered in this browser", async () => {
@@ -1014,17 +1103,17 @@ it("↑/↓ in «Колонки» move a column one step; the order is remembere
   expect(chooser.getByRole("button", { name: "Ниже: Склад" })).toBeDisabled();
 
   fireEvent.click(chooser.getByRole("button", { name: "Ниже: Тип" }));
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
   // The list of the chooser follows the table, with the name in its place.
-  expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Остаток", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
+  expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Доступно", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
   unmount();
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Склад", "Артикул", "Наименование"]);
 });
 
 it("a column moves past the one that is switched off, and the group column keeps its place meanwhile", async () => {
@@ -1034,16 +1123,13 @@ it("a column moves past the one that is switched off, and the group column keeps
   await screen.findByText("GHR-04V-S");
   const chooser = openChooser();
   fireEvent.click(chooser.getByLabelText("Партий"));
-  // «Партий» is off, but still in the list: «Места» steps over it and over «Остаток» and «ГРН» to the front.
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Места" }));
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Места" }));
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Места" }));
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Места" }));
-  expect(headerNames()).toEqual(["Места", "Тип", "ГРН", "Остаток", "Артикул", "Наименование", "Склад"]);
+  // «Партий» is off, but still in the list: «Места» steps over it and over «Доступно», «Резерв», «Остаток» and «ГРН» to the front.
+  for (let step = 0; step < 6; step += 1) fireEvent.click(chooser.getByRole("button", { name: "Выше: Места" }));
+  expect(headerNames()).toEqual(["Места", "Тип", "ГРН", "Остаток", "Резерв", "Артикул", "Наименование", "Склад"]);
 
   // «Серия» is the group header now: grouping by type frees it, and it stands where the default order put it.
   fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "type" } });
-  expect(headerNames()).toEqual(["Места", "ГРН", "Остаток", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Места", "ГРН", "Остаток", "Резерв", "Серия", "Артикул", "Наименование", "Склад"]);
 });
 
 it("the chooser of «Колонки» keeps the focus on the arrow that was pressed; Escape and a tap outside close it", async () => {
@@ -1078,15 +1164,15 @@ it("«По умолчанию» puts the order and the shown columns back", asyn
   const chooser = openChooser();
   fireEvent.click(chooser.getByLabelText("Тип"));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
-  expect(headerNames()).toEqual(["ГРН", "Остаток", "Партий", "Места", "Артикул", "Склад", "Наименование"]);
+  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Склад", "Наименование"]);
 
   fireEvent.click(chooser.getByRole("button", { name: "По умолчанию" }));
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
   unmount();
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
 });
 
 it("a damaged or old saved set gives the default order; a column the saved order does not know is added", async () => {
@@ -1097,14 +1183,14 @@ it("a damaged or old saved set gives the default order; a column the saved order
 
   const { unmount } = render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
   unmount();
 
   window.localStorage.setItem("erp-table:stock-columns:v2", JSON.stringify({ grouped: { order: ["warehouse", "name", "bogus", "grn", "grn"], hidden: ["name", "type", "bogus"] } }));
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
   // The name cannot be hidden by a saved set; the unknown ones are dropped, the missing ones follow in the default order.
-  expect(headerNames()).toEqual(["Склад", "Наименование", "ГРН", "Остаток", "Партий", "Места", "Артикул"]);
+  expect(headerNames()).toEqual(["Склад", "Наименование", "ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул"]);
 });
 
 it("the first column stays in view when the table is scrolled sideways: Тип, or ГРН when the rows are grouped by type", async () => {
@@ -1148,7 +1234,7 @@ it("a click on a header still sorts the rows; the sort column keeps its sort aft
 
   // Moving the sorted column does not drop the sort.
   fireEvent.click(openChooser().getByRole("button", { name: "Ниже: Остаток" }));
-  expect(headerNames()).toEqual(["Тип", "ГРН", "Партий", "Остаток", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["Тип", "ГРН", "Резерв", "Остаток", "Партий", "Места", "Серия", "Артикул", "Наименование", "Склад"]);
   expect(screen.getByRole("columnheader", { name: /^Остаток/ })).toHaveAttribute("aria-sort", "ascending");
 });
 
@@ -1161,19 +1247,98 @@ it("the lot table has its own order and set of columns; «Назначение»
   fireEvent.click(openChooser().getByRole("button", { name: "Ниже: Тип" }));
   fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
   const table = screen.getByRole("table", { name: "Таблица склада" });
-  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Доступно", "Место", "Серия", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Артикул", "Наименование", "Склад"]);
 
   const chooser = openChooser();
   fireEvent.click(chooser.getByLabelText("Назначение"));
-  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Доступно", "Место", "Серия", "Артикул", "Наименование", "Назначение", "Склад"]);
+  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Артикул", "Наименование", "Назначение", "Склад"]);
   expect(within(table).getByText("FRX.001")).toBeInTheDocument();
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
-  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Доступно", "Место", "Серия", "Назначение", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Назначение", "Артикул", "Наименование", "Склад"]);
 
   // Back to the article table: its own order is as the viewer left it.
   fireEvent.click(screen.getByRole("button", { name: "Остатки по позициям" }));
-  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Тип", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+});
+
+const kitHolder = { kind: "kit", label: "REQ.26.0000012 · 719К.2 КБ12", quantity: "100", unit: "шт" };
+const reservedLot: WarehouseLot = { ...lot, reserved: "100", available: "0", balance: "100", reserve_holders: [kitHolder] };
+const reservedSecond: WarehouseLot = { ...reservedLot, id: "40000000-0000-0000-0000-000000000003", grn: "FRX.26.0000003", reserved: "50", available: "0", balance: "60", reserve_holders: [{ ...kitHolder, label: "REQ.26.0000013 · 720К.1", quantity: "50" }] };
+
+it("«Резерв» stands after «Остаток» in both tables: the sum per article, the holders in the tooltip, a dim dash when nothing is held", async () => {
+  mockStock([reservedLot, reservedSecond, { ...second, reserved: "0" }]);
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  const rows = () => [...document.querySelectorAll(".stock-article-row")] as HTMLElement[];
+  const cell = (row: HTMLElement) => row.querySelectorAll("td")[3];
+  // Article table: ГРН · Остаток · Резерв, the two lots of GHR-04V-S add up.
+  const held = rows().find((row) => within(row).queryByText("GHR-04V-S"))!;
+  expect(cell(held)).toHaveTextContent("150 шт");
+  expect(cell(held)).toHaveAttribute("title", "REQ.26.0000012 · 719К.2 КБ12 — 100 шт\nREQ.26.0000013 · 720К.1 — 50 шт");
+  const free = rows().find((row) => within(row).queryByText("AAA-01"))!;
+  expect(cell(free)).toHaveTextContent("—");
+  expect(cell(free)).toHaveClass("stock-dim");
+
+  // The group header says it, too.
+  expect(screen.getByText(/остаток 160 шт · резерв 150 шт/)).toBeInTheDocument();
+
+  // Lot table: the reserve of one lot, right after «Остаток».
+  fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
+  const table = within(screen.getByRole("table", { name: "Таблица склада" }));
+  expect(headerNames(table).slice(2, 5)).toEqual(["Остаток", "Резерв", "Доступно"]);
+  const lotRow = table.getByText("FRX.26.0000003").closest("tr")!;
+  expect(within(lotRow).getByText("50 шт")).toHaveAttribute("title", "REQ.26.0000013 · 720К.1 — 50 шт");
+});
+
+it("the reserve of an article, of a group and of the page head come from the server sums, not from the loaded lots", async () => {
+  const totals = {
+    group: "series",
+    groups: [{ group: "LOT-2409", articles: 1, balance: "300", reserved: "180", available: "120", lots: 4, units: ["шт"] }],
+    articles: [{ group: "LOT-2409", article: "ghr-04v-s", balance: "300", reserved: "180", available: "120", lots: 4, units: ["шт"] }],
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path.startsWith("/api/stock/totals")) return json(totals);
+    return json({ lots: [reservedLot], total: 4, truncated: 3, next_cursor: "cursor-1" });
+  });
+
+  render(<WarehousePage />);
+  expect(await screen.findByText("в резерве 180 шт")).toBeInTheDocument();
+  expect(await screen.findByText(/остаток 300 шт · резерв 180 шт/)).toBeInTheDocument();
+  expect(document.querySelectorAll(".stock-article-row td")[3]).toHaveTextContent("180 шт");
+});
+
+it("the article table sorts by «Резерв»; «Доступно» is an optional column there", async () => {
+  mockStock([reservedLot, { ...second, reserved: "0" }]);
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  expect(screen.queryByRole("columnheader", { name: "Доступно" })).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
+  const articles = () => [...document.querySelectorAll(".stock-article-row")].map((row) => within(row as HTMLElement).queryByText(/^(GHR-04V-S|AAA-01)$/)?.textContent);
+  fireEvent.click(screen.getByRole("button", { name: /^Резерв/ }));
+  expect(articles()).toEqual(["AAA-01", "GHR-04V-S"]);
+  fireEvent.click(screen.getByRole("button", { name: /^Резерв/ }));
+  expect(articles()).toEqual(["GHR-04V-S", "AAA-01"]);
+
+  fireEvent.click(openChooser().getByLabelText("Доступно"));
+  expect(headerNames()).toContain("Доступно");
+});
+
+it("a saved set that does not know «Резерв» gets it after «Остаток», «Доступно» of the article table stays off", async () => {
+  mockStock([lot]);
+  window.localStorage.setItem("erp-table:stock-columns:v2", JSON.stringify({
+    grouped: { order: ["grn", "balance", "lots", "place", "series", "article", "name", "warehouse", "type"], hidden: ["type"] },
+    flat: { order: ["warehouse", "balance", "available", "name", "grn"], hidden: ["purpose"] },
+  }));
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  expect(headerNames()).toEqual(["ГРН", "Остаток", "Резерв", "Партий", "Места", "Артикул", "Наименование", "Склад"]);
+  fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
+  expect(headerNames(within(screen.getByRole("table", { name: "Таблица склада" })))).toEqual(["Склад", "Остаток", "Резерв", "Доступно", "Место", "Серия", "Артикул", "Наименование", "ГРН", "Тип"]);
 });
 
 it("a long name is cut to its column and carries the full text as a tooltip", async () => {
@@ -1244,7 +1409,7 @@ it("keeps the quantity inputs editable and the old search hint when the stage op
   stageFetch([]);
 
   render(<WarehousePage />);
-  expect(await screen.findByPlaceholderText("поиск: резистор 6-1 …")).toBeInTheDocument();
+  expect(await screen.findByPlaceholderText("Поиск: резистор, 6-1, ГРН…")).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
   fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.click(screen.getByRole("button", { name: "Править строку" }));

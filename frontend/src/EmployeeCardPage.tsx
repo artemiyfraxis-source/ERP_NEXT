@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   employeeCardApi,
   failureText,
-  productionApi,
+  documentsApi,
+  leaveApi,
   type EmployeeCard,
   type EmployeeCardAbsence,
   type EmployeeCardSkill,
@@ -10,11 +11,20 @@ import {
 } from "./api";
 import { formatDate, formatDay } from "./format";
 import { hasFullAccess } from "./navigation";
+import { LeaveRequests } from "./LeaveRequests";
+import { EmployeeDocuments } from "./EmployeeDocuments";
+import { EmployeeSkills } from "./EmployeeSkills";
+import { StatusChip } from "./StatusChip";
+import { WorkTime } from "./WorkTime";
 
 /** «Личная карточка» сотрудника (концепт владельца, 04.10): одна страница про человека из данных всех модулей, только
  *  чтение. Вкладка «Обзор» — карточки в порядке концепта: Основные данные · Подчинённость · Проекты · Отпуска · Рабочее
- *  время · Компетенции · Мои заявки на покупку · Задачи. Нет данных — «нет данных», а не ноль. */
+ *  время · Компетенции · Мои заявки на покупку · Задачи. Нет данных — «нет данных», а не ноль. Своя карточка — ещё вкладка
+ *  «Отпуска и заявления» (заявления, входящие на согласование, журнал кадров) со счётчиком ждущих решения. */
 
+type Tab = "overview" | "leave" | "documents" | "skills" | "worktime";
+const OWN_TABS: Tab[] = ["leave", "documents", "skills", "worktime"];
+const OWN_ONLY: Tab[] = ["leave", "documents"];
 const NO_DATA = "нет данных";
 const SKILLS_SHOWN = 8;
 
@@ -38,7 +48,14 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
   const own = !userId || userId === principal.user.id;
   const [card, setCard] = useState<EmployeeCard | null>(null);
   const [error, setError] = useState("");
-  const [names, setNames] = useState<Record<string, string>>({});
+  // `?section=card&tab=leave|documents|skills|worktime` opens that tab at once (a link from a notification or a bookmark).
+  const [tab, setTab] = useState<Tab>(() => {
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    const allowed = OWN_TABS.includes(wanted as Tab) && (own || !OWN_ONLY.includes(wanted as Tab));
+    return allowed ? (wanted as Tab) : "overview";
+  });
+  const [waiting, setWaiting] = useState(0);
+  const [unread, setUnread] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -50,18 +67,19 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
     return () => { live = false; };
   }, [own, userId]);
 
-  // Названия операций для компетенций: карточка отдаёт только код. Без доступа к производству остаются коды.
   useEffect(() => {
-    if (!card?.skills.length) return;
+    if (!own) return;
     let live = true;
-    productionApi.skills()
-      .then((result) => {
-        if (!live) return;
-        setNames(Object.fromEntries((result.operation_codes ?? []).filter((item) => item.name.trim()).map((item) => [item.code, item.name.trim()])));
-      })
-      .catch(() => undefined);
+    leaveApi.waiting().then((result) => { if (live) setWaiting(result.count); }).catch(() => undefined);
     return () => { live = false; };
-  }, [card]);
+  }, [own]);
+
+  useEffect(() => {
+    if (!own) return;
+    let live = true;
+    documentsApi.pending().then((result) => { if (live) setUnread(result.count); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [own]);
 
   // «Сотрудники» — только superadmin / admin (backend staffdir_principal): правка карточки и чужие карточки.
   const canEdit = Boolean(openStaffEdit) && hasFullAccess(principal);
@@ -98,12 +116,24 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
     </header>
     <div className="ec-tabs">
       <div className="seg-tabs" role="tablist" aria-label="Разделы карточки">
-        <button role="tab" aria-selected="true" className="on">Обзор</button>
+        <button role="tab" aria-selected={tab === "overview"} className={tab === "overview" ? "on" : undefined} onClick={() => setTab("overview")}>Обзор</button>
+        {own && <button role="tab" aria-selected={tab === "leave"} className={tab === "leave" ? "on" : undefined} onClick={() => setTab("leave")}>
+          Отпуска и заявления{waiting > 0 && <span className="ec-tab-count" aria-label={`ждут решения: ${waiting}`}>{waiting}</span>}
+        </button>}
+        {own && <button role="tab" aria-selected={tab === "documents"} className={tab === "documents" ? "on" : undefined} onClick={() => setTab("documents")}>
+          Документы{unread > 0 && <span className="ec-tab-count" aria-label={`ждут ознакомления: ${unread}`}>{unread}</span>}
+        </button>}
+        <button role="tab" aria-selected={tab === "skills"} className={tab === "skills" ? "on" : undefined} onClick={() => setTab("skills")}>Компетенции</button>
+        <button role="tab" aria-selected={tab === "worktime"} className={tab === "worktime" ? "on" : undefined} onClick={() => setTab("worktime")}>Рабочее время</button>
       </div>
       <span className="ec-asof">Сведения на {formatDate(card.as_of)}</span>
     </div>
 
-    <div className="ec-grid">
+    {tab === "leave" && own ? <LeaveRequests onWaiting={setWaiting} />
+      : tab === "documents" && own ? <EmployeeDocuments onPending={setUnread} />
+      : tab === "skills" ? <EmployeeSkills skills={card.skills} personnel={personnel} />
+      : tab === "worktime" ? <WorkTime userId={own ? undefined : userId ?? undefined} />
+      : <div className="ec-grid">
       <Card title="Основные данные">
         <dl className="ec-facts">
           {personnel && <Fact label="Табельный номер" value={personnel.tab_number} />}
@@ -155,14 +185,19 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
       <Card title="Рабочее время">
         {card.hours_this_month.hours === null
           ? <><NoData /><p className="ec-note">за {card.hours_this_month.label}</p></>
-          : <>
-            <p className="ec-big">{hoursText(card.hours_this_month.hours)} <span>ч</span></p>
-            <p className="ec-note">за {card.hours_this_month.label} · рабочих сессий: {card.hours_this_month.sessions ?? 0}</p>
-          </>}
+          : card.hours_this_month.hours === 0 && (card.hours_this_month.sessions ?? 0) > 0
+            ? <>
+              <p className="ec-big"><NoData /></p>
+              <p className="ec-note">за {card.hours_this_month.label} · рабочих сессий: {card.hours_this_month.sessions}, учтённых часов нет</p>
+            </>
+            : <>
+              <p className="ec-big">{hoursText(card.hours_this_month.hours)} <span>ч</span></p>
+              <p className="ec-note">за {card.hours_this_month.label} · рабочих сессий: {card.hours_this_month.sessions ?? 0}</p>
+            </>}
       </Card>
 
       <Card title="Компетенции" count={card.skills.length || undefined}>
-        <Skills skills={card.skills} names={names} />
+        <Skills skills={card.skills} />
       </Card>
 
       <Card title={own ? "Мои заявки на покупку" : "Заявки на покупку"} count={card.requests.count || undefined}>
@@ -172,7 +207,7 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
             <ul className="ec-list">
               {card.requests.items.map((item) => <li key={item.id} className="ec-row">
                 <span className="ec-main"><strong>{item.number}</strong> {item.name}</span>
-                <span className="ec-note">{item.status}</span>
+                <StatusChip status={item.status} />
               </li>)}
             </ul>
             {card.requests.count > card.requests.items.length && <p className="ec-note">Показаны первые {card.requests.items.length} из {card.requests.count}</p>}
@@ -199,7 +234,7 @@ export function EmployeeCardPage({ principal, userId, openProject, openMyRequest
             {card.tasks.count > card.tasks.items.length && <p className="ec-note">Показаны первые {card.tasks.items.length} из {card.tasks.count}</p>}
           </>}
       </Card>
-    </div>
+    </div>}
   </section>;
 }
 
@@ -238,7 +273,7 @@ function Vacations({ absences, asOf }: { absences: EmployeeCard["absences"]; asO
   </>;
 }
 
-function Skills({ skills, names }: { skills: EmployeeCardSkill[]; names: Record<string, string> }) {
+function Skills({ skills }: { skills: EmployeeCardSkill[] }) {
   const [all, setAll] = useState(false);
   // Сначала допущенные, лучшие сверху; без допуска — в конце.
   const sorted = useMemo(
@@ -250,16 +285,17 @@ function Skills({ skills, names }: { skills: EmployeeCardSkill[]; names: Record<
   return <>
     <ul className="ec-list">
       {shown.map((item) => {
-        const name = names[item.operation];
+        const name = item.name?.trim();
         const coefficient = Number(item.coefficient);
         return <li key={item.operation} className="ec-row ec-skill">
-          <span className="ec-main">{name ? <>{name}<small className="ec-code">{item.operation}</small></> : item.operation}</span>
+          <span className="ec-main">{name ? <>{name}<small className="ec-code">{item.operation}</small></> : <span title={item.operation}>операция без названия</span>}</span>
           {item.allowed
             ? <span className="ec-date"><span className="ec-stars" aria-label={`${item.stars} из 5`}>{"★".repeat(item.stars) || "—"}</span>{coefficient !== 1 && Number.isFinite(coefficient) ? ` ×${item.coefficient.replace(".", ",")}` : ""}</span>
             : <span className="ec-date tone-danger">нет допуска</span>}
         </li>;
       })}
     </ul>
+    <p className="ec-note ec-legend"><span className="ec-stars" aria-hidden="true">★</span> — уровень владения операцией, от 1 до 5</p>
     {sorted.length > SKILLS_SHOWN && <button className="link-button" onClick={() => setAll((open) => !open)}>
       {all ? "Свернуть" : `Показать все (${sorted.length})`}
     </button>}

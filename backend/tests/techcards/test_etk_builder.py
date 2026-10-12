@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.techcards.etk_builder import _suffix, _topology, build_etk
+from app.modules.techcards.etk_builder import _result_name, _suffix, _topology, build_etk
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardValidationError
 from app.modules.references.technology import TerminalRecord
@@ -234,6 +234,114 @@ def test_cut_and_crimp_operation_tracks_terminal_material_strip_and_applicator()
     assert "Несоответствие высоты опрессовки или усилия на разрыв:" in defects
 
 
+def _both_sides_config(term_b: str) -> dict:
+    """Generator «Обе стороны»: one CUT_WIRE+2crimp op with `ep` (А) and `epB` (В), no prsTerm — mountings follow."""
+    wire = {"name": "Провод НВ4 0,2", "art": "НВ4 0,2", "qty": 4, "length": 160}
+    return {
+        "assemblyName": "Кабель USB", "partQty": 100, "wires": [dict(wire)],
+        "ops": [{
+            "type": "cutWireCrimp", "templateId": "cut-wire-2crimp-автомат-резка-опрессовка",
+            "opNum": "CUT_WIRE+2crimp", "side": "A", "tPrep": 3600, "tOp": 4.8, "wires": [dict(wire)],
+            "strip": {"a": True, "lenA": "2", "b": True, "lenB": "2"},
+            "ep": {"connArt": "I-DS1071-SCB02X5", "termArt": "SXH-001T-P0.6N", "termName": "Контакт XH"},
+            "epB": {"connArt": "I-DS1071-SCB02X5", "termArt": term_b, "termName": "Контакт"},
+        }, *({"type": "insTerm", "opNum": "INS_terminal_2,54-6,3", "side": side, "wires": [dict(wire)], "wireSources": [""],
+              "ep": {"connArt": "I-DS1071-SCB02X5", "termArt": "SXH-001T-P0.6N" if side == "A" else term_b}} for side in ("A", "B"))],
+    }
+
+
+def test_cut_crimping_both_sides_carries_both_terminals_once_and_no_manual_crimp():
+    records = (
+        TerminalRecord(article="SXH-001T-P0.6N", applicator="S5/M5/A2", crimp_height="0,60 - 0,75", awg_from="28", awg_to="22"),
+        TerminalRecord(article="SPH-002T-P0.5S", applicator="S7/A7", crimp_height="0,48 - 0,52", awg_from="28", awg_to="24"),
+    )
+    same = build_etk(enrich_terminal_norms(_both_sides_config("SXH-001T-P0.6N"), records), CARDS, operation_library_commit="x")
+    cut = same["operations"][0]
+    assert (cut["code"], cut["connector"]) == ("CUT_WIRE+2crimp", "обжим А и В")
+    # Терминал обеих сторон один: строка комплектующих одна, на каждый конец — 4 провода × 2 конца × 100 = 800.
+    assert [row for row in cut["components"] if row["unit"] == "Шт."] == [
+        {"art": "SXH-001T-P0.6N", "name": "Контакт XH", "norm": "800", "unit": "Шт."}]
+    assert cut["result"] == [{"name": "НВ4 0,2 160мм, обжатый терминал SXH-001T-P0.6N с двух сторон", "norm": "400", "unit": "Шт."}]
+    assert cut["fields"]["applicator"] == "A2"
+    assert cut["fields"]["strip"] == {"a": True, "b": True, "lenA": "2", "lenB": "2"}
+    # Ручной опрессовки нет, монтаж в разъёмы терминалов не списывает: всего терминалов в ЭТК — 800, без двойного счёта.
+    assert [operation["type"] for operation in same["operations"]] == ["cutWireCrimp", "insTerm", "insTerm"]
+    terminals = sum(float(row["norm"].replace(",", ".")) for operation in same["operations"]
+                    for row in operation["components"] if row["art"].startswith("SXH"))
+    assert terminals == 800
+
+    mixed = build_etk(enrich_terminal_norms(_both_sides_config("SPH-002T-P0.5S"), records), CARDS, operation_library_commit="x")
+    cut = mixed["operations"][0]
+    assert [(row["art"], row["norm"]) for row in cut["components"] if row["unit"] == "Шт."] == [
+        ("SXH-001T-P0.6N", "400"), ("SPH-002T-P0.5S", "400")]
+    assert cut["result"][0]["name"] == "НВ4 0,2 160мм, обжатый терминал SXH-001T-P0.6N (А) / SPH-002T-P0.5S (В)"
+    # Два аппликатора на станке, высота обжима — по сторонам.
+    assert cut["fields"]["applicator"] == "A2/A7"
+    assert cut["fields"]["crimpHeight"] == "0,60 - 0,75 (А) / 0,48 - 0,52 (В)"
+    assert _result_name(_both_sides_config("SPH-002T-P0.5S")["ops"][0], {}, "") == (
+        "НВ4 0,2 160мм; ст. А: обжат терм. SXH-001T-P0.6N; ст. В: обжат терм. SPH-002T-P0.5S")
+
+
+def test_cut_crimping_two_contacts_names_each_ends_crimp_spec_and_missing_norms():
+    """Owner 12.10: the fitter must see which contact is end A / B and whose applicator, height and pull force it is."""
+    records = (TerminalRecord(
+        article="SXH-001T-P0.6N", applicator="S5/M5/A2", crimp_height="0,60 - 0,75", pull_force_min="9,8",
+        pull_force_max="39,2", strip="2,5", awg_from="28", awg_to="22",
+    ),)
+    config = _both_sides_config("T-DS1071-SC600")
+    config["ops"][0]["strip"] = {"a": True, "lenA": "", "b": True, "lenB": "3,5"}
+    for wire in (config["wires"][0], config["ops"][0]["wires"][0]):
+        wire.update(art="НВ4 0,2 белый")
+    config["ops"][0]["wires"].append({**config["ops"][0]["wires"][0], "art": "НВ4 0,2 зелёный"})
+    cut = build_etk(enrich_terminal_norms(config, records), CARDS, operation_library_commit="x")["operations"][0]
+
+    assert cut["fields"]["crimpEnds"] == [
+        {"ends": ["A"], "art": "SXH-001T-P0.6N", "name": "Контакт XH", "wire": "НВ4 0,2", "section": "24 AWG",
+         "applicator": "A2", "crimpHeight": "0,60 - 0,75", "pullForce": "9,8 - 39,2", "strip": "2,5"},
+        {"ends": ["B"], "art": "T-DS1071-SC600", "name": "Контакт", "wire": "НВ4 0,2", "section": "24 AWG",
+         "applicator": "", "crimpHeight": "", "pullForce": "", "strip": "3,5"},
+    ]
+    # Шапка старого вида (шаг ход операции, допуски) — без «?»: нет нормы — «не задано».
+    assert cut["fields"]["crimpHeight"] == "0,60 - 0,75 (А) / не задано (В)"
+
+    same = build_etk(enrich_terminal_norms(_both_sides_config("SXH-001T-P0.6N"), records), CARDS, operation_library_commit="x")
+    assert [(item["ends"], item["art"], item["strip"]) for item in same["operations"][0]["fields"]["crimpEnds"]] == [
+        (["A", "B"], "SXH-001T-P0.6N", "2")]
+    # Без снимка БД.ТЕР норм нет — и строк спецификации нет (выданные ЭТК показываются как были).
+    plain = build_etk(_both_sides_config("SXH-001T-P0.6N"), CARDS, operation_library_commit="x")
+    assert "crimpEnds" not in plain["operations"][0]["fields"]
+
+
+def test_one_side_cut_crimp_ignores_side_b_norms_and_keeps_its_etk():
+    """An op without `epB` (old configs, «Сторона А/В») builds exactly as before even if a stray `terminalNormB` sits on it."""
+    config = _both_sides_config("SXH-001T-P0.6N")
+    config["ops"][0].pop("epB")
+    config["ops"][0]["opNum"] = "CUT_WIRE+1crimp"
+    config["ops"][0]["templateId"] = "cut-wire-1crimp-автомат-резка-опрессовка"
+    before = build_etk(deepcopy(config), CARDS, operation_library_commit="x")
+    config["ops"][0]["terminalNormB"] = {"applicator": "A9", "crimpHeight": "1"}
+    assert build_etk(config, CARDS, operation_library_commit="x")["operations"] == before["operations"]
+    cut = before["operations"][0]
+    assert cut["connector"] == "обжим"
+    assert [row["norm"] for row in cut["components"] if row["unit"] == "Шт."] == ["400"]
+    assert cut["result"][0]["name"] == "НВ4 0,2 160мм, обжатый терминал SXH-001T-P0.6N"
+
+
+def test_drawing_cut_length_with_end_allowances_reaches_the_etk_unchanged():
+    """Owner 06.10: the TECHMAP-GRAPHER end corrections are the contact allowance. The generator passes the export's
+    cut_mm as the wire length (measure mode «длина реза», no L+/L− on top), and the ETK cuts exactly that."""
+    from app.modules.techcards.grapher_import import read_export
+    from . import grapher_fixture as fx
+
+    wire_view = read_export(json.dumps(fx.snapshot()).encode(), "snapshot.json")["harnesses"][0]["wires"][0]
+    assert (wire_view["length_mm"], wire_view["correction_from_mm"], wire_view["correction_to_mm"]) == (300, 8, 4)
+    wire = {"name": "ПВАМ 0,35", "art": "ПВАМ 0,35", "qty": 1, "length": wire_view["cut_mm"]}
+    config = {"assemblyName": "Жгут", "partQty": 1, "wires": [wire],
+              "ops": [{"type": "cutWire", "opNum": "CUT_WIRE_auto", "wires": [wire]}]}
+    operation = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+    assert operation["result"][0]["name"].startswith("ПВАМ 0,35 312мм")
+
+
 def test_splice_topology_and_strip_cable_do_not_advance_main_chain():
     config = {
         "assemblyName": "Жгут", "partQty": 1,
@@ -445,3 +553,62 @@ def test_cut_cards_list_the_measuring_tools_their_steps_use():
     assert any("разрывная" in name for name in tools)
     numbers = [tool["number"] for tool in tooling if tool["section"] == "Инструмент"]
     assert numbers == [str(index) for index in range(1, len(numbers) + 1)]
+
+
+def _mark_op(document: dict) -> dict:
+    return next(item for item in document["operations"] if item["type"] == "insMark")
+
+
+def test_bare_marking_toggle_keeps_the_old_etk_composition_tags_without_a_mark_list():
+    op = _mark_op(build("708К.2-КБ1"))
+    assert op["components"] == [
+        {"art": "Маркировка проводов у разъёмов", "name": "Маркировка проводов у разъёмов", "norm": "760", "unit": "Шт."},
+        {"art": "Маркировка отводов", "name": "Маркировка отводов", "norm": "114", "unit": "Шт."},
+        {"art": "Децимальный номер изделия", "name": "Децимальный номер изделия", "norm": "38", "unit": "Шт."},
+    ]
+    assert "marks" not in op["fields"]
+    # 20 с на метку × (20 + 3 + 1) метки × 38 шт + 120 с подготовки = 306 мин.
+    assert [row["norm"] for row in op["time"]] == ["306"]
+
+
+def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their_count():
+    config = deepcopy(kit("708К.2-КБ1")["config"])
+    mark = next(item for item in config["ops"] if item["type"] == "insMark")
+    tag = "Бирка маркировочная TMS-SCE-1/4-2.0-4 жёлтая"
+    mark["marks"] = [
+        {"art": tag, "name": tag, "qty": 1, "target": "Разъём X1 (174047-2)", "text": "X1", "place": "у разъёма", "placeKind": "conn", "placeMm": ""},
+        {"art": tag, "name": tag, "qty": 1, "target": "Разъём X2", "text": "X2", "place": "у разъёма", "placeKind": "conn", "placeMm": ""},
+        {"art": "Маркировка отводов", "name": "Маркировка отводов", "qty": 2, "target": "Провод W1", "text": "708К.4КБ1",
+         "place": "50 мм от конца", "placeKind": "dist", "placeMm": "50"},
+        {"art": "", "name": "", "qty": 1, "target": "Жгут целиком", "text": "КБ1 №1", "place": "на оплётке", "placeKind": "free", "placeMm": ""},
+    ]
+    op = _mark_op(build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"]))
+    assert op["fields"]["marks"] == [
+        {"target": "Разъём X1 (174047-2)", "text": "X1", "material": tag, "place": "у разъёма", "qty": "1", "batch": "38"},
+        {"target": "Разъём X2", "text": "X2", "material": tag, "place": "у разъёма", "qty": "1", "batch": "38"},
+        {"target": "Провод W1", "text": "708К.4КБ1", "material": "Маркировка отводов", "place": "50 мм от конца", "qty": "2", "batch": "76"},
+        {"target": "Жгут целиком", "text": "КБ1 №1", "material": "", "place": "на оплётке", "qty": "1", "batch": "38"},
+    ]
+    # Материал складывается по артикулу на партию; метка без материала строки не даёт.
+    assert op["components"] == [
+        {"art": tag, "name": tag, "norm": "76", "unit": "Шт."},
+        {"art": "Маркировка отводов", "name": "Маркировка отводов", "norm": "76", "unit": "Шт."},
+    ]
+    # Норма БД.ОП на штуку × 5 меток на изделие × 38 шт + подготовка: 20 × 5 × 38 / 60 + 2 = 65,33 мин.
+    assert [row["norm"] for row in op["time"]] == ["65,33"]
+    assert op["result"][0]["name"].endswith("(маркирован)")
+    assert op["card"]["steps"]
+
+
+def test_product_mark_with_a_tab_goes_to_the_etk_in_russian_and_feeds_the_materials():
+    config = deepcopy(kit("708К.2-КБ1")["config"])
+    mark = next(item for item in config["ops"] if item["type"] == "insMark")
+    mark["marks"] = [
+        {"art": "Термотрубка", "name": "Термотрубка", "qty": 1, "target": "Разъём X1", "text": "X1", "place": "у разъёма", "placeKind": "conn", "placeMm": ""},
+        {"art": "Хлястик", "name": "Хлястик", "qty": 1, "target": "Изделие КБ1", "text": "КБ1", "place": "на изделии", "placeKind": "item", "placeMm": ""},
+    ]
+    op = _mark_op(build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"]))
+    assert [(m["target"], m["material"], m["place"]) for m in op["fields"]["marks"]] == [
+        ("Разъём X1", "Термотрубка", "у разъёма"), ("Изделие КБ1", "Хлястик", "на изделии"),
+    ]
+    assert {c["art"] for c in op["components"]} == {"Термотрубка", "Хлястик"}

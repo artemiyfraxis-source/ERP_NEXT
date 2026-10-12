@@ -38,11 +38,25 @@ it("names the automatic fill after «Взять в работу» and its fields
   expect(auditDetails({ legacy_id: "SM-20261004-01", fields: ["supplier", "site_name", "manufacturer", "country"] })).toBe(
     "поля: поставщик, наименование (сайт), изготовитель, страна",
   );
+  // Audit U09: where the fill came from, and a site read without a certificate check.
+  expect(auditDetails({ fields: ["site_name"], source: "www.chipdip.ru", tls: "не проверен" })).toBe(
+    "поля: наименование (сайт) · сайт: www.chipdip.ru · сертификат: не проверен",
+  );
+});
+
+it("names the background retry and the login lock release in Russian", () => {
+  expect(auditEventName("operations.outbox_retried")).toBe("Фоновое задание запущено повторно");
+  expect(auditDetails({ topic: "warehouse.received", attempts: "5", error: "invalid payload" })).toBe(
+    "задание: Приход на склад · попыток: 5 · ошибка: invalid payload",
+  );
+  expect(auditEventName("identity.login_lock_released")).toBe("Блокировка входа снята");
+  expect(auditEventName("procurement.autofill_requested")).toBe("Автозаполнение строки закупки");
 });
 
 it("names the access-level events and the level and flag details in Russian", () => {
   expect(auditEventName("identity.level_access_saved")).toBe("Доступы уровней сохранены");
   expect(auditEventName("identity.access_levels_migrated")).toBe("Роли переведены в уровни доступа");
+  expect(auditEventName("identity.level_view_defaults_seeded")).toBe("Уровням открыт просмотр склада, закупки и приёмки");
   expect(auditEventName("identity.dormant_access_archived")).toBe("Исключения прежней роли с полным доступом убраны в архив");
   expect(auditDetails({ level: "tech_lead", changes: "3" })).toBe("уровень: Технический руководитель · изменения: 3");
   expect(auditDetails({ login: "petrov", access_level: "foreman", shop_worker: "да", site_master: "да" })).toBe(

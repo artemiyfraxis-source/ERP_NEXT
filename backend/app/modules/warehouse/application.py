@@ -62,6 +62,12 @@ class WarehouseRepository(Protocol):
         warehouse: str | None = None,
         include_zero: bool = False,
     ) -> int: ...
+    def filtered(
+        self,
+        query: str = "",
+        warehouse: str | None = None,
+        include_zero: bool = False,
+    ) -> Sequence[StockLot]: ...
     def at_location(self, warehouse: str, storage_location: str) -> Sequence[StockLot]: ...
     def occupied_locations(self, warehouse: str) -> Sequence[str]: ...
     def reserve_manual_numbers(self, year: int, count: int) -> int: ...
@@ -1207,6 +1213,78 @@ def warehouse_lots(
             raise KeyError(f"Warehouse cursor not found: {after_id}")
         lots = uow.warehouse.list(limit, after_id, query, warehouse, include_zero)
         return list(lots), uow.warehouse.count(query, warehouse, include_zero)
+
+
+STOCK_GROUPS = ("", "type", "place", "name", "series", "grn")
+
+
+@dataclass
+class StockTotals:
+    """Sums of the lots of one group or one article of a group: the numbers do not depend on how many lots a screen loaded."""
+
+    balance: Decimal = Decimal(0)
+    reserved: Decimal = Decimal(0)
+    available: Decimal = Decimal(0)
+    lots: int = 0
+    units: set[str] = field(default_factory=set)
+    articles: set[str] = field(default_factory=set)
+
+    def add(self, lot: StockLot, article: str) -> None:
+        self.balance += lot.balance
+        self.reserved += lot.reserved
+        self.available += lot.available
+        self.lots += 1
+        if lot.unit:
+            self.units.add(lot.unit)
+        self.articles.add(article)
+
+
+def stock_article_key(lot: StockLot) -> str:
+    """The article identity of the stock table (frontend `articleKey`): article or name, spaces folded, lower case."""
+    identity = " ".join((lot.article or lot.name).split()).lower()
+    return identity or f"\u0001грн {lot.grn}/{lot.package}"
+
+
+def stock_group_value(lot: StockLot, group: str) -> str:
+    """The group a lot sits in for the table «группировать» (frontend `warehouseGroups`); "" for no grouping."""
+    if group == "type":
+        value = lot.item_type
+    elif group == "place":
+        place = "".join(lot.storage_location.split()).upper()
+        found = re.match(r"^(\d+[A-ZА-Я])", place)
+        value = found.group(1) if found else lot.storage_location
+    elif group == "name":
+        value = lot.name
+    elif group == "series":
+        value = lot.series
+    elif group == "grn":
+        value = lot.grn
+    else:
+        value = ""
+    return value.strip()
+
+
+def warehouse_totals(
+    uow: UnitOfWork,
+    *,
+    group: str = "",
+    query: str = "",
+    warehouse: str | None = None,
+    include_zero: bool = False,
+) -> tuple[dict[str, StockTotals], dict[tuple[str, str], StockTotals]]:
+    """Totals per group and per (group, article) over all lots of the filter: what the grouped stock table shows."""
+    if group not in STOCK_GROUPS:
+        raise ValueError(f"Unknown stock group: {group}")
+    with uow:
+        lots = uow.warehouse.filtered(query, warehouse, include_zero)
+    groups: dict[str, StockTotals] = {}
+    articles: dict[tuple[str, str], StockTotals] = {}
+    for lot in lots:
+        value = stock_group_value(lot, group)
+        article = stock_article_key(lot)
+        groups.setdefault(value, StockTotals()).add(lot, article)
+        articles.setdefault((value, article), StockTotals()).add(lot, article)
+    return groups, articles
 
 
 @dataclass(frozen=True)

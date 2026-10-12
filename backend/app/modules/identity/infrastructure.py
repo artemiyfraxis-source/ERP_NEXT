@@ -11,12 +11,16 @@ from uuid import UUID
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
+    Text,
+    UniqueConstraint,
     Uuid,
     delete,
     false,
@@ -33,6 +37,8 @@ from app.shared.clock import as_utc
 
 from .application import ApiToken, IdentitySession, PinRecord
 from .domain import FULL_ACCESS_LEVELS, LEVEL_SEED, AccessMode, IdentityUser, normalize_login
+from .documents import Acknowledgement, Document, DocumentKind, DocumentScope, DocumentVersion
+from .leave import LeaveConflict, LeaveKind, LeaveRequest, LeaveSignature, LeaveStatus, signature_order
 from .level_migration import followed_flags, level_for_role, shop_worker_rule, site_master_rule
 
 
@@ -206,6 +212,171 @@ class IdentityApiTokenRow(Base):
     revoked_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
+class IdentityLeaveRequestRow(Base):
+    """Заявление на отпуск / отгул (0089, identity/leave.py). `version` is the row version every change checks."""
+
+    __tablename__ = "identity_leave_requests"
+    __table_args__ = (
+        CheckConstraint("kind IN ('vacation', 'day_off')", name="ck_identity_leave_requests_kind"),
+        CheckConstraint(
+            "status IN ('draft', 'signed', 'approved', 'registered', 'rejected', 'withdrawn')",
+            name="ck_identity_leave_requests_status",
+        ),
+        CheckConstraint("to_date >= from_date", name="ck_identity_leave_requests_period"),
+        CheckConstraint("content_version >= 1", name="ck_identity_leave_requests_content_version"),
+        CheckConstraint("version >= 1", name="ck_identity_leave_requests_version"),
+        Index("ix_identity_leave_requests_employee_id", "employee_id"),
+        Index("ix_identity_leave_requests_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    employee_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_identity_leave_requests_employee_id"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    from_date: Mapped[date] = mapped_column(Date, nullable=False)
+    to_date: Mapped[date] = mapped_column(Date, nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    content_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+
+class IdentityLeaveSignatureRow(Base):
+    """A signature on a leave request step (0089): who, when, how (PIN / password typed again — never stored)."""
+
+    __tablename__ = "identity_leave_signatures"
+    __table_args__ = (
+        CheckConstraint("step IN ('employee', 'manager', 'hr', 'withdraw')", name="ck_identity_leave_signatures_step"),
+        CheckConstraint(
+            "decision IN ('signed', 'approved', 'rejected', 'registered', 'withdrawn')",
+            name="ck_identity_leave_signatures_decision",
+        ),
+        CheckConstraint("method IN ('pin', 'password')", name="ck_identity_leave_signatures_method"),
+        CheckConstraint("content_version >= 1", name="ck_identity_leave_signatures_content_version"),
+        UniqueConstraint(
+            "request_id", "step", "content_version", name="uq_identity_leave_signatures_request_step_version",
+        ),
+        Index("ix_identity_leave_signatures_signer_id", "signer_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_leave_requests.id", ondelete="CASCADE", name="fk_identity_leave_signatures_request_id"),
+        nullable=False,
+    )
+    step: Mapped[str] = mapped_column(String(16), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    signer_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_identity_leave_signatures_signer_id"),
+        nullable=False,
+    )
+    signer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    signed_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    content_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+
+
+# A SHA-256 in lowercase hex; trim(x, chars) is btrim on PostgreSQL and the two-argument trim on SQLite.
+_HEX_SHA256 = "length({column}) = 64 AND trim({column}, '0123456789abcdef') = ''"
+
+
+class IdentityDocumentRow(Base):
+    """Документ с ознакомлением (0100, identity/documents.py): what it is and whom it is aimed at."""
+
+    __tablename__ = "identity_documents"
+    __table_args__ = (
+        CheckConstraint("kind IN ('job_description', 'regulation', 'other')", name="ck_identity_documents_kind"),
+        CheckConstraint("scope IN ('all', 'department', 'job_title')", name="ck_identity_documents_scope"),
+        CheckConstraint(
+            "(scope = 'all' AND scope_value = '') OR (scope <> 'all' AND scope_value <> '')",
+            name="ck_identity_documents_scope_value",
+        ),
+        CheckConstraint("title <> ''", name="ck_identity_documents_title"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    scope_value: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
+    created_by: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_identity_documents_created_by"),
+        nullable=False,
+    )
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IdentityDocumentVersionRow(Base):
+    """A version (редакция) of a document: the PDF itself, kept in the database like procurement's files."""
+
+    __tablename__ = "identity_document_versions"
+    __table_args__ = (
+        CheckConstraint("version_no >= 1", name="ck_identity_document_versions_version_no"),
+        CheckConstraint("size > 0 AND size <= 20971520", name="ck_identity_document_versions_size"),
+        CheckConstraint(_HEX_SHA256.format(column="sha256"), name="ck_identity_document_versions_sha256"),
+        UniqueConstraint("document_id", "version_no", name="uq_identity_document_versions_document_version"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_documents.id", ondelete="RESTRICT", name="fk_identity_document_versions_document_id"),
+        nullable=False,
+    )
+    version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, deferred=True)
+    uploaded_by: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_identity_document_versions_uploaded_by"),
+        nullable=False,
+    )
+    uploaded_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class IdentityDocumentAckRow(Base):
+    """«Ознакомлен»: one signature per person and version (PIN / password typed again — never stored)."""
+
+    __tablename__ = "identity_document_acks"
+    __table_args__ = (
+        CheckConstraint("method IN ('pin', 'password')", name="ck_identity_document_acks_method"),
+        CheckConstraint(_HEX_SHA256.format(column="sha256"), name="ck_identity_document_acks_sha256"),
+        UniqueConstraint("version_id", "user_id", name="uq_identity_document_acks_version_user"),
+        Index("ix_identity_document_acks_user_id", "user_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    version_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_document_versions.id", ondelete="RESTRICT", name="fk_identity_document_acks_version_id"),
+        nullable=False,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_users.id", ondelete="RESTRICT", name="fk_identity_document_acks_user_id"),
+        nullable=False,
+    )
+    signed_at: Mapped[Any] = mapped_column(DateTime(timezone=True), nullable=False)
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class IdentityDepartmentRow(Base):
     """The department list of the «Сотрудники» screen (ID-8), in dropdown order. Empty until the first save:
     then the list is the departments people already have, as SUPPLYMAP staffDepts_ did."""
@@ -241,6 +412,12 @@ class IdentityLoginThrottleRow(Base):
     rate_limit_audited_at: Mapped[Any | None] = mapped_column(DateTime(timezone=True))
 
 
+# Identity tables that are history all the same: a leave request and its signatures (0089), the documents, their
+# versions and «Ознакомлен» signatures (0100) — all RESTRICT to the person.
+_IDENTITY_HISTORY_TABLES = frozenset({
+    "identity_leave_requests", "identity_leave_signatures",
+    "identity_documents", "identity_document_versions", "identity_document_acks",
+})
 # Audit rows the employee leaves just by signing in; they stay in the log but do not make the employee «used».
 _OWN_SESSION_EVENTS = (
     "identity.login_succeeded", "identity.logout", "identity.own_password_changed", "identity.pin_revealed",
@@ -469,6 +646,12 @@ class SqlAlchemyIdentityRepository:
         if row is not None:
             self.session.delete(row)
 
+    def release_throttles(self, keys: tuple[str, ...] | None) -> int:
+        statement = delete(IdentityLoginThrottleRow)
+        if keys is not None:
+            statement = statement.where(IdentityLoginThrottleRow.key.in_(keys))
+        return int(self.session.execute(statement).rowcount or 0)
+
     def deactivate_user(self, user_id: UUID) -> IdentityUser | None:
         row = self.session.get(IdentityUserRow, user_id, with_for_update=True)
         if row is None:
@@ -514,7 +697,7 @@ class SqlAlchemyIdentityRepository:
         settings (CASCADE: credentials, sessions, access, skills, absences) and their own sign-ins are not history."""
         total = 0
         for table in Base.metadata.sorted_tables:
-            if table.name.startswith("identity_"):
+            if table.name.startswith("identity_") and table.name not in _IDENTITY_HISTORY_TABLES:
                 continue
             for column in table.columns:
                 if _cascades_from_user(column) or not _points_at_person(column):
@@ -769,6 +952,204 @@ class SqlAlchemyIdentityRepository:
         )
 
 
+def _leave_domain(row: IdentityLeaveRequestRow, signatures: list[IdentityLeaveSignatureRow]) -> LeaveRequest:
+    return LeaveRequest(
+        id=row.id, employee_id=row.employee_id, kind=LeaveKind(row.kind), from_date=row.from_date,
+        to_date=row.to_date, comment=row.comment or "", status=LeaveStatus(row.status),
+        content_version=row.content_version, content_sha256=row.content_sha256, version=row.version,
+        created_at=as_utc(row.created_at), updated_at=as_utc(row.updated_at),
+        signatures=tuple(sorted((LeaveSignature(
+            id=item.id, request_id=item.request_id, step=item.step, decision=item.decision, signer_id=item.signer_id,
+            signer_name=item.signer_name, signed_at=as_utc(item.signed_at), method=item.method,
+            content_version=item.content_version, content_sha256=item.content_sha256, comment=item.comment or "",
+        ) for item in signatures), key=signature_order)),
+    )
+
+
+class SqlAlchemyLeaveRepository:
+    """Leave requests (identity/leave.py). `save` writes over the row only from the version the caller saw: the
+    mapper's version column makes a concurrent change fail the flush (StaleDataError → conflict)."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _many(self, rows: list[IdentityLeaveRequestRow]) -> list[LeaveRequest]:
+        ids = [row.id for row in rows]
+        signatures: dict[UUID, list[IdentityLeaveSignatureRow]] = {}
+        if ids:
+            for item in self.session.scalars(
+                select(IdentityLeaveSignatureRow).where(IdentityLeaveSignatureRow.request_id.in_(ids))
+                .order_by(IdentityLeaveSignatureRow.signed_at, IdentityLeaveSignatureRow.id)
+            ):
+                signatures.setdefault(item.request_id, []).append(item)
+        return [_leave_domain(row, signatures.get(row.id, [])) for row in rows]
+
+    def get(self, request_id: UUID) -> LeaveRequest | None:
+        row = self.session.get(IdentityLeaveRequestRow, request_id, with_for_update=True)
+        return None if row is None else self._many([row])[0]
+
+    def for_employee(self, employee_id: UUID) -> list[LeaveRequest]:
+        rows = list(self.session.scalars(
+            select(IdentityLeaveRequestRow).where(IdentityLeaveRequestRow.employee_id == employee_id)
+            .order_by(IdentityLeaveRequestRow.from_date, IdentityLeaveRequestRow.id)
+        ))
+        return self._many(rows)
+
+    def with_status(self, statuses) -> list[LeaveRequest]:
+        values = sorted(LeaveStatus(status).value for status in statuses)
+        rows = list(self.session.scalars(
+            select(IdentityLeaveRequestRow).where(IdentityLeaveRequestRow.status.in_(values))
+            .order_by(IdentityLeaveRequestRow.from_date, IdentityLeaveRequestRow.id)
+        ))
+        return self._many(rows)
+
+    def add(self, request: LeaveRequest) -> None:
+        self.session.add(IdentityLeaveRequestRow(
+            id=request.id, employee_id=request.employee_id, kind=request.kind.value, from_date=request.from_date,
+            to_date=request.to_date, comment=request.comment, status=request.status.value,
+            content_version=request.content_version, content_sha256=request.content_sha256, version=request.version,
+            created_at=request.created_at, updated_at=request.updated_at,
+        ))
+        self.session.flush()
+
+    def save(self, request: LeaveRequest, expected_version: int) -> None:
+        row = self.session.get(IdentityLeaveRequestRow, request.id)
+        if row is None or row.version != expected_version or request.version != expected_version + 1:
+            raise LeaveConflict("Заявление уже изменилось — обновите страницу.")
+        row.kind = request.kind.value
+        row.from_date = request.from_date
+        row.to_date = request.to_date
+        row.comment = request.comment
+        row.status = request.status.value
+        row.content_version = request.content_version
+        row.content_sha256 = request.content_sha256
+        row.updated_at = request.updated_at
+        row.version = request.version
+        self.session.flush()
+
+    def add_signature(self, signature: LeaveSignature) -> None:
+        self.session.add(IdentityLeaveSignatureRow(
+            id=signature.id, request_id=signature.request_id, step=signature.step, decision=signature.decision,
+            signer_id=signature.signer_id, signer_name=signature.signer_name, signed_at=signature.signed_at,
+            method=signature.method, content_version=signature.content_version,
+            content_sha256=signature.content_sha256, comment=signature.comment,
+        ))
+        self.session.flush()
+
+
+def _document_version(row: IdentityDocumentVersionRow) -> DocumentVersion:
+    return DocumentVersion(
+        id=row.id, document_id=row.document_id, version_no=row.version_no, file_name=row.file_name, size=row.size,
+        sha256=row.sha256, uploaded_by=row.uploaded_by, uploaded_at=as_utc(row.uploaded_at),
+    )
+
+
+def _ack(row: IdentityDocumentAckRow) -> Acknowledgement:
+    return Acknowledgement(
+        id=row.id, version_id=row.version_id, user_id=row.user_id, signed_at=as_utc(row.signed_at), method=row.method,
+        sha256=row.sha256,
+    )
+
+
+class SqlAlchemyDocumentRepository:
+    """Documents with acknowledgement (identity/documents.py). The PDF bytes load only through `content`."""
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def _many(self, rows: list[IdentityDocumentRow]) -> list[Document]:
+        ids = [row.id for row in rows]
+        versions: dict[UUID, list[DocumentVersion]] = {}
+        if ids:
+            for item in self.session.scalars(
+                select(IdentityDocumentVersionRow).where(IdentityDocumentVersionRow.document_id.in_(ids))
+                .order_by(IdentityDocumentVersionRow.version_no)
+            ):
+                versions.setdefault(item.document_id, []).append(_document_version(item))
+        return [Document(
+            id=row.id, title=row.title, kind=DocumentKind(row.kind), scope=DocumentScope(row.scope),
+            scope_value=row.scope_value or "", archived=bool(row.archived), created_by=row.created_by,
+            created_at=as_utc(row.created_at), versions=tuple(versions.get(row.id, ())),
+        ) for row in rows]
+
+    def all(self) -> list[Document]:
+        return self._many(list(self.session.scalars(
+            select(IdentityDocumentRow).order_by(IdentityDocumentRow.created_at, IdentityDocumentRow.id)
+        )))
+
+    def get(self, document_id: UUID, *, for_update: bool = False) -> Document | None:
+        row = self.session.get(IdentityDocumentRow, document_id, with_for_update=for_update or None)
+        return None if row is None else self._many([row])[0]
+
+    def add(self, document: Document) -> None:
+        self.session.add(IdentityDocumentRow(
+            id=document.id, title=document.title, kind=document.kind.value, scope=document.scope.value,
+            scope_value=document.scope_value, archived=document.archived, created_by=document.created_by,
+            created_at=document.created_at,
+        ))
+        self.session.flush()
+
+    def set_archived(self, document_id: UUID, archived: bool) -> None:
+        self.session.execute(
+            update(IdentityDocumentRow).where(IdentityDocumentRow.id == document_id).values(archived=archived)
+        )
+
+    def add_version(self, version: DocumentVersion, content: bytes) -> None:
+        self.session.add(IdentityDocumentVersionRow(
+            id=version.id, document_id=version.document_id, version_no=version.version_no, file_name=version.file_name,
+            size=version.size, sha256=version.sha256, content=content, uploaded_by=version.uploaded_by,
+            uploaded_at=version.uploaded_at,
+        ))
+        self.session.flush()
+
+    def version(self, version_id: UUID) -> DocumentVersion | None:
+        row = self.session.get(IdentityDocumentVersionRow, version_id)
+        return None if row is None else _document_version(row)
+
+    def content(self, version_id: UUID) -> bytes | None:
+        return self.session.scalar(
+            select(IdentityDocumentVersionRow.content).where(IdentityDocumentVersionRow.id == version_id)
+        )
+
+    def delete_version(self, version_id: UUID) -> None:
+        """The caller has checked nobody signed it; the FK (RESTRICT) refuses otherwise. The only version takes the
+        document with it."""
+        row = self.session.get(IdentityDocumentVersionRow, version_id)
+        if row is None:
+            return
+        document_id = row.document_id
+        self.session.delete(row)
+        self.session.flush()
+        left = self.session.scalar(
+            select(func.count()).select_from(IdentityDocumentVersionRow)
+            .where(IdentityDocumentVersionRow.document_id == document_id)
+        )
+        if not left:
+            self.session.execute(delete(IdentityDocumentRow).where(IdentityDocumentRow.id == document_id))
+
+    def acks_of_versions(self, version_ids) -> list[Acknowledgement]:
+        ids = list(version_ids)
+        if not ids:
+            return []
+        return [_ack(row) for row in self.session.scalars(
+            select(IdentityDocumentAckRow).where(IdentityDocumentAckRow.version_id.in_(ids))
+            .order_by(IdentityDocumentAckRow.signed_at, IdentityDocumentAckRow.id)
+        )]
+
+    def acks_of_user(self, user_id: UUID) -> list[Acknowledgement]:
+        return [_ack(row) for row in self.session.scalars(
+            select(IdentityDocumentAckRow).where(IdentityDocumentAckRow.user_id == user_id)
+            .order_by(IdentityDocumentAckRow.signed_at, IdentityDocumentAckRow.id)
+        )]
+
+    def add_ack(self, ack: Acknowledgement) -> None:
+        self.session.add(IdentityDocumentAckRow(
+            id=ack.id, version_id=ack.version_id, user_id=ack.user_id, signed_at=ack.signed_at, method=ack.method,
+            sha256=ack.sha256,
+        ))
+        self.session.flush()
+
+
 class SqlAlchemyIdentityUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory
@@ -781,6 +1162,8 @@ class SqlAlchemyIdentityUnitOfWork:
         self.identity = SqlAlchemyIdentityRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         self.outbox = SqlAlchemyOutboxRepository(self.session)
+        self.leave = SqlAlchemyLeaveRepository(self.session)
+        self.documents = SqlAlchemyDocumentRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:

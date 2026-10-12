@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import (
+    COUNTRY_BY_MANUFACTURER,
     SUPPLIER_BY_LINK,
     ReferenceEntry,
     ReferenceKind,
@@ -45,7 +46,7 @@ class ReferencesSupplierDirectory:
         return saved or {normalized_supplier_key(key): value for key, value in SUPPLIER_BY_LINK}
 
     def country_for_manufacturer(self, manufacturer: str) -> str:
-        """`countryForManufacturer_` (References.gs:101): СТРАНА by ИЗГОТОВИТЕЛЬ from the map, otherwise ''."""
+        """`countryForManufacturer_` (References.gs:101): СТРАНА by ИЗГОТОВИТЕЛЬ from the saved map, else the COUNTRY_BY_MANUFACTURER seed, otherwise ''."""
         try:
             key = normalized_manufacturer_key(manufacturer)
         except ReferenceValidationError:
@@ -53,8 +54,12 @@ class ReferencesSupplierDirectory:
         with self.references_uow_factory() as uow:
             entries = list(uow.references.list())
         for entry in entries:
-            if entry.kind == ReferenceKind.COUNTRY and entry.normalized_key == key:
+            if entry.kind == ReferenceKind.COUNTRY and entry.normalized_key == key and entry.value.strip():
                 return entry.value.strip()
+        # Nothing saved for this key: the built-in seed (saved wins per key, the seed fills the rest).
+        for name, country in COUNTRY_BY_MANUFACTURER:
+            if normalized_manufacturer_key(name) == key:
+                return country
         return ""
 
     def learn(self, link: str | None, supplier: str | None, actor: Actor, now: datetime) -> bool:

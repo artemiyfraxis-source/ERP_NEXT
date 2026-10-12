@@ -8,8 +8,8 @@ from decimal import Decimal
 import json
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
-from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
+from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker, validates
 
 from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.fulfillment.domain import FulfillmentStatus
@@ -18,8 +18,10 @@ from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinis
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .application import Absence, Operator
-from .domain import DEFAULT_SHIFT, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, WorkShift
-from .plan import PlanEvent, PlanProjectSnapshot, normalize_project_number
+from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
+from .plan import (
+    KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
+)
 from .genealogy import (
     BoxConsumptionSnapshot,
     BoxSnapshot,
@@ -57,7 +59,20 @@ from .traceability import (
 
 class ProductionTaskRow(Base):
     __tablename__ = "production_tasks"
-    __table_args__ = (Index("ix_production_status_created_id", "status", "created_at", "id"),)
+    __table_args__ = (
+        Index("ix_production_status_created_id", "status", "created_at", "id"),
+        # Цель 2 (миграция 0089): план задания — ограничениями базы, не только кодом.
+        CheckConstraint("flow_mode IN ('sequential', 'parallel', 'mixed')", name="ck_production_tasks_flow_mode"),
+        CheckConstraint(
+            "transfer_batch IS NULL OR (transfer_batch >= 1 AND transfer_batch <= quantity)",
+            name="ck_production_tasks_transfer_batch",
+        ),
+        CheckConstraint(
+            "early_quantity IS NULL OR (early_quantity >= 1 AND early_quantity < quantity)",
+            name="ck_production_tasks_early_quantity",
+        ),
+        CheckConstraint("techcard_revision IS NULL OR techcard_revision >= 1", name="ck_production_tasks_techcard_revision"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     number: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
@@ -74,8 +89,58 @@ class ProductionTaskRow(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     launched_by: Mapped[str] = mapped_column(String(255), nullable=False)
     handed_to: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    # План задания (Цель 2): техкарта и ревизия норм (NULL — задание до 0089), режим передачи, передаточная партия
+    # (NULL — вся партия), «первые k раньше» (NULL — нет). Без FK на техкарту: задание хранит происхождение и
+    # после удаления карты вместе с проектом.
+    techcard_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    techcard_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    flow_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="mixed", server_default="mixed")
+    transfer_batch: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    early_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # № проекта для сравнения (`normalize_project_number`, миграция project_keys): трек проекта читает по индексу.
+    # Ставится сам при записи `project`; NULL — строка вставлена мимо ORM, такие читаются и сверяются в Python.
+    project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
+    @validates("project")
+    def _keep_project_key(self, _name: str, value: str) -> str:
+        self.project_key = normalize_project_number(value)
+        return value
+
+
+class ProductionTaskTeamRow(Base):
+    """Команда задания: люди из справочника сотрудников по id, в порядке выбора."""
+    __tablename__ = "production_task_team"
+    __table_args__ = (
+        UniqueConstraint("task_id", "position", name="ux_production_task_team_position"),
+        CheckConstraint("position >= 0", name="ck_production_task_team_position"),
+    )
+
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), primary_key=True)
+    operator_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="RESTRICT"), primary_key=True, index=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ProductionTaskDeliveryRow(Base):
+    """«Сдано N шт» площадки без нормирования (ЖУК). Отмена — отметка, строка остаётся."""
+    __tablename__ = "production_task_deliveries"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_production_task_deliveries_quantity"),
+        CheckConstraint(
+            "(cancelled_at IS NULL AND cancelled_by IS NULL) OR (cancelled_at IS NOT NULL AND cancelled_by IS NOT NULL)",
+            name="ck_production_task_deliveries_cancel",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    site: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    delivered_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class ProductionOperationRow(Base):
@@ -139,6 +204,15 @@ class ProductionAbsenceRow(Base):
     from_date: Mapped[date] = mapped_column(Date(), nullable=False)
     to_date: Mapped[date] = mapped_column(Date(), nullable=False)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    # A registered leave request (0089, identity/leave.py → workflows/leave_calendar.py); NULL — the master's own row.
+    # The master's calendar save never touches these.
+    leave_request_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity_leave_requests.id", ondelete="CASCADE", name="fk_production_absences_leave_request_id"),
+        nullable=True,
+    )
+
+    __table_args__ = (Index("ux_production_absences_leave_request_id", "leave_request_id", unique=True),)
 
 
 class ProductionShiftRow(Base):
@@ -183,11 +257,34 @@ class ProductionPlanProjectRow(Base):
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+def _sql_in(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN ({', '.join(chr(39) + value.replace(chr(39), chr(39) * 2) + chr(39) for value in values)})"
+
+
+# Migration 0101_production_stage_history adds the same checks (and a PostgreSQL/SQLite trigger refusing UPDATE:
+# the journal only grows; DELETE stays for a deleted project). The value column comes first in each check: the
+# head-1 seeder (tests/migrations/seed_any_revision.py) fills a checked column with the first literal.
+PLAN_EVENT_CHECKS = {
+    "ck_production_plan_events_kind": _sql_in("kind", tuple(PLAN_KINDS.values())),
+    "ck_production_plan_events_stage_value": (
+        f"{_sql_in('value', (*KIT_STAGES, PLAN_STAGE_AUTO))} OR kind <> '{PLAN_KINDS['stage']}'"
+    ),
+    "ck_production_plan_events_status_value": (
+        f"{_sql_in('value', (*PROJECT_TERMINALS, PLAN_STAGE_AUTO))} OR kind <> '{PLAN_KINDS['status']}'"
+    ),
+    "ck_production_plan_events_from_value": (
+        f"from_value = '' OR (kind = '{PLAN_KINDS['stage']}' AND {_sql_in('from_value', KIT_STAGES)})"
+        f" OR (kind = '{PLAN_KINDS['status']}' AND {_sql_in('from_value', PROJECT_TERMINALS)})"
+    ),
+}
+
+
 class ProductionPlanEventRow(Base):
     __tablename__ = "production_plan_events"
     __table_args__ = (
         Index("ix_production_plan_events_project_time", "project", "occurred_at", "id"),
         Index("ux_production_plan_events_project_sequence", "project", "sequence", unique=True),
+        *(CheckConstraint(sql, name=name) for name, sql in PLAN_EVENT_CHECKS.items()),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -202,6 +299,8 @@ class ProductionPlanEventRow(Base):
     item_index: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     value: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     field: Mapped[str] = mapped_column(String(32), nullable=False, default="", server_default="")
+    from_value: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    reason: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
 
 
 class ProductionBoxRow(Base):
@@ -441,6 +540,10 @@ class SqlAlchemyProductionRepository:
             inputs.setdefault(item.operation_id, []).append(
                 OperationInput(item.input_operation_id, item.per_unit, item.transfer_batch)
             )
+        team = tuple(self.session.scalars(
+            select(ProductionTaskTeamRow.operator_id).where(ProductionTaskTeamRow.task_id == row.id)
+            .order_by(ProductionTaskTeamRow.position)
+        ))
         return ProductionTask(
             id=row.id, number=row.number, source_idempotency_key=row.source_idempotency_key,
             source_fingerprint=row.source_fingerprint, version=row.version, created_at=row.created_at,
@@ -457,6 +560,9 @@ class SqlAlchemyProductionRepository:
                 stage_key=operation.stage_key,
                 inputs=tuple(inputs.get(operation.id, ())),
             ) for operation in operation_rows),
+            techcard_id=row.techcard_id, techcard_revision=row.techcard_revision,
+            flow_mode=FlowMode(row.flow_mode or FlowMode.MIXED.value),
+            transfer_batch=row.transfer_batch, early_quantity=row.early_quantity, team=team,
         )
 
     def get(self, task_id: UUID) -> ProductionTask | None:
@@ -479,6 +585,26 @@ class SqlAlchemyProductionRepository:
             ))
         rows = self.session.scalars(
             statement.order_by(ProductionTaskRow.created_at.desc(), ProductionTaskRow.id.desc()).limit(limit)
+        )
+        return [self._domain(row) for row in rows]
+
+    def for_project(self, project: str) -> list[ProductionTask]:
+        """Все задания одного проекта (точно по `normalize_project_number`, по индексу ключа), старые первыми."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        rows = self.session.scalars(
+            select(ProductionTaskRow)
+            .where(or_(ProductionTaskRow.project_key == key, ProductionTaskRow.project_key.is_(None)))
+            .order_by(ProductionTaskRow.created_at, ProductionTaskRow.id)
+        )
+        return [self._domain(row) for row in rows if normalize_project_number(row.project) == key]
+
+    def with_status(self, status: ProductionStatus) -> list[ProductionTask]:
+        """Все задания в статусе (по индексу статуса), старые первыми — без общего лимита ленты."""
+        rows = self.session.scalars(
+            select(ProductionTaskRow).where(ProductionTaskRow.status == status.value)
+            .order_by(ProductionTaskRow.created_at, ProductionTaskRow.id)
         )
         return [self._domain(row) for row in rows]
 
@@ -544,7 +670,23 @@ class SqlAlchemyProductionRepository:
         row.status = task.status.value
         row.launched_by = task.launched_by
         row.handed_to = task.handed_to
+        row.techcard_id = task.techcard_id
+        row.techcard_revision = task.techcard_revision
+        row.flow_mode = task.flow_mode.value
+        row.transfer_batch = task.transfer_batch
+        row.early_quantity = task.early_quantity
         self.session.flush()
+        stored_team = tuple(self.session.scalars(
+            select(ProductionTaskTeamRow.operator_id).where(ProductionTaskTeamRow.task_id == task.id)
+            .order_by(ProductionTaskTeamRow.position)
+        ))
+        if stored_team != task.team:
+            self.session.execute(delete(ProductionTaskTeamRow).where(ProductionTaskTeamRow.task_id == task.id))
+            self.session.flush()
+            self.session.add_all(
+                ProductionTaskTeamRow(task_id=task.id, operator_id=operator_id, position=position)
+                for position, operator_id in enumerate(task.team)
+            )
         existing = {item.id: item for item in self.session.scalars(select(ProductionOperationRow).where(ProductionOperationRow.task_id == task.id))}
         # Рёбра графа переписываются целиком, и только когда граф изменился (назначения его не трогают).
         edge = ProductionOperationInputRow
@@ -600,7 +742,7 @@ class SqlAlchemyProductionRepository:
             return set()
         found: set[UUID] = set()
         for column in (ProductionBoxRow.task_id, ProductionWorkSessionRow.task_id,
-                       ProductionOutputRow.task_id, ProductionDefectRow.task_id):
+                       ProductionOutputRow.task_id, ProductionDefectRow.task_id, ProductionTaskDeliveryRow.task_id):
             found.update(self.session.scalars(select(column).where(column.in_(ids)).distinct()))
         share = ProductionOperationOperatorRow
         found.update(self.session.scalars(
@@ -617,8 +759,55 @@ class SqlAlchemyProductionRepository:
         self.session.execute(delete(ProductionOperationInputRow).where(ProductionOperationInputRow.operation_id.in_(operations)))
         self.session.execute(delete(ProductionOperationOperatorRow).where(ProductionOperationOperatorRow.operation_id.in_(operations)))
         self.session.execute(delete(ProductionSerialRow).where(ProductionSerialRow.task_id == task_id))
+        self.session.execute(delete(ProductionTaskTeamRow).where(ProductionTaskTeamRow.task_id == task_id))
         self.session.execute(delete(ProductionOperationRow).where(ProductionOperationRow.task_id == task_id))
         self.session.execute(delete(ProductionTaskRow).where(ProductionTaskRow.id == task_id))
+
+
+class SqlAlchemyDeliveryRepository:
+    """«Сдано N шт» площадки (ЖУК) по заданиям."""
+
+    def __init__(self, session: Session): self.session = session
+
+    @staticmethod
+    def _domain(row: ProductionTaskDeliveryRow) -> TaskDelivery:
+        return TaskDelivery(
+            id=row.id, task_id=row.task_id, site=row.site, quantity=row.quantity,
+            delivered_at=row.delivered_at, delivered_by=row.delivered_by,
+            cancelled_at=row.cancelled_at, cancelled_by=row.cancelled_by,
+        )
+
+    def for_task(self, task_id: UUID) -> list[TaskDelivery]:
+        rows = self.session.scalars(
+            select(ProductionTaskDeliveryRow).where(ProductionTaskDeliveryRow.task_id == task_id)
+            .order_by(ProductionTaskDeliveryRow.delivered_at, ProductionTaskDeliveryRow.id)
+        )
+        return [self._domain(row) for row in rows]
+
+    def totals(self, task_ids) -> dict[UUID, int]:
+        """Сдано (без отменённых) по заданиям — одним запросом для списка заданий."""
+        ids = list(task_ids)
+        if not ids:
+            return {}
+        rows = self.session.execute(
+            select(ProductionTaskDeliveryRow.task_id, func.sum(ProductionTaskDeliveryRow.quantity))
+            .where(ProductionTaskDeliveryRow.task_id.in_(ids), ProductionTaskDeliveryRow.cancelled_at.is_(None))
+            .group_by(ProductionTaskDeliveryRow.task_id)
+        )
+        return {task_id: int(total or 0) for task_id, total in rows}
+
+    def save(self, delivery: TaskDelivery) -> None:
+        row = self.session.get(ProductionTaskDeliveryRow, delivery.id)
+        if row is None:
+            row = ProductionTaskDeliveryRow(id=delivery.id)
+            self.session.add(row)
+        row.task_id = delivery.task_id
+        row.site = delivery.site
+        row.quantity = delivery.quantity
+        row.delivered_at = delivery.delivered_at
+        row.delivered_by = delivery.delivered_by
+        row.cancelled_at = delivery.cancelled_at
+        row.cancelled_by = delivery.cancelled_by
 
 
 class SqlAlchemyOperatorRepository:
@@ -648,7 +837,9 @@ class SqlAlchemyCalendarRepository:
 
     def absences(self) -> list[Absence]:
         rows = self.session.scalars(select(ProductionAbsenceRow).order_by(ProductionAbsenceRow.from_date, ProductionAbsenceRow.id))
-        return [Absence(row.id, row.operator_id, row.from_date, row.to_date, row.kind) for row in rows]
+        return [
+            Absence(row.id, row.operator_id, row.from_date, row.to_date, row.kind, row.leave_request_id) for row in rows
+        ]
 
     def shift(self) -> WorkShift:
         row = self.session.get(ProductionShiftRow, 1)
@@ -663,14 +854,47 @@ class SqlAlchemyCalendarRepository:
             effective_seconds=row.effective_seconds,
         )
 
+    def replace_leave_absences(self, absences: tuple[Absence, ...]) -> int:
+        """The absences of registered leave requests become exactly `absences` (one row per request); the master's rows
+        are untouched. Returns how many rows were added, changed or removed."""
+        wanted = {item.leave_request_id: item for item in absences if item.leave_request_id is not None}
+        rows = {
+            row.leave_request_id: row for row in self.session.scalars(
+                select(ProductionAbsenceRow).where(ProductionAbsenceRow.leave_request_id.is_not(None))
+            )
+        }
+        changed = 0
+        for request_id, row in rows.items():
+            item = wanted.get(request_id)
+            if item is None:
+                self.session.delete(row)
+                changed += 1
+            elif (row.operator_id, row.from_date, row.to_date, row.kind) != (
+                item.operator_id, item.from_date, item.to_date, item.kind,
+            ):
+                row.operator_id, row.from_date, row.to_date, row.kind = (
+                    item.operator_id, item.from_date, item.to_date, item.kind,
+                )
+                changed += 1
+        for request_id, item in wanted.items():
+            if request_id not in rows:
+                self.session.add(ProductionAbsenceRow(
+                    id=item.id, operator_id=item.operator_id, from_date=item.from_date, to_date=item.to_date,
+                    kind=item.kind, leave_request_id=request_id,
+                ))
+                changed += 1
+        self.session.flush()
+        return changed
+
     def replace(self, holidays: frozenset[date], absences: tuple[Absence, ...], shift: WorkShift) -> None:
         self.session.execute(delete(ProductionHolidayRow))
-        self.session.execute(delete(ProductionAbsenceRow))
+        # The master's rows only: the absences of registered leave requests stay as they are.
+        self.session.execute(delete(ProductionAbsenceRow).where(ProductionAbsenceRow.leave_request_id.is_(None)))
         self.session.add_all(ProductionHolidayRow(day=day) for day in sorted(holidays))
         self.session.add_all(ProductionAbsenceRow(
             id=item.id, operator_id=item.operator_id, from_date=item.from_date,
             to_date=item.to_date, kind=item.kind,
-        ) for item in absences)
+        ) for item in absences if item.leave_request_id is None)
         def minutes(value: time) -> int:
             return value.hour * 60 + value.minute
         row = self.session.get(ProductionShiftRow, 1)
@@ -742,7 +966,14 @@ class SqlAlchemyPlanEventRepository:
             who=row.who, kind=row.kind, blocker=row.blocker,
             text=row.text, deadline=row.deadline, sequence=row.sequence,
             item_index=row.item_index, value=row.value, field=row.field,
+            from_value=row.from_value, reason=row.reason,
         )
+
+    def last_sequence(self, project: str) -> int:
+        """The newest sequence of the project's journal (0 — empty): the version a stage change is checked against."""
+        return self.session.scalar(select(func.max(ProductionPlanEventRow.sequence)).where(
+            ProductionPlanEventRow.project == project,
+        )) or 0
 
     def list(self, project: str | None = None, limit: int = 10_000) -> list[PlanEvent]:
         statement = select(ProductionPlanEventRow)
@@ -779,15 +1010,13 @@ class SqlAlchemyPlanEventRepository:
         ).rowcount or 0
 
     def add(self, event: PlanEvent) -> PlanEvent:
-        sequence = self.session.scalar(select(func.max(ProductionPlanEventRow.sequence)).where(
-            ProductionPlanEventRow.project == event.project,
-        )) or 0
-        stored = replace(event, sequence=sequence + 1)
+        stored = replace(event, sequence=self.last_sequence(event.project) + 1)
         self.session.add(ProductionPlanEventRow(
             id=stored.id, project=stored.project, sequence=stored.sequence,
             occurred_at=stored.occurred_at, who=stored.who, kind=stored.kind,
             blocker=stored.blocker, text=stored.text, deadline=stored.deadline,
             item_index=stored.item_index, value=stored.value, field=stored.field,
+            from_value=stored.from_value, reason=stored.reason,
         ))
         return stored
 
@@ -1352,6 +1581,7 @@ class SqlAlchemyProductionUnitOfWork:
         self.defects = SqlAlchemyDefectRepository(self.session)
         self.instruments = SqlAlchemyInstrumentRepository(self.session)
         self.serials = SqlAlchemySerialRepository(self.session)
+        self.deliveries = SqlAlchemyDeliveryRepository(self.session)
         self.qc = SqlAlchemyQcRepository(self.session)
         self.genealogy = SqlAlchemyGenealogyRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)

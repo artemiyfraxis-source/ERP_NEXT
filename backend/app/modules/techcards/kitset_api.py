@@ -18,18 +18,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
-from app.modules.fulfillment.application import free_for_project, project_reserve_by_lot
-from app.modules.fulfillment.domain import FulfillmentValidationError
+from app.modules.fulfillment.application import ConcurrentFulfillmentUpdate, free_for_project, project_reserve_by_lot
+from app.modules.fulfillment.domain import DuplicateKitRequest, FulfillmentValidationError
 from app.modules.production.domain import ProductionValidationError
 from app.modules.requests.application import CalcSheetError
 from app.modules.requests.domain import ValidationError as RequestValidationError, unit_for_type
+from app.modules.warehouse.domain import WarehouseValidationError
 from app.modules.production.plan import (
-    KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, summarize_journal,
+    KIT_STAGES, PLAN_BLOCKERS, PROJECT_TERMINALS, TC_REVIEW_VALUES, normalize_project_number, stage_plan_message,
+    summarize_journal,
 )
-from app.modules.production.plan_application import AddPlanEventCommand, add_plan_event
+from app.modules.production.plan_application import AddPlanEventCommand, StageChangeConflict, add_plan_event
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import file_response
+from app.workflows import kitset_reserve as reserve_flow
 from app.workflows import project_kitset as flow
 from app.workflows import project_track as track_flow
 
@@ -38,6 +41,8 @@ from .kitsets import (
     Kitset,
     KitsetNotFound,
     KitsetValidationError,
+    document_json,
+    document_kind,
     item_id,
     sort_kitsets,
 )
@@ -107,9 +112,16 @@ def _run(operation):
     except KitsetNotFound as error:
         # «Не найдена» — не сбой: плитка висела на открытом экране после сноса. gone → клиент вернётся к списку.
         raise HTTPException(status_code=404, detail={"message": str(error), "gone": True}) from error
-    except (KitsetValidationError, TechcardValidationError, ProductionValidationError, FulfillmentValidationError) as error:
+    except DuplicateKitRequest as error:  # every КБ already has its kit request
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (
+        KitsetValidationError, TechcardValidationError, ProductionValidationError, FulfillmentValidationError,
+        WarehouseValidationError,
+    ) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    except (IntegrityError, StaleDataError) as error:
+    except (ConcurrentFulfillmentUpdate, StageChangeConflict) as error:  # changed since the screen was loaded
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (IntegrityError, StaleDataError, reserve_flow.ConcurrentKitsetUpdate) as error:
         raise HTTPException(status_code=409, detail="Карточка проекта изменена конкурентно — обновите") from error
 
 
@@ -127,7 +139,7 @@ def _facts(request: Request) -> flow.KitsetFacts:
 def _kb_stage(stage) -> dict[str, Any]:
     return {
         "index": stage.item_index, "status": stage.status, "manual": stage.manual,
-        "tc": stage.tc, "kit": stage.kit,
+        "tc": stage.tc, "kit": stage.kit, "skipped": list(stage.skipped),
         "review": None if stage.review is None else {
             "value": stage.review.value, "text": stage.review.text, "who": stage.review.who,
         },
@@ -221,12 +233,16 @@ def load(
         actor=principal.actor, now=now,
     ), techcards_factory(request), production_factory(request), shipping_factory(request),
         _name_queue(request)))
+    # «Обновить из расчёта»: a row dropped from the calculation gives its ГРН reserve back, a new run re-counts it.
+    reserve_error = reserve_flow.resync_project(
+        result.project, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+    )
     requests, requests_error = _project_requests(payload, request, principal, result.project, now)
     return {"res": {
         "project": result.project, "assemblies": result.assemblies, "lines": result.lines,
         "erp": result.erp, "erp_error": result.erp_error, "ship": result.ship, "ship_error": result.ship_error,
         "ship_to_error": result.ship_to_error, "deadline_error": result.deadline_error,
-        "requests": requests, "requests_error": requests_error,
+        "requests": requests, "requests_error": requests_error, "reserve_error": reserve_error,
     }}
 
 
@@ -274,6 +290,7 @@ def lots(
         "lot_id": str(lot.id), "warehouse": lot.warehouse, "grn": lot.grn, "package": lot.package,
         "article": lot.article, "name": lot.name, "unit": lot.unit,
         "storage_location": lot.storage_location, "available": _number(free_for_project(lot, held)),
+        "version": lot.version,  # sent back with the pick: a lot changed since the list was loaded is refused (409)
         **({"reserved": _number(held[lot.id])} if held.get(lot.id) else {}),
     } for lot in found if free_for_project(lot, held) > 0]}
 
@@ -295,6 +312,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
     journal = summarize_journal(event for event in facts.events if normalize_project_number(event.project) == canon).get(canon)
     active = journal.blocker if journal is not None else None
     snapshot = next((item for item in facts.projects if normalize_project_number(item.project) == canon), None)
+    reserves = reserve_flow.reserves_by_row(kitset.project, fulfillment_factory(request))
     with techcards_factory(request)() as uow:
         documents = uow.kitsets.documents(kitset.project)
     return {
@@ -308,6 +326,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
         "journal": [{
             "id": str(event.id), "occurred_at": event.occurred_at.isoformat(), "who": event.who, "kind": event.kind,
             "blocker": event.blocker, "text": event.text, "item_index": event.item_index, "value": event.value,
+            "from_value": event.from_value, "reason": event.reason,
         } for event in (journal.events[:30] if journal is not None else ())],
         "stages": list(KIT_STAGES), "review_values": list(TC_REVIEW_VALUES),
         "terminals": list(PROJECT_TERMINALS), "blockers": list(PLAN_BLOCKERS),
@@ -316,7 +335,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
             "item": item_id(kitset.project, assembly.index),
             "stage": _kb_stage(stage_of[assembly.index]) if assembly.index in stage_of else None,
             "techcard": cards.get(assembly.index),
-            "kd": [_document_json(document) for document in documents if document.item_index == assembly.index],
+            "kd": [document_json(document) for document in documents if document.item_index == assembly.index],
             "components": [{
                 "art": component.article, "type": component.type, "name": component.name, "link": component.link,
                 "per": _number(component.per_unit), "scrap": _number(component.scrap_pct),
@@ -326,8 +345,20 @@ def _card(request: Request, kitset: Kitset) -> dict:
                     "warehouse": component.lot.warehouse, "grn": component.lot.grn,
                     "package": component.lot.package,
                 },
+                "reserve": _reserve_json(reserves.get(reserve_flow.row_key(assembly.index, component.article))),
             } for component in assembly.components],
         } for assembly in kitset.assemblies],
+    }
+
+
+def _reserve_json(reserves) -> dict | None:
+    """What the row's ГРН holds for its КБ right now (the techcard reserve); None — nothing held."""
+    if not reserves:
+        return None
+    first = reserves[0]
+    return {
+        "quantity": _number(sum((item.quantity for item in reserves), Decimal("0"))), "unit": first.unit,
+        "lot_id": str(first.lot_id), "warehouse": first.warehouse, "grn": first.grn, "package": first.package,
     }
 
 
@@ -363,23 +394,21 @@ def save_lines(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKitsetSave`: autosave of ONE spec row — an edit of one cell must not overwrite twenty others."""
+    """`portalKitsetSave`: autosave of ONE spec row — an edit of one cell must not overwrite twenty others.
+    A picked ГРН is reserved for the row's КБ at once (a re-pick moves the reserve, a cleared ГРН releases it);
+    `lot.version` from the picker refuses a lot changed since the list was loaded (409)."""
 
     def save():
-        with techcards_factory(request)() as uow:
-            current = uow.kitsets.get(project)
-            if current is None:
-                raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
-            edits = []
-            for item in payload.edits:
-                edit = item.model_dump(exclude_unset=True)
-                if "lot" in edit and edit["lot"] is None:
-                    edit["lot"] = {}
-                edits.append(edit)
-            updated, count = current.with_edits(edits, who=principal.actor.name, now=now)
-            uow.kitsets.save(updated)
-            uow.commit()
-            return {"project": updated.project, "updated": count}
+        edits = []
+        for item in payload.edits:
+            edit = item.model_dump(exclude_unset=True)
+            if "lot" in edit and edit["lot"] is None:
+                edit["lot"] = {}
+            edits.append(edit)
+        updated, count = reserve_flow.save_rows(
+            project, edits, principal.actor, now, techcards_factory(request), fulfillment_factory(request),
+        )
+        return {"project": updated.project, "updated": count}
 
     return {"res": _run(save)}
 
@@ -390,7 +419,7 @@ def supply(
     request: Request,
     _principal: Annotated[Principal, Depends(projects_view_principal)],
 ) -> dict:
-    """`portalKitsetSupply`: что по позициям закуплено, что едет, что есть на складе и чего не хватает."""
+    """`portalKitsetSupply`: что по позициям закуплено, что едет, что есть на складе (и без ГРН) и чего не хватает."""
     kitset = _kitset(request, project)
     lines, _requests = flow.project_supply(
         kitset, requests_factory(request), procurement_factory(request), fulfillment_factory(request),
@@ -398,7 +427,8 @@ def supply(
     return {"project": kitset.project, "lines": [{
         "art": line.article, "name": line.name, "kbs": list(line.kbs), "need": _number(line.need),
         "unit": unit_for_type(line.item_type),
-        "free": _number(line.free), "ordered": _number(line.ordered), "kitted": _number(line.kitted),
+        "free": _number(line.free), "off_book": _number(line.off_book), "ordered": _number(line.ordered),
+        "kitted": _number(line.kitted),
         "short": _number(line.short),
         "grn": line.grn, "stage": line.stage, "received": line.received,
         "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
@@ -421,7 +451,7 @@ def order_missing(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """Заявки на закупку недостающего: Нужно − Свободно − В закупке по каждой позиции; повтор не дублирует."""
+    """Заявки на закупку недостающего: Нужно − Свободно − Без ГРН − В закупке по каждой позиции; повтор не дублирует."""
     if principal.permissions.get("newrequest") != "edit":
         raise HTTPException(status_code=403, detail="Раздел «Оформить заявку» вам не открыт")
     factory = requests_factory(request)
@@ -467,6 +497,20 @@ class IssuePayload(BaseModel):
     deadline: date | None = None
 
 
+@router.get("/{project}/issue")
+def issue_state(
+    project: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """Before «Отправить на комплектацию»: per КБ — its live kit request (number, status) or none."""
+    factory = fulfillment_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    return {"project": kitset.project, "assemblies": flow.kitset_issue_state(kitset, factory)}
+
+
 @router.post("/{project}/issue")
 def issue(
     project: str,
@@ -481,7 +525,12 @@ def issue(
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     kitset = _kitset(request, project)
     result = _run(lambda: flow.issue_from_kitset(kitset, payload.deadline, principal.actor, now, factory))
-    return {"created": result.created, "skipped": result.skipped, "message": result.message}
+    # The kits took the КБ's ГРН reserves over; what a kit did not take goes back to the lot, never held twice.
+    reserve_error = reserve_flow.resync_project(kitset.project, principal.actor, now, techcards_factory(request), factory)
+    return {
+        "created": result.created, "skipped": result.skipped, "already": result.already, "message": result.message,
+        "reserve_error": reserve_error,
+    }
 
 
 @router.delete("/{project}")
@@ -491,13 +540,18 @@ def delete(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKitsetDelete`: проект уходит целиком во всех разделах сразу, с хвостами без движения."""
-    return {"res": _run(lambda: flow.delete_kitset(
+    """`portalKitsetDelete`: проект уходит целиком во всех разделах сразу, с хвостами без движения; резервы ГРН его
+    спецификации возвращаются партиям."""
+    result = _run(lambda: flow.delete_kitset(
         project, principal.actor, now,
         techcards_factory(request), production_factory(request), shipping_factory(request),
         fulfillment_uow=fulfillment_factory(request), requests_uow=requests_factory(request),
         procurement_uow=procurement_factory(request),
-    ))}
+    ))
+    result["reserve_error"] = reserve_flow.release_project(
+        result["project"], principal.actor, now, fulfillment_factory(request),
+    )
+    return {"res": result}
 
 
 class MarkPayload(BaseModel):
@@ -505,6 +559,33 @@ class MarkPayload(BaseModel):
     kind: str = Field(min_length=1, max_length=16)
     value: str = Field(default="", max_length=64)
     text: str = Field(default="", max_length=5000)
+    # Ручной этап назад — причина обязательна (для этапа годится и `text`).
+    reason: str = Field(default="", max_length=2000)
+
+
+def _stage_state(request: Request, kitset: Kitset, kb: str = "") -> flow.ProjectStageState:
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    return flow.load_project_stage_state(
+        kitset.project, production=factory, techcards=techcards_factory(request),
+        fulfillment=fulfillment_factory(request), shipping=shipping_factory(request),
+        item_indexes=[assembly.index for assembly in kitset.assemblies], kb=kb,
+    )
+
+
+@router.get("/{project}/status/preview")
+def status_preview(
+    project: str,
+    request: Request,
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+    value: Annotated[str, Query(min_length=1, max_length=64)],
+    kb: Annotated[str, Query(max_length=64)] = "",
+) -> dict:
+    """Что сделает ручная смена этапа (проекта или одной КБ) — до записи: по КБ «было → станет», пропущенные этапы,
+    что смена не трогает (задания цеха, заявки на комплектацию, непоставленная ГП, блокер), нужна ли причина."""
+    kitset = _kitset(request, project)
+    return _run(lambda: flow.preview_project_stage(_stage_state(request, kitset, kb), value, kb))
 
 
 @router.post("/{project}/marks")
@@ -515,13 +596,23 @@ def mark(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKitMark`: ручной этап КБ и проверка ТК — в журнал проекта, как в «Производственном плане»."""
+    """`portalKitMark`: ручной этап КБ (через единую смену этапа) и проверка ТК — в журнал проекта."""
     if payload.kind not in {"stage", "tcReview"}:
         raise HTTPException(status_code=422, detail="Неизвестный вид отметки.")
     factory = production_factory(request)
     if factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     kitset = _kitset(request, project)
+    if payload.kind == "stage":
+        change = _run(lambda: flow.change_project_stage(flow.ChangeProjectStageCommand(
+            project=kitset.project, value=payload.value, kb=payload.kb, reason=payload.reason or payload.text,
+            actor=principal.actor, now=now,
+        ), _stage_state(request, kitset, payload.kb), factory))
+        last = change.events[-1] if change.events else None
+        return {
+            "msg": stage_plan_message(change.plan), "change": change.payload(),
+            "event": None if last is None else {"kind": last.kind, "value": last.value, "item_index": last.item_index},
+        }
     event = _run(lambda: add_plan_event(AddPlanEventCommand(
         project=kitset.project, kind=payload.kind, blocker="", text=payload.text, deadline=None,
         known_projects=(kitset.project,), actor=principal.actor, now=now,
@@ -534,6 +625,8 @@ class StatusPayload(BaseModel):
     action: str = Field(min_length=1, max_length=16)
     value: str = Field(default="", max_length=64)
     text: str = Field(default="", max_length=5000)
+    # Этап назад — причина обязательна (для этапа годится и `text`).
+    reason: str = Field(default="", max_length=2000)
 
 
 @router.post("/{project}/status")
@@ -544,16 +637,22 @@ def change_status(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """Статус проекта в один клик: этап (на все КБ) / «авто» / Отказ·Слился·Отменён, блокер или его снятие."""
+    """Статус проекта в один клик: этап (поднимает отставшие КБ; назад — с причиной) / «авто» / Отказ·Слился·Отменён,
+    блокер или его снятие."""
     factory = production_factory(request)
     if factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     kitset = _kitset(request, project)
-    events = _run(lambda: flow.change_project_status(flow.ChangeProjectStatusCommand(
+    stage = payload.action == flow.PROJECT_STATUS and payload.value not in PROJECT_TERMINALS
+    result = _run(lambda: flow.change_project_status(flow.ChangeProjectStatusCommand(
         project=kitset.project, item_indexes=tuple(assembly.index for assembly in kitset.assemblies),
-        action=payload.action, value=payload.value, text=payload.text, actor=principal.actor, now=now,
-    ), factory))
-    return {"events": len(events), "card": _card(request, kitset)}
+        action=payload.action, value=payload.value,
+        text=(payload.reason or payload.text) if stage else payload.text, actor=principal.actor, now=now,
+    ), factory, techcards=techcards_factory(request), fulfillment=fulfillment_factory(request),
+        shipping=shipping_factory(request)))
+    if isinstance(result, flow.ProjectStageChange):
+        return {"events": len(result.events), "change": result.payload(), "card": _card(request, kitset)}
+    return {"events": len(result), "change": None, "card": _card(request, kitset)}
 
 
 class JournalPayload(BaseModel):
@@ -591,16 +690,6 @@ class DocumentPayload(BaseModel):
     content_b64: str = Field(min_length=1)
 
 
-def _document_json(document) -> dict:
-    """A row of the «КД» register as `tcKdByAssembly_` hands it to the card. `stored` — the bytes are in ERP (the
-    card links the download); otherwise `url` is the archived Drive link of a row from before the move, read-only."""
-    return {
-        "id": str(document.id), "index": document.item_index, "name": document.file_name,
-        "size": document.size, "stored": document.stored, "url": document.url or None,
-        "uploaded_at": document.uploaded_at.isoformat(), "who": document.uploaded_by,
-    }
-
-
 @router.post("/{project}/documents", status_code=201)
 def add_document(
     project: str,
@@ -615,7 +704,7 @@ def add_document(
         project, payload.index, payload.file_name, payload.content_type, content,
         principal.actor, now, techcards_factory(request),
     ))
-    return {"res": _document_json(document)}
+    return {"res": document_json(document)}
 
 
 @router.get("/{project}/documents/{document_id}")
@@ -632,7 +721,7 @@ def document(
     if found is None:
         raise HTTPException(status_code=404, detail="Файл КД не найден")
     meta, content = found
-    return file_response(content, meta.content_type or "application/octet-stream", meta.file_name)
+    return file_response(content, meta.file_name)
 
 
 @router.delete("/{project}/documents/{document_id}")
@@ -643,7 +732,15 @@ def delete_document(
     principal: Annotated[Principal, Depends(projects_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
 ) -> dict:
-    """`portalKdDelete`: отвязать вложение — строка реестра и файл уходят из ERP."""
+    """`portalKdDelete`: отвязать вложение — строка реестра и файл уходят из ERP. Чертёж жгута так не удаляется: его
+    отвязывают с возвратом (`harness_api.unlink_harness` / `restore_harness`)."""
+    kitset = _kitset(request, project)
+    with techcards_factory(request)() as uow:
+        document = uow.kitsets.document(kitset.project, document_id)
+    if document is not None and document_kind(document) != "file":
+        raise HTTPException(status_code=409, detail=(
+            "Чертёж жгута не удаляется: его отвязывают от позиции («Отвязать»), вернуть можно кнопкой «Вернуть»"
+        ))
     deleted = _run(lambda: flow.detach_document(
         project, document_id, principal.actor, now, techcards_factory(request),
     ))

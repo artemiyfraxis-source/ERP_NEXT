@@ -1,0 +1,66 @@
+/* Scoped under .harness-root: generated from TECHMAP-GRAPHER CSS (e63befb), UI colours mapped to ERP tokens. */
+.harness-root .e4-wire-menu {
+  --e4wm-accent: var(--primary);
+  width: 274px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  font: 10px/1.35 Arial, sans-serif;
+  box-shadow: 0 9px 26px color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+.harness-root .e4-wire-menu.floating { position: absolute; z-index: 12; transform: translate(10px, 10px); }
+.harness-root .e4wm-header { min-height: 44px; padding: 8px 9px 8px 11px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--border); background: var(--panel-soft); }
+.harness-root .e4wm-header > div { min-width: 0; display: grid; gap: 2px; }
+.harness-root .e4wm-header span { color: var(--muted-foreground); font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.harness-root .e4wm-header strong { color: var(--foreground); font-size: 11px; }
+.harness-root .e4wm-close { width: 25px; height: 25px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground); font-size: 17px; cursor: pointer; }
+.harness-root .e4wm-close:hover { background: var(--sheet-selected); color: var(--muted-foreground); }
+.harness-root .e4wm-section { margin: 0; padding: 10px 11px; display: grid; gap: 7px; border: 0; border-bottom: 1px solid var(--border); }
+.harness-root .e4wm-section legend { padding: 0; color: var(--muted-foreground); font-size: 9px; font-weight: 800; }
+.harness-root .e4wm-scope-hint { margin: 0; color: var(--muted-foreground); font-size: 8px; }
+.harness-root .e4wm-crossing-options { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.harness-root .e4wm-crossing-options button { min-height: 50px; padding: 5px; display: grid; grid-template-columns: 38px 1fr; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--muted-foreground); font-size: 9px; cursor: pointer; }
+.harness-root .e4wm-crossing-options button:hover:not(:disabled) { border-color: var(--muted-foreground); background: var(--panel-soft); }
+.harness-root .e4wm-crossing-options button.active { border-color: var(--muted-foreground); background: var(--sheet-selected); color: var(--primary); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 8%, transparent); }
+.harness-root .e4wm-crossing-options svg { width: 36px; height: 26px; }
+.harness-root .e4wm-crossing-options path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.harness-root .e4wm-feature-toggle { width: 100%; min-height: 38px; padding: 4px 2px; display: grid; grid-template-columns: 29px minmax(0, 1fr) 32px; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted-foreground); text-align: left; cursor: pointer; }
+.harness-root .e4wm-feature-toggle > span:nth-child(2) { display: grid; gap: 1px; }
+.harness-root .e4wm-feature-toggle strong { font-size: 10px; }
+.harness-root .e4wm-feature-toggle small { color: var(--muted-foreground); font-size: 8px; font-weight: 500; }
+.harness-root .e4wm-feature-icon { width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-soft); color: var(--muted-foreground); font: 800 18px/1 Georgia, serif; }
+.harness-root .e4wm-feature-icon.screen { border-radius: 50%; font-size: 21px; }
+.harness-root .e4wm-switch { position: relative; width: 29px; height: 16px; border-radius: 10px; background: var(--border); transition: background .12s ease; }
+.harness-root .e4wm-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--card); box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 25%, transparent); transition: transform .12s ease; }
+.harness-root .e4wm-feature-toggle.active .e4wm-switch { background: var(--e4wm-accent); }
+.harness-root .e4wm-feature-toggle.active .e4wm-switch::after { transform: translateX(13px); }
+.harness-root .e4wm-feature-toggle.active .e4wm-feature-icon { border-color: var(--muted-foreground); background: var(--sheet-selected); color: var(--primary); }
+.harness-root .e4wm-hint { margin: -3px 0 1px 35px; color: var(--muted-foreground); font-size: 8px; }
+.harness-root .e4wm-feature-settings { margin-left: 35px; padding-top: 7px; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 7px; border-top: 1px solid var(--accent); }
+.harness-root .e4wm-setting-label { color: var(--muted-foreground); font-size: 8px; font-weight: 750; }
+.harness-root .e4wm-variant-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.harness-root .e4wm-variant-buttons button { height: 31px; padding: 2px 5px; display: flex; align-items: center; justify-content: center; gap: 3px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); color: var(--muted-foreground); font-size: 8px; cursor: pointer; }
+.harness-root .e4wm-variant-buttons button.active { border-color: var(--muted-foreground); background: var(--sheet-selected); color: var(--primary); }
+.harness-root .e4wm-variant-buttons svg { width: 40px; height: 18px; }
+.harness-root .e4wm-variant-buttons path { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.harness-root .e4wm-number-field { grid-column: 1 / 3; display: grid; grid-template-columns: 1fr 80px; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 8px; }
+.harness-root .e4wm-number-field input { width: 80px; height: 27px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--foreground); font-size: 9px; }
+.harness-root .e4wm-screen-settings { margin-left: 35px; padding-top: 7px; display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; border-top: 1px solid var(--accent); color: var(--muted-foreground); font-size: 8px; }
+.harness-root .e4wm-screen-side-label { grid-column: 1 / 3; font-weight: 750; }
+.harness-root .e4wm-screen-side { grid-column: 1 / 3; margin-bottom: 5px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
+.harness-root .e4wm-screen-side button { min-height: 28px; padding: 3px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); color: var(--muted-foreground); font: inherit; cursor: pointer; }
+.harness-root .e4wm-screen-side button.active { border-color: var(--muted-foreground); background: var(--sheet-selected); color: var(--primary); font-weight: 800; }
+.harness-root .e4wm-screen-settings output { color: var(--primary); font-weight: 800; }
+.harness-root .e4wm-screen-settings input { grid-column: 1 / 3; width: 100%; accent-color: var(--e4wm-accent); }
+.harness-root .e4wm-screen-settings .start,
+.harness-root .e4wm-screen-settings .end { color: var(--muted-foreground); font-size: 7px; }
+.harness-root .e4wm-screen-settings .end { text-align: right; }
+.harness-root .e4wm-footer { padding: 8px 11px; }
+.harness-root .e4wm-footer button { width: 100%; min-height: 30px; border: 1px solid var(--border); border-radius: 5px; background: var(--card); color: var(--muted-foreground); font-size: 9px; font-weight: 700; cursor: pointer; }
+.harness-root .e4wm-footer button:hover:not(:disabled) { border-color: var(--muted-foreground); background: var(--panel-soft); color: var(--primary); }
+.harness-root .e4-wire-menu button:focus-visible,
+.harness-root .e4-wire-menu input:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 28%, transparent); outline-offset: 1px; }
+.harness-root .e4-wire-menu button:disabled,
+.harness-root .e4-wire-menu fieldset:disabled { opacity: .5; cursor: default; }

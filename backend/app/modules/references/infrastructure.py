@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import UUID
+from decimal import Decimal
+from typing import Sequence
+from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, Text, Uuid, delete, false as sa_false, func, select
+from sqlalchemy import (
+    Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, Uuid,
+    delete, false as sa_false, func, select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
+from .cable_structure import (
+    LAYERS, PARAMS, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, HookupWire, WireGauge,
+)
 from .domain import ReferenceEntry, ReferenceKind, TechOperationRecord, TechOperationTab
 
 
@@ -129,6 +137,315 @@ class SqlAlchemyTechOperationRepository:
         return {"schema_version": row.schema_version, "source_updated_at": row.source_updated_at, "imported_at": row.imported_at, "record_count": row.record_count}
 
 
+# --- structured cable reference (cable_structure.py; migration 0089) ---
+
+class WireGaugeRow(Base):
+    __tablename__ = "wire_gauges"
+    __table_args__ = (
+        UniqueConstraint("awg", name="ux_wire_gauges_awg"),
+        UniqueConstraint("section_mm2", name="ux_wire_gauges_section"),
+        CheckConstraint("section_mm2 > 0", name="ck_wire_gauges_section_positive"),
+        CheckConstraint("conductor_d_mm IS NULL OR conductor_d_mm > 0", name="ck_wire_gauges_conductor_positive"),
+        CheckConstraint("awg IS NULL OR awg <> ''", name="ck_wire_gauges_awg_not_blank"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    awg: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    section_mm2: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    conductor_d_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    strands: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
+class HookupWireRow(Base):
+    __tablename__ = "hookup_wires"
+    __table_args__ = (
+        UniqueConstraint("mark_key", name="ux_hookup_wires_mark_key"),
+        CheckConstraint("series <> ''", name="ck_hookup_wires_series_not_blank"),
+        CheckConstraint("outer_d_mm IS NULL OR outer_d_mm > 0", name="ck_hookup_wires_outer_positive"),
+        CheckConstraint("voltage_v IS NULL OR voltage_v > 0", name="ck_hookup_wires_voltage_positive"),
+        CheckConstraint("temp_min_c IS NULL OR temp_max_c IS NULL OR temp_min_c < temp_max_c", name="ck_hookup_wires_temp_range"),
+        CheckConstraint("insulation_thickness_mm IS NULL OR insulation_thickness_mm > 0",
+                        name="ck_hookup_wires_insulation_thickness_positive"),
+        Index("ix_hookup_wires_gauge_id", "gauge_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    mark: Mapped[str] = mapped_column(String(512), nullable=False)
+    mark_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    series: Mapped[str] = mapped_column(String(255), nullable=False)
+    gauge_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("wire_gauges.id", ondelete="RESTRICT"), nullable=False)
+    insulation: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
+    outer_d_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    voltage_v: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    temp_min_c: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    temp_max_c: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    conductor_material: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    insulation_thickness_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CoaxCableRow(Base):
+    __tablename__ = "coax_cables"
+    __table_args__ = (
+        UniqueConstraint("name_key", name="ux_coax_cables_name_key"),
+        CheckConstraint("name <> ''", name="ck_coax_cables_name_not_blank"),
+        CheckConstraint("span_from_mhz IS NULL OR span_from_mhz > 0", name="ck_coax_cables_span_from_positive"),
+        CheckConstraint("span_to_ghz IS NULL OR span_to_ghz > 0", name="ck_coax_cables_span_to_positive"),
+        CheckConstraint("span_from_mhz IS NULL OR span_to_ghz IS NULL OR span_from_mhz < span_to_ghz * 1000",
+                        name="ck_coax_cables_span_order"),
+        CheckConstraint("fc_ghz IS NULL OR fc_ghz > 0", name="ck_coax_cables_fc_positive"),
+        CheckConstraint("max_operating_ghz IS NULL OR max_operating_ghz > 0", name="ck_coax_cables_operating_positive"),
+        CheckConstraint("capacitance_pf_m IS NULL OR capacitance_pf_m > 0", name="ck_coax_cables_capacitance_positive"),
+        CheckConstraint("max_power_w IS NULL OR max_power_w > 0", name="ck_coax_cables_power_positive"),
+        CheckConstraint("max_power_at_mhz IS NULL OR max_power_at_mhz > 0", name="ck_coax_cables_power_freq_positive"),
+        CheckConstraint("impedance_ohm IS NULL OR impedance_ohm > 0", name="ck_coax_cables_impedance_positive"),
+        CheckConstraint("velocity_pct IS NULL OR (velocity_pct > 0 AND velocity_pct <= 100)", name="ck_coax_cables_velocity_pct"),
+        CheckConstraint("shielding_db IS NULL OR shielding_db > 0", name="ck_coax_cables_shielding_positive"),
+        CheckConstraint("bend_static_mm IS NULL OR bend_static_mm > 0", name="ck_coax_cables_bend_static_positive"),
+        CheckConstraint("bend_dynamic_mm IS NULL OR bend_dynamic_mm > 0", name="ck_coax_cables_bend_dynamic_positive"),
+        CheckConstraint("temp_min_c IS NULL OR temp_max_c IS NULL OR temp_min_c < temp_max_c", name="ck_coax_cables_temp_range"),
+        CheckConstraint("voltage_max_v IS NULL OR voltage_max_v > 0", name="ck_coax_cables_voltage_positive"),
+        CheckConstraint("weight_g_m IS NULL OR weight_g_m > 0", name="ck_coax_cables_weight_positive"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    name_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    family: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    span_from_mhz: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    span_to_ghz: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
+    span_note: Mapped[str] = mapped_column(String(2000), nullable=False, default="", server_default="")
+    fc_ghz: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    fc_note: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    max_operating_ghz: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    max_operating_note: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
+    impedance_ohm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    velocity_pct: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    capacitance_pf_m: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    max_power_w: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    max_power_at_mhz: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
+    shielding_db: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    bend_static_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    bend_dynamic_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    temp_min_c: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
+    temp_max_c: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
+    voltage_max_v: Mapped[Decimal | None] = mapped_column(Numeric(10, 1), nullable=True)
+    weight_g_m: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    notes: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
+    param_notes: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    sources: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    confidence: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
+    verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    changes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CoaxCableLayerRow(Base):
+    __tablename__ = "coax_cable_layers"
+    __table_args__ = (
+        UniqueConstraint("cable_id", "layer", name="ux_coax_cable_layers_cable_layer"),
+        CheckConstraint("layer IN ('core', 'dielectric', 'shield', 'jacket')", name="ck_coax_cable_layers_layer"),
+        CheckConstraint("diameter_mm IS NULL OR diameter_mm > 0", name="ck_coax_cable_layers_diameter_positive"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    cable_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("coax_cables.id", ondelete="CASCADE"), nullable=False)
+    layer: Mapped[str] = mapped_column(String(16), nullable=False)
+    material: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
+    diameter_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+
+
+class CoaxCableConnectorRow(Base):
+    __tablename__ = "coax_cable_connectors"
+    __table_args__ = (
+        UniqueConstraint("cable_id", "family", name="ux_coax_cable_connectors_cable_family"),
+        CheckConstraint("family <> ''", name="ck_coax_cable_connectors_family_not_blank"),
+        CheckConstraint("max_ghz IS NULL OR max_ghz > 0", name="ck_coax_cable_connectors_max_positive"),
+        CheckConstraint("span_to_ghz IS NULL OR span_to_ghz > 0", name="ck_coax_cable_connectors_span_positive"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    cable_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("coax_cables.id", ondelete="CASCADE"), nullable=False)
+    family: Mapped[str] = mapped_column(String(128), nullable=False)
+    max_ghz: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    max_note: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    span_to_ghz: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
+class CoaxCableMarkerRow(Base):
+    __tablename__ = "coax_cable_markers"
+    __table_args__ = (
+        UniqueConstraint("cable_id", "freq_mhz", name="ux_coax_cable_markers_cable_freq"),
+        CheckConstraint("freq_mhz IS NULL OR freq_mhz > 0", name="ck_coax_cable_markers_freq_positive"),
+        CheckConstraint("vswr_max IS NULL OR vswr_max >= 1", name="ck_coax_cable_markers_vswr"),
+        CheckConstraint("vswr_ref_assembly IS NULL OR vswr_ref_assembly >= 1", name="ck_coax_cable_markers_vswr_ref"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    cable_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("coax_cables.id", ondelete="CASCADE"), nullable=False)
+    freq_mhz: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)  # NULL — the «Peak» marker
+    vswr_max: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
+    vswr_ref_assembly: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
+    note: Mapped[str] = mapped_column(String(1000), nullable=False, default="", server_default="")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
+class CoaxCableAttenuationRow(Base):
+    __tablename__ = "coax_cable_attenuation"
+    __table_args__ = (
+        UniqueConstraint("cable_id", "freq_mhz", "kind", "source", name="ux_coax_cable_attenuation_point"),
+        CheckConstraint("freq_mhz > 0", name="ck_coax_cable_attenuation_freq_positive"),
+        CheckConstraint("kind IN ('nominal', 'typical', 'max')", name="ck_coax_cable_attenuation_kind"),
+        CheckConstraint("value > 0", name="ck_coax_cable_attenuation_value_positive"),
+        CheckConstraint("unit IN ('dB/m', 'dB/100m', 'dB/km', 'dB/100ft', 'dB/ft')", name="ck_coax_cable_attenuation_unit"),
+        CheckConstraint("ref_length_m > 0", name="ck_coax_cable_attenuation_length_positive"),
+        CheckConstraint("loss_db_m > 0", name="ck_coax_cable_attenuation_loss_positive"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    cable_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("coax_cables.id", ondelete="CASCADE"), nullable=False)
+    freq_mhz: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    value: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    ref_length_m: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    temp_c: Mapped[Decimal | None] = mapped_column(Numeric(6, 1), nullable=True)
+    loss_db_m: Mapped[Decimal] = mapped_column(Numeric(12, 4), nullable=False)
+    derived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    interpolated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    source: Mapped[str] = mapped_column(String(1000), nullable=False, default="", server_default="")
+    basis: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
+
+
+def _gauge(row: WireGaugeRow) -> WireGauge:
+    return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm), row.strands, row.position)
+
+
+def _dec(value) -> Decimal | None:
+    return None if value is None else Decimal(str(value))
+
+
+class SqlAlchemyCableStructureRepository:
+    def __init__(self, session: Session): self.session = session
+
+    def gauges(self) -> list[WireGauge]:
+        rows = self.session.scalars(select(WireGaugeRow).order_by(WireGaugeRow.position, WireGaugeRow.section_mm2))
+        return [_gauge(row) for row in rows]
+
+    def save_gauge(self, gauge: WireGauge) -> None:
+        row = self.session.get(WireGaugeRow, gauge.id)
+        if row is None: row = WireGaugeRow(id=gauge.id); self.session.add(row)
+        row.awg = gauge.awg; row.section_mm2 = gauge.section_mm2; row.conductor_d_mm = gauge.conductor_d_mm
+        row.strands = gauge.strands; row.position = gauge.position
+        self.session.flush()
+
+    def delete_gauge(self, gauge_id: UUID) -> None:
+        self.session.execute(delete(WireGaugeRow).where(WireGaugeRow.id == gauge_id))
+        self.session.flush()
+
+    def gauge_usage(self) -> dict[UUID, int]:
+        rows = self.session.execute(select(HookupWireRow.gauge_id, func.count()).group_by(HookupWireRow.gauge_id))
+        return {gauge_id: count for gauge_id, count in rows}
+
+    def hookups(self) -> list[HookupWire]:
+        return [self._hookup(row) for row in self.session.scalars(select(HookupWireRow).order_by(HookupWireRow.mark_key))]
+
+    def hookup(self, mark_key: str) -> HookupWire | None:
+        row = self.session.scalar(select(HookupWireRow).where(HookupWireRow.mark_key == mark_key))
+        return None if row is None else self._hookup(row)
+
+    @staticmethod
+    def _hookup(row: HookupWireRow) -> HookupWire:
+        return HookupWire(row.id, row.mark, row.mark_key, row.series, row.gauge_id, row.insulation, _dec(row.outer_d_mm),
+                          row.voltage_v, row.temp_min_c, row.temp_max_c, row.conductor_material or "",
+                          _dec(row.insulation_thickness_mm))
+
+    def save_hookup(self, wire: HookupWire, now: datetime) -> None:
+        row = self.session.get(HookupWireRow, wire.id)
+        if row is None: row = HookupWireRow(id=wire.id); self.session.add(row)
+        row.mark = wire.mark; row.mark_key = wire.mark_key; row.series = wire.series; row.gauge_id = wire.gauge_id
+        row.insulation = wire.insulation; row.outer_d_mm = wire.outer_d_mm; row.voltage_v = wire.voltage_v
+        row.temp_min_c = wire.temp_min_c; row.temp_max_c = wire.temp_max_c; row.updated_at = now
+        row.conductor_material = wire.conductor_material; row.insulation_thickness_mm = wire.insulation_thickness_mm
+        self.session.flush()
+
+    def cards(self) -> list[CoaxCard]:
+        cables = list(self.session.scalars(select(CoaxCableRow).order_by(CoaxCableRow.position, CoaxCableRow.name)))
+        ids = [row.id for row in cables]
+        children: dict[UUID, dict[str, list]] = {cable_id: {"layers": [], "connectors": [], "markers": [], "attenuation": []} for cable_id in ids}
+        if ids:
+            order = {layer: index for index, layer in enumerate(LAYERS)}
+            for row in self.session.scalars(select(CoaxCableLayerRow).where(CoaxCableLayerRow.cable_id.in_(ids))):
+                children[row.cable_id]["layers"].append(row)
+            for row in self.session.scalars(select(CoaxCableConnectorRow).where(CoaxCableConnectorRow.cable_id.in_(ids)).order_by(CoaxCableConnectorRow.position)):
+                children[row.cable_id]["connectors"].append(row)
+            for row in self.session.scalars(select(CoaxCableMarkerRow).where(CoaxCableMarkerRow.cable_id.in_(ids)).order_by(CoaxCableMarkerRow.position)):
+                children[row.cable_id]["markers"].append(row)
+            for row in self.session.scalars(select(CoaxCableAttenuationRow).where(CoaxCableAttenuationRow.cable_id.in_(ids)).order_by(CoaxCableAttenuationRow.freq_mhz, CoaxCableAttenuationRow.kind)):
+                children[row.cable_id]["attenuation"].append(row)
+        else:
+            order = {}
+        result = []
+        for row in cables:
+            own = children[row.id]
+            result.append(CoaxCard(
+                id=row.id, name=row.name, name_key=row.name_key, family=row.family,
+                layers=tuple(CoaxLayer(item.layer, item.material, _dec(item.diameter_mm))
+                             for item in sorted(own["layers"], key=lambda item: order.get(item.layer, 9))),
+                connectors=tuple(CoaxConnector(item.family, _dec(item.max_ghz), item.max_note, _dec(item.span_to_ghz)) for item in own["connectors"]),
+                markers=tuple(CoaxMarker(_dec(item.freq_mhz), _dec(item.vswr_max), item.note, _dec(item.vswr_ref_assembly))
+                              for item in own["markers"]),
+                attenuation=tuple(CoaxAttenuation(
+                    _dec(item.freq_mhz), item.kind, _dec(item.value), item.unit, _dec(item.ref_length_m), _dec(item.temp_c),
+                    _dec(item.loss_db_m), item.derived, item.interpolated, item.source, item.basis) for item in own["attenuation"]),
+                span_from_mhz=_dec(row.span_from_mhz), span_to_ghz=_dec(row.span_to_ghz), span_note=row.span_note,
+                fc_ghz=_dec(row.fc_ghz), notes=row.notes, sources=tuple(row.sources or ()), confidence=row.confidence,
+                verified=row.verified, changes=tuple(row.changes or ()),
+                params={key: _dec(getattr(row, key)) for key in PARAMS if getattr(row, key) is not None},
+                position=row.position, fc_note=row.fc_note, max_operating_ghz=_dec(row.max_operating_ghz),
+                max_operating_note=row.max_operating_note, param_notes=dict(row.param_notes or {}),
+            ))
+        return result
+
+    def replace_cards(self, cards: Sequence[CoaxCard], now: datetime) -> dict[str, int]:
+        """Idempotent seed: a card per name key — kept id, its rows and children replaced by the file's; cards the
+        file no longer names are removed with their children."""
+        existing = {row.name_key: row for row in self.session.scalars(select(CoaxCableRow))}
+        keys = {card.name_key for card in cards}
+        removed = [row.id for key, row in existing.items() if key not in keys]
+        if removed:
+            self.session.execute(delete(CoaxCableRow).where(CoaxCableRow.id.in_(removed)))
+        created = updated = 0
+        for card in cards:
+            row = existing.get(card.name_key)
+            if row is None:
+                row = CoaxCableRow(id=card.id); self.session.add(row); created += 1
+            else:
+                updated += 1
+                for child in (CoaxCableLayerRow, CoaxCableConnectorRow, CoaxCableMarkerRow, CoaxCableAttenuationRow):
+                    self.session.execute(delete(child).where(child.cable_id == row.id))
+            row.name = card.name; row.name_key = card.name_key; row.family = card.family
+            row.span_from_mhz = card.span_from_mhz; row.span_to_ghz = card.span_to_ghz; row.span_note = card.span_note
+            row.fc_ghz = card.fc_ghz; row.fc_note = card.fc_note; row.max_operating_ghz = card.max_operating_ghz
+            row.max_operating_note = card.max_operating_note; row.param_notes = dict(card.param_notes)
+            row.notes = card.notes; row.sources = list(card.sources)
+            row.confidence = card.confidence; row.verified = card.verified; row.changes = list(card.changes)
+            row.position = card.position; row.imported_at = now
+            for key in PARAMS:
+                setattr(row, key, card.params.get(key))
+            self.session.flush()
+            self.session.add_all(CoaxCableLayerRow(id=uuid4(), cable_id=row.id, layer=item.layer, material=item.material,
+                                                   diameter_mm=item.diameter_mm) for item in card.layers)
+            self.session.add_all(CoaxCableConnectorRow(id=uuid4(), cable_id=row.id, family=item.family, max_ghz=item.max_ghz,
+                                                       max_note=item.max_note, span_to_ghz=item.span_to_ghz, position=index)
+                                 for index, item in enumerate(card.connectors))
+            self.session.add_all(CoaxCableMarkerRow(id=uuid4(), cable_id=row.id, freq_mhz=item.freq_mhz, vswr_max=item.vswr_max,
+                                                    vswr_ref_assembly=item.vswr_ref, note=item.note, position=index)
+                                 for index, item in enumerate(card.markers))
+            self.session.add_all(CoaxCableAttenuationRow(
+                id=uuid4(), cable_id=row.id, freq_mhz=item.freq_mhz, kind=item.kind, value=item.value, unit=item.unit,
+                ref_length_m=item.ref_length_m, temp_c=item.temp_c, loss_db_m=item.loss_db_m, derived=item.derived,
+                interpolated=item.interpolated, source=item.source, basis=item.basis) for item in card.attenuation)
+        self.session.flush()
+        return {"created": created, "updated": updated, "removed": len(removed)}
+
+
 class SqlAlchemyReferencesUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
@@ -136,6 +453,7 @@ class SqlAlchemyReferencesUnitOfWork:
         self.committed = False; self.session = self.session_factory()
         self.references = SqlAlchemyReferenceRepository(self.session)
         self.tech_operations = SqlAlchemyTechOperationRepository(self.session)
+        self.cable_structure = SqlAlchemyCableStructureRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
         return self
     def __exit__(self, exc_type, exc, traceback) -> None:

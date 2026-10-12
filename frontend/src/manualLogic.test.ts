@@ -5,25 +5,47 @@ import {
   addInput,
   addInputBlock,
   addLibraryOp,
+  blockKind,
   blockOrder,
   cardLabel,
+  kdChangeText,
+  kdKey,
   emptyManual,
+  fillKdCards,
   genParams,
+  isEmptyManual,
+  kdOpSpec,
+  kdStale,
+  kdVersionOf,
+  kdSummary,
+  proposeFromKd,
   manualConfig,
   manualFromConfig,
   manualProblem,
+  manualRoute,
+  manualShortTitle,
+  moveBlock,
   moveOp,
+  moveOpToBlock,
+  shortBlockName,
   nameBlockAfter,
   orderedOps,
   removeBlock,
   removeInput,
   removeOp,
+  rederive,
   renameBlock,
   selectBlock,
+  setBlockChecked,
+  setBlockKind,
+  setBlockQuantity,
+  setPerUnit,
   stepsPayload,
   toolingPayload,
   updateOp,
+  type KdCard,
   type LibraryCard,
+  type ManualOp,
   type ManualState,
 } from "./manualLogic";
 
@@ -340,3 +362,344 @@ describe("manual assembly: editing on the diagram", () => {
   });
 });
 
+/* Схема из КД: итог «Жгут» (усадка) ← блок b2 «Провод W1» (резка, опрессовка). Ключи операций — по объекту КД и коду. */
+const CUT_W1 = kdKey("w1", "CUT"), PRS_W1 = kdKey("w1", "PRS"), STRIP_W1 = kdKey("w1", "STRIP"), HEAT_H = kdKey("h1", "HEAT"), CUT_W2 = kdKey("w2", "CUT");
+
+function kd(state: ManualState, origin: string, label: string, patch: Partial<ManualOp> = {}, block = state.selected): ManualState {
+  const next = addCustomOp(state, block);
+  return updateOp(next, state.nextSeq, { origin, label, opSec: "6", ...patch });
+}
+
+function derivedScheme(): ManualState {
+  let state = kd(emptyManual(), HEAT_H, "Усадка", { opSec: "20" }); // seq 1 — итог
+  state = addBlock(state, "Провод W1"); // b2 → b1
+  state = kd(state, CUT_W1, "Резка"); // seq 2
+  return kd(state, PRS_W1, "Опрессовка"); // seq 3
+}
+
+const opBy = (state: ManualState, origin: string) => state.ops.find((op) => op.origin === origin)!;
+const labelsIn = (state: ManualState, key: string) => state.blocks.find((block) => block.key === key)!.ops.map((seq) => state.ops.find((op) => op.seq === seq)!.label);
+
+describe("manual assembly: re-derive from the КД, the master wins", () => {
+  it("keeps the КД key on an operation and marks the fields the master edits", () => {
+    const state = derivedScheme();
+    expect(opBy(state, CUT_W1)).toMatchObject({ origin: "harness:w1:CUT", label: "Резка", opSec: "6" });
+    expect(opBy(state, CUT_W1).edited).toBeUndefined(); // заданное при создании — не правка мастера
+    const edited = updateOp(state, 2, { label: "Резка в размер", opSec: "6" });
+    expect(opBy(edited, CUT_W1).edited).toEqual(["label"]); // opSec тот же — не правка
+    expect(opBy(edited, CUT_W1).kdBase).toEqual({ label: JSON.stringify("Резка") });
+    // Вторая правка того же поля не переписывает значение из КД.
+    expect(opBy(updateOp(edited, 2, { label: "Резка 2" }), CUT_W1).kdBase).toEqual({ label: JSON.stringify("Резка") });
+    // Своя операция мастера (без ключа КД) правится без отметок.
+    const own = updateOp(addCustomOp(state, "b1"), 4, { label: "Контроль" });
+    expect(own.ops.find((op) => op.seq === 4)).not.toHaveProperty("edited");
+  });
+
+  it("1) adds a new КД key into the block the КД proposes, next to its КД neighbour", () => {
+    const manual = derivedScheme();
+    const kdNext = kd(derivedScheme(), STRIP_W1, "Зачистка", {}, "b2"); // seq 4
+    // В КД зачистка между резкой и опрессовкой.
+    const derived = { ...kdNext, blocks: kdNext.blocks.map((block) => (block.key === "b2" ? { ...block, ops: [2, 4, 3] } : block)) };
+    const next = rederive(manual, derived);
+    expect(labelsIn(next, "b2")).toEqual(["Резка", "Зачистка", "Опрессовка"]);
+    expect(opBy(next, STRIP_W1)).toMatchObject({ seq: 4, origin: STRIP_W1 });
+    expect(next.nextSeq).toBe(5);
+    expect(next.blocks.map((block) => block.key)).toEqual(["b1", "b2"]);
+    // Новая операция итога — в итоговый блок.
+    const toFinal = rederive(manual, kd(derivedScheme(), kdKey("h1", "MARK"), "Маркировка", {}, "b1"));
+    expect(labelsIn(toFinal, "b1")).toEqual(["Усадка", "Маркировка"]);
+  });
+
+  it("1) puts a new КД key into «Новое из КД» when the master removed the proposed block, and never returns deleted ones", () => {
+    const manual = removeBlock(derivedScheme(), "b2"); // мастер убрал блок вместе с резкой и опрессовкой
+    expect(manual.kdDropped).toEqual([CUT_W1, PRS_W1]);
+    const derived = kd(derivedScheme(), STRIP_W1, "Зачистка", {}, "b2");
+    const next = rederive(manual, derived);
+    const spare = next.blocks.find((block) => block.name === "Новое из КД")!;
+    expect(spare).toMatchObject({ key: "b2", final: false });
+    expect(labelsIn(next, spare.key)).toEqual(["Зачистка"]);
+    expect(next.edges).toEqual([{ from: "b2", to: "b1", per_unit: 1 }]);
+    expect(next.ops.map((op) => op.origin)).toEqual([HEAT_H, STRIP_W1]); // резка и опрессовка не вернулись
+    expect(manualProblem(next)).toBeNull();
+    // Второй новый ключ — в тот же «Новое из КД», не в новый блок.
+    const again = rederive(next, kd(addBlock(selectBlock(derived, "b1"), "Провод W2"), CUT_W2, "Резка W2")); // в КД — блок b3
+    expect(again.blocks.filter((block) => block.name === "Новое из КД")).toHaveLength(1);
+    expect(labelsIn(again, spare.key)).toEqual(["Зачистка", "Резка W2"]);
+  });
+
+  it("2) refreshes the КД fields of a known key except the edited ones and keeps «было → стало»", () => {
+    const manual = updateOp(derivedScheme(), 2, { label: "Резка в размер" });
+    const derived = updateOp(derivedScheme(), 2, { label: "Резка провода", opSec: "8", params: "L = 300 мм" });
+    const next = rederive(manual, derived);
+    const op = opBy(next, CUT_W1);
+    expect(op).toMatchObject({ label: "Резка в размер", opSec: "8", params: "L = 300 мм", edited: ["label"] });
+    expect(op.kdBase).toEqual({ label: JSON.stringify("Резка провода") });
+    expect(op.kdChanges!.map(kdChangeText)).toEqual([
+      "Название: в КД было «Резка» → стало «Резка провода»",
+      "Операция, с/шт: в КД было «6» → стало «8»",
+      "Параметры: в КД было «пусто» → стало «L = 300 мм»",
+    ]);
+    // Тот же КД ещё раз — ничего не меняется, подсказки остаются.
+    expect(rederive(next, derived)).toEqual(next);
+    expect(opBy(rederive(next, derived), CUT_W1)).toBe(op);
+    // Операция без изменений в КД — тот же объект.
+    expect(opBy(next, HEAT_H)).toBe(opBy(manual, HEAT_H));
+  });
+
+  it("3) never touches the master's blocks, order and edges", () => {
+    let manual = moveOp(derivedScheme(), 3, -1); // опрессовка раньше резки
+    manual = renameBlock(setPerUnit(manual, "b2", "b1", 2), "b2", "Провод с терминалом");
+    manual = addBlock(selectBlock(manual, "b1"), "Трубка"); // b3 — свой блок мастера
+    manual = setBlockChecked(setBlockKind(manual, "b2", "assembly"), "b2", true);
+    const derived = updateOp(derivedScheme(), 3, { opSec: "9" });
+    const next = rederive(manual, derived);
+    expect(next.blocks).toEqual(manual.blocks);
+    expect(next.edges).toEqual(manual.edges);
+    expect(labelsIn(next, "b2")).toEqual(["Опрессовка", "Резка"]);
+    expect(opBy(next, PRS_W1).opSec).toBe("9");
+  });
+
+  it("4) marks a key that left the КД as «нет в КД» instead of deleting it, and clears the mark when it comes back", () => {
+    const manual = derivedScheme();
+    const derived = removeOp(derivedScheme(), 3); // в КД больше нет опрессовки
+    const next = rederive(manual, derived);
+    expect(opBy(next, PRS_W1)).toMatchObject({ kdGone: true, label: "Опрессовка" });
+    expect(labelsIn(next, "b2")).toEqual(["Резка", "Опрессовка"]);
+    expect(rederive(next, derived)).toEqual(next);
+    expect(opBy(rederive(next, derivedScheme()), PRS_W1)).not.toHaveProperty("kdGone");
+  });
+
+  it("5) leaves the master's own operations alone", () => {
+    const manual = updateOp(addCustomOp(derivedScheme(), "b2"), 4, { label: "Прозвонка", opSec: "30" });
+    const own = manual.ops.find((op) => op.seq === 4)!;
+    const next = rederive(manual, updateOp(derivedScheme(), 2, { label: "Резка провода" }));
+    expect(next.ops.find((op) => op.seq === 4)).toBe(own);
+    expect(labelsIn(next, "b2")).toEqual(["Резка провода", "Опрессовка", "Прозвонка"]);
+  });
+
+  it("block kind: final is the product, otherwise set by the master or by the scheme", () => {
+    let state = derivedScheme();
+    expect(blockKind(state, "b1")).toBe("final");
+    expect(blockKind(state, "b2")).toBe("semiFinished");
+    state = addBlock(state, "Заготовка"); // b3 → b2: у b2 теперь вход — сборка
+    expect(blockKind(state, "b2")).toBe("assembly");
+    state = setBlockKind(state, "b2", "semiFinished");
+    expect(blockKind(state, "b2")).toBe("semiFinished");
+    expect(setBlockKind(state, "b1", "assembly")).toEqual(state);
+    expect(setBlockQuantity(state, "b3", 4).blocks[2].quantity).toBe(4);
+    expect(setBlockQuantity(setBlockQuantity(state, "b3", 4), "b3", 1).blocks[2]).not.toHaveProperty("quantity");
+    expect(setBlockQuantity(state, "b3", 0)).toBe(state);
+  });
+
+  it("saves and loads the КД links, block kind, quantity, КД objects and the master's check", () => {
+    let state = updateOp(derivedScheme(), 2, { label: "Резка в размер" });
+    state = rederive(state, updateOp(removeOp(derivedScheme(), 3), 2, { opSec: "8" }));
+    state = setBlockChecked(setBlockQuantity(setBlockKind(state, "b2", "assembly"), "b2", 4), "b2", true);
+    state = { ...state, blocks: state.blocks.map((block) => (block.key === "b2" ? { ...block, refs: ["w1", "x1"] } : block)) };
+    state = removeOp(updateOp(addCustomOp(state, "b1"), 4, { origin: kdKey("h1", "MARK"), label: "Маркировка" }), 4);
+    const config = manualConfig(state, base);
+    const route = config.route as { blocks: Array<Record<string, unknown>> };
+    expect(route.blocks.find((block) => block.key === "b2")).toMatchObject({ kind: "assembly", quantity: 4, refs: ["w1", "x1"], checked: true });
+    expect(route.blocks.find((block) => block.key === "b1")).not.toHaveProperty("kind");
+    expect((config.ops as Array<Record<string, unknown>>).find((op) => op.origin === PRS_W1)).toMatchObject({ kdGone: true });
+    expect(config.kdDropped).toEqual([kdKey("h1", "MARK")]);
+    const restored = manualFromConfig(config)!;
+    const byKey = (item: ManualState) => [...item.blocks].sort((a, b) => a.key.localeCompare(b.key));
+    expect(byKey(restored)).toEqual(byKey(state));
+    expect(restored.kdDropped).toEqual(state.kdDropped);
+    expect(restored.extra).toBeUndefined();
+    expect(opBy(restored, CUT_W1)).toEqual(opBy(state, CUT_W1));
+    expect(opBy(restored, PRS_W1).kdGone).toBe(true);
+    expect(manualConfig(restored, base)).toEqual(config);
+    // Операция генератора: связь с КД не попадает в её поля генератора.
+    const gen = manualFromConfig({ mode: "manual", ops: [{ type: "cutWireStrip", seq: 1, origin: CUT_W1, edited: ["opSec", "nope"], kdGone: true, wires: [] }] })!;
+    expect(gen.ops[0].gen).toEqual({ type: "cutWireStrip", wires: [] });
+    expect(gen.ops[0]).toMatchObject({ origin: CUT_W1, edited: ["opSec"], kdGone: true });
+    expect((manualConfig(gen, base).ops as Array<Record<string, unknown>>)[0]).toMatchObject({ type: "cutWireStrip", origin: CUT_W1, edited: ["opSec"], kdGone: true });
+  });
+
+  it("loads an old build_config unchanged: no new keys on blocks and operations, the same payload back", () => {
+    const old = {
+      mode: "manual", assemblyIndex: "КБ1", assemblyName: "Провод", partQty: 10,
+      ops: [
+        { type: "libraryOp", templateId: "cut", opNum: "CUT_WIRE_hand", side: "", seq: 4, label: "Резка", qty: "1", tPrep: "120", tOp: "6" },
+        { type: "customOp", seq: 7, label: "Пайка экрана", qty: "1", tPrep: "", tOp: "45", steps: [], tooling: [] },
+      ],
+      route: { blocks: [{ key: "b2", name: "Заготовка", ops: [1], final: false }, { key: "b1", ops: [2], final: true }], edges: [{ from: "b2", to: "b1", per_unit: 2 }] },
+    };
+    const state = manualFromConfig(old)!;
+    expect(state.blocks.map((block) => Object.keys(block).sort())).toEqual([["final", "key", "name", "ops"], ["final", "key", "name", "ops"]]);
+    expect(state.ops.some((op) => ["origin", "edited", "kdBase", "kdChanges", "kdGone"].some((key) => key in op))).toBe(false);
+    expect(state).not.toHaveProperty("kdDropped");
+    expect(blockKind(state, "b2")).toBe("semiFinished");
+    const config = manualConfig(state, base);
+    expect(config.route).toEqual(old.route);
+    expect(config.ops).toEqual(old.ops);
+    expect(config).not.toHaveProperty("kdDropped");
+    // Пересчёт по КД не трогает старую схему без ключей КД.
+    expect(rederive(state, derivedScheme()).ops.slice(0, 2)).toEqual(state.ops);
+  });
+});
+
+/* «Предложить из КД»: build_config, как его отдаёт POST …/harness/{index}/derive — блоки по маршруту КД (`route:<строка>`),
+   операции генератора без карточек и операция маршрута («Сборка жгута»). */
+const fromHarness = () => ({
+  mode: "manual", assemblyIndex: "КБ7", assemblyName: "Жгут", partQty: 10,
+  ops: [
+    { type: "cutWireStrip", side: "", tPrep: "", tOp: "", wires: [{ name: "W1", art: "МГТФ 0,35", qty: 1, length: 300 }], strip: { a: true, b: true },
+      label: "Резка с разделкой: W1", kdData: [{ wire_id: "w1" }], origin: "harness:r1:cutWireStrip.AB", seq: 1 } as Record<string, unknown>,
+    { type: "prsTerm", side: "B", tPrep: "", tOp: "", ep: { connName: "X2", connArt: "", label: "X2", termArt: "ЛП-3", termName: "" },
+      wires: [{ name: "W1", art: "МГТФ 0,35", qty: 1 }], label: "Опрессовка терминала (В) — X2", kdData: [{}], origin: "harness:X2:prsTerm.B", seq: 2 },
+    { type: "solderConn", side: "A", tPrep: "", tOp: "", ep: { connName: "XT60", connArt: "XT60-M", label: "XT60", termArt: "", termName: "" },
+      wires: [{ name: "W1", art: "МГТФ 0,35", qty: 1 }], label: "Пайка разъёма (А) — XT60", kdData: [{}], origin: "harness:X1:solderConn.A", seq: 3 },
+    { type: "heatTut", side: "", tPrep: "", tOp: "", tutArt: "ТУТ 6/3", tutName: "ТУТ 6/3", tutCount: 1, label: "Усадка ТУТ — H1", kdData: [{}],
+      origin: "harness:h1:heatTut", seq: 4 },
+    { type: "customOp", label: "Сборка жгута", qty: "1", tPrep: "", tOp: "", opNum: "", steps: [], tooling: [], origin: "harness:s1:assembly", seq: 5 },
+  ] as Array<Record<string, unknown>>,
+  route: {
+    blocks: [
+      { key: "route:r1", name: "Провод W1", ops: [1, 2, 3], final: false, kind: "semiFinished" },
+      { key: "route:r2", name: "Жгут", ops: [4, 5], final: true },
+    ],
+    edges: [{ from: "route:r1", to: "route:r2", per_unit: 1 }],
+  },
+});
+
+describe("manual assembly: «Предложить из КД»", () => {
+  it("takes the КД scheme as is into an empty scheme instead of dumping it into «Новое из КД»", () => {
+    const derived = manualFromConfig(fromHarness())!;
+    expect(isEmptyManual(emptyManual())).toBe(true);
+    const next = proposeFromKd(emptyManual(), derived, "v1");
+    expect(next).toEqual({ ...derived, kdVersion: "v1" });
+    expect(next.blocks.map((block) => [block.key, block.name])).toEqual([["route:r1", "Провод W1"], ["route:r2", "Жгут"]]);
+    expect(next.blocks.some((block) => block.name === "Новое из КД")).toBe(false);
+    // Слияние в пустую схему так и сделало бы: всё, кроме итога, — в «Новое из КД».
+    expect(rederive(emptyManual(), derived).blocks.some((block) => block.name === "Новое из КД")).toBe(true);
+    expect(manualProblem(next, "Жгут")).toBeNull();
+  });
+
+  it("merges into a non-empty scheme by rederive and counts what will be added, changed and gone from the КД", () => {
+    const derived = manualFromConfig(fromHarness())!;
+    // Мастер взял схему, правил название резки, удалил пайку и добавил свою операцию; в КД потом — новая резка ТУТ,
+    // другая ТУТ у усадки и нет опрессовки.
+    let manual = proposeFromKd(emptyManual(), derived, "v1");
+    manual = updateOp(manual, 1, { label: "Резка W1 в размер" });
+    manual = removeOp(manual, 3);
+    manual = updateOp(addCustomOp(manual, "route:r2"), manual.nextSeq, { label: "Прозвонка" });
+    const config = fromHarness();
+    config.ops = config.ops.filter((op) => op.seq !== 2).map((op) => (op.seq === 4 ? { ...op, tutArt: "ТУТ 9/3" } : op));
+    config.ops.push({ type: "cutTut", side: "", tPrep: "", tOp: "", tutArt: "ТУТ 6/3", tutName: "ТУТ 6/3", tutCount: 1, label: "Резка ТУТ — H1",
+      kdData: [{}], origin: "harness:h1:cutTut", seq: 6 });
+    config.route.blocks[0].ops = [1, 3];
+    config.route.blocks[1].ops = [4, 5, 6];
+    const fresh = manualFromConfig(config)!;
+    expect(isEmptyManual(manual)).toBe(false);
+    const next = proposeFromKd(manual, fresh, "v2");
+    expect(next).toEqual({ ...rederive(manual, fresh), kdVersion: "v2" });
+    expect(kdSummary(manual, next)).toEqual({ added: 1, changed: 1, gone: 1 });
+    expect(next.ops.find((op) => op.origin === "harness:r1:cutWireStrip.AB")!.label).toBe("Резка W1 в размер"); // правка мастера осталась
+    expect(next.ops.some((op) => op.origin === "harness:X1:solderConn.A")).toBe(false); // удалённая мастером не вернулась
+    // Тот же КД ещё раз — менять нечего.
+    expect(kdSummary(next, proposeFromKd(next, fresh, "v2"))).toEqual({ added: 0, changed: 0, gone: 0 });
+    // Мастер удалил всё: схема без операций, но с удалёнными из КД — не пустая, удалённые не вернутся.
+    const cleared = manual.ops.reduce((state, op) => removeOp(state, op.seq), manual);
+    expect(cleared.ops).toHaveLength(0);
+    expect(isEmptyManual(cleared)).toBe(false);
+    expect(proposeFromKd(cleared, derived).ops.some((op) => op.origin === "harness:X1:solderConn.A")).toBe(false);
+  });
+
+  it("saves the КД version it was proposed from and marks the scheme when the drawing changed since", () => {
+    const state = proposeFromKd(emptyManual(), manualFromConfig(fromHarness())!, "v1");
+    const config = manualConfig(state, base);
+    expect(config.kdHarnessVersion).toBe("v1");
+    const back = manualFromConfig(config)!;
+    expect(back.kdVersion).toBe("v1");
+    expect(back.extra).toBeUndefined();
+    expect(kdStale(back, "v1")).toBe(false);
+    expect(kdStale(back, "v2")).toBe(true);
+    expect(kdStale(back, null)).toBe(false); // чертежа нет или ещё не прочитан — не отмечаем
+    // Схема не из КД — без версии и без отметки.
+    const own = manualFromConfig(manualConfig(three(), base))!;
+    expect(own).not.toHaveProperty("kdVersion");
+    expect(manualConfig(own, base)).not.toHaveProperty("kdHarnessVersion");
+    expect(kdStale(own, "v2")).toBe(false);
+  });
+
+  it("versions the КД drawing by its revision; a mark from before the history (a hash) is not called stale", () => {
+    expect(kdVersionOf({ document: { id: "h1" }, revision: 3 })).toBe("3");
+    expect(kdVersionOf({ document: { id: "h1" }, revision: 0 })).toBe("0");
+    expect(kdVersionOf({ document: null, revision: null })).toBeNull();
+    expect(kdVersionOf(null)).toBeNull();
+    expect(kdStale({ kdVersion: "0123456789abcdef0123456789abcdef" }, "4")).toBe(false);
+    expect(kdStale({ kdVersion: "3" }, "4")).toBe(true);
+  });
+
+  it("asks the generator's card pick with the generator's hint or category per operation and fills code and БД.ОП norms", () => {
+    const derived = manualFromConfig(fromHarness())!;
+    const specs = derived.ops.map(kdOpSpec);
+    expect(specs.map((spec) => spec && { tmplHint: spec.tmplHint, cat: spec.cat, side: spec.side, termArt: spec.termArt })).toEqual([
+      { tmplHint: "CUT_WIRE+2strip", cat: undefined, side: undefined, termArt: undefined },
+      { tmplHint: undefined, cat: "Опрессовка терминалов (В)", side: "B", termArt: "ЛП-3" },
+      { tmplHint: "SDR_XT60", cat: undefined, side: "A", termArt: undefined },
+      { tmplHint: "HEAT_TTK_short", cat: "Усадка", side: undefined, termArt: undefined },
+      null, // операция маршрута — своя, карточка ей не нужна
+    ]);
+    const cards: Record<string, KdCard> = {
+      "CUT_WIRE+2strip": { templateId: "cut2", code: "CUT_WIRE+2strip", prepSec: "600", opSec: "5" },
+      "Опрессовка терминалов (В)": { templateId: "prsB", code: "PRS_TERMINAL_hand", prepSec: "", opSec: "" },
+    };
+    const filled = fillKdCards(derived, (spec) => cards[spec.tmplHint || spec.cat || ""] ?? null);
+    const op = (seq: number) => filled.ops.find((item) => item.seq === seq)!;
+    expect(op(1)).toMatchObject({ templateId: "cut2", code: "CUT_WIRE+2strip", prepMin: "10", opSec: "5" });
+    expect(op(1).gen).toMatchObject({ type: "cutWireStrip", templateId: "cut2", opNum: "CUT_WIRE+2strip" });
+    expect(op(2)).toMatchObject({ templateId: "prsB", code: "PRS_TERMINAL_hand", prepMin: "", opSec: "" });
+    // Не подобралась — остаётся без карточки, как пришла.
+    expect(op(3)).toBe(derived.ops[2]);
+    expect(op(5)).toBe(derived.ops[4]);
+    const payload = manualConfig(filled, base).ops as Array<Record<string, unknown>>;
+    expect(payload[0]).toMatchObject({ type: "cutWireStrip", templateId: "cut2", opNum: "CUT_WIRE+2strip", tPrep: "600", tOp: "5", origin: "harness:r1:cutWireStrip.AB" });
+    expect(payload[2]).not.toHaveProperty("templateId");
+    // Карточка уже есть — не перебирается.
+    expect(fillKdCards(filled, () => ({ templateId: "other", code: "X", prepSec: "", opSec: "" })).ops[0]).toBe(op(1));
+  });
+});
+
+describe("manual assembly: order of blocks and short names (owner 10.10: «как тут порядок поменять — я не могу»)", () => {
+  it("moves a block up and down among the blocks it does not depend on; the operation numbers follow", () => {
+    const state = twoBranches();
+    const up = moveBlock(state, "b3", -1);
+    expect(up.problem).toBeNull();
+    expect(blockOrder(up.state)).toEqual(["b3", "b2", "b1"]);
+    expect(order(up.state)).toEqual(["Резка ТУТ", "Резка", "Опрессовка терминалов (А)", "Усадка", "Контроль"]);
+    expect(blockOrder(moveBlock(up.state, "b3", 1).state)).toEqual(["b2", "b3", "b1"]);
+    // Края: выше первого и ниже последнего двигать некуда — схема прежняя, без слов.
+    expect(moveBlock(state, "b2", -1)).toEqual({ state, problem: null });
+    expect(moveBlock(state, "b1", 1)).toEqual({ state, problem: null });
+  });
+
+  it("will not put a block above its own input or below the block that takes it, and says why in Russian", () => {
+    const state = twoBranches();
+    const names: Record<string, string> = { b1: "Изделие", b2: "Провод", b3: "Трубка" };
+    const title = (key: string) => names[key];
+    expect(moveBlock(state, "b1", -1, title)).toEqual({ state, problem: "блок «Изделие» берёт полуфабрикат блока «Трубка» — выше него он встать не может" });
+    expect(moveBlock(state, "b3", 1, title)).toEqual({ state, problem: "блок «Изделие» берёт полуфабрикат блока «Трубка» — ниже него этот блок встать не может" });
+  });
+
+  it("«Перенести в блок…» puts an operation at the end of another block", () => {
+    const moved = moveOpToBlock(twoBranches(), 4, "b2");
+    expect(moved.blocks.map((block) => [block.key, block.ops])).toEqual([["b1", [1, 5]], ["b2", [2, 3, 4]], ["b3", []]]);
+    expect(moveOpToBlock(twoBranches(), 4, "nope")).toEqual(twoBranches());
+  });
+
+  it("shortens a long generated block name to its operations, keeping the full name for the tooltip", () => {
+    expect(shortBlockName(["Монтаж в разъём А1 — I-DS1071-SCB02X5", "Свивка", "Маркировка — БМ-25"])).toBe("Монтаж в разъём А1 · свивка · маркировка");
+    let state = renameBlock(twoBranches(), "b2", "Разъём I-DS1071-SCB02X5 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)");
+    state = renameBlock(state, "b3", "Трубка");
+    const { route, ops } = manualRoute(state, 1);
+    const title = (key: string) => manualShortTitle(route.blocks.find((block) => block.key === key)!, ops, "Изделие");
+    expect(title("b2")).toEqual({ title: "Резка · опрессовка терминалов (А)", full: "Разъём I-DS1071-SCB02X5 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)" });
+    expect(title("b3")).toEqual({ title: "Трубка", full: "Трубка" });
+    // Итог с операциями назван ими, изделие — в подсказке (и строкой «итог: …» на схеме).
+  expect(title("b1")).toEqual({ title: "Усадка · контроль", full: "Изделие" });
+  });
+});

@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from app.modules.procurement.document_match import code_key
+from app.workflows.article_key import code_key
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 

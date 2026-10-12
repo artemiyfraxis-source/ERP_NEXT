@@ -47,14 +47,22 @@ other identities).
 
 ## Repo invariants
 - Gate: `npm run check` (repo root) — architecture tests + backend pytest + frontend tests + build. CI runs the
-  same minus architecture tests (they need a sibling `../SUPPLYMAP` checkout; without it, skip them locally).
-  A PR with red `check` is not merged.
+  same gate, architecture tests included. A PR with red `check` is not merged. The gate proves logic only — say so in
+  reports: screens are checked by screenshots, data by the live-data rehearsal.
 - Python 3.12 venv in `backend/.venv` (`pip install -r requirements.lock.txt`), frontend `npm ci` in `frontend/`.
 - Schema only via Alembic migrations; the app never creates tables. Never edit a migration already on `main` —
   add a new one after the head. One head: right before merge, rebase on fresh `main`; if `main` gained a
   migration meanwhile, re-parent/renumber yours (not on `main` yet, so allowed) and rerun the gate
   (`backend/tests/test_alembic_single_head.py`).
-- Repo stays private. No secrets in git. Never write to live Google data (SUPPLYMAP warehouse sheets).
+- **Live-data protocol:** backup → rehearsal on a copy of the prod DB → integrity/row-count
+  check → only then prod.
+- A PR with an Alembic migration is rehearsed on a copy of prod first; its description carries the row-count
+  reconciliation from that run (before/after per table plus the invariants) and links the log.
+- Migrations are applied by the update script (`deploy/update.sh`), never on container start. A migration declaring
+  `DESTRUCTIVE = True` runs only after the owner approves its revision id via the «Обновить сервер» button.
+- New code: constraints, not rollbacks — protect data with CHECK, UNIQUE, FK, NOT NULL and version checks that make bad
+  states impossible, instead of relying on rollbacks or compensating scripts afterwards.
+- Repo is public (owner, 10.10.2026 — free CI). No secrets in git. Never write to live Google data (SUPPLYMAP warehouse sheets).
 - Commits are authored by the human whose session it is, under their own git identity. **No
   `Co-Authored-By: Claude`, no "Generated with Claude Code"** in commits or PRs.
 - PR ready = rebased on `main`, gate green, body says what changed, which module, migration yes/no, how to

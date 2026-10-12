@@ -6,8 +6,9 @@
 Source (git snapshots, read-only — the live directory is ScriptProperties `staff_directory`, unreachable from here):
   · ``SUPPLYMAP/Config.gs`` ``STAFF_BY_EMAIL`` — name + department (+ a first-run role);
   · ``SUPPLYMAP/_local/access-backup-2026-09-01.json`` — the role each employee actually has now.
-The SUPPLYMAP repo is the sibling ``../SUPPLYMAP`` unless ``SUPPLYMAP_SOURCE_REPOSITORY`` (or ``--source``) points
-elsewhere. E-mail is the key; the ERP id is derived from it, so re-running touches the same rows.
+The SUPPLYMAP snapshot is named explicitly — ``--source`` or ``SUPPLYMAP_SOURCE_REPOSITORY`` (the server sets it to
+``/opt/supplymap``); there is no sibling-checkout default (owner 05.10: staff live in the ERP directory now, this is a
+one-off import). E-mail is the key; the ERP id is derived from it, so re-running touches the same rows.
 
 PINs: SUPPLYMAP keeps them as irreversible hashes, so the Google PINs cannot be carried over. Each employee is
 given a fresh PIN here and the full name → login → PIN table is printed once — that is «все пины мне» (owner,
@@ -50,7 +51,6 @@ from .level_migration import shop_worker_rule, site_master_rule
 # ID-4/ID-8: the ERP id of an imported employee is fixed by e-mail, so the import is idempotent.
 STAFF_ID_NAMESPACE = "fraxis-erp:identity:staff:"
 
-DEFAULT_SOURCE = Path(__file__).resolve().parents[5] / "SUPPLYMAP"
 CONFIG_RELATIVE = Path("Config.gs")
 ACCESS_BACKUP_RELATIVE = Path("_local") / "access-backup-2026-09-01.json"
 
@@ -312,7 +312,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reset-pins", action="store_true", help="перевыдать PIN и уже заведённым сотрудникам")
     args = parser.parse_args(argv)
 
-    source = args.source or Path(os.getenv("SUPPLYMAP_SOURCE_REPOSITORY", str(DEFAULT_SOURCE)))
+    env_source = os.getenv("SUPPLYMAP_SOURCE_REPOSITORY", "").strip()
+    source = args.source or (Path(env_source) if env_source else None)
+    if source is None:
+        print("Источник не задан: укажи --source (снимок SUPPLYMAP) или SUPPLYMAP_SOURCE_REPOSITORY", file=sys.stderr)
+        return 2
     try:
         people = all_source_staff(source)
     except StaffImportError as error:

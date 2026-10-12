@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SuggestInput } from "./SuggestInput";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
+  UnknownResultError,
+  isAborted,
+  latestRead,
   requestsApi,
   type CalcImportPreview,
   type Principal,
@@ -9,11 +12,13 @@ import {
   type RequestSchema,
 } from "./api";
 import { canAct } from "./navigation";
+import { useFormDraft } from "./formDrafts";
 import { RequestGrid } from "./RequestGrid";
 import { RequestFormV2 } from "./RequestFormV2";
 import { projectLabel, useInternalProjects } from "./internalProjects";
 import { usePurposeLabel } from "./purposeLabels";
 import { useStageOption } from "./StageOptions";
+import { StatusChip } from "./StatusChip";
 import {
   GRID_LIMIT,
   parseExcelTsv,
@@ -126,22 +131,58 @@ function readCalcPreset(): { url: string; project: string } | null {
   return { url: calc, project };
 }
 
+/** Неотправленная форма «Оформить заявку» (аудит F07): ручная пачка, вставка из Excel, предпросмотр расчёта и оба
+ *  ключа идемпотентности — повтор после восстановления с тем же ключом не создаст дубль. */
+interface RequestsDraft {
+  creationKey: string;
+  batchKey: string;
+  createMode: "manual" | "excel" | "calc";
+  common: Common;
+  positions: Draft[];
+  excelText: string;
+  calcUrl: string;
+  calcText: string;
+  calcWarnings: string[];
+  calcRows: Draft[];
+  calcPreview: CalcImportPreview | null;
+  calcPurpose: string;
+  calcPoint: string;
+  calcDeadline: string;
+}
+
+/** Сколько введено: непустые позиции ручной пачки плюс строки предпросмотра расчёта. */
+function draftCount(draft: Pick<RequestsDraft, "positions" | "calcRows" | "calcPreview">): number {
+  return draft.positions.filter((item) => !isBlankRow(item)).length
+    + (draft.calcPreview ? draft.calcRows.filter((item) => !isBlankRow(item)).length : 0);
+}
+
+/** Ответ на запись не дошёл: ключ тот же, повтор безопасен (сервер вернёт уже созданное, дубля не будет). */
+const UNKNOWN_CREATE = "Результат неизвестен: ответ ERP не дошёл. Проверьте «Мои заявки» или нажмите кнопку ещё раз — повтор не создаст дубль.";
+
 export function RequestsPage({ principal, view }: { principal: Principal; view?: "create" | "mine" }) {
-  const creationKey = useRef(crypto.randomUUID());
-  const batchKey = useRef(crypto.randomUUID());
+  const draft = useFormDraft<RequestsDraft>("requests:create");
+  const restored = view === "mine" ? undefined : draft.initial;
+  const creationKey = useRef(restored?.creationKey ?? crypto.randomUUID());
+  const batchKey = useRef(restored?.batchKey ?? crypto.randomUUID());
+  // A newer search or reload cancels the list read it replaces: a stale answer never overwrites a fresh one.
+  const listRead = useRef(latestRead()).current;
   const [schema, setSchema] = useState<RequestSchema | null>(null);
   const [rows, setRows] = useState<RequestRow[]>([]);
-  const [common, setCommon] = useState<Common>(emptyCommon);
-  const [positions, setPositions] = useState<Draft[]>(() => [emptyDraft()]);
+  const [common, setCommon] = useState<Common>(() => restored?.common ?? emptyCommon());
+  const [positions, setPositions] = useState<Draft[]>(() => restored?.positions ?? [emptyDraft()]);
   const [showErrors, setShowErrors] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [notice, setNotice] = useState(() => {
+    const count = restored ? draftCount(restored) : 0;
+    return count ? `Восстановлена неотправленная заявка: ${positionsWord(count)}` : "";
+  });
   const [busy, setBusy] = useState(false);
   const [serverQuery, setServerQuery] = useState("");
   const canEdit = principal.permissions.newrequest === "edit";
   const canHandoff = canAct(principal, "procurement");
 
-  const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">("manual");
+  const [createMode, setCreateMode] = useState<"manual" | "excel" | "calc">(restored?.createMode ?? "manual");
   // Stage option «Новая форма заявки»: off = the form below as it was.
   const formV2 = useStageOption("requests.form");
   const purposeText = usePurposeLabel();
@@ -152,32 +193,51 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   const [mineTotal, setMineTotal] = useState(0);
   const [mineLoading, setMineLoading] = useState(false);
 
-  const [excelText, setExcelText] = useState("");
+  const [excelText, setExcelText] = useState(restored?.excelText ?? "");
   const [excelError, setExcelError] = useState("");
   const [templateNote, setTemplateNote] = useState("");
 
-  const [calcUrl, setCalcUrl] = useState("");
+  const [calcUrl, setCalcUrl] = useState(restored?.calcUrl ?? "");
   const [calcLoading, setCalcLoading] = useState(false);
-  const [calcText, setCalcText] = useState("");
-  const [calcWarnings, setCalcWarnings] = useState<string[]>([]);
-  const [calcRows, setCalcRows] = useState<Draft[]>([]);
+  const [calcText, setCalcText] = useState(restored?.calcText ?? "");
+  const [calcWarnings, setCalcWarnings] = useState<string[]>(restored?.calcWarnings ?? []);
+  const [calcRows, setCalcRows] = useState<Draft[]>(restored?.calcRows ?? []);
   const [calcShowErrors, setCalcShowErrors] = useState(false);
-  const [calcPreview, setCalcPreview] = useState<CalcImportPreview | null>(null);
-  const [calcPurpose, setCalcPurpose] = useState("");
-  const [calcPoint, setCalcPoint] = useState("");
-  const [calcDeadline, setCalcDeadline] = useState(dateAfter(7));
+  const [calcPreview, setCalcPreview] = useState<CalcImportPreview | null>(restored?.calcPreview ?? null);
+  const [calcPurpose, setCalcPurpose] = useState(restored?.calcPurpose ?? "");
+  const [calcPoint, setCalcPoint] = useState(restored?.calcPoint ?? "");
+  const [calcDeadline, setCalcDeadline] = useState(restored?.calcDeadline ?? dateAfter(7));
   const [calcError, setCalcError] = useState("");
+
+  // The form is kept in the shell's memory while it holds anything; once empty (sent, or never filled) the draft goes.
+  useEffect(() => {
+    if (view === "mine" || !canEdit) return;
+    const blank = !draftCount({ positions, calcRows, calcPreview }) && !excelText.trim() && !calcText.trim();
+    draft.save(blank ? null : {
+      creationKey: creationKey.current, batchKey: batchKey.current, createMode, common, positions, excelText,
+      calcUrl, calcText, calcWarnings, calcRows, calcPreview, calcPurpose, calcPoint, calcDeadline,
+    });
+  }, [view, canEdit, draft, createMode, common, positions, excelText, calcUrl, calcText, calcWarnings, calcRows, calcPreview, calcPurpose, calcPoint, calcDeadline]);
   // «Оформить заявку из расчёта» в карточке проекта: ссылка и № проекта приходят в адресе (?calc_url=&calc_project=).
   const calcPreset = useRef<ReturnType<typeof readCalcPreset> | undefined>(undefined);
   if (calcPreset.current === undefined) calcPreset.current = readCalcPreset();
 
   const projects = schema?.projects ?? [];
 
+  /** Resolves silently when a newer reload replaced this one. */
   async function reload(query = serverQuery) {
-    const [nextSchema, result] = await Promise.all([
-      requestsApi.schema(),
-      view === "create" ? Promise.resolve(null) : requestsApi.list(query),
-    ]);
+    let loaded;
+    try {
+      loaded = await Promise.all([
+        requestsApi.schema(),
+        view === "create" ? Promise.resolve(null) : requestsApi.list(query, listRead()),
+      ]);
+    } catch (reason) {
+      if (isAborted(reason)) return;
+      throw reason;
+    }
+    const [nextSchema, result] = loaded;
+    setLoadError("");
     setSchema(nextSchema);
     if (result) setRows(result.requests);
     const point = nextSchema.delivery_points[0] || "";
@@ -199,15 +259,19 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
   async function loadMine(offset: number, query = serverQuery) {
     setMineLoading(true);
     try {
-      const result = await requestsApi.mine(MINE_PAGE_SIZE, offset, query);
+      const result = await requestsApi.mine(MINE_PAGE_SIZE, offset, query, listRead());
       setMineRows((current) => (offset === 0 ? result.requests : [...current, ...result.requests]));
       setMineTotal(result.total);
+      setLoadError("");
+      setMineLoading(false);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Ошибка загрузки");
-    } finally {
+      if (isAborted(reason)) return; // the newer read owns the loading flag
+      setLoadError(reason instanceof Error ? reason.message : "Ошибка загрузки");
       setMineLoading(false);
     }
   }
+
+  const loadFailed = (reason: unknown) => setLoadError(reason instanceof Error ? reason.message : "Ошибка загрузки");
 
   useEffect(() => {
     const preset = calcPreset.current;
@@ -223,7 +287,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       void loadMine(0);
       return;
     }
-    reload().catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
+    reload().catch(loadFailed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
@@ -231,7 +295,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     setServerQuery(query);
     setError("");
     if (view === "mine") void loadMine(0, query);
-    else reload(query).catch((reason) => setError(reason instanceof Error ? reason.message : "Ошибка загрузки"));
+    else reload(query).catch(loadFailed);
   }
 
   /* rcBulkApply_: a common value goes into every position; rcCategoryRule follows the category. */
@@ -316,7 +380,9 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
         );
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Не удалось создать заявку");
+      // The key stays: a repeat after an unknown result returns what the server already created.
+      setError(reason instanceof UnknownResultError ? UNKNOWN_CREATE
+        : reason instanceof Error ? reason.message : "Не удалось создать заявку");
     } finally {
       setBusy(false);
     }
@@ -577,7 +643,8 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       setCreateMode("manual");
       await reload();
     } catch (reason) {
-      setCalcError(reason instanceof Error ? reason.message : "Не удалось создать заявки");
+      setCalcError(reason instanceof UnknownResultError ? UNKNOWN_CREATE
+        : reason instanceof Error ? reason.message : "Не удалось создать заявки");
     } finally {
       setBusy(false);
     }
@@ -591,6 +658,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
       value: (row) => row.legacy_id,
       render: (row) => <><strong>{row.legacy_id}</strong><small>{row.designation}</small></>,
     },
+    { key: "stage", title: "Статус", value: (row) => row.stage, render: (row) => <span className="procurement-stages">{stageParts(row.stage).map((part, index) => <StatusChip key={`${part}-${index}`} status={part} />)}</span> },
     { key: "designation", title: "Назначение", value: (row) => row.designation, filter: true, hidden: true },
     { key: "created_at", title: "Дата запроса", value: (row) => formatDate(row.created_at), hidden: view === "mine" },
     { key: "initiator", title: "Инициатор", value: (row) => row.initiator, filter: true, hidden: view === "mine" },
@@ -605,12 +673,11 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     { key: "quality_document", title: "Док. качества", value: (row) => row.quality_document ?? "", hidden: true },
     { key: "procurement_deadline", title: "Дедлайн", value: (row) => formatDate(row.procurement_deadline), hidden: view === "mine" },
     { key: "planned_date", title: "План. дата", value: (row) => formatDate(row.planned_date), hidden: view === "mine" },
-    { key: "priority", title: "Приоритет", value: (row) => row.priority, filter: true },
+    { key: "priority", title: "Приоритет", value: (row) => row.priority, filter: true, hidden: view !== "mine" },
     { key: "link", title: "Ссылка", value: (row) => row.link ?? "", render: (row) => (row.link ? <a href={row.link} target="_blank" rel="noreferrer">ссылка</a> : ""), hidden: true },
     { key: "price_with_vat", title: "Цена с НДС", value: (row) => row.price_with_vat ?? "", numeric: true, hidden: true },
-    { key: "line_sum", title: "Сумма заявки", value: (row) => row.line_sum ?? "", numeric: true, hidden: view === "mine" },
+    { key: "line_sum", title: "Сумма заявки", value: (row) => row.line_sum ?? "", numeric: true, hidden: true },
     { key: "comment", title: "Комментарий", value: (row) => row.comment ?? "", wrap: true, hidden: true },
-    { key: "stage", title: "Статус", value: (row) => row.stage, render: (row) => <span className="status">{row.stage}</span> },
   ];
   const mineColumns: DataColumn<RequestRow>[] = [
     ...baseColumns,
@@ -642,6 +709,13 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
     searchPlaceholder: view === "mine" ? "Поиск по моим заявкам — «Найти» ищет во всех" : "Поиск по заявкам — «Найти» ищет во всех",
   };
 
+  /** Переход в «Оформить заявку» без перезагрузки: приложение слушает popstate. */
+  function openCreate() {
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", "newrequest");
+    window.history.pushState({}, "", url);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
   const shownCount = view === "mine" ? mineTotal : rows.length;
 
   return (
@@ -650,17 +724,18 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
         <h1>{TITLES[view ?? "all"]}</h1>
         {view !== "create" && <span className="page-count">{shownCount}</span>}
       </header>
+      {loadError && <div className="error-banner" role="alert">{loadError} <button type="button" className="secondary small" onClick={() => searchServer(serverQuery)}>Повторить</button></div>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner">{notice}</div>}
       {/* «Заявки» и «Мои заявки» — только список; новая заявка оформляется в своём разделе «Оформить заявку». */}
       <div className={view === "create" ? "single-layout" : "list-layout"}>
         {view !== "create" ? null : canEdit ? (
           <div className="panel request-form">
-            <div className="panel-heading"><h2>Новая заявка</h2><span>{formV2 ? "Обязательные поля отмечены *; пустые поля сервер заполнит по умолчанию" : "Обязательные поля отмечены *; остальное заполнено по умолчанию"}</span></div>
-            <div className="mode-tabs">
-              <button type="button" className={createMode === "manual" ? "secondary small active" : "secondary small"} onClick={() => switchMode("manual")}>Вручную</button>
-              <button type="button" className={createMode === "excel" ? "secondary small active" : "secondary small"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
-              <button type="button" className={createMode === "calc" ? "secondary small active" : "secondary small"} onClick={() => switchMode("calc")}>Из расчёта</button>
+            <div className="panel-heading"><h2>Новая заявка</h2><span>{formV2 ? "* — обязательное поле; пустые поля сервер заполнит по умолчанию" : "* — обязательное поле"}</span></div>
+            <div className="seg-tabs mode-tabs" aria-label="Способ ввода">
+              <button type="button" className={createMode === "manual" ? "on" : undefined} aria-pressed={createMode === "manual"} onClick={() => switchMode("manual")}>Вручную</button>
+              <button type="button" className={createMode === "excel" ? "on" : undefined} aria-pressed={createMode === "excel"} onClick={() => switchMode("excel")}>Вставить из Excel</button>
+              <button type="button" className={createMode === "calc" ? "on" : undefined} aria-pressed={createMode === "calc"} onClick={() => switchMode("calc")}>Из расчёта</button>
             </div>
 
             {createMode === "manual" && formV2 && (
@@ -697,7 +772,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
                     <label>Плановая дата<input type="date" value={common.planned_date} onChange={(e) => setCommonField("planned_date", e.target.value)} /></label>
                   </div>
                 </div>
-                <p className="rg-hint">Вставьте блок из Excel или Таблиц прямо в таблицу (Ctrl+V в любую ячейку) · Enter — вниз, Tab — вправо, на последней строке Enter добавляет строку · в одной заявке до {GRID_LIMIT} позиций</p>
+                <p className="rg-hint">Ctrl+V из Excel — в любую ячейку · Enter — вниз, Tab — вправо · до {GRID_LIMIT} позиций в заявке</p>
                 <RequestGrid
                   positions={positions}
                   schema={schema}
@@ -802,9 +877,14 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
             )}
           </div>
         ) : <div className="panel readonly-panel"><h2>Только просмотр</h2><p>У вас нет права создавать заявки.</p></div>}
-        {view !== "create" && <div className="panel table-panel">
+        {view !== "create" && <div className="panel table-panel procurement-flat">
           <div className="panel-heading"><h2>{view === "mine" ? "Мои позиции" : "Последние заявки"}</h2><span>{view === "mine" ? `Всего ${mineTotal}` : "До 200 строк"}</span></div>
-          {view === "mine" ? (
+          {view === "mine" && !mineLoading && mineTotal === 0 && !serverQuery ? (
+            <div className="procurement-empty">
+              <span>Ваших заявок пока нет.</span>
+              {canEdit && <button type="button" className="primary small" onClick={openCreate}>Оформить первую заявку</button>}
+            </div>
+          ) : view === "mine" ? (
             <DataTable
               rows={mineRows}
               columns={mineColumns}
@@ -827,7 +907,7 @@ export function RequestsPage({ principal, view }: { principal: Principal; view?:
               presets={[
                 { label: "Ждут переноса", test: (row) => row.status === "Новый" },
                 { label: "В работе", test: (row) => row.status === "В работе" && !stageClosed(row.stage) },
-                { label: "Ждут счет", test: (row) => stageParts(row.stage).includes("Жду счет") },
+                { label: "Ждут счёт", test: (row) => stageParts(row.stage).includes("Жду счет") },
                 { label: "Ждут оплаты", test: (row) => stageParts(row.stage).includes("В оплату") },
                 { label: "Выполнено", test: (row) => stageClosed(row.stage) && stageParts(row.stage).includes("Готово") },
                 { label: "Отменено", test: (row) => stageClosed(row.stage) && !stageParts(row.stage).includes("Готово") },

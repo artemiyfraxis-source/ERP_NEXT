@@ -28,9 +28,13 @@ from app.modules.fulfillment.application import (
     create_fulfillment,
     delete_fulfillment,
     free_for_project,
+    kit_key,
+    kit_requests_by_kb,
     project_reserve_by_lot,
 )
-from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError
+from app.modules.fulfillment.domain import (
+    DuplicateKitRequest, FulfillmentLine, FulfillmentRequest, FulfillmentStatus, FulfillmentValidationError,
+)
 from app.modules.procurement.application import (
     ConcurrentProcurementUpdate,
     RemoveRequestLinesCommand,
@@ -39,29 +43,40 @@ from app.modules.procurement.application import (
     remove_untouched_request_lines,
 )
 from app.modules.procurement.domain import ProcurementLine
-from app.modules.production.domain import ProductionTask
+from app.modules.production.domain import ProductionStatus, ProductionTask
 from app.modules.production.plan import (
     KIT_STAGES,
     PLAN_KINDS,
     PLAN_STAGE_AUTO,
     TC_REVIEW_VALUES,
+    ActiveBlocker,
+    KitStageNow,
     PlanEvent,
     PlanProjectSnapshot,
     PROJECT_TERMINALS,
+    StagePlan,
+    kit_key_from_purpose,
+    kit_label,
+    kit_stage_key,
     project_terminal,
     ProjectStage,
     normalize_project_number,
+    plan_stage_change,
     project_from_purpose,
     project_stage,
+    project_stage_now,
+    stage_plan_message,
     summarize_journal,
     summarize_kit_marks,
 )
 from app.modules.production.plan_application import (
     AddPlanEventCommand,
+    ChangeStageCommand,
     DeleteProjectPlanEventsCommand,
     PlanUnitOfWork,
     ReplacePlanProjectsCommand,
     add_plan_event,
+    change_stage,
     delete_project_plan_events,
     replace_plan_projects,
 )
@@ -120,6 +135,7 @@ from app.modules.techcards.kitsets import (
 )
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardStatus
 from app.shared.events import AuditEvent
+from app.shared.file_types import stored_content_type
 from app.shared.identity import Actor
 from app.workflows.production_plan import kit_stage_facts
 
@@ -450,7 +466,7 @@ def create_kitset_requests(
     created = create_requests(CreateRequestsCommand(
         creation_key=f"kitset-requests:{normalize_project_number(command.project)}",
         drafts=tuple(drafts), actor=command.actor, now=command.now,
-        designation_base=command.project.strip(), source="import",
+        designation_base=command.project.strip(), source="import", to_procurement=True,
     ), requests_uow())
     return KitsetRequestsResult(created=len(created), skipped=tuple(skipped))
 
@@ -508,12 +524,20 @@ def kitset_facts(techcards, production=None, fulfillment=None, shipping=None) ->
     )
 
 
+def _stage_marks(facts: KitsetFacts, events: Iterable[PlanEvent]):
+    """Stage facts and marks of the ladder; `kit_stage_facts` rebuilds a mark for an issued card — the stages a manual
+    pick jumped (`KitMark.skipped`) are carried over from the journal."""
+    raw = summarize_kit_marks(events)
+    stage_facts, marks = kit_stage_facts(
+        cards=facts.cards, tasks=facts.tasks, fulfillment=facts.fulfillment, goods=facts.goods, marks=raw,
+    )
+    marks = {key: replace(mark, skipped=raw[key].skipped) if key in raw else mark for key, mark in marks.items()}
+    return stage_facts, marks
+
+
 def kitset_stages(kitsets: Iterable[Kitset], facts: KitsetFacts) -> dict[str, tuple[ProjectStage, str]]:
     """{project: (stage, active blocker type)} — the same ladder the production plan uses."""
-    marks = summarize_kit_marks(facts.events)
-    stage_facts, marks = kit_stage_facts(
-        cards=facts.cards, tasks=facts.tasks, fulfillment=facts.fulfillment, goods=facts.goods, marks=marks,
-    )
+    stage_facts, marks = _stage_marks(facts, facts.events)
     journal = summarize_journal(facts.events)
     snapshots = {normalize_project_number(item.project): item for item in facts.projects}
     result = {}
@@ -534,12 +558,199 @@ PROJECT_UNBLOCK = "unblock"
 PROJECT_STATUS = "status"
 
 
+# ── Ручная смена этапа: одна служба за всеми выборами этапа (карточка, КБ, «Производственный план») ──────────
+
+# Заявка на комплектацию ещё живёт: не закрыта, не отменена и не возвращена.
+_LIVE_KIT_REQUESTS = {
+    FulfillmentStatus.NEW, FulfillmentStatus.UNDERFILLED, FulfillmentStatus.COMPLETE, FulfillmentStatus.READY,
+    FulfillmentStatus.ISSUED,
+}
+
+
+@dataclass(frozen=True)
+class ProjectStageState:
+    """The stages of one project right now, read for a manual change or its preview."""
+
+    project: str
+    kits: tuple[KitStageNow, ...]
+    terminal: str = ""
+    blocker: ActiveBlocker | None = None
+    # The project's last journal sequence at read time: the change is refused if the journal moved since.
+    sequence: int = 0
+    # Per КБ: what the change leaves as it is (open shop tasks, live kit requests, goods not sent).
+    warnings: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+def _stage_warnings(project: str, kits: tuple[KitStageNow, ...], facts: KitsetFacts) -> dict[str, tuple[str, ...]]:
+    canon = normalize_project_number(project)
+    by_key = {kit_stage_key(project, kit.item_index): kit.item_index for kit in kits}
+    whole = "" in by_key.values()  # a project without KBs takes everything of the project
+
+    def owner(key: str) -> str | None:
+        if key in by_key:
+            return by_key[key]
+        return "" if whole and key.split("|", 1)[0] == canon else None
+
+    tasks: dict[str, int] = {}
+    requests: dict[str, int] = {}
+    goods: dict[str, tuple[Decimal, str]] = {}
+    for task in facts.tasks:
+        item = owner(kit_stage_key(task.project, task.item)) if task.status is ProductionStatus.RUNNING else None
+        if item is not None:
+            tasks[item] = tasks.get(item, 0) + 1
+    for request in facts.fulfillment:
+        item = owner(kit_key_from_purpose(request.purpose)) if request.status in _LIVE_KIT_REQUESTS else None
+        if item is not None:
+            requests[item] = requests.get(item, 0) + 1
+    for good in facts.goods:
+        item = owner(kit_stage_key(good.project, good.item_index))
+        waiting = good.accepted - good.sent
+        if item is not None and waiting > 0:
+            total, _unit = goods.get(item, (Decimal("0"), good.unit))
+            goods[item] = (total + waiting, good.unit)
+    result: dict[str, tuple[str, ...]] = {}
+    for kit in kits:
+        texts = []
+        if tasks.get(kit.item_index):
+            texts.append(f"Открыто заданий цеха: {tasks[kit.item_index]} — смена этапа их не закрывает.")
+        if requests.get(kit.item_index):
+            texts.append(f"Живых заявок на комплектацию: {requests[kit.item_index]} — смена этапа их не трогает.")
+        if kit.item_index in goods:
+            quantity, unit = goods[kit.item_index]
+            texts.append(
+                f"Готовая продукция принята, не отгружена: {kit_number_payload(quantity)} {unit}".rstrip()
+                + " — смена этапа не отгружает."
+            )
+        result[kit.item_index] = tuple(texts)
+    return result
+
+
+def project_stage_state(
+    project: str, item_indexes: Iterable[str], facts: KitsetFacts, *, sequence: int = 0, kb: str = "",
+) -> ProjectStageState:
+    """КБ of the project — the kitset's assemblies plus the КБ of its techcards (as the production plan lists them),
+    plus ``kb`` when a single КБ is picked — with their stages now."""
+    canon = normalize_project_number(project)
+    indexes = [
+        *item_indexes,
+        *(card.item_index for card in facts.cards if normalize_project_number(card.project) == canon),
+        *([kb] if str(kb or "").strip() else []),
+    ]
+    events = tuple(event for event in facts.events if normalize_project_number(event.project) == canon)
+    stage_facts, marks = _stage_marks(facts, events)
+    journal = summarize_journal(events).get(canon)
+    snapshot = next((item for item in facts.projects if normalize_project_number(item.project) == canon), None)
+    kits = project_stage_now(project, indexes, stage_facts, marks)
+    return ProjectStageState(
+        project=canon, kits=kits, terminal=project_terminal(snapshot, journal),
+        blocker=journal.blocker if journal is not None else None, sequence=sequence,
+        warnings=_stage_warnings(project, kits, facts),
+    )
+
+
+def load_project_stage_state(
+    project: str, *, production, techcards=None, fulfillment=None, shipping=None,
+    item_indexes: Iterable[str] | None = None, kb: str = "",
+) -> ProjectStageState:
+    """Reads the stages of a project from the modules (``item_indexes`` None — the kitset's assemblies, if any).
+    The journal version is read first, so a row added while the facts are read refuses the change."""
+    canon = normalize_project_number(project)
+    with production() as uow:
+        sequence = uow.plan_events.last_sequence(canon)
+    if item_indexes is None:
+        kitset = None
+        if techcards is not None:
+            with techcards() as uow:
+                kitsets = getattr(uow, "kitsets", None)
+                kitset = kitsets.get(project) if kitsets is not None else None
+        item_indexes = [assembly.index for assembly in kitset.assemblies] if kitset is not None else []
+    facts = kitset_facts(techcards, production, fulfillment, shipping)
+    return project_stage_state(project, item_indexes, facts, sequence=sequence, kb=kb)
+
+
+def stage_change_payload(state: ProjectStageState, plan: StagePlan) -> dict[str, Any]:
+    """Preview (and the applied change) for the screens: per КБ from → to, skipped stages in ladder order, what the
+    change does not touch; Russian texts."""
+    changed = {change.item_index: change for change in plan.changes}
+    kept = {item.item_index: item for item in plan.kept}
+    kbs = []
+    for kit in state.kits:
+        if kit.item_index in changed:
+            change = changed[kit.item_index]
+            kbs.append({
+                "kb": kit.item_index, "label": kit_label(kit.item_index), "from": change.from_stage,
+                "to": change.to_stage, "skipped": list(change.skipped), "change": True, "note": "",
+                "warnings": list(state.warnings.get(kit.item_index, ())),
+            })
+        elif kit.item_index in kept:
+            item = kept[kit.item_index]
+            kbs.append({
+                "kb": kit.item_index, "label": kit_label(kit.item_index), "from": item.stage, "to": item.stage,
+                "skipped": [], "change": False, "note": item.note, "warnings": [],
+            })
+    warnings = []
+    if state.terminal and not plan.error:
+        warnings.append(f"Проект закрыт («{state.terminal}») — смена этапа вернёт его в работу.")
+    if state.blocker is not None:
+        warnings.append(
+            f"Активный блокер «{state.blocker.type}»" + (f": {state.blocker.text}" if state.blocker.text else "")
+            + " — смена этапа его не снимает."
+        )
+    return {
+        "project": state.project, "value": plan.value, "kb": plan.kb, "direction": plan.direction,
+        "reason_required": plan.reason_required, "error": plan.error, "message": stage_plan_message(plan),
+        "terminal": state.terminal, "blocker": state.blocker.type if state.blocker is not None else "",
+        "kbs": kbs, "warnings": warnings,
+    }
+
+
+@dataclass(frozen=True)
+class ChangeProjectStageCommand:
+    """Ручная смена этапа: ``kb`` "" — весь проект (без КБ — запись с пустым КБ), иначе одна КБ; ``value`` — этап
+    лестницы или «авто». Назад — только с ``reason``."""
+
+    project: str
+    value: str
+    actor: Actor
+    now: datetime
+    kb: str = ""
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class ProjectStageChange:
+    events: tuple[PlanEvent, ...]
+    plan: StagePlan
+    state: ProjectStageState
+
+    def payload(self) -> dict[str, Any]:
+        return stage_change_payload(self.state, self.plan)
+
+
+def preview_project_stage(state: ProjectStageState, value: str, kb: str = "") -> dict[str, Any]:
+    return stage_change_payload(state, plan_stage_change(state.kits, value, kb))
+
+
+def change_project_stage(
+    command: ChangeProjectStageCommand, state: ProjectStageState, uow_factory: Callable[[], PlanUnitOfWork],
+) -> ProjectStageChange:
+    """The one stage service: plans the pick over ``state`` (read just before) and writes it in one transaction.
+    A stage pick on a closed project first returns it to work (as before)."""
+    plan = plan_stage_change(state.kits, command.value, command.kb)
+    events = change_stage(ChangeStageCommand(
+        project=command.project, plan=plan, actor=command.actor, now=command.now, reason=command.reason,
+        reopen_from=state.terminal, expected_sequence=state.sequence,
+    ), uow_factory())
+    return ProjectStageChange(events, plan, state)
+
+
 @dataclass(frozen=True)
 class ChangeProjectStatusCommand:
     """Смена статуса проекта одним действием — из карточки, плитки и «Производственного плана».
 
-    ``action``: "status" — ``value`` этап лестницы (на все КБ), «авто» (снять ручные этапы) или
-    Отказ/Слился/Отменён; "block" — блокер ``value`` (ХОЛД, СТОП…) с причиной ``text``; "unblock" — снять блокер.
+    ``action``: "status" — ``value`` этап лестницы (поднимает отставшие КБ; назад — с причиной ``text``), «авто»
+    (снять ручные этапы) или Отказ/Слился/Отменён; "block" — блокер ``value`` (ХОЛД, СТОП…) с причиной ``text``;
+    "unblock" — снять блокер.
     """
 
     project: str
@@ -552,19 +763,21 @@ class ChangeProjectStatusCommand:
 
 
 def change_project_status(
-    command: ChangeProjectStatusCommand, uow_factory: Callable[[], PlanUnitOfWork],
-) -> list[PlanEvent]:
-    """Единая точка смены статуса проекта: пишет записи журнала проекта, как «Производственный план» SUPPLYMAP.
+    command: ChangeProjectStatusCommand, uow_factory: Callable[[], PlanUnitOfWork], *,
+    techcards=None, fulfillment=None, shipping=None,
+) -> list[PlanEvent] | ProjectStageChange:
+    """Единая точка смены статуса проекта: блокер и закрытие — записью журнала, этап — через `change_project_stage`
+    (возвращает `ProjectStageChange`).
 
-    Этап лестницы у закрытого проекта сначала возвращает его в работу. «Отгружено» по факту отгрузки (ГП отгружено ≥
-    партии) ставится само и перекрывает ручной этап — вызывать эту функцию из отгрузки не нужно.
+    «Отгружено» по факту отгрузки (ГП отгружено ≥ партии) ставится само и перекрывает ручной этап — вызывать эту
+    функцию из отгрузки не нужно.
     """
     project, value, known = command.project, str(command.value or "").strip(), (command.project,)
 
-    def add(kind: str, *, item_index: str = "", event_value: str = "", blocker: str = "", text: str = "") -> PlanEvent:
+    def add(kind: str, *, event_value: str = "", blocker: str = "", text: str = "") -> PlanEvent:
         return add_plan_event(AddPlanEventCommand(
             project=project, kind=kind, blocker=blocker, text=text, deadline=None, known_projects=known,
-            actor=command.actor, now=command.now, item_index=item_index, value=event_value,
+            actor=command.actor, now=command.now, value=event_value,
         ), uow_factory())
 
     if command.action == PROJECT_BLOCK:
@@ -577,15 +790,13 @@ def change_project_status(
         return [add("status", event_value=value, text=command.text)]
     if value not in (*KIT_STAGES, PLAN_STAGE_AUTO):
         raise KitsetValidationError(f"Неизвестный статус проекта: {value}")
-    canon = normalize_project_number(project)
-    with uow_factory() as uow:
-        snapshot = next((item for item in uow.plan_projects.list() if normalize_project_number(item.project) == canon), None)
-        journal = summarize_journal(uow.plan_events.list(project=canon)).get(canon)
-    events = [add("status", event_value=PLAN_STAGE_AUTO)] if project_terminal(snapshot, journal) else []
-    # Без КБ этап ставится на весь проект (запись с пустым КБ), как в «Производственном плане».
-    for index in command.item_indexes or ("",):
-        events.append(add("stage", item_index=index, event_value=value))
-    return events
+    state = load_project_stage_state(
+        project, production=uow_factory, techcards=techcards, fulfillment=fulfillment, shipping=shipping,
+        item_indexes=command.item_indexes,
+    )
+    return change_project_stage(ChangeProjectStageCommand(
+        project=project, value=value, actor=command.actor, now=command.now, reason=command.text,
+    ), state, uow_factory)
 
 
 def kitset_statuses() -> list[str]:
@@ -613,16 +824,11 @@ def cards_state(project: str, cards: Iterable[ProjectTechcard]) -> dict[str, dic
 _RECEIVING_STATUSES = {"В пути", "Карантин", "Готово"}
 
 
-def supply_rows(
+def _project_chain(
     project: str, requests: Iterable[Request], procurement: Iterable[ProcurementLine],
-) -> list[SupplyRow]:
-    """The purchase chain of the project: Запрос → Закупка → Приёмка. SUPPLYMAP ties it by ЦЕЛЬ (project number)
-    and АРТИКУЛ КД; here by the request's project reference (or purpose) and design article. A procurement line
-    in transit, quarantine or done is at acceptance; «Готово» means it was accepted with a ГРН.
-
-    `open_quantity` («В закупке»): a live request with no procurement line yet brings its КОЛ-ВО; once handed over,
-    only the newest live revision of its line brings what is still to buy (КОЛ-ВО − «Со склада») until it is
-    accepted. Accepted goods lie on the shelf or sit in the kit — counted there, not twice."""
+) -> tuple[dict[UUID, Request], list[ProcurementLine]]:
+    """The project's requests (by id) and procurement lines: by the request's project reference (or purpose), a
+    line by its request or its own project reference."""
     canon = normalize_project_number(project)
     by_request: dict[UUID, Request] = {}
     for request in requests:
@@ -637,6 +843,30 @@ def supply_rows(
         target = normalize_project_number(line.project_reference) if line.project_reference else ""
         if line.source_request_id in by_request or target == canon:
             lines.append(line)
+    return by_request, lines
+
+
+def _line_article(line: ProcurementLine, request: Request | None) -> str:
+    # Артикул мог остаться только в заявке — тянем его вперёд по связи строки с заявкой.
+    return str(line.design_article or "").strip() or (str(request.design_article or "").strip() if request else "")
+
+
+def supply_rows(
+    project: str, requests: Iterable[Request], procurement: Iterable[ProcurementLine],
+    lotless: Iterable[UUID] = (),
+) -> list[SupplyRow]:
+    """The purchase chain of the project: Запрос → Закупка → Приёмка. SUPPLYMAP ties it by ЦЕЛЬ (project number)
+    and АРТИКУЛ КД; here by the request's project reference (or purpose) and design article. A procurement line
+    in transit, quarantine or done is at acceptance; «Готово» means it was accepted with a ГРН.
+
+    `open_quantity` («В закупке»): a live request with no procurement line yet brings its КОЛ-ВО; once handed over,
+    only the newest live revision of its line brings what is still to buy (КОЛ-ВО − «Со склада») until it is
+    accepted. Accepted goods lie on the shelf or sit in the kit — counted there, not twice.
+
+    `lotless` — ids of lines holding a cover «Есть на складе, без ГРН»: such a line closed from stock (unpaid
+    «Готово») was never accepted — it stays in «Закупка» as «Готово · без ГРН», not «Принято на склад»."""
+    by_request, lines = _project_chain(project, requests, procurement)
+    without_lot = set(lotless)
     handed = {line.source_request_id for line in lines}
     newest: dict[UUID, ProcurementLine] = {}
     for line in lines:
@@ -658,16 +888,47 @@ def supply_rows(
         if status == "Отменено":
             continue
         request = by_request.get(line.source_request_id)
-        # Артикул мог остаться только в заявке — тянем его вперёд по связи строки с заявкой.
-        article = str(line.design_article or "").strip() or (str(request.design_article or "").strip() if request else "")
+        article = _line_article(line, request)
         where = "Приёмка" if status in _RECEIVING_STATUSES else "Закупка"
         live = newest.get(line.source_request_id) is line and status != "Готово"
+        received = status == "Готово"
+        if received and line.paid_at is None and line.id in without_lot:
+            where, status, received = "Закупка", f"{status} · без ГРН", False
         rows.append(SupplyRow(
             article=article, where=where, status=status, source_id=line.legacy_id or str(line.id),
-            received=status == "Готово", name=line.calculated_name or (request.name if request else ""),
+            received=received, name=line.calculated_name or (request.name if request else ""),
             open_quantity=line.to_buy if live else Decimal("0"),
         ))
     return rows
+
+
+def supply_off_book(
+    project: str, requests: Iterable[Request], procurement: Iterable[ProcurementLine],
+    procurement_uow: Callable[[], ProcurementUnitOfWork] | None,
+) -> list[tuple[UUID, SupplyStock]]:
+    """«Без ГРН»: the project's procurement covers «Есть на складе, без ГРН» — on the shelf, in no lot, so neither
+    «Свободно» nor «В закупке» (the line's КОЛ-ВО − «Со склада») has them. Cancelled lines bring nothing.
+    → (line id, the quantity under the line's article and name). No factory or no port (test fakes) → []."""
+    if procurement_uow is None:
+        return []
+    by_request, lines = _project_chain(project, requests, procurement)
+    by_id = {line.id: line for line in lines if line.status.value != "Отменено"}
+    if not by_id:
+        return []
+    with procurement_uow() as uow:
+        covers = getattr(uow, "stock_covers", None)
+        found = list(covers.active_without_lot(list(by_id))) if covers is not None else []
+    result = []
+    for cover in found:
+        line = by_id.get(cover.line_id)
+        if line is None or cover.lot_id is not None or cover.quantity <= 0:
+            continue
+        request = by_request.get(line.source_request_id)
+        result.append((line.id, SupplyStock(
+            article=_line_article(line, request), name=line.calculated_name or (request.name if request else ""),
+            quantity=cover.quantity,
+        )))
+    return result
 
 
 def supply_stock(project: str, fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None) -> list[SupplyStock]:
@@ -700,7 +961,9 @@ def supply_kitting(project: str, requests: Iterable[FulfillmentRequest]) -> list
         for line in request.lines:
             quantity = line.reserved + max(line.issued - line.returned_good, Decimal("0"))
             if quantity > 0:
-                kitted.append(SupplyStock(article=line.article, name=line.name, quantity=quantity))
+                kitted.append(SupplyStock(
+                    article=line.article, name=line.name, quantity=quantity, off_book=line.off_book,
+                ))
     return kitted
 
 
@@ -714,7 +977,7 @@ def project_supply(
     procurement_uow: Callable[[], ProcurementUnitOfWork] | None,
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None,
 ) -> tuple[tuple[SupplyLine, ...], tuple[Request, ...]]:
-    """The «Снабжение» tab: every spec position with Нужно / Свободно / В закупке / Не хватает and its stage.
+    """The «Снабжение» tab: every spec position with Нужно / Свободно / Без ГРН / В закупке / Не хватает, its stage.
     A module without a factory reads empty. Also returns the project's requests (the order reads their point)."""
     def read(factory, reader):
         if factory is None:
@@ -722,12 +985,19 @@ def project_supply(
         with factory() as uow:
             return tuple(reader(uow))
 
-    requests = read(requests_uow, lambda uow: uow.requests.recent(10_000))
-    procurement = read(procurement_uow, lambda uow: uow.procurement.list(limit=10_000))
-    kits = read(fulfillment_uow, lambda uow: uow.fulfillment.list(limit=10_000))
-    rows = supply_rows(kitset.project, requests, procurement)
+    # Только этот проект, по индексам ключа № проекта (U06): «первые 10 000» всей ERP теряли старые записи проекта.
+    # Отбор шире, чем нужно цепочке (заявка — по № проекта, цели или обозначению), сужают `_project_chain` и др.
+    project = kitset.project
+    requests = read(requests_uow, lambda uow: uow.requests.for_project(project))
+    procurement = read(procurement_uow, lambda uow: uow.procurement.for_project(
+        project, tuple(request.id for request in requests),
+    ))
+    kits = read(fulfillment_uow, lambda uow: uow.fulfillment.for_project(project))
+    off_book = supply_off_book(kitset.project, requests, procurement, procurement_uow)
+    rows = supply_rows(kitset.project, requests, procurement, lotless=[line_id for line_id, _item in off_book])
     lines = supply_lines(
         kitset, rows, supply_stock(kitset.project, fulfillment_uow), supply_kitting(kitset.project, kits),
+        off_book=[item for _line_id, item in off_book],
     )
     return lines, requests
 
@@ -776,6 +1046,8 @@ def _skip_reason(line: SupplyLine) -> tuple[str, str]:
         return "уже в закупке", f"уже в закупке: {kit_number_payload(line.ordered)}"
     if line.kitted > 0:
         return "уже в комплектации", f"уже в комплектации: {kit_number_payload(line.kitted)}"
+    if line.off_book > 0:
+        return "есть на складе без ГРН", f"на складе без ГРН: {kit_number_payload(line.off_book)}"
     return "хватает на складе", f"свободно на складе: {kit_number_payload(line.free)}"
 
 
@@ -801,7 +1073,8 @@ def order_missing(
     fulfillment_uow: Callable[[], FulfillmentUnitOfWork] | None = None,
     production_uow: Callable[[], PlanUnitOfWork] | None = None,
 ) -> OrderMissingResult:
-    """Purchase requests for what the project lacks: per position Нужно − Свободно − В закупке − в комплектации.
+    """Purchase requests for what the project lacks: per position Нужно − Свободно − В закупке − в комплектации −
+    на складе без ГРН.
 
     Idempotent by construction: the requests it files count «В закупке» at once, so a repeat finds nothing short;
     the creation key (project + what is ordered + the chain it saw) also turns a double click into one batch.
@@ -859,7 +1132,7 @@ def order_missing(
     ).encode()).hexdigest()[:32]
     created = create_requests(CreateRequestsCommand(
         creation_key=f"kitset-missing:{canon}:{digest}", drafts=tuple(drafts), actor=command.actor,
-        now=command.now, designation_base=kitset.project.strip(), source="kitset-missing",
+        now=command.now, designation_base=kitset.project.strip(), source="kitset-missing", to_procurement=True,
     ), requests_uow())
     result.created = [{
         "art": request.design_article or "", "name": request.name, "quantity": kit_number_payload(request.quantity),
@@ -879,6 +1152,8 @@ def _supply_key(value: object) -> str:
 class IssueFromKitsetResult:
     created: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    # КБ that already have a live request (any status but «Отменена»): {"index", "no", "status"} — not sent again.
+    already: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def message(self) -> str:
@@ -886,9 +1161,33 @@ class IssueFromKitsetResult:
         return (
             f"Заявок создано: {len(self.created)}"
             + (f", из них ждут поставки: {waiting}" if waiting else "")
+            + (f"; уже отправлены: {_sent_list(self.already)}" if self.already else "")
             + (f"; пропущено сборок без состава: {len(self.skipped)}" if self.skipped else "")
             + "."
         )
+
+
+def _sent_list(already: list[dict[str, str]]) -> str:
+    return ", ".join(f"{item['index']} ({item['no']})" for item in already)
+
+
+def kitset_issue_state(
+    kitset: Kitset, fulfillment_uow: Callable[[], FulfillmentUnitOfWork],
+) -> list[dict[str, Any]]:
+    """What «Отправить на комплектацию» would do, per assembly: its live kit request (number and status) if the КБ
+    was sent already and not cancelled, whether it has composition to send."""
+    with fulfillment_uow() as uow:
+        live = kit_requests_by_kb(uow, kitset.project)
+    rows = []
+    for assembly in kitset.assemblies:
+        key = kit_key(f"{kitset.project} · {assembly.index}")
+        request = live.get(key[1]) if key is not None else None
+        rows.append({
+            "index": assembly.index, "name": assembly.name, "has_items": bool(assembly.components),
+            "request": {"id": str(request.id), "no": request.number, "status": request.status.value}
+            if request is not None else None,
+        })
+    return rows
 
 
 def issue_from_kitset(
@@ -903,6 +1202,9 @@ def issue_from_kitset(
         raise KitsetValidationError(f"В наборе «{kitset.project}» нет ни одной сборки с составом.")
     lots: dict[tuple[str, str], Any] = {}
     with fulfillment_uow() as uow:
+        # One live request per КБ (prod 180К.11: a second press doubled КБ1 and its reserve): a КБ sent already and
+        # not cancelled is skipped and named; the database's partial UNIQUE stops a press racing this one.
+        live = kit_requests_by_kb(uow, kitset.project)
         for assembly in kitset.assemblies:
             for component in assembly.components:
                 lot = component.lot
@@ -918,10 +1220,19 @@ def issue_from_kitset(
                 if stock is not None and free_for_project(stock, project_reserve_by_lot(uow, [stock], kitset.project)) > 0:
                     lots[(lot.grn, lot.package)] = stock
     result = IssueFromKitsetResult()
+    tasks = []
     for task in issue_tasks(kitset, set(lots)):
-        if not task.items:
+        key = kit_key(task.purpose)
+        sent = live.get(key[1]) if key is not None else None
+        if sent is not None:
+            result.already.append({"index": task.index, "no": sent.number, "status": sent.status.value})
+        elif not task.items:
             result.skipped.append(task.index)
-            continue
+        else:
+            tasks.append(task)
+    if not tasks and result.already:
+        raise DuplicateKitRequest(f"Все КБ проекта {kitset.project} уже отправлены: {_sent_list(result.already)}.")
+    for task in tasks:
         lines = []
         bindings = []
         for item in task.items:
@@ -1316,7 +1627,7 @@ def _purge_requests(
 
 def attach_document(
     project: str, index: str, file_name: str, content_type: str, content: bytes, actor: Actor, now: datetime,
-    techcards_uow: Callable[[], TechcardsUnitOfWork],
+    techcards_uow: Callable[[], TechcardsUnitOfWork], audit_extra: dict[str, str] | None = None,
 ) -> KitDocument:
     """`tcKdAdd`: the file name carries the product id in front («708К.4КБ1 — …») so it is recognised outside
     the card too — in search, mail, print. The bytes live in the ERP database: the owner's decision of 29.09 is
@@ -1337,12 +1648,12 @@ def attach_document(
         document = KitDocument(
             id=uuid4(), project=kitset.project, item_index=index,
             file_name=f"{item_id(kitset.project, index)} — {str(file_name or '').strip() or 'КД'}",
-            content_type=str(content_type or "").strip() or "application/octet-stream",
+            content_type=stored_content_type(content),
             size=len(content), uploaded_at=now, uploaded_by=actor.name,
         )
         uow.kitsets.add_document(document, content)
         _audit(uow, kitset.project, "techcards.kitset_document_added", actor, now, {
-            "item_index": index, "file": document.file_name, "size": str(document.size),
+            "item_index": index, "file": document.file_name, "size": str(document.size), **(audit_extra or {}),
         })
         uow.commit()
     return document
@@ -1377,7 +1688,9 @@ def kit_number_payload(value: Decimal) -> str:
 __all__ = [
     "LoadKitsetCommand", "LoadKitsetResult", "KitsetFacts", "IssueFromKitsetResult", "PLAN_KINDS",
     "ChangeProjectStatusCommand", "change_project_status",
+    "ChangeProjectStageCommand", "ProjectStageChange", "ProjectStageState", "change_project_stage",
+    "load_project_stage_state", "preview_project_stage", "project_stage_state", "stage_change_payload",
     "TC_REVIEW_VALUES", "attach_document", "calc_ops_from_grid", "cards_state", "delete_kitset", "detach_document",
-    "assembly_calc_ops", "generator_bom", "issue_from_kitset", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
+    "assembly_calc_ops", "generator_bom", "issue_from_kitset", "kitset_issue_state", "read_calc_ops", "kit_number_payload", "kitset_facts", "kitset_stages", "kitset_statuses", "load_kitset", "register_project", "supply_lines",
     "supply_rows", "ProjectTails", "TailEntry", "TAIL_JOURNAL", "TAIL_SECTIONS", "purge_project_tails", "request_matches_project", "KitsetRequestsCommand", "KitsetRequestsResult", "create_kitset_requests", "requests_calc_reader",
 ]

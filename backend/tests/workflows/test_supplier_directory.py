@@ -65,8 +65,26 @@ def test_country_for_manufacturer_ignores_case_and_spaces():
     """`countryForManufacturer_`: СТРАНА by ИЗГОТОВИТЕЛЬ, key normalised like the map's."""
     directory, _, _ = _directory()
     assert directory.country_for_manufacturer("  amphenol ") == "США"
-    assert directory.country_for_manufacturer("Molex") == ""
     assert directory.country_for_manufacturer("") == ""
+    assert directory.country_for_manufacturer("Неизвестный завод") == ""
+
+
+def test_country_falls_back_to_the_seed_and_saved_wins_per_key():
+    directory, factory, _ = _directory()
+    assert directory.country_for_manufacturer("Molex") == "США"  # nothing saved for it → seed
+    assert directory.country_for_manufacturer("  TE   CONNECTIVITY ") == "Швейцария"
+    assert directory.country_for_manufacturer("würth ELEKTRONIK") == "Германия"
+    assert directory.country_for_manufacturer("Wurth Elektronik") == "Германия"  # Latin variant is its own row
+    assert directory.country_for_manufacturer("квт") == "Россия"
+    replace_maps(
+        ReplaceMapsCommand(
+            suppliers=(), countries=(ReferencePair("Amphenol", "США"), ReferencePair(" molex ", "Китай")),
+            gost_awg=(), actor=Actor(name="Админ", department="ИТ"), now=NOW,
+        ),
+        factory(),
+    )
+    assert directory.country_for_manufacturer("Molex") == "Китай"  # saved beats the seed
+    assert directory.country_for_manufacturer("JST") == "Япония"  # the rest of the seed stays
 
 
 def test_empty_map_falls_back_to_the_config_seed():

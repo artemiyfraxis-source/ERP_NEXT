@@ -5,14 +5,18 @@
 export type NotificationTone = "ok" | "warn" | "danger" | "info" | "neutral";
 
 const KINDS: Record<string, { label: string; tone: NotificationTone }> = {
+  arrival: { label: "Приход под проект", tone: "ok" },
   digest: { label: "Сводка", tone: "info" },
   disposal: { label: "Утилизация", tone: "danger" },
   error: { label: "Ошибка", tone: "danger" },
   nonconformity: { label: "Несоответствие", tone: "warn" },
   quarantine: { label: "Карантин", tone: "warn" },
+  production: { label: "Цех", tone: "info" },
   ready: { label: "Готово к выдаче", tone: "ok" },
   ship: { label: "Отгрузка", tone: "info" },
   security: { label: "Безопасность", tone: "danger" },
+  leave: { label: "Отпуск и отгул", tone: "info" },
+  document: { label: "Документ к ознакомлению", tone: "info" },
   status: { label: "Статус заявки", tone: "neutral" },
   info: { label: "Сообщение", tone: "neutral" },
 };

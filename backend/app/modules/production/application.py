@@ -34,6 +34,7 @@ from .domain import (
     BusyInterval,
     DEFAULT_SHIFT,
     UNPLANNED_SITES,
+    FlowMode,
     OperationShare,
     OperatorSkill,
     PlanResult,
@@ -41,12 +42,15 @@ from .domain import (
     ProductionStatus,
     ProductionTask,
     ProductionValidationError,
+    TaskDelivery,
     WorkShift,
     add_work_seconds,
+    delivered_total,
     next_working_moment,
     plan_operation,
     skill_of,
 )
+from .flow import FlowPlan, FlowStep, plan_flow
 from .scheduling import ScheduleVariant, schedule_task, schedule_variants, upstream_ids, waited_input
 
 logger = logging.getLogger(__name__)
@@ -83,12 +87,19 @@ class Absence:
     from_date: date
     to_date: date
     kind: str
+    # Written from a registered leave request (identity/leave.py); None — the master's own row.
+    leave_request_id: UUID | None = None
+
+
+ABSENCE_KINDS = frozenset({"Отпуск", "Больничный", "Отгул", "Командировка", "Учёба"})
 
 
 class ProductionRepository(Protocol):
     def get(self, task_id: UUID) -> ProductionTask | None: ...
     def by_idempotency_key(self, key: str) -> ProductionTask | None: ...
     def list(self, limit: int = 200, after_id: UUID | None = None) -> Sequence[ProductionTask]: ...
+    def for_project(self, project: str) -> Sequence[ProductionTask]: ...
+    def with_status(self, status: ProductionStatus) -> Sequence[ProductionTask]: ...
     def planned(self, since: datetime) -> Sequence[ProductionTask]: ...
     def lock(self, task_id: UUID) -> None: ...
     def reserve_number(self) -> str: ...
@@ -107,6 +118,7 @@ class CalendarRepository(Protocol):
     def absences(self) -> Sequence[Absence]: ...
     def shift(self) -> WorkShift: ...
     def replace(self, holidays: frozenset[date], absences: tuple[Absence, ...], shift: WorkShift) -> None: ...
+    def replace_leave_absences(self, absences: tuple[Absence, ...]) -> int: ...
 
 
 class SkillRepository(Protocol):
@@ -147,6 +159,9 @@ class LaunchProductionCommand:
     operations: tuple[ProductionOperation, ...]
     actor: Actor
     now: datetime
+    # Техкарта и её ревизия, с которых взяты нормы (план задания, «Обновить нормы из ЭТК»).
+    techcard_id: UUID | None = None
+    techcard_revision: int | None = None
 
 
 @dataclass(frozen=True)
@@ -276,6 +291,8 @@ def launch_production(command: LaunchProductionCommand, uow: UnitOfWork) -> Prod
             launched_by=command.actor.name,
             operations=command.operations,
             created_at=command.now,
+            techcard_id=command.techcard_id,
+            techcard_revision=command.techcard_revision,
         )
         uow.production.add(task)
         uow.serials.ensure_task(task.id, task.number, task.quantity)
@@ -536,6 +553,8 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         # Факт монтажника по этому заданию (application.record_fact) и мастер пишут по очереди.
         uow.production.lock(command.task_id)
         loaded = _task(command.task_id, command.expected_version, uow)
+        if loaded.status is ProductionStatus.DONE:
+            raise ProductionValidationError(f"Задание {loaded.number} выполнено — назначать нельзя")
         now = command.now
         tasks = _live_tasks(uow, now)
         task = tasks.get(loaded.id) or localize(loaded, now)
@@ -813,7 +832,9 @@ def _record_fact(
 def hand_over_production(command: HandOverProductionCommand, uow: UnitOfWork) -> ProductionTask:
     with uow:
         task = _task(command.task_id, command.expected_version, uow)
-        updated = task.hand_over(command.site)
+        deliveries = getattr(uow, "deliveries", None)
+        delivered = delivered_total(deliveries.for_task(task.id)) if deliveries is not None else 0
+        updated = task.hand_over(command.site, delivered)
         uow.production.add(updated)
         _audit(updated, "production.handed_over", command.actor, command.now, {"site": updated.handed_to}, uow)
         uow.commit()
@@ -833,13 +854,25 @@ def set_production_cancelled(command: SetProductionCancelledCommand, uow: UnitOf
 def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: UnitOfWork) -> None:
     with uow:
         operators = {operator.id for operator in uow.operators.list() if operator.active}
-        for absence in command.absences:
+        # A screen that sends the leave-request absences back (they are listed with the master's) does not turn them
+        # into the master's rows: the same person, period and kind as a leave row is that row.
+        from_leave = {
+            (item.operator_id, item.from_date, item.to_date, item.kind)
+            for item in uow.calendar.absences() if item.leave_request_id is not None
+        }
+        manual = tuple(
+            absence for absence in command.absences
+            if absence.leave_request_id is None
+            and (absence.operator_id, absence.from_date, absence.to_date, absence.kind) not in from_leave
+        )
+        for absence in manual:
             if absence.operator_id not in operators:
                 raise ProductionValidationError("Оператора нет в справочнике сотрудников")
             if absence.to_date < absence.from_date:
                 raise ProductionValidationError("Конец отсутствия раньше начала")
-            if absence.kind not in {"Отпуск", "Больничный", "Отгул", "Командировка", "Учёба"}:
+            if absence.kind not in ABSENCE_KINDS:
                 raise ProductionValidationError("Неизвестный вид отсутствия")
+        command = replace(command, absences=manual)
         uow.calendar.replace(command.holidays, command.absences, command.shift)
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=command.actor.id, event_type="production.calendar_replaced",
@@ -853,6 +886,37 @@ def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: 
         ))
         uow.commit()
 
+
+
+@dataclass(frozen=True)
+class SyncLeaveAbsencesCommand:
+    absences: tuple[Absence, ...]  # one per registered leave request, `leave_request_id` set
+    actor: Actor
+    now: datetime
+
+
+def sync_leave_absences(command: SyncLeaveAbsencesCommand, uow: UnitOfWork) -> int:
+    """Registered leave requests → the shop calendar (cabinet plan T6): the planner and «Загрузка по людям» then do not
+    put the person on those days. Idempotent: the calendar's leave rows become exactly the given set; the master's own
+    absences are never touched. Returns the number of rows changed (0 — already in step, nothing written)."""
+    for absence in command.absences:
+        if absence.leave_request_id is None:
+            raise ProductionValidationError("Отсутствие по заявлению без заявления")
+        if absence.to_date < absence.from_date:
+            raise ProductionValidationError("Конец отсутствия раньше начала")
+        if absence.kind not in ABSENCE_KINDS:
+            raise ProductionValidationError("Неизвестный вид отсутствия")
+    with uow:
+        changed = uow.calendar.replace_leave_absences(command.absences)
+        if not changed:
+            return 0
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=command.actor.id, event_type="production.leave_absences_synced",
+            actor=command.actor, occurred_at=command.now,
+            details={"absences": len(command.absences), "changed": changed},
+        ))
+        uow.commit()
+        return changed
 
 def replace_operator_skills(command: ReplaceOperatorSkillsCommand, uow: UnitOfWork) -> None:
     with uow:
@@ -898,6 +962,13 @@ def _auto_schedule(
         operator_id for operator_id in operators
         if any(item.operator_id == operator_id and item.allowed for item in skill_rows)
     )
+    if task.team:
+        # Команда задания (план задания): авторасчёт ставит только её людей.
+        team = tuple(operator_id for operator_id in task.team if operator_id in team)
+        if not team:
+            raise ProductionValidationError(
+                "В команде задания нет монтажников с допуском — добавьте людей в «План задания» или заведите компетенции"
+            )
     if not team:
         raise ProductionValidationError("Для авторасчёта нужно заполнить матрицу компетенций")
     other_tasks = [item for item in uow.production.list(limit=10_000) if item.id != task.id]
@@ -910,6 +981,10 @@ def _auto_schedule(
         holidays=uow.calendar.holidays(), shift=_shift(uow.calendar),
         max_crew=command.max_crew, replan=command.replan,
     )
+    # Партия, выбранная в плане задания, сильнее вариантов: последовательно — целиком, иначе — своя партия.
+    chosen = task.quantity if task.flow_mode is FlowMode.SEQUENTIAL else task.transfer_batch
+    if transfer_batch is None and chosen is not None:
+        transfer_batch = chosen
     if transfer_batch is not None:
         variants = (schedule_task(transfer_batch=transfer_batch, **parameters),)
     else:
@@ -946,3 +1021,295 @@ def apply_auto_schedule(
         }, uow)
         uow.commit()
         return updated, variant
+
+
+# ── Цель 2: план задания, «Сдано N шт» площадки, статус «Выполнено» ──────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class UpdateFlowCommand:
+    task_id: UUID
+    expected_version: int
+    flow_mode: FlowMode
+    transfer_batch: int | None
+    early_quantity: int | None
+    team: tuple[UUID, ...]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class RefreshNormsCommand:
+    """«Обновить нормы из ЭТК»: нормы выданной техкарты по номерам этапов {номер: (код, сек на штуку, подготовка)}."""
+    task_id: UUID
+    expected_version: int
+    techcard_id: UUID
+    revision: int
+    norms: dict[int, tuple[str, Decimal, Decimal]]
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class RecordDeliveryCommand:
+    """«Сдано N шт»; quantity None — весь остаток одним разом (по умолчанию ЖУК сдаёт всё сразу)."""
+    task_id: UUID
+    expected_version: int
+    quantity: int | None
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class CancelDeliveryCommand:
+    task_id: UUID
+    expected_version: int
+    delivery_id: UUID
+    actor: Actor
+    now: datetime
+
+
+@dataclass(frozen=True)
+class SetTaskDoneCommand:
+    task_id: UUID
+    expected_version: int
+    done: bool  # True — «Выполнено», False — «Вернуть в работу»
+    actor: Actor
+    now: datetime
+
+
+def _locked(task_id: UUID, expected_version: int, uow) -> ProductionTask:
+    """Строка задания под замок (PostgreSQL) и проверка версии формы: сдачи и план пишутся по очереди."""
+    lock = getattr(uow.production, "lock", None)
+    if lock is not None:
+        lock(task_id)
+    return _task(task_id, expected_version, uow)
+
+
+def update_flow(command: UpdateFlowCommand, uow: UnitOfWork) -> ProductionTask:
+    """План задания: режим передачи, передаточная партия, «первые k раньше», команда (люди из справочника по id)."""
+    with uow:
+        task = _locked(command.task_id, command.expected_version, uow)
+        team = tuple(command.team)
+        assigner = uow.operators.get(command.actor.id)
+        for operator_id in team:
+            operator = uow.operators.get(operator_id)
+            if operator is None or not operator.active:
+                raise ProductionValidationError("Человека нет в справочнике сотрудников")
+            if not operator.shop_worker and operator_id not in task.team:
+                raise ProductionValidationError(f"{operator.name} не монтажник: в команду задания берут только монтажников")
+            # Мастер площадки собирает команду из своих (как при назначении); уже стоящих не выгоняем.
+            if assigner is not None and assigner.site and operator.site != assigner.site and operator_id not in task.team:
+                raise ProductionValidationError(f"Площадка {assigner.site}: в команду можно взять только своих, не {operator.name}")
+        updated = task.with_flow(
+            flow_mode=command.flow_mode, transfer_batch=command.transfer_batch,
+            early_quantity=command.early_quantity, team=team,
+        )
+        if updated is task:
+            return task
+        uow.production.add(updated)
+        _audit(updated, "production.flow_updated", command.actor, command.now, {
+            "flow_mode": updated.flow_mode.value, "transfer_batch": updated.transfer_batch,
+            "early_quantity": updated.early_quantity, "team": [str(value) for value in updated.team],
+        }, uow)
+        uow.commit()
+        return updated
+
+
+def refresh_norms(command: RefreshNormsCommand, uow: UnitOfWork) -> ProductionTask:
+    """Нормы из ЭТК — только по кнопке мастера (решение 5): тихо задание нормы не меняет."""
+    with uow:
+        task = _locked(command.task_id, command.expected_version, uow)
+        before = {operation.position: str(operation.norm_seconds) for operation in task.operations}
+        updated = task.refresh_norms(command.norms, command.techcard_id, command.revision)
+        uow.production.add(updated)
+        _audit(updated, "production.norms_refreshed", command.actor, command.now, {
+            "techcard_id": str(command.techcard_id), "from_revision": task.techcard_revision,
+            "revision": command.revision,
+            "norm_seconds": {
+                str(operation.position): [before[operation.position], str(operation.norm_seconds)]
+                for operation in updated.operations
+            },
+        }, uow)
+        uow.commit()
+        return updated
+
+
+def record_delivery(command: RecordDeliveryCommand, uow: UnitOfWork) -> tuple[ProductionTask, TaskDelivery]:
+    """«Сдано N шт» площадки, которой задание отдано целиком. Весь тираж сдан — задание «Выполнено»."""
+    with uow:
+        task = _locked(command.task_id, command.expected_version, uow)
+        if not task.handed_to:
+            raise ProductionValidationError(
+                f"Задание {task.number} распределяется по людям — сдача идёт коробками, «Сдано N шт» только у площадки"
+            )
+        task._check_open("сдавать нельзя")
+        delivered = delivered_total(uow.deliveries.for_task(task.id))
+        left = task.quantity - delivered
+        quantity = left if command.quantity is None else command.quantity
+        if left <= 0:
+            raise ProductionValidationError(f"Задание {task.number}: весь тираж уже сдан")
+        if quantity <= 0:
+            raise ProductionValidationError("Сдать можно целое число штук больше нуля")
+        if quantity > left:
+            raise ProductionValidationError(
+                f"Задание {task.number}: осталось сдать {left} шт из {task.quantity} — {quantity} шт больше остатка"
+            )
+        delivery = TaskDelivery(
+            id=uuid4(), task_id=task.id, site=task.handed_to, quantity=quantity,
+            delivered_at=command.now, delivered_by=command.actor.name,
+        )
+        uow.deliveries.save(delivery)
+        total = delivered + quantity
+        updated = (
+            task.complete(Decimal(total), Decimal(task.quantity)) if total >= task.quantity
+            else replace(task, version=task.version + 1)
+        )
+        uow.production.add(updated)
+        _audit(updated, "production.delivered", command.actor, command.now, {
+            "delivery_id": str(delivery.id), "site": delivery.site, "quantity": quantity,
+            "delivered": total, "of": task.quantity, "status": updated.status.value,
+        }, uow)
+        uow.commit()
+        return updated, delivery
+
+
+def cancel_delivery(command: CancelDeliveryCommand, uow: UnitOfWork) -> ProductionTask:
+    """Отмена ошибочной сдачи: строка остаётся с отметкой; выполненное задание с недостачей — снова «Запущено»."""
+    with uow:
+        task = _locked(command.task_id, command.expected_version, uow)
+        deliveries = uow.deliveries.for_task(task.id)
+        delivery = next((item for item in deliveries if item.id == command.delivery_id), None)
+        if delivery is None:
+            raise KeyError(f"Delivery not found: {command.delivery_id}")
+        if not delivery.active:
+            raise ProductionValidationError("Эта сдача уже отменена")
+        if task.status is ProductionStatus.CANCELLED:
+            raise ProductionValidationError(f"Задание {task.number} отменено — сдачи не меняются")
+        uow.deliveries.save(replace(delivery, cancelled_at=command.now, cancelled_by=command.actor.name))
+        total = delivered_total(deliveries) - delivery.quantity
+        updated = (
+            task.reopen() if task.status is ProductionStatus.DONE and total < task.quantity
+            else replace(task, version=task.version + 1)
+        )
+        uow.production.add(updated)
+        _audit(updated, "production.delivery_cancelled", command.actor, command.now, {
+            "delivery_id": str(delivery.id), "quantity": delivery.quantity, "delivered": total,
+            "status": updated.status.value,
+        }, uow)
+        uow.commit()
+        return updated
+
+
+def _done_quantity(task: ProductionTask, uow) -> tuple[Decimal, Decimal]:
+    """(сдано, нужно) для «Выполнено»: у площадки — «Сдано N шт», у цеха — годные финального этапа."""
+    if task.handed_to:
+        return Decimal(delivered_total(uow.deliveries.for_task(task.id))), Decimal(task.quantity)
+    final = task.final_operation
+    good = sum(
+        (output.good_quantity for output in uow.outputs.active_for_tasks((task.id,)) if output.operation_id == final.id),
+        Decimal(0),
+    )
+    return good, task.operation_units(final.id)
+
+
+def set_task_done(command: SetTaskDoneCommand, uow: UnitOfWork) -> ProductionTask:
+    """«Выполнено» — когда сдан тираж; «Вернуть в работу» — выполненное задание снова в работе."""
+    with uow:
+        task = _locked(command.task_id, command.expected_version, uow)
+        done, required = _done_quantity(task, uow)
+        if command.done:
+            updated = task.complete(done, required)
+        else:
+            if task.handed_to and task.status is ProductionStatus.DONE and done >= required:
+                raise ProductionValidationError(
+                    f"{task.handed_to} сдал весь тираж — чтобы вернуть задание в работу, отмените сдачу"
+                )
+            updated = task.reopen()
+        uow.production.add(updated)
+        _audit(updated, "production.done" if command.done else "production.reopened", command.actor, command.now, {
+            "done": str(done), "required": str(required),
+        }, uow)
+        uow.commit()
+        return updated
+
+
+@dataclass(frozen=True)
+class FlowStepView:
+    operation_id: UUID
+    position: int
+    people: Decimal
+    start: datetime
+    first_out: datetime
+    finish: datetime
+    wait_seconds: int
+
+
+@dataclass(frozen=True)
+class FlowView:
+    """«План задания»: расчёт flow.plan_flow в датах смены от начала задания."""
+    task: ProductionTask
+    anchor: datetime
+    plan: FlowPlan
+    steps: tuple[FlowStepView, ...]
+    first_ready: datetime
+    finish: datetime
+    baseline_finish: datetime
+    baseline_early_ready: datetime | None
+    warnings: tuple[str, ...]
+    deliveries: tuple[TaskDelivery, ...]
+
+
+def _flow_people(task: ProductionTask, operation: ProductionOperation, skills) -> Decimal:
+    """Скорость этапа: назначенные люди (сумма коэффициентов); не назначен — последовательно вся команда задания
+    с допуском (этапы идут по очереди), иначе один человек."""
+    people = operation.operator_ids
+    if not people and task.flow_mode is FlowMode.SEQUENTIAL and task.team:
+        people = tuple(value for value in task.team if skill_of(skills, operation.code, value).allowed)
+    if not people:
+        return Decimal(1)
+    return sum((skill_of(skills, operation.code, value).coefficient for value in people), Decimal(0)) or Decimal(1)
+
+
+def flow_view(task_id: UUID, uow: UnitOfWork, now: datetime) -> FlowView:
+    with uow:
+        stored = uow.production.get(task_id)
+        if stored is None:
+            raise KeyError(f"Production task not found: {task_id}")
+        task = localize(stored, now)
+        skills = _skills(uow)
+        holidays = uow.calendar.holidays()
+        shift = _shift(uow.calendar)
+        deliveries = getattr(uow, "deliveries", None)
+        history = tuple(deliveries.for_task(task.id)) if deliveries is not None else ()
+    factors = task.unit_factors
+    steps = tuple(FlowStep(
+        operation_id=operation.id, position=operation.position,
+        inputs=tuple(item.input_operation_id for item in operation.inputs),
+        setup_seconds=operation.setup_seconds,
+        unit_seconds=operation.seconds_per_unit * factors.get(operation.id, Decimal(1)),
+        people=_flow_people(task, operation, skills),
+    ) for operation in task.operations)
+    plan = plan_flow(steps, task.quantity, task.flow_mode, task.transfer_batch, task.early_quantity)
+    starts = [operation.planned_start for operation in task.operations if operation.planned_start is not None]
+    # От начала по плану, если этапы уже поставлены; иначе — от ближайшего рабочего момента.
+    anchor = next_working_moment(min(starts) if starts else now, holidays, shift)
+
+    def at(seconds: Decimal) -> datetime:
+        return add_work_seconds(anchor, ceil(seconds), holidays, shift)
+
+    people = {step.operation_id: step.people for step in steps}
+    finish = at(plan.finish)
+    warnings = list(plan.warnings)
+    if task.deadline and finish.date() > task.deadline:
+        warnings.append(f"Всё готово {finish:%d.%m} — позже срока {task.deadline:%d.%m}")
+    return FlowView(
+        task=task, anchor=anchor, plan=plan,
+        steps=tuple(FlowStepView(
+            item.operation_id, item.position, people[item.operation_id],
+            at(item.start), at(item.first_out), at(item.finish), ceil(item.wait),
+        ) for item in plan.steps),
+        first_ready=at(plan.first_ready), finish=finish, baseline_finish=at(plan.baseline_finish),
+        baseline_early_ready=at(plan.baseline_early_ready) if plan.baseline_early_ready is not None else None,
+        warnings=tuple(warnings), deliveries=history,
+    )
