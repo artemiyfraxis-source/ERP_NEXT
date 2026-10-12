@@ -1437,6 +1437,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .ep-pin { display: grid; grid-template-columns: minmax(0, 1fr) 120px; align-items: center; gap: 8px; color: var(--foreground); font-size: 12.5px; font-weight: 500; }
 .tcgen .ep-links { gap: 4px; font-size: 12.5px; }
 .tcgen .ep-links b { font-variant-numeric: tabular-nums; }
+/* «Построить чертёж»: итог строкой под шапкой «Соединений», замечания свёрнуты. */
+.tcgen .gen-drawing-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; color: var(--muted-foreground); }
+.tcgen .gen-drawing-note .link-button { padding: 0; font-size: inherit; }
+.tcgen .gen-drawing-note details { flex-basis: 100%; }
+.tcgen .gen-drawing-note summary { cursor: pointer; color: var(--tone-warn); font-weight: 600; }
+.tcgen .gen-drawing-note ul { margin: 4px 0 0; padding-left: 18px; }
 .tcgen .coax-info { color: var(--muted-foreground); font-size: 12px; }
 .tcgen .coax-add { display: grid; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--warn-soft); }
 .tcgen .coax-add > .secondary { justify-self: start; }
@@ -2094,6 +2100,12 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-section h3 { margin: 0 0 6px; font-size: 14px; }
 .conn-section h3 .muted { font-weight: 400; }
 .conn-series-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.conn-maker { grid-column: 1 / -1; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--muted-foreground); border-bottom: 1px solid var(--border); padding-bottom: 2px; }
+.conn-maker:first-child { margin-top: 0; }
+.conn-sources { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13px; }
+.conn-sources a { color: var(--primary); }
+.conn-jump { border: 0; cursor: pointer; font-family: inherit; }
+.conn-jump:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .conn-series { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center; min-height: 72px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); text-align: left; cursor: pointer; }
 .conn-series:hover, .conn-series:focus-visible { border-color: var(--primary); background: var(--accent); }
 .conn-series-pic { display: flex; align-items: center; justify-content: center; height: 56px; }

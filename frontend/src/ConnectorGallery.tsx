@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
@@ -91,6 +91,14 @@ const TERMINAL_COLUMNS: DataColumn<ConnectorTerminal>[] = [
   { key: "applicator", title: "Аппликатор", value: (t) => t.applicator },
 ];
 
+type ContactRow = NonNullable<ConnectorSeries["contacts"]>[number];
+const CONTACT_COLUMNS: DataColumn<ContactRow>[] = [
+  { key: "article", title: "Артикул контакта", value: (c) => c.article, render: (c) => <b>{c.article}</b> },
+  { key: "wire", title: "Провод, исполнение", value: (c) => c.wire },
+  { key: "base", title: "Во вкладке «Терминалы»", value: (c) => (c.in_base ? "есть" : "нет"),
+    render: (c) => (c.in_base ? <span className="tone-ok">есть</span> : <span className="tone-warn">нет — добавить</span>) },
+];
+
 type CatalogRow = ConnectorSeries["catalog"][number];
 const CATALOG_COLUMNS: DataColumn<CatalogRow>[] = [
   { key: "article", title: "Артикул", value: (c) => c.article, render: (c) => <b>{c.article}</b> },
@@ -98,6 +106,8 @@ const CATALOG_COLUMNS: DataColumn<CatalogRow>[] = [
   { key: "wire", title: "Кабель", value: (c) => c.wire },
   { key: "maker", title: "Производитель", value: (c) => c.maker },
 ];
+
+const missing = (series: ConnectorSeries) => (series.contacts ?? []).filter((c) => !c.in_base).length;
 
 function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match: ConnectorSeriesMatch | null; onBack: () => void }) {
   const hit = match?.series === series.id ? match.article : null;
@@ -110,8 +120,12 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
       <button type="button" className="secondary small" onClick={onBack}>← Все серии</button>
       <h2>{series.title}</h2>
       <span className="muted">{[series.category, series.maker, series.pitch ? `шаг ${comma(series.pitch)} мм` : "", range ? `${range} конт.` : "", series.housing_count ? `${series.housing_count} корп.` : ""].filter(Boolean).join(" · ")}</span>
-      {series.datasheet && <a href={series.datasheet} target="_blank" rel="noreferrer">Чертёж производителя (PDF)</a>}
+      {!series.sources?.length && series.datasheet && <a href={series.datasheet} target="_blank" rel="noreferrer">Чертёж производителя (PDF)</a>}
     </div>
+    {series.sources && series.sources.length > 0 && <div className="conn-sources">
+      <span className="muted">{series.sources.length > 1 ? "Документы производителя:" : "Документ производителя:"}</span>
+      {series.sources.map((source) => <a key={source.url} href={source.url} target="_blank" rel="noreferrer">{source.title}</a>)}
+    </div>}
     <div className="conn-facts">
       {series.housing_count === 0
         ? <span className="order-chip tone-warn" title="Каталога корпусов серии в ERP нет — показаны только данные из баз «Терминалы» и «Коакс»">корпуса не добавлены</span>
@@ -124,6 +138,9 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
             : <span className="order-chip tone-warn" title="Каталога серии в ERP нет — показаны корпуса, которые ERP уже знает">диапазон не сверен</span>}
         </>}
       {series.wire && <span className="order-chip tone-info">провод {wireText(series.wire)}</span>}
+      {missing(series) > 0 && <button type="button" className="order-chip tone-warn conn-jump"
+        onClick={() => document.getElementById("conn-contacts")?.scrollIntoView?.({ block: "start" })}>
+        контактов нет в «Терминалы»: {missing(series)} ↓</button>}
       {series.housing_count > 0 && <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>}
     </div>
     {match?.series === series.id && !match.article && <div className="warning-inline">
@@ -142,6 +159,12 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
       <h3>Артикулы <span className="muted">{series.catalog.length} · из вкладки «Коакс»</span></h3>
       <DataTable label={`Артикулы ${series.title}`} rows={series.catalog} columns={CATALOG_COLUMNS} rowKey={(c) => c.article}
         storageKey="db:conn-catalog" exportName={`Коакс ${series.title}`} hideSearch compactBelow={30} />
+    </section>}
+    {series.contacts && series.contacts.length > 0 && <section className="conn-variant" id="conn-contacts">
+      <h3>Контакты по каталогу <span className="muted">{series.contacts.length}
+        {missing(series) ? ` · нет во вкладке «Терминалы»: ${missing(series)}` : " · все есть во вкладке «Терминалы»"}</span></h3>
+      <DataTable label={`Контакты по каталогу ${series.title}`} rows={series.contacts} columns={CONTACT_COLUMNS} rowKey={(c) => c.article}
+        storageKey="db:conn-contacts" exportName={`Контакты ${series.title}`} hideSearch compactBelow={30} />
     </section>}
     {(series.terminals.length > 0 || series.catalog.length === 0) && <section className="conn-variant">
       <h3>Терминалы <span className="muted">{series.terminals.length ? `${series.terminals.length} · из вкладки «Терминалы»` : ""}</span></h3>
@@ -193,11 +216,13 @@ export function ConnectorGallery() {
     || item.catalog.some((c) => c.article.toUpperCase().replace(/\s+/g, "").includes(query))), [series, query]);
   // Sections in the order the server sends them (fixed category order); counts follow the search.
   const sections = useMemo(() => {
-    const out: Array<{ name: string; items: ConnectorSeries[] }> = [];
+    // Inside a section the server sends the series by maker, then pitch; a maker label only where makers differ.
+    const out: Array<{ name: string; items: ConnectorSeries[]; makers: number }> = [];
     for (const item of shown) {
       const last = out.find((section) => section.name === item.category);
-      if (last) last.items.push(item); else out.push({ name: item.category, items: [item] });
+      if (last) last.items.push(item); else out.push({ name: item.category, items: [item], makers: 0 });
     }
+    for (const section of out) section.makers = new Set(section.items.map((item) => item.maker)).size;
     return out;
   }, [shown]);
   const categories = useMemo(() => {
@@ -221,7 +246,8 @@ export function ConnectorGallery() {
   if (series === null) return <div className="empty">Загрузка…</div>;
   const visible = sections.filter((section) => category === null || section.name === category);
   const open = series.find((item) => item.id === openId) ?? null;
-  const housings = series.reduce((sum, item) => sum + item.housing_count, 0);
+  // A housing listed in two series (Mini-Fit Plus contacts go into Mini-Fit Jr. housings) is counted once.
+  const housings = new Set(series.flatMap((item) => item.variants.flatMap((variant) => variant.housings.map((h) => h.article)))).size;
   return <div className="conn-base">
     <form className="toolbar" onSubmit={(event) => { event.preventDefault(); void check(); }}>
       <input value={article} placeholder="Серия или артикул корпуса, например GHR-04V-S" aria-label="Артикул корпуса"
@@ -246,7 +272,11 @@ export function ConnectorGallery() {
         ? visible.map((section) => <section key={section.name} className="conn-section">
           <h3>{section.name} <span className="muted">{section.items.length}</span></h3>
           <div className="conn-series-list">
-            {section.items.map((item) => <SeriesCard key={item.id} series={item} onOpen={() => { setOpenId(item.id); setMatch(null); }} />)}
+            {section.items.map((item, index) => <Fragment key={item.id}>
+              {section.makers > 1 && (index === 0 || section.items[index - 1].maker !== item.maker)
+                && <div className="conn-maker">{item.maker || "Без производителя"}</div>}
+              <SeriesCard series={item} onOpen={() => { setOpenId(item.id); setMatch(null); }} />
+            </Fragment>)}
           </div></section>)
         : <div className="empty">Серий по «{article.trim()}» нет — нажмите «Проверить артикул», чтобы узнать, как ERP нарисует корпус.</div>}</div>}
   </div>;

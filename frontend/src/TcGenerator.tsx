@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assemblyApi,
+  failureText,
   harnessApi,
   kitsetsApi,
   referencesApi,
@@ -156,7 +157,7 @@ async function readRefs(): Promise<Refs> {
  * Данные — `portalTcGenData` → `tcLoadBomFromKit`: состав сборки из набора проекта и строки листа КБn расчёта
  * (`kit`, GET /api/techcards/kitsets/{project}/bom/{index}); нет набора — ошибка вместо формы (`kitError`).
  */
-export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId }: {
+export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onConfig, more, builtId: builtProp, onBuiltChange, userId, onOpenDrawing }: {
   card: ProjectTechcard;
   kit?: KitsetBom | null;
   kitError?: string;
@@ -173,6 +174,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   onBuiltChange?: (draftId: string) => void;
   /** Пользователь: рабочее состояние формы сохраняется черновиком за ним, проектом и КБ (useGeneratorDraft). */
   userId?: string;
+  /** «Открыть чертёж» после «Построить чертёж» — вкладка «Чертёж КБn» карточки проекта. */
+  onOpenDrawing?: () => void;
 }) {
   const [refs, setRefs] = useState<Refs | null>(null);
   const [S, setS] = useState<GenState>(emptyState);
@@ -301,6 +304,23 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   }, [manualTab, harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const harnessNow = drawing?.key === harnessKey ? drawing : null;
 
+  // «Построить чертёж» (владелец 12.10): есть ли у позиции чертёж — читается один раз за карту на типовых вкладках,
+  // по нему кнопка «Построить» или «Обновить».
+  const typicalTab = S.tab !== "coax" && !manualTab;
+  const [kdDrawing, setKdDrawing] = useState<{ key: string; exists: boolean } | null>(null);
+  const [drawBusy, setDrawBusy] = useState(false);
+  const [drawResult, setDrawResult] = useState<{ key: string; text: string; error: boolean; warnings: string[] } | null>(null);
+  useEffect(() => {
+    if (!typicalTab || kdDrawing?.key === harnessKey) return;
+    let alive = true;
+    harnessApi.drawing(card.project, card.item_index)
+      .then((found) => { if (alive) setKdDrawing({ key: harnessKey, exists: !!found?.design }); })
+      .catch(() => { if (alive) setKdDrawing({ key: harnessKey, exists: false }); });
+    return () => { alive = false; };
+  }, [typicalTab, harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const drawingExists = kdDrawing?.key === harnessKey && kdDrawing.exists;
+  const drawNote = drawResult?.key === harnessKey ? drawResult : null;
+
   // Карточка операции из КД — тем же подбором, что у генератора (подсказка шаблона / категория, шаг терминала по БД.ТЕР,
   // нормы из БД.ОП); состояние формы кабелей не участвует, чтобы выбор на типовых вкладках не подмешивался.
   const kdGen = useMemo(() => makeGen(D, emptyState()), [D]);
@@ -332,6 +352,34 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       setStatus({ text: reason instanceof Error ? reason.message : "Схема из КД не предложена", error: true });
     } finally {
       setKdBusy(false);
+    }
+  }
+
+  /** «Построить чертёж» / «Обновить чертёж»: форма → чертёж жгута позиции (generatorToHarness.ts, грузится лениво вместе
+   *  с кодом редактора). Чертёж правили после построения (или он не из генератора) — сначала вопрос; прежняя версия
+   *  закрывается в истории версий, построенная записывается своей закрытой строкой. */
+  async function buildDrawing() {
+    const { project, item_index: index } = card;
+    setDrawBusy(true); setDrawResult(null);
+    try {
+      const builder = await import("./generatorToHarness");
+      const found = await harnessApi.drawing(project, index);
+      const current = found?.design ? found.revision ?? 0 : null;
+      if (current !== null && builder.generatedRevision(project, index) !== current &&
+          !window.confirm(`Перезаписать ручные правки?\n\nЧертёж ${index} правили после построения или делали не в генераторе. Он будет построен заново по форме; прежняя версия останется в истории версий чертежа.`)) return;
+      const { libraryTemplates } = await import("./harness/library/library");
+      const built = await builder.buildGeneratorDrawing(D, S, pinHousings, libraryTemplates());
+      if (current !== null) await harnessApi.checkpoint(project, index, current);
+      const saved = await harnessApi.save(project, index, built.document as unknown as Record<string, unknown>, current, { checkpoint: true });
+      builder.rememberGeneratedRevision(project, index, saved.revision);
+      setKdDrawing({ key: harnessKey, exists: true });
+      const what = `${built.connectors} ${plural(built.connectors, "разъём", "разъёма", "разъёмов")}, ${built.wires} ${plural(built.wires, "провод", "провода", "проводов")}`;
+      setDrawResult({ key: harnessKey, error: false, text: `Чертёж ${index} ${current === null ? "построен" : "обновлён"}: ${what}.`,
+        warnings: [...built.warnings, ...(saved.warnings ?? [])] });
+    } catch (reason) {
+      setDrawResult({ key: harnessKey, error: true, text: failureText(reason, "Чертёж не построен"), warnings: [] });
+    } finally {
+      setDrawBusy(false);
     }
   }
 
@@ -1037,7 +1085,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {sideSection("A")}
     {sideSection("B")}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
-      <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} /></div>
+      <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} />
+        <button type="button" className="secondary small" disabled={drawBusy || !links.list.length}
+          title={links.list.length ? "Чертёж жгута позиции по разъёмам, проводам и распиновке формы" : "Сначала задайте контакты проводов на разъёмах"}
+          onClick={() => void buildDrawing()}>{drawBusy ? "Строю чертёж…" : drawingExists ? "Обновить чертёж" : "Построить чертёж"}</button></div>
+      {drawNote && <div className={drawNote.error ? "error-banner gen-drawing-note" : "gen-drawing-note"} role={drawNote.error ? "alert" : "status"}>
+        <span>{drawNote.text}</span>
+        {!drawNote.error && onOpenDrawing && <button type="button" className="link-button" onClick={onOpenDrawing}>Открыть чертёж {card.item_index}</button>}
+        {drawNote.warnings.length > 0 && <details><summary>Замечания: {drawNote.warnings.length}</summary>
+          <ul>{drawNote.warnings.map((item) => <li key={item}>{item}</li>)}</ul></details>}
+      </div>}
       <PinoutBoard ends={pinEnds} links={links.list} units={pinUnitList} housings={pinHousings} free={pinFree}
         wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={[...pinFitWarnings(pinEnds, pinCounts), ...routingWarnings(D, S)]}
         branches={S.branches || []} complex={complex}

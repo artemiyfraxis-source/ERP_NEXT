@@ -155,7 +155,7 @@ function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange, op
     {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}{assembly.kd.some((document) => document.kind === "harness") && <> · <button className="link-button" onClick={() => openDrawing(assembly.index)}>Чертёж жгута</button></>}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
-    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange}
+    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange} onOpenDrawing={() => openDrawing(index)}
       onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
   </div>;
 }
