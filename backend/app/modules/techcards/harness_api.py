@@ -284,6 +284,19 @@ def relink_harness(
         return harness.view(linked)
 
 
+@router.delete("/{project}/harness/{index}/unlinked/{document_id}")
+def delete_unlinked_harness(
+    project: str, index: str, document_id: UUID,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """«Удалить» отвязанный чертёж позиции насовсем (с историей версий). Привязанный — 409: сначала «Отвязать»."""
+    with _refusals():
+        revisions = harness.delete_unlinked(factory, project, index, document_id, actor=principal.actor, now=now)
+    return {"res": {"deleted": 1, "revisions": revisions}}
+
+
 @router.get("/{project}/harness/{index}/revisions")
 def harness_revisions(
     project: str, index: str,

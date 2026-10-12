@@ -3935,6 +3935,9 @@ export const harnessApi = {
   /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
   relink: (project: string, index: string, documentId: string) =>
     api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+  /** «Удалить» отвязанный чертёж позиции насовсем, с историей версий; привязанный сервер не удалит (409). */
+  removeUnlinked: (project: string, index: string, documentId: string) =>
+    api<{ res: { deleted: number; revisions: number } }>(`${harnessPath(project, index)}/unlinked/${encodeURIComponent(documentId)}`, { method: "DELETE" }),
   /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
   exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
   /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */

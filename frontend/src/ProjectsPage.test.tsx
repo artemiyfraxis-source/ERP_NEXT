@@ -2,6 +2,12 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectsPage, deleteSummary, kitBatch } from "./ProjectsPage";
 
+// Редактор чертежа — внутри карточки проекта вкладкой; сам редактор в jsdom не нужен, достаточно заглушки с «← Назад».
+vi.mock("./HarnessPage", () => ({
+  HarnessPage: ({ project, index, onBack }: { project: string; index: string; onBack: () => void }) =>
+    <section aria-label={`Редактор ${project} ${index}`}><button onClick={onBack}>← Назад</button></section>,
+}));
+
 const editor = {
   user: { id: "u1", email: "engineer@example.test", name: "Технолог", department: "Производство" },
   roles: ["tech_lead"], access_level: "tech_lead", permissions: { projects: "edit" as const },
@@ -745,9 +751,14 @@ describe("ProjectsPage", () => {
     expect(await screen.findByRole("button", { name: "Создать в редакторе" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "＋ файл" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Чертёж жгута" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Чертёж КБ1" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Создать в редакторе" }));
-    expect(window.location.search).toContain("harness=%D0%9A%D0%911");
-    expect(window.location.search).toContain("section=projects");
+    // Редактор открывается вкладкой карточки, а не уходит на отдельный экран.
+    expect(await screen.findByRole("region", { name: "Редактор 708К.4 КБ1" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Чертёж КБ1", selected: true })).toBeTruthy();
+    expect(window.location.search).not.toContain("harness=");
+    fireEvent.click(screen.getByRole("button", { name: "← Назад" }));
+    expect(await screen.findByRole("button", { name: "Создать в редакторе" })).toBeTruthy();
     view.unmount();
 
     window.history.replaceState({}, "", "/?section=projects");
@@ -755,6 +766,7 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
     const open = await screen.findByRole("button", { name: "Чертёж жгута" });
+    expect(screen.getByRole("tab", { name: "Чертёж КБ1" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Создать в редакторе" })).toBeNull();
     expect(screen.queryByRole("link", { name: /harness/ })).toBeNull(); // не файл для скачивания
     expect(screen.getByRole("button", { name: "＋ файл" })).toBeTruthy();
@@ -792,6 +804,31 @@ describe("ProjectsPage", () => {
     expect(JSON.parse(String(restore[1]!.body))).toEqual({ document_id: "h1" });
   });
 
+  it("отвязанный чертёж жгута: «Удалить» с подтверждением; у привязанного кнопки нет", async () => {
+    const drawing = { id: "h1", index: "КБ1", name: "Чертёж жгута", size: 900, stored: true, url: null, uploaded_at: "2026-10-06T14:30:00", who: "Технолог", kind: "harness" as const };
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    let kd: unknown[] = [drawing, { ...drawing, id: "h0", kind: "harness_unlinked" }];
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      const method = init?.method || "GET";
+      if (url === "/api/techcards/kitsets/708К.4" && method === "GET") return json({ ...card, assemblies: [{ ...card.assemblies[0], kd }] });
+      if (url.endsWith("/harness/КБ1/unlinked/h0") && method === "DELETE") { kd = [drawing]; return json({ res: { deleted: 1, revisions: 2 } }); }
+      return base(input, init);
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValue(true);
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    const remove = await screen.findByRole("button", { name: "Удалить" });
+    expect(screen.getAllByRole("button", { name: "Удалить" })).toHaveLength(1); // только у отвязанного
+    fireEvent.click(remove);
+    expect(confirm).toHaveBeenCalledWith("Удалить отвязанный чертёж жгута (сохранён 06.10.2026 14:30)? Вернуть его будет нельзя.");
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false); // отказались
+    fireEvent.click(remove);
+    await waitFor(() => expect(screen.queryByText(/Отвязанный чертёж жгута · сохранён/)).toBeNull());
+    expect(screen.queryByRole("button", { name: "Удалить" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Чертёж жгута" })).toBeTruthy();
+  });
+
   it("чертёж жгута: без права правки нет «Отвязать» и «Вернуть»", async () => {
     const drawing = { id: "h1", index: "КБ1", name: "Чертёж жгута", size: 900, stored: true, url: null, uploaded_at: "2026-10-06T14:30:00", who: "Технолог", kind: "harness" as const };
     const base = vi.mocked(fetch).getMockImplementation()!;
@@ -807,6 +844,7 @@ describe("ProjectsPage", () => {
     expect(screen.getByText("Отвязанный чертёж жгута · сохранён 06.10.2026 14:30")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Отвязать" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Вернуть" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Удалить" })).toBeNull();
   });
 
   it("opens the track of the project only on the «Трек» tab", async () => {
