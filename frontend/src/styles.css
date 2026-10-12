@@ -497,6 +497,9 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-actions { align-items: end; margin-top: 0; }
 .cable-kind { display: flex; align-items: center; gap: 8px; margin-right: auto; }
 .cable-kind .muted { font-size: 12px; }
+.wire-dots { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.wire-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.35); display: inline-block; }
+.wire-dot-name { font-size: 12px; color: var(--muted-foreground); }
 .cable-clip { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cable-card { padding: 4px 0; }
 .cable-card small { font-size: 11px; text-transform: none; }

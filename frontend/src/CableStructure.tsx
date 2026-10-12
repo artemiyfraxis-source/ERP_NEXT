@@ -133,6 +133,29 @@ const hookupPayload = (wire: Partial<HookupWire> | null | undefined): HookupPayl
   outer_d_mm: num(wire?.outer_d_mm), voltage_v: num(wire?.voltage_v), temp_min_c: num(wire?.temp_min_c), temp_max_c: num(wire?.temp_max_c),
 });
 
+// Wire colours as the shop names them → a dot. Data names, not design tokens; a name not listed is shown as text.
+const WIRE_COLORS: Record<string, string> = {
+  "белый": "#ffffff", "чёрный": "#222222", "черный": "#222222", "красный": "#d93a32", "синий": "#2b5fd9", "голубой": "#4aa8e0",
+  "зелёный": "#2e9e4f", "зеленый": "#2e9e4f", "жёлтый": "#f2c200", "желтый": "#f2c200", "коричневый": "#7a4a21",
+  "оранжевый": "#f08a1c", "фиолетовый": "#7b3fa0", "серый": "#8a8f98", "розовый": "#f08fb0", "натуральный": "#e6d9b8",
+  "красно-чёрный": "linear-gradient(135deg, #d93a32 50%, #222222 50%)", "коричнево-серый": "linear-gradient(135deg, #7a4a21 50%, #8a8f98 50%)",
+  "жёлто-зелёный": "linear-gradient(135deg, #f2c200 50%, #2e9e4f 50%)", "желто-зеленый": "linear-gradient(135deg, #f2c200 50%, #2e9e4f 50%)",
+};
+const colorNames = (text: string): string[] => text.split(/[,;]/).map((name) => name.trim()).filter(Boolean);
+
+function WireColors({ text }: { text: string }) {
+  const names = colorNames(text);
+  if (!names.length) return <span className="muted">—</span>;
+  return <span className="wire-dots" title={names.join(", ")}>
+    {names.map((name) => WIRE_COLORS[name.toLowerCase()]
+      ? <i key={name} className="wire-dot" style={{ background: WIRE_COLORS[name.toLowerCase()] }} role="img" aria-label={name} title={name} />
+      : <span key={name} className="wire-dot-name">{name}</span>)}
+  </span>;
+}
+
+const UNPARSED = "Не разобраны";
+type Shared = { insulation?: string; voltage?: string; temp?: string };
+
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar }: {
   data: CablesResult;
   canEdit: boolean;
@@ -145,7 +168,38 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const [adding, setAdding] = useState(false);
   const gauges = useMemo(() => data.gauges ?? [], [data.gauges]);
   const byId = useMemo(() => new Map(gauges.map((gauge) => [gauge.id, gauge])), [gauges]);
-  const rows = useMemo(() => data.rows.filter((row) => row.kind === "wire"), [data.rows]);
+  // Grouped by series, sizes in a series by section as a number (the server's order is by text: 10, 16, 2,5, 4).
+  const rows = useMemo(() => data.rows.filter((row) => row.kind === "wire").sort((a, b) =>
+    (a.hookup ? 0 : 1) - (b.hookup ? 0 : 1)
+    || (a.hookup?.series ?? "").localeCompare(b.hookup?.series ?? "", "ru")
+    || (byId.get(a.hookup?.gauge_id ?? "")?.section_mm2 ?? 0) - (byId.get(b.hookup?.gauge_id ?? "")?.section_mm2 ?? 0)
+    || a.cable.localeCompare(b.cable, "ru", { numeric: true })), [data.rows, byId]);
+  // What every size of a series shares goes into the group header and is not repeated per row (a series of 2+ sizes only).
+  const shared = useMemo(() => {
+    const bySeries = new Map<string, CableRow[]>();
+    for (const row of rows) if (row.hookup) bySeries.set(row.hookup.series, [...(bySeries.get(row.hookup.series) ?? []), row]);
+    const result = new Map<string, Shared>();
+    for (const [series, list] of bySeries) {
+      if (list.length < 2) continue;
+      const same = (pick: (wire: HookupWire) => string) => {
+        const values = new Set(list.map((row) => pick(row.hookup as HookupWire)));
+        const [only] = [...values];
+        return values.size === 1 && only ? only : undefined;
+      };
+      result.set(series, {
+        insulation: same((wire) => wire.insulation),
+        voltage: same((wire) => wire.voltage_v === null ? "" : String(wire.voltage_v)),
+        temp: same((wire) => range(wire.temp_min_c, wire.temp_max_c)),
+      });
+    }
+    return result;
+  }, [rows]);
+  const sharedOf = (row: CableRow) => row.hookup ? shared.get(row.hookup.series) : undefined;
+  // The table itself appends « · N» — the number of sizes in the group.
+  const groupLabel = (name: string) => {
+    const own = name === UNPARSED ? undefined : shared.get(name);
+    return [name, own?.insulation, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
+  };
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   const clip = (text: string) => <span className="cable-clip" title={text}>{text}</span>;
@@ -159,10 +213,10 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
     { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm) },
-    { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => clip(row.hookup?.insulation ?? "") },
-    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "" },
-    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
-    { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => clip(field(row, "Цвета")) },
+    { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? "") },
+    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "" },
+    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
+    { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
     ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: true, render: (row) => clip(field(row, name)),
     })),
@@ -184,6 +238,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       columns={columns}
       rowKey={(row) => row.id}
       storageKey="db:cables:wire-structured"
+      groupBy={(row) => row.hookup?.series ?? UNPARSED}
+      groupLabel={groupLabel}
       exportName="Монтажные провода"
       renderDetail={detail}
       presets={unparsed ? [{ label: "Не разобраны", test: (row) => !row.hookup }] : undefined}

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
+import { HookupWireTable } from "./CableStructure";
 import type { CableRow, Principal } from "./api";
 
 /* «База данных» → «Кабели и провода» (owner 04.10.2026): coax / hookup / other cables, D1–D3 edited in the coax tab,
@@ -278,4 +279,32 @@ it("shows the cable lists read-only without the reference edit right", async () 
   expect(screen.queryByLabelText("D1 кабеля")).toBeNull();
   expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
   expect(screen.getByText("тип «коаксиальный»")).toBeInTheDocument();
+});
+
+it("groups the hook-up wires by series with the shared values in the header, sizes by number, colours as dots", () => {
+  const gauge = (id: string, section: number) => ({ id, awg: "", section_mm2: section, conductor_d_mm: null, strands: "", label: `${section} мм²`, wires: 1 });
+  const wire = (series: string, mark: string, gauge_id: string, colors: string, voltage: number) => ({
+    id: mark, kind: "wire" as const, auto_kind: "wire" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
+    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Цвета": colors } },
+    hookup: { series, gauge_id, insulation: "ПВХ-пластикат", outer_d_mm: 2, voltage_v: voltage, temp_min_c: -50, temp_max_c: 65 },
+  });
+  const data = {
+    columns: ["Марка", "Цвета"], counts: { coax: 0, wire: 4, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
+    rows: [wire("ПуГВ", "ПуГВ 10", "s10", "синий", 450), wire("ПуГВ", "ПуГВ 16", "s16", "", 450), wire("ПуГВ", "ПуГВ 2,5", "s25", "белый, жёлто-зелёный", 450), wire("ПуГВ", "ПуГВ 4", "s4", "красный", 450)],
+  } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
+  render(<HookupWireTable data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} kindSelect={() => null} />);
+
+  // one header: series, what all sizes share, the number of sizes
+  expect(screen.getByText("ПуГВ · ПВХ-пластикат · 450 В · −50 … +65 °C")).toBeInTheDocument();
+  // not repeated in the rows
+  expect(screen.queryAllByText("450")).toHaveLength(0);
+  // 2,5 · 4 · 10 · 16, not the text order 10 · 16 · 2,5 · 4
+  const marks = [...document.querySelectorAll("tbody tr:not(.group-row) strong")].map((node) => node.textContent);
+  expect(marks).toEqual(["ПуГВ 2,5", "ПуГВ 4", "ПуГВ 10", "ПуГВ 16"]);
+  // colours: a dot per colour with its name; no colours — a dash
+  expect(screen.getByRole("img", { name: "жёлто-зелёный" })).toBeInTheDocument();
+  expect(screen.getAllByRole("img", { name: "красный" })).toHaveLength(1);
+  const row16 = screen.getByText("ПуГВ 16").closest("tr") as HTMLElement;
+  expect(row16.querySelector(".wire-dot")).toBeNull();
+  expect(within(row16).getAllByText("—").length).toBeGreaterThan(0);
 });
