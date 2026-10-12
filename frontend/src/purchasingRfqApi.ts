@@ -60,10 +60,33 @@ export type RfqMatrix = {
 };
 
 export type SupplierBrief = { supplier_id: string; name: string; is_key: boolean; categories: string[] };
-export type SupplierSuggestion = SupplierBrief & {
-  reason: "key" | "category" | "rotation" | "plan"; preselect: boolean; in_rfq: boolean; last_asked_at: string | null;
+
+/** The request pool (`GET /pool`): the buyer's lines for a new request by nomenclature category. */
+export type PoolCategory = "cable" | "connector" | "ekb" | "other";
+export type PastPrice = { price: string; date: string; supplier: string | null; unit: string | null };
+export type PoolLine = RfqCandidate & {
+  project: string | null; category: PoolCategory; supplier_name: string | null; supplier_id: string | null;
+  item: { id: string; name: string; category: string; matched_by: "link" | "part_key" | "alias" } | null;
+  history: { purchases: number; last: PastPrice | null; min: PastPrice | null } | null;
+  cheaper_before_pct: string | null;
 };
-export type SuggestResult = { categories: string[]; suggestions: SupplierSuggestion[]; unmapped_plan: string[] };
+export type PoolGroup = {
+  category: PoolCategory; label: string; count: number;
+  suppliers: { name: string; supplier_id: string | null; lines: number }[]; lines: PoolLine[];
+};
+export type RfqPoolResult = { total: number; groups: PoolGroup[] };
+
+/** Whom to ask (`GET /suggest`): each supplier once with all its reasons, ranked; `supplier_id: null` — not in the
+ *  directory yet (added by name when the request is created). */
+// "manual" — only on the client: a supplier the buyer added by name in the panel.
+export type SuggestReasonCode = "items" | "category_history" | "original" | "key" | "rotation" | "category" | "manual";
+export type SuggestReason = { code: SuggestReasonCode; label: string; lines: number | null; last_date: string | null };
+export type SupplierSuggestion = {
+  supplier_id: string | null; name: string; is_key: boolean; categories: string[]; reasons: SuggestReason[];
+  reason: SuggestReasonCode; rfq_reason: string; preselect: boolean; in_rfq: boolean; last_asked_at: string | null;
+};
+export type SuggestResult = { categories: string[]; lines: number; suggestions: SupplierSuggestion[] };
+export type SupplierPick = { supplier_id?: string; name?: string; reason: string };
 
 export type QuoteLineInput = {
   rfq_line_id: string; unit_price: string | null; vat_included: boolean; vat_rate: string | null; moq: string | null;
@@ -104,10 +127,14 @@ const remove = (path: string) => api<void>(path, { method: "DELETE" });
 export const rfqApi = {
   list: (scope: "mine" | "all") => api<{ rfqs: RfqSummary[] }>(`${BASE}?scope=${scope}`),
   candidates: () => api<{ lines: RfqCandidate[] }>(`${BASE}/candidates`),
-  create: (lineIds: string[], title: string) => post<{ id: string; number: string }>(BASE, { line_ids: lineIds, title: title || null }),
+  pool: () => api<RfqPoolResult>(`${BASE}/pool`),
+  create: (lineIds: string[], title: string, suppliers: SupplierPick[] = []) =>
+    post<{ id: string; number: string; suppliers: number }>(BASE, { line_ids: lineIds, title: title || null, suppliers }),
   matrix: (id: string) => api<RfqMatrix>(`${BASE}/${id}`),
   directory: () => api<{ suppliers: SupplierBrief[] }>(`${BASE}/directory`),
-  suggest: (id: string) => api<SuggestResult>(`${BASE}/suggest-suppliers?rfq_id=${encodeURIComponent(id)}`),
+  suggest: (id: string) => api<SuggestResult>(`${BASE}/suggest?rfq_id=${encodeURIComponent(id)}`),
+  suggestForLines: (lineIds: string[]) =>
+    api<SuggestResult>(`${BASE}/suggest?line_ids=${lineIds.map(encodeURIComponent).join(",")}`),
   addSupplier: (id: string, supplier: { supplier_id?: string; name?: string }, reason = "manual") =>
     post<SupplierBrief>(`${BASE}/${id}/suppliers`, { ...supplier, reason }),
   removeSupplier: (id: string, supplierId: string) => remove(`${BASE}/${id}/suppliers/${supplierId}`),
