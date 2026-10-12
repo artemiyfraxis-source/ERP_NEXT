@@ -215,3 +215,20 @@ test("operations replaces the owner tick with append-only audit and reliable job
   assert.equal(worker.includes("dispatch_next_notification"), true);
   assert.equal(worker.includes("everyMinutes"), false);
 });
+
+test("every backend/data file the frontend imports is copied into the web build stage", async () => {
+  // A missing COPY passes CI (whole repo checked out) but breaks the server image build (12.10.2026, etk-marking.json).
+  const { readdir } = await import("node:fs/promises");
+  const dockerfile = await readFile(join(root, "Dockerfile"), "utf8");
+  const copied = [...dockerfile.matchAll(/^COPY (backend\/data\/\S+) /gm)].map((match) => match[1]);
+  const files = (await readdir(join(root, "frontend", "src"), { recursive: true }))
+    .filter((name) => /\.(ts|tsx|mts)$/.test(name));
+  for (const name of files) {
+    const source = await readFile(join(root, "frontend", "src", name), "utf8");
+    for (const match of source.matchAll(/from\s+["'](?:\.\.\/)+(backend\/data\/[^"']+)["']/g)) {
+      const target = match[1];
+      assert.ok(copied.some((path) => target === path || (path.endsWith("/") && target.startsWith(path))),
+        `frontend/src/${name} imports ${target}, but the Dockerfile web stage does not COPY it`);
+    }
+  }
+});
