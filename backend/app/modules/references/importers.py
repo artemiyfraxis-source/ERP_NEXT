@@ -24,25 +24,43 @@ A file that is not this format at all is refused whole; a bad gauge, series or s
    written (only a changed meaning), the row is marked edited in ERP so a mirror reload keeps it; its structure is
    created or updated. A size no row has becomes a new БД.ПРОВ row with its structure. Nothing is renamed or deleted.
 3. report: the БД.ПРОВ marks the shape rule calls монтажный that the база монтажных sends to «прочие».
-Run twice — the second run changes nothing."""
+Run twice — the second run changes nothing.
+
+`import_rows(table, uow, rows, …)` (below) loads rows into one table by its natural key through the shared bulk
+import (`app/shared/bulk_import.py`): БД.ТЕР / БД.КОАКС / БД.ПРОВ / БД.МАТ / БД.ОБ, the maps «ссылка → поставщик»,
+«изготовитель → страна», ГОСТ → AWG and «Сечения AWG ↔ мм²» — see `ROW_TABLES` and docs/api-references.md."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 from uuid import UUID
 
+from app.shared.bulk_import import (
+    DUPLICATE_REASON, ImportRateLimiter, ImportReport as RowsReport, ImportRowIn, ImportTable, RowRefused, clean_value,
+    row_key, run_import,
+)
+from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
 from .application import UnitOfWork, _audit, _search_text, _sync_gost_awg, cable_overrides
 from .cable_structure import (
-    AWG_FIELD, INSULATION_FIELD, OUTER_FIELD, SECTION_FIELD, TEMP_MAX_FIELD, TEMP_MIN_FIELD, VOLTAGE_FIELD, HookupWire,
-    WireGauge, decimal_or_none, leading_int, parse_hookup, shown, validate_gauges,
+    AWG_FIELD, INSULATION_FIELD, MIRRORED_FIELDS, OUTER_FIELD, SECTION_FIELD, TEMP_MAX_FIELD, TEMP_MIN_FIELD,
+    VOLTAGE_FIELD, HookupWire, WireGauge, decimal_or_none, leading_int, parse_hookup, refreshed_hookup, section_key,
+    shown, validate_gauges,
 )
 from .cables import CableKind, cable_mark, diameter_index, hookup_series, left_hookups
-from .domain import BASE_COLUMNS, ReferenceValidationError, TechOperationRecord, TechOperationTab, cable_key
+from .domain import (
+    BASE_COLUMNS, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceEntry, ReferenceKind, ReferenceValidationError,
+    TechOperationRecord, TechOperationTab, cable_key, normalized_manufacturer_key, normalized_section_key,
+    normalized_supplier_key, validate_entries,
+)
+from .technology import (
+    _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, schema_display_text, schema_keys,
+    sync_schema_fields,
+)
 
 HOOKUP_SEED_VERSION = 1
 TYPE_FIELD = "Тип провода"
@@ -474,10 +492,13 @@ def _hookup(mark: str, base: HookupWire | None, parsed, gauge: WireGauge, series
     )
 
 
-def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime, *, dry_run: bool = False) -> ImportReport:
+def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime, *, dry_run: bool = False,
+                   source: str = "api") -> ImportReport:
     """The база монтажных проводов from its parsed file (see the module doc). A file that is not the format is refused
     whole before anything is read (`HookupSeedError`); a bad row is refused with its reason and the rest applies; a
-    dry run reports the same and writes nothing. Never deletes, never renames. One audit event per run."""
+    dry run reports the same and writes nothing. Never deletes, never renames. One audit event per run that changes
+    something (`source` — who loads: erp | api | warehouse); a run that changes nothing leaves no event."""
+    check_source(source)
     seed = hookup_seed(payload)
     report = ImportReport(dry_run=dry_run, sizes_in_file=seed.sizes, refused=[dict(item) for item in seed.refused])
     with uow:
@@ -524,9 +545,11 @@ def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime
                 for record in matched:
                     _update(record, series, size, gauge, by_id, hookups, overrides, done, uow, now, report)
 
-        _audit("references.hookup_wires_imported", actor, now, {**report.counts(), "dry_run": dry_run}, uow)
-        if not dry_run:
-            uow.commit()
+        if report.changed or report.hookups_created or report.hookups_updated:
+            _audit("references.hookup_wires_imported", actor, now,
+                   {**report.counts(), "dry_run": dry_run, "source": source}, uow)
+            if not dry_run:
+                uow.commit()
     return report
 
 
@@ -581,3 +604,493 @@ def _create(series: SeedSeries, size: SeedSize, gauge: WireGauge, by_id: Mapping
     uow.cable_structure.save_hookup(wire, now)
     report.created.append(size.mark)
     report.hookups_created += 1
+
+
+# --- rows into a table: POST /api/references/import/<table> (owner 12.10.2026: «парсить контакты, разъёмы вручную гемор») ---
+
+IMPORT_SOURCES = ("erp", "api", "warehouse")
+IMPORT_EVENT = "references.table_imported"
+_AGGREGATE = UUID("00000000-0000-0000-0000-000000000010")
+AMBIGUOUS_REASON = "в таблице несколько строк с этим ключом — правьте их в «Базе данных»"
+GAUGE_KEY = "AWG или сечение"  # the size's key, filled from awg (else section_mm2) of the row
+
+
+def check_source(source: str) -> None:
+    if source not in IMPORT_SOURCES:
+        raise ReferenceValidationError("Источник загрузки: " + ", ".join(IMPORT_SOURCES))
+
+
+def _cell(name: str, value: Any) -> Any:
+    text = clean_value(name, value)
+    if text and text.startswith("="):
+        raise RowRefused(f"{name}: формулы вводить нельзя")
+    return text
+
+
+def _folded(value: str) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+class _Target:
+    """Writes through the unit of work the import runs in; what is not committed is dropped when it closes (a dry
+    run, or nothing changed), so `rollback` has nothing to do. The audit event carries the load's `source`."""
+
+    def __init__(self, uow: UnitOfWork, source: str) -> None:
+        self.uow = uow
+        self.source = source
+
+    def flush(self) -> None:
+        """Writes kept until every row was seen (a map is stored once per call)."""
+
+    def audit(self, event: AuditEvent) -> None:
+        self.flush()
+        self.uow.audit.add(replace(event, details={**event.details, "source": self.source}))
+
+    def commit(self) -> None:
+        self.uow.commit()
+
+    def rollback(self) -> None:
+        pass
+
+
+# БД.ТЕР / БД.КОАКС / БД.ОБ / БД.ПРОВ / БД.МАТ
+
+@dataclass(frozen=True)
+class _TechTable:
+    tab: TechOperationTab
+    label: str
+    key_fields: tuple[str, ...]
+    # Match forms of a key, strictest first: a row matches the stored rows of the first form any of them shares.
+    forms: Callable[[tuple[str, ...]], tuple[tuple[str, object], ...]]
+    virtual: str = ""  # a key that is the record's display text, not a field (БД.ОБ «Для базы» = baseValue)
+
+    @property
+    def sheet_columns(self) -> bool:
+        """ОБ / ТЕР / КОАКС: fields are the schema values plus the sheet's own columns; ПРОВ / МАТ: the sheet header."""
+        return self.tab not in BASE_COLUMNS
+
+    def schema_fields(self) -> tuple[str, ...]:
+        if not self.sheet_columns:
+            return BASE_COLUMNS[self.tab]
+        fields = _TECH_SCHEMA[self.tab.value][0]
+        derived = sorted(schema_keys(self.tab.value) - {item.key for item in fields})
+        stored = tuple(item.key for item in fields if item.store or item.key == self.virtual)
+        return stored + tuple(derived)
+
+
+def _ter_forms(values: tuple[str, ...]) -> tuple[tuple[str, object], ...]:
+    # The generator's terminal lookup (technology.matching_terminal_records): exact, then without spaces . / ( ) _ -.
+    article = values[0]
+    normalized = _normalized_article(article)
+    return (("exact", article.casefold().strip()),) + ((("normalized", normalized),) if len(normalized) >= 3 else ())
+
+
+TECH_TABLES: dict[str, _TechTable] = {
+    "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms),
+    "coax": _TechTable(TechOperationTab.COAX, "БД.КОАКС — коаксиальные разъёмы", ("coaxArticle", "coaxWire"),
+                       lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),)),
+    "prov": _TechTable(TechOperationTab.WIRE, "БД.ПРОВ — кабели и провода", ("Марка",),
+                       lambda values: (("mark", cable_key(values[0])),)),
+    "mat": _TechTable(TechOperationTab.MATERIAL, "БД.МАТ — материалы", ("Наименование",),
+                      lambda values: (("name", _folded(values[0])),)),
+    "ob": _TechTable(TechOperationTab.EQUIPMENT, "БД.ОБ — станки и оборудование", ("baseValue",),
+                     lambda values: (("base", _folded(values[0])),), virtual="baseValue"),
+}
+
+
+def _sheet_columns(table: _TechTable, records: Sequence[TechOperationRecord]) -> list[str]:
+    if not table.sheet_columns:
+        return list(BASE_COLUMNS[table.tab])
+    keys = schema_keys(table.tab.value)
+    return list(dict.fromkeys(name for record in records for name in record.fields if name not in keys))
+
+
+def _schema_values(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
+    schema_fields = _TECH_SCHEMA[tab][0]
+    keys = schema_keys(tab)
+    columns = [name for name in fields if name not in keys]
+    resolved = _resolve_schema(schema_fields, columns)
+    return {item.key: str((fields[columns[resolved[item.key]]] if resolved[item.key] >= 0 else fields.get(item.key)) or "")
+            .strip() for item in schema_fields}
+
+
+class _TechTarget(_Target):
+    def __init__(self, uow: UnitOfWork, source: str, table: _TechTable, records: Sequence[TechOperationRecord],
+                 key_values: Mapping[str, tuple[str, ...]], now: datetime) -> None:
+        super().__init__(uow, source)
+        self.table, self.key_values, self.now = table, key_values, now
+        self.columns = _sheet_columns(table, records)
+        self.index: dict[tuple[str, object], list[TechOperationRecord]] = {}
+        for record in records:
+            values = tuple(str(self._current(record).get(name) or "") for name in table.key_fields)
+            if all(values):
+                for form in table.forms(values):
+                    self.index.setdefault(form, []).append(record)
+        self.matched: dict[str, TechOperationRecord] = {}
+        self.ambiguous: set[str] = set()
+        self.duplicates: set[str] = set()
+        self.created: set[tuple[str, object]] = set()
+
+    def _current(self, record: TechOperationRecord) -> dict[str, str]:
+        fields = dict(record.fields)
+        if self.table.virtual:
+            fields[self.table.virtual] = record.display_text
+        return fields
+
+    def existing(self, keys):
+        found, taken = {}, {}
+        for key in keys:
+            matches: list[TechOperationRecord] = []
+            for form in self.table.forms(self.key_values[key]):
+                if form in self.index:
+                    matches = self.index[form]
+                    break
+            if len(matches) > 1:
+                self.ambiguous.add(key)
+            elif matches:
+                record = matches[0]
+                if record.id in taken:  # «ZHR-5» and «ZHR 5» in one load: one row
+                    self.duplicates.add(key)
+                    continue
+                taken[record.id] = key
+                self.matched[key] = record
+                found[key] = self._current(record)
+        return found
+
+    def _schema(self, fields: dict[str, str], given: set[str]) -> dict[str, str]:
+        """ОБ / ТЕР / КОАКС: a schema value given (terStep) is written to the sheet column it is read from too, so a
+        later edit of the row never takes it back; a sheet column given moves its schema value (as edit_record)."""
+        if not self.table.sheet_columns:
+            return fields
+        tab = self.table.tab.value
+        keys = schema_keys(tab)
+        columns = [name for name in fields if name not in keys]
+        resolved = _resolve_schema(_TECH_SCHEMA[tab][0], columns)
+        if self.table.tab == TechOperationTab.TERMINAL:
+            resolved.update(_range_indexes(columns))
+        result = dict(fields)
+        for name in sorted(given & keys):
+            index = resolved.get(name, -1)
+            if index < 0:
+                continue
+            column = columns[index]
+            if column in given and fields[column] != fields[name]:
+                raise RowRefused(f"{name} и «{column}» — одно и то же поле, а значения разные")
+            result[column] = fields[name]
+        return sync_schema_fields(tab, result)
+
+    def create(self, key, fields):
+        if key in self.ambiguous:
+            raise RowRefused(AMBIGUOUS_REASON)
+        forms = set(self.table.forms(self.key_values[key]))
+        if key in self.duplicates or forms & self.created:
+            raise RowRefused(DUPLICATE_REASON)
+        stored = {name: "" for name in self.columns}  # every column of the base, so the row is editable on screen
+        stored.update(fields)
+        stored = self._schema(stored, set(fields))
+        tab = self.table.tab.value
+        display = (schema_display_text(tab, stored) if self.table.sheet_columns else "") \
+            or str(fields.get(self.table.key_fields[0]) or "")
+        sort = _TECH_SCHEMA[tab][3] if self.table.sheet_columns else None
+        sort_key = sort(_schema_values(tab, {**stored, self.table.virtual: display} if self.table.virtual else stored)) \
+            if sort else display
+        if self.table.virtual:
+            stored.pop(self.table.virtual, None)
+        try:
+            record = TechOperationRecord.create(tab=self.table.tab, display_text=display, search_text="",
+                                                source_sheet="", sort_key=sort_key, fields=stored, edited_in_erp=True)
+        except ReferenceValidationError as error:
+            raise RowRefused(str(error)) from error
+        self.uow.tech_operations.save(record)
+        self.created |= forms
+
+    def update(self, key, changes):
+        record = self.matched[key]
+        fields = self._schema({**record.fields, **changes}, set(changes))
+        display = (schema_display_text(self.table.tab.value, fields) if self.table.sheet_columns else "") \
+            or record.display_text
+        updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
+        updated = replace(updated, normalized_search=_search_text(updated))
+        wire = None
+        mark_key = cable_key(cable_mark(record))
+        if self.table.tab == TechOperationTab.WIRE and mark_key and set(changes) & set(MIRRORED_FIELDS):
+            stored = self.uow.cable_structure.hookup(mark_key)
+            if stored is not None:  # a structured монтажный wire follows its cells (as edit_record)
+                try:
+                    wire = refreshed_hookup(stored, cable_mark(updated), updated.fields, set(changes),
+                                            self.uow.cable_structure.gauges())
+                except ReferenceValidationError as error:
+                    raise RowRefused(str(error)) from error
+        self.uow.tech_operations.save(updated)
+        if wire is not None:
+            self.uow.cable_structure.save_hookup(wire, self.now)
+
+
+# «Ссылка → поставщик» / «Изготовитель → страна» / ГОСТ → AWG
+
+_MAPS: dict[str, tuple[ReferenceKind, Callable[[str], str], str]] = {
+    "suppliers": (ReferenceKind.SUPPLIER, normalized_supplier_key, "Ссылка → поставщик"),
+    "countries": (ReferenceKind.COUNTRY, normalized_manufacturer_key, "Изготовитель → страна"),
+    "gost_awg": (ReferenceKind.GOST_AWG, normalized_section_key, "ГОСТ → AWG (сечение ГОСТ, мм² → AWG)"),
+}
+MAP_FIELDS = ("key", "value")
+
+
+def _map_value(name: str, value: Any) -> Any:
+    text = _cell(name, value)
+    return str(int(text)) if name == "value" and isinstance(text, str) and text.isdigit() else text
+
+
+class _MapTarget(_Target):
+    """Upsert into one map: a key not in it is added after the others, a known one gets the new value, nothing is
+    removed. «Изготовитель → страна» compares with what the screen shows (saved rows + the seed); «ссылка →
+    поставщик» never saved shows its seed, which the first write stores, as the first save on screen does."""
+
+    def __init__(self, uow: UnitOfWork, source: str, kind: ReferenceKind, normalize: Callable[[str], str]) -> None:
+        super().__init__(uow, source)
+        self.kind, self.normalize = kind, normalize
+        self.entries = list(uow.references.list())
+        self.saved = {entry.normalized_key: entry for entry in self.entries if entry.kind == kind}
+        never_saved = not any(entry.kind in (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY) for entry in self.entries)
+        supplier_map = kind in (ReferenceKind.SUPPLIER, ReferenceKind.COUNTRY)
+        self.materialize = SUPPLIER_BY_LINK if never_saved and supplier_map else ()
+        seed = SUPPLIER_BY_LINK if kind == ReferenceKind.SUPPLIER and never_saved else (
+            COUNTRY_BY_MANUFACTURER if kind == ReferenceKind.COUNTRY else ())
+        self.seed = {normalize(name): (name, value) for name, value in seed}
+        self.gauges = {section_key(gauge.section_mm2): gauge for gauge in uow.cable_structure.gauges()} \
+            if kind == ReferenceKind.GOST_AWG else {}
+        self.duplicates: set[str] = set()
+        self.dirty = False
+
+    def existing(self, keys):
+        found, taken = {}, set()
+        for key in keys:
+            try:
+                normalized = self.normalize(key)
+            except ReferenceValidationError:
+                continue  # refused with the reason when it is written
+            if normalized in taken:
+                self.duplicates.add(key)
+                continue
+            taken.add(normalized)
+            if normalized in self.saved:
+                found[key] = {"key": self.saved[normalized].key, "value": self.saved[normalized].value}
+            elif normalized in self.seed:
+                found[key] = {"key": self.seed[normalized][0], "value": self.seed[normalized][1]}
+        return found
+
+    def _put(self, key: str, value: str) -> None:
+        if key in self.duplicates:
+            raise RowRefused(DUPLICATE_REASON)
+        try:
+            normalized = self.normalize(key)
+            current = self.saved.get(normalized)
+            name = current.key if current else self.seed.get(normalized, (key,))[0]
+            entry = ReferenceEntry.create(self.kind, name, value, current.position if current else 0)
+        except ReferenceValidationError as error:
+            raise RowRefused(str(error)) from error
+        gauge = self.gauges.get(normalized)
+        if gauge is not None and gauge.awg_number is not None and str(gauge.awg_number) != entry.value:
+            raise RowRefused(f"в «Сечения AWG ↔ мм²» {shown(gauge.section_mm2)} мм² = {gauge.awg} AWG — ГОСТ → AWG "
+                             "следует таблице сечений, поменяйте там")
+        self.saved[normalized] = replace(entry, id=current.id) if current else entry
+        self.dirty = True
+
+    def create(self, key, fields):
+        self._put(key, str(fields.get("value") or ""))
+
+    def update(self, key, changes):
+        self._put(key, str(changes.get("value") or ""))
+
+    def flush(self) -> None:
+        if not self.dirty:
+            return
+        own = list(self.saved.values())
+        if self.materialize:  # the supplier seed the screen shows is stored with the first write
+            seeded = [self.saved.get(self.normalize(name)) if self.kind == ReferenceKind.SUPPLIER else None
+                      for name, _value in self.materialize]
+            seeded = [found or ReferenceEntry.create(ReferenceKind.SUPPLIER, name, value, 0)
+                      for found, (name, value) in zip(seeded, self.materialize)]
+            seeded_keys = {entry.normalized_key for entry in seeded}
+            own = seeded + [entry for entry in own if entry.kind != ReferenceKind.SUPPLIER
+                            or entry.normalized_key not in seeded_keys]
+        positions: dict[ReferenceKind, int] = {}
+        placed = []
+        for entry in own:
+            placed.append(replace(entry, position=positions.get(entry.kind, 0)))
+            positions[entry.kind] = positions.get(entry.kind, 0) + 1
+        entries = tuple([entry for entry in self.entries if entry.kind not in positions] + placed)
+        validate_entries(entries)
+        self.uow.references.replace(entries)
+
+
+# «Сечения AWG ↔ мм²»
+
+GAUGE_FIELDS = (GAUGE_KEY, "awg", "section_mm2", "conductor_d_mm", "strands")
+
+
+def _gauge_value(name: str, value: Any) -> Any:
+    text = clean_value(name, value)
+    if not text or name in (GAUGE_KEY, "strands"):
+        return text
+    if name == "awg":
+        try:
+            return WireGauge.create(awg=text, section_mm2="1").awg or ""
+        except ReferenceValidationError as error:
+            raise RowRefused(f"awg: {error}") from error
+    number = decimal_or_none(text)
+    if number is None or number <= 0:
+        raise RowRefused(f"{name}: нужно число больше нуля")
+    return shown(number)
+
+
+def _gauge_rows(rows: Sequence[ImportRowIn]) -> tuple[list[ImportRowIn], dict[str, tuple[str | None, Decimal | None]]]:
+    """Each row gets its key: «20 AWG» when it gives an AWG, else «0,5 мм²» (a key sent by the caller is replaced)."""
+    keyed, sizes = [], {}
+    for row in rows:
+        fields = {name: value for name, value in row.fields.items() if name != GAUGE_KEY}
+        try:
+            awg = _gauge_value("awg", fields.get("awg")) or None
+            section = decimal_or_none(_gauge_value("section_mm2", fields.get("section_mm2")) or None)
+        except RowRefused:
+            awg, section = None, None  # the framework refuses the row with the field's reason
+        label = f"{awg} AWG" if awg else f"{shown(section)} мм²" if section is not None else ""
+        if label:
+            fields[GAUGE_KEY] = label
+            sizes[label] = (awg, section)
+        keyed.append(ImportRowIn(fields=fields or {"awg": None}, old=row.old))
+    return keyed, sizes
+
+
+class _GaugeTarget(_Target):
+    """A size is matched by its AWG; a row without an AWG — by the section (of a size row without an AWG too). The
+    ГОСТ → AWG map follows every size written (as `save_gauge`)."""
+
+    def __init__(self, uow: UnitOfWork, source: str, sizes: Mapping[str, tuple[str | None, Decimal | None]]) -> None:
+        super().__init__(uow, source)
+        self.sizes = sizes
+        self.gauges = uow.cable_structure.gauges()
+        self.matched: dict[str, WireGauge] = {}
+        self.duplicates: set[str] = set()
+
+    @staticmethod
+    def _fields(gauge: WireGauge, key: str) -> dict[str, str]:
+        return {GAUGE_KEY: key, "awg": gauge.awg or "", "section_mm2": shown(gauge.section_mm2),
+                "conductor_d_mm": shown(gauge.conductor_d_mm), "strands": gauge.strands}
+
+    def existing(self, keys):
+        found, taken = {}, set()
+        for key in keys:
+            awg, section = self.sizes[key]
+            gauge = next((item for item in self.gauges if awg and item.awg == awg), None) or next((
+                item for item in self.gauges if section is not None and item.section_mm2 == section
+                and not (awg and item.awg)), None)
+            if gauge is None:
+                continue
+            if gauge.id in taken:
+                self.duplicates.add(key)
+                continue
+            taken.add(gauge.id)
+            self.matched[key] = gauge
+            found[key] = self._fields(gauge, key)
+        return found
+
+    def _save(self, before: WireGauge | None, values: Mapping[str, str]) -> None:
+        others = [item for item in self.gauges if before is None or item.id != before.id]
+        try:
+            gauge = WireGauge.create(
+                id=before.id if before else None, awg=values.get("awg") or "",
+                section_mm2=values.get("section_mm2") or "", conductor_d_mm=values.get("conductor_d_mm") or "",
+                strands=values.get("strands") or "",
+                position=before.position if before else max((item.position for item in self.gauges), default=-1) + 1,
+            )
+            validate_gauges([*others, gauge])
+        except ReferenceValidationError as error:
+            raise RowRefused(str(error)) from error
+        self.uow.cable_structure.save_gauge(gauge)
+        _sync_gost_awg(self.uow, before, gauge)
+        self.gauges = [*others, gauge]
+
+    def create(self, key, fields):
+        if key in self.duplicates:
+            raise RowRefused(DUPLICATE_REASON)
+        self._save(None, fields)
+
+    def update(self, key, changes):
+        before = self.matched[key]
+        self._save(before, {**self._fields(before, key), **changes})
+
+
+# The tables
+
+ROW_TABLES = (*TECH_TABLES, *_MAPS, "wire-gauges")
+IMPORT_TABLES = (*ROW_TABLES, "hookups")
+MAP_TABLES = tuple(_MAPS)
+
+
+def unknown_table(table: str) -> LookupError:
+    return LookupError(f"Нет таблицы «{table}» для загрузки; есть: " + ", ".join(IMPORT_TABLES))
+
+
+def _table(name: str, key_fields: tuple[str, ...], fields: Sequence[str], normalize) -> ImportTable:
+    return ImportTable(name=name, key_fields=key_fields, fields=frozenset(fields), event_type=IMPORT_EVENT,
+                       aggregate_id=_AGGREGATE, normalize=normalize)
+
+
+def _key_values(table: ImportTable, rows: Sequence[ImportRowIn]) -> dict[str, tuple[str, ...]]:
+    """Each row's key string (`row_key`) → its key values, so a target matches by the values, not the joined text."""
+    values = {}
+    for row in rows:
+        try:
+            key = tuple(str(table.normalize(name, row.fields.get(name)) or "") for name in table.key_fields)
+        except (RowRefused, ValueError):
+            continue
+        values[row_key(table, dict(zip(table.key_fields, key)))] = key
+    return values
+
+
+def import_rows(table: str, uow: UnitOfWork, rows: Sequence[ImportRowIn], actor: Actor, now: datetime, *,
+                dry_run: bool, source: str = "api", limiter: ImportRateLimiter | None = None) -> RowsReport:
+    """Rows into one table (`ROW_TABLES`) by its natural key, through `run_import`: created / updated field by field /
+    unchanged / refused with the reason; nothing deleted; a БД row written is marked edited in ERP, so a mirror reload
+    keeps it. One audit event `references.table_imported` (with `source`) per call that changes something."""
+    check_source(source)
+    if table not in ROW_TABLES:
+        raise unknown_table(table)
+    with uow:
+        if table in TECH_TABLES:
+            spec = TECH_TABLES[table]
+            records = uow.tech_operations.list(tab=spec.tab, query="", limit=100_000)
+            import_table = _table(table, spec.key_fields, [*spec.schema_fields(), *_sheet_columns(spec, records)], _cell)
+            target: _Target = _TechTarget(uow, source, spec, records, _key_values(import_table, rows), now)
+        elif table in _MAPS:
+            kind, normalize, _label = _MAPS[table]
+            import_table = _table(table, ("key",), MAP_FIELDS, _map_value)
+            target = _MapTarget(uow, source, kind, normalize)
+        else:
+            rows, sizes = _gauge_rows(rows)
+            import_table = _table(table, (GAUGE_KEY,), GAUGE_FIELDS, _gauge_value)
+            target = _GaugeTarget(uow, source, sizes)
+        return run_import(import_table, rows, target, actor=actor, now=now, dry_run=dry_run, limiter=limiter)
+
+
+def import_schema(table: str, uow: UnitOfWork) -> dict:
+    """What a table's load accepts: the key and every field name (БД.ОБ / ТЕР / КОАКС — the schema values the
+    generator reads, then the sheet's own columns as «База данных» shows them)."""
+    if table == "hookups":
+        return {"table": table, "label": "База монтажных проводов", "key": ["марка БД.ПРОВ (серия + размер)"],
+                "fields": [], "format": f"hookup-wires.json, version {HOOKUP_SEED_VERSION}"}
+    if table in TECH_TABLES:
+        spec = TECH_TABLES[table]
+        with uow:
+            records = uow.tech_operations.list(tab=spec.tab, query="", limit=100_000)
+        schema = list(spec.schema_fields())
+        columns = [name for name in _sheet_columns(spec, records) if name not in schema] if spec.sheet_columns else []
+        return {"table": table, "label": spec.label, "key": list(spec.key_fields), "fields": schema + columns,
+                "schema_fields": schema if spec.sheet_columns else [], "sheet_columns": columns}
+    if table in _MAPS:
+        return {"table": table, "label": _MAPS[table][2], "key": ["key"], "fields": list(MAP_FIELDS)}
+    if table == "wire-gauges":
+        return {"table": table, "label": "Сечения AWG ↔ мм²", "key": ["awg", "section_mm2"],
+                "fields": list(GAUGE_FIELDS[1:]), "note": "ключ — AWG; строка без AWG ищется по сечению"}
+    raise unknown_table(table)

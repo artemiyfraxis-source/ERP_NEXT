@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal, references_edit_principal, references_import_principal, references_maps_edit_principal,
-    references_maps_view_principal, references_view_principal,
+    references_maps_view_principal, references_view_principal, refuse_api_tokens,
 )
 
 from .application import (
@@ -480,7 +480,8 @@ def update_wire_gauge(
     return _save_gauge(gauge_id, payload, principal, now, uow_factory)
 
 
-@router.delete("/wire-gauges/{gauge_id}", status_code=204)
+# A token never deletes (owner 12.10.2026): `refs:write` loads and edits rows, removing one stays with a person.
+@router.delete("/wire-gauges/{gauge_id}", status_code=204, dependencies=[Depends(refuse_api_tokens("Токен API не удаляет строки справочника."))])
 def remove_wire_gauge(
     gauge_id: UUID,
     principal: Annotated[Principal, Depends(references_edit_principal)],
