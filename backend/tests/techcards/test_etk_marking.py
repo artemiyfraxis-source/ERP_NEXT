@@ -168,3 +168,44 @@ def test_legacy_marking_without_a_kd_list_keeps_the_card_as_it_was():
     config = deepcopy(FIXTURES["files"]["kit-708К.2-КБ1.json"]["payload"]["config"])
     enriched = enrich_marking(config, _mirror_equipment(), _mirror_operations())
     assert "markKit" not in next(item for item in enriched["ops"] if item["type"] == "insMark")
+
+
+def _tube(material: str, text: str, length, qty: int = 1) -> dict:
+    return {**_mark(material, text, qty), **({"lengthMm": length} if length is not None else {})}
+
+
+def test_tube_cutting_step_lists_the_lengths_from_the_marks_table():
+    op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Термотрубка", "X2", "30,5")])
+    step = op["card"]["steps"][1]
+    assert step["text"] == "Нарезать трубки в размер: X1 — 25 мм, X2 — 30,5 мм — Автомат мерной резки гофрированных и термоусаживаемых трубок."
+    assert step["tolerance"] == "Согласно КД"
+    assert [row["length"] for row in op["fields"]["marks"]] == ["25", "30,5"]
+
+
+def test_equal_tube_lengths_are_grouped_per_item():
+    op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Термотрубка", "X2", 25), _tube("ТУТнг 4/2", "X3", 25, qty=2)])
+    assert op["card"]["steps"][1]["text"].startswith("Нарезать трубки в размер: 25 мм — 4 шт. на изделие — ")
+
+
+def test_tube_rows_without_length_keep_the_not_set_tolerance_only_for_them():
+    op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Термотрубка", "X2", None), _tube("Термотрубка", "X3", 0)])
+    step = op["card"]["steps"][1]
+    assert step["text"].startswith("Нарезать трубки в размер: X1 — 25 мм — ")
+    assert step["tolerance"] == "длина не задана: X2, X3"
+
+
+def test_length_of_a_non_tube_mark_is_ignored_and_old_marks_stay_not_set():
+    op, _warnings = _build([_tube("Хлястик", "КБ1", 25)])
+    assert "length" not in op["fields"]["marks"][0]
+    assert all("мм" not in step["text"] for step in op["card"]["steps"])
+    op, _warnings = _build([_mark("Термотрубка", "X1")])
+    assert op["card"]["steps"][1]["tolerance"] == "длина не задана"
+    assert "length" not in op["fields"]["marks"][0]
+
+
+def test_mixed_heat_and_pvc_blocks_get_their_own_lengths():
+    op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Трубка ТВ-40 ПВХ 4мм (кембрик) чёрная", "W1", 40)])
+    cuts = [step["text"] for step in op["card"]["steps"] if "арезать" in step["text"]]
+    assert len(cuts) == 2
+    assert cuts[0].startswith("Термоусадочная трубка — нарезать трубки в размер: X1 — 25 мм — ")
+    assert cuts[1].startswith("ПВХ-трубка — нарезать трубки в размер: W1 — 40 мм — ")

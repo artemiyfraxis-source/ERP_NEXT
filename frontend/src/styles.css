@@ -1282,6 +1282,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks col.c-mat { width: 13%; }
 .tcgen .gen-marks col.c-place { width: 20%; }
 .tcgen .gen-marks col.c-qty { width: 64px; }
+.tcgen .gen-marks col.c-len { width: 84px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
 .tcgen .gen-marks-place { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 4px; }
 .tcgen .gen-marks-place > select:only-child { grid-column: 1 / -1; }

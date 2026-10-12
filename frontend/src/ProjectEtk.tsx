@@ -32,7 +32,7 @@ type Housing = {
 };
 type EtkWireField = { name?: string; art?: string; pins?: number[] };
 /** Метка по КД (etk_builder `_mark_rows`): что, надпись, материал, где, на изделие и на партию. */
-type EtkMark = { target?: string; text?: string; material?: string; place?: string; qty?: string; batch?: string };
+type EtkMark = { target?: string; text?: string; material?: string; place?: string; qty?: string; batch?: string; length?: string };
 type EtkTool = {
   section?: string; number?: string; name?: string; inventory_number?: string; program?: string;
   parameters?: string; norm?: string; unit?: string;
@@ -197,12 +197,13 @@ const NOT_SET = /не задан/i;
 
 /** Метки по КД в «Ходе операции» маркировки: монтажник видит, какую надпись, чем и где делать, сколько штук. */
 function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
+  const lengths = marks.some((mark) => mark.length);
   return <table className="etk-marks" aria-label="Метки по КД">
     <caption>Метки по КД</caption>
-    <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th><th className="num">На изделие</th><th className="num">{batch ? `На партию ${formatQty(batch, "шт")}` : "На партию"}</th></tr></thead>
+    <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th>{lengths && <th className="num">Длина, мм</th>}<th className="num">На изделие</th><th className="num">{batch ? `На партию ${formatQty(batch, "шт")}` : "На партию"}</th></tr></thead>
     <tbody>{marks.map((mark, index) => <tr key={index}>
       <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><b>{mark.text || "—"}</b></td><td>{mark.material || "—"}</td>
-      <td>{mark.place || "—"}</td><td className="num">{mark.qty || ""}</td><td className="num">{mark.batch || ""}</td>
+      <td>{mark.place || "—"}</td>{lengths && <td className="num">{mark.length || ""}</td>}<td className="num">{mark.qty || ""}</td><td className="num">{mark.batch || ""}</td>
     </tr>)}</tbody>
   </table>;
 }

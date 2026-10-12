@@ -12,7 +12,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from .domain.route import (
     Block, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_totals,
 )
-from .etk_marking import apply_marking
+from .etk_marking import apply_marking, mark_length
 from .operation_cards import OperationCardTemplate
 from .project_cards import CUSTOM_OP
 
@@ -244,6 +244,7 @@ def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[st
         "target": str(item.get("target") or "").strip(), "text": str(item.get("text") or "").strip(),
         "material": str(item.get("name") or item.get("art") or "").strip(), "place": str(item.get("place") or "").strip(),
         "qty": _format(_number(item.get("qty"), Decimal(1))), "batch": _format(_number(item.get("qty"), Decimal(1)) * quantity),
+        **({"length": _format(length)} if (length := mark_length(item)) else {}),
     } for item in _mark_items(op) if str(item.get("text") or "").strip() or str(item.get("target") or "").strip()]
 
 

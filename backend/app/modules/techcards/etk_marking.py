@@ -120,18 +120,59 @@ def _lead(text: str) -> str:
     return text[:1].lower() + text[1:] if len(text) > 1 and text[1].islower() else text
 
 
-def _steps(counts: Mapping[str, Decimal], op: Mapping[str, Any], batch: Decimal) -> list[dict[str, str]]:
+TUBE_KINDS = frozenset({"heat", "pvc"})
+
+
+def mark_length(item: Mapping[str, Any]) -> Decimal:
+    """Длина отрезка трубки, мм (`lengthMm` строки меток); не задана, не число или не больше нуля — 0. Только у трубок."""
+    if mark_kind(str(item.get("name") or item.get("art") or "")) not in TUBE_KINDS:
+        return Decimal(0)
+    number = _amount(item.get("lengthMm"))
+    return number if number > 0 else Decimal(0)
+
+
+def _label(item: Mapping[str, Any]) -> str:
+    return str(item.get("text") or item.get("target") or "").strip() or "метка"
+
+
+def _sizes(marks: Sequence[Mapping[str, Any]]) -> tuple[str, str]:
+    """Длины трубок одного вида для шага нарезки: («: X1 — 25 мм, 25 мм — 3 шт. на изделие», допуск). Метки с одной
+    длиной в группе из нескольких сводятся в «25 мм — 3 шт. на изделие», одиночные — «X1 — 25 мм». Метки без длины
+    оставляют допуск «длина не задана» (с их надписями, если часть длин всё же есть)."""
+    groups: dict[Decimal, list[Mapping[str, Any]]] = {}
+    unset: list[str] = []
+    for item in marks:
+        length = mark_length(item)
+        if length:
+            groups.setdefault(length, []).append(item)
+        else:
+            unset.append(_label(item))
+    if not groups:
+        return "", "длина не задана"
+    parts = [
+        f"{_label(items[0])} — {_format(length)} мм" if len(items) == 1
+        else f"{_format(length)} мм — {_format(sum((_qty(item) for item in items), Decimal(0)))} шт. на изделие"
+        for length, items in groups.items()
+    ]
+    tolerance = f"длина не задана: {', '.join(unset)}" if unset else "Согласно КД"
+    return ": " + ", ".join(parts), tolerance
+
+
+def _steps(counts: Mapping[str, Decimal], op: Mapping[str, Any], batch: Decimal,
+           marks: Sequence[Mapping[str, Any]] = ()) -> list[dict[str, str]]:
     mixed = len(counts) > 1
     steps: list[dict[str, str]] = []
     for kind, per_item in counts.items():
         block = _BY_ID[kind]
         names = {slot: _step_name(op, key) for slot, key in _TYPE_EQUIPMENT.get(kind, {}).items()}
+        sizes, length_tolerance = _sizes([item for item in marks if mark_kind(str(item.get("name") or item.get("art") or "")) == kind])
         for step in block["steps"]:
-            text = str(step["text"]).format(count=f"{_format(per_item * batch)} шт.", **{
+            text = str(step["text"]).format(count=f"{_format(per_item * batch)} шт.", sizes=sizes, **{
                 slot: names.get(slot, "") for slot in ("printer", "cutter", "heater")})
             steps.append({
                 "number": str(len(steps) + 1), "kind": step["kind"],
-                "text": f"{block['title']} — {_lead(text)}" if mixed else text, "tolerance": str(step["tolerance"]),
+                "text": f"{block['title']} — {_lead(text)}" if mixed else text,
+                "tolerance": str(step["tolerance"]).format(length_tolerance=length_tolerance),
             })
     return steps
 
@@ -194,7 +235,7 @@ def apply_marking(operation: dict[str, Any], op: Mapping[str, Any], marks: Seque
         return
     card = operation.get("card")
     if isinstance(card, dict):
-        card["steps"] = _steps(counts, op, batch)
+        card["steps"] = _steps(counts, op, batch, marks)
         card["defects"] = _defects(counts)
         card["tooling"] = _tooling(card.get("tooling") or [], counts, op)
     operation["time"] = [*operation.get("time", []), *_time_rows(
