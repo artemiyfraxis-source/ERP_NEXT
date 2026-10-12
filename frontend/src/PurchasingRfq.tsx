@@ -3,7 +3,9 @@ import { failureText } from "./api";
 import { formatDay } from "./format";
 import {
   decisionViolations,
+  quoteCell,
   rfqApi,
+  unasked,
   type DecisionField,
   type PastedRow,
   type QuoteLineInput,
@@ -145,6 +147,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [quoteFor, setQuoteFor] = useState<RfqSupplier | null>(null);
+  const [linesFor, setLinesFor] = useState<RfqSupplier | null>(null);
   const [decisionFor, setDecisionFor] = useState<{ lineId: string; supplierId: string } | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [directory, setDirectory] = useState<SupplierBrief[]>([]);
@@ -243,7 +246,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
               {suppliers.map((supplier) => (
                 <th key={supplier.supplier_id} colSpan={2} style={{ ...groupEdge, verticalAlign: "top", minWidth: 190, whiteSpace: "normal", fontWeight: 400 }}>
                   <SupplierHead
-                    supplier={supplier} editable={editable}
+                    supplier={supplier} editable={editable} total={lines.length} onLines={() => setLinesFor(supplier)}
                     onSent={() => void act(() => rfqApi.markSent(id, supplier.supplier_id), `«${supplier.name}»: запрос отправлен`, "Не отмечено")}
                     onQuote={() => setQuoteFor(supplier)}
                     onDeclined={() => {
@@ -286,7 +289,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
                 </td>
                 {suppliers.map((supplier) => (
                   <MatrixCell
-                    key={supplier.supplier_id} line={line} supplier={supplier} cell={line.cells[supplier.supplier_id]}
+                    key={supplier.supplier_id} line={line} supplier={supplier}
                     onOpen={() => setDecisionFor({ lineId: line.id, supplierId: supplier.supplier_id })}
                   />
                 ))}
@@ -328,6 +331,12 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
           onSaved={() => { setQuoteFor(null); void refresh(`КП «${quoteFor.name}» внесено`); }}
         />
       )}
+      {linesFor && (
+        <SupplierLinesDialog
+          matrix={matrix} supplier={linesFor} onClose={() => setLinesFor(null)}
+          onSaved={() => { setLinesFor(null); void refresh(`«${linesFor.name}»: позиции запроса изменены`); }}
+        />
+      )}
       {decisionFor && decisionLine && (
         <DecisionPanel
           matrix={matrix} line={decisionLine} supplierId={decisionFor.supplierId} editable={editable}
@@ -345,8 +354,9 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
   );
 }
 
-function SupplierHead({ supplier, editable, onSent, onQuote, onDeclined, onRemove }: {
-  supplier: RfqSupplier; editable: boolean; onSent: () => void; onQuote: () => void; onDeclined: () => void; onRemove: () => void;
+function SupplierHead({ supplier, editable, total, onLines, onSent, onQuote, onDeclined, onRemove }: {
+  supplier: RfqSupplier; editable: boolean; total: number; onLines: () => void; onSent: () => void; onQuote: () => void;
+  onDeclined: () => void; onRemove: () => void;
 }) {
   const state = supplier.declined_at
     ? `отказался${supplier.decline_note ? `: ${supplier.decline_note}` : ""}`
@@ -357,6 +367,13 @@ function SupplierHead({ supplier, editable, onSent, onQuote, onDeclined, onRemov
         {supplier.name}{supplier.is_key ? " ★" : ""}
       </strong>
       <span className={supplier.declined_at ? "tone-danger" : supplier.answered ? "tone-ok" : "muted"}>{state} · {REASONS[supplier.reason] ?? ""}</span>
+      <span className="muted">
+        позиций: {supplier.line_ids?.length ?? total} из {total}
+        {editable && <>
+          {" · "}
+          <button type="button" className="link-button" style={{ padding: 0, fontSize: 12 }} aria-label={`Изменить позиции ${supplier.name}`} onClick={onLines}>изменить</button>
+        </>}
+      </span>
       {(supplier.delivery_cost || supplier.min_order_sum) && (
         <span className="muted">
           {supplier.delivery_cost ? `доставка ${money(supplier.delivery_cost)}` : ""}
@@ -391,7 +408,15 @@ function cellHints(cell: RfqCell): string[] {
   return hints;
 }
 
-function MatrixCell({ line, supplier, cell, onOpen }: { line: RfqLine; supplier: RfqSupplier; cell: RfqCell | undefined; onOpen: () => void }) {
+function MatrixCell({ line, supplier, onOpen }: { line: RfqLine; supplier: RfqSupplier; onOpen: () => void }) {
+  if (unasked(line, supplier.supplier_id)) {
+    return (
+      <td colSpan={2} style={{ ...groupEdge, color: "var(--muted-foreground)", fontSize: 12 }} title="Эту позицию у поставщика не запрашивали">
+        не запрашивали
+      </td>
+    );
+  }
+  const cell = quoteCell(line, supplier.supplier_id);
   if (!cell) {
     return <>
       <td style={{ ...groupEdge, color: "var(--muted-foreground)" }}>—</td>
@@ -435,7 +460,7 @@ function DecisionPanel({ matrix, line, supplierId, editable, onClose, onDone }: 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const chosen = line.cells[chosenId];
+  const chosen = quoteCell(line, chosenId);
   const chosenSupplier = matrix.suppliers.find((supplier) => supplier.supplier_id === chosenId);
   const decidedSupplier = line.decision ? matrix.suppliers.find((supplier) => supplier.supplier_id === line.decision?.supplier_id) : undefined;
   const choosable = Boolean(chosen && !chosen.declined && !chosen.expired && chosen.gross_unit !== null);
@@ -446,7 +471,10 @@ function DecisionPanel({ matrix, line, supplierId, editable, onClose, onDone }: 
   const missing = (required.has("gate_override_reason") && !gateReason.trim())
     || (required.has("not_cheapest_reason") && !pricierReason.trim())
     || (required.has("analog_approved_by") && !analogBy.trim());
-  const offers = matrix.suppliers.filter((supplier) => line.cells[supplier.supplier_id]);
+  const offers = matrix.suppliers.flatMap((supplier) => {
+    const cell = quoteCell(line, supplier.supplier_id);
+    return cell ? [{ supplier, cell }] : [];
+  });
 
   async function decide() {
     if (!chosen) return;
@@ -500,8 +528,7 @@ function DecisionPanel({ matrix, line, supplierId, editable, onClose, onDone }: 
             <tr><th>Поставщик</th><th>Цена с НДС</th><th>Берём</th><th>Сумма</th><th>Срок</th><th>Отметки</th></tr>
           </thead>
           <tbody>
-            {offers.map((supplier) => {
-              const cell = line.cells[supplier.supplier_id];
+            {offers.map(({ supplier, cell }) => {
               const marks = [
                 cell.cheapest && "самое дешёвое", cell.baseline && "база экономии", cell.decided && "выбрано",
                 cell.analog && `аналог${cell.analog_note ? `: ${cell.analog_note}` : ""}`, cell.expired && "срок КП истёк",
@@ -609,7 +636,8 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
     price: "", vat_included: true, vat_rate: matrix.settings.default_vat_rate, moq: "", pack: "", lead: "",
     in_stock: false, declined: false, analog: false, analog_note: "",
   });
-  const [rows, setRows] = useState<Record<string, QuoteRowState>>(() => Object.fromEntries(matrix.lines.map((line) => [line.id, blank()])));
+  const asked = supplier.line_ids ? matrix.lines.filter((line) => supplier.line_ids?.includes(line.id)) : matrix.lines;
+  const [rows, setRows] = useState<Record<string, QuoteRowState>>(() => Object.fromEntries(asked.map((line) => [line.id, blank()])));
   const [receivedOn, setReceivedOn] = useState(today());
   const [validUntil, setValidUntil] = useState("");
   const [delivery, setDelivery] = useState("");
@@ -627,7 +655,7 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
   async function parsePaste() {
     setError("");
     try {
-      const preview = await rfqApi.paste(matrix.rfq.id, pasteText);
+      const preview = await rfqApi.paste(matrix.rfq.id, pasteText, supplier.supplier_id);
       const next = { ...rows };
       for (const row of preview.rows) {
         if (!row.rfq_line_id || !next[row.rfq_line_id]) continue;
@@ -647,7 +675,7 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
   }
 
   async function save() {
-    const lines: QuoteLineInput[] = matrix.lines.flatMap((line) => {
+    const lines: QuoteLineInput[] = asked.flatMap((line) => {
       const row = rows[line.id];
       if (!row.declined && !decimalInput(row.price)) return [];
       return [{
@@ -695,6 +723,11 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
           <div><button type="button" className="secondary small" disabled={!pasteText.trim()} onClick={() => void parsePaste()}>Разобрать</button></div>
         </div>
       )}
+      {asked.length < matrix.lines.length && (
+        <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+          У поставщика запрошено позиций: {asked.length} из {matrix.lines.length} — остальные в КП не вносятся.
+        </p>
+      )}
       {unmatched.length > 0 && (
         <div className="warning-inline">Не сопоставлено со строками запроса: {unmatched.map((row) => row.source_name || row.source_article).join("; ")}</div>
       )}
@@ -708,7 +741,7 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
             </tr>
           </thead>
           <tbody>
-            {matrix.lines.map((line) => {
+            {asked.map((line) => {
               const row = rows[line.id];
               return (
                 <tr key={line.id}>
@@ -736,6 +769,61 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
         <span className="muted" style={{ marginRight: "auto", fontSize: 12 }}>Пустая строка без отказа — позиция не предложена. Повторное КП заменит прежнее по этим позициям.</span>
         <button type="button" className="secondary" onClick={onClose}>Отмена</button>
         <button type="button" className="primary" disabled={busy} onClick={() => void save()}>Сохранить КП</button>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Which lines of the request a supplier is asked for; a line he has already quoted stays ticked. */
+function SupplierLinesDialog({ matrix, supplier, onClose, onSaved }: {
+  matrix: RfqMatrix; supplier: RfqSupplier; onClose: () => void; onSaved: () => void;
+}) {
+  const all = matrix.lines.map((line) => line.id);
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(supplier.line_ids ?? all));
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const quoted = new Set(matrix.lines.filter((line) => quoteCell(line, supplier.supplier_id)).map((line) => line.id));
+  const toggle = (id: string) => setPicked((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  async function save() {
+    setBusy(true);
+    setError("");
+    try {
+      await rfqApi.setSupplierLines(matrix.rfq.id, supplier.supplier_id, all.filter((id) => picked.has(id)));
+      onSaved();
+    } catch (reason) {
+      setError(failureText(reason, "Позиции не сохранены"));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog title={`Позиции для «${supplier.name}»`} onClose={onClose}>
+      <div style={{ display: "flex", gap: 8, alignItems: "baseline", fontSize: 12 }}>
+        <span className="muted">Отмечено {picked.size} из {all.length}</span>
+        <button type="button" className="link-button" style={{ padding: 0 }} onClick={() => setPicked(new Set(all))}>все</button>
+      </div>
+      <div className="rfq-lines-editor" role="group" aria-label="Позиции запроса">
+        {matrix.lines.map((line) => (
+          <label key={line.id} title={quoted.has(line.id) ? "По позиции уже есть КП этого поставщика" : undefined}>
+            <input
+              type="checkbox" aria-label={`Запросить ${line.legacy_id ?? line.name}`} checked={picked.has(line.id)}
+              disabled={quoted.has(line.id)} onChange={() => toggle(line.id)}
+            />
+            <span>{line.name}</span>
+            {line.legacy_id && <small>{line.legacy_id}</small>}
+            {quoted.has(line.id) && <small>есть КП</small>}
+          </label>
+        ))}
+      </div>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="form-actions">
+        <button type="button" className="secondary" onClick={onClose}>Отмена</button>
+        <button type="button" className="primary" disabled={busy || picked.size === 0} onClick={() => void save()}>Сохранить</button>
       </div>
     </Dialog>
   );

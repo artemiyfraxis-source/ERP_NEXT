@@ -45,16 +45,19 @@ const suggestion = {
       supplier_id: "s-al", name: "ООО Альфа", is_key: false, categories: [], reason: "items", rfq_reason: "category",
       preselect: true, in_rfq: false, last_asked_at: null,
       reasons: [{ code: "items", label: "поставлял эти позиции", lines: 2, last_date: "2026-09-03" }],
+      lines: [{ line_id: "a", reasons: ["items", "category_history"] }],
     },
     {
       supplier_id: null, name: "ИП Неизвестный", is_key: false, categories: [], reason: "category_history",
       rfq_reason: "category", preselect: true, in_rfq: false, last_asked_at: null,
       reasons: [{ code: "category_history", label: "поставлял такие же (кабель и провод)", lines: 1, last_date: null }],
+      lines: [{ line_id: "a", reasons: ["category_history"] }, { line_id: "b", reasons: ["category_history"] }],
     },
     {
       supplier_id: "s-rot", name: "ООО Ротация", is_key: false, categories: ["cable"], reason: "rotation",
       rfq_reason: "rotation", preselect: false, in_rfq: false, last_asked_at: null,
       reasons: [{ code: "rotation", label: "давно не спрашивали", lines: null, last_date: null }],
+      lines: [{ line_id: "b", reasons: ["rotation"] }],
     },
   ],
 };
@@ -147,12 +150,89 @@ it("preselects the suggested suppliers and creates the request with lines and su
     body: {
       line_ids: ["a", "b"], title: "Кабель",
       suppliers: [
-        { supplier_id: "s-al", reason: "items" },
-        { name: "ИП Неизвестный", reason: "category_history" },
-        { supplier_id: "s-om", reason: "manual" },
+        { supplier_id: "s-al", reason: "items", line_ids: ["a"] },
+        { name: "ИП Неизвестный", reason: "category_history", line_ids: ["a", "b"] },
+        { supplier_id: "s-om", reason: "manual", line_ids: ["a", "b"] },
       ],
     },
   }]);
+});
+
+async function openSuppliers(posts: { path: string; body: unknown }[] = []) {
+  mockServer(posts);
+  const created = vi.fn();
+  render(<RfqPool onClose={() => undefined} onCreated={created} />);
+  fireEvent.click(await screen.findByLabelText("Выбрать группу «Кабель и провод»"));
+  fireEvent.click(screen.getByRole("button", { name: "Запросить КП (2)" }));
+  await screen.findByLabelText("Спросить ООО Альфа");
+  return created;
+}
+
+const supplierRow = (name: string) => screen.getByRole("group", { name: `Поставщик ${name}` });
+
+it("a supplier row opens its positions with the reason of each", async () => {
+  await openSuppliers();
+  const alfa = supplierRow("ООО Альфа");
+  const toggle = within(alfa).getByRole("button", { name: /позиций: 1 из 2/ });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  expect(within(alfa).queryByLabelText("Запросить SM-a у ООО Альфа")).not.toBeInTheDocument();
+  fireEvent.click(toggle);
+  const lines = within(alfa).getByRole("group", { name: "Позиции для ООО Альфа" });
+  expect(within(lines).getByText("Провод МГТФ 0,12")).toBeInTheDocument();
+  expect(within(lines).getByText("Кабель ПВС 2х0,75")).toBeInTheDocument();
+  expect(within(lines).getByLabelText("Запросить SM-a у ООО Альфа")).toBeChecked();
+  expect(within(lines).getByLabelText("Запросить SM-b у ООО Альфа")).not.toBeChecked();
+  expect(within(lines).getByText("поставлял")).toBeInTheDocument();
+  expect(screen.getByRole("toolbar", { name: "Создание запроса" })).toHaveTextContent("Поставщиков: 2 · запросов позиций: 3");
+});
+
+it("the supplier checkbox is half-ticked when a position is dropped and takes or drops all of them", async () => {
+  await openSuppliers();
+  const unknown = supplierRow("ИП Неизвестный");
+  const box = within(unknown).getByLabelText("Спросить ИП Неизвестный") as HTMLInputElement;
+  expect(box.checked).toBe(true);
+  fireEvent.click(within(unknown).getByRole("button", { name: /позиций: 2 из 2/ }));
+  fireEvent.click(within(unknown).getByLabelText("Запросить SM-b у ИП Неизвестный"));
+  expect(box.checked).toBe(false);
+  expect(box.indeterminate).toBe(true);
+  expect(within(unknown).getByRole("button", { name: /позиций: 1 из 2/ })).toBeInTheDocument();
+
+  fireEvent.click(box);  // half-ticked → all its positions again
+  expect(box.checked).toBe(true);
+  expect(box.indeterminate).toBe(false);
+  expect(within(unknown).getByLabelText("Запросить SM-b у ИП Неизвестный")).toBeChecked();
+
+  fireEvent.click(box);  // ticked → the supplier is dropped
+  expect(within(unknown).getByLabelText("Запросить SM-a у ИП Неизвестный")).not.toBeChecked();
+  expect(within(unknown).getByLabelText("Запросить SM-b у ИП Неизвестный")).not.toBeChecked();
+  expect(screen.getByRole("toolbar", { name: "Создание запроса" })).toHaveTextContent("Поставщиков: 1 · запросов позиций: 1");
+});
+
+it("one position ticked by hand and the quick links go into the request", async () => {
+  const posts: { path: string; body: unknown }[] = [];
+  const created = await openSuppliers(posts);
+  const alfa = supplierRow("ООО Альфа");
+  fireEvent.click(within(alfa).getByRole("button", { name: /позиций: 1 из 2/ }));
+  fireEvent.click(within(alfa).getByLabelText("Запросить SM-b у ООО Альфа"));
+  expect(within(alfa).getByLabelText("Спросить ООО Альфа")).toBeChecked();
+  expect(within(alfa).getByRole("button", { name: /позиций: 2 из 2/ })).toBeInTheDocument();
+
+  const rotation = supplierRow("ООО Ротация");
+  expect(within(rotation).getByLabelText("Спросить ООО Ротация")).not.toBeChecked();
+  fireEvent.click(within(rotation).getByRole("button", { name: /позиций: 0 из 2/ }));
+  fireEvent.click(within(rotation).getByRole("button", { name: "все" }));
+  fireEvent.click(within(rotation).getByRole("button", { name: "только по причинам" }));
+  expect(within(rotation).getByLabelText("Запросить SM-a у ООО Ротация")).not.toBeChecked();
+  expect(within(rotation).getByLabelText("Запросить SM-b у ООО Ротация")).toBeChecked();
+  expect(screen.getByRole("toolbar", { name: "Создание запроса" })).toHaveTextContent("Поставщиков: 3 · запросов позиций: 5");
+
+  fireEvent.click(screen.getByRole("button", { name: "Создать запрос" }));
+  await waitFor(() => expect(created).toHaveBeenCalledWith("r-new"));
+  expect((posts[0].body as { suppliers: unknown[] }).suppliers).toEqual([
+    { supplier_id: "s-al", reason: "items", line_ids: ["a", "b"] },
+    { name: "ИП Неизвестный", reason: "category_history", line_ids: ["a", "b"] },
+    { supplier_id: "s-rot", reason: "rotation", line_ids: ["b"] },
+  ]);
 });
 
 it("«+ Запрос» opens the pool across the page instead of the request list", async () => {

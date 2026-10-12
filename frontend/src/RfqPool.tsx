@@ -87,6 +87,12 @@ export function RfqPool({ onClose, onCreated }: { onClose: () => void; onCreated
     rfqApi.pool().then(setPool).catch((reason) => setError(failureText(reason, "Строки не загрузились")));
   }, []);
 
+  // The chosen lines in the order they were ticked: the supplier step lists them under each supplier.
+  const askingLines = useMemo(() => {
+    const byId = new Map((pool?.groups ?? []).flatMap((group) => group.lines.map((line) => [line.id, line] as const)));
+    return (asking ?? []).map((id): ChosenLine => byId.get(id) ?? { id, name: id, legacy_id: "" });
+  }, [asking, pool]);
+
   const groups = useMemo(() => {
     const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
     return (pool?.groups ?? []).map((group) => ({ group, rows: group.lines.filter((line) => matches(line, words, project)) }));
@@ -122,7 +128,7 @@ export function RfqPool({ onClose, onCreated }: { onClose: () => void; onCreated
         <div className="empty">Нет строк «В работе» / «Готов к запросу» вне запросов КП — возьмите строки в работу на листе закупки.</div>
       )}
       {asking ? (
-        <SuggestPanel lineIds={asking} onBack={() => setAsking(null)} onCreated={onCreated} />
+        <SuggestPanel lineIds={asking} lines={askingLines} onBack={() => setAsking(null)} onCreated={onCreated} />
       ) : pool && pool.total > 0 && (
         <div className="data-table">
           <div className="filters table-toolbar">
@@ -214,6 +220,20 @@ const REASON_TONE: Record<string, Tone> = {
 
 export const suggestionKey = (item: SupplierSuggestion) => item.supplier_id ?? `name:${item.name.toLowerCase()}`;
 
+/** A line of the new request as the supplier step lists it. */
+export type ChosenLine = { id: string; name: string; legacy_id: string };
+
+// Per line: why the supplier is suggested for it (the chip shows the best reason, the hint all of them).
+const LINE_REASON: Record<string, string> = {
+  items: "поставлял", category_history: "такая же категория", original: "в строке", key: "ключевой",
+  rotation: "по категории", category: "по категории",
+};
+const LINE_REASON_HINT: Record<string, string> = {
+  items: "поставлял эту позицию", category_history: "поставлял позиции этой категории",
+  original: "указан в строке заявки", key: "ключевой поставщик этой категории",
+  rotation: "категория в справочнике, давно не спрашивали", category: "категория в справочнике",
+};
+
 function reasonText(reason: SuggestReason) {
   // Rotation and the rest of the category carry the day the supplier was last asked, history reasons the last purchase.
   if (reason.code === "rotation" || reason.code === "category") {
@@ -240,15 +260,117 @@ export function SuggestionList({ items, checked, onToggle }: {
               type="checkbox" aria-label={`Спросить ${item.name}`} disabled={item.in_rfq}
               checked={item.in_rfq || checked.has(key)} onChange={() => onToggle(key)}
             />
-            <strong>{item.name}{item.is_key ? " ★" : ""}</strong>
-            {item.supplier_id === null && (
-              <StatusChip tone="warning" title="Добавится в справочник поставщиков вместе с запросом">нет в справочнике</StatusChip>
-            )}
-            {item.reasons.map((reason) => (
-              <StatusChip key={reason.code} tone={REASON_TONE[reason.code] ?? "neutral"}>{reasonText(reason)}</StatusChip>
-            ))}
+            <SupplierTitle item={item} />
             {item.in_rfq && <span className="muted">уже в запросе</span>}
           </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function SupplierTitle({ item }: { item: SupplierSuggestion }) {
+  return <>
+    <strong>{item.name}{item.is_key ? " ★" : ""}</strong>
+    {item.supplier_id === null && (
+      <StatusChip tone="warning" title="Добавится в справочник поставщиков вместе с запросом">нет в справочнике</StatusChip>
+    )}
+    {item.reasons.map((reason) => (
+      <StatusChip key={reason.code} tone={REASON_TONE[reason.code] ?? "neutral"}>{reasonText(reason)}</StatusChip>
+    ))}
+  </>;
+}
+
+/** The lines a supplier is suggested for — ticked by default; none known (a supplier added by hand) — every line. */
+export function relatedLines(item: SupplierSuggestion, lineIds: string[]): string[] {
+  const own = new Set(item.lines.map((line) => line.line_id));
+  const related = lineIds.filter((id) => own.has(id));
+  return related.length > 0 ? related : lineIds;
+}
+
+/** The picks of the new request, each supplier with its ticked lines (a supplier with none is not asked). */
+export function picksWithLines(items: SupplierSuggestion[], chosen: Record<string, string[]>): SupplierPick[] {
+  return items.flatMap((item) => {
+    const lineIds = chosen[suggestionKey(item)] ?? [];
+    if (item.in_rfq || lineIds.length === 0) return [];
+    const who = item.supplier_id ? { supplier_id: item.supplier_id } : { name: item.name };
+    return [{ ...who, reason: item.reason, line_ids: lineIds }];
+  });
+}
+
+/** Suppliers of the new request with the positions each is asked for: the supplier checkbox takes or drops all its
+ *  suggested positions (half-ticked when some are dropped by hand), «позиций: N из M» opens them one by one. */
+function SupplierLinesList({ items, lines, chosen, onChange }: {
+  items: SupplierSuggestion[]; lines: ChosenLine[]; chosen: Record<string, string[]>;
+  onChange: (key: string, lineIds: string[]) => void;
+}) {
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const lineIds = lines.map((line) => line.id);
+  const ordered = (ids: Set<string>) => lineIds.filter((id) => ids.has(id));
+  const toggleOpen = (key: string) => setOpen((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  return (
+    <div className="rfq-suggest-list" role="group" aria-label="Поставщики">
+      {items.map((item) => {
+        const key = suggestionKey(item);
+        const picked = new Set(chosen[key] ?? []);
+        const related = relatedLines(item, lineIds);
+        const whole = picked.size > 0 && related.every((id) => picked.has(id));
+        const why = new Map(item.lines.map((line) => [line.line_id, line.reasons]));
+        const expanded = open.has(key) && !item.in_rfq;
+        const toggleLine = (id: string) => {
+          const next = new Set(picked);
+          if (next.has(id)) next.delete(id); else next.add(id);
+          onChange(key, ordered(next));
+        };
+        return (
+          <div key={key} className="rfq-supplier" role="group" aria-label={`Поставщик ${item.name}`}>
+            <div className="rfq-supplier-head">
+              <input
+                type="checkbox" aria-label={`Спросить ${item.name}`} disabled={item.in_rfq} checked={item.in_rfq || whole}
+                ref={(input) => { if (input) input.indeterminate = !item.in_rfq && picked.size > 0 && !whole; }}
+                onChange={(event) => onChange(key, event.currentTarget.checked ? ordered(new Set([...picked, ...related])) : [])}
+              />
+              <SupplierTitle item={item} />
+              {item.in_rfq ? <span className="muted">уже в запросе</span> : (
+                <button
+                  type="button" className="link-button rfq-supplier-toggle" aria-expanded={expanded}
+                  title="Какие позиции спросить у этого поставщика" onClick={() => toggleOpen(key)}
+                >позиций: {picked.size} из {lineIds.length} {expanded ? "▾" : "▸"}</button>
+              )}
+            </div>
+            {expanded && (
+              <div className="rfq-supplier-lines" role="group" aria-label={`Позиции для ${item.name}`}>
+                <span className="rfq-supplier-quick">
+                  <button type="button" className="link-button" onClick={() => onChange(key, lineIds)}>все</button>
+                  {" · "}
+                  <button type="button" className="link-button" onClick={() => onChange(key, related)}>только по причинам</button>
+                </span>
+                {lines.map((line) => {
+                  const reasons = why.get(line.id) ?? [];
+                  return (
+                    <label key={line.id}>
+                      <input
+                        type="checkbox" aria-label={`Запросить ${line.legacy_id || line.name} у ${item.name}`}
+                        checked={picked.has(line.id)} onChange={() => toggleLine(line.id)}
+                      />
+                      <span className="rfq-supplier-line-name" title={line.name}>{line.name}</span>
+                      {line.legacy_id && <small>{line.legacy_id}</small>}
+                      {reasons.length > 0 && (
+                        <StatusChip
+                          tone={REASON_TONE[reasons[0]] ?? "neutral"}
+                          title={reasons.map((code) => LINE_REASON_HINT[code] ?? code).join("; ")}
+                        >{LINE_REASON[reasons[0]] ?? reasons[0]}</StatusChip>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         );
       })}
     </div>
@@ -268,14 +390,17 @@ export function manualSuggestion(name: string, directory: SupplierBrief[]): Supp
   return {
     supplier_id: known?.supplier_id ?? null, name: known?.name ?? clean, is_key: known?.is_key ?? false,
     categories: known?.categories ?? [], reasons: [{ code: "manual", label: "добавлен вручную", lines: null, last_date: null }],
-    reason: "manual", rfq_reason: "manual", preselect: true, in_rfq: false, last_asked_at: null,
+    reason: "manual", rfq_reason: "manual", preselect: true, in_rfq: false, last_asked_at: null, lines: [],
   };
 }
 
-function SuggestPanel({ lineIds, onBack, onCreated }: { lineIds: string[]; onBack: () => void; onCreated: (id: string) => void }) {
+function SuggestPanel({ lineIds, lines, onBack, onCreated }: {
+  lineIds: string[]; lines: ChosenLine[]; onBack: () => void; onCreated: (id: string) => void;
+}) {
   const [result, setResult] = useState<SuggestResult | null>(null);
   const [extra, setExtra] = useState<SupplierSuggestion[]>([]);
-  const [checked, setChecked] = useState<Set<string>>(new Set());
+  // Supplier key → the lines asked of it; empty — the supplier is not asked.
+  const [chosen, setChosen] = useState<Record<string, string[]>>({});
   const [directory, setDirectory] = useState<SupplierBrief[]>([]);
   const [name, setName] = useState("");
   const [title, setTitle] = useState("");
@@ -286,18 +411,16 @@ function SuggestPanel({ lineIds, onBack, onCreated }: { lineIds: string[]; onBac
     rfqApi.suggestForLines(lineIds)
       .then((next) => {
         setResult(next);
-        setChecked(new Set(next.suggestions.filter((item) => item.preselect).map(suggestionKey)));
+        setChosen(Object.fromEntries(
+          next.suggestions.filter((item) => item.preselect).map((item) => [suggestionKey(item), relatedLines(item, lineIds)]),
+        ));
       })
       .catch((reason) => setError(failureText(reason, "Подсказка не загрузилась")));
     rfqApi.directory().then(({ suppliers }) => setDirectory(suppliers)).catch(() => setDirectory([]));
   }, [lineIds]);
 
   const items = [...(result?.suggestions ?? []), ...extra];
-  const toggle = (key: string) => setChecked((current) => {
-    const next = new Set(current);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
+  const choose = (key: string, ids: string[]) => setChosen((current) => ({ ...current, [key]: ids }));
 
   function addByName(event: FormEvent) {
     event.preventDefault();
@@ -305,7 +428,7 @@ function SuggestPanel({ lineIds, onBack, onCreated }: { lineIds: string[]; onBac
     const item = manualSuggestion(name, directory);
     const key = suggestionKey(item);
     if (!items.some((existing) => suggestionKey(existing) === key)) setExtra((current) => [...current, item]);
-    setChecked((current) => new Set(current).add(key));
+    setChosen((current) => (current[key]?.length ? current : { ...current, [key]: lineIds }));
     setName("");
   }
 
@@ -313,7 +436,7 @@ function SuggestPanel({ lineIds, onBack, onCreated }: { lineIds: string[]; onBac
     setBusy(true);
     setError("");
     try {
-      const created = await rfqApi.create(lineIds, title.trim(), picksOf(items, checked));
+      const created = await rfqApi.create(lineIds, title.trim(), picks);
       onCreated(created.id);
     } catch (reason) {
       setError(failureText(reason, "Запрос не создан"));
@@ -321,7 +444,8 @@ function SuggestPanel({ lineIds, onBack, onCreated }: { lineIds: string[]; onBac
     }
   }
 
-  const count = items.filter((item) => checked.has(suggestionKey(item))).length;
+  const picks = picksWithLines(items, chosen);
+  const asks = picks.reduce((sum, pick) => sum + (pick.line_ids?.length ?? 0), 0);
   return (
     <div className="rfq-suggest" aria-label="Поставщики для запроса" role="region">
       <div className="rfq-pool-head">
@@ -336,7 +460,7 @@ function SuggestPanel({ lineIds, onBack, onCreated }: { lineIds: string[]; onBac
       {result && items.length === 0 && (
         <div className="empty">Подсказать некого: истории закупок этих позиций нет, в строках поставщик не указан, у поставщиков справочника нет таких категорий. Добавьте поставщика по названию.</div>
       )}
-      {items.length > 0 && <SuggestionList items={items} checked={checked} onToggle={toggle} />}
+      {items.length > 0 && <SupplierLinesList items={items} lines={lines} chosen={chosen} onChange={choose} />}
       <form className="rfq-add-supplier" onSubmit={addByName}>
         <input
           aria-label="Поставщик по названию" list="rfq-pool-directory" value={name} placeholder="Поставщик из справочника или новый"
@@ -348,10 +472,10 @@ function SuggestPanel({ lineIds, onBack, onCreated }: { lineIds: string[]; onBac
         <button type="submit" className="secondary small" disabled={!name.trim()}>+ поставщик по названию</button>
       </form>
       <div className="bulk-bar rfq-pool-bar" role="toolbar" aria-label="Создание запроса">
-        <span>Выбрано поставщиков: {count}</span>
+        <span>Поставщиков: {picks.length} · запросов позиций: {asks}</span>
         <span className="spacer" />
         <button type="button" className="secondary small" onClick={onBack}>Назад</button>
-        <button type="button" className="primary small" disabled={busy || count === 0} onClick={() => void create()}>Создать запрос</button>
+        <button type="button" className="primary small" disabled={busy || picks.length === 0} onClick={() => void create()}>Создать запрос</button>
       </div>
     </div>
   );

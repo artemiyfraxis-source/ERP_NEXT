@@ -16,13 +16,15 @@ export type RfqCandidate = {
 export type DecisionField = "gate_override_reason" | "not_cheapest_reason" | "analog_approved_by" | "quote_line_id";
 
 export type RfqCell = {
-  quote_line_id: string; quote_id: string; received_on: string; valid_until: string | null;
+  asked: true; quote_line_id: string; quote_id: string; received_on: string; valid_until: string | null;
   unit_price: string | null; vat_included: boolean; vat_rate: string; gross_unit: string | null;
   cover_qty: string | null; total: string | null; moq: string | null; pack: string | null;
   tiers: { from: string; price: string }[]; lead_days: number | null; in_stock: boolean; analog: boolean;
   analog_note: string | null; declined: boolean; expired: boolean; cheapest: boolean; baseline: boolean;
   decided: boolean; requires: DecisionField[];
 };
+/** A line not asked of that supplier: no quote expected there. */
+export type RfqUnaskedCell = { asked: false };
 
 export type RfqGate = { priced: number; required: number; has_non_key: boolean; require_non_key: boolean; passes: boolean };
 
@@ -38,11 +40,24 @@ export type RfqLine = {
   editable: boolean; name: string; article: string | null; quantity: string; unit: string; need_by: string | null;
   budget_unit_gross: string | null; delta_pct: string | null; gate: RfqGate;
   cheapest_quote_line_id: string | null; baseline_quote_line_id: string | null; decision: RfqDecision | null;
-  cells: Record<string, RfqCell>;
+  cells: Record<string, RfqCell | RfqUnaskedCell>;
 };
+
+/** The supplier's quote cell of a line; undefined — no quote (or the line is not asked of him). */
+export function quoteCell(line: RfqLine, supplierId: string): RfqCell | undefined {
+  const cell = line.cells[supplierId];
+  return cell && cell.asked !== false ? cell : undefined;
+}
+
+/** The line is not asked of the supplier (the request asks him for a part of its lines). */
+export function unasked(line: RfqLine, supplierId: string): boolean {
+  return line.cells[supplierId]?.asked === false;
+}
 
 export type RfqSupplier = {
   supplier_id: string; name: string; is_key: boolean; reason: string; sent_at: string | null;
+  /** the request lines asked of him; null — every line */
+  line_ids: string[] | null;
   declined_at: string | null; decline_note: string | null; answered: boolean; delivery_cost: string | null;
   min_order_sum: string | null; basket_total: string | null; basket_lines: number; chosen_total: string | null;
   min_order_warning: string | null;
@@ -83,12 +98,16 @@ export type RfqPoolResult = { total: number; groups: PoolGroup[] };
 // "manual" — only on the client: a supplier the buyer added by name in the panel.
 export type SuggestReasonCode = "items" | "category_history" | "original" | "key" | "rotation" | "category" | "manual";
 export type SuggestReason = { code: SuggestReasonCode; label: string; lines: number | null; last_date: string | null };
+/** A chosen line the supplier relates to (procurement line id) and why — ticked by default. */
+export type SuggestLine = { line_id: string; reasons: SuggestReasonCode[] };
 export type SupplierSuggestion = {
   supplier_id: string | null; name: string; is_key: boolean; categories: string[]; reasons: SuggestReason[];
   reason: SuggestReasonCode; rfq_reason: string; preselect: boolean; in_rfq: boolean; last_asked_at: string | null;
+  lines: SuggestLine[];
 };
 export type SuggestResult = { categories: string[]; lines: number; suggestions: SupplierSuggestion[] };
-export type SupplierPick = { supplier_id?: string; name?: string; reason: string };
+/** `line_ids` — the procurement lines asked of this supplier; omitted — every line of the request. */
+export type SupplierPick = { supplier_id?: string; name?: string; reason: string; line_ids?: string[] };
 
 export type QuoteLineInput = {
   rfq_line_id: string; unit_price: string | null; vat_included: boolean; vat_rate: string | null; moq: string | null;
@@ -125,6 +144,7 @@ export function decisionViolations(error: unknown): Violation[] {
 
 const post = <T>(path: string, body: unknown = {}) => api<T>(path, { method: "POST", body: JSON.stringify(body) });
 const remove = (path: string) => api<void>(path, { method: "DELETE" });
+const put = <T>(path: string, body: unknown) => api<T>(path, { method: "PUT", body: JSON.stringify(body) });
 
 export const rfqApi = {
   list: (scope: "mine" | "all") => api<{ rfqs: RfqSummary[] }>(`${BASE}?scope=${scope}`),
@@ -140,11 +160,14 @@ export const rfqApi = {
   addSupplier: (id: string, supplier: { supplier_id?: string; name?: string }, reason = "manual") =>
     post<SupplierBrief>(`${BASE}/${id}/suppliers`, { ...supplier, reason }),
   removeSupplier: (id: string, supplierId: string) => remove(`${BASE}/${id}/suppliers/${supplierId}`),
+  setSupplierLines: (id: string, supplierId: string, lineIds: string[]) =>
+    put<{ line_ids: string[] | null }>(`${BASE}/${id}/suppliers/${supplierId}/lines`, { line_ids: lineIds }),
   markSent: (id: string, supplierId: string) => post(`${BASE}/${id}/suppliers/${supplierId}/sent`),
   markDeclined: (id: string, supplierId: string, note: string, declined = true) =>
     post(`${BASE}/${id}/suppliers/${supplierId}/declined`, { note: note || null, declined }),
   addQuote: (id: string, quote: QuoteInput) => post<{ id: string }>(`${BASE}/${id}/quotes`, quote),
-  paste: (id: string, text: string) => post<PastePreview>(`${BASE}/${id}/quotes/paste`, { text }),
+  paste: (id: string, text: string, supplierId?: string) =>
+    post<PastePreview>(`${BASE}/${id}/quotes/paste`, supplierId ? { text, supplier_id: supplierId } : { text }),
   deleteQuote: (quoteId: string) => remove(`${BASE}/quotes/${quoteId}`),
   decide: (id: string, decision: DecisionInput) => post<RfqDecision>(`${BASE}/${id}/decisions`, decision),
   undoDecision: (id: string, decisionId: string) => remove(`${BASE}/${id}/decisions/${decisionId}`),

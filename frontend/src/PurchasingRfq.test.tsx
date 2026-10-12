@@ -101,3 +101,55 @@ it("the cheapest offer asks only for the gate reason when too few quotes came", 
   expect(within(dialog).getByLabelText("Причина обхода")).toBeInTheDocument();
   expect(within(dialog).queryByLabelText("Почему не самое дешёвое")).not.toBeInTheDocument();
 });
+
+it("a line not asked of a supplier is «не запрашивали», the header edits his positions, the quote form lists his only", async () => {
+  const second = {
+    ...matrix.lines[0], id: "l2", procurement_line_id: "p2", legacy_id: "SM-2", name: "Клемма", article: null,
+    gate: { priced: 1, required: 3, has_non_key: false, require_non_key: true, passes: false },
+    cells: { s1: cell({ quote_line_id: "ql3" }), s2: { asked: false } },
+  };
+  const partial = {
+    ...matrix,
+    suppliers: [supplier("s1", "ООО Альфа", true), { ...supplier("s2", "ООО Бета", false), line_ids: ["l1"] }],
+    lines: [matrix.lines[0], second],
+  };
+  const puts: { path: string; body: unknown }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "PUT") {
+      puts.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ line_ids: null });
+    }
+    if (path === "/api/purchasing/rfqs?scope=mine") {
+      return json({ rfqs: [{ id: "r1", number: "КП-2610-001", title: "Разъёмы", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true, lines: 2, suppliers: 2, sent: 2, quotes: 3, decided: 0 }] });
+    }
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    if (path === "/api/purchasing/rfqs/r1") return json(partial);
+    return json({}, 404);
+  });
+  render(<PurchasingRfq />);
+  const row = (await screen.findByText("Клемма")).closest("tr") as HTMLElement;
+  expect(within(row).getByText("не запрашивали")).toBeInTheDocument();
+  expect(within(row).queryByRole("button", { name: "Клемма — ООО Бета" })).not.toBeInTheDocument();
+  expect(within(row).getByRole("button", { name: "Клемма — ООО Альфа" })).toBeInTheDocument();
+  const head = screen.getByText("ООО Бета").closest("th") as HTMLElement;
+  expect(head).toHaveTextContent("позиций: 1 из 2 · изменить");
+  expect(screen.getByText("ООО Альфа ★").closest("th")).toHaveTextContent("позиций: 2 из 2");
+
+  fireEvent.click(within(head).getByRole("button", { name: "+ КП ООО Бета" }));
+  const quote = await screen.findByRole("dialog", { name: "КП от «ООО Бета»" });
+  expect(within(quote).getByLabelText("Цена Разъём")).toBeInTheDocument();
+  expect(within(quote).queryByLabelText("Цена Клемма")).not.toBeInTheDocument();
+  fireEvent.click(within(quote).getByRole("button", { name: "Отмена" }));
+
+  fireEvent.click(within(head).getByRole("button", { name: "Изменить позиции ООО Бета" }));
+  const editor = await screen.findByRole("dialog", { name: "Позиции для «ООО Бета»" });
+  const first = within(editor).getByLabelText("Запросить SM-1");
+  expect(first).toBeChecked();
+  expect(first).toBeDisabled();  // he has quoted it: it stays
+  expect(within(editor).getByLabelText("Запросить SM-2")).not.toBeChecked();
+  fireEvent.click(within(editor).getByLabelText("Запросить SM-2"));
+  fireEvent.click(within(editor).getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(puts).toHaveLength(1));
+  expect(puts[0]).toEqual({ path: "/api/purchasing/rfqs/r1/suppliers/s2/lines", body: { line_ids: ["l1", "l2"] } });
+});
