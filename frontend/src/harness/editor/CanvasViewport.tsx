@@ -1,4 +1,4 @@
-import { renderPartSvg } from "../wire-blank-artwork";
+import { artworkWireDiameter, artworkJacketAnchor, renderPartSvg } from "../wire-blank-artwork";
 import { drawVolumeStroke, drawVolumeSurface } from "./drawing-volume";
 import { commonParallelSpan, commonHorizontalPairSpan, parallelSpanWorld, parallelSpanLocal, type ParallelSpan } from "./e4-parallel-spans";
 import { intersectSegments, segmentsParallel } from "./segment-geometry";
@@ -2063,10 +2063,10 @@ export function wireDrawingEndArtworkPlacement(origin: EditorPoint, adjacent: Ed
   const dx = adjacent.x - origin.x, dy = adjacent.y - origin.y;
   const length = Math.hypot(dx, dy);
   if (!length) return null;
-  const scale = Math.min(Math.max(drawingWidth, 3) / 52, length / 280);
+  const scale = Math.min(Math.max(drawingWidth, 3) / artworkWireDiameter, length / 280);
   return {
-    x: origin.x - dx / length * 222 * scale,
-    y: origin.y - dy / length * 222 * scale,
+    x: origin.x - dx / length * artworkJacketAnchor * scale,
+    y: origin.y - dy / length * artworkJacketAnchor * scale,
     rotation: Math.atan2(dy, dx),
     scale,
   };
