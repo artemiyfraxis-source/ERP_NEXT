@@ -11,7 +11,7 @@ from uuid import UUID, uuid4
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.modules.fulfillment.domain import FulfillmentStatus
-from app.modules.shipping.domain import FinishedGood
+from app.modules.shipping.domain import FinishedGood, MoveContext
 
 from .application import CalendarRepository, ConcurrentProductionUpdate, OperatorRepository, ProductionRepository, SkillRepository, record_fact, release_fact
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, operation_duration_seconds
@@ -85,7 +85,7 @@ class MaterialRepository(Protocol):
 
 class FinishedGoodsRepository(Protocol):
     def get(self, good_id: UUID) -> FinishedGood | None: ...
-    def add(self, good: FinishedGood) -> None: ...
+    def add(self, good: FinishedGood, move: MoveContext | None = None) -> object: ...
     def reserve_grn(self, year: int) -> str: ...
 
 
@@ -744,7 +744,11 @@ def handoff_box(command: HandoffBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
             id=uuid4(), source_box_id=box.id, finished_good_id=good.id,
             grn=grn, quantity=quantity, received_at=command.now,
         )
-        uow.goods.add(updated_good)
+        # Ход журнала ГП «в производстве → принято складом» — вместе с коробкой, в той же транзакции.
+        uow.goods.add(updated_good, MoveContext(
+            actor=command.actor.name, actor_id=command.actor.id, occurred_at=command.now,
+            reason=f"коробка {box.number or box.id}",
+        ))
         uow.boxes.save(updated_box)
         uow.finished_goods_receipts.add(receipt)
         uow.serials.mark_handed(box.id, grn)

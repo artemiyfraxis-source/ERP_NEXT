@@ -36,6 +36,7 @@ from app.modules.production.domain import (
 )
 from app.modules.production.traceability import WorkSession
 from app.modules.warehouse.domain import StockLot
+from app.modules.shipping.domain import GoodsRegister
 from app.modules.production.infrastructure import (
     PLAN_EVENT_CHECKS,
     ProductionPlanEventRow,
@@ -292,7 +293,9 @@ def test_preview_lists_from_to_skipped_what_closes_and_what_stays():
         tasks=(_task_fact(ProductionStatus.RUNNING), _task_fact(ProductionStatus.DONE, "П-2")),
         fulfillment=(_request_fact(FulfillmentStatus.NEW), _request_fact(FulfillmentStatus.CANCELLED, "К-2")),
         goods=(SimpleNamespace(project="708К.4", item_index="КБ1", ordered=Decimal("10"), accepted=Decimal("4"),
-                               shipped=Decimal("1"), sent=Decimal("1"), unit="шт", name="Жгут", article="708К.4.01"),),
+                               shipped=Decimal("1"), sent=Decimal("1"), unit="шт", name="Жгут", article="708К.4.01",
+                               register=GoodsRegister(needed=Decimal("10"), accepted_total=Decimal("4"),
+                                                      packed_total=Decimal("1"), shipped_total=Decimal("1"))),),
         events=(PlanEvent("708К.4", NOW, "РП", PLAN_KINDS["block"], blocker="ХОЛД", text="ждём оплату"),),
     )
     state = flow.project_stage_state("708К.4", ("КБ1", "КБ2"), facts, sequence=1)

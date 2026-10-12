@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.main import app
 from app.modules.shipping.application import RegisterGoodCommand, register_good
+from app.modules.shipping.domain import MoveContext
 from tests.factories import Actor
 from tests.techcards.test_kitset_api import _load, kitset_api  # noqa: F401 — фикстура
 
@@ -84,7 +85,10 @@ def test_sync_keeps_a_shipped_project_that_already_moved_in_erp(kitset_api):  # 
     actor = Actor(id=uuid4(), name="перенос", department="")
     with app.state.shipping_uow_factory() as uow:
         good = next(g for g in uow.goods.list() if g.project == "714К.1")
-        uow.goods.add(good.accept(Decimal("1"), datetime(2026, 9, 30).date(), "ГП.26.0000001"))
+        uow.goods.add(
+            good.accept(Decimal("1"), datetime(2026, 9, 30).date(), "ГП.26.0000001"),
+            MoveContext(actor=actor.name, occurred_at=datetime(2026, 9, 30, 9, 0)),
+        )
         uow.commit()
 
     done, skipped = projects_import.sync_shipped(SHEET, app.state, actor, datetime(2026, 9, 30, 9, 0))

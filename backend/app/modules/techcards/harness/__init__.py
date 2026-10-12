@@ -1,7 +1,8 @@
 """The ERP harness drawing, owned by techcards. Pure domain: model, length rules, TECHMAP-GRAPHER document
 (de)serializer, derivations (`derive`, «Ручная сборка» in `assembly`), the stored document (`schema`), what may be
-stored (`validate`), the `.techmap-project.zip` exchange (`exchange`). Use cases with the revision history:
-`application` (over the unit of work); tables: `techcards.harness_infrastructure`; HTTP: `techcards.harness_api`.
+stored (`validate`), the `.techmap-project.zip` exchange (`exchange`), the «Маршрут v3» route-card graph
+(`route_v3`). Use cases with the revision history: `application`, of the route: `route_application` (over the unit of
+work); tables: `techcards.harness_infrastructure`; HTTP: `techcards.harness_api`.
 
 TECHMAP-GRAPHER © Василий (SaveOurSouls), used with the author's permission; source commit
 e63befb85edb79f0c1635ac8314539ac24d2486a. See THIRD_PARTY_NOTICES.md.
