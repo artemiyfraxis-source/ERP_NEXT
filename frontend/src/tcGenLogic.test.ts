@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { applyGrapherGroups, applyOpOrder, grapherLengthText, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -386,4 +386,8 @@ it("applyOpOrder keeps new operations where the generator put them and moves «f
   expect(sorted.map((item) => item.opKey)).toEqual(["cut", "prsB", "new", "prsA"]);
   expect(sorted.map((item) => item.firstTerm)).toEqual([undefined, true, undefined, false]);
   expect(applyOpOrder(ops, [])).toBe(ops);
+});
+
+it("зачистка под лужение по умолчанию — 5 мм (владелец 12.10.2026)", () => {
+  expect(emptyState().tin.stripLen).toBe("5");
 });
