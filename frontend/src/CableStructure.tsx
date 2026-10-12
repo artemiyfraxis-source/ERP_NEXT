@@ -211,7 +211,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
     { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
-    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) || <span className="muted">—</span> },
+    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span> },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm) },
     { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? "") },
     { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "" },

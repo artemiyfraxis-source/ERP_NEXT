@@ -18,8 +18,21 @@ NEW_CELLS = (STANDARD_FIELD, MAKERS_FIELD, CATEGORY_FIELD)
 MAKERS_SEPARATOR = ", "
 
 _STANDARD = re.compile(
-    r"(?<![A-Za-zА-Яа-яЁё0-9])(ГОСТ|ТУ|ОСТ|OCT|UL|IEC|DIN|MIL|JIS|ISO|EN|TIA|EIA|ASTM|AWM)(?![A-Za-zА-Яа-яЁё])"
+    r"(?<![A-Za-zА-Яа-яЁё0-9])(ГОСТ|ТУ|ОСТ|OCT|UL|IEC|DIN|VDE|MIL|JIS|ISO|EN|TIA|EIA|ANSI|ASTM|AWM|ТР\s?ТС)(?![A-Za-zА-Яа-яЁё])"
 )
+
+
+_LETTERS = re.compile(r"[A-Za-zА-Яа-яЁё]{3}")
+
+
+def _is_break(text: str, index: int) -> bool:
+    """«0,34» and «A/U» are not breaks: a decimal comma sits between digits, a slash splits only two words (LAPP/Helukabel)."""
+    char = text[index]
+    if char == ",":
+        return not (text[index - 1:index].isdigit() and text[index + 1:index + 2].isdigit())
+    if char == "/":
+        return bool(_LETTERS.fullmatch(text[:index].rstrip()[-3:])) and bool(_LETTERS.fullmatch(text[index + 1:].lstrip()[:3]))
+    return True
 
 
 def _split(text: str, separators: str) -> list[str]:
@@ -27,12 +40,12 @@ def _split(text: str, separators: str) -> list[str]:
     parts: list[str] = []
     depth = 0
     current: list[str] = []
-    for char in text:
+    for index, char in enumerate(text):
         if char in "([«":
             depth += 1
         elif char in ")]»":
             depth = max(0, depth - 1)
-        if char in separators and depth == 0:
+        if char in separators and depth == 0 and _is_break(text, index):
             parts.append("".join(current))
             current = []
         else:
@@ -62,7 +75,7 @@ def split_legacy(value: str) -> tuple[str, list[str]]:
     makers: list[str] = []
     for part in _split(str(value or ""), ",;"):
         if looks_like_standard(part):
-            standards.append(part)
+            standards.append(re.sub(r"^также\s+", "", part))
         else:
             makers.extend(_split(part, "/"))
     return "; ".join(unique(standards)), unique(makers)
