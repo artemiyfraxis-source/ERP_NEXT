@@ -38,6 +38,14 @@ export interface TerminalContactTypeBindingV5 {
   readonly standard: boolean;
 }
 
+/** A seal approved for use with every article in this connector series. */
+export interface CompatibleSealV5 {
+  readonly article: string;
+  readonly color: string;
+  readonly section: string;
+  readonly insulationDiameter: string;
+}
+
 export interface TemplateContentV5 extends Omit<TemplateContentV3, "schemaVersion" | "articleVariants"> {
   readonly drawingGenerators?: DrawingGenerator[];
   readonly articleDrawings?: ArticleDrawing[];
@@ -45,6 +53,8 @@ export interface TemplateContentV5 extends Omit<TemplateContentV3, "schemaVersio
   readonly e4Presentation?: ConnectorSchematicPresentation;
   readonly schemaVersion: 5;
   readonly compatibleTerminalArticleKeys: ArticleKeyV3[];
+  /** Optional for backward-compatible reading of existing v5 templates. */
+  readonly compatibleSeals?: CompatibleSealV5[];
   readonly terminalContactTypeBindings?: TerminalContactTypeBindingV5[];
   readonly articleVariants: ArticleVariantV5[];
   readonly e4ConnectorTable: E4ConnectorSeriesTableV2;
@@ -64,13 +74,14 @@ const ROOT_KEYS = [
   "schemaVersion", "views", "logicalContacts", "parameters", "repeaters", "assets",
   "contactTypeGroups", "compatibleTerminalArticleKeys", "articleVariants", "e4ConnectorTable",
 ] as const;
-const OPTIONAL_ROOT_KEYS = ["terminalContactTypeBindings", "e4Presentation", "articleDrawings", "drawingContactBindings", "drawingGenerators"] as const;
+const OPTIONAL_ROOT_KEYS = ["terminalContactTypeBindings", "compatibleSeals", "e4Presentation", "articleDrawings", "drawingContactBindings", "drawingGenerators"] as const;
 const ARTICLE_GROUP_KEYS = ["contactTypeGroupId", "contactCount"] as const;
 const TABLE_KEYS = ["modelVersion", "columns", "contactTypeGroups", "seriesDefaults", "articles"] as const;
 const TABLE_ARTICLE_KEYS = ["articleVariantId", "sourceId", "entityType", "articleKey", "contactGroups", "rows"] as const;
 const ARTICLE_KEY_KEYS = ["sourceId", "entityType", "articleKey"] as const;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/;
 const TERMINAL_LIMIT = 256;
+const SEAL_LIMIT = 256;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const hasOwn = (value: object, key: PropertyKey) => Object.prototype.hasOwnProperty.call(value, key);
@@ -150,6 +161,47 @@ function validateTerminalKeys(value: unknown, diagnostics: TemplateV3Diagnostic[
     result.push(key);
   });
   return result;
+}
+
+function validateCompatibleSeals(value: unknown, diagnostics: TemplateV3Diagnostic[]): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    diagnostics.push(error("array_required", "$.compatibleSeals", "Ожидается список совместимых уплотнителей."));
+    return;
+  }
+  if (value.length > SEAL_LIMIT)
+    diagnostics.push(error("limit", "$.compatibleSeals", `Превышен лимит ${SEAL_LIMIT}.`));
+  const articles = new Set<string>();
+  value.forEach((candidate, index) => {
+    const path = `$.compatibleSeals[${index}]`;
+    if (!exact(candidate, ["article", "color", "section", "insulationDiameter"], path, diagnostics)) return;
+    for (const key of ["article", "color", "section", "insulationDiameter"] as const)
+      if (!validText(candidate[key], 512))
+        diagnostics.push(error("invalid_compatible_seal", `${path}.${key}`, "Заполните текстовое поле уплотнителя (не более 512 символов)."));
+    if (typeof candidate.article === "string") {
+      const identity = candidate.article.trim().toLocaleLowerCase("ru-RU");
+      if (articles.has(identity)) diagnostics.push(error("duplicate_compatible_seal", `${path}.article`, "Артикул уплотнителя повторяется в серии."));
+      else articles.add(identity);
+    }
+  });
+}
+
+function validateSelectedSeals(table: unknown, seals: readonly CompatibleSealV5[] | undefined, diagnostics: TemplateV3Diagnostic[]): void {
+  if (seals === undefined || !isRecord(table)) return;
+  const compatible = new Set(seals.map(seal => seal.article));
+  const validateRow = (row: unknown, path: string) => {
+    if (!isRecord(row)) return;
+    const values = isRecord(row.values) ? row.values : isRecord(row.overrides) ? row.overrides : null;
+    const seal = values && isRecord(values.customValues) ? values.customValues.seal : undefined;
+    if (seal !== undefined && (typeof seal !== "string" || (seal !== "" && !compatible.has(seal))))
+      diagnostics.push(error("incompatible_seal", `${path}.customValues.seal`, "Уплотнитель строки отсутствует в списке совместимых уплотнителей серии."));
+  };
+  if (Array.isArray(table.seriesDefaults)) table.seriesDefaults.forEach((row, index) =>
+    validateRow(row, `$.e4ConnectorTable.seriesDefaults[${index}].values`));
+  if (Array.isArray(table.articles)) table.articles.forEach((article, articleIndex) => {
+    if (!isRecord(article) || !Array.isArray(article.rows)) return;
+    article.rows.forEach((row, rowIndex) => validateRow(row, `$.e4ConnectorTable.articles[${articleIndex}].rows[${rowIndex}].overrides`));
+  });
 }
 
 function validateSelectedTerminals(
@@ -271,6 +323,7 @@ function projectV5ToV4(value: Record<string, unknown>, terminals: readonly Artic
     bindings === null || bindings.get(identity(terminal)) === groupId);
   projected.schemaVersion = 4;
   delete projected.compatibleTerminalArticleKeys;
+  delete projected.compatibleSeals;
   delete projected.terminalContactTypeBindings;
   delete projected.e4Presentation;
   delete projected.articleDrawings;
@@ -347,6 +400,8 @@ export function validateTemplateContentV5(value: unknown): TemplateV5Validation 
   if (value.schemaVersion !== 5)
     diagnostics.push(error("schema_version", "$.schemaVersion", "Поддерживается schemaVersion 5."));
   const terminals = validateTerminalKeys(value.compatibleTerminalArticleKeys, diagnostics);
+  validateCompatibleSeals(value.compatibleSeals, diagnostics);
+  validateSelectedSeals(value.e4ConnectorTable, Array.isArray(value.compatibleSeals) ? value.compatibleSeals as CompatibleSealV5[] : undefined, diagnostics);
   if (terminals !== null) {
     validateSelectedTerminals(value.e4ConnectorTable, terminals, diagnostics);
     validateTerminalBindings(value.terminalContactTypeBindings, terminals, value.contactTypeGroups, diagnostics);
@@ -435,6 +490,7 @@ export function upgradeTemplateContentV4ToV5(content: TemplateContentV4): Templa
     ...structuredClone(core),
     schemaVersion: 5,
     compatibleTerminalArticleKeys,
+    compatibleSeals: [],
     terminalContactTypeBindings: terminalBindingsFromV4(content),
     articleVariants,
     e4ConnectorTable: upgradeE4ConnectorSeriesTableV1ToV2(oldTable),
@@ -467,6 +523,7 @@ export function createTemplateContentV5FromEditor(
   articleDrawings?: readonly ArticleDrawing[],
   drawingContactBindings?: readonly DrawingContactBinding[],
   drawingGenerators?: readonly DrawingGenerator[],
+  compatibleSeals: readonly CompatibleSealV5[] = [],
 ): TemplateV5Upgrade {
   content = withDrawingArticleCounts(content);
   const coreValidation = validateTemplateContentV3Structure(content);
@@ -488,6 +545,7 @@ export function createTemplateContentV5FromEditor(
     ...structuredClone(core),
     schemaVersion: 5,
     compatibleTerminalArticleKeys: compatibleTerminalArticleKeys.map(item => ({ ...item })),
+    compatibleSeals: compatibleSeals.map(seal => ({ ...seal })),
     ...(terminalContactTypeBindings === null ? {} : { terminalContactTypeBindings: terminalContactTypeBindings.map(binding => ({
       terminalArticleKey: { ...binding.terminalArticleKey },
       contactTypeGroupId: binding.contactTypeGroupId,
@@ -507,7 +565,7 @@ export function createTemplateContentV5FromEditor(
 
 /** Projects v5 into the existing reusable v3 editor core. */
 export function projectTemplateContentV5ToV3(content: TemplateContentV5): TemplateContentV3 {
-  const { schemaVersion: _schemaVersion, compatibleTerminalArticleKeys, terminalContactTypeBindings: _bindings, e4ConnectorTable: _table, e4Presentation: _presentation, articleDrawings: _drawings, drawingContactBindings: _contactBindings, drawingGenerators: _generators, ...core } = content;
+  const { schemaVersion: _schemaVersion, compatibleTerminalArticleKeys, compatibleSeals: _seals, terminalContactTypeBindings: _bindings, e4ConnectorTable: _table, e4Presentation: _presentation, articleDrawings: _drawings, drawingContactBindings: _contactBindings, drawingGenerators: _generators, ...core } = content;
   return withDrawingArticleCounts({
     ...structuredClone(core),
     schemaVersion: 3,

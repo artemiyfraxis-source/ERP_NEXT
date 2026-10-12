@@ -521,8 +521,21 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-card small { font-size: 11px; text-transform: none; }
 /* Structured cable reference (10.10.2026): the coax card a tester reads at the VNA, «разобрать позже». */
 .db-later { align-self: center; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; }
-.hookup-form { padding-bottom: 10px; border-bottom: 1px solid var(--sheet-line); }
 .hookup-form select { min-width: 0; }
+/* Wire form in short sections (12.10.2026): small heading, dense grid, list fields as swatches / chips. */
+.form-section { display: grid; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--sheet-line); }
+.form-section > h4, .form-section > summary { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted-foreground); letter-spacing: 0.02em; }
+.form-section > summary { cursor: pointer; }
+.field-group { display: grid; gap: 4px; min-width: 0; }
+.field-group > small { color: var(--muted-foreground); font-size: 11px; }
+.swatch-row, .chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.35); cursor: pointer; }
+.swatch[aria-pressed="true"] { outline: 2px solid var(--primary); outline-offset: 2px; }
+.swatch:focus-visible { outline: 2px solid var(--foreground); outline-offset: 2px; }
+.swatch-row input, .makers-input .chip-row input { height: 28px; width: 160px; }
+.chip-item { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 999px; background: var(--accent); font-size: 12px; }
+.chip-item button { border: 0; background: transparent; cursor: pointer; padding: 0 4px; color: var(--muted-foreground); font-size: 14px; line-height: 1; }
+@media (pointer: coarse) { .swatch { width: 40px; height: 40px; } .chip-item button { min-width: 32px; min-height: 32px; } }
 .coax-card { display: grid; gap: 12px; min-width: 0; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--sheet-line); font-variant-numeric: tabular-nums; }
 .coax-card-head { display: grid; gap: 8px; }
 .coax-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
@@ -1348,6 +1361,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 
 /* Данные из листа — плотная таблица как DataTable. */
 .tcgen .gtable-wrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+/* «Данные из листа» — всё сразу, без прокрутки; соседние блоки ряда — одной высоты (владелец 12.10.2026). */
+.tcgen .gtable-wrap.is-full { max-height: none; overflow-x: auto; overflow-y: visible; }
+.tcgen .gsec { align-self: stretch; }
 .tcgen .gtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .tcgen .gtable th { position: sticky; top: 0; z-index: 1; padding: 6px 10px; background: var(--table-head); color: var(--table-head-fg); font-weight: 600; border-bottom: 1px solid var(--border); }
 .tcgen .gtable td { height: 30px; padding: 4px 10px; white-space: normal; }
@@ -1374,6 +1390,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 
 /* Сторона — разъёмы строками внутри секции (без рамки в рамке); пустая сторона — одна строка. */
 .tcgen .ep-side { container-type: inline-size; }
+/* Стороны A и B — одной высоты, распиновка прижата к низу: блоки заканчиваются на одном уровне (владелец 12.10.2026). */
+.tcgen .ep-side:not(.full) { align-self: stretch; display: flex; flex-direction: column; }
+.tcgen .ep-side:not(.full) > .ep-card:last-child { flex: 1 1 auto; display: flex; flex-direction: column; }
+.tcgen .ep-side:not(.full) > .ep-card:last-child > :last-child { margin-top: auto; }
 .tcgen .ep-side.is-empty { padding-top: 10px; padding-bottom: 10px; }
 .tcgen .ep-card { display: grid; gap: 9px; padding-top: 12px; border-top: 1px solid var(--border); }
 .tcgen .gsec-head + .ep-card { padding-top: 2px; border-top: 0; }
@@ -2969,7 +2989,7 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 
 /* Автоплан */
 .autoplan-dialog { display: flex; flex-direction: column; gap: 10px; width: min(880px, 100%); height: auto; max-height: calc(100vh - 32px); overflow: hidden; padding: 16px 20px; outline: none; }
-.autoplan-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.autoplan-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .autoplan-head h2 { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
 .autoplan-scroll { display: grid; gap: 10px; align-content: start; min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 2px; }
 .autoplan-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
@@ -2995,7 +3015,7 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-batch { border-left: 3px solid var(--primary); padding-left: 8px; margin-bottom: 6px; }
 .autoplan-batch-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; font-size: 13px; padding: 2px 0; }
 .autoplan-batch-head small { color: var(--muted-foreground); font-weight: 400; }
-.autoplan-row { display: grid; grid-template-columns: 24px 70px minmax(0, 1fr) 160px 150px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; border-top: 1px solid var(--border); }
+.autoplan-row { display: grid; grid-template-columns: 24px 120px minmax(0, 1fr) 160px 150px; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; border-top: 1px solid var(--border); }
 .autoplan-row input { width: auto; margin: 0; }
 .autoplan-op small { display: block; color: var(--muted-foreground); font-size: 11px; }
 .autoplan-slot { white-space: nowrap; }
@@ -3003,9 +3023,25 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .autoplan-unplaced { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--card); }
 .autoplan-unplaced h3 { margin: 0 0 4px; font-size: 14px; }
 .autoplan-unplaced-row { font-size: 13px; padding: 2px 0; }
+.autoplan-head .seg-tabs.autoplan-modes { margin: 0; }
+.autoplan-period { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+.autoplan-period label { display: flex; align-items: center; gap: 6px; }
+.autoplan-period .link-button { padding: 0; margin: 0; }
+.autoplan-scope { display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--accent); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.autoplan-scope small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); }
+.autoplan-exclude summary { padding: 6px 10px; cursor: pointer; font-weight: 600; }
+.autoplan-exclude[open] summary { border-bottom: 1px solid var(--border); }
+.autoplan-new { display: inline-block; justify-self: start; padding: 0 6px; border-radius: 6px; background: color-mix(in srgb, var(--primary) 14%, white); color: var(--primary); font-size: 11px; font-style: normal; font-weight: 600; line-height: 18px; white-space: nowrap; }
+.autoplan-new.off { background: var(--accent); color: var(--muted-foreground); }
+.autoplan-task .autoplan-new { display: block; width: fit-content; margin-top: 1px; }
+.autoplan-skipped { display: grid; grid-template-columns: 20px 84px minmax(110px, 190px) minmax(0, 1fr); gap: 8px; align-items: center; min-height: 28px; font-size: 13px; }
+.autoplan-project { display: grid; gap: 3px; font-size: 12px; max-width: 520px; }
+.autoplan-check.autoplan-person { display: grid; grid-template-columns: 20px minmax(140px, 220px) 60px minmax(0, 1fr); gap: 8px; min-height: 28px; font-variant-numeric: tabular-nums; }
+.autoplan-free { color: var(--muted-foreground); }
+.autoplan-created { font-size: 13px; padding: 6px 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--primary) 35%, white); }
 .autoplan-dialog .autoplan-actions { margin: 0; padding: 10px 0 0; border-top: 1px solid var(--border); flex-wrap: nowrap; }
 @media (max-width: 700px) { .autoplan-task-line { grid-template-columns: 20px 76px minmax(0, 1fr); } .autoplan-task-name { grid-column: 3; } .autoplan-row { grid-template-columns: 24px minmax(0, 1fr) auto; } .autoplan-task, .autoplan-change { grid-column: 2 / 4; } }
-@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"] { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
+@media (pointer: coarse) { .autoplan-check, .autoplan-row, .autoplan-task-line, .autoplan-dialog button, .autoplan-dialog input[type="date"], .autoplan-person, .autoplan-exclude summary, .autoplan-dialog select { min-height: 40px; } .autoplan-check input, .autoplan-row input { width: 22px; height: 22px; } }
 
 /* Вид сотрудника: выбор рядом с заголовком, заметная полоса «только просмотр» */
 .view-as { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -3434,8 +3470,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 
 /* Оборудование (БД.ОБ): карточка станка, форма «Новая запись», «что обжимает» (владелец 12.10.2026) */
 .tnum { font-variant-numeric: tabular-nums slashed-zero; }
-.eq-card { padding: 16px 20px; }
-.eq-card .tr-head { grid-template-columns: minmax(0, 2fr) repeat(4, minmax(0, auto)); }
 .eq-line { margin: 0; font-size: 13px; }
 .eq-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .eq-table th { padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; font-weight: 500; text-align: left; }
@@ -3458,7 +3492,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .eq-missing { margin: 0 0 8px; font-size: 13px; }
 .eq-missing-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .eq-crimp h5 { margin: 12px 0 4px; font-size: 13px; font-weight: 600; }
-@media (max-width: 900px) { .eq-card .tr-head { grid-template-columns: 1fr 1fr; } }
 @media (pointer: coarse) { .eq-table td, .eq-hit { padding-top: 8px; padding-bottom: 8px; } .eq-x { padding: 8px; } }
 .eq-chip-btn { cursor: pointer; color: var(--foreground); }
 .eq-chip-btn:hover { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
@@ -3473,3 +3506,35 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
 .cov-other { display: grid; gap: 8px; justify-items: start; }
 .cov-other > .cov-group { justify-self: stretch; }
+/* БД.ОБ master–detail: the list stays on the left, the machine card is a right-hand panel (full-screen on a tablet). */
+.eq-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.eq-split.has-card { grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); }
+.eq-list { min-width: 0; }
+.eq-panel { position: sticky; top: 0; max-height: calc(100dvh - 60px); overflow: auto; overscroll-behavior: contain; min-width: 0; }
+.eq-card { display: grid; gap: 12px; padding: 12px 16px; }
+.eq-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.eq-title { display: grid; gap: 2px; min-width: 0; }
+.eq-title b { font-size: 16px; line-height: 1.25; overflow-wrap: anywhere; }
+.eq-title .muted { font-size: 12.5px; overflow-wrap: anywhere; }
+.eq-head-act { display: flex; align-items: center; gap: 8px; flex: none; }
+.eq-close { border: 0; padding: 0 6px; background: transparent; color: var(--muted-foreground); font-size: 22px; line-height: 1; cursor: pointer; }
+.eq-close:hover { color: var(--foreground); }
+.eq-ops { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.eq-ops li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.eq-ops li:hover { background: var(--accent); }
+.eq-table .num { text-align: right; }
+.eq-econ { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0; font-size: 13px; }
+.eq-econ > div { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.eq-econ dt { color: var(--muted-foreground); font-size: 12px; }
+.eq-econ dd { margin: 0; text-align: right; }
+.eq-econ .derived dd { color: var(--muted-foreground); font-style: italic; }
+.eq-calc { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--border); border-radius: 4px; font-size: 11px; font-style: normal; }
+.eq-split .eq-selected td { background: color-mix(in srgb, var(--primary) 14%, var(--card)); }
+@media (max-width: 1100px), (pointer: coarse) {
+  .eq-split.has-card { grid-template-columns: minmax(0, 1fr); }
+  .eq-panel { position: fixed; inset: 0; z-index: 45; max-height: none; padding: 8px; background: var(--background, #f6f8f8); }
+  .eq-econ { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 700px) { .eq-econ { grid-template-columns: minmax(0, 1fr); } }
+@media (pointer: coarse) { .eq-close { min-width: 40px; min-height: 40px; font-size: 26px; } .eq-head-act .small { min-height: 40px; } .eq-ops li { min-height: 40px; } }
+.eq-econ dd { flex: none; white-space: nowrap; } .eq-econ dt { min-width: 0; }

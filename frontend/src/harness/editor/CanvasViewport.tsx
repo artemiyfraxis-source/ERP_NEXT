@@ -1,4 +1,4 @@
-import { renderPartSvg } from "../wire-blank-artwork";
+import { artworkWireDiameter, artworkJacketAnchor, renderPartSvg } from "../wire-blank-artwork";
 import { drawVolumeStroke, drawVolumeSurface } from "./drawing-volume";
 import { commonParallelSpan, commonHorizontalPairSpan, parallelSpanWorld, parallelSpanLocal, type ParallelSpan } from "./e4-parallel-spans";
 import { intersectSegments, segmentsParallel } from "./segment-geometry";
@@ -114,6 +114,8 @@ export interface CanvasViewportProps {
   readonly onObjectGroupSelect?: (objectIds: readonly string[], mode?: EditorSelectionMode) => void;
   /** Available only for editable route fragment copies. */
   readonly onObjectsIsolate?: (objectIds: readonly string[]) => void;
+  readonly dimmedObjectIds?: readonly string[];
+  readonly onObjectsSave?: (objectIds: readonly string[]) => void;
   readonly onDrawingScale?: (objectId:string,drawingId:string,scale:number)=>void;
   readonly onDrawingMove?: (objectId:string,drawingId:string,offset:EditorPoint)=>void;
   readonly objectProperties?: (objectId:string)=>ReactNode;
@@ -2063,10 +2065,10 @@ export function wireDrawingEndArtworkPlacement(origin: EditorPoint, adjacent: Ed
   const dx = adjacent.x - origin.x, dy = adjacent.y - origin.y;
   const length = Math.hypot(dx, dy);
   if (!length) return null;
-  const scale = Math.min(Math.max(drawingWidth, 3) / 52, length / 280);
+  const scale = Math.min(Math.max(drawingWidth, 3) / artworkWireDiameter, length / 280);
   return {
-    x: origin.x - dx / length * 222 * scale,
-    y: origin.y - dy / length * 222 * scale,
+    x: origin.x - dx / length * artworkJacketAnchor * scale,
+    y: origin.y - dy / length * artworkJacketAnchor * scale,
     rotation: Math.atan2(dy, dx),
     scale,
   };
@@ -2870,6 +2872,7 @@ export function redrawCanvas(
   if (backgroundOpacity > 0 && backgroundObjects.length > 0) {
     context.save();
     context.globalAlpha = Math.max(0, Math.min(1, backgroundOpacity));
+    if (view === "drawing") drawCableSheaths(context, getVisibleCableSheathScene(cables, backgroundObjects, layers).geometries, new Set(), camera.zoom, new Set());
     for (const object of objectsInPaintOrder(backgroundObjects, layers, view)) {
       drawEditorSceneObject(context, object, false, view,
         object.kind === "connector" ? componentViews.get(object.id) : undefined,
@@ -3111,6 +3114,8 @@ function EditableCanvasViewport({
   onObjectSelect,
   onObjectGroupSelect,
   onObjectsIsolate,
+  onObjectsSave,
+  dimmedObjectIds,
   objectProperties, onObjectPick, onObjectPickCancel, onRelatedObjectsSelect, onObjectMove, onDrawingMove, onDrawingScale,
   onObjectMovePreview, onPipeIntervalSelect, onCoveringDrag,
   onWireConnect,
@@ -3257,7 +3262,7 @@ function EditableCanvasViewport({
         canvas,
         view,
         camera,
-        paintObjects,
+        dimmedObjectIds ? paintObjects.filter(object => !dimmedObjectIds.includes(object.id)) : paintObjects,
         layers,
         paintSelectedSet,
         cables,
@@ -3287,7 +3292,7 @@ function EditableCanvasViewport({
       observer.disconnect();
       componentTemplateImageCacheRef.current?.setInvalidate(null);
     };
-  }, [effectiveHighlights, foregroundWireIds, backgroundObjects, backgroundOpacity, cables, camera, displayInstances, connectorAlignmentGuides, paintObjects, inlineObject?.id, layers, onViewportSizeChange, overlays, resolveComponentTemplateAssetUrl, selectedObjectIds, selectedObjectId, view, physicalNodePreview]);
+  }, [dimmedObjectIds, effectiveHighlights, foregroundWireIds, backgroundObjects, backgroundOpacity, cables, camera, displayInstances, connectorAlignmentGuides, paintObjects, inlineObject?.id, layers, onViewportSizeChange, overlays, resolveComponentTemplateAssetUrl, selectedObjectIds, selectedObjectId, view, physicalNodePreview]);
 
   // Выгрузка листа (PNG / PDF): страница получает порт «нарисуй эту сцену на белом без сетки и выделения».
   // Порт только читает то, что уже нарисовано в поле; без `onExportPort` поле ведёт себя как раньше.
@@ -4240,7 +4245,7 @@ function EditableCanvasViewport({
         onContextMenu={event=>{
           if(onObjectPick){event.preventDefault();return;}
           if(tool.startsWith("graphic-")&&graphicPathDraft){event.preventDefault();finishGraphicPath();return;}
-          if(view!=="drawing"||(!onPhysicalContextAction&&!objectProperties&&!onObjectsIsolate&&!onDetachedPairAction&&!onFreeWireEndStyleRequest))return;
+          if(view!=="drawing"||(!onPhysicalContextAction&&!objectProperties&&!onObjectsIsolate&&!onObjectsSave&&!onDetachedPairAction&&!onFreeWireEndStyleRequest))return;
           event.preventDefault();
           setHoverTarget(null);
           const point=screenToWorld(camera,localPoint(event.clientX,event.clientY));
@@ -4258,7 +4263,7 @@ function EditableCanvasViewport({
             const selectedObject = objects.find(candidate => candidate.id === selectedId);
             return selectedObject && materialObjectGroup(selectedObject.kind) !== null;
           });
-          if (onObjectsIsolate && !hasMaterialSelection) { setPhysicalMenu(null); return; }
+          if (onObjectsIsolate && !onObjectsSave && !hasMaterialSelection) { setPhysicalMenu(null); return; }
           if(!selectedSet.has(object.id))onObjectSelect(object.id,false);
           setPhysicalMenu({id:object.id,point,node:object.kind==="physical-node",x:event.clientX,y:event.clientY,isolationIds});
         }}
@@ -4303,6 +4308,7 @@ function EditableCanvasViewport({
       {physicalMenu&&objects.some(o=>o.id===physicalMenu.id)&&<CanvasObjectPopover key={physicalMenu.id+(physicalMenu.wires?":wires":"")} x={physicalMenu.x} y={physicalMenu.y} label={physicalMenu.wires?"Провода пайпа":"Свойства объекта"} onClose={()=>setPhysicalMenu(null)}>
         {physicalMenu.wires ? <><table className="he-pipe-wires"><thead><tr><th>Провод</th><th>Цепь</th></tr></thead><tbody>{pipeSceneWireIds(objects.find(o=>o.id===physicalMenu.id)).map(id=>{const w=objects.find(o=>o.id===id);return <tr key={id}><td><button className="he-wire-row" onClick={()=>onRelatedObjectsSelect?.([id])}><i style={{background:resolveWireColorHex(w?.color??"")}}/>{`W${objects.filter(o=>o.kind==="wire").findIndex(o=>o.id===id)+1}`}</button></td><td>{w?.label}</td></tr>;})}</tbody></table>{pipeSceneWireIds(objects.find(o=>o.id===physicalMenu.id)).length===0&&<span>Нет назначенных проводов</span>}</> : <>
           {onObjectsIsolate&&physicalMenu.isolationIds?.length&&<button type="button" className="ui-control" onClick={()=>{onObjectsIsolate(physicalMenu.isolationIds!);setPhysicalMenu(null);}}>Изолировать</button>}
+          {onObjectsSave&&physicalMenu.isolationIds?.length&&<button type="button" className="ui-control" onClick={()=>{onObjectsSave(physicalMenu.isolationIds!);setPhysicalMenu(null);}}>Сохранить</button>}
           {onDetachedPairAction&&pairActionIds(physicalMenu.id).length===2&&(["twist","straighten"] as const).map(action=><button key={action} type="button" className="ui-control" onClick={()=>{onDetachedPairAction(pairActionIds(physicalMenu.id),action);setPhysicalMenu(null);}}>{action==="twist"?"Свить пару":"Распрямить пару"}</button>)}
           {onFreeWireEndStyleRequest&&(["from","to"] as const).filter(end=>objects.find(o=>o.id===physicalMenu.id)?.metadata?.[end==="from"?"freeFrom":"freeTo"]==="true").map(end=><button key={end} type="button" className="ui-control" onClick={()=>{onFreeWireEndStyleRequest(physicalMenu.id,end);setPhysicalMenu(null);}}>{end==="from"?"Оконцовка начала":"Оконцовка конца"}</button>)}
           {objectProperties?.(physicalMenu.id)}

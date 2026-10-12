@@ -986,7 +986,7 @@ it("issues the ticked КБ of the whole order in one call; a КБ not picked is 
 
   render(<FulfillmentPage principal={principal} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  fireEvent.click(screen.getByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Выдать: (КБ\d+(, КБ\d+)*|\d+ готовых КБ) · \d+ поз\.$/ }));
 
   const chooser = screen.getByRole("group", { name: "Выдать комплекты проекта 33МФ.2" });
   expect(within(chooser).getByLabelText("Выдать КБ1")).toBeChecked();
@@ -1018,7 +1018,7 @@ it("keeps the chooser open and names the КБ when the server refuses the batch"
 
   render(<FulfillmentPage principal={principal} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  fireEvent.click(screen.getByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Выдать: (КБ\d+(, КБ\d+)*|\d+ готовых КБ) · \d+ поз\.$/ }));
   fireEvent.click(screen.getByRole("button", { name: "Выдать выбранные (2)" }));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("КБ2 (REQ.26.0000020): заявка изменилась после загрузки");
@@ -1045,7 +1045,7 @@ it("gives no issue action without the handout right or on the picking screen", a
 
   const { unmount } = render(<FulfillmentPage principal={picker} mode="give" />);
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Выдать: (КБ\d+(, КБ\d+)*|\d+ готовых КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
   expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
   unmount();
@@ -1053,7 +1053,7 @@ it("gives no issue action without the handout right or on the picking screen", a
   render(<FulfillmentPage principal={principal} mode="pick" />);
   await showAll();
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
-  expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Выдать: (КБ\d+(, КБ\d+)*|\d+ готовых КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
   expect(screen.queryByRole("button", { name: "Выдать комплект" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();

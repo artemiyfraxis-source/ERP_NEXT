@@ -1,4 +1,5 @@
-"""Автоплан через HTTP: предпросмотр, применение одним коммитом, отпечаток, площадка мастера."""
+"""Автоплан через HTTP: режимы «Весь цех» и «По проекту», КБ без задания, применение одним коммитом, отпечаток,
+горизонт без выбора периода, площадка мастера."""
 
 from datetime import date, datetime
 from uuid import UUID
@@ -11,6 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.identity.infrastructure import IdentityUserRow
+from app.modules.production.domain import ProductionTask, ProductionValidationError
 from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
@@ -26,7 +28,6 @@ ANNA = UUID("30000000-0000-0000-0000-000000000002")
 BORIS = UUID("30000000-0000-0000-0000-000000000003")
 ZHUK = UUID("30000000-0000-0000-0000-000000000004")
 NOW = datetime(2026, 9, 22, 9, 0)
-PERIOD = {"date_from": "2026-09-22", "date_to": "2026-09-25"}
 
 
 @pytest.fixture()
@@ -66,16 +67,16 @@ def client():
     engine.dispose()
 
 
-def launch(client: TestClient, index: str, *, terminal: str = "T-1", height: str = "1,14 - 1,24",
-           deadline: str = "2026-10-02", quantity: int = 50) -> dict:
-    """Выданная техкарта «опрессовка → сборка» и запущенное по ней задание."""
+def issue(index: str, *, project: str = "708К", terminal: str = "T-1", height: str = "1,14 - 1,24",
+          part_quantity: str = "10", deadline: date | None = None) -> ProjectTechcard:
+    """Выданная техкарта «опрессовка → сборка» (задания по ней ещё нет)."""
     config = {"ops": [
         {"type": "prsTerm", "stage": "Опрессовка терминалов", "opNumber": "PRS", "tOp": 30, "tPrep": 1800,
          "ep": {"termArt": terminal}},
         {"type": "insHousing", "stage": "Монтаж в корпус", "opNumber": "ASM", "tOp": 20, "tPrep": 300},
     ]}
     card = ProjectTechcard.create(
-        project="708К", item_index=index, product_name="Жгут", source_calculation="", deadline=None, now=NOW,
+        project=project, item_index=index, product_name="Жгут", source_calculation="", deadline=deadline, now=NOW,
     ).rebuild({
         "operations": [
             {"code": "PRS", "connector": "1", "side": "", "type": "prsTerm",
@@ -83,13 +84,20 @@ def launch(client: TestClient, index: str, *, terminal: str = "T-1", height: str
              "card": {"tooling": [{"section": "Оборудование", "inventory_number": "ОБ.027.X", "name": "Пресс"}]}},
             {"code": "ASM", "connector": "2", "side": "", "type": "insHousing", "connector_article": "XP-6"},
         ],
-        "build_config": config, "kit": {"part_quantity": "10"},
+        "build_config": config, "kit": {"part_quantity": part_quantity},
     }, NOW).issue(NOW)
     with app.state.techcards_uow_factory() as uow:
         uow.techcards.save(card)
         uow.commit()
+    return card
+
+
+def launch(client: TestClient, index: str, *, project: str = "708К", terminal: str = "T-1",
+           height: str = "1,14 - 1,24", deadline: str = "2026-10-02", quantity: int = 50) -> dict:
+    """Выданная техкарта и запущенное по ней задание."""
+    card = issue(index, project=project, terminal=terminal, height=height)
     response = client.post(
-        "/api/production/tasks", headers={"Idempotency-Key": f"autoplan-{index.encode().hex()}"},
+        "/api/production/tasks", headers={"Idempotency-Key": f"autoplan-{(project + index).encode().hex()}"},
         json={"techcard_id": str(card.id), "quantity": quantity, "deadline": deadline},
     )
     assert response.status_code == 200, response.text
@@ -97,17 +105,21 @@ def launch(client: TestClient, index: str, *, terminal: str = "T-1", height: str
 
 
 def preview(client: TestClient, **extra) -> dict:
-    response = client.post("/api/production/autoplan/preview", json={**PERIOD, **extra})
+    response = client.post("/api/production/autoplan/preview", json=extra)
     assert response.status_code == 200, response.text
     return response.json()
 
 
 def apply(client: TestClient, planned: dict, **extra):
     return client.post("/api/production/autoplan/apply", json={
-        **PERIOD, "fingerprint": planned["fingerprint"],
+        "fingerprint": planned["fingerprint"],
         "items": [{key: item[key] for key in ("task_id", "operation_id", "operator_id")} for item in planned["proposals"]],
         **extra,
     })
+
+
+def tasks_of(client: TestClient) -> dict[str, dict]:
+    return {task["id"]: task for task in client.get("/api/production/tasks").json()["tasks"]}
 
 
 def test_preview_batches_one_terminal_on_one_fitter_and_skips_zhuk(client):
@@ -157,10 +169,12 @@ def test_apply_writes_the_chosen_assignments_and_one_audit_event(client):
             select(AuditEventRow).where(AuditEventRow.event_type == "production.autoplan_applied"))]
     assert len(events) == 1
     assert events[0]["operations"] == 2 and events[0]["tasks"] == [first["number"]]
-    assert (events[0]["date_from"], events[0]["date_to"], events[0]["master"]) == ("2026-09-22", "2026-09-25", "Мастер")
+    # Период не выбирают: от сегодня до срока задания (02.10), режим — весь цех.
+    assert (events[0]["date_from"], events[0]["date_to"], events[0]["master"]) == ("2026-09-22", "2026-10-02", "Мастер")
+    assert events[0]["mode"] == "shop" and events[0]["created"] == []
 
 
-def test_existing_assignments_stay_and_replan_moves_only_autoplanned_work(client):
+def test_whole_shop_replaces_old_autoplan_and_keeps_manual_assignments(client):
     http, _ = client
     manual = launch(http, "КБ1")
     crimp = manual["operations"][0]
@@ -177,13 +191,13 @@ def test_existing_assignments_stay_and_replan_moves_only_autoplanned_work(client
     assert assembly["start"] >= assigned.json()["plan"]["finish"]
     assert apply(http, planned).status_code == 200
 
-    locked = preview(http)
-    moved = preview(http, replan_auto=True)
+    again = preview(http)
 
-    assert locked["proposals"] == []
+    # «Весь цех» пересчитывает всё, что ставил автоплан; ручное назначение и его время не трогает.
     autoplanned = {item["operation_id"] for item in planned["proposals"]}
-    assert {item["operation_id"] for item in moved["proposals"]} == autoplanned
-    stored = next(task for task in http.get("/api/production/tasks").json()["tasks"] if task["id"] == manual["id"])
+    assert {item["operation_id"] for item in again["proposals"]} == autoplanned
+    assert apply(http, again).status_code == 200
+    stored = tasks_of(http)[manual["id"]]
     assert stored["operations"][0]["operator_ids"] == [str(BORIS)] and stored["operations"][0]["assigned_by"] == "Мастер"
 
 
@@ -212,33 +226,188 @@ def test_master_of_another_site_is_refused(client):
         session.get(IdentityUserRow, MASTER).site = "ЖУК"
         session.commit()
 
-    response = http.post("/api/production/autoplan/preview", json=PERIOD)
+    response = http.post("/api/production/autoplan/preview", json={})
 
     assert response.status_code == 403, response.text
     assert "ЦАР" in response.json()["detail"]
 
 
-def test_period_is_validated(client):
+def test_horizon_needs_no_dates_and_an_explicit_end_is_validated(client):
     http, _ = client
+    launch(http, "КБ1", deadline="2026-10-09")
 
-    backwards = http.post("/api/production/autoplan/preview", json={"date_from": "2026-09-25", "date_to": "2026-09-22"})
-    past = http.post("/api/production/autoplan/preview", json={"date_from": "2026-09-01", "date_to": "2026-09-05"})
+    planned = preview(http)
+    short = preview(http, date_to="2026-09-23")
+    past = http.post("/api/production/autoplan/preview", json={"date_to": "2026-09-01"})
+    far = http.post("/api/production/autoplan/preview", json={"date_to": "2026-12-31"})
 
-    assert backwards.status_code == 422 and past.status_code == 422
+    assert planned["period"]["start"].startswith("2026-09-22T09:00")
+    assert planned["period"]["last_day"] == "2026-10-09"
+    assert short["period"]["last_day"] == "2026-09-23"
+    assert past.status_code == 422 and far.status_code == 422
 
 
-def test_task_filter_limits_what_is_planned(client):
+def test_excluded_task_is_not_planned_and_exclusion_is_in_the_fingerprint(client):
     http, _ = client
     first, second = launch(http, "КБ1"), launch(http, "КБ2")
 
-    planned = preview(http, task_ids=[first["id"]])
+    planned = preview(http, exclude=[second["id"]])
 
     assert {item["task_id"] for item in planned["proposals"]} == {first["id"]}
     assert len(planned["proposals"]) == 2
+    assert planned["scope"] == {"tasks": 1, "new": 0, "fitters": 2}
     assert date.fromisoformat(planned["proposals"][0]["start"][:10]) == NOW.date()
-    # Отпечаток помнит фильтр: применить без него — данные «другие».
+    # Отпечаток помнит исключения: применить без них — данные «другие».
     assert apply(http, planned).status_code == 409
-    applied = apply(http, planned, task_ids=[first["id"]])
+    applied = apply(http, planned, exclude=[second["id"]])
     assert applied.status_code == 200, applied.text
     assert [item["id"] for item in applied.json()["tasks"]] == [first["id"]]
     assert second["id"] in {item["task_id"] for item in preview(http)["proposals"]}
+
+
+def test_preview_takes_issued_kb_without_task_and_writes_nothing(client):
+    http, _ = client
+    launched = launch(http, "КБ1")
+    card = issue("КБ2", deadline=date(2026, 9, 30))
+
+    planned = preview(http)
+
+    new = [item for item in planned["proposals"] if item["new"]]
+    assert len(new) == 2 and {item["task_number"] for item in new} == {"Новое · 708К КБ2"}
+    assert planned["new_tasks"][0]["techcard_id"] == str(card.id) and planned["new_tasks"][0]["quantity"] == 10
+    assert planned["scope"] == {"tasks": 1, "new": 1, "fitters": 2}
+    assert launched["id"] in {item["task_id"] for item in planned["proposals"]}
+    # Предпросмотр ничего не пишет: задания нет, КБ по-прежнему к запуску.
+    assert list(tasks_of(http)) == [launched["id"]]
+    ready = {item["index"]: item for item in http.get("/api/production/launchable").json()["items"]}
+    assert ready["КБ2"]["launched"] == 0
+
+
+def test_apply_creates_the_task_and_its_schedule_in_one_commit(client):
+    http, sessions = client
+    card = issue("КБ2", deadline=date(2026, 9, 30))
+    planned = preview(http)
+
+    response = apply(http, planned)
+
+    assert response.status_code == 200, response.text
+    created = response.json()["created"]
+    assert len(created) == 1 and created[0]["number"].startswith("ПЗ-")
+    task = tasks_of(http)[created[0]["id"]]
+    assert (task["quantity"], task["deadline"], task["version"]) == (10, "2026-09-30", 2)
+    assert task["techcard_id"] == str(card.id)
+    assert all(operation["assigned_by"] == "Автоплан · Мастер" and operation["operator_ids"] for operation in task["operations"])
+    ready = {item["index"]: item for item in http.get("/api/production/launchable").json()["items"]}
+    assert ready["КБ2"]["launched"] == 10
+    assert preview(http)["new_tasks"] == []
+    with sessions() as session:
+        launched = [row.details for row in session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "production.launched"))]
+        applied = [row.details for row in session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "production.autoplan_applied"))]
+    assert launched == [{"number": created[0]["number"]}]
+    assert applied[0]["created"] == [created[0]["number"]]
+
+
+def test_failed_schedule_leaves_no_task_behind(client, monkeypatch):
+    http, _ = client
+    issue("КБ2")
+    planned = preview(http)
+
+    def broken(self, assignments, assigned_by):
+        raise ProductionValidationError("сбой расписания")
+
+    monkeypatch.setattr(ProductionTask, "apply_schedule", broken)
+    response = apply(http, planned)
+
+    assert response.status_code == 422, response.text
+    assert tasks_of(http) == {}
+
+
+def test_kb_launched_after_preview_is_refused(client):
+    http, _ = client
+    card = issue("КБ2")
+    planned = preview(http)
+    launched = http.post(
+        "/api/production/tasks", headers={"Idempotency-Key": "by-hand"},
+        json={"techcard_id": str(card.id), "quantity": 10},
+    )
+    assert launched.status_code == 200, launched.text
+
+    response = apply(http, planned)
+
+    assert response.status_code == 409, response.text
+    assert len(tasks_of(http)) == 1
+
+
+def test_kb_without_run_goes_to_unplaced(client):
+    http, _ = client
+    issue("КБ3", part_quantity="")
+
+    planned = preview(http)
+
+    assert planned["proposals"] == [] and planned["new_tasks"] == []
+    assert planned["unplaced"] == [{
+        "operation_id": None, "task_id": None, "techcard_id": planned["unplaced"][0]["techcard_id"],
+        "task_number": "708К КБ3", "position": None,
+        "reason": "Нет тиража — запустите через «+ Запустить задание»",
+    }]
+
+
+def test_project_mode_plans_only_that_project_on_the_chosen_people(client):
+    http, _ = client
+    own = launch(http, "КБ1")
+    other = launch(http, "КБ1", project="815Р")
+    shop = preview(http)
+    assert apply(http, shop).status_code == 200
+    before = tasks_of(http)[other["id"]]
+    issue("КБ2")
+
+    planned = preview(http, mode="project", project="708К", people=[str(BORIS)])
+
+    assert {item["task_id"] for item in planned["proposals"] if not item["new"]} == {own["id"]}
+    assert {item["task_number"] for item in planned["proposals"] if item["new"]} == {"Новое · 708К КБ2"}
+    assert {item["operator_id"] for item in planned["proposals"]} == {str(BORIS)}
+    assert planned["scope"] == {"tasks": 1, "new": 1, "fitters": 1}
+    # Люди и проект — в отпечатке: другой набор людей при применении — «данные изменились».
+    assert apply(http, planned, mode="project", project="708К", people=[str(ANNA)]).status_code == 409
+    response = apply(http, planned, mode="project", project="708К", people=[str(BORIS)])
+    assert response.status_code == 200, response.text
+    after = tasks_of(http)
+    assert after[other["id"]] == before
+    assert all(operation["operator_ids"] == [str(BORIS)] for operation in after[own["id"]]["operations"])
+
+
+def test_project_mode_needs_project_and_fitters_of_the_site(client):
+    http, _ = client
+    launch(http, "КБ1")
+
+    no_people = http.post("/api/production/autoplan/preview", json={"mode": "project", "project": "708К"})
+    stranger = http.post("/api/production/autoplan/preview", json={"mode": "project", "project": "708К", "people": [str(ZHUK)]})
+    no_project = http.post("/api/production/autoplan/preview", json={"mode": "project", "people": [str(ANNA)]})
+
+    assert no_people.status_code == 422 and stranger.status_code == 422 and no_project.status_code == 422
+
+
+def test_context_lists_work_projects_and_free_hours(client):
+    http, _ = client
+    launch(http, "КБ1", deadline="2026-09-25")
+    issue("КБ2", project="815Р", deadline=date(2026, 9, 24))
+    issue("КБ3", part_quantity="")
+
+    response = http.post("/api/production/autoplan/context", json={})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [row["project"] for row in body["projects"]] == ["815Р", "708К"]
+    assert body["projects"][0]["deadline"] == "2026-09-24" and body["projects"][0]["new"] == 1
+    assert body["projects"][1]["new"] == 0  # КБ3 без тиража ставить нечего
+    assert {item["index"]: item["skipped"] for item in body["new"]} == {
+        "КБ2": "", "КБ3": "Нет тиража — запустите через «+ Запустить задание»",
+    }
+    assert body["period"] == {"start": "2026-09-22T09:00:00", "last_day": "2026-09-25", "auto": True}
+    fitters = {item["name"]: item for item in body["fitters"]}
+    assert set(fitters) == {"Анна", "Борис"} and fitters["Анна"]["free_seconds"] > 0
+    project = http.post("/api/production/autoplan/context", json={"mode": "project", "project": "815Р"}).json()
+    assert project["tasks"] == [] and [item["index"] for item in project["new"]] == ["КБ2"]
+    assert project["period"]["last_day"] == "2026-09-24"

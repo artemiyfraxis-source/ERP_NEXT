@@ -267,38 +267,45 @@ def _audit(task: ProductionTask, event_type: str, actor: Actor, now: datetime, d
 
 def launch_production(command: LaunchProductionCommand, uow: UnitOfWork) -> ProductionTask:
     with uow:
-        key = str(command.idempotency_key or "").strip()
-        if not key:
-            raise ProductionValidationError("Idempotency key обязателен")
-        fingerprint = _fingerprint(command)
-        existing = uow.production.by_idempotency_key(key)
-        if existing is not None:
-            if existing.source_fingerprint != fingerprint:
-                raise ProductionValidationError("Idempotency key уже использован для другого задания")
-            if uow.serials.ensure_task(existing.id, existing.number, existing.quantity):
-                uow.commit()
-            return existing
-        task = ProductionTask.create(
-            number=uow.production.reserve_number(),
-            source_idempotency_key=key,
-            source_fingerprint=fingerprint,
-            project=command.project,
-            item=command.item,
-            name=command.name,
-            quantity=command.quantity,
-            fulfillment_request_id=command.fulfillment_request_id,
-            deadline=command.deadline,
-            launched_by=command.actor.name,
-            operations=command.operations,
-            created_at=command.now,
-            techcard_id=command.techcard_id,
-            techcard_revision=command.techcard_revision,
-        )
-        uow.production.add(task)
-        uow.serials.ensure_task(task.id, task.number, task.quantity)
-        _audit(task, "production.launched", command.actor, command.now, {"number": task.number}, uow)
-        uow.commit()
+        task, created = launch_task(command, uow)
+        if created or uow.serials.ensure_task(task.id, task.number, task.quantity):
+            uow.commit()
         return task
+
+
+def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[ProductionTask, bool]:
+    """Запуск задания внутри открытой единицы работы, без коммита: номер ПЗ, ключ идемпотентности, серийники, аудит.
+    Один путь для «Создать задание» и автоплана (он пишет задание и его расписание одним коммитом).
+    Возвращает задание и True, если оно создано сейчас (False — ключ уже запускал это же задание)."""
+    key = str(command.idempotency_key or "").strip()
+    if not key:
+        raise ProductionValidationError("Idempotency key обязателен")
+    fingerprint = _fingerprint(command)
+    existing = uow.production.by_idempotency_key(key)
+    if existing is not None:
+        if existing.source_fingerprint != fingerprint:
+            raise ProductionValidationError("Idempotency key уже использован для другого задания")
+        return existing, False
+    task = ProductionTask.create(
+        number=uow.production.reserve_number(),
+        source_idempotency_key=key,
+        source_fingerprint=fingerprint,
+        project=command.project,
+        item=command.item,
+        name=command.name,
+        quantity=command.quantity,
+        fulfillment_request_id=command.fulfillment_request_id,
+        deadline=command.deadline,
+        launched_by=command.actor.name,
+        operations=command.operations,
+        created_at=command.now,
+        techcard_id=command.techcard_id,
+        techcard_revision=command.techcard_revision,
+    )
+    uow.production.add(task)
+    uow.serials.ensure_task(task.id, task.number, task.quantity)
+    _audit(task, "production.launched", command.actor, command.now, {"number": task.number}, uow)
+    return task, True
 
 
 def _task(command_task_id: UUID, expected_version: int, uow: UnitOfWork) -> ProductionTask:
