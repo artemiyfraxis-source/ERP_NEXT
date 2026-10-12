@@ -8,8 +8,9 @@ on read, so issued ETKs get it without a rebuild; the KD analogue is replaced in
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any
 
 _CYRILLIC = re.compile(r"[а-яё]", re.I)
@@ -65,19 +66,80 @@ def part_row(row: Mapping[str, Any], identify: Callable[[str], str] | None = Non
             "grn": str(row.get("grn") or ""), "part": 1}
 
 
-def attach_parts(document: Mapping[str, Any] | None, identify: Callable[[str], str] | None = None) -> dict[str, Any] | None:
+@dataclass(frozen=True)
+class EtkLot:
+    """A lot bound to a position of the project КБ: the kit line's article and name (the КД article and the name the
+    item actually used is taken from, `kit_article`), its ГРН and ПАКЕТ."""
+
+    article: str
+    name: str
+    grn: str
+    package: str = ""
+
+
+@dataclass(frozen=True)
+class EtkLots:
+    """The current lot bindings of the ETK's project + КБ (owner, 12.10.2026: «после того как Алексей привяжет к позиции
+    ГРН, нужно чтобы это синкалось в техкарте»). `issued` — lots actually handed to the shop (kit request and its
+    «Довыдача»); `kitset` — the lots chosen in the project's «Состав». The first one that has the row's article wins."""
+
+    issued: tuple[EtkLot, ...] = ()
+    kitset: tuple[EtkLot, ...] = ()
+
+
+def _article_keys(*values: object) -> frozenset[str]:
+    return frozenset(key for key in (_squash(str(value or "")) for value in values) if key)
+
+
+def _lot_keys(lot: EtkLot) -> frozenset[str]:
+    return _article_keys(lot.article, kit_article(lot.article, lot.name)["art"])
+
+
+def lots_text(lots: Sequence[EtkLot]) -> str:
+    """«ГРН1, ГРН2» in the binding order, each ГРН once; the ПАКЕТ is named only when one ГРН came in different
+    packages («ГРН1 · 1, ГРН1 · 2») — a single package of a ГРН tells the fitter nothing more."""
+    packages: dict[str, list[str]] = {}
+    for lot in lots:
+        grn = lot.grn.strip()
+        if grn:
+            seen = packages.setdefault(grn, [])
+            if lot.package.strip() not in seen:
+                seen.append(lot.package.strip())
+    parts: list[str] = []
+    for grn, seen in packages.items():
+        parts.extend([grn] if len(seen) < 2 else [f"{grn} · {package}" if package else grn for package in seen])
+    return ", ".join(parts)
+
+
+def _bound_grn(row: Mapping[str, Any], lots: Sequence[tuple[frozenset[str], EtkLot]]) -> str:
+    keys = _article_keys(row.get("art"), row.get("kd"))
+    return lots_text([lot for lot_keys, lot in lots if lot_keys & keys]) if keys else ""
+
+
+def attach_parts(
+    document: Mapping[str, Any] | None,
+    identify: Callable[[str], str] | None = None,
+    lots: EtkLots | None = None,
+) -> dict[str, Any] | None:
     """`etkAttachParts_`: component rows through `part_row`; a KD article is replaced by the article to apply in the
-    operation connector and in the harness nodes."""
+    operation connector and in the harness nodes. With `lots`, a row's ГРН is the current binding of its article (the
+    article to apply or the КД one, either way round): issued lots first, else the «Состав» lot, else the snapshot."""
     if document is None:
         return None
     result = deepcopy(dict(document))
     use: dict[str, str] = {}
+    issued = [(_lot_keys(lot), lot) for lot in lots.issued] if lots else []
+    kitset = [(_lot_keys(lot), lot) for lot in lots.kitset] if lots else []
     for operation in result.get("operations") or []:
         rows = []
         for row in operation.get("components") or []:
             converted = part_row(row, identify) if isinstance(row, Mapping) else row
             if isinstance(converted, Mapping) and converted.get("kd"):
                 use[str(converted["kd"])] = str(converted["art"])
+            if isinstance(converted, dict) and (issued or kitset):
+                grn = _bound_grn(converted, issued) or _bound_grn(converted, kitset)
+                if grn:
+                    converted["grn"] = grn
             rows.append(converted)
         if "components" in operation:
             operation["components"] = rows

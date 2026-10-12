@@ -8,7 +8,7 @@
 обязательно…» вместо типов, которые проверяются сами.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import base64
 import binascii
 from datetime import date, datetime
@@ -29,6 +29,7 @@ from app.shared.http_auth import (
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab
+from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.techcard_build import with_technology
 from app.workflows.warehouse_article import infer_article_identity
 
@@ -56,7 +57,7 @@ from .domain.coax import КоаксСборка
 from .domain.coax import Сторона as КоаксСторона
 from .domain.coax import построить_коакс
 from .domain.harness import Провод, Разъём, Сборка, построить
-from .etk_read import card_view
+from .etk_read import IssuedLots, card_views
 from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardValidationError
 from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
@@ -285,8 +286,38 @@ def _run(operation):
         raise HTTPException(status_code=409, detail="Карточка проекта изменена конкурентно") from error
 
 
-def _card_result(card: ProjectTechcard, identify: Callable[[str], str] | None = None) -> dict:
-    return card_view(card, identify)
+def etk_issued_lots(request: Request) -> IssuedLots | None:
+    """Lots handed to the shop, read through the Fulfillment port; None when that module is not wired (tests)."""
+    factory = getattr(request.app.state, "fulfillment_uow_factory", None)
+    return IssuedKitLots(factory) if callable(factory) else None
+
+
+class EtkCards:
+    """Project cards as the screens read them: parts by the warehouse article rules and each component's ГРН by the
+    current lot bindings of the card's project + КБ (issued lots, else the «Состав» lot, else the snapshot), read once
+    for all the cards of the request."""
+
+    def __init__(
+        self, uow_factory: Callable[[], UnitOfWork], identify: Callable[[str], str] | None, issued: IssuedLots | None,
+    ):
+        self.uow_factory, self.identify, self.issued = uow_factory, identify, issued
+
+    def many(self, cards: Sequence[ProjectTechcard]) -> list[dict]:
+        if not cards:
+            return []
+        with self.uow_factory() as uow:
+            return card_views(uow, cards, self.identify, self.issued)
+
+    def one(self, card: ProjectTechcard) -> dict:
+        return self.many([card])[0]
+
+
+def etk_cards(
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    issued: Annotated[IssuedLots | None, Depends(etk_issued_lots)],
+) -> EtkCards:
+    return EtkCards(uow_factory, identify, issued)
 
 
 def _revision_result(revision: TechcardRevision) -> dict:
@@ -545,11 +576,11 @@ def edit_operation_card_template(
 @router.get("/techcards/projects", dependencies=[Depends(techcards_view_principal)])
 def project_techcards(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
     with uow_factory() as uow:
         cards = uow.techcards.list()
-    return {"items": [_card_result(card, identify) for card in cards]}
+    return {"items": etk.many(cards)}
 
 
 @router.post("/techcards/projects", status_code=201)
@@ -558,7 +589,7 @@ def add_project_techcard(
     principal: Annotated[Principal, Depends(techcards_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
     card = _run(lambda: create_project_techcard(CreateProjectTechcardCommand(
         project=payload.project,
@@ -569,20 +600,20 @@ def add_project_techcard(
         actor=principal.actor,
         now=now,
     ), uow_factory()))
-    return _card_result(card, identify)
+    return etk.one(card)
 
 
 @router.get("/techcards/projects/{card_id}", dependencies=[Depends(techcards_view_principal)])
 def project_techcard(
     card_id: UUID,
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
     with uow_factory() as uow:
         card = uow.techcards.get(card_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Карточка проекта не найдена")
-    return _card_result(card, identify)
+    return etk.one(card)
 
 
 @router.put("/techcards/projects/{card_id}/etk")
@@ -592,7 +623,7 @@ def rebuild_project_etk(
     principal: Annotated[Principal, Depends(techcards_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
     card = _run(lambda: rebuild_project_techcard(RebuildProjectTechcardCommand(
         card_id=card_id,
@@ -601,7 +632,7 @@ def rebuild_project_etk(
         now=now,
         document=payload.document,
     ), uow_factory()))
-    return _card_result(card, identify)
+    return etk.one(card)
 
 
 # A `tcgen` API token reads and routes, it never writes a project techcard (an issued card would get a new revision):
@@ -616,7 +647,7 @@ def auto_build_project_etk(
     principal: Annotated[Principal, Depends(tcgen_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
     references_factory: Annotated[
         Callable[[], ReferencesUnitOfWork] | None,
         Depends(optional_references_uow_factory),
@@ -639,7 +670,7 @@ def auto_build_project_etk(
         _draft_run(lambda: finalise_draft(
             payload.draft_id, payload.config, card.revision, principal.actor, now, uow_factory,
         ))
-    return _card_result(card, identify)
+    return etk.one(card)
 
 
 @router.get("/techcards/scheme-corrections", dependencies=[Depends(tcgen_principal)])
@@ -670,7 +701,7 @@ def issue_project_etk(
     principal: Annotated[Principal, Depends(techcards_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
     card = _run(lambda: issue_project_techcard(ChangeProjectTechcardCommand(
         card_id=card_id,
@@ -678,7 +709,7 @@ def issue_project_etk(
         actor=principal.actor,
         now=now,
     ), uow_factory()))
-    return _card_result(card, identify)
+    return etk.one(card)
 
 
 @router.delete("/techcards/projects/{card_id}/etk")
@@ -688,7 +719,7 @@ def discard_project_etk_draft(
     principal: Annotated[Principal, Depends(techcards_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
     """«Удалить созданные» генератора: убрать собранный, ещё не выданный черновик ЭТК."""
     card = _run(lambda: discard_project_techcard_draft(ChangeProjectTechcardCommand(
@@ -697,7 +728,7 @@ def discard_project_etk_draft(
         actor=principal.actor,
         now=now,
     ), uow_factory()))
-    return _card_result(card, identify)
+    return etk.one(card)
 
 
 @router.put("/techcards/projects/{card_id}/operations/{operation_key}")
@@ -708,7 +739,7 @@ def edit_project_etk_operation(
     principal: Annotated[Principal, Depends(techcards_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
-    identify: Annotated[Callable[[str], str] | None, Depends(etk_part_identifier)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
     card = _run(lambda: edit_project_operation(EditTechcardOperationCommand(
         card_id=card_id,
@@ -718,7 +749,7 @@ def edit_project_etk_operation(
         operation_key=operation_key,
         operation=payload.operation,
     ), uow_factory()))
-    return _card_result(card, identify)
+    return etk.one(card)
 
 
 @router.get("/techcards/projects/{card_id}/revisions", dependencies=[Depends(techcards_view_principal)])
