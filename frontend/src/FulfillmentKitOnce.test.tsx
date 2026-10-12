@@ -125,7 +125,7 @@ it("opens «Выдача со списанием» on «Укомплектова
 
   fireEvent.click(screen.getByRole("button", { name: "КБ Выдана · 1" }));
   expect(screen.getAllByText("REQ.26.0000002").length).toBeGreaterThan(0);
-  expect(JSON.parse(window.localStorage.getItem("erp.fulfillment.give.stages")!)).toEqual(["Укомплектован", "КБ Возвращена", "КБ Выдана"]);
+  expect(JSON.parse(window.localStorage.getItem("erp.fulfillment.give.stages")!)).toEqual(["Укомплектован", "Готов к выдаче", "КБ Возвращена", "КБ Выдана"]);
   unmount();
 
   render(<FulfillmentPage principal={principal} mode="give" />);

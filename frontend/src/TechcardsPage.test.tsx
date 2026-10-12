@@ -311,8 +311,9 @@ it("lays an ETK operation out in production order with the soldering mode and pi
   expect(screen.getByText("Недолив припоя")).toBeInTheDocument();
   expect(document.querySelectorAll(".etk-def-pic > svg")).toHaveLength(2);
   expect(screen.getByText("Требование безопасности")).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "Полуфабрикат" })).toBeInTheDocument();
-  expect(screen.getByRole("row", { name: /^Провод с XT60 1\sшт$/ })).toBeInTheDocument();
+  const result = screen.getByRole("region", { name: "Результат" });
+  expect(within(result).getByText("Провод с XT60")).toBeInTheDocument();
+  expect(within(result).getByText(/^1\sшт$/)).toBeInTheDocument();
   // Время — отдельной цифрой, без повтора наименования полуфабриката.
   const time = screen.getByLabelText("Расчётное время");
   expect(time).toHaveTextContent("Расчётное время1,5 мин");
@@ -336,7 +337,7 @@ it("shows per-wire times beside their rows and no «— Шт.» for a missing no
 
   render(<TechcardsPage principal={engineer} view="projects" />);
   const time = await screen.findByLabelText("Расчётное время");
-  expect(time).toHaveTextContent("Расчётное время, итого170 мин2 ч 50 мин · на партию 100 шт");
+  expect(time).toHaveTextContent("Расчётное время, итого170 мин · 2 ч 50 мин");
   expect(screen.getByRole("row", { name: /^ПВ3 250мм, обжатый терминал T1 200\sшт 100,5$/ })).toBeInTheDocument();
   expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent(/^Автомат резка \+ опрессовка/);
   expect(document.querySelector(".etk-op")).not.toHaveTextContent("— Шт.");

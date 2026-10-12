@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.warehouse.domain import WarehouseValidationError
+from app.shared import article_match
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -336,6 +337,61 @@ def available_lots(
         "available": _number(free_for_project(lot, held)),
         **({"reserved": _number(held[lot.id])} if held.get(lot.id) else {}),
     } for lot in candidates]}
+
+
+_CANDIDATES_SHOWN = 10
+
+
+@router.get("/projects/{project}/candidates")
+def project_candidates(
+    project: str,
+    _principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Возможно есть» (owner 12.10.2026): for every position of the project's requests, the warehouse lots that may be
+    it — exact article first, then fuzzy (`app.shared.article_match`) — in ONE pass over the stock. `available` is what
+    the project's kit can take (ДОСТУПНО + its own reserve), a lot with nothing to take is not offered. Read-only."""
+    project = project.strip()
+    with uow_factory() as uow:
+        positions: dict[tuple[str, str], str] = {}
+        after = None
+        while True:
+            page = list(uow.fulfillment.list(limit=200, after_id=after))
+            for request in page:
+                if project_of(request.purpose) != project:
+                    continue
+                for line in request.lines:
+                    positions.setdefault((line.article, line.name), line.unit)
+            if len(page) < 200:
+                break
+            after = page[-1].id
+        lots = uow.warehouse.list(limit=5000, include_zero=False) if positions else []
+        held = project_reserve_by_lot(uow, lots, project)
+    free = [lot for lot in lots if free_for_project(lot, held) > 0]
+    result = []
+    for (article, name), unit in positions.items():
+        found = article_match.candidates(article, name, free)
+        result.append({
+            "article": article,
+            "name": name,
+            "unit": unit,
+            "candidates": [{
+                "id": str(lot.id),
+                "lot_id": str(lot.id),
+                "warehouse": lot.warehouse,
+                "grn": lot.grn,
+                "package": lot.package,
+                "article": lot.article,
+                "name": lot.name,
+                "unit": lot.unit,
+                "storage_location": lot.storage_location,
+                "available": _number(free_for_project(lot, held)),
+                "kind": match.kind,
+                "match": match.label,
+            } for match, lot in found[:_CANDIDATES_SHOWN]],
+            "more": max(len(found) - _CANDIDATES_SHOWN, 0),
+        })
+    return {"positions": result}
 
 
 def _print_response(

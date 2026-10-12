@@ -19,6 +19,7 @@ from app.modules.warehouse.domain import (
     WriteOffEntry,
     issue_writeoff_reason,
 )
+from app.shared.article_match import binding_kind
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.shared.notifications import (
@@ -442,6 +443,17 @@ def refuse_duplicate_kits(requests: Sequence[FulfillmentRequest]) -> None:
         raise DuplicateKitRequest("; ".join(doubled) + " — отмените лишнюю, ничего не привязано")
 
 
+def binding_details(kd_article: str, position_name: str, lot: StockLot, via: str) -> dict:
+    """What a binding log event keeps (owner, 12.10.2026): the КД position, the lot it was bound to and how the two
+    matched — `python -m app.workflows.article_bindings_report` turns these into the pairs that warehouse articles
+    are normalized by. `match_kind`: exact · fuzzy-<rule> · manual (picked by search, no rule offered it)."""
+    return {
+        "kd_article": kd_article, "position_name": position_name, "lot_grn": lot.grn, "lot_package": lot.package or "",
+        "lot_article": lot.article, "lot_name": lot.name,
+        "match_kind": binding_kind(kd_article, position_name, lot.article, lot.name), "via": via,
+    }
+
+
 def _reserve_details(reserve: KitReserve, quantity: Decimal) -> dict:
     return {
         "quantity": format(quantity.normalize(), "f"), "unit": reserve.unit, "holder": reserve.label,
@@ -529,7 +541,7 @@ def hold_kit_reserve(command: HoldKitReserveCommand, uow) -> KitReserve | None:
         created_at=command.now, created_by=command.actor.name,
     )
     uow.kit_reserves.add(reserve)
-    details = _reserve_details(reserve, wanted)
+    details = {**_reserve_details(reserve, wanted), **binding_details(reserve.article, "", held, "kitset")}
     uow.audit.add(AuditEvent(
         id=uuid4(), aggregate_id=held.id, event_type="warehouse.kit_reserve_held",
         actor=command.actor, occurred_at=command.now, details=details,
@@ -840,7 +852,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
         updated = request.bind_line(line.id, snapshot, quantity, lot.unit).stamped(command.now)
         uow.warehouse.add(reserved_lot)
         uow.fulfillment.add(updated)
-        _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity)}, uow)
+        _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity), **binding_details(line.article, line.name, lot, "line")}, uow)
         _audit_auto_complete(request, updated, command.actor, command.now, uow)
         uow.commit()
         return updated
@@ -1000,6 +1012,7 @@ def _fill_line_fifo(
         ))
         _audit(request, "fulfillment.lot_bound", actor, now, {
             "line_id": str(target), "lot_id": str(lot.id), "quantity": str(give), **details,
+            **binding_details(line.article, line.name, lot, "project"),
         }, uow)
         need -= give
         if need > 0:  # the lot fell short: the split-off remainder waits for the next lot

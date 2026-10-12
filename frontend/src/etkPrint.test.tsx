@@ -48,8 +48,10 @@ it("shows «Оснастка» with all three sections, an empty one as «нет
 
   const input = screen.getByRole("region", { name: "Вход" });
   expect(within(input).getByText(/^184,8\sм$/).className).toBe("etk-in-qty");
-  expect(screen.getByRole("row", { name: /^ПВАМ 1,5 264мм 700\sшт$/ })).toBeInTheDocument();
-  expect(screen.getByLabelText("Расчётное время")).toHaveTextContent(/на партию 700\sшт/);
+  const result = screen.getByRole("region", { name: "Результат" });
+  expect(within(result).getByText("ПВАМ 1,5 264мм")).toBeInTheDocument();
+  expect(within(result).getByText(/^700\sшт$/)).toBeInTheDocument();
+  expect(screen.getByLabelText("Расчётное время")).not.toHaveTextContent(/на партию/);
   expect(screen.getByText(/^1 операция ·/)).toBeInTheDocument();
   // Кнопки без эмодзи (ПР-1).
   expect(screen.getByRole("button", { name: "Печать / PDF" })).toBeInTheDocument();

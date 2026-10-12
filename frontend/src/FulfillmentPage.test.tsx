@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FulfillmentPage } from "./FulfillmentPage";
+import { candidateTone } from "./FulfillmentBulkLots";
 import type { FulfillmentRequest, Principal } from "./api";
 import { capturePrintFrames } from "./testPrintFrames";
 
@@ -317,11 +318,14 @@ it("searches by number, purpose, requester and status and counts every stage in 
   });
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
-  expect(await screen.findByRole("button", { name: "Новая · 1" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Не начата · 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Недоукомплектован · 1" })).toBeInTheDocument();
-  // «Готов к выдаче» is done for the picker: hidden until ticked (ISS_MODES_.pick.hidden).
+  // «Готов к выдаче» is not a stage of its own any more: it counts in «Укомплектован», no checkbox, no chip.
+  expect(screen.getByRole("button", { name: "Укомплектован · 1" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Готов к выдаче/ })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("показать «Готов к выдаче»")).not.toBeInTheDocument();
   expect(screen.queryByText("FRX-ISS-26-0003")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByLabelText("показать «Готов к выдаче»"));
+  await showAll();
   expect(await screen.findByText("FRX-ISS-26-0003")).toBeInTheDocument();
 
   fireEvent.change(screen.getByLabelText("Поиск: Запросы на комплектацию"), { target: { value: "петров КБ1" } });
@@ -329,8 +333,61 @@ it("searches by number, purpose, requester and status and counts every stage in 
   expect(screen.getByRole("button", { name: /^708К\.4/ })).toBeInTheDocument();
   expect(screen.queryByText("FRX-ISS-26-0001")).not.toBeInTheDocument();
   // issFilterRender_: the chips count what the search left.
-  expect(screen.getByRole("button", { name: "Новая · 0" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Не начата · 0" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Недоукомплектован · 1" })).toBeInTheDocument();
+});
+
+function kitRequests() {
+  return [
+    request,
+    { ...request, id: "r2", number: "FRX-ISS-26-0002", purpose: "708К.4 · КБ1 · Жгут", project: "708К.4", status: "Недоукомплектован" },
+    { ...request, id: "r4", number: "FRX-ISS-26-0004", purpose: "708К.4 · КБ2 · Жгут", project: "708К.4", status: "Укомплектован" },
+    { ...request, id: "r5", number: "FRX-ISS-26-0005", purpose: "", project: "", status: "Укомплектован" },
+  ];
+}
+
+function mockKit() {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: kitRequests(), next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("opens the picking screen on «К набору»: new and short requests only, «Новая» reads «Не начата», «Все» is last", async () => {
+  mockKit();
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  const chip = await screen.findByRole("button", { name: "К набору · 2" });
+  expect(chip).toHaveAttribute("aria-pressed", "true");
+  const labels = within(screen.getByRole("group", { name: "Стадии" })).getAllByRole("button").map((button) => button.textContent);
+  expect(labels).toEqual(["К набору · 2", "Не начата · 1", "Недоукомплектован · 1", "Укомплектован · 2", "Все · 4"]);
+  expect(screen.getByRole("button", { name: "Не начата · 1" })).toHaveAttribute("title", "заявка пришла, комплектовщик ещё ничего не набрал");
+  expect(screen.queryByText("Новая")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /^708К.4/ })).toBeInTheDocument();
+  expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();
+  expect(screen.queryByText("FRX-ISS-26-0005")).not.toBeInTheDocument();
+  // The tile and the project card count only what the chip lets through: one КБ of 708К.4, not both.
+  expect(screen.getByText("сборок: 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /^708К.4/ }));
+  expect(await screen.findByRole("tab", { name: /КБ1/ })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: /КБ2/ })).not.toBeInTheDocument();
+});
+
+it("«Все» and a stage chip widen or narrow the picking screen; the table opens on the same chip", async () => {
+  mockKit();
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Все · 4" }));
+  expect(screen.getByText("FRX-ISS-26-0005")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Укомплектован · 2" }));
+  expect(screen.queryByText("FRX-ISS-26-0001")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "К набору · 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Таблицей" }));
+  const group = await screen.findByRole("group", { name: "Быстрый отбор" });
+  expect(within(group).getByRole("button", { name: "К набору · 2" })).toHaveAttribute("aria-pressed", "true");
+  expect(within(group).getAllByRole("button").at(-1)).toHaveTextContent("Все · 4");
+  expect(screen.queryByText("FRX-ISS-26-0005")).not.toBeInTheDocument();
+  expect(screen.getByText("FRX-ISS-26-0001")).toBeInTheDocument();
 });
 
 it("opens a project with every request of it and a whole-order view", async () => {
@@ -622,8 +679,78 @@ const projectLots = [
 
 async function openWholeOrder() {
   render(<FulfillmentPage principal={principal} mode="pick" />);
+  await showAll();
   fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
 }
+
+/* «Возможно есть» (owner 12.10.2026): the column, the row colour and the legend of the project card. */
+const candidateOf = (lot: (typeof projectLots)[number], kind: "exact" | "fuzzy", available = lot.available) =>
+  ({ ...lot, lot_id: lot.id, kind, match: kind === "exact" ? "exact" : "fuzzy-separators", available });
+
+async function openWithCandidates(candidates: ReturnType<typeof candidateOf>[], more = 0) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [{ ...kb1, status: "Недоукомплектован" }, { ...kb2, status: "Недоукомплектован" }], next_cursor: null });
+    if (path.startsWith("/api/issues/lots")) return json({ lots: projectLots });
+    if (path === "/api/issues/projects/728%D0%9A.2/candidates") return json({ positions: [{ article: "CON-001", name: "Разъём", unit: "шт", candidates, more }] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
+}
+
+const positionRow = () => screen.getByRole("cell", { name: "CON-001" }).closest("tr")!;
+
+it("candidateTone: green exact and enough, yellow lookalike or too little, red nothing, neutral picked", () => {
+  const exact = (available: string) => candidateOf(projectLots[0], "exact", available);
+  expect(candidateTone(8, [exact("10")])).toBe("ok");
+  expect(candidateTone(8, [exact("5"), candidateOf(projectLots[1], "exact", "3")])).toBe("ok");
+  expect(candidateTone(8, [exact("5")])).toBe("maybe");
+  expect(candidateTone(8, [candidateOf(projectLots[0], "fuzzy", "100")])).toBe("maybe");
+  expect(candidateTone(8, [])).toBe("none");
+  expect(candidateTone(0, [])).toBe("done");
+});
+
+it("shows the best lot of «Возможно есть» with «ещё N», a green row and the legend; a click opens the lot list with it marked", async () => {
+  await openWithCandidates([candidateOf(projectLots[0], "exact"), candidateOf(projectLots[1], "fuzzy")], 3);
+
+  expect(await screen.findByText("ГРН FRX.26.0000002 · 10 шт · ЦАР")).toBeInTheDocument();
+  expect(screen.getByText("тот же артикул · ещё 4")).toBeInTheDocument();
+  expect(positionRow()).toHaveClass("cand-ok");
+  expect(screen.getByLabelText("Цвета строк")).toHaveTextContent("на складе не найдено");
+
+  fireEvent.click(screen.getByText("ГРН FRX.26.0000002 · 10 шт · ЦАР"));
+  expect(await screen.findByRole("group", { name: "ГРН на все КБ: Разъём" })).toBeInTheDocument();
+  expect(screen.getByText("возможно есть · тот же артикул")).toBeInTheDocument();
+  expect(screen.getByText("возможно есть · похожий артикул")).toBeInTheDocument();
+});
+
+it("paints the row yellow for lookalikes only or too little exact, red when nothing is found", async () => {
+  await openWithCandidates([candidateOf(projectLots[1], "fuzzy")]);
+  expect(await screen.findByText("похожий артикул")).toBeInTheDocument();
+  expect(positionRow()).toHaveClass("cand-maybe");
+  cleanup();
+  vi.restoreAllMocks();
+
+  await openWithCandidates([]);
+  expect(await screen.findByText("не найдено")).toBeInTheDocument();
+  expect(positionRow()).toHaveClass("cand-none");
+});
+
+it("«Возможно есть» is for those who can pick: the viewer gets neither the column nor the request", async () => {
+  const paths: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    paths.push(path);
+    if (path === "/api/issues") return json({ requests: [{ ...kb1, status: "Недоукомплектован" }], next_cursor: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { fulfillment: "view" } }} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
+  await screen.findByRole("cell", { name: "CON-001" });
+  expect(screen.queryByText("Возможно есть")).not.toBeInTheDocument();
+  expect(paths.some((path) => path.includes("candidates"))).toBe(false);
+});
 
 it("counts a line «нет на складе» as waiting on its КБ chip and names it in the order, never as «есть»", async () => {
   const absentKb2 = { ...kb2, status: "Недоукомплектован", lines: [{ ...kb2.lines[0], absent_at: "2026-10-12T09:30:00", absent_by: "Кладовщик" }] };
@@ -924,6 +1051,7 @@ it("gives no issue action without the handout right or on the picking screen", a
   unmount();
 
   render(<FulfillmentPage principal={principal} mode="pick" />);
+  await showAll();
   fireEvent.click(await screen.findByRole("button", { name: /^33МФ\.2/ }));
   expect(screen.queryByRole("button", { name: /^Выдать (КБ\d+|\d+ КБ) · \d+ поз\.$/ })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "КБ1 ✓" }));
@@ -931,22 +1059,34 @@ it("gives no issue action without the handout right or on the picking screen", a
   expect(screen.getByRole("button", { name: "Отправить на выдачу" })).toBeInTheDocument();
 });
 
-it("opens «Выдача» on the stages that hold requests, «Готов к выдаче» first, when the saved ones are empty (В-1)", async () => {
+it("opens «Выдача» on the stages that hold requests when the saved ones are empty (В-1); a kit at the handout point is «Укомплектован»", async () => {
   issueFetch(order([{ status: "Готов к выдаче", handout_location: "1B3" }, { status: "КБ Выдана", project: "40К.1", purpose: "40К.1 · КБ1 · Жгут" }]), []);
   render(<FulfillmentPage principal={principal} mode="give" />);
-  const ready = await screen.findByRole("button", { name: "Готов к выдаче · 1" });
+  const ready = await screen.findByRole("button", { name: "Укомплектован · 1" });
   await waitFor(() => expect(ready).toHaveAttribute("aria-pressed", "true"));
-  expect(screen.getByRole("button", { name: "КБ Выдана · 1" })).toHaveAttribute("aria-pressed", "true");
-  expect(screen.getByRole("button", { name: "Укомплектован · 0" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.getByRole("button", { name: "КБ Выдана · 1" })).toHaveAttribute("aria-pressed", "false"); // the default already holds a kit
+  expect(screen.queryByRole("button", { name: /^Готов к выдаче/ })).not.toBeInTheDocument();
   expect(screen.queryByText(/заявок нет/)).not.toBeInTheDocument();
+  expect(screen.getAllByText("Укомплектован").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Готов к выдаче")).not.toBeInTheDocument();
+});
+
+it("shows a kit at the handout point as «Укомплектован» with its place, never as «Готов к выдаче»", async () => {
+  issueFetch([{ ...request, status: "Готов к выдаче", handout_location: "1B3", lines: [boundLine] }], []);
+  render(<FulfillmentPage principal={principal} mode="give" />);
+  const badge = await screen.findByText("Укомплектован · 1B3");
+  expect(badge).toHaveAttribute("title", "Лежит в зоне выдачи: 1B3");
+  expect(screen.queryByText("Готов к выдаче")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Таблицей" }));
+  expect((await screen.findAllByText("Укомплектован · 1B3")).length).toBeGreaterThan(0);
 });
 
 it("keeps the default «Выдача» stages when they hold requests", async () => {
   issueFetch(order([{ status: "Укомплектован" }, { status: "Готов к выдаче" }]), []);
   render(<FulfillmentPage principal={principal} mode="give" />);
-  const kitted = await screen.findByRole("button", { name: "Укомплектован · 1" });
+  const kitted = await screen.findByRole("button", { name: "Укомплектован · 2" });
   await waitFor(() => expect(kitted).toHaveAttribute("aria-pressed", "true"));
-  expect(screen.getByRole("button", { name: "Готов к выдаче · 1" })).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByRole("button", { name: /^Готов к выдаче/ })).not.toBeInTheDocument();
 });
 
 it("draws «Отменить заявку» as a danger button and asks before cancelling (К-2)", async () => {
