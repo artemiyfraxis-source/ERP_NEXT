@@ -128,10 +128,11 @@ describe("рисунки карточек генератора", () => {
 
   it("labels wires «А1:1 → В1:1» from the pinout, faces with the wire of each contact, tubes without «Резка»", () => {
     const ends = [{ id: "e1", key: "А1", side: "A", conn: "XHP-2" }, { id: "e2", key: "В1", side: "B", conn: "XHP-2" }] as PinoutEnd[];
-    const units = [
-      { key: "u1", idx: 0, unit: 0, num: "1", compId: "c", name: "МГТФ красный", color: "#d7322d", length: 150, at: { e1: 1, e2: 2 } },
-      { key: "u2", idx: 1, unit: 0, num: "2", compId: "c", name: "МГТФ чёрный", color: null, length: 0, at: { e1: 2, e2: null } },
-    ] as PinUnit[];
+    // Первый провод — цвет из наименования; второму цвет жилы выбран на схеме распиновки (бело-синий: основной — белый).
+    const units: PinUnit[] = [
+      { key: "u1", idx: 0, unit: 0, num: "1", compId: "c", name: "МГТФ красный", color: "#d7322d", stripe: null, colorName: "", baseName: null, length: 150, at: { e1: 1, e2: 2 } },
+      { key: "u2", idx: 1, unit: 0, num: "2", compId: "c", name: "МГТФ", color: "#f4f4f4", stripe: "#2463c7", colorName: "бело-синий", baseName: "белый", length: 0, at: { e1: 2, e2: null } },
+    ];
     const specs = [
       { type: "cutWireStrip", opKey: "cutWire", label: "Резка", wireIdxs: [0, 1], strip: { a: true, lenA: "3", b: true, lenB: "3" } },
       { type: "cutTut", opKey: "cutTut", label: "Резка ТУТ — 4×20мм (на пайку)" },
@@ -139,11 +140,11 @@ describe("рисунки карточек генератора", () => {
     const housing = { rows: 1, cols: 2, color: "#fff", grid: [[1, 2]] };
     const art = schemeArt(specs, ends, units, { "XHP-2": housing }, null);
     expect(art.wires.map((wire) => [wire.label, wire.left, wire.right, wire.color])).toEqual([
-      ["А1:1 → В1:2", "copper", "copper", "#d7322d"], ["А1:2 → В1:?", "copper", "copper", "#6b7c86"],
+      ["А1:1 → В1:2", "copper", "copper", "#d7322d"], ["А1:2 → В1:?", "copper", "copper", "#f4f4f4"],
     ]);
     expect(art.wires[0].title).toBe("1 · МГТФ красный · 150 мм");
     expect(art.tubes).toEqual([{ key: "cutTut", label: "ТУТ — 4×20мм (на пайку)", count: 0 }]);
-    expect(art.faces.A).toEqual([{ key: "А1", label: "А1 · XHP-2", housing, byPin: { 1: "МГТФ красный", 2: "МГТФ чёрный" } }]);
+    expect(art.faces.A).toEqual([{ key: "А1", label: "А1 · XHP-2", housing, byPin: { 1: "МГТФ красный", 2: "белый" } }]);
     expect(art.faces.B[0].byPin).toEqual({ 2: "МГТФ красный" });
     // Сторона без разъёмов — свободный конец.
     const free = schemeArt([], [ends[0]], [{ ...units[0], at: { e1: 3 } }], {}, { side: "B", ends: [] });

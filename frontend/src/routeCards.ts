@@ -260,7 +260,8 @@ export function schemeArt(specs: readonly OpSpec[], ends: readonly PinoutEnd[], 
     .map((spec): TubeThumb => ({ key: spec.opKey, label: spec.label.replace(/^Резка\s+/i, "") || "Трубка", count: 0 }));
   const face = (side: "A" | "B") => ends.filter((end) => end.side === side).map((end): FaceThumb => {
     const byPin: Record<number, string> = {};
-    units.forEach((unit) => { const pin = unit.at[end.id]; if (pin != null && !byPin[pin]) byPin[pin] = unit.name; });
+    // Торец рисуется основным цветом выбранной жилы (как схема распиновки), иначе — цветом из наименования.
+    units.forEach((unit) => { const pin = unit.at[end.id]; if (pin != null && !byPin[pin]) byPin[pin] = unit.baseName ?? unit.name; });
     return { key: end.key, label: `${end.key} · ${end.conn || "разъём не выбран"}`, housing: housings[end.conn] ?? null, byPin: Object.keys(byPin).length ? byPin : null };
   });
   return { wires, tubes, faces: { A: face("A"), B: face("B") } };
