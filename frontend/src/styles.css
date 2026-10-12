@@ -1348,6 +1348,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 
 /* Данные из листа — плотная таблица как DataTable. */
 .tcgen .gtable-wrap { max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+/* «Данные из листа» — всё сразу, без прокрутки; соседние блоки ряда — одной высоты (владелец 12.10.2026). */
+.tcgen .gtable-wrap.is-full { max-height: none; overflow-x: auto; overflow-y: visible; }
+.tcgen .gsec { align-self: stretch; }
 .tcgen .gtable { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .tcgen .gtable th { position: sticky; top: 0; z-index: 1; padding: 6px 10px; background: var(--table-head); color: var(--table-head-fg); font-weight: 600; border-bottom: 1px solid var(--border); }
 .tcgen .gtable td { height: 30px; padding: 4px 10px; white-space: normal; }
