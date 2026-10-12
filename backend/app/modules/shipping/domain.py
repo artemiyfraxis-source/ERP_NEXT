@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 import re
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 
 class ShippingValidationError(ValueError):
@@ -135,6 +135,194 @@ class FinishedGood:
         if amount > self.shipped - self.sent:
             raise ShippingValidationError("Возврат не может превышать отобранное количество")
         return replace(self, shipped=self.shipped - amount, version=self.version + 1)
+
+    def undispatch(self, quantity: Decimal) -> FinishedGood:
+        """Откат «Отгружено» (руководитель, с причиной): уехавшее снова числится упакованным на складе."""
+        amount = _positive(quantity, "Количество отката")
+        if amount > self.sent - self.before_erp:
+            raise ShippingValidationError("Откатить можно только отгруженное в ERP, не больше уехавшего")
+        return replace(self, sent=self.sent - amount, version=self.version + 1)
+
+    @property
+    def register(self) -> GoodsRegister:
+        return GoodsRegister(
+            needed=self.ordered, accepted_total=self.accepted, packed_total=self.shipped, shipped_total=self.sent,
+        )
+
+
+# ── Регистр готовой продукции (владелец 12.10.2026): штуки КБ по состояниям, сквозные статусы ─────────────────
+# В производстве → Принято складом → Упаковано → Отгружено. Остаток по состояниям хранят счётчики строки ГП
+# (accepted — принято всего, shipped — упаковано всего, sent — отгружено всего), каждое их изменение пишет ход
+# в журнал `finished_goods_moves` в той же транзакции (SqlAlchemyFinishedGoodsRepository.add).
+
+
+class GoodsState(str, Enum):
+    PRODUCTION = "production"
+    ACCEPTED = "accepted"
+    PACKED = "packed"
+    SHIPPED = "shipped"
+
+
+GOODS_STATE_LABELS = {
+    GoodsState.PRODUCTION: "В производстве",
+    GoodsState.ACCEPTED: "Принято складом",
+    GoodsState.PACKED: "Упаковано",
+    GoodsState.SHIPPED: "Отгружено",
+}
+
+
+class MoveKind(str, Enum):
+    ACCEPT = "accept"
+    PACK = "pack"
+    # Возврат упакованного на склад: «вернуть на склад» строки отправки, отмена отправки.
+    UNPACK = "unpack"
+    SHIP = "ship"
+    # Откат назад руками руководителя, всегда с причиной.
+    CORRECTION = "correction"
+
+
+MOVE_KIND_LABELS = {
+    MoveKind.ACCEPT: "Принято складом",
+    MoveKind.PACK: "Упаковано",
+    MoveKind.UNPACK: "Возврат на склад",
+    MoveKind.SHIP: "Отгружено",
+    MoveKind.CORRECTION: "Откат",
+}
+
+# Какой ход из какого состояния в какое ведёт (та же таблица — CHECK журнала в миграции 0111).
+MOVE_ROUTES: dict[MoveKind, frozenset[tuple[GoodsState, GoodsState]]] = {
+    MoveKind.ACCEPT: frozenset({(GoodsState.PRODUCTION, GoodsState.ACCEPTED)}),
+    MoveKind.PACK: frozenset({(GoodsState.ACCEPTED, GoodsState.PACKED)}),
+    MoveKind.UNPACK: frozenset({(GoodsState.PACKED, GoodsState.ACCEPTED)}),
+    MoveKind.SHIP: frozenset({(GoodsState.PACKED, GoodsState.SHIPPED)}),
+    MoveKind.CORRECTION: frozenset({
+        (GoodsState.SHIPPED, GoodsState.PACKED),
+        (GoodsState.PACKED, GoodsState.ACCEPTED),
+        (GoodsState.ACCEPTED, GoodsState.PRODUCTION),
+    }),
+}
+
+
+@dataclass(frozen=True)
+class GoodsRegister:
+    """Штуки одной КБ по состояниям. `*_total` — сколько всего дошло до состояния (и дальше), из них выводится,
+    сколько стоит в каждом сейчас. Этапы лестницы: принято ≥ нужно, упаковано ≥ нужно, отгружено ≥ нужно."""
+
+    needed: Decimal
+    accepted_total: Decimal
+    packed_total: Decimal
+    shipped_total: Decimal
+    delivered: Decimal | None = None
+
+    @property
+    def in_production(self) -> Decimal:
+        """Ещё не принято складом (до тиража)."""
+        return max(self.needed - self.accepted_total, Decimal("0"))
+
+    @property
+    def waiting(self) -> Decimal:
+        """Сдано цехом, склад ещё не принял (None — сданное не считалось)."""
+        if self.delivered is None:
+            return Decimal("0")
+        return max(self.delivered - self.accepted_total, Decimal("0"))
+
+    @property
+    def accepted(self) -> Decimal:
+        """Лежит на складе ГП, не упаковано."""
+        return self.accepted_total - self.packed_total
+
+    @property
+    def packed(self) -> Decimal:
+        """Упаковано в отправки, ещё не уехало."""
+        return self.packed_total - self.shipped_total
+
+    @property
+    def shipped(self) -> Decimal:
+        return self.shipped_total
+
+
+@dataclass(frozen=True)
+class MoveContext:
+    """Кто и почему меняет остаток ГП: без него счётчики строки ГП не меняются (`balance_moves`)."""
+
+    actor: str
+    occurred_at: datetime
+    actor_id: UUID | None = None
+    shipment_id: UUID | None = None
+    reason: str = ""
+    # Ход назад — откат руководителя (CORRECTION); без флага упакованное возвращается на склад обычным UNPACK.
+    correction: bool = False
+    # Ключ повтора: id ходов выводятся из него, повтор той же команды не пишет журнал второй раз.
+    id_seed: UUID | None = None
+
+
+@dataclass(frozen=True)
+class GoodMove:
+    id: UUID
+    finished_good_id: UUID
+    project_key: str
+    item_index: str
+    kind: MoveKind
+    quantity: Decimal
+    from_state: GoodsState
+    to_state: GoodsState
+    actor: str
+    occurred_at: datetime
+    shipment_id: UUID | None = None
+    actor_id: UUID | None = None
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not Decimal(self.quantity) > 0:
+            raise ShippingValidationError("Ход готовой продукции — только положительное количество")
+        if (self.from_state, self.to_state) not in MOVE_ROUTES[self.kind]:
+            raise ShippingValidationError(f"Ход «{MOVE_KIND_LABELS[self.kind]}» не ведёт из «{GOODS_STATE_LABELS[self.from_state]}» в «{GOODS_STATE_LABELS[self.to_state]}»")
+        if self.kind is MoveKind.CORRECTION and not str(self.reason or "").strip():
+            raise ShippingValidationError("Откат без причины не записывается")
+
+
+def balance_moves(
+    before: FinishedGood | None, after: FinishedGood, context: MoveContext | None, project_key: str,
+) -> tuple[GoodMove, ...]:
+    """Ходы журнала, которые объясняют разницу счётчиков строки ГП `before` → `after`.
+
+    Вперёд: принято (+accepted), упаковано (+shipped), отгружено (+sent). Назад: отгружено → упаковано (−sent) и
+    принято → в производство (−accepted) — только откатом руководителя; упаковано → на склад (−shipped) — возврат
+    отбора, при откате — ход отката. Счётчики изменились, а контекста нет — отказ: остаток ГП без журнала не меняется.
+    """
+    zero = Decimal("0")
+    old = (before.accepted, before.shipped, before.sent) if before is not None else (zero, zero, zero)
+    accepted, packed, shipped = (after.accepted - old[0], after.shipped - old[1], after.sent - old[2])
+    if not (accepted or packed or shipped):
+        return ()
+    if context is None:
+        raise ShippingValidationError("Остаток готовой продукции меняется только с записью в журнал ГП")
+    if (accepted < 0 or shipped < 0) and not context.correction:
+        raise ShippingValidationError("Назад по состояниям ГП — только откат руководителя с причиной")
+    steps: list[tuple[MoveKind, Decimal, GoodsState, GoodsState]] = []
+    if accepted > 0:
+        steps.append((MoveKind.ACCEPT, accepted, GoodsState.PRODUCTION, GoodsState.ACCEPTED))
+    if packed > 0:
+        steps.append((MoveKind.PACK, packed, GoodsState.ACCEPTED, GoodsState.PACKED))
+    if shipped > 0:
+        steps.append((MoveKind.SHIP, shipped, GoodsState.PACKED, GoodsState.SHIPPED))
+    if shipped < 0:
+        steps.append((MoveKind.CORRECTION, -shipped, GoodsState.SHIPPED, GoodsState.PACKED))
+    if packed < 0:
+        kind = MoveKind.CORRECTION if context.correction else MoveKind.UNPACK
+        steps.append((kind, -packed, GoodsState.PACKED, GoodsState.ACCEPTED))
+    if accepted < 0:
+        steps.append((MoveKind.CORRECTION, -accepted, GoodsState.ACCEPTED, GoodsState.PRODUCTION))
+    moves = []
+    for kind, quantity, source, target in steps:
+        move_id = uuid5(context.id_seed, f"{after.id}:{kind.value}:{source.value}") if context.id_seed else uuid4()
+        moves.append(GoodMove(
+            id=move_id, finished_good_id=after.id, project_key=project_key, item_index=after.item_index,
+            kind=kind, quantity=quantity, from_state=source, to_state=target, actor=context.actor,
+            occurred_at=context.occurred_at, shipment_id=context.shipment_id, actor_id=context.actor_id,
+            reason=str(context.reason or "").strip(),
+        ))
+    return tuple(moves)
 
 
 ADDRESSEE_CONTACT_FIELDS = ("shipping_point", "contact", "phone")
@@ -497,6 +685,14 @@ class Shipment:
             raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО)")
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
 
+    def unship(self) -> Shipment:
+        """Откат «Отгружена»/«Закрыта» (руководитель, с причиной): груз снова на складе — «Упакована», а без PL/DN
+        «Собрана»; дата отгрузки снимается, набранное остаётся в отправке."""
+        if self.status not in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED}:
+            raise ShippingValidationError("Откатить можно только отгруженную или закрытую отправку")
+        status = ShipmentStatus.PACKED if self.pl_number else ShipmentStatus.ASSEMBLED
+        return replace(self, status=status, shipped_at=None, version=self.version + 1)
+
     def set_requested(self, line_id: UUID, quantity: Decimal) -> Shipment:
         """`shipItemSetQty_`: менеджер передумал — «Заказано» не ниже уже набранного, в любом статусе.
 
@@ -685,3 +881,14 @@ def total_gross(boxes: tuple[ShipmentBox, ...]) -> str:
             return ""
         total += Decimal(box.gross.replace(",", "."))
     return _plain(_round2(total)).replace(".", ",")
+
+
+def journal_balance(totals: dict[tuple[str, str], Decimal]) -> tuple[Decimal, Decimal, Decimal]:
+    """(принято всего, упаковано всего, отгружено всего) по суммам журнала {(из, в): штук}: сверка со счётчиками ГП."""
+    def total(source: GoodsState, target: GoodsState) -> Decimal:
+        return Decimal(totals.get((source.value, target.value), Decimal("0")))
+
+    accepted = total(GoodsState.PRODUCTION, GoodsState.ACCEPTED) - total(GoodsState.ACCEPTED, GoodsState.PRODUCTION)
+    packed = total(GoodsState.ACCEPTED, GoodsState.PACKED) - total(GoodsState.PACKED, GoodsState.ACCEPTED)
+    shipped = total(GoodsState.PACKED, GoodsState.SHIPPED) - total(GoodsState.SHIPPED, GoodsState.PACKED)
+    return accepted, packed, shipped

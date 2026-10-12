@@ -236,16 +236,18 @@ def kit_stage_facts(
         # Коробка последней операции в очереди ОТК (подтверждена мастером) или уже проверена ОТК.
         if box.operation_id == final:
             facts["qc"].add(kit_stage_key(task.project, task.item))
+    # Регистр ГП (0111): принято / упаковано / отгружено всего по КБ — счётчики, которые двигает только ход журнала ГП.
     for good in goods:
         key = kit_stage_key(good.project, good.item_index)
-        need = good.ordered or good.accepted
-        if good.accepted > 0 and good.accepted >= need:
+        register = good.register
+        need = good.ordered or register.accepted_total
+        if register.accepted_total > 0 and register.accepted_total >= need:
             facts["stock"].add(key)
-        # «Упаковано» - отобрано в отправки (`shipped`, растёт при «Упаковать»), ещё не уехало.
-        if good.shipped > 0 and good.shipped >= need:
+        # «Упаковано» - отобрано в отправки (растёт при «Упаковать»), уехавшее тоже было упаковано.
+        if register.packed_total > 0 and register.packed_total >= need:
             facts["packed"].add(key)
-        # Этап «Отгружено» — по уехавшему (`sent`), не по отобранному: упакованное ещё на складе (решено агентом 30.09).
-        if good.sent > 0 and good.sent >= need:
+        # Этап «Отгружено» — по уехавшему, не по отобранному: упакованное ещё на складе (решено агентом 30.09).
+        if register.shipped_total > 0 and register.shipped_total >= need:
             facts["shipped"].add(key)
 
     facts["planned"].update(key for key, value in placed.items() if value)
