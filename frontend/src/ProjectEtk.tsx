@@ -642,10 +642,12 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild, s
 /** «Генератор» сборки: форма и ОДНА кнопка. Нет ТК — «Создать» (сборка ЭТК и выдача сразу, как файл техкарты в
     SUPPLYMAP: отдельного шага утверждения там нет). ТК уже выдана — «Пересобрать» с подтверждением, новой ревизией.
     Служебное — свод материалов, удаление черновика, JSON-конфигурация — свёрнуто в «Ещё». */
-export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBuiltChange }: {
+export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBuiltChange, onOpenDrawing }: {
   card: ProjectTechcard; principal: Principal; onChange: (card: ProjectTechcard) => void; onDone?: (card: ProjectTechcard) => void;
   /** Черновик, по которому собрали и чей урок ещё не записан (хранит владелец вкладок). */
   builtId?: string; onBuiltChange?: (draftId: string) => void;
+  /** «Открыть чертёж» после «Построить чертёж» в генераторе. */
+  onOpenDrawing?: () => void;
 }) {
   const [configText, setConfigText] = useState("{}");
   const generatedConfig = useRef<Record<string, unknown> | null>(null);
@@ -715,7 +717,7 @@ export function GeneratorPane({ card, principal, onChange, onDone, builtId, onBu
   }
 
   return <div className="gen-pane">
-    <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} builtId={builtId} onBuiltChange={onBuiltChange}
+    <TcGenerator card={card} kit={kit.data} kitError={kit.error} busy={busy} onBuild={build} onDiscard={discardDraft} builtId={builtId} onBuiltChange={onBuiltChange} onOpenDrawing={onOpenDrawing}
       userId={principal.user.id} onConfig={(config) => { generatedConfig.current = config; }}
       /* JSON-конфигурация — служебная, только админу (владелец 29.09: «что это такое и зачем»). */
       more={!hasFullAccess(principal) ? undefined : <div className="build-config">
