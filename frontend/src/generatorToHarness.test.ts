@@ -126,10 +126,10 @@ it("draws a twisted pair on the segments both wires run through", () => {
   expect(document.diffPairs).toEqual([{ id: "gen-p1", wireIds: ["gen-w1", "gen-w2"], step: 25, amplitude: 7, variant: 1 }]);
   expect(routeOf(document, "gen-w1")).toEqual(routeOf(document, "gen-w2"));
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
-  // «Все вместе» больше двух — не пара: свивка не рисуется, сказано почему.
+  // «Все вместе» больше двух — не пара, а свитая группа (twistGroups.test.ts, twistDrawing.test.ts).
   const all = planFromGenerator(D, { ...twisted, twist: { ...twisted.twist, mode: "all", wires: null } });
   expect(all.pairs).toEqual([]);
-  expect(all.warnings.some((w) => w.includes("Свивка всех проводов вместе (4)"))).toBe(true);
+  expect(all.twistGroups).toEqual([plan.wires.map((w) => w.key)]);
 });
 
 it("falls back to a generic housing for a connector the library does not know, and flags it", async () => {

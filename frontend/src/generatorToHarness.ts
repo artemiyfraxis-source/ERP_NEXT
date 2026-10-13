@@ -19,6 +19,8 @@
 import { wireColorKnown, type ConnectorHousing } from "./connectorArt";
 import { JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
 import { coreColor } from "./pinoutCheck";
+import { planTwist } from "./twistGroups";
+import { withTwistNotes } from "./twistDrawing";
 import { applyEditorCommand, createConnector, createWire, type EditorCommand } from "./harness/editor/commands";
 import {
   createConnectorInstanceFromComponentTemplate,
@@ -101,6 +103,8 @@ export interface GeneratorDrawingPlan {
   readonly cables: readonly PlanCable[];
   /** Свитые пары — ключи проводов. */
   readonly pairs: readonly (readonly [string, string])[];
+  /** Свитые группы из трёх проводов и больше — ключи проводов (в редакторе пара только из двух: группа — надписью). */
+  readonly twistGroups?: readonly (readonly string[])[];
   readonly twistPitchMm: number | null;
   readonly coverings: readonly PlanCovering[];
   readonly warnings: readonly string[];
@@ -187,20 +191,12 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
   });
   if (wires.some((wire) => wire.lengthMm === null)) warnings.push("Длина по чертежу не задана — провода без длины.");
 
-  const pairs: Array<[string, string]> = [];
-  if (S.twist.enabled) {
-    const unitsOf = (group: number) => wires.filter((wire) => wire.group === group);
-    if (S.twist.mode === "pairs") {
-      gen.getTwistPairs().forEach(([a, b]) => {
-        const left = unitsOf(a), right = unitsOf(b);
-        for (let i = 0; i < Math.min(left.length, right.length); i++) pairs.push([left[i].key, right[i].key]);
-      });
-    } else {
-      const units = gen.twistWireIndices_().flatMap(unitsOf);
-      if (units.length === 2) pairs.push([units[0].key, units[1].key]);
-      else if (units.length > 2) warnings.push(`Свивка всех проводов вместе (${units.length}) — на чертеже пары только по два провода, свивка не показана.`);
-    }
-  }
+  // Свивка (twistGroups.ts): группа из двух — свитая пара, из трёх и больше — группа.
+  const twist = S.twist.enabled
+    ? planTwist(S.twist.mode, S.twist.mode === "pairs" ? gen.getTwistPairs() : [gen.twistWireIndices_()],
+      (group) => wires.filter((wire) => wire.group === group).map((wire) => wire.key))
+    : { pairs: [], groups: [] };
+  const pairs = twist.pairs;
 
   const coverings: PlanCovering[] = [];
   connectors.forEach((c) => {
@@ -227,7 +223,7 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
       coverings.push({ kind: "wrap", name: comp.art || comp.name, lengthMm: positive(slot.len), coveringKind: slot.kind === "braid" ? "braid" : "tape" });
     });
   }
-  return { connectors, wires, cables, pairs, twistPitchMm: positive(S.twist.pitch), coverings, warnings };
+  return { connectors, wires, cables, pairs, ...(twist.groups.length ? { twistGroups: twist.groups } : {}), twistPitchMm: positive(S.twist.pitch), coverings, warnings };
 }
 
 // ── Разъём по артикулу: библиотека компонентов или свободный корпус ─────────────────────────────────────────────────
@@ -577,6 +573,10 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       warnings.push("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
     }
   }
+
+  const twisted = withTwistNotes(doc, plan);
+  doc = twisted.document;
+  warnings.push(...twisted.warnings);
 
   const document = JSON.parse(JSON.stringify(doc)) as HarnessDesignDocument;
   parseHarnessDesignDocument(document);

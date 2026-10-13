@@ -8,6 +8,7 @@
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
 import { markLabel, markSpecs, type MarkMat, type MarkRow, type MarkSpec } from "./tcGenMarks";
+import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 
 /** `art` — what the row actually uses (selects, gauge, terminals, ETK); `kd` — the КД article it replaced, display only. */
 export type Comp = { id: string; type: string; name: string; art: string; kd?: string; qty: number | string; length?: number };
@@ -97,7 +98,7 @@ export type GenState = {
   crimpCutManual: boolean;
   crimpCutSide: string;
   twist: {
-    enabled: boolean; mode: "pairs" | "all"; pairs: Array<{ a: string; b: string }>;
+    enabled: boolean; mode: "pairs" | "all"; pairs: TwistRow[];
     wires: number[] | null; pitch: string; z0: string; dia: string; diaManual: boolean;
   };
   spl: { enabled: boolean; count: string; wires: string; tut: string; tutMat: string; strip: string; fold: boolean };
@@ -882,9 +883,13 @@ export function makeGen(D: GenData, S: GenState) {
   // ── Свивка / лужение ──
   const twistWireIndices_ = () => (S.twist.wires === null ? activeWires_().map((_, i) => i) : S.twist.wires.filter((i) => i < activeWires_().length));
   const tinWireIndices_ = () => (S.tin.wires === null ? activeWires_().map((_, i) => i) : S.tin.wires.filter((i) => i < activeWires_().length));
-  function getTwistPairs() {
-    return S.twist.pairs.filter((p) => p.a !== "" && p.b !== "" && p.a !== p.b).map((p) => [Number(p.a), Number(p.b)] as [number, number]);
-  }
+  /** Пары и группы свивки (twistGroups.ts): позиции кабелей, в группе два и больше. */
+  const getTwistPairs = () => twistGroupsOf(S.twist.pairs, activeWires_().length);
+  /** Проверка строк свивки «Пары и группы» — стоп и предупреждения (twistGroups.ts). */
+  const twistProblems_ = () => (S.twist.enabled && S.twist.mode === "pairs"
+    ? twistGroupProblems(S.twist.pairs, activeWires_().map((w) => { const c = getCompById(w.compId); return c ? c.art || c.name : ""; }),
+      activeWires_().map(unitCount_))
+    : { error: "", warnings: [] as string[] });
   const getTwistSelectionCount = () => (S.twist.mode === "pairs" ? getTwistPairs().length : twistWireIndices_().length);
   function autoDetectTwistPairs() {
     const active = activeWires_();
@@ -1681,7 +1686,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (p <= 0) return;
     const manualD = parseDecimal_(tw.wireDia) || 0;
     const idx = new Set<number>();
-    if (tw.mode === "pairs") (tw.pairs || []).forEach((pr) => { idx.add(pr[0]); idx.add(pr[1]); });
+    if (tw.mode === "pairs") (tw.pairs || []).forEach((group) => group.forEach((i) => idx.add(i)));
     else (tw.wireIndices || []).forEach((i) => idx.add(i));
     wires.forEach((w, i) => {
       if (!idx.has(i) || !(w.length > 0)) return;
@@ -1832,12 +1837,14 @@ export function makeGen(D: GenData, S: GenState) {
     const cfg = buildConfig();
     const ops = (cfg.ops as Array<{ templateId: string; type: string }>).filter((o) => o.templateId);
     if (!ops.length) return { cfg, error: "Выберите шаблон хотя бы для одной операции.", warnings: [] as string[] };
+    const twistCheck = twistProblems_();
+    if (twistCheck.error) return { cfg, error: twistCheck.error, warnings: [] };
     const hasCut = ops.some((o) => /^cutWire/.test(o.type));
     if (hasCut) {
       if (!S.advancedLength && !sharedLength()) return { cfg, error: 'Укажите длину кабелей (поле "Длина, мм" вверху секции).', warnings: [] };
       if (S.advancedLength && (cfg.wires as Array<{ length: number }>).some((w) => !w.length)) return { cfg, error: "Укажите длину для каждого кабеля.", warnings: [] };
     }
-    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_()) };
+    return { cfg: { ...cfg, ops, materialsSheet: S.materialsSheet }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_(), twistCheck.warnings) };
   }
 
   return {
@@ -1845,7 +1852,7 @@ export function makeGen(D: GenData, S: GenState) {
     cableRecOf_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_,
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
-    cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
+    cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
