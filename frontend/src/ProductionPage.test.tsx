@@ -369,12 +369,12 @@ it("corrects one output of a returned box and shows that it waits for the master
       },
     },
   ]));
-  const dialog = await screen.findByRole("dialog", { name: "Коробка исправлена" });
+  const dialog = await screen.findByRole("dialog", { name: "Коробка исправлена — подпишите заново" });
   expect(dialog).toHaveTextContent("000002-6");
   expect(screen.queryByRole("button", { name: "Доложить" })).not.toBeInTheDocument();
 });
 
-it("starts a later stage by typed box numbers and shows the new box number to write on it", async () => {
+it("starts a later stage by typed box numbers and shows the new box code to write on it", async () => {
   const requests: Array<{ path: string; body: unknown }> = [];
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
@@ -396,7 +396,10 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
       requests.push({ path, body: JSON.parse(String(init.body)) });
       if (path.endsWith("/work/start")) { current = session; return json({ session }); }
       current = null;
-      return json({ session, box: { id: "74000000-0000-0000-0000-000000000009", number: "000007-5" }, output_id: "x", defect: null });
+      return json({ session, box: {
+        id: "74000000-0000-0000-0000-000000000009", number: "000007-5", code: "180К.11·КБ1·22.09·ОП01·3",
+        task_id: later.id, operation_id: later.operations[0].id, item: "КБ1", operation_position: 2, quantity: "5", closed_at: "2026-09-22T10:00:00+03:00",
+      }, output_id: "x", defect: null });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -409,10 +412,13 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
   fireEvent.change(await screen.findByLabelText("Годные изделия"), { target: { value: "5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
 
-  const dialog = await screen.findByRole("dialog", { name: "Напишите на коробке" });
-  expect(dialog).toHaveTextContent("000007-5");
+  const dialog = await screen.findByRole("dialog", { name: "Подпишите коробку" });
+  expect(within(dialog).getByLabelText("Код коробки")).toHaveTextContent("180К.11·КБ1·22.09·ОП01·3");
+  expect(dialog).toHaveTextContent("В коробке 5 шт");
+  expect(dialog).toHaveTextContent("№ учёта 000007-5");
+  expect(within(dialog).getByRole("button", { name: "Печать этикетки" })).toBeEnabled();
   expect(requests[0].body).toEqual({ inputs: ["000001-8", "000002-6"], materials: [] });
-  fireEvent.click(screen.getByRole("button", { name: "Записал" }));
+  fireEvent.click(screen.getByRole("button", { name: "Подписал" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -648,7 +654,7 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
   expect(await screen.findByText(new RegExp(`${FEEDS}; подтверждённые мастером`))).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: /000001-8.*5 шт · этап 1/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /000002-6.*5 шт · этап 2/ })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Ввести номер вручную" }));
+  fireEvent.click(screen.getByRole("button", { name: "Ввести код вручную" }));
   expect(screen.getByLabelText("Номера коробок")).toBeInTheDocument();
   unmount();
 
@@ -847,7 +853,7 @@ it("starts by tapping ready box chips and keeps typed numbers as a fallback", as
   fireEvent.click(second);
   expect(second).toHaveAttribute("aria-pressed", "false");
   fireEvent.click(second);
-  fireEvent.click(screen.getByRole("button", { name: "Ввести номер вручную" }));
+  fireEvent.click(screen.getByRole("button", { name: "Ввести код вручную" }));
   fireEvent.change(screen.getByLabelText("Номера коробок"), { target: { value: "000099-4, 000011-1" } });
   fireEvent.click(screen.getByRole("button", { name: "Начать работу" }));
   await waitFor(() => expect(payload).toEqual({ inputs: ["000011-1", "000012-9", "000099-4"], materials: [] }));
@@ -998,11 +1004,11 @@ it("keeps «Начать» disabled with a reason until a box is chosen, then le
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
   const go = await screen.findByRole("button", { name: "Начать работу" });
   expect(go).toBeDisabled();
-  expect(screen.getByText("Выберите коробку или введите её номер")).toBeInTheDocument();
+  expect(screen.getByText("Выберите коробку или введите её код")).toBeInTheDocument();
   expect(screen.queryByLabelText("Номера коробок")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /000011-1/ }));
   expect(go).toBeEnabled();
-  expect(screen.queryByText("Выберите коробку или введите её номер")).not.toBeInTheDocument();
+  expect(screen.queryByText("Выберите коробку или введите её код")).not.toBeInTheDocument();
 });
 
 it("limits the «Годные» prefill by the taken input boxes", async () => {

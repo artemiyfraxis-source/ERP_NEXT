@@ -15,6 +15,7 @@ import { formatDay } from "./format";
 import { canAct } from "./navigation";
 import { isFinal } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
+import { BoxName, boxMatches } from "./BoxLabel";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<void>;
 
@@ -133,7 +134,7 @@ function QcRejectionReview({ rejections, busy, mutate }: {
     <div className="box-grid">{pending.map((item) => {
       const disposition = dispositions[item.id] ?? "Доработка";
       return <div className="production-box defect-box" key={item.id}>
-        <strong>{item.defect_number}</strong><span>{item.rejected} шт · {item.defect_character}</span><span>{item.defect_description}</span><small>{item.box_number ?? item.box_id} · {item.item}</small>
+        <strong>{item.defect_number}</strong><span>{item.rejected} шт · {item.defect_character}</span><span>{item.defect_description}</span><small>{item.box_code ?? item.box_number ?? item.box_id} · {item.item}</small>
         <label>Решение<select value={disposition} onChange={(event) => setDispositions((current) => ({ ...current, [item.id]: event.target.value as typeof disposition }))}><option>Доработка</option><option>Списание</option><option>Использовать как есть</option></select></label>
         <label>Акт / основание<input aria-label={`Акт ОТК для ${item.defect_number}`} value={acts[item.id] ?? ""} onChange={(event) => setActs((current) => ({ ...current, [item.id]: event.target.value }))} /></label>
         <button className="primary small" disabled={busy || !(acts[item.id] ?? "").trim()} onClick={() => void mutate(`qc-decision:${item.id}`, () => productionApi.decideQcRejection(item.id, disposition, acts[item.id]))}>Принять решение</button>
@@ -150,6 +151,7 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
   mutate: Mutate;
 }) {
   const [drafts, setDrafts] = useState<Record<string, { accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>>({});
+  const [query, setQuery] = useState("");
   const ready = boxes.filter((box) => {
     const task = tasks.find((item) => item.id === box.task_id);
     const operation = task?.operations.find((item) => item.id === box.operation_id);
@@ -163,12 +165,15 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
     const previous = current[box.id] ?? { accepted: box.available, rejected: "0", character: "", description: "", instrumentIds: [] };
     return { ...current, [box.id]: { ...previous, ...patch } };
   });
-  return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">{ready.length}</span></div>
-    <div className="box-grid">{ready.map((box) => {
+  const shown = ready.filter((box) => boxMatches(box, query));
+  return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">{ready.length}</span>
+    {ready.length > 3 && <input className="search box-search" type="search" aria-label="Найти коробку по коду" placeholder="Код с коробки или номер" value={query} onChange={(event) => setQuery(event.target.value)} />}</div>
+    {!shown.length && <div className="empty">Нет коробки с кодом «{query}» — проверьте код на коробке.</div>}
+    <div className="box-grid">{shown.map((box) => {
       const draft = drafts[box.id] ?? { accepted: box.available, rejected: "0", character: "", description: "", instrumentIds: [] };
       const totalMatches = Number(draft.accepted || 0) + Number(draft.rejected || 0) === Number(box.available);
       return <div className="production-box" key={`${box.id}:${box.version}`}>
-        <strong>{box.number}</strong><span>{box.item} · {box.available} шт</span>
+        <BoxName box={box} /><span>{box.item} · {box.available} шт</span>
         <label>Годные ОТК<input aria-label={`Годные ОТК ${box.number}`} type="number" min="0" step="1" value={draft.accepted} onChange={(event) => update(box, { accepted: event.target.value })} /></label>
         <label>Брак ОТК<input aria-label={`Брак ОТК ${box.number}`} type="number" min="0" step="1" value={draft.rejected} onChange={(event) => update(box, { rejected: event.target.value })} /></label>
         {Number(draft.rejected) > 0 && <><label>Характер<input value={draft.character} onChange={(event) => update(box, { character: event.target.value })} /></label><label>Описание<textarea value={draft.description} onChange={(event) => update(box, { description: event.target.value })} /></label></>}

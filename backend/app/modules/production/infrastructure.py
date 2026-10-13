@@ -56,8 +56,12 @@ from .traceability import (
     WorkInput,
     WorkSession,
     WorkStatus,
+    box_code_key,
+    box_code_prefix,
     issue_box_number,
     issue_defect_number,
+    next_box_code,
+    operator_short_code,
 )
 from .worklog import SUMMARY_KEYS, WorkEvent, WorkTimeEntry
 
@@ -254,6 +258,20 @@ class ProductionSequenceRow(Base):
     value: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class ProductionOperatorCodeRow(Base):
+    """Короткий код сотрудника в коде коробки («Б07», 0119): выдаётся при первой сдаче и больше не меняется,
+    UNIQUE среди сотрудников."""
+    __tablename__ = "production_operator_codes"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_production_operator_codes_code"),
+        CheckConstraint("code <> ''", name="ck_production_operator_codes_code"),
+    )
+    operator_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True,
+    )
+    code: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
 class ProductionPlanProjectRow(Base):
     __tablename__ = "production_plan_projects"
 
@@ -324,6 +342,7 @@ class ProductionBoxRow(Base):
             unique=True, sqlite_where=text("status = 'Открыта'"),
             postgresql_where=text("status = 'Открыта'"),
         ),
+        Index("ux_production_boxes_code", "code", unique=True),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     number: Mapped[str | None] = mapped_column(String(16), unique=True, nullable=True)
@@ -344,6 +363,8 @@ class ProductionBoxRow(Base):
     confirmed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     return_reason: Mapped[str] = mapped_column(Text(), nullable=False)
     rejected: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, server_default="0")
+    # Код для подписи маркером (0119): проект·КБ·дата·код сотрудника·номер, UNIQUE; NULL — коробка до 0119.
+    code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -1130,6 +1151,7 @@ class SqlAlchemyBoxRepository:
             confirmed_at=row.confirmed_at, confirmed_by=row.confirmed_by,
             return_reason=row.return_reason,
             rejected=row.rejected,
+            code=row.code,
         )
 
     def get(self, box_id: UUID) -> ProductionBox | None:
@@ -1158,6 +1180,54 @@ class SqlAlchemyBoxRepository:
         row.value += 1
         return issue_box_number(row.value)
 
+    def operator_code(self, operator_id: UUID) -> str:
+        """Код сотрудника для коробки: выданный раньше, иначе новый (буква фамилии + табельный или свободный номер)."""
+        held = self.session.get(ProductionOperatorCodeRow, operator_id)
+        if held is not None:
+            return held.code
+        user = self.session.get(IdentityUserRow, operator_id)
+        taken = self.session.scalars(select(ProductionOperatorCodeRow.code)).all()
+        code = operator_short_code(user.name if user else "", user.personnel_number if user else "", taken)
+        self.session.add(ProductionOperatorCodeRow(operator_id=operator_id, code=code))
+        self.session.flush()
+        return code
+
+    def reserve_code(self, *, project: str, item: str, operator_id: UUID, day: date) -> str:
+        """Код новой коробки. Зовётся после reserve_number: замок строки серии номеров (FOR UPDATE) держит
+        выдачу кодов по очереди, а UNIQUE на коде не даст двум коробкам один код и без него."""
+        prefix = box_code_prefix(project, item, day, self.operator_code(operator_id))
+        existing = self.session.scalars(
+            select(ProductionBoxRow.code).where(ProductionBoxRow.code.startswith(f"{prefix}·", autoescape=True))
+        ).all()
+        return next_box_code(prefix, (code for code in existing if code))
+
+    def by_code(self, text: str) -> list[ProductionBox]:
+        """Коробки, чей код совпадает с введённым без учёта регистра, пробелов и разделителей."""
+        key = box_code_key(text)
+        if not key:
+            return []
+        exact = self.session.scalar(select(ProductionBoxRow).where(ProductionBoxRow.code == str(text).strip()).limit(1))
+        if exact is not None:
+            return [self._domain(exact)]
+        rows = self.session.scalars(select(ProductionBoxRow).where(ProductionBoxRow.code.is_not(None)))
+        return [self._domain(row) for row in rows if box_code_key(row.code) == key]
+
+    def search(self, text: str, limit: int = 200) -> list[ProductionBox]:
+        """Поиск коробки: часть кода (без учёта разделителей) или номера."""
+        key = box_code_key(text)
+        if not key:
+            return []
+        rows = self.session.scalars(
+            select(ProductionBoxRow).order_by(ProductionBoxRow.created_at.desc(), ProductionBoxRow.id.desc())
+        )
+        found = []
+        for row in rows:
+            if key in box_code_key(row.code or "") or key in box_code_key(row.number or ""):
+                found.append(self._domain(row))
+                if len(found) >= limit:
+                    break
+        return found
+
     def save(self, box: ProductionBox) -> None:
         row = self.session.get(ProductionBoxRow, box.id)
         if row is None:
@@ -1168,7 +1238,7 @@ class SqlAlchemyBoxRepository:
             "operation_position", "operator_id", "quantity", "consumed",
             "reserved", "created_at", "closed_at", "closed_by",
             "confirmed_at", "confirmed_by", "return_reason",
-            "rejected",
+            "rejected", "code",
         ):
             setattr(row, name, getattr(box, name))
         row.status = box.status.value

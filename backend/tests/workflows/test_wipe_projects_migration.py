@@ -72,6 +72,8 @@ def database(tmp_path, monkeypatch):
             "ALTER TABLE production_plan_events ADD COLUMN from_value VARCHAR(64) NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE production_plan_events ADD COLUMN reason TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN stage_key VARCHAR(128)"))
+        # 0119: код коробки.
+        connection.execute(text("ALTER TABLE production_boxes ADD COLUMN code VARCHAR(64)"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
         # 0106: «нет на складе» on a kit line.
