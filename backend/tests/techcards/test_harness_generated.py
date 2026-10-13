@@ -16,6 +16,9 @@ from app.modules.techcards.harness.validate import validate_design
 from .test_harness_api import BASE, harness_api  # noqa: F401 — фикстура API чертежа
 
 SAMPLE = json.loads((Path(__file__).parent / "harness_generated_sample.json").read_text(encoding="utf-8"))
+# Чертёж заказчика «Жгут НВ4» (frontend/src/tcGenRealHarness.fixture.ts): 4 сростка и 4 хвоста по 60 мм — открытые концы
+# `freeEnd`; фронтенд-тест `tcGenRealHarness.test.ts` сверяет с ним свой результат.
+TAILS = json.loads((Path(__file__).parent / "harness_generated_tails_sample.json").read_text(encoding="utf-8"))
 
 
 def test_the_generated_drawing_passes_the_server_validator():
@@ -66,3 +69,30 @@ def test_build_saves_the_drawing_and_update_keeps_the_previous_version_in_histor
     assert all(row["closed"] for row in history["revisions"])
     hand_version = client.get(f"{BASE}/КБ1/revisions/{second}").json()
     assert hand_version["design"]["connectors"][0]["designation"] == "XS1-правка"
+
+
+def test_splices_with_tails_pass_the_validator_and_read_as_open_ends():
+    assert validate_design(deepcopy(TAILS)) == []
+    design, warnings = parse_design(deepcopy(TAILS))
+    assert warnings == []
+    tails = [wire for wire in design.wires if wire.end_b.kind == "free"]
+    assert [(wire.end_a.kind, wire.length_mm) for wire in tails] == [("junction", 60)] * 4
+    assert [len(junction.wire_ids) for junction in design.junctions] == [4, 4, 3, 3]
+    stored, _ = normalized(deepcopy(TAILS))
+    assert [wire["to"] for wire in stored["wires"] if "freeEnd" in wire["to"]] ==         [wire["to"] for wire in TAILS["wires"] if "freeEnd" in wire["to"]]
+    routed = {route["wireId"] for route in TAILS["physicalTopology"]["routes"]}
+    assert routed == {wire["id"] for wire in TAILS["wires"]}
+
+
+def test_an_open_end_must_be_a_point_off_any_contact_and_only_one_per_wire():
+    def with_end(change):
+        content = deepcopy(TAILS)
+        tail = next(wire for wire in content["wires"] if "freeEnd" in wire["to"])
+        change(tail)
+        return validate_design(content)
+
+    assert any("нет точки на схеме" in error for error in with_end(lambda wire: wire["to"].update(freeEnd={"x": "a"})))
+    assert any("не может стоять на контакте" in error
+               for error in with_end(lambda wire: wire["to"].update(connectorId="gen-x1", contactId="gen-x1:contact:1")))
+    assert any("только один конец" in error
+               for error in with_end(lambda wire: wire.update({"from": {"freeEnd": {"x": 0, "y": 0}, "connectorId": "", "contactId": ""}})))

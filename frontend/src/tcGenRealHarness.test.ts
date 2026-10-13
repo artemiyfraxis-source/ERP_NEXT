@@ -1,10 +1,12 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { buildHarnessDocument, planFromGenerator, type ConnectorSource, type GeneratorDrawingPlan } from "./generatorToHarness";
-import { parseHarnessDesignDocument } from "./harness/editor/model";
+import { createFreeEndpoint, isFreeEndpoint, isJunctionEndpoint, parseHarnessDesignDocument } from "./harness/editor/model";
+import { openWireEndMetadata } from "./harness/editor/open-wire-ends";
+import tailsSample from "../../backend/tests/techcards/harness_generated_tails_sample.json";
 import { pinoutEnds, pinoutRecord, pinUnits, restorePinout, routingWarnings } from "./pinoutCheck";
 import { linkLayout } from "./PinoutLinks";
-import { assignPinJoined, leaveJoin, linkWires, spliceLabel } from "./tcGenSplices";
+import { assignPinJoined, leaveJoin, linkWires, setTail, spliceLabel } from "./tcGenSplices";
 import { complexByHand, initState, makeGen, updateEndpoint, type GenData, type GenState } from "./tcGenLogic";
 import { BARE, D, end, harness, id, R } from "./tcGenRealHarness.fixture";
 
@@ -102,23 +104,56 @@ it("keeps splices and tails in build_config.pinout and restores them on reopenin
   expect(back.tails).toEqual(S.tails);
 });
 
-it("«Построить чертёж»: splices become junctions of the drawing, wires go contact → junction with their own lengths", () => {
+const freeSources = (plan: GeneratorDrawingPlan) =>
+  Object.fromEntries(plan.connectors.map((c) => [c.key, { kind: "free", contactCount: null, libraryCode: null } as ConnectorSource]));
+
+it("«Построить чертёж»: splices become junctions, tails — open ends of their own length, no warnings about either", () => {
   const S = harness(D);
   const plan = planFromGenerator(D, S);
   expect(plan.wires.map((w) => `${w.mark} ${w.from.pin}→${w.to.pin}`)).toEqual(["НВ4 0,2 белый 2→5", "НВ4 0,2 зеленый 3→4", "НВ4 0,2 желтый 4→3"]);
-  expect(plan.splices!.map((sp) => `${sp.label}:${sp.wires.map((w) => `${w.side}${w.end.pin}`).join(",")}`))
-    .toEqual(["С1:A1,B1,B2", "С2:A2,B3,B2", "С3:A1,A1", "С4:A2,A2"]);
-  expect(plan.warnings.filter((w) => w.includes("хвост"))).toHaveLength(4);
-  const sources = Object.fromEntries(plan.connectors.map((c) => [c.key, { kind: "free", contactCount: null, libraryCode: null } as ConnectorSource]));
-  const drawing = buildHarnessDocument(plan as GeneratorDrawingPlan, sources);
-  expect(drawing.warnings.filter((w) => w.includes("узел"))).toEqual([]);
-  // С1 и С2 (провод 0,5 и провода 0,2 к контактам) — узлы; С3 и С4 сводят по два контакта — их контакты соединены проводом.
-  expect(drawing.document.junctions.map((j) => j.wireIds.length)).toEqual([3, 3]);
-  expect(drawing.warnings.filter((w) => w.includes("два провода"))).toHaveLength(2);
-  expect(drawing.wires).toBe(11);
+  expect(plan.splices!.map((sp) => `${sp.label}:${sp.wires.map((w) => `${w.side}${w.end.pin}`).join(",")}+${sp.tails.map((t) => t.lengthMm).join(",")}`))
+    .toEqual(["С1:A1,B1,B2+60", "С2:A2,B3,B2+60", "С3:A1,A1+60", "С4:A2,A2+60"]);
+  const drawing = buildHarnessDocument(plan, freeSources(plan));
+  expect(drawing.warnings.filter((w) => /хвост|сросток|свободный конец|два провода|узел|без трассы/i.test(w))).toEqual([]);
+  // Четыре узла: С1 и С2 — провод 0,5, провода 0,2 к контактам и хвост; С3 и С4 — два контакта и хвост.
+  expect(drawing.document.junctions.map((j) => j.wireIds.length)).toEqual([4, 4, 3, 3]);
+  expect(drawing.wires).toBe(17);
   expect(drawing.connectors).toBe(6);
   expect(() => parseHarnessDesignDocument(drawing.document)).not.toThrow();
-  const toJunction = drawing.document.wires.filter((w) => "junctionId" in w.from || "junctionId" in w.to);
-  expect(toJunction.map((w) => w.lengthMm).sort()).toEqual([150, 150, 160, 160, 160, 180]);
-  expect(toJunction.find((w) => w.lengthMm === 180)).toBeTruthy();
+  const tails = drawing.document.wires.filter((w) => isFreeEndpoint(w.to));
+  expect(tails.map((w) => [w.lengthMm, isJunctionEndpoint(w.from)])).toEqual([[60, true], [60, true], [60, true], [60, true]]);
+  const toJunction = drawing.document.wires.filter((w) => !isFreeEndpoint(w.to) && (isJunctionEndpoint(w.from) || isJunctionEndpoint(w.to)));
+  expect(toJunction.map((w) => w.lengthMm).sort()).toEqual([150, 150, 150, 150, 150, 150, 160, 160, 160, 180]);
+  // Чертёж: у каждого провода трасса; хвост — участок от узла сростка до свободного конца, подпись — его длина.
+  const topology = drawing.document.physicalTopology!;
+  expect(drawing.document.wires.every((w) => topology.routes.some((r) => r.wireId === w.id))).toBe(true);
+  for (const tail of tails) {
+    const route = topology.routes.find((r) => r.wireId === tail.id)!;
+    const segment = topology.segments.find((s) => s.id === route.steps[0].segmentId)!;
+    expect(topology.nodes.find((n) => n.id === segment.to)!.connectorId).toBeUndefined();
+    expect(openWireEndMetadata(tail)).toEqual({ spliceFrom: "true", openTo: "60 мм" });
+  }
+  expect(drawing.document).toEqual(tailsSample);
+});
+
+it("a tail straight from a contact (no splice) is drawn as a wire into an open end", () => {
+  let S = harness(D);
+  S = setTail(D, S, end(R.w2, 0, "B"));
+  const plan = planFromGenerator(D, S);
+  expect(plan.tails!.map((t) => `${t.mark} ${t.side}${t.end.pin} ${t.lengthMm}`)).toEqual(["НВ4 0,2 белый A2 330"]);
+  expect(plan.wires).toHaveLength(2);
+  const drawing = buildHarnessDocument(plan, freeSources(plan));
+  const wire = drawing.document.wires.find((w) => isFreeEndpoint(w.to) && !isJunctionEndpoint(w.from))!;
+  expect(wire.lengthMm).toBe(330);
+  expect(drawing.document.physicalTopology!.routes.some((r) => r.wireId === wire.id)).toBe(true);
+  expect(drawing.warnings.filter((w) => /хвост|без трассы|распиновка/.test(w))).toEqual([]);
+});
+
+it("the editor model keeps an open end: one per wire, parsed back with its point", () => {
+  const drawing = buildHarnessDocument(planFromGenerator(D, harness(D)), freeSources(planFromGenerator(D, harness(D))));
+  const tail = drawing.document.wires.find((w) => isFreeEndpoint(w.to))!;
+  const parsed = parseHarnessDesignDocument(JSON.parse(JSON.stringify(drawing.document)));
+  expect(parsed.wires.find((w) => w.id === tail.id)!.to).toEqual(tail.to);
+  const both = { ...drawing.document, wires: drawing.document.wires.map((w) => (w.id === tail.id ? { ...w, from: createFreeEndpoint({ x: 0, y: 0 }) } : w)) };
+  expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(both)))).toThrow(/только один конец/);
 });

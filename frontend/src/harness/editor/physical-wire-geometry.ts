@@ -5,6 +5,19 @@ import { coveringKind, coveringRoute, resolvedCoveringSpan, trimPolyline } from 
 import { hasPipeBundleProjection, pipeBundleDisplaySamples } from "./pipe-bundle-projection";
 import { drawingBendRadius, drawingRouteHitPoints } from "./drawing-route-path";
 import { physicalTwistedPairPath } from "./drawing-twisted-pair";
+import { physicalNodePoint } from "./physical-ports";
+
+/** ERP: a wire end with no contact on the drawing (a splice or an open «хвост») is the end node of its physical route. */
+export function physicalRouteEndPoint(document: HarnessDesignDocument, wireId: string, end: "from" | "to"): Point | null {
+  const topology = document.physicalTopology;
+  const route = topology?.routes.find(r => r.wireId === wireId);
+  const step = end === "from" ? route?.steps[0] : route?.steps.at(-1);
+  const segment = step && topology!.segments.find(s => s.id === step.segmentId);
+  if (!step || !segment) return null;
+  const nodeId = (end === "from") !== step.reverse ? segment.from : segment.to;
+  const node = topology!.nodes.find(n => n.id === nodeId);
+  return node && !node.connectorId ? physicalNodePoint(document, node) : null;
+}
 
 /** Conductors follow the pipe centreline exactly; do not apply another angle snap. */
 export function physicalWirePoints(document: HarnessDesignDocument, wireId: string, start: Point, end: Point): Point[] | null {
