@@ -59,3 +59,18 @@ def test_marks_are_unique_and_was_points_at_a_known_series_or_mark():
         assert w["old_from"] in ("БД.ПРОВ", "СПР.КАБ Ø изоляции")
         assert w["source"].strip() and w["new"] is not None
         assert any(w["mark"].replace(" ", "").startswith(a) for a in aliases), w["mark"]
+
+
+def test_strand_lay_and_series_colours_are_filled_where_a_source_gives_them():
+    """T6 (13.10.2026): скрутка у НВ-4, ПВАМ, МС 15-11, ПуГВ, МГШВ — у каждого размера; цвета серий ПВАМ и ПуГВ.
+    МК 26-13 (скрутка, цвета) и цвета МГТФ первичного источника не имеют — остаются пустыми, а не додуманными."""
+    series = {s["key"]: s for s in _load()["series"]}
+    for key in ("НВ-4 (600 В)", "ПВАМ", "МС 15-11", "ПуГВ", "МГШВ"):
+        assert all(size["strands"] and size["strands"]["value"].strip() for size in series[key]["sizes"]), key
+    assert {size["strands"]["value"] for size in series["МС 15-11"]["sizes"]} == {
+        "многопроволочная, медь лужёная, класс 4 по ГОСТ 22483", "многопроволочная, медь лужёная, класс 5 по ГОСТ 22483"}
+    for key in ("ПВАМ", "ПуГВ"):
+        colors = series[key]["colors"]["value"]
+        assert len(colors) >= 11 and len(set(colors)) == len(colors) and "чёрный" in colors, key
+    assert series["МК 26-13"]["colors"] is None and all(size["strands"] is None for size in series["МК 26-13"]["sizes"])
+    assert series["МГТФ"]["colors"] is None

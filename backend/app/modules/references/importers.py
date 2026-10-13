@@ -1006,12 +1006,12 @@ class _MapTarget(_Target):
 
 # «Сечения AWG ↔ мм²»
 
-GAUGE_FIELDS = (GAUGE_KEY, "awg", "section_mm2", "conductor_d_mm", "strands")
+GAUGE_FIELDS = (GAUGE_KEY, "awg", "section_mm2", "conductor_d_mm")
 
 
 def _gauge_value(name: str, value: Any) -> Any:
     text = clean_value(name, value)
-    if not text or name in (GAUGE_KEY, "strands"):
+    if not text or name == GAUGE_KEY:
         return text
     if name == "awg":
         try:
@@ -1056,7 +1056,7 @@ class _GaugeTarget(_Target):
     @staticmethod
     def _fields(gauge: WireGauge, key: str) -> dict[str, str]:
         return {GAUGE_KEY: key, "awg": gauge.awg or "", "section_mm2": shown(gauge.section_mm2),
-                "conductor_d_mm": shown(gauge.conductor_d_mm), "strands": gauge.strands}
+                "conductor_d_mm": shown(gauge.conductor_d_mm)}
 
     def existing(self, keys):
         found, taken = {}, set()
@@ -1081,7 +1081,6 @@ class _GaugeTarget(_Target):
             gauge = WireGauge.create(
                 id=before.id if before else None, awg=values.get("awg") or "",
                 section_mm2=values.get("section_mm2") or "", conductor_d_mm=values.get("conductor_d_mm") or "",
-                strands=values.get("strands") or "",
                 position=before.position if before else max((item.position for item in self.gauges), default=-1) + 1,
             )
             validate_gauges([*others, gauge])

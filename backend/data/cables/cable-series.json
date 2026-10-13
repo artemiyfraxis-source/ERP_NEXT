@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "notes": "Серии многожильных кабелей («Кабели»): общие значения серии и размеры. Каждое значение — {value, source: URL}; чего нет в источнике, того здесь нет. Строки БД.ПРОВ наследуют только в ПУСТЫЕ ячейки (python -m app.workflows.cable_series --dry-run). Заполнено 12.10.2026 по тому, что нашлось: LiYCY — листинги RS Components по товару LAPP UNITRONIC LiYCY (не листок LAPP: официальной страницы с таблицей найти не удалось); H05RN-F — страницы Faber Kabel и Nassau National Cable. CCC/CCCU, PAAR-TRONIC-CY, Cat5e (Cabeus, ParLan, Teldor, Klotz, REXANT), DS1057, КДВВГ, FLEXICORE ещё не разобраны: их строки в базе уже несут значения со своими источниками.",
+  "notes": "Серии многожильных кабелей («Кабели»): общие значения серии и размеры. Каждое значение — {value, source: URL}; чего нет в источнике, того здесь нет. Строки БД.ПРОВ наследуют только в ПУСТЫЕ ячейки (python -m app.workflows.cable_series --dry-run). Заполнено 12.10.2026 по тому, что нашлось: LiYCY — листинги RS Components по товару LAPP UNITRONIC LiYCY (не листок LAPP: официальной страницы с таблицей найти не удалось); H05RN-F — страницы Faber Kabel и Nassau National Cable. 13.10.2026 (T6): CCC/CCCU — UL Style Page 2464 (300 В) и карточки brownbear.ru (Тайвань, бренд не назван — производителей нет); PAAR-TRONIC-CY — HELUKABEL; Cat5e — только стандарт категории; КДВВГ, КДВЭВГ — каталог «Паритет» (ТУ 3581-011-39793330-2009); FLEXICORE — flexicore.ru (ЛАПП Руссия); ШВВП, ПВС — ГОСТ 7399-97 (п. 8.2: −40 °C для исполнения У, −25 °C для остальных — поэтому «от» не задано); МКШ — Чувашкабель (ГОСТ 10348-80); RVVP, ШТЛЭ/ШТСПЭ — только «Категория» (классификатор экрана кладёт их в «Прочие»). Изоляция пишется «жилы / оболочка». Не заполнены (нет источника, который открывается, или марку делают разные заводы с разными ТУ): ПВВС, DS1057, КСПВГ/КСПЭВГ (Паритет и Breks), ШВПМ (Паритет и Калужский завод).",
   "series": [
     {
       "key": "LiYCY",
@@ -31,6 +31,190 @@
       "screen": null,
       "makers": [],
       "sizes": []
+    },
+    {
+      "key": "CCC",
+      "aliases": ["CCC"],
+      "standard": null,
+      "insulation": {"value": "полужёсткий ПВХ (жилы) / ПВХ серый (оболочка)", "source": "https://www.brownbear.ru/catalog/cable/kabel-kommunikatsionnyy/kabel_kommunikatsionnyy_15_provodov_ekranirovannyy_seryy.html"},
+      "voltage_v": {"value": 300, "source": "https://iq.ul.com/awm/stylepage.aspx?Style=2464"},
+      "temp_min_c": {"value": 0, "source": "https://www.brownbear.ru/catalog/cable/kabel-kommunikatsionnyy/kabel_kommunikatsionnyy_15_provodov_ekranirovannyy_seryy.html"},
+      "temp_max_c": {"value": 70, "source": "https://www.brownbear.ru/catalog/cable/kabel-kommunikatsionnyy/kabel_kommunikatsionnyy_15_provodov_ekranirovannyy_seryy.html"},
+      "screen": null,
+      "makers": [],
+      "sizes": []
+    },
+    {
+      "key": "CCCU",
+      "aliases": ["CCCU"],
+      "standard": null,
+      "insulation": {"value": "полужёсткий ПВХ (жилы) / ПВХ серый (оболочка)", "source": "https://www.brownbear.ru/catalog/cable/kabel-kommunikatsionnyy/kabel_kommunikatsionnyy_2_provoda_26_awg_bukhta_50m_neekranirovannyy_seryy.html"},
+      "voltage_v": {"value": 300, "source": "https://iq.ul.com/awm/stylepage.aspx?Style=2464"},
+      "temp_min_c": {"value": 0, "source": "https://www.brownbear.ru/catalog/cable/kabel-kommunikatsionnyy/kabel_kommunikatsionnyy_2_provoda_26_awg_bukhta_50m_neekranirovannyy_seryy.html"},
+      "temp_max_c": {"value": 70, "source": "https://www.brownbear.ru/catalog/cable/kabel-kommunikatsionnyy/kabel_kommunikatsionnyy_2_provoda_26_awg_bukhta_50m_neekranirovannyy_seryy.html"},
+      "screen": {"value": "нет", "source": "https://www.brownbear.ru/catalog/cable/kabel-kommunikatsionnyy/kabel_kommunikatsionnyy_2_provoda_26_awg_bukhta_50m_neekranirovannyy_seryy.html"},
+      "makers": [],
+      "sizes": []
+    },
+    {
+      "key": "PAAR-TRONIC-CY",
+      "aliases": ["PAAR-TRONIC-CY"],
+      "standard": {"value": "DIN VDE 0812", "source": "https://www.helu.com/vn-en/paar-tronic-cy-cables-emc-preferred-type-cu-screened.html"},
+      "insulation": {"value": "ПВХ (жилы) / ПВХ серый RAL 7032 (оболочка)", "source": "https://www.helu.com/vn-en/paar-tronic-cy-cables-emc-preferred-type-cu-screened.html"},
+      "voltage_v": {"value": 350, "source": "https://www.helu.com/vn-en/paar-tronic-cy-cables-emc-preferred-type-cu-screened.html"},
+      "temp_min_c": {"value": -30, "source": "https://www.helu.com/vn-en/paar-tronic-cy-cables-emc-preferred-type-cu-screened.html"},
+      "temp_max_c": {"value": 80, "source": "https://www.helu.com/vn-en/paar-tronic-cy-cables-emc-preferred-type-cu-screened.html"},
+      "screen": {"value": "оплётка из лужёной меди ≈85% поверх фольги", "source": "https://www.helu.com/vn-en/paar-tronic-cy-cables-emc-preferred-type-cu-screened.html"},
+      "makers": [],
+      "sizes": []
+    },
+    {
+      "key": "Cat5e",
+      "aliases": ["Cat5e", "F/UTP Cat 5e", "F/UTP 24AWG", "FTP 2PR 24AWG CAT5e", "FTP-4P-Cat.5e", "SFTP-4P-Cat.5e", "U/UTP 4х2х0,52мм Сat 5e", "ParLan F/UTP Cat5e", "ParLan Patch U/UTP Cat5e"],
+      "standard": {"value": "ANSI/TIA-568.2-D, категория 5e", "source": "https://www.cablinginstall.com/standards/article/16482213/drilling-down-on-the-ansi-tia-5682-d-cabling-standard"},
+      "insulation": null,
+      "voltage_v": null,
+      "temp_min_c": null,
+      "temp_max_c": null,
+      "screen": null,
+      "makers": [],
+      "sizes": []
+    },
+    {
+      "key": "КДВВГ",
+      "aliases": ["КДВВГ"],
+      "standard": {"value": "ТУ 3581-011-39793330-2009", "source": "https://paritet.su/catalog/kdvvg_liyy/"},
+      "insulation": {"value": "ПВХ пластикат (жилы) / ПВХ пластикат (оболочка)", "source": "https://paritet.su/catalog/kdvvg_liyy/"},
+      "voltage_v": {"value": 300, "source": "https://paritet.su/catalog/kdvvg_liyy/"},
+      "temp_min_c": {"value": -50, "source": "https://paritet.su/catalog/kdvvg_liyy/"},
+      "temp_max_c": {"value": 70, "source": "https://paritet.su/catalog/kdvvg_liyy/"},
+      "screen": {"value": "нет", "source": "https://paritet.su/catalog/kdvvg_liyy/"},
+      "makers": [{"value": "Паритет", "source": "https://paritet.su/catalog/kdvvg_liyy/"}],
+      "sizes": [
+        {"cores": 6, "section_mm2": "0,14", "outer_dia_mm": {"value": "4,4", "source": "https://paritet.su/catalog/kdvvg_liyy/"}}
+      ]
+    },
+    {
+      "key": "КДВЭВГ",
+      "aliases": ["КДВЭВГ", "КДЭВГ"],
+      "standard": {"value": "ТУ 3581-011-39793330-2009", "source": "https://paritet.su/catalog/kdvevg_liycy/"},
+      "insulation": {"value": "ПВХ пластикат (жилы) / ПВХ пластикат (оболочка)", "source": "https://paritet.su/catalog/kdvevg_liycy/"},
+      "voltage_v": {"value": 300, "source": "https://paritet.su/catalog/kdvevg_liycy/"},
+      "temp_min_c": {"value": -50, "source": "https://paritet.su/catalog/kdvevg_liycy/"},
+      "temp_max_c": {"value": 70, "source": "https://paritet.su/catalog/kdvevg_liycy/"},
+      "screen": {"value": "оплётка из лужёной меди, плотность 80%", "source": "https://paritet.su/catalog/kdvevg_liycy/"},
+      "makers": [{"value": "Паритет", "source": "https://paritet.su/catalog/kdvevg_liycy/"}],
+      "sizes": [
+        {"cores": 9, "section_mm2": "0,14", "outer_dia_mm": {"value": "6,1", "source": "https://paritet.su/catalog/kdvevg_liycy/"}},
+        {"cores": 6, "section_mm2": "0,14", "outer_dia_mm": {"value": "5,2", "source": "https://paritet.su/catalog/kdvevg_liycy/"}}
+      ]
+    },
+    {
+      "key": "FLEXICORE LiYCY",
+      "aliases": ["FLEXICORE LiYCY", "FLEXICORE® LiYCY"],
+      "standard": {"value": "ТР ТС 004/2011; ГОСТ 31565", "source": "https://flexicore.ru/products/flexicore-liycy"},
+      "insulation": {"value": "ПВХ (жилы) / ПВХ галечно-серый RAL 7032 (оболочка)", "source": "https://flexicore.ru/products/flexicore-liycy"},
+      "voltage_v": null,
+      "temp_min_c": {"value": -60, "source": "https://flexicore.ru/products/flexicore-liycy"},
+      "temp_max_c": {"value": 80, "source": "https://flexicore.ru/products/flexicore-liycy"},
+      "screen": {"value": "оплётка из лужёной меди", "source": "https://flexicore.ru/products/flexicore-liycy"},
+      "makers": [{"value": "FLEXICORE", "source": "https://flexicore.ru/products/flexicore-liycy"}],
+      "sizes": [
+        {"cores": 2, "section_mm2": "0,34", "outer_dia_mm": {"value": "4,8", "source": "https://flexicore.ru/products/flexicore-liycy"}},
+        {"cores": 3, "section_mm2": "0,25", "outer_dia_mm": {"value": "4,8", "source": "https://flexicore.ru/products/flexicore-liycy"}},
+        {"cores": 4, "section_mm2": "0,5", "outer_dia_mm": {"value": "5,9", "source": "https://flexicore.ru/products/flexicore-liycy"}},
+        {"cores": 6, "section_mm2": "0,34", "outer_dia_mm": {"value": "6,8", "source": "https://flexicore.ru/products/flexicore-liycy"}},
+        {"cores": 7, "section_mm2": "0,5", "outer_dia_mm": {"value": "7,2", "source": "https://flexicore.ru/products/flexicore-liycy"}}
+      ]
+    },
+    {
+      "key": "FLEXICORE 100 нг(А)-LS",
+      "aliases": ["FLEXICORE 100", "FLEXICORE® 100"],
+      "standard": {"value": "ТР ТС 004/2011", "source": "https://flexicore.ru/products/flexicore-100-nga-ls"},
+      "insulation": {"value": "ПВХ (жилы) / ПВХ чёрный RAL 9005 (оболочка)", "source": "https://flexicore.ru/products/flexicore-100-nga-ls"},
+      "voltage_v": {"value": "300/500", "source": "https://flexicore.ru/products/flexicore-100-nga-ls"},
+      "temp_min_c": {"value": -50, "source": "https://flexicore.ru/products/flexicore-100-nga-ls"},
+      "temp_max_c": {"value": 80, "source": "https://flexicore.ru/products/flexicore-100-nga-ls"},
+      "screen": null,
+      "makers": [],
+      "sizes": [
+        {"cores": 3, "section_mm2": "2,5", "outer_dia_mm": {"value": "9,4", "source": "https://flexicore.ru/products/flexicore-100-nga-ls"}}
+      ]
+    },
+    {
+      "key": "FLEXICORE 105 CY",
+      "aliases": ["FLEXICORE 105 CY", "FLEXICORE® 105 CY"],
+      "standard": {"value": "ТР ТС 004/2011", "source": "https://flexicore.ru/products/flexicore-105-cy-06-1-kv"},
+      "insulation": {"value": "ПВХ (жилы) / ПВХ серебристо-серый RAL 7000 (оболочка)", "source": "https://flexicore.ru/products/flexicore-105-cy-06-1-kv"},
+      "voltage_v": {"value": "600/1000", "source": "https://flexicore.ru/products/flexicore-105-cy-06-1-kv"},
+      "temp_min_c": {"value": -60, "source": "https://flexicore.ru/products/flexicore-105-cy-06-1-kv"},
+      "temp_max_c": {"value": 80, "source": "https://flexicore.ru/products/flexicore-105-cy-06-1-kv"},
+      "screen": {"value": "оплётка из лужёной меди", "source": "https://flexicore.ru/products/flexicore-105-cy-06-1-kv"},
+      "makers": [],
+      "sizes": []
+    },
+    {
+      "key": "ШВВП",
+      "aliases": ["ШВВП"],
+      "standard": {"value": "ГОСТ 7399-97", "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "insulation": {"value": "ПВХ (жилы) / ПВХ (оболочка)", "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "voltage_v": {"value": 380, "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "temp_min_c": null,
+      "temp_max_c": {"value": 40, "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "screen": null,
+      "makers": [],
+      "sizes": []
+    },
+    {
+      "key": "ПВС",
+      "aliases": ["ПВС"],
+      "standard": {"value": "ГОСТ 7399-97", "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "insulation": {"value": "ПВХ (жилы) / ПВХ (оболочка)", "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "voltage_v": {"value": 380, "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "temp_min_c": null,
+      "temp_max_c": {"value": 40, "source": "https://meganorm.ru/Data1/7/7216/index.htm"},
+      "screen": null,
+      "makers": [],
+      "sizes": []
+    },
+    {
+      "key": "МКШ",
+      "aliases": ["МКШ"],
+      "standard": {"value": "ГОСТ 10348-80", "source": "https://chuvashcable.ru/catalog/mksh/"},
+      "insulation": {"value": "ПВХ пластикат (жилы) / ПВХ пластикат (оболочка)", "source": "https://chuvashcable.ru/catalog/mksh/"},
+      "voltage_v": {"value": 500, "source": "https://chuvashcable.ru/catalog/mksh/"},
+      "temp_min_c": {"value": -50, "source": "https://chuvashcable.ru/catalog/mksh/"},
+      "temp_max_c": {"value": 70, "source": "https://chuvashcable.ru/catalog/mksh/"},
+      "screen": null,
+      "makers": [],
+      "sizes": [],
+      "category": {"value": "Контрольные / управления", "source": "https://chuvashcable.ru/catalog/mksh/"}
+    },
+    {
+      "key": "RVVP",
+      "aliases": ["RVVP", "РВВП"],
+      "standard": null,
+      "insulation": null,
+      "voltage_v": null,
+      "temp_min_c": null,
+      "temp_max_c": null,
+      "screen": null,
+      "makers": [],
+      "sizes": [],
+      "category": {"value": "Контрольные / управления", "source": "https://kulibin.su/catalog/razemy-konnektory-kabeli-klemmniki-shtekera/perekhodniki/ekranirovannyy-provod/kabel-ekranirovannyy-rvvp-16-x-0-3-mm.html"}
+    },
+    {
+      "key": "ШТЛЭ / ШТСПЭ",
+      "aliases": ["ШТЛЭ", "ШТСПЭ"],
+      "standard": {"value": "ТУ 16-505.386-78", "source": "https://optochip.org/vniikp/2/8/2/ТУ16-505.386-78"},
+      "insulation": null,
+      "voltage_v": null,
+      "temp_min_c": null,
+      "temp_max_c": null,
+      "screen": null,
+      "makers": [],
+      "sizes": [],
+      "category": {"value": "Коммуникационные многожильные", "source": "https://optochip.org/vniikp/2/8/2/ТУ16-505.386-78"}
     }
   ]
 }

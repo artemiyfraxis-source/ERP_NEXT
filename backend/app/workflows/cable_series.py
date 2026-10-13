@@ -4,8 +4,9 @@
     ERP_DATABASE_URL=... python -m app.workflows.cable_series --apply     # записать одной транзакцией + аудит
 
 Данные — `backend/data/cables/cable-series.json`: у каждого значения свой URL источника, чего в источнике нет, того в файле
-нет. Строка БД.ПРОВ относится к серии по началу марки (`aliases`). Пишутся ТОЛЬКО ПУСТЫЕ ячейки: стандарт, изоляция, экран,
-напряжение, температура, «Производители» (дополняются), а по размеру (число жил × сечение строки) — наружный Ø и AWG.
+нет. Строка БД.ПРОВ относится к серии по началу марки (`aliases`). Пишутся ТОЛЬКО ПУСТЫЕ ячейки: стандарт, изоляция (жилы /
+оболочка), экран, напряжение, температура, «Категория» (группа на экране «Кабели» — только у серий, которые классификатор
+экрана кладёт не туда), «Производители» (дополняются), а по размеру (число жил × сечение строки) — наружный Ø и AWG.
 Использованные URL дописываются в «Источник данных». Строки монтажных проводов (серии из hookup-wires.json) не трогаются.
 """
 
@@ -23,7 +24,7 @@ from pathlib import Path
 
 from app.modules.references.application import UnitOfWork, _audit, _search_text
 from app.modules.references.domain import TechOperationRecord, TechOperationTab
-from app.modules.references.wire_makers import MAKERS_FIELD, STANDARD_FIELD, join_makers, parse_makers
+from app.modules.references.wire_makers import CATEGORY_FIELD, MAKERS_FIELD, STANDARD_FIELD, join_makers, parse_makers
 from app.shared.clock import moscow_now
 from app.shared.identity import Actor
 
@@ -31,8 +32,13 @@ DATA_FILE = Path(__file__).resolve().parents[2] / "data" / "cables" / "cable-ser
 SOURCE_FIELD = "Источник данных"
 VALUE_CELLS = {  # series key → record cell
     "standard": STANDARD_FIELD, "insulation": "Изоляция", "screen": "Экран", "voltage_v": "Напряжение, В",
-    "temp_min_c": "Темп. от, °C", "temp_max_c": "Темп. до, °C",
+    "temp_min_c": "Темп. от, °C", "temp_max_c": "Темп. до, °C", "category": CATEGORY_FIELD,
 }
+# The «Кабели» groups — a literal copy of CATEGORIES in frontend/src/cableCategory.ts (a test keeps them equal).
+CATEGORIES = (
+    "Витая пара / Ethernet", "Шлейфы плоские", "Коммуникационные многожильные", "Контрольные / управления",
+    "Силовые", "USB / интерфейсные", "Коаксиальные / комбинированные", "Прочие",
+)
 
 
 class SeriesFileError(ValueError):
@@ -64,6 +70,9 @@ def load_series(path: Path = DATA_FILE) -> list[dict]:
         key = series.get("key", "?")
         for name in (*VALUE_CELLS, ):
             _given(series.get(name), f"{key}.{name}")
+        category = _given(series.get("category"), f"{key}.category")
+        if category and category[0] not in CATEGORIES:
+            raise SeriesFileError(f"{key}.category: «{category[0]}» — не группа экрана «Кабели»")
         for index, maker in enumerate(series.get("makers") or []):
             _given(maker, f"{key}.makers[{index}]")
         for size in series.get("sizes") or []:
@@ -83,11 +92,13 @@ def series_of(mark: str, series: list[dict]) -> dict | None:
     return best[1] if best else None
 
 
+_LEADING_NUMBER = re.compile(r"\s*(\d+(?:[.,]\d+)?)")
+
+
 def _same_number(a: object, b: object) -> bool:
-    try:
-        return float(str(a).replace(",", ".")) == float(str(b).replace(",", "."))
-    except ValueError:
-        return False
+    """The leading numbers are equal: «8 (4 пары)» is 8 cores, «0,50» is 0.5."""
+    first, second = _LEADING_NUMBER.match(str(a or "")), _LEADING_NUMBER.match(str(b or ""))
+    return bool(first and second) and float(first.group(1).replace(",", ".")) == float(second.group(1).replace(",", "."))
 
 
 def inherited(fields: dict[str, str], item: dict) -> tuple[dict[str, str], list[str]]:

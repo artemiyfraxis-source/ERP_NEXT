@@ -379,7 +379,7 @@ def _num(value) -> float | int | None:
 
 def _gauge_json(gauge: WireGauge, usage: int = 0) -> dict:
     return {"id": str(gauge.id), "awg": gauge.awg or "", "section_mm2": _num(gauge.section_mm2),
-            "conductor_d_mm": _num(gauge.conductor_d_mm), "strands": gauge.strands, "label": gauge.label, "wires": usage}
+            "conductor_d_mm": _num(gauge.conductor_d_mm), "label": gauge.label, "wires": usage}
 
 
 def _hookup_json(wire: HookupWire | None) -> dict | None:
@@ -459,14 +459,13 @@ def cables(
 class GaugePayload(BaseModel):
     awg: str = Field(default="", max_length=8)
     section_mm2: str = Field(min_length=1, max_length=32)
-    conductor_d_mm: str = Field(default="", max_length=32)
-    strands: str = Field(default="", max_length=64)
+    conductor_d_mm: str = Field(default="", max_length=32)  # an old client's «strands» is ignored (column dropped, 0114)
 
 
 def _save_gauge(gauge_id: UUID | None, payload: GaugePayload, principal: Principal, now: datetime, uow_factory) -> dict:
     gauge = _run_edit(lambda: save_gauge(SaveGaugeCommand(
         gauge_id=gauge_id, awg=payload.awg, section_mm2=payload.section_mm2, conductor_d_mm=payload.conductor_d_mm,
-        strands=payload.strands, actor=principal.actor, now=now,
+        actor=principal.actor, now=now,
     ), uow_factory()))
     return _gauge_json(gauge)
 
