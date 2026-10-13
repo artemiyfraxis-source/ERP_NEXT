@@ -9,7 +9,8 @@ import { usePhoneView } from "./phone-view";
  *  просмотр: поле с прокруткой и масштабом, без инструментов и панелей правки. */
 export default function HarnessEditor(props: HarnessDesignEditorProps) {
   const { documentsSource, projectId, harnessId } = props;
-  const phone = usePhoneView();
+  // Просмотр без инструментов — телефон, или его просит сам экран (Э4 в задании монтажника).
+  const phone = usePhoneView() || props.phoneView === true;
   const source = useMemo(() => documentsSource ?? serverDocumentsSource(projectId, harnessId), [documentsSource, projectId, harnessId]);
   return <div className={phone ? "harness-root harness-phone" : "harness-root"}>
     <HarnessDocumentsContext.Provider value={source}>
