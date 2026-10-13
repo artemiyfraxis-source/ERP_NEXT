@@ -6,7 +6,7 @@ import {
 } from "./api";
 import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
-import { openShippingForms } from "./shippingPrint";
+import { fetchBoxLabels, openBoxLabels, openShippingForms } from "./shippingPrint";
 import { formatDate } from "./format";
 import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
@@ -565,6 +565,11 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
     try { openShippingForms((await shippingApi.print(shipment.id, document)).forms); }
     catch (reason) { setPrintError(failureText(reason, "Не удалось подготовить печать")); }
   };
+  const printLabels = async () => {
+    setPrintError("");
+    try { openBoxLabels((await fetchBoxLabels(shipment.id)).labels); }
+    catch (reason) { setPrintError(failureText(reason, "Не удалось подготовить этикетки")); }
+  };
   const uploadUpd = (file: File | undefined) => {
     if (!file) return;
     void mutate(`upd:${shipment.id}`, async () => shippingApi.uploadUpd(shipment.id, shipment.version, await readFile(file)), "УПД приложена");
@@ -610,7 +615,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
       {canWarehouse && got && ACTIVE.includes(shipment.status) && <button type="button" className="primary" disabled={disabled} onClick={ship}>Отгрузить</button>}
       {canWarehouse && shipment.status === "Отгружена" && <button type="button" className="primary" disabled={disabled} onClick={() => void action("close", `Отгрузка закрыта: ${shipment.number}`)}>Закрыть</button>}
       {canWarehouse && shipment.status === "Новая" && <button type="button" className="secondary" disabled={disabled} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать со склада</button>}
-      {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" onClick={() => void print("dn")}>Печать DN</button></>}
+      {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" onClick={() => void print("dn")}>Печать DN</button><button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
       {canEdit && got && (ACTIVE.includes(shipment.status) || (shipment.pl_number && shipment.status === "Отгружена")) && !layout && <button type="button" className="secondary" disabled={disabled} onClick={() => setLayout(true)}>{shipment.pl_number ? "Перевыпустить" : "Сформировать отгрузочные"}</button>}
       {canEdit && open && <label className="secondary file-button">Загрузить УПД<input type="file" accept=".pdf,image/*" aria-label={`Загрузить УПД ${shipment.number}`} hidden onChange={(event) => { uploadUpd(event.target.files?.[0]); event.target.value = ""; }} /></label>}
       <span className="ship-actions-end">

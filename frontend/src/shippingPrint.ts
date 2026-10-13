@@ -3,7 +3,7 @@
 // таблица «GRN | № КБ | ОПИСАНИЕ | кол-во | Ед. изм.» в чёрной рамке, пустые строки для дописки от руки,
 // «Штамп / подпись кладовщика». Данные строит backend (shipping/documents.py); печать — через тот же
 // скрытый iframe, что и остальные бланки (print.ts → openPrintHtml).
-import type { ShippingForm } from "./api";
+import { api, type ShippingForm } from "./api";
 import { openPrintHtml } from "./print";
 
 function escapeHtml(value: string | undefined): string {
@@ -88,4 +88,73 @@ export function buildShippingFormsHtml(forms: ShippingForm[]): string {
 
 export function openShippingForms(forms: ShippingForm[]): void {
   openPrintHtml(buildShippingFormsHtml(forms));
+}
+
+/** Этикетка одного короба (shipping/documents.py `BoxLabel`): пустые вес и габариты — короб не измерен. */
+export interface BoxLabel {
+  shipper: string;
+  consignee: string;
+  address: string;
+  project: string;
+  pl_number: string;
+  place: string;
+  items: { item_index: string; quantity: string; unit: string }[];
+  net: string;
+  dims: string;
+}
+
+export function fetchBoxLabels(shipmentId: string): Promise<{ labels: BoxLabel[] }> {
+  return api<{ labels: BoxLabel[] }>(`/api/shipping/shipments/${shipmentId}/labels`);
+}
+
+// Этикетка короба — A6, по одной на лист: образца у владельца нет, раскладка своя. Сверху отправитель, крупно получатель
+// и адрес, проект и PL, «Упаковка N/M» — самое крупное (его ищут глазами на складе ТК), состав КБ, внизу вес и габариты.
+const LABEL_CSS = `
+  @page { size: A6 portrait; margin: 5mm; }
+  body { margin: 0; color: #000; font-family: Calibri, Carlito, Arial, sans-serif; font-size: 10pt; }
+  .label { page-break-after: always; border: 1.5px solid #000; padding: 3mm; min-height: 128mm; box-sizing: border-box; display: flex; flex-direction: column; gap: 2mm; }
+  .label:last-child { page-break-after: auto; }
+  .caption { font-size: 7.5pt; text-transform: uppercase; letter-spacing: .04em; }
+  .shipper { font-weight: bold; border-bottom: 1px solid #000; padding-bottom: 1.5mm; }
+  .consignee { font-size: 13pt; font-weight: bold; line-height: 1.15; }
+  .address { line-height: 1.2; }
+  .refs { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid #000; border-bottom: 1px solid #000; }
+  .refs > div { padding: 1mm 0; }
+  .refs > div + div { border-left: 1px solid #000; padding-left: 2mm; }
+  .refs strong { display: block; font-size: 11pt; }
+  .place { font-size: 22pt; font-weight: bold; text-align: center; padding: 1mm 0; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #000; padding: 1px 3px; text-align: left; }
+  th { font-weight: bold; font-size: 8.5pt; }
+  td.qty, th.qty { text-align: right; font-variant-numeric: tabular-nums; width: 22%; }
+  td.unit, th.unit { width: 14%; }
+  .measures { margin-top: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 2mm; }
+  .measures strong { display: block; font-size: 12pt; min-height: 5.5mm; border-bottom: 1px solid #000; }
+`;
+
+function labelHtml(label: BoxLabel): string {
+  const items = label.items.map((item) =>
+    `<tr><td>${escapeHtml(item.item_index)}</td><td class="qty">${escapeHtml(item.quantity)}</td><td class="unit">${escapeHtml(item.unit)}</td></tr>`).join("");
+  return `<section class="label" aria-label="${escapeHtml(label.place)}">` +
+    `<div class="shipper"><span class="caption">Отправитель</span><br>${escapeHtml(label.shipper)}</div>` +
+    `<div><span class="caption">Получатель</span><div class="consignee">${escapeHtml(label.consignee)}</div>` +
+    `<div class="address">${escapeHtml(label.address)}</div></div>` +
+    `<div class="refs"><div><span class="caption">Проект</span><strong>${escapeHtml(label.project)}</strong></div>` +
+    `<div><span class="caption">Упаковочная ведомость</span><strong>${escapeHtml(label.pl_number)}</strong></div></div>` +
+    `<div class="place">${escapeHtml(label.place)}</div>` +
+    `<table><thead><tr><th>№ КБ</th><th class="qty">кол-во</th><th class="unit">ед.</th></tr></thead><tbody>${items}</tbody></table>` +
+    `<div class="measures"><div><span class="caption">Вес нетто, кг</span><strong class="net">${escapeHtml(label.net)}</strong></div>` +
+    `<div><span class="caption">Габариты, см</span><strong class="dims">${escapeHtml(label.dims)}</strong></div></div>` +
+    `</section>`;
+}
+
+/** HTML печати этикеток: каждая — отдельный лист A6. */
+export function buildBoxLabelsHtml(labels: BoxLabel[]): string {
+  const title = labels[0] ? `Этикетки ${labels[0].pl_number}` : "Этикетки";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>` +
+    `<style>${LABEL_CSS}</style></head><body>${labels.map(labelHtml).join("")}</body></html>`;
+}
+
+export function openBoxLabels(labels: BoxLabel[]): void {
+  openPrintHtml(buildBoxLabelsHtml(labels));
 }
