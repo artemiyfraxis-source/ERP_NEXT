@@ -28,7 +28,7 @@ from .application import (
     pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
     ship_project, unpick_line, update_documents,
 )
-from .documents import build_delivery_note, build_packing_lists
+from .documents import build_box_labels, build_delivery_note, build_packing_lists, packer_short
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment,
     ShippingValidationError, UpdType, total_gross,
@@ -561,11 +561,31 @@ def print_documents(
         # Заказчик DN — как в реестре отгрузок: из заявки, иначе из позиции ГП, иначе получатель.
         goods = (uow.goods.get(line.finished_good_id) for line in shipment.lines)
         customer = shipment.customer or next((good.customer for good in goods if good and good.customer), "") or shipment.receiver
+        # «Штамп / подпись кладовщика» — кто упаковал (владелец 13.10.2026), не менеджер отправки.
+        packer = packer_short(uow.shipments.packer(shipment_id))
     try:
-        forms = build_packing_lists(shipment) if document == "pl" else [build_delivery_note(shipment, customer)]
+        forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer)]
     except ShippingValidationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {"forms": [form.to_dict() for form in forms]}
+
+
+@router.get("/shipments/{shipment_id}/labels")
+def print_labels(
+    shipment_id: UUID,
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """«Печать этикеток»: этикетка на каждый короб по актуальным данным отправки."""
+    with uow_factory() as uow:
+        shipment = uow.shipments.get(shipment_id)
+        if shipment is None:
+            raise HTTPException(status_code=404, detail="Отгрузка не найдена")
+    try:
+        labels = build_box_labels(shipment)
+    except ShippingValidationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"labels": [label.to_dict() for label in labels]}
 
 
 @router.post("/shipments/{shipment_id}/close")
