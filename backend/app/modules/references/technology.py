@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from math import log
@@ -252,6 +252,17 @@ class TerminalRecord:
             mm2_from=fields.get("mm2From", ""),
             mm2_to=fields.get("mm2To", ""),
         )
+
+
+def terminal_card(fields: Mapping[str, str]) -> dict[str, str]:
+    """The contact card the «Терминалы» screen shows: the record as the generator reads it (REEL / BAG, crimp, AWG,
+    insulation, material, current, datasheet) plus the maker, series and product name; crimp texts canonical."""
+    shown = normalize_terminal_fields(fields)
+    card = {key: str(value or "") for key, value in asdict(TerminalRecord.from_fields(shown)).items()}
+    for key, name in (("maker", "terManufacturer"), ("series", "terSeries"), ("product", "terComponent"),
+                      ("type", "terType")):
+        card[key] = str(shown.get(name) or "")
+    return card
 
 
 def terminal_record_for_section(
@@ -729,15 +740,50 @@ _FEMALE = re.compile(r"^(female|socket|receptacle|гнезд|мама)|\(socket\
 _MALE = re.compile(r"^(male|pin|tab|plug|штыр|папа)|\(pin\)|\(tab\)|\(штырь\)")
 
 
+CONTACT_GENDERS = ("Male", "Female")
+
+
 def contact_gender(value: object) -> str:
-    """«Тип контакта» → Male / Female («Male (Pin)», «Female (Socket)», «Гнездо»…); text it can't read stays as is."""
-    text = re.sub(r"\s+", " ", str(value or "")).strip()
-    folded = text.casefold()
+    """«Тип контакта» → Male / Female («Male (Pin)», «Female (Socket)», «Гнездо»…); a type without a gender (a lug,
+    «Обжимной контакт») gives "" — terGender holds only Male, Female or nothing (CHECK of migration 0115)."""
+    folded = re.sub(r"\s+", " ", str(value or "")).strip().casefold()
     if _FEMALE.search(folded):
         return "Female"
     if _MALE.search(folded):
         return "Male"
-    return text
+    return ""
+
+
+_CARD_NUMBER = re.compile(r"^\d+([.,]\d+)?$")
+
+
+def _card_number(value: str) -> Decimal | None:
+    return Decimal(value.replace(",", ".")) if _CARD_NUMBER.match(value) else None
+
+
+def terminal_card_problems(fields: Mapping[str, str]) -> list[str]:
+    """What the contact card of a БД.ТЕР record breaks (the rules the database CHECKs of migration 0115 hold):
+    gender Male / Female or empty; insulation Ø from / to — a positive number in mm, from ≤ to; datasheet — a
+    http(s) link. Empty is always allowed (null-spec: a value not in the maker's spec stays empty)."""
+    card = {**terminal_card_fields(fields), **{key: fields[key] for key in TER_CARD_KEYS if fields.get(key)}}
+    value = {key: str(card.get(key) or "").strip() for key in TER_CARD_KEYS}
+    problems = []
+    if value["terGender"] and value["terGender"] not in CONTACT_GENDERS:
+        problems.append(f"Пол контакта: Male или Female, а не «{value['terGender']}»")
+    od = {}
+    for key, title in (("terInsOdFrom", "Диаметр изоляции от"), ("terInsOdTo", "Диаметр изоляции до")):
+        if not value[key]:
+            continue
+        number = _card_number(value[key])
+        if number is None or number <= 0:
+            problems.append(f"{title}: число в мм больше нуля, а не «{value[key]}»")
+        else:
+            od[key] = number
+    if len(od) == 2 and od["terInsOdFrom"] > od["terInsOdTo"]:
+        problems.append(f"Диаметр изоляции: «от» {value['terInsOdFrom']} больше «до» {value['terInsOdTo']}")
+    if value["terDatasheet"] and not re.match(r"https?://", value["terDatasheet"]):
+        problems.append(f"Даташит: ссылка http(s)://, а не «{value['terDatasheet']}»")
+    return problems
 
 
 def normalize_material(value: object) -> str:

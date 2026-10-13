@@ -110,7 +110,8 @@ it("edits a technology row with the old value and hides editing for non-admins",
 
   const { unmount } = render(<ReferencesPage principal={admin} />);
   fireEvent.click(await screen.findByRole("button", { name: "Терминалы" }));
-  fireEvent.click((await screen.findAllByText("МГТФ"))[0]); // строка целиком открывает правку
+  fireEvent.click((await screen.findAllByText("МГТФ"))[0]); // строка «Терминалов» открывает карточку контакта, правка — из неё
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
   fireEvent.change(screen.getByLabelText("Поле Сечение"), { target: { value: "0,5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
 

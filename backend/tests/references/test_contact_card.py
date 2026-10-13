@@ -32,9 +32,9 @@ NOW = datetime(2026, 10, 12, 12, 0)
 @pytest.mark.parametrize("raw, gender", [
     ("Male (Pin)", "Male"), ("Male (tab)", "Male"), ("Male (Pin) — см. notes", "Male"), ("male", "Male"),
     ("Female", "Female"), ("Female (Socket)", "Female"), ("Гнездо", "Female"), ("Штырь", "Male"),
-    ("Обжимной контакт", "Обжимной контакт"), ("", ""),
+    ("Обжимной контакт", ""), ("Кольцевой наконечник", ""), ("", ""),
 ])
-def test_contact_type_becomes_male_or_female_and_unknown_text_stays_as_written(raw, gender):
+def test_contact_type_becomes_male_or_female_and_a_type_without_a_gender_gives_none(raw, gender):
     assert contact_gender(raw) == gender
 
 

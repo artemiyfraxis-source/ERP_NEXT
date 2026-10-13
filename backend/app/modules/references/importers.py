@@ -62,7 +62,7 @@ from .domain import (
 from .technology import (
     _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, contact_gender, normalize_material,
     pull_force_newtons, schema_display_text, schema_keys, sync_schema_fields, terminal_card_fields,
-    terminal_card_indexes,
+    terminal_card_indexes, terminal_card_problems,
 )
 
 HOOKUP_SEED_VERSION = 1
@@ -659,7 +659,10 @@ def _ter_cell(name: str, value: Any) -> Any:
     if name == "terMaterial" or folded.startswith("материал"):
         return normalize_material(text)
     if name == "terGender":
-        return contact_gender(text)
+        gender = contact_gender(text)
+        if text and not gender:
+            raise RowRefused(f"terGender: Male или Female, а не «{text}»")
+        return gender
     return text
 
 
@@ -821,7 +824,10 @@ class _TechTarget(_Target):
             if column in given and fields[column] != fields[name]:
                 raise RowRefused(f"{name} и «{column}» — одно и то же поле, а значения разные")
             result[column] = fields[name]
-        return sync_schema_fields(tab, result)
+        synced = sync_schema_fields(tab, result)
+        if self.table.tab == TechOperationTab.TERMINAL and (problems := terminal_card_problems(synced)):
+            raise RowRefused("; ".join(problems))  # the CHECKs of migration 0115 would refuse the whole load
+        return synced
 
     @staticmethod
     def _gender(fields: dict[str, str], given: set[str], columns: list[str], resolved: Mapping[str, int]) -> None:

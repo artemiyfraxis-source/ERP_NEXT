@@ -43,6 +43,7 @@ from .technology import (
     normalize_terminal_fields,
     resolve_terminal,
     schema_keys,
+    terminal_card,
     wire_section,
 )
 
@@ -211,6 +212,8 @@ def tech_operations(
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet,
             "fields": normalize_terminal_fields(item.fields) if item.tab == TechOperationTab.TERMINAL else item.fields,
+            # «Терминалы»: the contact card by protocol v5.2, read from the record as the generator reads it.
+            **({"card": terminal_card(item.fields)} if item.tab == TechOperationTab.TERMINAL else {}),
         } for item in records],
     }
 

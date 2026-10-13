@@ -23,7 +23,9 @@ from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
     prepare_equipment,
 )
-from .technology import TECH_SNAPSHOT_SCHEMA_VERSION, schema_display_text, schema_keys, sync_schema_fields
+from .technology import (
+    TECH_SNAPSHOT_SCHEMA_VERSION, schema_display_text, schema_keys, sync_schema_fields, terminal_card_problems,
+)
 
 
 class ReferenceRepository(Protocol):
@@ -213,6 +215,12 @@ def _search_text(record: TechOperationRecord) -> str:
     return " ".join(f"{record.display_text} {' '.join(record.fields.values())}".casefold().split())
 
 
+def _check_terminal_card(tab: TechOperationTab, fields: dict[str, str]) -> None:
+    """БД.ТЕР: a card the database CHECKs would refuse (gender, insulation Ø, datasheet) is refused here in words."""
+    if tab == TechOperationTab.TERMINAL and (problems := terminal_card_problems(fields)):
+        raise ReferenceValidationError("; ".join(problems))
+
+
 def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
     if not command.edits or len(command.edits) > MAX_ROW_EDITS:
         raise ReferenceValidationError(f"Правок за раз: от 1 до {MAX_ROW_EDITS}")
@@ -254,6 +262,7 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
         synced = sync_schema_fields(record.tab.value, fields)
         keys = schema_keys(record.tab.value)
         fields = {key: (synced[key] if key in keys and key not in edited else value) for key, value in synced.items()}
+        _check_terminal_card(record.tab, fields)
         display = schema_display_text(record.tab.value, fields) or display
         updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
         updated = replace(updated, normalized_search=_search_text(updated))
@@ -321,6 +330,7 @@ def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperatio
         if not filled:
             raise ReferenceValidationError("Заполни хотя бы одно поле")
         fields = sync_schema_fields(command.tab.value, fields)
+        _check_terminal_card(command.tab, fields)
         display = schema_display_text(command.tab.value, fields) or filled[0]
         record = TechOperationRecord.create(
             tab=command.tab, display_text=display, search_text="", source_sheet="",
