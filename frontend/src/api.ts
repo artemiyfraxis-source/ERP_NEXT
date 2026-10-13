@@ -4097,6 +4097,23 @@ export interface HarnessRouteRead {
   complete: boolean;
 }
 
+/** «Заполнить техкарту» (techcards/harness/route_to_assembly.py): карточки маршрута — черновиком «Ручной сборки».
+ *  `route` — схема полуфабрикатов, как её собрал сборщик ЭТК (блоки с операциями, стрелки с количеством на штуку);
+ *  `draft` — сохранённый черновик (при просмотре — null). */
+export interface HarnessRouteDraft {
+  dry_run: boolean;
+  revision: number;
+  build_config: { ops?: Array<{ label?: string; qty?: string; tOp?: string; seq?: number }> } & Record<string, unknown>;
+  operations: number;
+  route: {
+    source: string; final: string;
+    blocks: Array<{ key: string; name: string; ops: number[]; final: boolean; minutes: number }>;
+    edges: Array<{ from: string; to: string; per_unit: number }>;
+  } | null;
+  warnings: string[];
+  draft: { id: string; project: string; item_index: string; source: string; author: string; status: string; note: string; created_at: string } | null;
+}
+
 const componentsPath = "/api/techcards/harness-components";
 const componentPath = (templateId: string, revision?: number) =>
   `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
@@ -4151,6 +4168,10 @@ export const harnessApi = {
   /** «Построить по чертежу»: карточки и связи заново по сохранённому чертежу (ручные правки карточек пропадают). */
   generateRoute: (project: string, index: string, revision: number | null) =>
     api<HarnessRouteRead>(`${harnessPath(project, index)}/route/generate`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «Заполнить техкарту»: карточки маршрута — черновиком «Ручной сборки». `dryRun` — только показать результат;
+   *  без него — сохранить черновик по просмотренной версии маршрута `revision` (изменился после просмотра — 409). */
+  routeDraft: (project: string, index: string, revision: number | null, dryRun: boolean) =>
+    api<HarnessRouteDraft>(`${harnessPath(project, index)}/route/draft${dryRun ? "?dry_run=true" : ""}`, { method: "POST", body: JSON.stringify({ revision }) }),
   /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
   exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
   /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */

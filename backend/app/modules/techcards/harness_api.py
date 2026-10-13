@@ -31,6 +31,7 @@ from .api import optional_references_uow_factory, techcards_uow_factory
 from .harness import application as harness, documents as harness_documents, route_application as harness_route
 from .harness.assembly import assembly_from_harness
 from .harness.exchange import design_from_export, export_zip
+from .harness.route_to_assembly import draft_from_route, draft_json
 from .harness.schema import Expected, HarnessError, decode, normalized
 from .harness.snapshot import parse_design
 from .harness.validate import ReferenceBook
@@ -114,6 +115,11 @@ class RouteSavePayload(BaseModel):
 
 class RouteGeneratePayload(BaseModel):
     # The route revision on screen; None — the position has no route yet.
+    revision: int | None = Field(default=None, ge=0)
+
+
+class RouteDraftPayload(BaseModel):
+    # The route revision the master previewed; a save needs it (what is stored is what was shown).
     revision: int | None = Field(default=None, ge=0)
 
 
@@ -404,6 +410,27 @@ def generate_harness_route(
             factory, project, index, revision=payload.revision if payload is not None else None,
             actor=principal.actor, now=now,
         )
+
+
+@router.post("/{project}/harness/{index}/route/draft")
+def harness_route_draft(
+    project: str, index: str,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    payload: RouteDraftPayload | None = None,
+    dry_run: bool = Query(default=False),
+) -> dict:
+    """«Заполнить техкарту»: карточки маршрута — черновиком «Ручной сборки» (блоки и связи схемы полуфабрикатов,
+    операции по порядку карточек). `dry_run` — только показать, что получится (проверка настоящим сборщиком ЭТК);
+    без него — сохранить черновик у позиции по просмотренной версии маршрута. Техкарту проекта не трогает: её
+    собирают из черновика и выпускают отдельно."""
+    with _refusals():
+        result = draft_from_route(
+            factory, project, index, revision=payload.revision if payload is not None else None, dry_run=dry_run,
+            actor=principal.actor, now=now,
+        )
+    return draft_json(result, dry_run=dry_run)
 
 
 # ── Documents of the drawing: connection table, cut list, specification (harness/documents.py) ─────────────────────
