@@ -54,6 +54,8 @@ def _family(identifier: str, title: str, pattern: str, pitch: float | None, *, r
 
 
 UNCHECKED = "метки контакта 1 со стороны проводов на листе производителя нет — сверить по детали"
+NO_DRAWING = "чертёж производителя не получен — нумерация не сверена, сверить по детали"
+DF1B_SRC = "Hirose DF1B, каталог 01.07.2020, {}"
 
 
 def _te_table(base: str, tens: dict[str, int]) -> dict[str, int]:
@@ -112,27 +114,51 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # Hirose
     _family("hirose-df13-2r", "Hirose DF13 (2 ряда)", r"^DF13-(\d+)DS-1[.,]25C", 1.25, rows=2, order="col", latch="ramp",
             note=UNCHECKED),
-    _family("hirose-df19", "Hirose DF19", r"^DF19G?-(\d+)S-1C", 1.0, latch="ramp",
-            note="на каталоге Hirose DF19 метка контакта 1 есть, со стороны проводов не сверена"),
+    # DF19 — catalogue 01.01.2024 «Single Row Socket (Cable Type)»: the face view has the cable end up (p. 2 «Cable
+    # Type»: the cable leaves the socket away from the vertical header) and the «Contact No. 1 Indicator» ▽ at the right
+    # of the mating edge; the view under it is the mating end. From the wire side, ▽ face up: contact 1 on the LEFT.
+    # DF19G repeats the ▽ on the shell face over the same contact, so the ▽ stays over contact 1 either way up.
+    _family("hirose-df19", "Hirose DF19", r"^DF19G?-(\d+)S-1C", 1.0, latch="mark", conf="high",
+            src="Hirose DF19, каталог 01.01.2024, Single Row Socket (Cable Type)",
+            note="по каталогу Hirose DF19: метка ▽ контакта 1 на грани у стыковочного торца; со стороны проводов ▽ сверху — контакт 1 слева"),
     _family("hirose-df20", "Hirose DF20 (2 ряда)", r"^DF20A-(\d+)DS-1C", 1.0, rows=2, order="col", latch="ramp", note=UNCHECKED),
     _family("hirose-df61", "Hirose DF61", r"^DF61-(\d+)S-2[.,]2C", 2.2, latch="lever", note=UNCHECKED),
-    # DF1B — catalogue 01.07.2020: the front face of the sockets carries the moulded «1» and «n» and the «Contact No1.
-    # mark»; from which side the face is seen with the wire end the catalogue does not show, so it stays unchecked.
-    _family("hirose-df1b", "Hirose DF1B (гнездовой корпус)", r"^DF1B-(\d+)S-2[.,]5RC?$", 2.5, start="TR", latch="mark",
-            note="в каталоге Hirose DF1B цифры 1 и n на лицевой грани; сторона проводов не показана — сверить по детали"),
+    # DF1B — catalogue 01.07.2020 (third angle). The sockets' front view has the mating end UP: the top view shows the
+    # square pin entries with lead-in chamfers and the anti-mis-insertion bosses, the in-line socket's lock hook sits
+    # near that end and engages the plug's lever inside its 7 mm shroud. The wire end is the bottom view, where the
+    # in-line sockets and plugs carry the moulded contact numbers. From the wire side, with the face that carries the
+    # «Contact No1. mark» (front face) up, the bottom view keeps left and right: contact 1 on the LEFT.
+    _family("hirose-df1b", "Hirose DF1B (гнездовой корпус)", r"^DF1B-(\d+)S-2[.,]5RC?$", 2.5, latch="mark", conf="high",
+            src=DF1B_SRC.format("Single Row Socket"),
+            note="по каталогу Hirose DF1B: метка ① контакта 1 на лицевой грани у торца проводов; со стороны проводов этой гранью вверх — контакт 1 слева"),
+    # DS: «1» on the front face over the first column; the mating DF1BZ-*DP header numbers No. 1 / No. 2 across the rows
+    # of one column (and DES prints 1, 3, 5 … over 2, 4, 6 …), so 2 is under 1.
     _family("hirose-df1b-2r", "Hirose DF1B (гнездовой корпус, 2 ряда)", r"^DF1B-(\d+)DS-2[.,]5RC$", 2.5, rows=2,
-            order="col", start="TR", latch="mark",
-            note="в каталоге Hirose DF1B нечётные номера в одном ряду, чётные в другом; сторона проводов не показана — сверить по детали"),
-    _family("hirose-df1b-es", "Hirose DF1B (гнездовой корпус на провод)", r"^DF1B-(\d+)ES-2[.,]5RC$", 2.5, start="TR",
-            latch="mark", note="в каталоге Hirose DF1B метка контакта 1 на корпусе; сторона проводов не показана — сверить по детали"),
+            order="col", latch="mark", conf="high", src=DF1B_SRC.format("Double Row Socket + Double Row Straight Pin Header"),
+            note="по каталогу Hirose DF1B: «1» на лицевой грани, у ответной вилки № 1 и № 2 в одном столбце; со стороны проводов этой гранью вверх — 1 слева вверху, 2 под ним"),
+    # ES: the wire-end view prints 1, 2, 3 … n from the left along the front-face edge; the lock hook is on the back face.
+    _family("hirose-df1b-es", "Hirose DF1B (гнездовой корпус на провод)", r"^DF1B-(\d+)ES-2[.,]5RC$", 2.5,
+            latch="mark", conf="high", src=DF1B_SRC.format("Single Row In-line Socket (Full Lock Type)"),
+            note="по каталогу Hirose DF1B: цифры 1…n на торце проводов у лицевой грани (защёлка на обратной); лицевой гранью вверх — контакт 1 слева"),
     _family("hirose-df1b-des", "Hirose DF1B (гнездовой корпус на провод, 2 ряда)", r"^DF1B-(\d+)DES-2[.,]5RC$", 2.5,
-            rows=2, order="col", start="TR", latch="mark",
-            note="в каталоге Hirose DF1B нечётные номера в одном ряду, чётные в другом; сторона проводов не показана — сверить по детали"),
-    _family("hirose-df1b-p", "Hirose DF1B (штыревой корпус)", r"^DF1BA?-(\d+)EP-2[.,]5RC$", 2.5, latch="mark",
-            note="в каталоге Hirose DF1B метка контакта 1 на корпусе; сторона проводов не показана — сверить по детали"),
-    _family("hirose-df1b-p2r", "Hirose DF1B (штыревой корпус, 2 ряда)", r"^DF1BA?-(\d+)DEP-2[.,]5RC$", 2.5, rows=2,
-            order="col", latch="mark",
-            note="в каталоге Hirose DF1B нечётные номера в одном ряду, чётные в другом; сторона проводов не показана — сверить по детали"),
+            rows=2, order="col", latch="mark", conf="high", src=DF1B_SRC.format("Double Row In-line Socket (Full Lock Type)"),
+            note="по каталогу Hirose DF1B: на торце проводов 1, 3, 5 … у лицевой грани с меткой ▽, 2, 4, 6 … под ними; ▽ сверху — 1 слева вверху"),
+    # EP (full lock): the wire-end view prints 1, 2, 3 … from the left along the face with the lock lever.
+    _family("hirose-df1b-p", "Hirose DF1B (штыревой корпус)", r"^DF1B-(\d+)EP-2[.,]5RC$", 2.5, latch="lever", conf="high",
+            src=DF1B_SRC.format("Single Row In-line Plug (Full Lock Type)"),
+            note="по каталогу Hirose DF1B: цифры 1…n на торце проводов у грани с рычагом замка; рычагом вверх — контакт 1 слева"),
+    _family("hirose-df1b-p2r", "Hirose DF1B (штыревой корпус, 2 ряда)", r"^DF1B-(\d+)DEP-2[.,]5RC$", 2.5, rows=2,
+            order="col", latch="lever",
+            note="в каталоге Hirose DF1B у корпуса DEP на торце проводов только метка поляризации, номеров нет — сверить по детали"),
+    # DF1BA (simple lock, panel mount) numbers the other way: the wire-end view prints 1, 2, 3 from the RIGHT (DEP:
+    # 1, 3, 5 over 2, 4, 6) along the front face that carries the «Contact No1. mark».
+    _family("hirose-df1ba-p", "Hirose DF1BA (штыревой корпус, простой замок)", r"^DF1BA-(\d+)EP-2[.,]5RC$", 2.5,
+            start="TR", latch="mark", conf="high", src=DF1B_SRC.format("Single Row In-line Plug (Simple Lock Type)"),
+            note="по каталогу Hirose DF1B: у DF1BA цифры 1, 2, 3 справа на торце проводов у лицевой грани; лицевой гранью вверх — контакт 1 справа"),
+    _family("hirose-df1ba-p2r", "Hirose DF1BA (штыревой корпус, простой замок, 2 ряда)", r"^DF1BA-(\d+)DEP-2[.,]5RC$",
+            2.5, rows=2, order="col", start="TR", latch="mark", conf="high",
+            src=DF1B_SRC.format("Double Row In-line Plug (Simple Lock Type)"),
+            note="по каталогу Hirose DF1B: у DF1BA на торце проводов 1, 3, 5 справа у грани с меткой контакта 1, 2, 4, 6 под ними — 1 справа вверху"),
     # JAE
     _family("jae-fis", "JAE FI-S", r"^FI-S(\d+)S$", 1.25, latch="ramp", color="#b9c0c6", note=UNCHECKED),
     _family("jae-fir", "JAE FI-R", r"^FI-RE(\d+)HL$", 0.5, latch="ramp", color="#b9c0c6", note=UNCHECKED),
@@ -144,59 +170,135 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # Samtec ISD2 — «positions per row», two rows: ISD2-05-D = 10 contacts.
     _family("samtec-isd2", "Samtec ISD2 (2 ряда)", r"^ISD2-(\d{2})-D-[MS]", 2.0, rows=2, order="col", count_mul=2,
             latch="lever", color=BLACK, note="на листе Samtec метка ▽ контакта 1 есть, со стороны проводов не сверена"),
-    # Molex — sales drawings (SD) read from the copies at static.chipdip.ru / datasheet.lcsc.com. Their «CIRCUIT 1»
-    # marks are drawn on views whose side towards the wires was not pinned down here, so the numbering stays unchecked.
+    # Molex — sales drawings (SD) read from the copies at static.chipdip.ru / datasheet.lcsc.com (13.10.2026, third
+    # angle). A view placed directly above / below the front view keeps left and right; a rear view placed beside the
+    # side view mirrors them; an isometric view shows the outside. Which end takes the wires: the end with the larger
+    # crimp cavities and the moulded part / cavity numbers; the mating end has the small pin entries (or the towers of
+    # the Fit families). Every family below names the drawing and the view its contact 1 is read from.
     _family("molex-minifit-jr-bk", "Molex Mini-Fit Jr. (чёрный)", r"^39-?03-?9(\d{2})2$", 4.2, rows=2, start="BR",
             latch="lever", color=BLACK, conf="high", src="Molex SD-5557-003",
             note="по чертежу Molex SD-5557-003: защёлка сверху, контакт 1 внизу справа, ряд 1…n дальше от защёлки",
             body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4)}),
-    _family("molex-nanofit-1r", "Molex Nano-Fit", r"^105307-?[12]2(\d{2})$", 2.5, latch="lever", color=BLACK,
-            color_by=((r"^105307-?2", IVORY),), note="на чертеже Molex SD-105307-100 метка CIRCUIT 1 есть; со стороны проводов не сверена"),
-    _family("molex-nanofit", "Molex Nano-Fit (2 ряда)", r"^105308-?[12]2(\d{2})$", 2.5, rows=2, latch="lever", color=BLACK,
-            color_by=((r"^105308-?2", IVORY),), note="на чертеже Molex SD-105308-100 метки CKT 1, CKT 2, LAST CKT есть; со стороны проводов не сверены"),
+    # Nano-Fit 105307 — the front view (latch face, towers of the mating end up) has «CIRCUIT 1» at its right on the
+    # wire-end edge; the bottom view (wire end) keeps it there -> latch up, contact 1 on the RIGHT.
+    _family("molex-nanofit-1r", "Molex Nano-Fit", r"^105307-?[12]2(\d{2})$", 2.5, start="TR", latch="lever", color=BLACK,
+            color_by=((r"^105307-?2", IVORY),), conf="high", src="Molex SD-105307-100",
+            note="по чертежу Molex SD-105307-100: метка CIRCUIT 1 справа на грани защёлки у торца проводов; защёлкой вверх — контакт 1 справа"),
+    # Nano-Fit 105308 — the isometric view of the mating face, latch up: CKT 1 top-left, CKT 2 right of it, LAST CKT
+    # bottom-right -> from the wire side, latch up: 1 top-RIGHT, the latch row first, both rows right to left.
+    _family("molex-nanofit", "Molex Nano-Fit (2 ряда)", r"^105308-?[12]2(\d{2})$", 2.5, rows=2, start="TR", latch="lever",
+            color=BLACK, color_by=((r"^105308-?2", IVORY),), conf="high", src="Molex SD-105308-100",
+            note="по чертежу Molex SD-105308-100: со стыковки защёлкой вверх CKT 1 слева вверху; со стороны проводов — 1 справа вверху, ряд 1…n у защёлки"),
+    # Nano-Fit plugs — the bottom view (wire end, latch catch up) marks CKT 1 at the left, LAST CKT at the right (2 rows:
+    # CKT 2 right of CKT 1) — the mirror of the receptacles, as a mated pair must be.
     _family("molex-nanofit-plug-1r", "Molex Nano-Fit (вилка)", r"^200277-?[12]1(\d{2})$", 2.5, latch="lever", color=BLACK,
-            color_by=((r"^200277-?2", IVORY),), note="на чертеже Molex 2002771000-SD метка CKT 1 есть; со стороны проводов не сверена"),
+            color_by=((r"^200277-?2", IVORY),), conf="high", src="Molex 2002771000-SD",
+            note="по чертежу Molex 2002771000-SD: на торце проводов упором защёлки вверх CKT 1 слева"),
     _family("molex-nanofit-plug", "Molex Nano-Fit (вилка, 2 ряда)", r"^201444-?[12]1(\d{2})$", 2.5, rows=2, latch="lever",
-            color=BLACK, color_by=((r"^201444-?2", IVORY),),
-            note="на чертеже Molex 2014441000-SD метки CKT 1, CKT 2 есть; со стороны проводов не сверены"),
+            color=BLACK, color_by=((r"^201444-?2", IVORY),), conf="high", src="Molex 2014441000-SD",
+            note="по чертежу Molex 2014441000-SD: на торце проводов упором защёлки вверх CKT 1 слева вверху, CKT 2 справа от него"),
     _family("molex-microfit-plus", "Molex Micro-Fit+ (2 ряда)", r"^206461-?(\d{2})\d{2}$", 3.0, rows=2, latch="lever",
-            color=BLACK, note=UNCHECKED),
-    _family("molex-minifit-tpa2", "Molex Mini-Fit TPA2 (2 ряда)", r"^172708-?0[0-2](\d{2})$", 4.2, rows=2, latch="lever",
-            color=BLACK, note=UNCHECKED),
-    _family("molex-minifit-tpa2-1r", "Molex Mini-Fit TPA2", r"^200453-?10(\d{2})$", 4.2, latch="lever", color=BLACK, note=UNCHECKED),
-    _family("molex-minifit-max-1r", "Molex Mini-Fit Max", r"^215913-?10(\d{2})$", 4.2, latch="lever", color=BLACK, note=UNCHECKED),
-    _family("molex-ultrafit-1r", "Molex ULTRA-FIT", r"^172256-?[12][01](\d{2})$", 3.5, latch="lever", color=BLACK, note=UNCHECKED),
+            color=BLACK, note="на чертеже Molex 2064610000-SD номеров контактов нет — сверить по детали"),
+    # Mini-Fit TPA2 172708 — the wire-end views («before TPA assembly», latch up) mould 8 7 6 5 over 4 3 2 1: contact 1
+    # bottom-right, as Mini-Fit Jr.
+    _family("molex-minifit-tpa2", "Molex Mini-Fit TPA2 (2 ряда)", r"^172708-?0[0-2](\d{2})$", 4.2, rows=2, start="BR",
+            latch="lever", color=BLACK, conf="high", src="Molex SD-172708-0000",
+            note="по чертежу Molex SD-172708-0000: на торце проводов защёлкой вверх цифры 8 7 6 5 над 4 3 2 1 — контакт 1 внизу справа"),
+    # 200453 — the wire-end view (latch block with «200453» up) moulds 4 3 2 1, FIRST CKT ID at the right.
+    _family("molex-minifit-tpa2-1r", "Molex Mini-Fit TPA2", r"^200453-?10(\d{2})$", 4.2, start="TR", latch="lever",
+            color=BLACK, conf="high", src="Molex 2004531000",
+            note="по чертежу Molex 2004531000: на торце проводов защёлкой вверх цифры 4 3 2 1 — контакт 1 справа"),
+    # Mini-Fit Max 215913 — the isometric view of the wire end, latch up, has «1» (FIRST CKT) on the right end wall.
+    _family("molex-minifit-max-1r", "Molex Mini-Fit Max", r"^215913-?10(\d{2})$", 4.2, start="TR", latch="lever",
+            color=BLACK, conf="high", src="Molex 2159130000-SD",
+            note="по чертежу Molex 2159130000-SD: на торце проводов защёлкой вверх «1» на правой стенке — контакт 1 справа"),
+    # ULTRA-FIT — the wire-end views (moulded «1», «172256» / «172258», latch up) put CKT 1 at the left (2 rows: CKT 2
+    # right of it, LAST CKT bottom-right); the mating views below the front views mirror it.
+    _family("molex-ultrafit-1r", "Molex ULTRA-FIT", r"^172256-?[12][01](\d{2})$", 3.5, latch="lever", color=BLACK,
+            conf="high", src="Molex SD-172256-0001",
+            note="по чертежу Molex SD-172256-0001: на торце проводов защёлкой вверх «1» и CKT 1 слева"),
     _family("molex-ultrafit", "Molex ULTRA-FIT (2 ряда)", r"^172258-?[34]1(\d{2})$", 3.5, rows=2, latch="lever", color=BLACK,
-            color_by=((r"^172258-?4", IVORY),), note=UNCHECKED),
-    _family("molex-picolock-20", "Molex Pico-Lock 2,0", r"^20534102(\d{2})$", 2.0, latch="ramp", color=BLACK, note=UNCHECKED),
-    _family("molex-picolock-15", "Molex Pico-Lock 1,5", r"^504051(\d{2})01$", 1.5, latch="ramp", note=UNCHECKED),
-    _family("molex-picolock-10", "Molex Pico-Lock 1,0", r"^503764(\d{2})01$", 1.0, latch="ramp", note=UNCHECKED),
+            color_by=((r"^172258-?4", IVORY),), conf="high", src="Molex 1722580003",
+            note="по чертежу Molex 1722580003: на торце проводов защёлкой вверх CKT 1 слева вверху, ряд 1…n у защёлки"),
+    # Pico-Lock — the front view is the flat face with the lance windows and the «CIRCUIT No1 INDICATOR MARK» ▽ over the
+    # right cavity at the wire end; the top view (wire end) has CIRCUIT 1 at the right with that face down -> ▽ face
+    # up, contact 1 on the LEFT. The locks are arms at both ends, so the ▽ is the face cue.
+    _family("molex-picolock-20", "Molex Pico-Lock 2,0", r"^20534102(\d{2})$", 2.0, latch="mark", color=BLACK, conf="high",
+            src="Molex 2053410000-SD", note="по чертежу Molex 2053410000-SD: метка ▽ над контактом 1; ▽ сверху — контакт 1 слева"),
+    _family("molex-picolock-15", "Molex Pico-Lock 1,5", r"^504051(\d{2})01$", 1.5, latch="mark", conf="high",
+            src="Molex 5040510000-SD", note="по чертежу Molex 5040510000-SD: метка ▽ над контактом 1; ▽ сверху — контакт 1 слева"),
+    _family("molex-picolock-10", "Molex Pico-Lock 1,0", r"^503764(\d{2})01$", 1.0, latch="mark", conf="high",
+            src="Molex SD-503764-001", note="по чертежу Molex SD-503764-001: метка ▽ над контактом 1; ▽ сверху — контакт 1 слева"),
+    # Micro-Lock Plus 2.0 — the top view is the wire end (crimp cavities, CIRCUIT 1 MARK on the end wall), the lock
+    # face at its bottom edge, CIRCUIT 1 at the right -> lock up, contact 1 on the LEFT.
     _family("molex-microlock-20", "Molex Micro-Lock Plus 2,0", r"^505570(\d{2})0[01]$", 2.0, latch="ramp",
-            color_by=((r"1$", BLACK),), note=UNCHECKED),
-    _family("molex-microlock-125", "Molex Micro-Lock Plus 1,25", r"^505565(\d{2})0\d$", 1.25, latch="ramp", note=UNCHECKED),
+            color_by=((r"1$", BLACK),), conf="high", src="Molex 5055700001",
+            note="по чертежу Molex 5055700001: на торце проводов замок снизу, CIRCUIT 1 справа; замком вверх — контакт 1 слева"),
+    # 505565, 214526 — the rear view (wire end, lock up) has the ▷ CKT. NO.1 MARK and CKT. NO.1 at the left; the plug
+    # 214525 numbers its mating face CIRCUIT 1 … N from the left, so its wire end, lock up, has contact 1 on the RIGHT
+    # (it mates with 214526 face to face).
+    _family("molex-microlock-125", "Molex Micro-Lock Plus 1,25", r"^505565(\d{2})0\d$", 1.25, latch="ramp", conf="high",
+            src="Molex 5055650002-SD", note="по чертежу Molex 5055650002-SD: на торце проводов замком вверх метка ▷ и CKT. NO.1 слева"),
     _family("molex-microlock-125-p", "Molex Micro-Lock Plus 1,25 (провод — провод)", r"^2145252(\d{2})\d$", 1.25,
-            latch="ramp", note=UNCHECKED),
+            start="TR", latch="ramp", conf="high", src="Molex 2145250000-SD",
+            note="по чертежу Molex 2145250000-SD: со стыковки замком вверх CIRCUIT 1 слева; со стороны проводов — контакт 1 справа"),
     _family("molex-microlock-125-s", "Molex Micro-Lock Plus 1,25 (провод — провод, гнёзда)", r"^214526(\d{2})0\d$", 1.25,
-            latch="ramp", note=UNCHECKED),
-    _family("molex-microlatch", "Molex Micro-Latch", r"^51065-?(\d{2})0[01]$", 2.0, latch="ramp", note=UNCHECKED),
+            latch="ramp", conf="high", src="Molex 2145260000-SD",
+            note="по чертежу Molex 2145260000-SD: на торце проводов замком вверх метка ▷ и CIRCUIT 1 слева"),
+    # Micro-Latch 51065 — the top view (wire end) has «1» and CIRCUIT 1 at the left with the slotted face at the bottom;
+    # the lock ramp is on the opposite face -> ramp up, contact 1 on the LEFT. 502351 — rear view (wire end), lock up,
+    # «1» at the left.
+    _family("molex-microlatch", "Molex Micro-Latch", r"^51065-?(\d{2})0[01]$", 2.0, latch="ramp", conf="high",
+            src="Molex 510650000-SD", note="по чертежу Molex 510650000-SD: на торце проводов защёлкой вверх «1» слева"),
     _family("molex-microlatch-502351", "Molex 502351 (под контакты Micro-Latch)", r"^502351-?(\d{2})0[01]$", 2.0,
-            latch="ramp", color_by=((r"1$", BLACK),), note=UNCHECKED),
-    _family("molex-minispox", "Molex Mini-SPOX", r"^50-?37-?5(\d{2})3$", 2.5, latch="ramp", note=UNCHECKED),
-    _family("molex-picospox","Molex Pico-SPOX", r"^87439-?(\d{2})0[01]$", 1.5, latch="ramp", color_by=((r"1$", BLACK),),
-            note=UNCHECKED),
+            latch="ramp", color_by=((r"1$", BLACK),), conf="high", src="Molex SD-502351-001",
+            note="по чертежу Molex SD-502351-001: на торце проводов замком вверх «1» слева"),
+    # Mini-SPOX 5264 — the catalogue top view is the wire end (round wire entries) with CIRCUIT 1 at the left and the
+    # face with the lance windows at its bottom (friction lock, no latch) -> windows down, contact 1 on the LEFT.
+    _family("molex-minispox", "Molex Mini-SPOX", r"^50-?37-?5(\d{2})3$", 2.5, latch="windows", conf="high",
+            src="Molex 5264-N, каталог MX01 B-102",
+            note="по каталогу Molex 5264-N: на торце проводов окнами фиксаторов вниз CIRCUIT 1 слева"),
+    # Pico-SPOX 87439 — the bottom view has the «MARK FOR CIRCUIT1» at the right under the mating-end view; the ramp
+    # bump is on the opposite (top) face -> from the wire side, ramp up, contact 1 on the LEFT.
+    _family("molex-picospox", "Molex Pico-SPOX", r"^87439-?(\d{2})0[01]$", 1.5, latch="ramp", color_by=((r"1$", BLACK),),
+            conf="high", src="Molex 874390000-SD",
+            note="по чертежу Molex 874390000-SD: метка «1» на нижней грани; со стороны проводов выступом защёлки вверх — контакт 1 слева"),
+    # Micro-One, OneBlade, Zero-Hachi, CLIK-Mate 2.0 — the end view with the moulded marks (wire end), lock up, has
+    # CIRCUIT 1 at the left.
     _family("molex-microone", "Molex Micro-One", r"^2127242(\d{2})[01]$", 2.0, latch="lever",
-            color_by=((r"1$", BLACK),), note="на чертеже Molex 2127240000-SD метки CIRCUIT 1 / N есть; со стороны проводов не сверены"),
-    _family("molex-oneblade", "Molex OneBlade", r"^21409220(\d)0$", 1.0, latch="ramp", color=BLACK,
-            note="на чертеже Molex 2140920000-SD метка CIRCUIT 1 есть; со стороны проводов не сверена"),
-    _family("molex-zerohachi", "Molex Zero-Hachi", r"^2147192(\d{2})0$", 0.8, latch="ramp", color=BLACK,
-            note="на чертеже Molex 2147190000-SD метка CIRCUIT 1 есть; со стороны проводов не сверена"),
-    _family("molex-kk254", "Molex KK 254", r"^22-?01-?[23](\d{2})[17]$", 2.54, latch="ramp", note=UNCHECKED),
-    _family("molex-cgrid3-1r", "Molex C-Grid III", r"^90123-?0[12](\d{2})$", 2.54, color=BLACK,
-            note="на чертеже Molex SD-90123 метка CCT. No. 1 есть; со стороны проводов не сверена"),
+            color_by=((r"1$", BLACK),), conf="high", src="Molex 2127240000-SD",
+            note="по чертежу Molex 2127240000-SD: на торце проводов замком вверх CIRCUIT 1 слева"),
+    _family("molex-oneblade", "Molex OneBlade", r"^21409220(\d)0$", 1.0, latch="ramp", color=BLACK, conf="high",
+            src="Molex 2140920000-SD", note="по чертежу Molex 2140920000-SD: на торце проводов защёлками вверх CIRCUIT 1 слева"),
+    _family("molex-zerohachi", "Molex Zero-Hachi", r"^2147192(\d{2})0$", 0.8, latch="mark", color=BLACK, conf="high",
+            src="Molex 2147190000-SD",
+            note="по чертежу Molex 2147190000-SD: метка контакта 1 на грани с окнами фиксаторов; этой гранью вверх — контакт 1 слева"),
+    # KK 254 2695 — the face with the windows has «1» at its wire-end corner on the left (mating end up); the bottom view
+    # keeps it -> windows up, contact 1 LEFT; the ramp is on the opposite face -> ramp up, contact 1 on the RIGHT.
+    _family("molex-kk254", "Molex KK 254", r"^22-?01-?[23](\d{2})[17]$", 2.54, start="TR", latch="ramp", conf="high",
+            src="Molex 26950000-SD (SD-2695)",
+            note="по чертежу Molex 26950000-SD: «1» на грани с окнами; со стороны проводов рампой защёлки вверх — контакт 1 справа"),
+    # C-Grid III — the top view (mating end, pin lead-ins) has CCT. No. 1 at the right, the face with the polarising
+    # buttons and «90123» at its bottom; the bottom view (wire end) keeps it -> buttons up, contact 1 on the RIGHT.
+    _family("molex-cgrid3-1r", "Molex C-Grid III", r"^90123-?0[12](\d{2})$", 2.54, start="TR", color=BLACK, conf="high",
+            src="Molex SD-90123",
+            note="по чертежу Molex SD-90123: со стороны проводов гранью с кнопками поляризации и надписью 90123 вверх — контакт 1 справа"),
+    # Milli-Grid 151192 — the front view (mating end) has CKT 1 top-left, CKT 2 under it, CKT 3 right of 1, the face with
+    # the ▽ 1st CKT mark and the latch up -> from the wire side 1 top-RIGHT, 2 under it.
     _family("molex-milligrid-151192", "Molex Milli-Grid (151192)", r"^151192-?00(\d{2})$", 2.0, rows=2, order="col",
-            latch="ramp", color=BLACK, note="на чертеже Molex 1511921001 метка 1st CKT есть; со стороны проводов не сверена"),
-    _family("molex-clikmate-20", "Molex CLIK-Mate 2,0", r"^502439-?(\d{2})00$", 2.0, latch="ramp",
-            note="на чертеже Molex 5024391500 метка CKT. NO. 1 есть; со стороны проводов не сверена"),
+            start="TR", latch="mark", color=BLACK, conf="high", src="Molex 1511921001",
+            note="по чертежу Molex 1511921001: метка ▽ 1st CKT на грани с защёлкой; ▽ сверху — 1 справа вверху, 2 под ним"),
+    _family("molex-clikmate-20", "Molex CLIK-Mate 2,0", r"^502439-?(\d{2})00$", 2.0, latch="ramp", conf="high",
+            src="Molex 5024391500", note="по чертежу Molex 5024391500: на торце проводов замком вверх «1» и метка ▷ слева"),
+    # Series of БД.ТЕР without a drawing the ERP could read (molex.com did not answer, 13.10.2026): the housing part
+    # numbers are those Molex lists (its part sheets, or the LCSC / Heilind pages that quote them); the count comes
+    # from the part number, the numbering stays unchecked.
+    _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, latch="ramp", note=NO_DRAWING),
+    _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", note=NO_DRAWING),
+    _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, latch="ramp", color=BLACK, note=NO_DRAWING),
+    _family("molex-igrid", "Molex iGrid (2 ряда)", r"^501646-?(\d{2})0[01]$", 2.0, rows=2, order="col", latch="lever",
+            color_by=((r"1$", BLACK),), note=NO_DRAWING),
+    _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, note=NO_DRAWING),
     # TE Mini CT — C-353908: the top view is the wire end; «CIRCUIT No.1» is at its right with the +AMP face (the lock
     # ramp) at the bottom -> from the wire side, lock up, contact 1 on the LEFT.
     _family("te-minict", "TE AMP Mini CT", r"^((?:\d-)?353908-\d)$", 1.5, latch="ramp", table=MINI_CT_TABLE, conf="high",
@@ -216,7 +318,8 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "hirose-df13-2r": "DF13-10DS-1.25C", "hirose-df19": "DF19-8S-1C", "hirose-df20": "DF20A-10DS-1C", "hirose-df61": "DF61-2S-2.2C",
     "hirose-df1b": "DF1B-4S-2.5R", "hirose-df1b-2r": "DF1B-18DS-2.5RC", "hirose-df1b-es": "DF1B-4ES-2.5RC",
     "hirose-df1b-des": "DF1B-10DES-2.5RC", "hirose-df1b-p": "DF1B-5EP-2.5RC",
-    "hirose-df1b-p2r": "DF1B-10DEP-2.5RC", "jae-fis": "FI-S10S", "jae-fir": "FI-RE31HL",
+    "hirose-df1b-p2r": "DF1B-10DEP-2.5RC", "hirose-df1ba-p": "DF1BA-5EP-2.5RC", "hirose-df1ba-p2r": "DF1BA-10DEP-2.5RC",
+    "jae-fis": "FI-S10S", "jae-fir": "FI-RE31HL",
     "connfly-ds1070": "I-DS1070-SCV04", "connfly-ds1072": "I-DS1072-SCT004", "connfly-ds1073": "I-DS1073-SCW004",
     "connfly-ds1074": "I-DS1074-SCT004", "samtec-isd2": "ISD2-05-D-M", "te-minict": "353908-4", "te-sl156": "770849-4",
     "molex-minifit-jr-bk": "39-03-9082", "molex-nanofit-1r": "105307-1204", "molex-nanofit": "105308-1208",
@@ -228,6 +331,12 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "molex-microlatch": "510650600", "molex-microlatch-502351": "502351-0600", "molex-picospox": "87439-0400", "molex-minispox": "50-37-5043", "molex-microone": "2127242040", "molex-oneblade": "2140922040",
     "molex-zerohachi": "2147192080", "molex-kk254": "22-01-2041", "molex-cgrid3-1r": "90123-0106",
     "molex-milligrid-151192": "1511920010", "molex-clikmate-20": "502439-0400",
+    # Housings Molex lists: 09-50-8051 — part sheet 0009508051 (KK 3.96 mm, friction ramp, 5 circuits); 51163-0400 — part
+    # sheet 0511630400 (Mini-Lock, 4 circuits); 50-57-9404 — SL 70066, 4 positions (LCSC C293342, which links the Molex
+    # drawing 050579404_sd); 501646-1000 — iGrid dual row, 10 circuits, natural (Heilind 501646-1000); 35023-0004 —
+    # Board-in crimp housing, 4 circuits (Molex part 350230004).
+    "molex-kk396": "09-50-8051", "molex-minilock": "51163-0400", "molex-sl-1r": "50-57-9404",
+    "molex-igrid": "501646-1000", "molex-boardin": "35023-0004",
 }
 
 
@@ -386,6 +495,18 @@ MOLEX_SERIES: tuple[dict[str, Any], ...] = (
             (("Корпус, 1 ряд (501330)", "molex-picoclasp-1r", "501330-{:02d}00", _counts(2, 15)),),
             (("Molex Pico-Clasp 501330, лист каталога", _cd("033381093")),),
             note="2-рядные корпуса 501189, 501939 — чертежи не найдены", range_checked=False),
+    # Molex part sheets (static.chipdip.ru copies): each confirms one housing; the series tables and the sales drawings
+    # (SD-41695-001, 511630400_sd) were not reachable, so the range and the numbering stay unchecked.
+    _series("molex-kk396", "Molex KK 396", "Molex", WTB, ("KK 396 (legacy KK 156)", "KK 396/508"),
+            (("Корпус 41695, без защёлки", "molex-kk396", ("09-50-8020",)),
+             ("Корпус 41695, с фрикционной защёлкой", "molex-kk396", ("09-50-8051",))),
+            (("Molex 0009508020, лист детали", _cd("011657093")), ("Molex 0009508051, лист детали", _cd("029580511"))),
+            note="известны только корпуса из листов деталей; корпуса 2139 (09-50-3…) — лист не найден; контакты 2478, 2578, 6838",
+            range_checked=False),
+    _series("molex-minilock", "Molex Mini-Lock", "Molex", WTB, ("Mini-Lock",),
+            (("Корпус 51163, натуральный", "molex-minilock", ("51163-0400",)),),
+            (("Molex 0511630400, лист детали", _cd("012341229")),),
+            note="известен только корпус из листа детали (4 конт.)", range_checked=False),
 )
 
 DF1B_DOC = ("Hirose DF1B, каталог 01.07.2020", LCSC.format("ba434fb92ec248c0cb9579d7a1b767a6", "C392028"))
@@ -467,8 +588,8 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
              ("Гнездовой корпус на провод (полный замок), 2 ряда", "hirose-df1b-des", "DF1B-{}DES-2.5RC", _even(10, 34)),
              ("Штыревой корпус (полный замок), 1 ряд", "hirose-df1b-p", "DF1B-{}EP-2.5RC", _counts(2, 13)),
              ("Штыревой корпус (полный замок), 2 ряда", "hirose-df1b-p2r", "DF1B-{}DEP-2.5RC", _even(10, 34)),
-             ("Штыревой корпус (простой замок), 1 ряд", "hirose-df1b-p", "DF1BA-{}EP-2.5RC", _counts(2, 10, 12)),
-             ("Штыревой корпус (простой замок), 2 ряда", "hirose-df1b-p2r", "DF1BA-{}DEP-2.5RC", _even(4, 30, 34))),
+             ("Штыревой корпус (простой замок), 1 ряд", "hirose-df1ba-p", "DF1BA-{}EP-2.5RC", _counts(2, 10, 12)),
+             ("Штыревой корпус (простой замок), 2 ряда", "hirose-df1ba-p2r", "DF1BA-{}DEP-2.5RC", _even(4, 30, 34))),
             (DF1B_DOC,),
             headers=((TOP, "DF1BZ-{}P-2.5DSA", _counts(2, 16, 18, 20), "hirose-df1b"),
                      (SIDE, "DF1BZ-{}P-2.5DS", _counts(2, 16, 18, 20), "hirose-df1b"),

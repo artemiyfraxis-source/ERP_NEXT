@@ -271,9 +271,9 @@ def test_gallery_runs_by_maker_then_pitch_inside_a_section():
 
 def test_a_checked_catalogue_series_says_where_contact_one_is():
     series = _series()
-    for series_id in ("jst-suh", "jst-shj", "jst-ra", "te-minict", "te-sl156", "hirose-df14", "hirose-df11"):
+    for series_id in ("jst-suh", "jst-shj", "jst-ra", "te-minict", "te-sl156", "hirose-df14", "hirose-df11", "hirose-df19"):
         assert series[series_id]["checked"], series_id
-    for series_id in ("jst-el", "jst-pud", "hirose-df1b", "hirose-df19", "connfly-ds1072", "samtec-isd2"):
+    for series_id in ("jst-el", "jst-pud", "hirose-df1b", "connfly-ds1072", "samtec-isd2"):
         assert not series[series_id]["checked"], series_id  # no circuit-1 mark placed on the wire side: warning stays
     assert re.search(r"контакт 1 справа", housing_of("RA-2011")["note"])
 
