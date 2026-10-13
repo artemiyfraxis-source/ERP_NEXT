@@ -157,12 +157,16 @@ def _database_assigns(table: Table, column: Column, dialect: str) -> bool:
 # Pairs a CHECK ties together that the column-by-column fill can't see: identity_documents.scope takes 'all' from its
 # `IN (…)` list, and `scope = 'all'` demands an empty scope_value (0100_identity_documents).
 _COUPLED_VALUES: dict[tuple[str, str], Any] = {("identity_documents", "scope_value"): ""}
+# Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0106_internal_projects), unique.
+_SHAPED_VALUES: dict[tuple[str, str], Any] = {("purchasing_internal_projects", "number"): lambda i: f"ВП-{i + 1:03d}"}
 
 
 def _value(table: str, column: Column, index: int) -> Any:
     name, kind = column.name, column.type
     if (table, name) in _COUPLED_VALUES:
         return _COUPLED_VALUES[(table, name)]
+    if (table, name) in _SHAPED_VALUES:
+        return _SHAPED_VALUES[(table, name)](index)
     if table == "warehouse_lots" and name in _LOT_QUANTITIES:
         return _LOT_QUANTITIES[name](index)
     if (table, name) in _HOLDER_QUANTITY:

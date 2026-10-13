@@ -12,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
@@ -19,6 +20,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -26,7 +28,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, Session, deferred, mapped_column, sessionmaker
 
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
@@ -329,6 +331,239 @@ class DecisionRow(Base):
     decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     # When the choice was written into the procurement line (supplier, quantity, unit).
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ---- documents (migration 0108): the UPD registry, Kaiten invoices, the buyer's invoice ↔ UPD word, price refs ----
+# Ported from Roller_Buyer (upd_documents, upd_lines, invoices, upd_invoice_links, price_refs). Money in kopecks
+# (BigInteger) as there; unit prices of UPD lines in rubles as printed. Files live in the database like every other
+# ERP upload (app/shared/stored_files.py), one row per distinct content.
+
+UPD_ORIGINS = ("google", "edo")
+UPD_LINE_SOURCES = ("google", "manual")
+INVOICE_STATUSES = ("to_pay", "paid", "return", "other")
+INVOICE_FILE_KINDS = ("invoice", "payment", "other")
+LINK_DECISIONS = ("confirmed", "rejected")
+PRICE_CURRENCIES = ("RUB", "CNY", "USD")
+
+
+class DocumentFileRow(Base):
+    __tablename__ = "purchasing_document_files"
+    __table_args__ = (UniqueConstraint("sha256", name="uq_purchasing_document_files_sha256"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[bytes] = deferred(mapped_column(LargeBinary, nullable=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UpdDocumentRow(Base):
+    """One closing document: a PDF read by the Google parser (key = Drive file id) or an EDO XML (key «edo-<sha1 of
+    ИдФайл>»). Parser fields are the parser's word; the buyer's corrections live in manual_header / manual lines and
+    win on read. twin_of — the same document came twice (PDF and XML, XML resent): the copy points at the one in force."""
+
+    __tablename__ = "purchasing_upd_documents"
+    __table_args__ = (
+        CheckConstraint("origin IN ('google', 'edo')", name="ck_purchasing_upd_documents_origin"),
+        CheckConstraint("twin_of IS NULL OR twin_of <> id", name="ck_purchasing_upd_documents_twin"),
+        Index("ix_purchasing_upd_documents_supplier", "supplier_id"),
+        Index("ix_purchasing_upd_documents_seller_inn", "seller_inn"),
+        Index("ix_purchasing_upd_documents_date", "doc_date"),
+        Index("ix_purchasing_upd_documents_twin", "twin_of"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    origin: Mapped[str] = mapped_column(String(8), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    folder: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    md5: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    file_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_document_files.id", ondelete="SET NULL"))
+    # The parser's verdict as Roller_Buyer shows it: «Разобран», «Требует проверки», «Дубликат», «Не документ закупки».
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    tag: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    issues: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    model: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    number: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    doc_date: Mapped[date | None] = mapped_column(Date)
+    seller_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    seller_inn: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    seller_kpp: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    buyer_inn: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    basis: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    payment_doc: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    total_net: Mapped[int | None] = mapped_column(BigInteger)
+    total_vat: Mapped[int | None] = mapped_column(BigInteger)
+    total_gross: Mapped[int | None] = mapped_column(BigInteger)
+    file_amount: Mapped[int | None] = mapped_column(BigInteger)
+    line_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    dup_of: Mapped[str | None] = mapped_column(String(128))
+    drive_url: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    # When the parser last changed the document (Google: Drive modified time; EDO: «<time>|<md5>»).
+    parser_updated: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # {number, date, seller_name, seller_inn, seller_kpp, buyer_inn, total_net, total_vat, total_gross}
+    manual_header: Mapped[dict | None] = mapped_column(JSON)
+    manual_saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    manual_saved_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    # parser_updated the correction was made against: a newer parse is shown to the buyer.
+    manual_based_on: Mapped[str | None] = mapped_column(String(128))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    verified_parser_updated: Mapped[str | None] = mapped_column(String(128))
+    supplier_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_suppliers.id", ondelete="SET NULL"))
+    # «591К.3» or «ВП-001», set by hand.
+    project_reference: Mapped[str | None] = mapped_column(String(255))
+    twin_of: Mapped[str | None] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UpdLineRow(Base):
+    __tablename__ = "purchasing_upd_lines"
+    __table_args__ = (
+        CheckConstraint("source IN ('google', 'manual')", name="ck_purchasing_upd_lines_source"),
+        UniqueConstraint("document_id", "source", "seq", name="uq_purchasing_upd_lines_seq"),
+        Index("ix_purchasing_upd_lines_article_key", "article_key"),
+        Index("ix_purchasing_upd_lines_name_key", "name_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    document_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("purchasing_upd_documents.id", ondelete="CASCADE"), nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(8), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    article: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # Derived on write, for lookups by item: items.part_key(article) and items.alias_key(name).
+    article_key: Mapped[str | None] = mapped_column(String(255))
+    name_key: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    product_type_code: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    unit_code: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    unit: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    # Unit price without VAT in rubles (may carry 4 decimals); net / vat / gross in kopecks.
+    price: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    net: Mapped[int | None] = mapped_column(BigInteger)
+    excise: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    vat_rate: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    vat: Mapped[int | None] = mapped_column(BigInteger)
+    gross: Mapped[int | None] = mapped_column(BigInteger)
+    country_code: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    country: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    declaration: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    is_service: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    issues: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    fixes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class InvoiceRow(Base):
+    """A supplier's invoice mirrored from a Kaiten card of «Закупки» (one card = one invoice + payment orders). The
+    header is read from the invoice PDF's text layer; lines are the positions of its table."""
+
+    __tablename__ = "purchasing_invoices"
+    __table_args__ = (
+        UniqueConstraint("source", "external_id", name="uq_purchasing_invoices_source_external"),
+        CheckConstraint("source IN ('kaiten')", name="ck_purchasing_invoices_source"),
+        CheckConstraint("status IN ('to_pay', 'paid', 'return', 'other')", name="ck_purchasing_invoices_status"),
+        Index("ix_purchasing_invoices_supplier", "supplier_id"),
+        Index("ix_purchasing_invoices_date", "doc_date"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    board_title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    column_title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    card_created: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    card_updated: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    number: Mapped[str | None] = mapped_column(String(128))
+    doc_date: Mapped[date | None] = mapped_column(Date)
+    seller_name: Mapped[str | None] = mapped_column(String(512))
+    seller_inn: Mapped[str | None] = mapped_column(String(32))
+    supplier_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_suppliers.id", ondelete="SET NULL"))
+    total: Mapped[int | None] = mapped_column(BigInteger)
+    vat: Mapped[int | None] = mapped_column(BigInteger)
+    vat_free: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    payment_numbers: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    payment_date: Mapped[date | None] = mapped_column(Date)
+    payment_sum: Mapped[int | None] = mapped_column(BigInteger)
+    parsed_file: Mapped[str | None] = mapped_column(String(64))
+    parse_issues: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The invoice PDF's text layer, for search; empty for scans.
+    text: Mapped[str] = deferred(mapped_column(Text, nullable=False, default=""))
+    # Positions of the invoice table: [{seq, name, article, qty, unit, price, sum}] (Roller_Buyer InvoiceLine).
+    lines: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class InvoiceFileRow(Base):
+    __tablename__ = "purchasing_invoice_files"
+    __table_args__ = (
+        UniqueConstraint("invoice_id", "external_id", name="uq_purchasing_invoice_files"),
+        CheckConstraint("kind IN ('invoice', 'payment', 'other')", name="ck_purchasing_invoice_files_kind"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    invoice_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_invoices.id", ondelete="CASCADE"), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # None — the file was not downloaded.
+    file_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_document_files.id", ondelete="SET NULL"))
+
+
+class UpdInvoiceLinkRow(Base):
+    """The buyer's word on «this UPD closes that invoice»: confirmed links always, rejected never. Every other link is
+    computed on read from the documents' own data."""
+
+    __tablename__ = "purchasing_upd_invoice_links"
+    __table_args__ = (
+        UniqueConstraint("upd_id", "invoice_id", name="uq_purchasing_upd_invoice_links"),
+        CheckConstraint("decision IN ('confirmed', 'rejected')", name="ck_purchasing_upd_invoice_links_decision"),
+        Index("ix_purchasing_upd_invoice_links_invoice", "invoice_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    upd_id: Mapped[str] = mapped_column(String(128), ForeignKey("purchasing_upd_documents.id", ondelete="CASCADE"), nullable=False)
+    invoice_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_invoices.id", ondelete="CASCADE"), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+
+
+class PriceRefRow(Base):
+    """A reference price from a price book or an old quote collection: who offered what for how much, without a
+    request for quotes behind it. Re-importing a source replaces its rows. The price is kept in the source currency
+    as unit × 10 000 — a Chinese connector costs 0.0177 CNY, which kopecks cannot hold."""
+
+    __tablename__ = "purchasing_price_refs"
+    __table_args__ = (
+        CheckConstraint("currency IN ('RUB', 'CNY', 'USD')", name="ck_purchasing_price_refs_currency"),
+        CheckConstraint("unit_price4 > 0", name="ck_purchasing_price_refs_price"),
+        Index("ix_purchasing_price_refs_item", "item_id"),
+        Index("ix_purchasing_price_refs_source", "source"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    item_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_items.id", ondelete="CASCADE"), nullable=False)
+    supplier_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_suppliers.id", ondelete="SET NULL"))
+    supplier_name: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    offered_part: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    offered_manufacturer: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    unit_price4: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    vat_included: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(20, 6))
+    lead_time: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_row: Mapped[int | None] = mapped_column(Integer)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class SqlAlchemyPurchasingUnitOfWork:
