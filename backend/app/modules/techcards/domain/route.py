@@ -53,6 +53,9 @@ class Route:
     blocks: tuple[Block, ...]
     edges: tuple[Edge, ...]
     manual: bool = False
+    # The ПФ split the generator's rule made (domain/pf_split.py): production launches by its blocks like a hand-made
+    # one; a later hand edit («Править ПФ») is `manual` and wins over it on a rebuild.
+    generated: bool = False
 
     @property
     def final(self) -> Block:
@@ -69,6 +72,8 @@ class RouteOp:
     code: str = ""
     name: str = ""
     minutes: Decimal = Decimal(0)
+    side: str = ""  # «A» / «B» — the harness side the generator put the operation on, "" — none
+    key: str = ""   # the generator's opKey (shieldA1, insSpl…), "" — unknown
 
 
 @dataclass(frozen=True)
@@ -84,7 +89,7 @@ def _label(block: Block) -> str:
     return f"«{block.name or block.key}»"
 
 
-def _ordered(blocks: Sequence[Block], edges: Sequence[Edge], manual: bool) -> Route:
+def _ordered(blocks: Sequence[Block], edges: Sequence[Edge], manual: bool, generated: bool = False) -> Route:
     """Blocks by their first operation number, edges by their blocks' order. Operations of a derived block go
     ascending; a hand-made (manual) block keeps the technologist's order — it IS the order of work inside the
     semi-finished product (ПФ, owner + Vasily 13.10): «05, 03» in one ПФ is allowed, ETK numbers stay as they are."""
@@ -95,7 +100,7 @@ def _ordered(blocks: Sequence[Block], edges: Sequence[Edge], manual: bool) -> Ro
     )
     order = {block.key: index for index, block in enumerate(blocks)}
     edges = sorted(edges, key=lambda item: (order.get(item.source, -1), order.get(item.target, -1)))
-    return Route(tuple(blocks), tuple(edges), manual)
+    return Route(tuple(blocks), tuple(edges), manual, generated)
 
 
 def derive_route(ops: Sequence[RouteOp], final_name: str = "") -> Route:
@@ -365,7 +370,7 @@ def _number(value: Decimal, places: int = 4) -> int | float:
 def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any]:
     """The `document.route` shape (ETK version 3)."""
     return {
-        "source": "manual" if route.manual else "derived",
+        "source": "generated" if route.generated else "manual" if route.manual else "derived",
         "final": route.final.key,
         "blocks": [{
             "key": block.key,
