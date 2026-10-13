@@ -76,6 +76,12 @@ class WarehouseRepository(Protocol):
         warehouse: str | None = None,
         include_zero: bool = False,
     ) -> Sequence[StockLot]: ...
+    def filtered(
+        self,
+        query: str = "",
+        warehouse: str | None = None,
+        include_zero: bool = False,
+    ) -> Sequence[StockLot]: ...
     def add(self, lot: StockLot) -> None: ...
 
 
