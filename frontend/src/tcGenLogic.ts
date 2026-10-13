@@ -67,9 +67,11 @@ export type Endpoint = {
 };
 /** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
 export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };
-export type Connection = { wire: string; from: ConnectionEnd; to: ConnectionEnd };
+export type Connection = { wire: string; from: ConnectionEnd; to: ConnectionEnd; /** Экран кабеля с контакта на контакт. */ shield?: true };
 /** `coreColors[k]` — цвет k-й жилы кабеля (канонические названия палитры wireColors.ts: «красный», «бело-синий»); пусто — как в наименовании. */
-export type WireEntry = { idx: number; compId: string; length: number; qty: number; cores?: number; jacket?: string; coreColors?: string[] };
+export type WireEntry = { idx: number; compId: string; length: number; qty: number; cores?: number; jacket?: string; coreColors?: string[];
+  /** `nets[k]` — цепь k-й жилы (после жил — экраны), как её подписывают на чертеже («GND», «CAN_H»); пусто — без имени. */
+  nets?: string[] };
 export type WrapKind = "tape" | "braid" | "under";
 export type WrapSlot = { mat: string; kind: WrapKind; len: string };
 export type CoaxSide = { art: string; name: string } | null;
@@ -470,11 +472,14 @@ export function makeGen(D: GenData, S: GenState) {
       for (let k = 0; k < n; k++) {
         const at = ends.filter((x) => x.cores[k] != null);
         if (at.length < 2) continue;
-        paired++;
-        at.slice(1).forEach((x) => list.push({ wire, from: end(at[0].ep, at[0].cores[k]!), to: end(x.ep, x.cores[k]!) }));
+        // Экран на контактах двух разъёмов — тоже соединение; на одном (заземлён с одного конца) — не ошибка.
+        const shield = isShieldPos_(w, k);
+        if (!shield) paired++;
+        const name = shield ? `${wire || "Кабель"} · экран` : wire;
+        at.slice(1).forEach((x) => list.push({ wire: name, from: end(at[0].ep, at[0].cores[k]!), to: end(x.ep, x.cores[k]!), ...(shield ? { shield: true as const } : {}) }));
       }
       const [from, ...rest] = ends;
-      const count = (x: typeof from) => x.cores.filter((p) => p != null).length;
+      const count = (x: typeof from) => x.cores.filter((p, k) => p != null && !isShieldPos_(w, k)).length;
       const onRest = rest.reduce((s, x) => s + count(x), 0);
       if (paired !== count(from) || paired < Math.max(...ends.map(count))) {
         warnings.push(`${wire || "Провод"}: на ${endKey_(from.ep)} ${count(from)} конт., на ${rest.map((x) => endKey_(x.ep)).join(" + ")} ${onRest} — ` +
@@ -549,24 +554,33 @@ export function makeGen(D: GenData, S: GenState) {
     const fromRec = rec && rec.colors.length === per ? rec.colors : [];
     return Array.from({ length: n }, (_, k) => w.coreColors?.[k] || fromRec[k % per] || "");
   }
-  /** Контакты жил провода `idx` у разъёма: k-я — контакт k-й жилы или null. */
+  /** Контакты жил провода `idx` у разъёма: k-я — контакт k-й жилы или null (после жил — экраны, shieldCount_). */
   const corePinsOf_ = (ep: Endpoint, idx: number) => parseCorePins_(ep.pins?.[idx]);
-  /** Жил провода, которые приходят на разъём: по распиновке — сколько жил с контактом здесь; распиновки у разъёма
-   *  нет — все жилы (кабелей × жил), как раньше. */
+  /** Экранов у строки «Кабели»: у экранированного кабеля в оболочке — по одному на кабель. Экран (дренаж) можно завести
+   *  на контакт, как жилу: в строке распиновки он стоит после всех жил — позиция unitCount_ + номер кабеля. */
+  const shieldCount_ = (w: WireEntry) => (isJacketedCable_(w) && wireScreened_(w) ? Math.max(1, Math.round(Number(w.qty) || 1)) : 0);
+  const isShieldPos_ = (w: WireEntry, k: number) => k >= unitCount_(w) && k < unitCount_(w) + shieldCount_(w);
+  /** Жил провода, которые приходят на разъём: по распиновке — сколько жил с контактом здесь (экран не в счёт);
+   *  распиновки у разъёма нет — все жилы (кабелей × жил), как раньше. */
   function endUnits_(ep: Endpoint, w: WireEntry) {
-    const pinned = corePinsOf_(ep, w.idx).filter((p) => p != null).length;
+    const pinned = corePinsOf_(ep, w.idx).filter((p, k) => p != null && !isShieldPos_(w, k)).length;
     return pinned || unitCount_(w);
   }
-  /** Концы кабелей в оболочке на стороне: разъёмы стороны, куда идут жилы кабеля (по порядку), экранирован ли он и
-   *  незадействованные на этой стороне жилы (номера с 0) — когда распиновка задана на всех его разъёмах стороны. */
+  /** Контакты экранов провода у разъёма (экран, заведённый на контакт, — ещё один терминал или ещё одна пайка). */
+  const shieldPinsAt_ = (ep: Endpoint, w: WireEntry) =>
+    corePinsOf_(ep, w.idx).flatMap((p, k) => (p != null && isShieldPos_(w, k) ? [p] : []));
+  /** Концы кабелей в оболочке на стороне: разъёмы стороны, куда идут жилы кабеля (по порядку), экранирован ли он,
+   *  незадействованные на этой стороне жилы (номера с 0) — когда распиновка задана на всех его разъёмах стороны — и
+   *  экраны, заведённые на контакт (разъём и контакт). */
   function cableEnds_(side: Side) {
     return activeWires_().filter(isJacketedCable_).flatMap((w) => {
       const eps = endpointsOnSide_(side).filter((ep) => routedWireIdxs_(ep).includes(w.idx));
       if (!eps.length) return [];
       const lists = eps.map((ep) => corePinsOf_(ep, w.idx));
-      const unused = lists.every((list) => list.some((p) => p != null))
+      const unused = lists.every((list) => list.some((p, k) => p != null && !isShieldPos_(w, k)))
         ? Array.from({ length: unitCount_(w) }, (_, k) => k).filter((k) => lists.every((list) => list[k] == null)) : [];
-      return [{ w, eps, screened: wireScreened_(w), unused }];
+      const shieldPins = eps.flatMap((ep) => shieldPinsAt_(ep, w).map((pin) => ({ ep, pin })));
+      return [{ w, eps, screened: wireScreened_(w), unused, shields: shieldCount_(w), shieldPins }];
     });
   }
   const isRjEndpoint_ = (e: Endpoint) => { const c = e.connId ? getCompById(e.connId) : null; return !!c && isRjConn_(c); };
@@ -1268,8 +1282,9 @@ export function makeGen(D: GenData, S: GenState) {
     S.endpoints.forEach((e) => {
       if (e.method !== "solder" || e.tutOff) return;
       const routed = routedWireIdxs_(e);
-      // ТУТ — на каждую жилу, что приходит на этот разъём (часть жил кабеля может идти на другой разъём стороны).
-      const n = activeWires.filter((w) => routed.includes(w.idx)).reduce((s, w) => s + endUnits_(e, w), 0);
+      // ТУТ — на каждую жилу, что приходит на этот разъём (часть жил кабеля может идти на другой разъём стороны), и на
+      // экран, припаянный к контакту.
+      const n = activeWires.filter((w) => routed.includes(w.idx)).reduce((s, w) => s + endUnits_(e, w) + shieldPinsAt_(e, w).length, 0);
       if (!n) return;
       solderEnds += n;
       const len = (e.tutLen || "").trim();
@@ -1401,10 +1416,16 @@ export function makeGen(D: GenData, S: GenState) {
         }
         const shielded = mine.filter((x) => x.screened);
         if (shielded.length) {
+          // Экран, заведённый на контакт, скручивают в вывод под контакт; остальные — скручивают и изолируют.
+          const total = count(shielded);
+          const onPin = Math.min(total, shielded.reduce((s, x) => s + x.shieldPins.length, 0));
+          const where = [...new Set(shielded.flatMap((x) => x.shieldPins.map((p) => `${endKey_(p.ep)}·${p.pin}`)))].join(", ");
+          const label = !onPin ? `Скрутка и изоляция экрана ${tags} — ${total} шт`
+            : onPin === total ? `Скрутка экрана в вывод на контакт ${where} — ${total} шт`
+              : `Скрутка экрана ${tags} — ${total} шт: на контакт ${where} — ${onPin}, изолировать — ${total - onPin}`;
           // Карты «Скрутка экрана» (БД.ОП TWST_SHILED) в библиотеке может не быть — тогда разделка экранированного кабеля.
-          out.push({ type: "stripCable", opKey: "shield" + side + ord, side, ord, cat: "Разделка", tutCount: count(shielded),
-            tmplHint: hasTemplateCode_(SHIELD_CODE_) ? SHIELD_CODE_ : "STRIP_CABLE_sheld", tmplWant: SHIELD_CODE_,
-            label: `Скрутка и изоляция экрана ${tags} — ${count(shielded)} шт` });
+          out.push({ type: "stripCable", opKey: "shield" + side + ord, side, ord, cat: "Разделка", tutCount: total,
+            tmplHint: hasTemplateCode_(SHIELD_CODE_) ? SHIELD_CODE_ : "STRIP_CABLE_sheld", tmplWant: SHIELD_CODE_, label });
         }
         const idle = mine.reduce((s, x) => s + x.unused.length, 0);
         if (idle) {
@@ -1732,9 +1753,19 @@ export function makeGen(D: GenData, S: GenState) {
         if (wireCores_(w) <= 1) return { ...rest, qty: here };
         return here % qty === 0 ? { ...rest, cores: here / qty } : { ...rest, qty: 1, cores: here };
       };
+      const corePins = (w: WireEntry) => corePinsOf_(ep, w.idx).filter((p, k): p is number => p != null && !isShieldPos_(w, k)).join(", ");
+      // Экран на контакте разъёма — отдельной строкой «Экран <кабель>»: ему тоже нужен терминал (или пайка) и место в ЭТК.
+      const shields = entries.flatMap((x) => {
+        const pins = shieldPinsAt_(ep, x.w);
+        if (!pins.length) return [];
+        const base = wires[x.pos] as { name?: string; art?: string; length?: unknown };
+        const name = `Экран ${base.art || base.name || "кабеля"}`;
+        return [{ wire: { name, art: name, qty: pins.length, length: base.length }, source: sourceBranch_(ep, x.w.idx), pins: pins.join(", ") }];
+      });
       return {
-        wires: entries.map((x) => own(x.w, wires[x.pos])), sources: entries.map((x) => sourceBranch_(ep, x.w.idx)),
-        pins: entries.map((x) => parsePinList_(ep.pins?.[x.w.idx]).join(", ")),
+        wires: [...entries.map((x) => own(x.w, wires[x.pos])), ...shields.map((s) => s.wire)],
+        sources: [...entries.map((x) => sourceBranch_(ep, x.w.idx)), ...shields.map((s) => s.source)],
+        pins: [...entries.map((x) => corePins(x.w)), ...shields.map((s) => s.pins)],
       };
     };
     const epSnap = (ep: Endpoint | null) => {
@@ -1842,7 +1873,7 @@ export function makeGen(D: GenData, S: GenState) {
 
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
-    cableRecOf_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_,
+    cableRecOf_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,

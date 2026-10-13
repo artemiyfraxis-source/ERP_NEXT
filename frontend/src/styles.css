@@ -1477,6 +1477,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .ep-cable { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--muted-foreground); font-size: 12.5px; }
 .tcgen .ep-cable b { color: var(--foreground); font-variant-numeric: tabular-nums; }
 .tcgen .ep-cable .tone-warn { color: var(--tone-warn); font-weight: 500; }
+/* Распиновка: экран кабеля в палитре — кружок без выбора цвета; цепь жилы «в руке» — короткое поле рядом с проводом. */
+.tcgen .pin-color-dot.is-static { cursor: default; pointer-events: none; }
+.tcgen .pin-hand-net { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
+.tcgen .pin-hand-net input { width: 140px; height: 28px; }
 .tcgen .op-code, .tcgen .code { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
 .tcgen .ep-more summary { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
 .tcgen .ep-more[open] > summary { margin-bottom: 8px; }

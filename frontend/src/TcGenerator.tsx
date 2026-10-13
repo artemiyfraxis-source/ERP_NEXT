@@ -72,7 +72,7 @@ import { MarkTable, markTotal } from "./GenMarkTable";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
 import {
   addBranch, assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
-  setBranchMode, setCoreColor, swapPins, syncRoutes, unassignPin,
+  setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin,
 } from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
@@ -521,7 +521,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const pinFree = freeSide(gen, S);
   const pinHousings = usePinHousings(pinEnds.map((end) => end.conn));
   const pinCounts = Object.fromEntries(pinEnds.map((end) => [end.id, pinHousings[end.conn]?.n || null]));
-  const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList, pinHousings, pinFree);
+  // Экран кабеля — не отдельный провод резки: на эскизах маршрута его нет.
+  const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList.filter((u) => !u.shield), pinHousings, pinFree);
   // Автозаполнение (владелец 12.10): распиновка пустая, а число контактов каждого разъёма известно из базы разъёмов —
   // провода встают по порядку сами (одна сторона — 1…N, две — пин-в-пин). Один раз на набор разъёмов и проводов:
   // очищенную вручную распиновку не перезаполняет; не помещается — не трогает, предупреждение под схемой.
@@ -757,7 +758,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const pinEnd = pinEnds.find((end) => end.id === ep.id);
     // Терминалов на разъём — по жилам, что сюда приходят (часть жил кабеля может идти на другой разъём или не участвовать).
     const routedSet = new Set(routedList);
-    const coresHere = gen.activeWires_().filter((w) => routedSet.has(w.idx)).reduce((s, w) => s + gen.endUnits_(ep, w), 0);
+    // Экран, заведённый на контакт, — ещё один терминал.
+    const coresHere = gen.activeWires_().filter((w) => routedSet.has(w.idx)).reduce((s, w) => s + gen.endUnits_(ep, w) + gen.shieldPinsAt_(ep, w).length, 0);
     const termCount = ep.double ? Math.ceil(coresHere / gen.epPer_(ep)) : coresHere;
     // Концы кабелей в оболочке у этого разъёма: сколько жил здесь, куда остальные, экран и незадействованные жилы.
     const cableLines = gen.cableEnds_(ep.side).filter((x) => x.eps.includes(ep)).map((x) => {
@@ -772,7 +774,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         if (prev && prev.unit === u.unit - 1) idle[idle.length - 1] = `${idle[idle.length - 1].split("–")[0]}–${u.num}`;
         else idle.push(u.num);
       });
-      return { key: x.w.idx, name: compLabel(x.w.compId), here: gen.endUnits_(ep, x.w), total, others, screened: first && x.screened, idle };
+      // Экран на контакте — у своего разъёма «на контакт N»; не заведён никуда — «скрутить и изолировать» у первого разъёма.
+      const shieldHere = x.shieldPins.filter((p) => p.ep === ep).map((p) => p.pin);
+      const shieldIdle = first && x.screened ? Math.max(0, x.shields - x.shieldPins.length) : 0;
+      return { key: x.w.idx, name: compLabel(x.w.compId), here: gen.endUnits_(ep, x.w), total, others, shieldHere, shieldIdle, idle };
     });
     return <div className="ep-card" key={ep.id}>
       <div className="ep-head">
@@ -830,7 +835,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>}
       {cableLines.map((line) => <div className="ep-cable" key={line.key} aria-label={`Кабель ${line.name} на ${name}`}>
         <span>Кабель <b>{line.name}</b>: жил здесь <b>{line.here}</b> из {line.total}{line.others.length > 0 && ` · остальные — ${line.others.join(", ")}`}</span>
-        {line.screened && <span>экран — скрутить и изолировать</span>}
+        {line.shieldHere.length > 0 && <span>экран — на контакт <b>{line.shieldHere.join(", ")}</b></span>}
+        {line.shieldIdle > 0 && <span>экран{line.shieldIdle > 1 ? ` ×${line.shieldIdle}` : ""} — скрутить и изолировать</span>}
         {line.idle.length > 0 && <span className="tone-warn">не задействованы {line.idle.join(", ")} — обрезать и изолировать</span>}
       </div>)}
       {pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
@@ -1131,6 +1137,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onBranchMode={(extra, mode) => update((current) => setBranchMode(D, current, extra, mode))}
         onRemoveBranch={(extra) => update((current) => removeBranch(D, current, extra))}
         onCoreColor={(idx, unit, color) => update((current) => setCoreColor(D, current, idx, unit, color))}
+        onCoreNet={(idx, unit, net) => update((current) => setCoreNet(D, current, idx, unit, net))}
         onAssign={(epId, idx, unit, pin) => update((current) => assignPin(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
