@@ -80,6 +80,8 @@ JST_SERIES: tuple[dict[str, Any], ...] = (
                   ("Розетка SMR, белая", "jst-sm-r", "SMR-{:02d}V-N", _counts(2, 12)),
                   ("Вилка SMP, чёрная", "jst-sm-p", "SMP-{:02d}V-BC", _counts(2, 12)),
                   ("Вилка SMP, белая", "jst-sm-p", "SMP-{:02d}V-NC", _counts(2, 12))),
+     # eSM «Contact»: the receptacle SMR takes the pin contact, the plug SMP the socket contact.
+     "contacts": (("SYM-001T-P0.6", "штырь, в розетку SMR, AWG 28–22"), ("SHF-001T-0.8BS", "гнездо, в вилку SMP, AWG 28–22")),
      "headers": (), "note": "18 конт. — двухрядный корпус, в базе не рисуется"},
     {"id": "jst-rcy", "title": "JST RCY", "sheet": "eRCY", "terminals": ("SYR", "SYP"),
      "variants": (("Розетка SYR, штыри", "jst-rcy", "SYR-{:02d}T", (2,)),
@@ -101,7 +103,9 @@ FAMILY_CATEGORY: dict[str, str] = {
 # Other series: which families form one series and how БД.ТЕР names their terminals (a «Series» token, or the whole
 # «Series» / «Product Name» cell). A family not listed here is a series of its own, without terminals.
 GROUPS: tuple[dict[str, Any], ...] = (
-    {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "category": WTB, "families": ("molex-sl-2r",), "terminals": ("SL",)},
+    {"id": "molex-sl", "title": "Molex SL", "category": WTB, "families": ("molex-sl-1r", "molex-sl-2r"), "terminals": ("SL",)},
+    {"id": "molex-igrid", "title": "Molex iGrid", "category": WTB, "families": ("molex-igrid",), "terminals": ("iGrid",)},
+    {"id": "molex-boardin", "title": "Molex Board-in", "category": WTB, "families": ("molex-boardin",), "terminals": ("Board-in",)},
     {"id": "molex-clikmate", "title": "Molex CLIK-Mate", "category": WTB, "families": ("molex-clikmate",), "terminals": ("502578", "CLIK-Mate")},
     {"id": "molex-picoclasp", "title": "Molex Pico-Clasp", "category": WTB, "families": ("molex-picoclasp-1r", "molex-picoclasp"), "terminals": ("501189", "501330")},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "category": AUTO, "families": ("te-multilock-040",), "terminals": ("Multilock 040 MK-II",)},
@@ -117,12 +121,10 @@ GROUPS: tuple[dict[str, Any], ...] = (
 # shows the terminals and the picture of the closest shape (`pic` = a family whose sample is drawn), never a made-up
 # model number. (id, title, maker, category, pic, terminal keys).
 _LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
-    ("molex-kk396", "Molex KK 396", "Molex", WTB, "jst-vh", ("KK 396 (legacy KK 156)", "KK 396/508")),
-    ("molex-minilock", "Molex Mini-Lock", "Molex", WTB, "jst-ph", ("Mini-Lock",)),
-    ("molex-igrid", "Molex iGrid", "Molex", WTB, "molex-picoclasp-1r", ("iGrid",)),
+    # CTX50 terminals go into the Mini50 / CTX50 housings, Pico-EZmate is sold as cable assemblies (36920): no housing
+    # part number the maker lists for them was found, so they keep the closest shape.
     ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",)),
     ("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, "molex-picoblade", ("Pico-EZmate", "Pico-EZmate Plus")),
-    ("molex-boardin", "Molex Board-in", "Molex", WTB, "jst-xh", ("Board-in",)),
     ("jst-wp", "JST WP (JWPF)", "JST", AUTO, "te-superseal", ("WP (JWPF)",)),
     ("hsm-phu", "Hsuan Mao PHU / MHU / MX", "Hsuan Mao", WTB, "jst-ph", ("PHU/MHU/MX", "HC (PAP)")),
     ("kls", "KLS Electronic", "KLS", WTB, "connfly-ds1071", ("KLS1-2.50", "KLS1-2.54", "KLS1-XL4-1.25 (HRS DF13 type)")),
@@ -311,7 +313,7 @@ def _jst_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
     """The first JST sheets (`JST_SERIES`) in the catalogue format of `connector_catalog_data`."""
     return {**spec, "maker": "JST", "category": WTW if spec["id"] in {"jst-rcy", "jst-sm"} else WTB,
             "datasheet": JST_PDF.format(spec["sheet"]), "range_checked": True, "range_src": f"JST {spec['sheet']}, Housing",
-            "sources": ((f"JST {spec['sheet']}", JST_PDF.format(spec["sheet"])),), "contacts": ()}
+            "sources": ((f"JST {spec['sheet']}", JST_PDF.format(spec["sheet"])),), "contacts": spec.get("contacts", ())}
 
 
 def _catalog_series(spec: Mapping[str, Any], records: list[Mapping[str, Any]], known: set[str]) -> dict[str, Any]:
