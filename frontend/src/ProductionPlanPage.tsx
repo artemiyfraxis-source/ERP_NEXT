@@ -15,6 +15,7 @@ import {
 import { StageChangeDialog } from "./StageChangeDialog";
 import { canAct } from "./navigation";
 import { PeopleLoadGrid } from "./PeopleLoad";
+import { PlanBaseline } from "./PlanBaseline";
 import { EMPTY, formatDate, formatDayMonth, formatMoment } from "./format";
 import { PlanLoadSheet, markText, periodWords, type SheetMark } from "./PlanLoadSheet";
 import { StatusChip } from "./StatusChip";
@@ -169,6 +170,8 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
         </div>
       </div>}
     </section>
+
+    <PlanBaseline canEdit={canEdit} />
 
     <section className="panel plan-load" aria-label="Загрузка по людям">
       <div className="plan-section-head"><h2>Загрузка по людям</h2>
