@@ -184,7 +184,7 @@ export function RequestGrid({
                     )}
                   </td>
                   {shown.map((column) => (
-                    <td key={column.key} className={`rg-col-${column.key}`}>{control(row, column.key, draft, rowErrors[column.key])}</td>
+                    <td key={column.key} className={`rg-col-${column.key}`} data-label={column.label}>{control(row, column.key, draft, rowErrors[column.key])}</td>
                   ))}
                   <td className="rg-act">
                     <button type="button" className="rg-link" onClick={() => onDuplicate(row)} disabled={atLimit} aria-label={`Копия строки ${row + 1}`}>Копия</button>
