@@ -298,10 +298,13 @@ export function templateTerminalChoices(connector: ConnectorInstance, logicalCon
   ])];
 }
 
+/** ERP: `freeEnd` — an open wire end with no connector (a «хвост» of a splice); the point is its Э4 position, on the
+ *  drawing the end is the last node of the wire's physical route. */
 export type WireEndpoint =
-  | { readonly connectorId: string; readonly contactId: string; readonly junctionId?: never; readonly screenId?: never }
-  | { readonly junctionId: string; readonly connectorId: ""; readonly contactId: ""; readonly screenId?: never }
-  | { readonly screenId: string; readonly screenTerminalSide?: WireScreenEndpointSide; readonly connectorId: ""; readonly contactId: ""; readonly junctionId?: never };
+  | { readonly connectorId: string; readonly contactId: string; readonly junctionId?: never; readonly screenId?: never; readonly freeEnd?: never }
+  | { readonly junctionId: string; readonly connectorId: ""; readonly contactId: ""; readonly screenId?: never; readonly freeEnd?: never }
+  | { readonly screenId: string; readonly screenTerminalSide?: WireScreenEndpointSide; readonly connectorId: ""; readonly contactId: ""; readonly junctionId?: never; readonly freeEnd?: never }
+  | { readonly freeEnd: Point; readonly connectorId: ""; readonly contactId: ""; readonly junctionId?: never; readonly screenId?: never };
 
 export interface E4Junction {
   readonly id: string;
@@ -774,6 +777,8 @@ export function parseHarnessDesignDocument(value: unknown): HarnessDesignDocumen
     for (const endpoint of [wire.from, wire.to]) {
       if (isJunctionEndpoint(endpoint)) {
         if (!junctionIds.has(endpoint.junctionId)) throw new Error("Провод ссылается на отсутствующий узел соединения.");
+      } else if (isFreeEndpoint(endpoint)) {
+        if (isFreeEndpoint(endpoint === wire.from ? wire.to : wire.from)) throw new Error("У провода свободным может быть только один конец.");
       } else if (isScreenEndpoint(endpoint)) {
         if (!document.screens.some((screen) => screen.id === endpoint.screenId) ||
             !wireScreenConnectionPoint(document, endpoint.screenId, new Set(), endpoint.screenTerminalSide)) {
@@ -845,6 +850,14 @@ export function createJunctionEndpoint(junctionId: string): WireEndpoint {
   return { junctionId, connectorId: "", contactId: "" };
 }
 
+export function isFreeEndpoint(endpoint: WireEndpoint): endpoint is Extract<WireEndpoint, { freeEnd: Point }> {
+  return "freeEnd" in endpoint && endpoint.freeEnd !== undefined;
+}
+
+export function createFreeEndpoint(position: Point): WireEndpoint {
+  return { freeEnd: { x: position.x, y: position.y }, connectorId: "", contactId: "" };
+}
+
 export function isScreenEndpoint(endpoint: WireEndpoint): endpoint is Extract<WireEndpoint, { screenId: string }> {
   return "screenId" in endpoint;
 }
@@ -868,6 +881,7 @@ function wireEndpointE4AnchorInternal(
     const junction = document.junctions.find((item) => item.id === endpoint.junctionId);
     return junction ? { position: junction.position, leadDirection: null } : null;
   }
+  if (isFreeEndpoint(endpoint)) return { position: endpoint.freeEnd, leadDirection: null };
   if (isScreenEndpoint(endpoint)) {
     const geometry = wireScreenConnectionGeometry(
       document,
@@ -1151,6 +1165,7 @@ export function findWireEndpoint(
   if (isJunctionEndpoint(endpoint)) {
     return view === "e4" ? document.junctions.find((item) => item.id === endpoint.junctionId)?.position ?? null : null;
   }
+  if (isFreeEndpoint(endpoint)) return view === "e4" ? endpoint.freeEnd : null;
   if (isScreenEndpoint(endpoint)) {
     return view === "e4"
       ? wireScreenConnectionPoint(document, endpoint.screenId, new Set(), endpoint.screenTerminalSide)
@@ -1929,6 +1944,10 @@ function parseNormalizedPosition(value: unknown, name: string): number {
 function parseEndpoint(value: unknown): WireEndpoint {
   const record = requireRecord(value, "Конец провода задан неверно.");
   if (record.junctionId !== undefined) return createJunctionEndpoint(requireText(record.junctionId, "Узел конца провода"));
+  if (record.freeEnd !== undefined) {
+    if (record.connectorId || record.contactId || record.screenId !== undefined) throw new Error("Свободный конец провода не может стоять на контакте.");
+    return createFreeEndpoint(parsePoint(record.freeEnd));
+  }
   if (record.screenId !== undefined) {
     const side = record.screenTerminalSide;
     if (side !== undefined && side !== "above" && side !== "below") {

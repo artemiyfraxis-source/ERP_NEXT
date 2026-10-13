@@ -27,6 +27,7 @@ import {
   defaultE4WireLead,
   defaultLayerIds,
   isJunctionEndpoint,
+  isFreeEndpoint,
   isScreenEndpoint,
   normalizeCableInstance,
   normalizeWireStripProfileBinding,
@@ -2712,6 +2713,7 @@ function requireEndpoint(document: HarnessDesignDocument, endpoint: WireEndpoint
     }
     return;
   }
+  if (isFreeEndpoint(endpoint)) return;
   if (isScreenEndpoint(endpoint)) {
     if (!document.screens.some((screen) => screen.id === endpoint.screenId) ||
         !wireEndpointE4Anchor(document, endpoint)) {
@@ -2735,6 +2737,7 @@ function isContactConnected(document: HarnessDesignDocument, connectorId: string
 }
 
 function sameEndpoint(left: WireEndpoint, right: WireEndpoint): boolean {
+  if (isFreeEndpoint(left) || isFreeEndpoint(right)) return isFreeEndpoint(left) && isFreeEndpoint(right);
   if (isJunctionEndpoint(left)) return isJunctionEndpoint(right) && left.junctionId === right.junctionId;
   if (isScreenEndpoint(left)) return isScreenEndpoint(right) && left.screenId === right.screenId &&
     (left.screenTerminalSide ?? "above") === (right.screenTerminalSide ?? "above");
