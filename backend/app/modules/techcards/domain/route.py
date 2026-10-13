@@ -85,9 +85,12 @@ def _label(block: Block) -> str:
 
 
 def _ordered(blocks: Sequence[Block], edges: Sequence[Edge], manual: bool) -> Route:
-    """Blocks by their first operation, operations ascending, edges by their blocks' order."""
+    """Blocks by their first operation number, edges by their blocks' order. Operations of a derived block go
+    ascending; a hand-made (manual) block keeps the technologist's order — it IS the order of work inside the
+    semi-finished product (ПФ, owner + Vasily 13.10): «05, 03» in one ПФ is allowed, ETK numbers stay as they are."""
     blocks = sorted(
-        (Block(item.key, item.name, tuple(sorted(item.ops)), item.final, item.components) for item in blocks),
+        (Block(item.key, item.name, tuple(item.ops) if manual else tuple(sorted(item.ops)), item.final, item.components)
+         for item in blocks),
         key=lambda item: (min(item.ops, default=0), item.key),
     )
     order = {block.key: index for index, block in enumerate(blocks)}
@@ -213,7 +216,8 @@ def parse_route(
         final = bool(item.get("final"))
         name = str(item.get("name") or "").strip()
         if not name and positions:
-            name = (final_name if final else "") or names.get(max(positions), "")
+            # The product of the block is what its last operation hands on: the last by the hand-made order.
+            name = (final_name if final else "") or names.get(positions[-1] if manual else max(positions), "")
         blocks.append(Block(key, name, positions, final, _components(item.get("components"), f"«{name or key}»")))
     raw_edges = raw.get("edges")
     if raw_edges is None:
@@ -378,3 +382,96 @@ def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any
         } for block in route.blocks],
         "edges": [{"from": edge.source, "to": edge.target, "per_unit": _number(edge.per_unit)} for edge in route.edges],
     }
+
+
+# ── ПФ documents (owner + Vasily 13.10): the ETK is cut into semi-finished products; a ПФ document is one block of
+# the scheme, not an entity of its own — computed from the document every time, nothing is stored.
+
+def _batch(document: Mapping[str, Any]) -> Decimal:
+    config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
+    kit = document.get("kit") if isinstance(document.get("kit"), Mapping) else {}
+    for value in (config.get("partQty"), kit.get("part_quantity")):
+        number = _decimal_or_none(value)
+        if number is not None and number > 0:
+            return number
+    return Decimal(1)
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = Decimal(str(value).strip().replace(",", "."))
+    except (InvalidOperation, ValueError):
+        return None
+    return number if number.is_finite() else None
+
+
+def _sum_rows(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Rows of one article (or name, without an article) and unit added up; a row without a number stays its own."""
+    result: list[dict[str, Any]] = []
+    index: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        article, name = str(row.get("art") or "").strip(), str(row.get("name") or "").strip()
+        unit = str(row.get("unit") or "").strip()
+        norm = _decimal_or_none(row.get("norm"))
+        key = (article or name, unit)
+        same = index.get(key) if norm is not None and (article or name) else None
+        if same is not None:
+            same["norm"] = _text(_decimal_or_none(same["norm"]) + norm)
+            continue
+        item = deepcopy(dict(row))
+        if norm is not None:
+            item["norm"] = _text(norm)
+            if article or name:
+                index[key] = item
+        result.append(item)
+    return result
+
+
+def _text(value: Decimal) -> str:
+    number = _number(value)
+    return str(number).replace(".", ",") if isinstance(number, float) else str(number)
+
+
+def pf_documents(document: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """The ПФ documents of an ETK — one per block of its `route` (pass a document with its route attached:
+    `etk_builder.attach_route`), in the scheme's order, numbered ПФ-1… Each one: its operations in the order of work
+    (`ops` — ETK positions, the order of `block.ops`), the components all of them take (one article added up), the
+    semi-finished pieces that come from outside the ПФ (incoming edges: the source ПФ, per one piece and per batch),
+    what it hands on (the result of its last operation) and its time norm. No route or no operations — empty."""
+    if not isinstance(document, Mapping):
+        return []
+    route = document.get("route") if isinstance(document.get("route"), Mapping) else {}
+    raw_blocks = [item for item in route.get("blocks") or [] if isinstance(item, Mapping) and item.get("key")]
+    operations = [item for item in document.get("operations") or [] if isinstance(item, Mapping)]
+    if not raw_blocks or not operations:
+        return []
+    batch = _batch(document)
+    number = {str(block["key"]): index for index, block in enumerate(raw_blocks, start=1)}
+    names = {str(block["key"]): str(block.get("name") or "") for block in raw_blocks}
+    result: list[dict[str, Any]] = []
+    for block in raw_blocks:
+        key = str(block["key"])
+        positions = [_position(value) for value in block.get("ops") or []]
+        own = [operations[position - 1] for position in positions if 0 < position <= len(operations)]
+        components = _sum_rows([row for operation in own for row in operation.get("components") or []
+                                if isinstance(row, Mapping)])
+        inputs = []
+        for edge in route.get("edges") or []:
+            if not isinstance(edge, Mapping) or str(edge.get("to") or "") != key or str(edge.get("from") or "") not in number:
+                continue
+            source = str(edge["from"])
+            per_unit = _decimal_or_none(edge.get("per_unit")) or Decimal(1)
+            inputs.append({"block": source, "number": number[source], "name": names[source],
+                           "per_unit": _number(per_unit), "norm": _text(per_unit * batch), "unit": "шт"})
+        inputs.sort(key=lambda item: item["number"])
+        last = own[-1] if own else {}
+        result.append({
+            "number": number[key], "key": key, "name": str(block.get("name") or ""),
+            "final": bool(block.get("final")), "ops": positions,
+            "components": components, "inputs": inputs,
+            "output": [deepcopy(dict(row)) for row in last.get("result") or [] if isinstance(row, Mapping)],
+            "minutes": block.get("minutes", 0), "unit_minutes": block.get("unit_minutes", 0),
+        })
+    return result

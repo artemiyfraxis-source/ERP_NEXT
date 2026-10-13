@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from typing import Any, Protocol, Sequence
 from uuid import UUID, uuid4
@@ -18,7 +19,9 @@ from .operation_cards import (
     parse_operation_library,
     parse_operation_template,
 )
-from .etk_builder import build_etk
+from .etk_builder import _route_ops, build_etk
+from .domain.route import RouteError, parse_route, route_json, route_totals
+from .project_cards import operation_key
 from .scheme_corrections import EVENT as SCHEME_CORRECTED, scheme_correction
 
 
@@ -93,6 +96,14 @@ class AutoBuildProjectTechcardCommand(ChangeProjectTechcardCommand):
 class EditTechcardOperationCommand(ChangeProjectTechcardCommand):
     operation_key: str
     operation: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SaveTechcardRouteCommand(ChangeProjectTechcardCommand):
+    """«ПФ» of the ETK by hand: the block scheme (`document.route`) with blocks, their operations in the order of work
+    and edges; totals are counted anew."""
+
+    route: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -174,10 +185,43 @@ def create_project_techcard(command: CreateProjectTechcardCommand, uow: UnitOfWo
         return card
 
 
+def _hand_route(document: dict[str, Any], raw: object) -> dict[str, Any]:
+    """`document.route` from a scheme made by hand: checked against the document's operations (RouteError explains
+    what is wrong), operations keep the given order inside a block, totals come from the ETK time rows."""
+    ops, final_name, quantity = _route_ops(document, strict=False)
+    if not ops:
+        raise RouteError("нет операций")
+    route = parse_route(raw, ops, final_name, manual=True)
+    return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
+
+
+def _operation_keys(document: dict[str, Any] | None) -> list[str] | None:
+    try:
+        return [operation_key(item) for item in (document or {}).get("operations") or []]
+    except (AttributeError, TechcardValidationError):
+        return None
+
+
+def _keep_hand_route(previous: dict[str, Any] | None, document: dict[str, Any]) -> dict[str, Any]:
+    """A rebuild keeps the ПФ the technologist cut by hand (`document.route`, source manual) while the operations are
+    the same ones in the same places and the new build brings no hand-made scheme of its own (`build_config.route`)."""
+    old = (previous or {}).get("route")
+    new = document.get("route") if isinstance(document, dict) else None
+    if not isinstance(old, dict) or old.get("source") != "manual" or (isinstance(new, dict) and new.get("source") == "manual"):
+        return document
+    keys = _operation_keys(previous)
+    if not keys or keys != _operation_keys(document):
+        return document
+    try:
+        return {**document, "route": _hand_route(document, old)}
+    except (RouteError, AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return document
+
+
 def rebuild_project_techcard(command: RebuildProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
-        updated = current.rebuild(command.document, command.now)
+        updated = current.rebuild(_keep_hand_route(current.document, command.document), command.now)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
             uow.techcards.add_revision(_revision(updated, "Пересборка", command.actor, command.now))
@@ -205,7 +249,7 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
             )
         except ValueError as error:
             raise TechcardValidationError(str(error)) from error
-        updated = current.rebuild(document, command.now)
+        updated = current.rebuild(_keep_hand_route(current.document, document), command.now)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
             uow.techcards.add_revision(_revision(updated, "Автопересборка", command.actor, command.now))
@@ -328,6 +372,36 @@ def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWor
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.operation_edited",
             actor=command.actor, occurred_at=command.now,
             details={"operation_key": command.operation_key, "revision": updated.revision},
+        ))
+        uow.commit()
+        return updated
+
+
+def save_project_route(command: SaveTechcardRouteCommand, uow: UnitOfWork) -> ProjectTechcard:
+    """«Сохранить ПФ»: the ETK's operations grouped into semi-finished products by hand. An issued ETK gets a new
+    revision (as an operation edit does); a draft just keeps the scheme. The operations and `build_config` stay."""
+    with uow:
+        current = _current(command, uow)
+        if current.document is None:
+            raise TechcardValidationError("Электронная техкарта ещё не собрана")
+        try:
+            route = _hand_route(current.document, command.route)
+        except RouteError as error:
+            raise TechcardValidationError(str(error)) from error
+        document = deepcopy(current.document)
+        document["route"] = route
+        issued = current.status is TechcardStatus.ISSUED
+        updated = replace(
+            current, document=document, revision=current.revision + 1 if issued else current.revision,
+            version=current.version + 1, updated_at=command.now,
+        )
+        uow.techcards.save(updated)
+        if issued:
+            uow.techcards.add_revision(_revision(updated, "Правка ПФ", command.actor, command.now))
+        uow.audit.add(AuditEvent(
+            id=uuid4(), aggregate_id=updated.id, event_type="techcards.route_edited",
+            actor=command.actor, occurred_at=command.now,
+            details={"revision": updated.revision, "blocks": len(route["blocks"])},
         ))
         uow.commit()
         return updated
