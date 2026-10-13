@@ -7,6 +7,8 @@
 .etk-pf-bar { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 13px; }
 .etk-pf-bar > button { margin-left: auto; }
 .etk-pf-bar > small { color: var(--muted-foreground); font-size: 12px; }
+/* «Предложить разбивку на ПФ» и её итог — строкой под шапкой в режиме правки. */
+.etk-pf-propose { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 12px; color: var(--muted-foreground); }
 .etk-pf-group { display: grid; gap: 4px; padding: 7px 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
 .etk-pf-group.on { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
 .etk-pf-head { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }

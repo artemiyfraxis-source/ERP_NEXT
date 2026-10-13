@@ -1700,12 +1700,12 @@ export function makeGen(D: GenData, S: GenState) {
     } : null);
     const ops = getActiveOps().map((spec) => {
       const row = opRow(spec);
-      return { type: spec.type, side: spec.side || "", units: spec.units || 1, templateId: row.templateId,
+      return { type: spec.type, opKey: spec.opKey, side: spec.side || "", units: spec.units || 1, templateId: row.templateId,
         opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine };
     });
     const tut = coaxBomTut_(), cable = coaxBomCableComp_();
     return {
-      mode: "coax",
+      mode: "coax", tab: "coax",
       assemblyIndex: findKey(/индекс/i),
       assemblyName: findKey(/наименование/i),
       partQty: partQtyFromInfo_(),
@@ -1814,7 +1814,7 @@ export function makeGen(D: GenData, S: GenState) {
     const ops = getActiveOps().map((spec) => {
       const row = opRow(spec);
       const op: Record<string, unknown> = {
-        type: spec.type, templateId: row.templateId, opNum: row.matched ? (row.matched.opNumber || "") : "",
+        type: spec.type, opKey: spec.opKey, templateId: row.templateId, opNum: row.matched ? (row.matched.opNumber || "") : "",
         tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
       };
       if (spec.wireIdxs) {
@@ -1858,7 +1858,7 @@ export function makeGen(D: GenData, S: GenState) {
     };
     const bigAssembly = S.endpoints.filter((e) => e.connId || e.termId).length > 2;
     return {
-      assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
+      tab: S.tab, assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
       bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
       ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
     };

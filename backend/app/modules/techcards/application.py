@@ -104,6 +104,10 @@ class SaveTechcardRouteCommand(ChangeProjectTechcardCommand):
     and edges; totals are counted anew."""
 
     route: dict[str, Any]
+    # The split came from the generator's rule (`pf_split`, the move of old ETKs onto ПФ) — stored as «generated»;
+    # the revision says why it was made.
+    generated: bool = False
+    reason: str = "Правка ПФ"
 
 
 @dataclass(frozen=True)
@@ -185,13 +189,14 @@ def create_project_techcard(command: CreateProjectTechcardCommand, uow: UnitOfWo
         return card
 
 
-def _hand_route(document: dict[str, Any], raw: object) -> dict[str, Any]:
+def _hand_route(document: dict[str, Any], raw: object, generated: bool = False) -> dict[str, Any]:
     """`document.route` from a scheme made by hand: checked against the document's operations (RouteError explains
-    what is wrong), operations keep the given order inside a block, totals come from the ETK time rows."""
+    what is wrong), operations keep the given order inside a block, totals come from the ETK time rows. `generated` —
+    the split is the generator's rule, not a hand edit (source «generated»)."""
     ops, final_name, quantity = _route_ops(document, strict=False)
     if not ops:
         raise RouteError("нет операций")
-    route = parse_route(raw, ops, final_name, manual=True)
+    route = replace(parse_route(raw, ops, final_name, manual=True), generated=generated)
     return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
 
 
@@ -204,16 +209,20 @@ def _operation_keys(document: dict[str, Any] | None) -> list[str] | None:
 
 def _keep_hand_route(previous: dict[str, Any] | None, document: dict[str, Any]) -> dict[str, Any]:
     """A rebuild keeps the ПФ the technologist cut by hand (`document.route`, source manual) while the operations are
-    the same ones in the same places and the new build brings no hand-made scheme of its own (`build_config.route`)."""
+    the same ones in the same places and the new build brings no hand-made scheme of its own (`build_config.route`).
+    A split by the generator's rule (source generated — an old ETK moved onto ПФ) is kept the same way while the new
+    build has no split of its own (derived); a new generated split replaces it."""
     old = (previous or {}).get("route")
     new = document.get("route") if isinstance(document, dict) else None
-    if not isinstance(old, dict) or old.get("source") != "manual" or (isinstance(new, dict) and new.get("source") == "manual"):
+    old_source = old.get("source") if isinstance(old, dict) else None
+    new_source = new.get("source") if isinstance(new, dict) else None
+    if old_source not in ("manual", "generated") or new_source == "manual" or (old_source == "generated" and new_source == "generated"):
         return document
     keys = _operation_keys(previous)
     if not keys or keys != _operation_keys(document):
         return document
     try:
-        return {**document, "route": _hand_route(document, old)}
+        return {**document, "route": _hand_route(document, old, generated=old_source == "generated")}
     except (RouteError, AttributeError, IndexError, KeyError, TypeError, ValueError):
         return document
 
@@ -385,7 +394,7 @@ def save_project_route(command: SaveTechcardRouteCommand, uow: UnitOfWork) -> Pr
         if current.document is None:
             raise TechcardValidationError("Электронная техкарта ещё не собрана")
         try:
-            route = _hand_route(current.document, command.route)
+            route = _hand_route(current.document, command.route, generated=command.generated)
         except RouteError as error:
             raise TechcardValidationError(str(error)) from error
         document = deepcopy(current.document)
@@ -397,11 +406,11 @@ def save_project_route(command: SaveTechcardRouteCommand, uow: UnitOfWork) -> Pr
         )
         uow.techcards.save(updated)
         if issued:
-            uow.techcards.add_revision(_revision(updated, "Правка ПФ", command.actor, command.now))
+            uow.techcards.add_revision(_revision(updated, command.reason, command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.route_edited",
             actor=command.actor, occurred_at=command.now,
-            details={"revision": updated.revision, "blocks": len(route["blocks"])},
+            details={"revision": updated.revision, "blocks": len(route["blocks"]), "source": route["source"]},
         ))
         uow.commit()
         return updated

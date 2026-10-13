@@ -3,6 +3,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDayMonth } from "./format";
 import { EtkSheet, GeneratorPane, ToolingBySection, editDraft } from "./ProjectEtk";
 import { StatusChip } from "./StatusChip";
+import { pfPending } from "./pfPropose";
 import { headerLabel } from "./referenceLabels";
 import { RECORD_CATEGORIES, recordCategory } from "./etkOperation";
 import {
@@ -212,6 +213,9 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     { key: "item", title: "Изделие", value: (card) => `${card.item_index} · ${card.product_name}`, grow: true },
     { key: "status", title: "Статус", value: (card) => card.status, render: (card) => <StatusChip status={card.status} /> },
     { key: "revision", title: "Ревизия", value: (card) => card.revision || "", numeric: true },
+    // ЭТК со схемой «по ПФ на операцию» — технолог проходит их в «Править ПФ» (владелец 13.10).
+    { key: "pf", title: "ПФ", value: (card) => (pfPending(card) ? "не настроены" : card.document ? "настроены" : ""),
+      render: (card) => (pfPending(card) ? <StatusChip status="ПФ не настроены" tone="warning" /> : card.document ? <span className="muted">настроены</span> : "") },
     { key: "deadline", title: "Срок", value: (card) => card.deadline ?? "" },
   ];
   // Одна запись на код операции: пара (A)/(B) — одна карточка (SUPPLYMAP tcRecordsByCode_).
@@ -302,6 +306,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
       presets={[
         { label: "Черновики", test: (card) => card.status === "Черновик" },
         { label: "Выданные", test: (card) => card.status === "Выдана" },
+        { label: "ПФ не настроены", test: (card) => card.status === "Выдана" && pfPending(card) },
       ]}
       rowClassName={(card) => (selectedId === card.id ? "selected" : "")}
       onRowClick={(card) => setSelectedId(card.id)}

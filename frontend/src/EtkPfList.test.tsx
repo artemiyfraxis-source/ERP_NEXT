@@ -187,6 +187,80 @@ describe("ETK list by ПФ", () => {
   });
 });
 
+/** Предложение сервера: 01 и 04 — нарезка, 02 — обжатые, 03 и 05 — изделие. */
+const proposal = {
+  source: "generated", final: "final",
+  blocks: [
+    { key: "wires", name: "Нарезанные провода", ops: [1, 4], final: false },
+    { key: "crimped", name: "Обжатые провода", ops: [2], final: false },
+    { key: "final", name: "Жгут", ops: [3, 5], final: true },
+  ],
+  edges: [{ from: "wires", to: "crimped", per_unit: 2 }, { from: "crimped", to: "final", per_unit: 1 }],
+};
+
+function mockPropose(same: boolean, puts: Array<Record<string, unknown>>, posts: string[]) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/route/propose") && init?.method === "POST") {
+      posts.push(url);
+      return new Response(JSON.stringify({ route: proposal, same, rule: "generator" }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.endsWith("/route") && init?.method === "PUT") {
+      puts.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({ ...techcard({ ...pf, blocks: [] }), version: 5, revision: 3 }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  });
+}
+
+describe("«Предложить разбивку на ПФ»", () => {
+  it("fills the editor with the proposal and saves nothing until «Сохранить ПФ»", async () => {
+    const puts: Array<Record<string, unknown>> = [];
+    const posts: string[] = [];
+    mockPropose(false, puts, posts);
+    const changed = vi.fn();
+    render(<EtkSheet card={techcard()} principal={editor} onChange={changed} />);
+    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
+    expect(within(nav).queryByRole("button", { name: "Предложить разбивку на ПФ" })).toBeNull();
+    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    fireEvent.click(within(nav).getByRole("button", { name: "Предложить разбивку на ПФ" }));
+
+    await waitFor(() => expect(within(nav).getAllByRole("region")).toHaveLength(3));
+    expect(posts).toEqual(["/api/techcards/projects/t/route/propose"]);
+    const groups = within(nav).getAllByRole("region");
+    expect(within(groups[0]).getAllByRole("button", { name: /^\d\d/ }).map((button) => button.textContent?.slice(0, 2))).toEqual(["01", "04"]);
+    expect(within(groups[2]).getAllByRole("button", { name: /^\d\d/ }).map((button) => button.textContent?.slice(0, 2))).toEqual(["03", "05"]);
+    expect(within(nav).getByRole("status")).toHaveTextContent("Предложена разбивка по этапам генератора");
+    // Предложение лежит в редакторе — на сервер ничего не ушло.
+    expect(puts).toHaveLength(0);
+    expect(changed).not.toHaveBeenCalled();
+
+    fireEvent.click(within(nav).getByRole("button", { name: "Сохранить ПФ · ревизия 3" }));
+    await waitFor(() => expect(changed).toHaveBeenCalled());
+    expect(puts).toHaveLength(1);
+    const saved = puts[0].route as { blocks: Array<{ key: string; name?: string; ops: number[] }>; edges: unknown[] };
+    // Названия ПФ — из предложения (состав не правили).
+    expect(saved.blocks.map((item) => [item.key, item.name, item.ops])).toEqual([
+      ["wires", "Нарезанные провода", [1, 4]], ["crimped", "Обжатые провода", [2]], ["final", "Жгут", [3, 5]],
+    ]);
+    expect(saved.edges).toEqual(proposal.edges);
+  });
+
+  it("says «Разбивка уже по ПФ» and keeps the scheme; «Отмена» drops a proposal", async () => {
+    const puts: Array<Record<string, unknown>> = [];
+    mockPropose(true, puts, []);
+    render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);
+    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    fireEvent.click(within(nav).getByRole("button", { name: "Предложить разбивку на ПФ" }));
+    expect(await within(nav).findByText("Разбивка уже по ПФ")).toBeInTheDocument();
+    expect(within(nav).getAllByRole("region")).toHaveLength(4);
+    fireEvent.click(within(nav).getByRole("button", { name: "Отмена" }));
+    expect(within(nav).queryByText("Разбивка уже по ПФ")).toBeNull();
+    expect(puts).toHaveLength(0);
+  });
+});
+
 describe("task mode by ПФ", () => {
   it("shows only the task's operations in the order of work, each collapsed", async () => {
     mockFetch();

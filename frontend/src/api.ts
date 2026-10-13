@@ -1517,7 +1517,8 @@ export interface EtkRouteEdge {
 }
 
 export interface EtkRoute {
-  source: "derived" | "manual";
+  /** derived — по ПФ на операцию (схема до 13.10), generated — разбивка по правилу генератора, manual — технолог. */
+  source: "derived" | "generated" | "manual";
   final: string;
   blocks: EtkRouteBlock[];
   edges: EtkRouteEdge[];
@@ -3335,6 +3336,9 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, route }),
     }),
+  /** «Предложить разбивку на ПФ»: схема по правилу генератора (ручная сборка — её блоки); ничего не сохраняет. */
+  proposeRoute: (cardId: string) =>
+    api<{ route: EtkRoute; same: boolean; rule: "generator" | "blocks" }>(`/api/techcards/projects/${cardId}/route/propose`, { method: "POST" }),
   importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = [],
     sheet: GrapherSheetRow[] = []) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {

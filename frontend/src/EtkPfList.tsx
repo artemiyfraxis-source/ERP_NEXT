@@ -3,13 +3,15 @@ import { techcardsApi, failureText, type ProjectTechcard } from "./api";
 import { etkFigure } from "./etkDraw";
 import { etkPfGroups, etkRouteOf, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
+import { proposePf } from "./pfPropose";
 import { mergeBlocks, placeOp, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import "./EtkPfList.css";
 
 /* Список операций ЭТК по ПФ (владелец + Василий 13.10): ЭТК режется на полуфабрикаты, ПФ — блок схемы `document.route`.
    У каждого ПФ — вход (комплектующие и полуфабрикаты других ПФ), выход, норма и эскизы операций. Технолог переносит
    операции между ПФ и внутри ПФ (перетаскиванием или кнопками), выделяет новый ПФ, объединяет ПФ и сохраняет — выданная
-   ЭТК получает новую ревизию. Порядок операций внутри ПФ — порядок работы; номера операций ЭТК не меняются. */
+   ЭТК получает новую ревизию. Порядок операций внутри ПФ — порядок работы; номера операций ЭТК не меняются.
+   «Предложить разбивку на ПФ» кладёт в редактор разбивку по правилу генератора (сервер, pfPropose.ts) — без сохранения. */
 
 export type EtkPfListOperation = EtkPfOperation & { position?: number; type?: string; code?: string };
 
@@ -62,9 +64,13 @@ export function EtkPfList<T extends EtkPfListOperation>({ card, list, selected, 
   sketch: (operation: T) => string;
 }) {
   const [draft, setDraft] = useState<Route | null>(null);
+  // Схема, от которой пошла правка: сохранённая или предложенная («Предложить разбивку на ПФ») — названия ПФ берутся
+  // из неё, пока состав ПФ тот же.
+  const [base, setBase] = useState<Route | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
   const saved = editable(card.document);
   const route = draft ?? saved;
   if (!route) return null;
@@ -79,7 +85,26 @@ export function EtkPfList<T extends EtkPfListOperation>({ card, list, selected, 
   const problem = editing ? routeProblem(route, routeOps, String(kit.name ?? "")) : null;
   const numberOf = (position: number) => opNumber(list[position - 1]?.position || position);
 
-  function edit(next: Route) { setDraft(next); setError(""); }
+  function edit(next: Route) { setDraft(next); setError(""); setInfo(""); }
+
+  function stop() { setDraft(null); setBase(null); setError(""); setInfo(""); }
+
+  async function propose() {
+    if (busy) return;
+    setBusy(true); setError(""); setInfo("");
+    try {
+      const proposal = await proposePf(card.id);
+      if (proposal.same || !proposal.route.blocks.length) {
+        setInfo("Разбивка уже по ПФ");
+      } else {
+        setDraft(proposal.route);
+        setBase(proposal.route);
+        setInfo("Предложена разбивка по этапам генератора — проверьте и сохраните");
+      }
+    } catch (reason) {
+      setError(failureText(reason, "Разбивка на ПФ не предложена"));
+    } finally { setBusy(false); }
+  }
 
   function drop(event: DragEvent, to: string | null, at: number) {
     event.preventDefault();
@@ -97,8 +122,8 @@ export function EtkPfList<T extends EtkPfListOperation>({ card, list, selected, 
     if (!draft || busy || problem) return;
     setBusy(true); setError("");
     try {
-      const updated = await techcardsApi.saveRoute(card.id, card.version, pfPayload(draft, saved));
-      setDraft(null);
+      const updated = await techcardsApi.saveRoute(card.id, card.version, pfPayload(draft, base ?? saved));
+      stop();
       onSaved(updated);
     } catch (reason) {
       setError(failureText(reason, "ПФ не сохранены"));
@@ -113,6 +138,10 @@ export function EtkPfList<T extends EtkPfListOperation>({ card, list, selected, 
       {canEdit && !editing && <button type="button" className="secondary small" onClick={() => edit(route)}>Править ПФ</button>}
       {editing && <small>перетащите операцию в другой ПФ или на её место</small>}
     </div>
+    {editing && <div className="etk-pf-propose">
+      <button type="button" className="secondary small" disabled={busy} onClick={() => void propose()}>Предложить разбивку на ПФ</button>
+      {info && <span role="status">{info}</span>}
+    </div>}
     {groups.map((group) => <PfGroup key={group.key} group={group} list={list} selected={selected} onPick={onPick}
       editing={editing} groups={groups} title={title} sub={sub} sketch={sketch} numberOf={numberOf}
       mergeTarget={editing ? mergeTarget(route, group.key) : null}
@@ -130,7 +159,7 @@ export function EtkPfList<T extends EtkPfListOperation>({ card, list, selected, 
         <button type="button" className="primary small" disabled={busy || Boolean(problem)} onClick={() => void save()}>
           {card.status === "Выдана" ? `Сохранить ПФ · ревизия ${card.revision + 1}` : "Сохранить ПФ"}
         </button>
-        <button type="button" className="secondary small" disabled={busy} onClick={() => { setDraft(null); setError(""); }}>Отмена</button>
+        <button type="button" className="secondary small" disabled={busy} onClick={stop}>Отмена</button>
       </div>
     </>}
   </nav>;
