@@ -70,6 +70,7 @@ import { railCatchDistance, railDistance, railParameter, snapRailEnd } from "./p
 import { snapDrawingPoint, type DrawingOutline, type DrawingSnaps } from "../component-library/drawing-geometry";
 import { materialObjectGroup } from "./MaterialObjectsPanel";
 import type { HarnessExportPort } from "../export/port";
+import { isLightWireColor, LIGHT_WIRE_OUTLINE } from "./wire-contrast";
 
 export interface CanvasViewportProps {
   readonly onFreeWireEndpointMove?: (wireId:string,end:"from"|"to",point:EditorPoint)=>void;
@@ -2287,6 +2288,7 @@ export function drawEditorSceneObject(
       context.lineWidth = view==="drawing"&&object.kind==="wire"?Number(object.metadata?.drawingWidth??3)+(selected?1:0):selected?4:object.kind==="wire"?3:1.5;
       if (object.kind === "dimension" || object.metadata?.routeMissing === "true") context.setLineDash([7, 5]);
       if (view === "e4" && object.kind === "wire" && !selected) strokeE4Wire(context, object.color);
+      else if (view === "drawing" && object.kind === "wire" && !selected && object.metadata?.routeMissing !== "true") strokeE4Wire(context, object.color, context.lineWidth);
       else context.stroke();
       context.setLineDash([]);
       if (view === "drawing" && object.kind === "wire") {
@@ -2380,18 +2382,10 @@ export function drawEditorSceneObject(
   context.restore();
 }
 
-const E4_WHITE_WIRE_OUTLINE = "#53636c";
-
-function isWhiteWireColor(color: string): boolean {
-  const normalized = color.trim().toLowerCase().replace(/\s+/g, "");
-  return normalized === "white" || normalized === "#fff" || normalized === "#ffffff" ||
-    normalized === "#ffffffff" || normalized === "rgb(255,255,255)" || normalized === "rgba(255,255,255,1)";
-}
-
-/** Keeps a white E4 conductor visible on the pale canvas without changing its actual colour. */
+/** Keeps a light conductor (white, yellow, light grey…) visible on the pale canvas without changing its actual colour. */
 function strokeE4Wire(context: CanvasRenderingContext2D, color: string, width = 3): void {
-  if (isWhiteWireColor(color)) {
-    context.strokeStyle = E4_WHITE_WIRE_OUTLINE;
+  if (isLightWireColor(color)) {
+    context.strokeStyle = LIGHT_WIRE_OUTLINE;
     context.lineWidth = width + 2;
     context.stroke();
   }
