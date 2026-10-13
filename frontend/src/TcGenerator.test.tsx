@@ -73,7 +73,7 @@ it("pairs the pin lists of both ends in order and shows the crossover under the 
   mockApi();
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
   const [pinsA, pinsB] = await screen.findAllByPlaceholderText("1, 3 или 1-2");
-  expect(screen.getAllByText(/Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне/)).toHaveLength(1);
+  expect(screen.getAllByText(/Контакты стыкуются по жилам: k-я жила здесь ↔ k-я на другой стороне/)).toHaveLength(1);
   expect(screen.getByLabelText("Соединения по распиновке")).not.toHaveTextContent("А1 → В1");
   fireEvent.change(pinsA, { target: { value: "1-2" } });
   fireEvent.change(pinsB, { target: { value: "2, 1" } });

@@ -45,6 +45,8 @@ export type GenData = {
   calcOps: CalcOp[];
   /** Материалы маркировки из БД.МАТ (tcGenMarks.markMatsFromRecords) — выбор «Вид / материал» у меток. */
   markMats?: MarkMat[];
+  /** Кабели и провода из БД.ПРОВ (cableRecFromFields): число жил, цвета жил по порядку, экран. */
+  cableRecords?: CableRec[];
 };
 
 export type Side = "A" | "B";
@@ -155,6 +157,8 @@ export const CRIMP_TIN_CODE_ = "CUT_WIRE+1crimp+tin";
 /** Обжим обеих сторон на автомате резки: значение `crimpCutSide` и карта БД.ОП/шаблона (4,8 с/пр. против 4 у +1crimp). */
 export const CRIMP_BOTH_ = "AB";
 const CRIMP_BOTH_CODE_ = "CUT_WIRE+2crimp";
+/** Скрутка экрана кабеля в оболочке (БД.ОП «Скрутка экрана»). */
+const SHIELD_CODE_ = "TWST_SHILED";
 
 /** Русское название операции генератора по её `type` (как `OPERATION_TYPE_NAMES` на сервере): когда в конфиге нет `label`. */
 const OP_TYPE_NAMES: Record<string, string> = {
@@ -314,18 +318,60 @@ function endpointOpKey_(side: Side, ordinal: number, kind: "prs" | "ins" | "sold
 }
 export const sideRu_ = (s: string) => (s === "B" ? "В" : "А");
 
-/** Распиновка провода в порядке записи: «3, 1, 2» → [3, 1, 2], «1-6» → 1…6, «6-1» → 6…1. Повторы остаются (двойной
- *  обжим: «1, 1, 2, 2»), мусор отбрасывается, диапазон не длиннее 200 (etk_builder._pins — то же, но для рисунка). */
-export function parsePinList_(value: unknown): number[] {
-  const out: number[] = [];
+/** Контакты провода у разъёма по жилам (владелец 12.10: жилы одного кабеля — на разные разъёмы стороны): k-я позиция —
+ *  k-я жила (кабелей × жил), null — эта жила сюда не идёт. Запись — как раньше, «1, 2, 3» или «1-6» с первой жилы
+ *  подряд; «11:1-9» — с 11-й жилы на контакты 1…9 (жилы 1–10 сюда не идут); «_» — пропуск одной жилы. Строка старого
+ *  сохранения читается как прежде: жилы с первой подряд. Мусор отбрасывается, диапазон не длиннее 200. */
+export function parseCorePins_(value: unknown): Array<number | null> {
+  const out: Array<number | null> = [];
   String(value ?? "").split(/[,;\s]+/).forEach((token) => {
-    const m = /^(\d+)(?:-(\d+))?$/.exec(token);
+    if (token === "_") { out.push(null); return; }
+    const m = /^(?:(\d+):)?(\d+)(?:-(\d+))?$/.exec(token);
     if (!m) return;
-    const a = Number(m[1]), b = m[2] ? Number(m[2]) : a, step = b >= a ? 1 : -1;
-    for (let p = a, n = 0; n < 200; p += step, n++) { out.push(p); if (p === b) break; }
+    if (m[1]) {
+      const at = Number(m[1]) - 1;
+      if (at < 0 || at > 2000) return;
+      while (out.length < at) out.push(null);
+    }
+    const a = Number(m[2]), b = m[3] ? Number(m[3]) : a, step = b >= a ? 1 : -1;
+    for (let p = a, n = 0; n < 200; p += step, n++) { if (p > 0) out.push(p); if (p === b) break; }
   });
-  return out.filter((p) => p > 0);
+  while (out.length && out[out.length - 1] == null) out.pop();
+  return out;
 }
+
+/** Обратно в строку: подряд с первой жилы — «1, 2, 3» (как раньше), после пропуска — «11:1, 2, 3». */
+export function formatCorePins_(list: ReadonlyArray<number | null | undefined>): string {
+  const parts: string[] = [];
+  let gap = false;
+  list.forEach((pin, k) => {
+    if (pin == null || !(pin > 0)) { gap = true; return; }
+    parts.push(gap ? `${k + 1}:${pin}` : String(pin));
+    gap = false;
+  });
+  return parts.join(", ");
+}
+
+/** Распиновка провода в порядке записи: «3, 1, 2» → [3, 1, 2], «1-6» → 1…6, «6-1» → 6…1. Повторы остаются (двойной
+ *  обжим: «1, 1, 2, 2»), мусор и пропуски жил отбрасываются, диапазон не длиннее 200 (etk_builder._pins — то же, но для
+ *  рисунка). Контакты разъёма без привязки к жилам — parseCorePins_ без пропусков. */
+export function parsePinList_(value: unknown): number[] {
+  return parseCorePins_(value).filter((p): p is number => p != null);
+}
+
+/** Запись провода из БД.ПРОВ, нужная генератору: марка, число жил, цвета жил по порядку и экран. */
+export type CableRec = { mark: string; cores: number; colors: string[]; screen: string };
+/** Строка БД.ПРОВ (поля по шапке листа) → CableRec; без марки — null. */
+export function cableRecFromFields(f: Record<string, string>): CableRec | null {
+  const field = (name: string) => String(Object.entries(f).find(([key]) => key.trim().toLowerCase() === name.toLowerCase())?.[1] ?? "").trim();
+  const mark = field("Марка");
+  if (!mark) return null;
+  const cores = parseInt(field("Число жил"), 10);
+  const colors = field("Цвета").split(/[,;]+/).map((s) => s.trim()).filter(Boolean);
+  return { mark, cores: cores > 0 ? cores : 0, colors, screen: field("Экран") };
+}
+/** Экранирован ли кабель по записи БД.ПРОВ: «Экран» заполнен и не «нет»/«—». */
+export const cableScreened_ = (rec: CableRec | null) => !!rec && !!rec.screen && !/^(?:нет|без|-|—|–|0)$/i.test(rec.screen.trim());
 
 /** calcCutMm_ (TcGenInline.html:2295): «L=…мм» из требований строки КБn, иначе колонка L (м). */
 export function calcCutMm_(o: CalcOp) {
@@ -402,9 +448,10 @@ export function makeGen(D: GenData, S: GenState) {
   }
   const endKey_ = (ep: Endpoint) => sideRu_(ep.side) + endpointOrdinal_(ep);
 
-  /** Соединения провод за проводом: k-й контакт в распиновке первого разъёма провода (А раньше В) ↔ k-й контакт у
-   *  следующих разъёмов того же провода, по порядку списков. Перекрёст задаётся порядком: А «1-6», В «3, 1, 2, 4, 5, 6»
-   *  → 1→3, 2→1, 3→2… Разные длины списков — пары до короткого и предупреждение. */
+  /** Соединения жила за жилой: у k-й жилы провода — её контакт на первом разъёме (А раньше В) ↔ её контакт на каждом
+   *  следующем разъёме. Жилы одного кабеля расходятся по разъёмам стороны (жилы 1–10 → В1, 11–19 → В2); жила с контактом
+   *  на двух разъёмах одной стороны — ветвь «Y». Перекрёст задаётся порядком: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1,
+   *  3→2… Жилы с контактом только на одном разъёме — без пары, предупреждение. */
   function connections_(): { list: Connection[]; warnings: string[] } {
     const list: Connection[] = [], warnings: string[] = [];
     const ordered = (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side));
@@ -414,25 +461,24 @@ export function makeGen(D: GenData, S: GenState) {
     };
     activeWires_().forEach((w) => {
       const ends = ordered.filter((ep) => routedWireIdxs_(ep).includes(w.idx))
-        .map((ep) => ({ ep, pins: parsePinList_(ep.pins?.[w.idx]) })).filter((x) => x.pins.length);
+        .map((ep) => ({ ep, cores: corePinsOf_(ep, w.idx) })).filter((x) => x.cores.some((p) => p != null));
       if (ends.length < 2) return;
       const comp = getCompById(w.compId);
       const wire = comp ? (comp.art || comp.name || "") : "";
-      const [from, ...rest] = ends;
-      // Ветвь: провод идёт с первого разъёма на два и больше следующих, и на каждом столько же контактов, сколько у него
-      // на первом — каждый получает своё соединение (на «Y» провод разветвляется), а не продолжение списка контактов.
-      if (rest.length > 1 && rest.every((x) => x.pins.length === from.pins.length)) {
-        rest.forEach((x) => x.pins.forEach((pin, i) => list.push({ wire, from: end(from.ep, from.pins[i]), to: end(x.ep, pin) })));
-        return;
+      const n = Math.max(...ends.map((x) => x.cores.length));
+      let paired = 0;
+      for (let k = 0; k < n; k++) {
+        const at = ends.filter((x) => x.cores[k] != null);
+        if (at.length < 2) continue;
+        paired++;
+        at.slice(1).forEach((x) => list.push({ wire, from: end(at[0].ep, at[0].cores[k]!), to: end(x.ep, x.cores[k]!) }));
       }
-      let k = 0;
-      rest.forEach((x) => x.pins.forEach((pin) => {
-        if (k < from.pins.length) list.push({ wire, from: end(from.ep, from.pins[k]), to: end(x.ep, pin) });
-        k++;
-      }));
-      if (k !== from.pins.length) {
-        warnings.push(`${wire || "Провод"}: на ${endKey_(from.ep)} ${from.pins.length} конт., на ${rest.map((x) => endKey_(x.ep)).join(" + ")} ${k} — ` +
-          `соединения по порядку только для ${Math.min(k, from.pins.length)}.`);
+      const [from, ...rest] = ends;
+      const count = (x: typeof from) => x.cores.filter((p) => p != null).length;
+      const onRest = rest.reduce((s, x) => s + count(x), 0);
+      if (paired !== count(from) || paired < Math.max(...ends.map(count))) {
+        warnings.push(`${wire || "Провод"}: на ${endKey_(from.ep)} ${count(from)} конт., на ${rest.map((x) => endKey_(x.ep)).join(" + ")} ${onRest} — ` +
+          `соединения по порядку только для ${paired}.`);
       }
     });
     return { list, warnings };
@@ -456,15 +502,72 @@ export function makeGen(D: GenData, S: GenState) {
     return comps().filter((c) => byType.includes(c) || (looksWire(c) && !/^маркир/i.test(c.type || "")));
   }
 
+  /** Запись БД.ПРОВ позиции состава: марка совпадает с артикулом или наименованием (без регистра, пробелов, точек),
+   *  иначе самая длинная марка, входящая в артикул/наименование (не короче 4 знаков). */
+  const cableRecCache_ = new Map<string, CableRec | null>();
+  function cableRecOf_(c: Comp | null): CableRec | null {
+    if (!c || !(D.cableRecords || []).length) return null;
+    if (cableRecCache_.has(c.id)) return cableRecCache_.get(c.id)!;
+    const recs = D.cableRecords || [];
+    const keys = [c.art, c.name].map((s) => normalizeArt_(s || "")).filter(Boolean);
+    let found = recs.find((r) => keys.includes(normalizeArt_(r.mark))) || null;
+    if (!found) {
+      const text = keys.join("|");
+      found = recs.filter((r) => { const m = normalizeArt_(r.mark); return m.length >= 4 && text.includes(m); })
+        .sort((a, b) => normalizeArt_(b.mark).length - normalizeArt_(a.mark).length)[0] || null;
+    }
+    cableRecCache_.set(c.id, found);
+    return found;
+  }
+  const wireRec_ = (w: WireEntry) => cableRecOf_(w.compId ? getCompById(w.compId) : null);
+  /** Жил в кабеле: заданное в строке «Кабели», иначе из наименования («4x0,5»), иначе «Число жил» записи БД.ПРОВ. */
   function wireCores_(w: WireEntry) {
     if (w.cores) return w.cores;
     const c = w.compId ? getCompById(w.compId) : null;
-    return c ? cableCoresFromName_(`${c.name || ""} ${c.art || ""}`) : 1;
+    if (!c) return 1;
+    const byName = cableCoresFromName_(`${c.name || ""} ${c.art || ""}`);
+    if (byName > 1) return byName;
+    const rec = cableRecOf_(c);
+    return rec && rec.cores > 1 ? rec.cores : byName;
   }
+  const wireScreened_ = (w: WireEntry) => {
+    const c = w.compId ? getCompById(w.compId) : null;
+    return cableScreened_(cableRecOf_(c)) || (!!c && /экран|shield|sheld|\b(?:S|SF|F)\/?[UF]TP\b|-C[YD]\b/i.test(`${c.name || ""} ${c.art || ""}`));
+  };
   function isJacketedCable_(w: WireEntry) {
     if (wireCores_(w) > 1) return true;
     const c = w.compId ? getCompById(w.compId) : null;
     return !!c && JACKETED_RE_.test(`${c.name || ""} ${c.art || ""}`);
+  }
+  /** Жил в строке «Кабели» всего: кабелей × жил (провод без оболочки — одна жила на штуку). */
+  const unitCount_ = (w: WireEntry) => Math.max(1, Math.round(Number(w.qty) || 1)) * Math.max(1, wireCores_(w) || 1);
+  /** Цвета жил по порядку: выбранный на палитре, иначе из «Цвета» записи БД.ПРОВ — когда их столько же, сколько жил
+   *  в кабеле (у монтажного провода «Цвета» — какие бывают, а не по жилам). "" — цвет из наименования. */
+  function coreColors_(w: WireEntry): string[] {
+    const n = unitCount_(w), per = Math.max(1, wireCores_(w));
+    const rec = per > 1 ? wireRec_(w) : null;
+    const fromRec = rec && rec.colors.length === per ? rec.colors : [];
+    return Array.from({ length: n }, (_, k) => w.coreColors?.[k] || fromRec[k % per] || "");
+  }
+  /** Контакты жил провода `idx` у разъёма: k-я — контакт k-й жилы или null. */
+  const corePinsOf_ = (ep: Endpoint, idx: number) => parseCorePins_(ep.pins?.[idx]);
+  /** Жил провода, которые приходят на разъём: по распиновке — сколько жил с контактом здесь; распиновки у разъёма
+   *  нет — все жилы (кабелей × жил), как раньше. */
+  function endUnits_(ep: Endpoint, w: WireEntry) {
+    const pinned = corePinsOf_(ep, w.idx).filter((p) => p != null).length;
+    return pinned || unitCount_(w);
+  }
+  /** Концы кабелей в оболочке на стороне: разъёмы стороны, куда идут жилы кабеля (по порядку), экранирован ли он и
+   *  незадействованные на этой стороне жилы (номера с 0) — когда распиновка задана на всех его разъёмах стороны. */
+  function cableEnds_(side: Side) {
+    return activeWires_().filter(isJacketedCable_).flatMap((w) => {
+      const eps = endpointsOnSide_(side).filter((ep) => routedWireIdxs_(ep).includes(w.idx));
+      if (!eps.length) return [];
+      const lists = eps.map((ep) => corePinsOf_(ep, w.idx));
+      const unused = lists.every((list) => list.some((p) => p != null))
+        ? Array.from({ length: unitCount_(w) }, (_, k) => k).filter((k) => lists.every((list) => list[k] == null)) : [];
+      return [{ w, eps, screened: wireScreened_(w), unused }];
+    });
   }
   const isRjEndpoint_ = (e: Endpoint) => { const c = e.connId ? getCompById(e.connId) : null; return !!c && isRjConn_(c); };
   const allRjEndpoints_ = () => S.endpoints.length > 0 && S.endpoints.every(isRjEndpoint_);
@@ -503,13 +606,13 @@ export function makeGen(D: GenData, S: GenState) {
     const t = (D.templates || []).find((x) => kind.test(String(x.title || "").split("|")[0].trim()));
     return t ? String(t.title).split("|")[0].trim() : "";
   }
-  function stripCableTmpl_(c: Comp | null) {
+  function stripCableTmpl_(c: Comp | null, screened = false) {
     const s = c ? `${c.art || ""} ${c.name || ""}` : "";
     if (/usb/i.test(s)) return /usb\s*3|3[.,][0-2]/i.test(s) ? "STRIP_CABLE_usb_3.2" : "STRIP_CABLE_usb_2.0";
     const m = /\b(SF|S|F|U)\s*\/\s*(FTP|UTP)\b/i.exec(s);
     if (m) return `STRIP_${m[1].toUpperCase()}/${m[2].toUpperCase()}_ethernet`;
     if (/\bFTP\b/i.test(s)) return "STRIP_F/UTP_ethernet";
-    if (/экран|shield|sheld/i.test(s)) return "STRIP_CABLE_sheld";
+    if (screened || /экран|shield|sheld/i.test(s)) return "STRIP_CABLE_sheld";
     return "STRIP_CABLE";
   }
   const markComps_ = () => comps().filter((c) => /маркир/i.test(`${c.type || ""} ${c.name || ""}`));
@@ -560,7 +663,7 @@ export function makeGen(D: GenData, S: GenState) {
     S.endpoints.forEach((e) => {
       if (e.method !== "crimp" || !e.fold) return;
       const set = new Set(routedWireIdxs_(e));
-      activeWires_().forEach((w) => { if (set.has(w.idx)) n += (Number(w.qty) || 1) * (wireCores_(w) || 1); });
+      activeWires_().forEach((w) => { if (set.has(w.idx)) n += endUnits_(e, w); });
     });
     if (S.spl.fold) n += spliceEnds_();
     return n ? [{ type: "foldCore", opKey: "foldCore", tmplHint: "PREP_FOLD", cat: "Подготовка", tutCount: n,
@@ -1142,7 +1245,7 @@ export function makeGen(D: GenData, S: GenState) {
     ops.splice(lastCut + 1, 0, ...cuts);
     items.forEach((it) => {
       const side = it.ep.side, ord = endpointOrdinal_(it.ep);
-      const own = (o: OpSpec) => o.epId === it.ep.id || o.opKey === "stripCable" + side + ord;
+      const own = (o: OpSpec) => o.epId === it.ep.id || ["stripCable", "shield", "idle"].some((k) => o.opKey === k + side + ord);
       const first = ops.findIndex(own);
       const kind = kindOf(it.comp);
       const put: OpSpec = { type: "insTut", opKey: "insShr" + side + ord, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: 1,
@@ -1165,7 +1268,8 @@ export function makeGen(D: GenData, S: GenState) {
     S.endpoints.forEach((e) => {
       if (e.method !== "solder" || e.tutOff) return;
       const routed = routedWireIdxs_(e);
-      const n = activeWires.filter((w) => routed.includes(w.idx)).reduce((s, w) => s + (Number(w.qty) || 1) * wireCores_(w), 0);
+      // ТУТ — на каждую жилу, что приходит на этот разъём (часть жил кабеля может идти на другой разъём стороны).
+      const n = activeWires.filter((w) => routed.includes(w.idx)).reduce((s, w) => s + endUnits_(e, w), 0);
       if (!n) return;
       solderEnds += n;
       const len = (e.tutLen || "").trim();
@@ -1206,7 +1310,8 @@ export function makeGen(D: GenData, S: GenState) {
           else if (e.method === "solder") len = (e.solderStrip || "").trim() || DEFAULT_LEN_MM_;
           else if (e.method === "crimp" && e.fold && isComplex_()) len = FOLD_STRIP_MM_;
           else if (e.method === "crimp" && isRjEndpoint_(e)) len = RJ_STRIP_MM_;
-          else if (e.method === "crimp" && isJacketedCable_(w)) len = w.jacket || JACKET_STRIP_MM_;
+          // Без ротора кабель разделывают у разъёма («Разделка кабеля под обжим»), при резке его конец не трогают.
+          else if (e.method === "crimp" && isJacketedCable_(w)) len = S.rotor ? w.jacket || JACKET_STRIP_MM_ : null;
           else if (e.method === "crimp" && e.double) {
             const t = e.termId ? getCompById(e.termId) : null;
             const r = t ? findTerRecord_(t.art) : null;
@@ -1276,23 +1381,47 @@ export function makeGen(D: GenData, S: GenState) {
     }
 
     let firstTermSeen = false;
+    const solderStrips = new Set<string>();
+    const sideEnds = { A: cableEnds_("A"), B: cableEnds_("B") };
     (["A", "B"] as Side[]).forEach((side) => endpointsOnSide_(side).forEach((ep) => {
       const ord = endpointOrdinal_(ep);
       const conn = ep.connId ? getCompById(ep.connId) : null;
       const term = ep.termId ? getCompById(ep.termId) : null;
       const tag = sideRu_(side) + ord;
+      // Конец кабеля в оболочке: разделка, экран и незадействованные жилы — один раз на сторону, у первого разъёма,
+      // куда идут его жилы (жилы 1–10 → В1, 11–19 → В2 — оболочку снимают один раз).
+      const mine = sideEnds[side].filter((x) => x.eps[0] === ep);
+      const tags = [...new Set(mine.flatMap((x) => x.eps.map(endKey_)))].join(", ") || tag;
+      const count = (list: typeof mine) => list.reduce((s, x) => s + Math.max(1, Math.round(Number(x.w.qty) || 1)), 0);
+      const cableOps = (how: string) => {
+        const out: OpSpec[] = [];
+        if (mine.length && !S.rotor && (conn || ep.method === "crimp")) {
+          out.push({ type: "stripCable", opKey: "stripCable" + side + ord, side, ord, label: `Разделка кабеля ${how} ${tags} — ${count(mine)} конц.`,
+            tmplHint: stripCableTmpl_(getCompById(mine[0].w.compId), mine.some((x) => x.screened)), cat: "Разделка", tutCount: count(mine) });
+        }
+        const shielded = mine.filter((x) => x.screened);
+        if (shielded.length) {
+          // Карты «Скрутка экрана» (БД.ОП TWST_SHILED) в библиотеке может не быть — тогда разделка экранированного кабеля.
+          out.push({ type: "stripCable", opKey: "shield" + side + ord, side, ord, cat: "Разделка", tutCount: count(shielded),
+            tmplHint: hasTemplateCode_(SHIELD_CODE_) ? SHIELD_CODE_ : "STRIP_CABLE_sheld", tmplWant: SHIELD_CODE_,
+            label: `Скрутка и изоляция экрана ${tags} — ${count(shielded)} шт` });
+        }
+        const idle = mine.reduce((s, x) => s + x.unused.length, 0);
+        if (idle) {
+          out.push({ type: "endCap", opKey: "idle" + side + ord, side, ord, tmplHint: "INS_END_CAP", cat: "Подготовка", tutCount: idle,
+            label: `Обрезка и изоляция незадействованных жил ${tags} — ${idle} шт` });
+        }
+        return out;
+      };
       if (ep.method === "solder") {
         if (!conn) return;
-        const routed = routedWireIdxs_(ep);
-        const multi = activeWires.filter((w) => routed.includes(w.idx) && isJacketedCable_(w));
-        const cableEnds = multi.reduce((s, w) => s + (Number(w.qty) || 1), 0);
-        if (cableEnds && !S.rotor) {
-          ops.push({ type: "stripCable", opKey: "stripCable" + side + ord, side, ord, label: `Разделка кабеля под пайку ${tag} — ${cableEnds} конц.`,
-            tmplHint: stripCableTmpl_(getCompById(multi[0].compId)), cat: "Разделка", tutCount: cableEnds });
-        }
+        const own = cableOps("под пайку");
+        own.forEach((o) => { if (o.opKey.startsWith("stripCable")) solderStrips.add(o.opKey); });
+        ops.push(...own);
         ops.push({ type: "solderConn", opKey: endpointOpKey_(side, ord, "solder"), side, ord, epId: ep.id,
           label: `Пайка разъёма ${tag} — ${conn.art || conn.name}`, tmplHint: ep.sdrTmpl || detectSolderConn_(conn.art) || undefined });
       } else {
+        ops.push(...cableOps("под обжим"));
         if (term && !crimpSides.includes(side)) {
           ops.push({ type: "prsTerm", opKey: endpointOpKey_(side, ord, "prs"), side, ord, epId: ep.id,
             label: `Опрессовка ${LUG_RE_.test(term.art || term.name || "") ? "наконечников" : "терминалов"} ${tag}`
@@ -1316,7 +1445,7 @@ export function makeGen(D: GenData, S: GenState) {
     // ТУТ «на пайку» надевается прямо перед пайкой — после обжима и монтажа другой стороны, с той стороны, где паяют
     // (владелец 12.10.2026: «обычно сначала обжим, вставляем, потом одеть трубки и паять»). Режется она по-прежнему с проводами.
     const insTutAt = ops.findIndex((o) => o.opKey === "insTut");
-    const solderAt = ops.findIndex((o) => o.type === "stripCable" || o.type === "solderConn");
+    const solderAt = ops.findIndex((o) => solderStrips.has(o.opKey) || o.type === "solderConn");
     if (insTutAt >= 0 && solderAt > insTutAt) {
       const [insTut] = ops.splice(insTutAt, 1);
       ops.splice(solderAt - 1, 0, insTut);
@@ -1575,7 +1704,7 @@ export function makeGen(D: GenData, S: GenState) {
       return {
         name: comp ? comp.name : "", art: comp ? comp.art : "", qty: w.qty || 1, length: len,
         ...(wireCores_(w) > 1 && !allRjEndpoints_() ? { cores: wireCores_(w) } : {}),
-        ...(w.coreColors?.some(Boolean) ? { coreColors: Array.from({ length: Math.max(1, Math.round(Number(w.qty) || 1)) * Math.max(1, wireCores_(w)) }, (_, k) => w.coreColors![k] || "") } : {}),
+        ...(coreColors_(w).some(Boolean) ? { coreColors: coreColors_(w) } : {}),
       };
     });
     const epOrder: Record<string, number> = {};
@@ -1589,10 +1718,24 @@ export function makeGen(D: GenData, S: GenState) {
       }
       return "";
     };
+    /** Провода разъёма для его операций: у кабеля, часть жил которого идёт сюда (остальные — на другой разъём или не
+     *  задействованы), — столько жил, сколько здесь контактов: по ним считаются терминалы, обжим, монтаж и время.
+     *  Контакты — списком без пропусков жил (etk_builder._pins читает «1, 2, 3»). */
     const routedDetail_ = (ep: Endpoint) => {
       const routed = new Set(routedWireIdxs_(ep));
       const entries = activeWires.map((w, pos) => ({ w, pos })).filter((x) => routed.has(x.w.idx));
-      return { wires: entries.map((x) => wires[x.pos]), sources: entries.map((x) => sourceBranch_(ep, x.w.idx)), pins: entries.map((x) => (ep.pins && ep.pins[x.w.idx]) || "") };
+      const own = (w: WireEntry, base: Record<string, unknown>) => {
+        const total = unitCount_(w), here = endUnits_(ep, w);
+        if (here === total) return base;
+        const qty = Math.max(1, Math.round(Number(w.qty) || 1));
+        const { cores: _all, ...rest } = base;
+        if (wireCores_(w) <= 1) return { ...rest, qty: here };
+        return here % qty === 0 ? { ...rest, cores: here / qty } : { ...rest, qty: 1, cores: here };
+      };
+      return {
+        wires: entries.map((x) => own(x.w, wires[x.pos])), sources: entries.map((x) => sourceBranch_(ep, x.w.idx)),
+        pins: entries.map((x) => parsePinList_(ep.pins?.[x.w.idx]).join(", ")),
+      };
     };
     const epSnap = (ep: Endpoint | null) => {
       const conn = ep && ep.connId ? getCompById(ep.connId) : null;
@@ -1604,6 +1747,12 @@ export function makeGen(D: GenData, S: GenState) {
         fold: ep ? !!ep.fold && isComplex_() : false, label: ep ? (ep.label || "") : "",
       };
     };
+    // Припуск на свивку — до операций: провода разъёмов (routedDetail_) берут уже свитую длину.
+    const twist = {
+      enabled: S.twist.enabled, mode: S.twist.mode, pairs: getTwistPairs(), wireIndices: twistWireIndices_(),
+      pitch: (S.twist.pitch || "").trim(), wireDia: (twistDiaValue() || "").trim(),
+    };
+    applyTwistAllowance_(wires, twist);
     const welded = spliceWelded_();
     const links = connections_().list;
     const ops = getActiveOps().map((spec) => {
@@ -1641,11 +1790,6 @@ export function makeGen(D: GenData, S: GenState) {
       }
       return op;
     });
-    const twist = {
-      enabled: S.twist.enabled, mode: S.twist.mode, pairs: getTwistPairs(), wireIndices: twistWireIndices_(),
-      pitch: (S.twist.pitch || "").trim(), wireDia: (twistDiaValue() || "").trim(),
-    };
-    applyTwistAllowance_(wires, twist);
     const tin = { enabled: !sideB && S.tin.enabled, wireIndices: tinWireIndices_(), stripLen: (S.tin.stripLen || "").trim() };
     const otpA = !!(epA && epA.otp), otpB = !!(epB && epB.otp);
     const tinOn = !sideB && S.tin.enabled && tinWireIndices_().length > 0;
@@ -1698,6 +1842,7 @@ export function makeGen(D: GenData, S: GenState) {
 
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
+    cableRecOf_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_,
     endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, autoDetectTwistPairs,
@@ -1710,7 +1855,8 @@ export function makeGen(D: GenData, S: GenState) {
       return { name: (e.label || "").trim() || endKey_(e), art: conn ? conn.art || conn.name || "" : "" };
     })), asmLenFromName_, calcCutLengths_, freeEnds_,
     wireQtyFromTerms_: (wires: Comp[]) => {
-      if (wires.length !== 1 || cableCoresFromName_(`${wires[0].name || ""} ${wires[0].art || ""}`) > 1) return 0;
+      // Кабель в оболочке (жил больше одной по наименованию или по записи БД.ПРОВ): терминалы — по жилам, не по кабелям.
+      if (wires.length !== 1 || cableCoresFromName_(`${wires[0].name || ""} ${wires[0].art || ""}`) > 1 || (cableRecOf_(wires[0])?.cores || 0) > 1) return 0;
       const conns = bomLists().conns.filter((c) => !/корпус|housing/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`));
       if (!conns.length || conns.some((c) => detectSolderConn_(c.art || c.name))) return 0;
       const terms = getByTypes(["терминал", "terminal", "контакт"]).reduce((n, c) => n + qtyNum(c), 0);

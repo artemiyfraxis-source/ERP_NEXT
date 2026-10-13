@@ -1473,6 +1473,10 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .ep-per { display: inline-flex; align-items: center; gap: 6px; color: var(--foreground); font-size: 12.5px; font-weight: 500; }
 .tcgen .ep-per input { width: 54px; }
 .tcgen .ep-sdr { font-size: 12.5px; }
+/* Конец кабеля в оболочке у разъёма: жил здесь, куда остальные, экран, незадействованные жилы — одной строкой. */
+.tcgen .ep-cable { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--muted-foreground); font-size: 12.5px; }
+.tcgen .ep-cable b { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.tcgen .ep-cable .tone-warn { color: var(--tone-warn); font-weight: 500; }
 .tcgen .op-code, .tcgen .code { color: var(--muted-foreground); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; font-weight: 400; overflow-wrap: anywhere; }
 .tcgen .ep-more summary { color: var(--muted-foreground); font-size: 12.5px; font-weight: 600; }
 .tcgen .ep-more[open] > summary { margin-bottom: 8px; }

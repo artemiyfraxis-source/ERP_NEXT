@@ -17,7 +17,8 @@
  *  • buildGeneratorDrawing — всё вместе для кнопки.
  */
 import { wireColorKnown, type ConnectorHousing } from "./connectorArt";
-import { makeGen, parseDecimal_, parsePinList_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { coreColor } from "./pinoutCheck";
 import { applyEditorCommand, createConnector, createWire, type EditorCommand } from "./harness/editor/commands";
 import {
   createConnectorInstanceFromComponentTemplate,
@@ -74,6 +75,16 @@ export interface PlanWire {
   readonly to: { readonly connector: string; readonly pin: number };
 }
 
+/** Многожильный кабель: его жилы — провода плана (`wireKeys`), оболочка и длина реза — у кабеля. */
+export interface PlanCable {
+  readonly key: string;
+  readonly mark: string;
+  readonly wireKeys: readonly string[];
+  readonly lengthMm: number | null;
+  /** Снятие оболочки на концах, мм (разделка кабеля из строки «Кабели»). */
+  readonly stripMm: number | null;
+}
+
 export interface PlanCovering {
   readonly kind: "tut" | "sleeve" | "wrap";
   readonly name: string;
@@ -86,6 +97,8 @@ export interface PlanCovering {
 export interface GeneratorDrawingPlan {
   readonly connectors: readonly PlanConnector[];
   readonly wires: readonly PlanWire[];
+  /** Кабели в оболочке (на форме — кабель с числом жил больше одной). */
+  readonly cables: readonly PlanCable[];
   /** Свитые пары — ключи проводов. */
   readonly pairs: readonly (readonly [string, string])[];
   readonly twistPitchMm: number | null;
@@ -99,10 +112,15 @@ const positive = (value: unknown): number | null => {
   return number > 0 ? round3(number) : null;
 };
 
+/** «#222» → «#222222», #RRGGBB как есть, иное — "". */
+const hex6 = (value: string | null | undefined) => {
+  const color = (value ?? "").toUpperCase();
+  return /^#[0-9A-F]{3}$/.test(color) ? `#${[...color.slice(1)].map((digit) => digit + digit).join("")}` : /^#[0-9A-F]{6}$/.test(color) ? color : "";
+};
+
 /** Цвет жилы по наименованию — #RRGGBB, как его хранит чертёж («#222» → «#222222»); нет цвета — "". */
 export function wireColorHex(mark: string): string {
-  const color = (wireColorKnown(mark) ?? "").toUpperCase();
-  return /^#[0-9A-F]{3}$/.test(color) ? `#${[...color.slice(1)].map((digit) => digit + digit).join("")}` : /^#[0-9A-F]{6}$/.test(color) ? color : "";
+  return hex6(wireColorKnown(mark));
 }
 
 /** Сечение из марки: «24 AWG», иначе число с запятой («МГТФ 0,12» → «0,12 мм²»); нет — "". */
@@ -113,8 +131,9 @@ export function wireSectionOf(mark: string): string {
   return decimals ? `${decimals[decimals.length - 1].replace(".", ",")} мм²` : "";
 }
 
-/** Что рисовать по форме генератора: те же соединения, что уходят в ЭТК (`connections_`: k-й контакт первого разъёма
- *  провода ↔ k-й по порядку у следующих разъёмов, А раньше В), но с номером кабеля и разъёмом формы. */
+/** Что рисовать по форме генератора: те же соединения, что уходят в ЭТК (`connections_`: жила за жилой — её контакт
+ *  на первом разъёме, А раньше В, ↔ её контакт на каждом следующем), но с номером кабеля и разъёмом формы. Жилы кабеля
+ *  в оболочке собраны в кабель чертежа; жила на двух разъёмах одной стороны — два провода (ветвь). */
 export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan {
   const gen = makeGen(D, S);
   const warnings: string[] = [];
@@ -131,29 +150,40 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
 
   const active = gen.activeWires_();
   const wires: PlanWire[] = [];
+  const cables: PlanCable[] = [];
   active.forEach((w, group) => {
     const mark = compText(w.compId);
     const routed = ordered.filter((ep) => gen.routedWireIdxs_(ep).includes(w.idx));
-    const ends = routed.map((ep) => ({ ep, pins: parsePinList_(ep.pins?.[w.idx]) })).filter((x) => x.pins.length);
-    const qty = Math.max(1, Math.round(Number(w.qty) || 1));
+    const ends = routed.map((ep) => ({ ep, cores: gen.corePinsOf_(ep, w.idx) })).filter((x) => x.cores.some((p) => p != null));
+    const qty = gen.unitCount_(w);
     if (ends.length < 2) {
       if (routed.length >= 2) warnings.push(`${mark || "Провод"}: распиновка не задана — на чертёж не попал.`);
       return;
     }
     const length = positive(S.advancedLength ? w.length : S.drawingLength);
-    const [from, ...rest] = ends;
-    let k = 0;
-    rest.forEach((x) => x.pins.forEach((pin) => {
-      if (k < from.pins.length) {
-        wires.push({
-          key: `${w.idx}.${k}`, group, unit: k, mark, section: wireSectionOf(mark), color: wireColorHex(mark),
-          lengthMm: length, from: { connector: from.ep.id, pin: from.pins[k] }, to: { connector: x.ep.id, pin },
-        });
-      }
-      k++;
-    }));
-    const drawn = Math.min(k, from.pins.length);
+    const colors = gen.coreColors_(w);
+    const mine: PlanWire[] = [];
+    let drawn = 0;
+    for (let k = 0; k < qty; k++) {
+      const at = ends.filter((x) => x.cores[k] != null);
+      if (at.length < 2) continue;
+      drawn++;
+      const color = hex6(coreColor(colors[k])?.hex) || wireColorHex(mark);
+      at.slice(1).forEach((x, j) => mine.push({
+        key: j ? `${w.idx}.${k}.${j}` : `${w.idx}.${k}`, group, unit: k, mark, section: wireSectionOf(mark), color,
+        lengthMm: length, from: { connector: at[0].ep.id, pin: at[0].cores[k]! }, to: { connector: x.ep.id, pin: x.cores[k]! },
+      }));
+    }
+    wires.push(...mine);
     if (drawn < qty) warnings.push(`${mark || "Провод"}: на чертеже ${drawn} из ${qty} — у остальных нет контактов.`);
+    const per = gen.wireCores_(w);
+    if (per > 1) {
+      const strip = positive(w.jacket || JACKET_STRIP_MM_);
+      for (let c = 0; c * per < qty; c++) {
+        const keys = mine.filter((x) => Math.floor(x.unit / per) === c).map((x) => x.key);
+        if (keys.length) cables.push({ key: `${w.idx}#${c}`, mark, wireKeys: keys, lengthMm: length, stripMm: strip });
+      }
+    }
   });
   if (wires.some((wire) => wire.lengthMm === null)) warnings.push("Длина по чертежу не задана — провода без длины.");
 
@@ -197,7 +227,7 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
       coverings.push({ kind: "wrap", name: comp.art || comp.name, lengthMm: positive(slot.len), coveringKind: slot.kind === "braid" ? "braid" : "tape" });
     });
   }
-  return { connectors, wires, pairs, twistPitchMm: positive(S.twist.pitch), coverings, warnings };
+  return { connectors, wires, cables, pairs, twistPitchMm: positive(S.twist.pitch), coverings, warnings };
 }
 
 // ── Разъём по артикулу: библиотека компонентов или свободный корпус ─────────────────────────────────────────────────
@@ -277,6 +307,8 @@ const COVER_COLOR: Record<CoveringKind, string> = {
   "heat-shrink": "#424c53", nylon: "#b19c77", braid: "#b19c77", "metal-braid": "#73838d", tape: "#b19c77", band: "#b19c77",
 };
 const DIRECTION_ANGLE = { right: 0, down: 90, left: 180, up: 270 } as const;
+/** Оболочка многожильного кабеля на участке чертежа. */
+const CABLE_JACKET = "#3b4652";
 
 function run(document: HarnessDesignDocument, command: EditorCommand): HarnessDesignDocument {
   return applyEditorCommand(document, command);
@@ -425,6 +457,24 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const wireIds = wired.done;
   warnings.push(...wired.failed);
 
+  // 4б. Кабели в оболочке: жилы — провода чертежа, собранные в кабель (длина реза и снятие оболочки — у кабеля).
+  const cableMembers = new Map<string, string[]>();
+  plan.cables.forEach((cable, index) => {
+    const members = cable.wireKeys.map((key) => wireIds.get(key)).filter((id): id is string => !!id);
+    if (!members.length) return;
+    const id = `gen-cab${index + 1}`;
+    const fits = cable.stripMm !== null && (cable.lengthMm === null || cable.stripMm * 2 < cable.lengthMm);
+    try {
+      doc = run(doc, { type: "add-cable", cable: {
+        id, memberWireIds: members, lengthMm: cable.lengthMm, endCorrectionFromMm: 0, endCorrectionToMm: 0, cutRoundingStepMm: 1,
+        ...(fits ? { sheathStrip: { fromMm: cable.stripMm, toMm: cable.stripMm } } : {}),
+      } });
+      cableMembers.set(id, members);
+    } catch (reason) {
+      warnings.push(`${cable.mark || "Кабель"}: кабель на чертеже не собран (${reason instanceof Error ? reason.message : "ошибка"}) — жилы нарисованы проводами.`);
+    }
+  });
+
   // 5. Свитые пары.
   plan.pairs.forEach(([a, b], index) => {
     const first = wireIds.get(a), second = wireIds.get(b);
@@ -472,6 +522,16 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   }
   let topology: PhysicalTopology = { snap: true, nodes, segments, routes: [] };
   topology = routePhysicalWires({ ...doc, physicalTopology: topology }, topology);
+  // Участок, по которому идут все жилы кабеля и только они, — кабель в оболочке (ствол до разделки); ветки к разным
+  // разъёмам после узла — жилы россыпью (кабель разделан, жилы разведены по разъёмам).
+  if (cableMembers.size) {
+    const through = (segmentId: string) => new Set(topology.routes.filter((route) => route.steps.some((step) => step.segmentId === segmentId)).map((route) => route.wireId));
+    topology = { ...topology, segments: topology.segments.map((segment) => {
+      const inside = through(segment.id);
+      const cable = [...cableMembers].find(([, members]) => members.length === inside.size && members.every((id) => inside.has(id)));
+      return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : segment;
+    }) };
+  }
   doc = run(doc, { type: "set-physical-topology", topology });
   const unrouted = doc.wires.filter((wire) => !topology.routes.some((route) => route.wireId === wire.id)).length;
   if (unrouted) warnings.push(`${unrouted} провод(а) без трассы на чертеже — проложите их в редакторе.`);
