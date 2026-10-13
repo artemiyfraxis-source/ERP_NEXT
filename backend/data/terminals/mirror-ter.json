@@ -1,0 +1,6362 @@
+{
+ "rows": [
+  {
+   "fields": {
+    "terArticle": "НВИ 1.5-3",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5",
+    "terComponent": "НВИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 1.5-4",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5",
+    "terComponent": "НВИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 1.5-5",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5",
+    "terComponent": "НВИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 2.5-4",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5",
+    "terComponent": "НВИ",
+    "terInsOdTo": "2,3",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 2.5-5",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5",
+    "terComponent": "НВИ",
+    "terInsOdTo": "2,3",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 2.5-6",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5",
+    "terComponent": "НВИ",
+    "terInsOdTo": "2,3",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 6.0-4",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 6.0",
+    "terComponent": "НВИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 6.0-5",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 6.0",
+    "terComponent": "НВИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НВИ 6.0-6",
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 6.0",
+    "terComponent": "НВИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 1.5-3",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 1.5-4",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 1.5-5",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 1.5-6",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 2.5-4",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 2.5",
+    "terComponent": "НКИ",
+    "terInsOdTo": "2,3",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 2.5-5",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 2.5",
+    "terComponent": "НКИ",
+    "terInsOdTo": "2,3",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 2.5-6",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 2.5",
+    "terComponent": "НКИ",
+    "terInsOdTo": "2,3",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 6.0-10",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 6.0",
+    "terComponent": "НКИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 6.0-4",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 6.0",
+    "terComponent": "НКИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 6.0-5",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 6.0",
+    "terComponent": "НКИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 6.0-6",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 6.0",
+    "terComponent": "НКИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 6.0-8",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 6.0",
+    "terComponent": "НКИ",
+    "terInsOdTo": "3,4",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М 1.5 (2.8)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М (2.8)",
+    "terComponent": "РПИ-М",
+    "terInsOdTo": "1,7",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М 1.5 (4.8)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М (4.8)",
+    "terComponent": "РПИ-М",
+    "terInsOdTo": "1,7",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М 2.5 (4.8)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М (4.8)",
+    "terComponent": "РПИ-М",
+    "terInsOdTo": "2,3",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М 1.5 (6.3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М (6.3)",
+    "terComponent": "РПИ-М",
+    "terInsOdTo": "1,7",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М 2.5 (6.3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М (6.3)",
+    "terComponent": "РПИ-М",
+    "terInsOdTo": "2,3",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М 6.0 (6.3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М (6.3)",
+    "terComponent": "РПИ-М",
+    "terInsOdTo": "3,4",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М(н) 1,5-(6,3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М(н) (6.3)",
+    "terComponent": "РПИ-М(н)",
+    "terInsOdTo": "1,7",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpimn/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-М(н) 2,5-(6,3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М(н) (6.3)",
+    "terComponent": "РПИ-М(н)",
+    "terInsOdTo": "2,3",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rpimn/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РППИ-М 1.5 (2.8)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РППИ-М (2.8)",
+    "terComponent": "РППИ-М",
+    "terInsOdTo": "1,7",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rppim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РППИ-М 1.5 (4.8)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РППИ-М (4.8)",
+    "terComponent": "РППИ-М",
+    "terInsOdTo": "1,7",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rppim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РППИ-М 2.5 (4.8)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РППИ-М (4.8)",
+    "terComponent": "РППИ-М",
+    "terInsOdTo": "2,3",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rppim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РППИ-М 1.5 (6.3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РППИ-М (6.3)",
+    "terComponent": "РППИ-М",
+    "terInsOdTo": "1,7",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rppim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РППИ-М 2.5 (6.3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РППИ-М (6.3)",
+    "terComponent": "РППИ-М",
+    "terInsOdTo": "2,3",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rppim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РППИ-М 6.0 (6.3)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РППИ-М (6.3)",
+    "terComponent": "РППИ-М",
+    "terInsOdTo": "3,4",
+    "terMaterial": "латунь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/iplug/rppim/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1071-SC600",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-SCB01, I-DS1071-SCB02",
+    "terComponent": "BLS, BLD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://en.connfly.com/static/upload/file/DS1071-01.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1071-SC800",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-SCB01, I-DS1071-SCB02",
+    "terComponent": "BLS, BLD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://en.connfly.com/static/upload/file/DS1071-01.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1071-01-SC600",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-01-SCB01, I-DS1071-01-SCB02",
+    "terComponent": "BLD2, BLS2",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,35",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://en.connfly.com/static/upload/file/DS1071-01.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1070-SC600",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1070",
+    "terComponent": "DS1070",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy, покрытие Tin Plating Over Nickel (код «6»)",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://en.connfly.com/static/upload/file//DS1070.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1074-SC600",
+    "terManufacturer": "Connfly",
+    "terSeries": "T-DS1074",
+    "terComponent": "T-DS1074",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "2,8",
+    "terMaxCurrent": "7",
+    "terDatasheet": "https://www.connfly.com/static/upload/file/pdf/DS1074.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1066-SC600",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1066",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy, покрытие Tin (код «6»)",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://en.connfly.com/static/upload/file//DS1066.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-22SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11",
+    "terComponent": "DF11",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,50 - 1,65",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-22SCF/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-22SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11",
+    "terComponent": "DF11",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,50 - 1,65",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-22SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-2428SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11",
+    "terComponent": "DF11",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,30 - 1,45\n26 AWG: 1,35 - 1,50\n24 AWG: 1,40 - 1,55",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,45",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-2428SCF/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-2428SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11",
+    "terComponent": "DF11",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,30 - 1,45\n26 AWG: 1,35 - 1,50\n24 AWG: 1,40 - 1,55",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,45",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-2428SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-30SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11",
+    "terComponent": "DF11",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,25 - 1,40",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-30SCF/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-30SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11",
+    "terComponent": "DF11",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,25 - 1,40",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-30SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-EP2428PC",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11EP",
+    "terComponent": "DF11",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,45",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-EP2428PC/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF11-EP2428PCA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF11EP",
+    "terComponent": "DF11",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,45",
+    "terMaterial": "Brass / Gold",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF11/DF11-EP2428PCA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-2630SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF13",
+    "terComponent": "DF13",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,00 - 1,20\n28 AWG: 1,20 - 1,40\n26 AWG: 1,20 - 1,40",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,35",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF13/DF13-2630SCF/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-2630SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF13",
+    "terComponent": "DF13",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,00 - 1,20\n28 AWG: 1,20 - 1,40\n26 AWG: 1,20 - 1,40",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,35",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF13/DF13-2630SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-3032SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF13",
+    "terComponent": "DF13",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "32 AWG: 0,80 - 0,90\n30 AWG: 0,90 - 1,00",
+    "terInsOdFrom": "0,52",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF13/DF13-3032SCF/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-3032SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF13",
+    "terComponent": "DF13",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "32 AWG: 0,80 - 0,90\n30 AWG: 0,90 - 1,00",
+    "terInsOdFrom": "0,52",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF13/DF13-3032SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF14-2628SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF14",
+    "terComponent": "DF14",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,10 - 1,20\n26 AWG: 1,20 - 1,30",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF14/DF14-2628SCF/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF14-2628SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF14",
+    "terComponent": "DF14",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,10 - 1,25\n26 AWG: 1,20 - 1,30",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF14/DF14-2628SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF14-3032SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF14",
+    "terComponent": "DF14",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "32 AWG: 0,80 - 0,90\n30 AWG: 0,90 - 1,05",
+    "terInsOdFrom": "0,52",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF14/DF14-3032SCF/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF14-3032SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF14",
+    "terComponent": "DF14",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "32 AWG: 0,80 - 0,90\n30 AWG: 0,90 - 1,05",
+    "terInsOdFrom": "0,52",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF14/DF14-3032SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF20F-2830SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF20",
+    "terComponent": "DF20",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 0,75 - 0,90\n28 AWG: 0,88 - 1,03",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF20/DF20F-2830SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF20F-3032SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF20",
+    "terComponent": "DF20",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "0,69",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.hirose.com/product/en/products/DF20/DF20F-3032SCFA/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF19A-2830SCFA",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF19",
+    "terInsCrimpHeight": "0,65 - 0,84"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FI-C3-A1-15000",
+    "terManufacturer": "JAE",
+    "terSeries": "FI-S",
+    "terComponent": "FI-S",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "0,85",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "http://www.jae.com/z-en/product_en.cfm?l_code=en&product_number=FI-C3-A1-15000&series_code=FI-S"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FI-XC3A-1-15000",
+    "terManufacturer": "JAE",
+    "terSeries": "FI-X",
+    "terComponent": "FI-X",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "0,8",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "http://www.jae.com/z-en/product_en.cfm?l_code=en&product_number=FI-XC3A-1-15000&series_code=FI-X"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FI-XC3B-1-15000",
+    "terManufacturer": "JAE",
+    "terSeries": "FI-X",
+    "terComponent": "FI-X",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,3",
+    "terInsOdTo": "0,6",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "http://www.jae.com/z-en/product_en.cfm?l_code=en&product_number=FI-XC3B-1-15000&series_code=FI-X"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FI-XC3C-1-15000",
+    "terManufacturer": "JAE",
+    "terSeries": "FI-X",
+    "terComponent": "FI-X",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "http://www.jae.com/z-en/product_en.cfm?l_code=en&product_number=FI-XC3C-1-15000&series_code=FI-X"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SVH-21T-P1.1",
+    "terManufacturer": "JST",
+    "terSeries": "NVR, NV, VB, VHR",
+    "terComponent": "NV, VB, VH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,7",
+    "terInsOdTo": "3",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "10",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/svh-21t-p1-1/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SLM-01T-P1.3E",
+    "terManufacturer": "JST",
+    "terSeries": "ELP",
+    "terComponent": "EL",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,9",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "10",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/slm-01t-p1-3e/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SLM-41T-P1.3E",
+    "terManufacturer": "JST",
+    "terSeries": "ELP, EL",
+    "terComponent": "EL",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,5",
+    "terInsOdTo": "3,2",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "10",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/slm-41t-p1-3e/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SLF-01T-P1.3E",
+    "terManufacturer": "JST",
+    "terSeries": "ELR",
+    "terComponent": "EL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "10",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/slf-01t-p1-3e/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SLF-41T-P1.3E",
+    "terManufacturer": "JST",
+    "terSeries": "ELR",
+    "terComponent": "EL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,5",
+    "terInsOdTo": "3,2",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "10",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/slf-41t-p1-3e/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SVH-41T-P1.1",
+    "terManufacturer": "JST",
+    "terSeries": "VHR, NV, NVR, VB",
+    "terComponent": "VH, NV, VB",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,7",
+    "terInsOdTo": "3",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "10",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/svh-41t-p1-1/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPH-002T-P0.5S",
+    "terManufacturer": "JST",
+    "terSeries": "PADP, PHR",
+    "terComponent": "PAD, PH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sph-002t-p0-5s/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SEH-001T-P0.6",
+    "terManufacturer": "JST",
+    "terSeries": "EHR",
+    "terComponent": "EH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/seh-001t-p0-6/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SEH-002T-P0.6",
+    "terManufacturer": "JST",
+    "terSeries": "EHR",
+    "terComponent": "EH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,3",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/seh-002t-p0-6/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SYF-001T-P0.6",
+    "terManufacturer": "JST",
+    "terSeries": "SMP, SYR",
+    "terComponent": "SM, RCY",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/syf-001t-p0-6/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SYF-001T-P0.6A",
+    "terManufacturer": "JST",
+    "terSeries": "SMP",
+    "terComponent": "SM",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/syf-001t-p0-6a/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SYM-001T-P0.6",
+    "terManufacturer": "JST",
+    "terSeries": "SMR, SYP",
+    "terComponent": "SM, RCY",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sym-001t-p0-6/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SYM-001T-P0.6A",
+    "terManufacturer": "JST",
+    "terSeries": "SMR",
+    "terComponent": "SM",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sym-001t-p0-6a/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SXH-001T-P0.6",
+    "terManufacturer": "JST",
+    "terSeries": "XHP",
+    "terComponent": "XH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sxh-001t-p0-6/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SXH-001T-P0.6N",
+    "terManufacturer": "JST",
+    "terSeries": "XHP",
+    "terComponent": "XH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sxh-001t-p0-6n/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SXH-002T-P0.6",
+    "terManufacturer": "JST",
+    "terSeries": "XHP",
+    "terComponent": "XH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,3",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sxh-002t-p0-6/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPH-001T-P0.5L",
+    "terManufacturer": "JST",
+    "terSeries": "PADP",
+    "terComponent": "PAD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sph-001t-p0-5l/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPND-001T-C0.5",
+    "terManufacturer": "JST",
+    "terSeries": "PADP, PNDP",
+    "terComponent": "PAD, PND",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/spnd-001t-c0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPND-002T-C0.5",
+    "terManufacturer": "JST",
+    "terSeries": "PADP, PNDP",
+    "terComponent": "PAD, PND",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/spnd-002t-c0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPHD-001T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "PAP, PHDR",
+    "terComponent": "PA, PHD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sphd-001t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPHD-002T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "PAP, PHDR",
+    "terComponent": "PA, PHD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sphd-002t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPH-002T-P0.5L",
+    "terManufacturer": "JST",
+    "terSeries": "PHR",
+    "terComponent": "PH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sph-002t-p0-5l/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPH-004T-P0.5S",
+    "terManufacturer": "JST",
+    "terSeries": "PHR",
+    "terComponent": "PH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sph-004t-p0-5s/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPNI-001T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "PNIR",
+    "terComponent": "PNI",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/spni-001t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SPNI-002T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "PNIR",
+    "terComponent": "PNI",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/spni-002t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SQS-A03GF-P-P",
+    "terManufacturer": "JST",
+    "terSeries": "SQSR",
+    "terComponent": "SQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,3",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sqs-a03gf-p-p/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSQSK-A03GJ-P-L",
+    "terManufacturer": "JST",
+    "terSeries": "SQSR",
+    "terComponent": "SQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,3",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/ssqsk-a03gj-p-l/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSQSK-A03GJ-P-R",
+    "terManufacturer": "JST",
+    "terSeries": "SQSR",
+    "terComponent": "SQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,3",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/ssqsk-a03gj-p-r/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SCZH-002T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "CZHR",
+    "terComponent": "CZ",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sczh-002t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SCZH-003T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "CZHR",
+    "terComponent": "CZ",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sczh-003t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SZE-002T-P0.3",
+    "terManufacturer": "JST",
+    "terSeries": "ZER, ZNDP",
+    "terComponent": "ZE, ZND",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sze-002t-p0-3/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SZE-003T-P0.3",
+    "terManufacturer": "JST",
+    "terSeries": "ZER, ZNDP",
+    "terComponent": "ZE, ZND",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sze-003t-p0-3/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SZH-002T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "ZHR",
+    "terComponent": "ZH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/szh-002t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SZH-003T-P0.5",
+    "terManufacturer": "JST",
+    "terSeries": "ZHR",
+    "terComponent": "ZH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/szh-003t-p0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SZPD-002T-P0.3",
+    "terManufacturer": "JST",
+    "terSeries": "ZPDR",
+    "terComponent": "ZPD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/szpd-002t-p0-3/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSHL-002T-P0.2",
+    "terManufacturer": "JST",
+    "terSeries": "GHDR, GHR",
+    "terComponent": "GHD, GH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sshl-002t-p0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSHL-003T-P0.2",
+    "terManufacturer": "JST",
+    "terSeries": "GHDR, GHR, NSHR, SHLP",
+    "terComponent": "GHD, GH, NSH, SHL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sshl-003t-p0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SGVH-002T-P0.2",
+    "terManufacturer": "JST",
+    "terSeries": "GVHR",
+    "terComponent": "GVH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sgvh-002t-p0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SGVHSF-002T-0.2",
+    "terManufacturer": "JST",
+    "terSeries": "GVHR",
+    "terComponent": "GVH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sgvhsf-002t-0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SNSHD-003T-P0.2",
+    "terManufacturer": "JST",
+    "terSeries": "NSHDR",
+    "terComponent": "NSHD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/snshd-003t-p0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSH-003T-P0.2",
+    "terManufacturer": "JST",
+    "terSeries": "SHDP, SHR, APSH, LBT",
+    "terComponent": "SHD, SH, APSH, LBT",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/ssh-003t-p0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSHJ-003T-P0.2",
+    "terManufacturer": "JST",
+    "terSeries": "SHJP",
+    "terComponent": "SHJ",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/sshj-003t-p0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSH-003GA-P0.2",
+    "terManufacturer": "JST",
+    "terSeries": "SHR, SHD",
+    "terComponent": "SH, SHD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/ssh-003ga-p0-2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSH-003T-P0.2-H",
+    "terManufacturer": "JST",
+    "terSeries": "SHR",
+    "terComponent": "SH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/ssh-003t-p0-2-h/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SLBTAD-01T-M0.5",
+    "terManufacturer": "JST",
+    "terSeries": "LBT",
+    "terComponent": "LBT",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/slbtad-01t-m0-5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "shf-001T-0.8BS",
+    "terManufacturer": "JST",
+    "terSeries": "SM"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "RA-SC1290",
+    "terManufacturer": "JST",
+    "terSeries": "RA",
+    "terComponent": "RA",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/ra-sc1290/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000038",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000039",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000038"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000046",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000047",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000046"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000059",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000060",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000059"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000065",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000066",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000065"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000073",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000074",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000073"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000077",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000078",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000077"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000079",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000080",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,38µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000079"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000089",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000090",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000089"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000139",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000140",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000139"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000181",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000182",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000181"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000183",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000184",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,38µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000183"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000185",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000186",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000185"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000207",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000208",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000207"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000209",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000210",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Hi-Cond. Brass / Tin",
+    "terMaxCurrent": "13",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000209"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000428",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000429",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000428"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000434",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000435",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Hi-Cond. Copper / Tin",
+    "terMaxCurrent": "13",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000434"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000040",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000041",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000040"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000048",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000049",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000048"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000061",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000062",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000061"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000067",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000068",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000067"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000075",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000076",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000075"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000081",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000082",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,38µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000081"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000083",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000084",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000083"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000091",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000092",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000091"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000141",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000142",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000141"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000213",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000214",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24\n20 AWG: 2,24\n18 AWG: 2,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000213"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000215",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000216",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,62\n22 AWG: 1,62",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass / Gold 0,38µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000215"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000217",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "39000218",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000217"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310001",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "430310007",
+    "terInsCrimpHeight": "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310001"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310002",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "430310008",
+    "terInsCrimpHeight": "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310002"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310003",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "430310009",
+    "terInsCrimpHeight": "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310003"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310004",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "430310010",
+    "terInsCrimpHeight": "1,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310004"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310005",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "430310011",
+    "terInsCrimpHeight": "1,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310005"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310006",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "430310012",
+    "terInsCrimpHeight": "1,38",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310006"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310022",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "1,9",
+    "terInsOdFrom": "1,12",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310022"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430310023",
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "1,9",
+    "terInsOdFrom": "1,12",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430310023"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300001",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "430300007",
+    "terInsCrimpHeight": "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "7",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300001"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300002",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "430300008",
+    "terInsCrimpHeight": "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "7",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300002"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300003",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "430300009",
+    "terInsCrimpHeight": "24 AWG: 1,58\n22 AWG: 1,58\n20 AWG: 1,7",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,85",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "7",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300003"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300004",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "430300010",
+    "terInsCrimpHeight": "1,38",
+    "terInsOdFrom": "1,12",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "4,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300004"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300005",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "430300011",
+    "terInsCrimpHeight": "1,38",
+    "terInsOdFrom": "1,12",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "4,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300005"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300006",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "430300012",
+    "terInsCrimpHeight": "1,38",
+    "terInsOdFrom": "1,12",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "4,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300006"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300038",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,9",
+    "terInsOdFrom": "1,85",
+    "terInsOdTo": "2,36",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300038"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "430300039",
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "430300040",
+    "terInsCrimpHeight": "1,9",
+    "terInsOdFrom": "1,85",
+    "terInsOdTo": "2,36",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "8,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/430300039"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "507528200",
+    "terManufacturer": "Molex",
+    "terSeries": "51163",
+    "terComponent": "Mini-Lock",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,9",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "4",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/507528200"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "507528400",
+    "terManufacturer": "Molex",
+    "terSeries": "51163",
+    "terComponent": "Mini-Lock",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,75 - 1,85\n24 AWG: 1,80 - 1,90",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "4",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/507528400"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190109",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,4",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190109"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190110",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,4",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190110"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190111",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,4",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190111"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190120",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,55\n26 AWG: 1,3",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190120"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190121",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,55\n26 AWG: 1,3",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190121"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190122",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,55\n26 AWG: 1,3",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190122"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "08701039",
+    "terManufacturer": "Molex",
+    "terSeries": "5264",
+    "terComponent": "Mini-SPOX",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8701040",
+    "terInsCrimpHeight": "28 AWG: 1,42\n26 AWG: 1,42\n24 AWG: 1,57\n22 AWG: 1,68",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08701039"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "502128000",
+    "terManufacturer": "Molex",
+    "terSeries": "51065, 51089, 51090, 502351",
+    "terComponent": "Micro-Latch",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "502128100",
+    "terInsCrimpHeight": "30 AWG: 1,31\n28 AWG: 1,31\n26 AWG: 1,43\n24 AWG: 1,43",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/502128000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "503948051",
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "503948100",
+    "terInsCrimpHeight": "1,30 - 1,40",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Gold 0,38µm",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/503948051"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "503948052",
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,30 - 1,40",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Gold 0,76µm",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/503948052"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "503948054",
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,30 - 1,40",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Gold 0,76µm",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/503948054"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "503948055",
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,30 - 1,40",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/503948055"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "503948999",
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Tin / Gold",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/503948999"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "561349001",
+    "terManufacturer": "Molex",
+    "terSeries": "205979, 212724",
+    "terComponent": "Micro-One",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "561349100",
+    "terInsCrimpHeight": "24 AWG: 1,7\n22 AWG: 1,9",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/561349001"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "561349002",
+    "terManufacturer": "Molex",
+    "terSeries": "205979, 212724",
+    "terComponent": "Micro-One",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,55",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/561349002"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "873968051",
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,35 - 1,45",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/873968051"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1510878101",
+    "terManufacturer": "Molex",
+    "terSeries": "151098",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,43\n28 AWG: 1,46\n26 AWG: 1,47\n24 AWG: 1,47",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1510878101"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2053425028",
+    "terManufacturer": "Molex",
+    "terSeries": "205341",
+    "terComponent": "Pico-Lock",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "22 AWG: 1,75\n20 AWG: 1,85 (Max)",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "3,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2053425028"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2053425128",
+    "terManufacturer": "Molex",
+    "terSeries": "205341",
+    "terComponent": "Pico-Lock",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,42\n24 AWG: 1,48",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2053425128"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2137201000",
+    "terManufacturer": "Molex",
+    "terSeries": "213719",
+    "terComponent": "Micro-Lock Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,48 - 1,56\n24 AWG: 1,71 - 1,79\n22 AWG: 1,71 - 1,79",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2137201000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2147205000",
+    "terManufacturer": "Molex",
+    "terSeries": "214719",
+    "terComponent": "Zero-Hachi",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "2147205001",
+    "terInsCrimpHeight": "30 AWG: 0,725 - 0,775\n28 AWG: 0,775 - 0,825",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2147205000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5016471000",
+    "terManufacturer": "Molex",
+    "terSeries": "501646",
+    "terComponent": "iGrid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "5016471100",
+    "terInsCrimpHeight": "26 AWG: 1,55\n24 AWG: 1,6\n22 AWG: 1,65",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5016471000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5016481000",
+    "terManufacturer": "Molex",
+    "terSeries": "501646",
+    "terComponent": "iGrid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "5016481100",
+    "terInsCrimpHeight": "28 AWG: 1,5\n26 AWG: 1,55",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5016481000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5024380000",
+    "terManufacturer": "Molex",
+    "terSeries": "502439",
+    "terComponent": "CLIK-Mate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "5024380100",
+    "terInsCrimpHeight": "26 AWG: 1,55\n24 AWG: 1,65\n22 AWG: 1,75",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5024380000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5055721000",
+    "terManufacturer": "Molex",
+    "terSeries": "505570",
+    "terComponent": "Micro-Lock Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,75\n24 AWG: 1,8\n22 AWG: 1,8",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5055721000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5055721100",
+    "terManufacturer": "Molex",
+    "terSeries": "505570",
+    "terComponent": "Micro-Lock Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,75\n24 AWG: 1,8\n22 AWG: 1,8",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Copper Alloy / Gold 0,10µm",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5055721100"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "874210000",
+    "terManufacturer": "Molex",
+    "terSeries": "87439",
+    "terComponent": "Pico-SPOX",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "874210100",
+    "terInsCrimpHeight": "26 AWG: 1,24\n24 AWG: 1,4",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/874210000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5025790000",
+    "terManufacturer": "Molex",
+    "terSeries": "502578, 503149",
+    "terComponent": "CLIK-Mate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "5025790100",
+    "terInsCrimpHeight": "28 AWG: 1,4\n26 AWG: 1,5\n24 AWG: 1,6",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5025790000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5034290000",
+    "terManufacturer": "Molex",
+    "terSeries": "502578, 503149",
+    "terComponent": "CLIK-Mate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,13\n28 AWG: 1,17\n26 AWG: 1,25",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5034290000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5040520098",
+    "terManufacturer": "Molex",
+    "terSeries": "504051",
+    "terComponent": "Pico-Lock",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,30 (Max)\n26 AWG: 1,40 (Max)\n24 AWG: 1,40 (Max)",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "2,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5040520098"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500588001",
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "500588100",
+    "terInsCrimpHeight": "1,2",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/500588001"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500588020",
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,2",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/500588020"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500798001",
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "500798100",
+    "terInsCrimpHeight": "1,2",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "1,04",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/500798001"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500798020",
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,2",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "1,04",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/500798020"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "501258000",
+    "terManufacturer": "Molex",
+    "terSeries": "51047",
+    "terComponent": "PicoBlade",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "501258100",
+    "terInsCrimpHeight": "1,24",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "1,04",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/501258000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "501338000",
+    "terManufacturer": "Molex",
+    "terSeries": "51047",
+    "terComponent": "PicoBlade",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "501338100",
+    "terInsCrimpHeight": "32 AWG: 1,19\n30 AWG: 1,19\n28 AWG: 1,2",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,9",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/501338000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2145241000",
+    "terManufacturer": "Molex",
+    "terSeries": "214525",
+    "terComponent": "Micro-Lock Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,08 - 1,18\n28 AWG: 1,18 - 1,28\n26 AWG: 1,19 - 1,28",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,05",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2145241000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2145291000",
+    "terManufacturer": "Molex",
+    "terSeries": "214526, 214527",
+    "terComponent": "Micro-Lock Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,15 - 1,25\n28 AWG: 1,16 - 1,26\n26 AWG: 1,20 - 1,28",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,05",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2145291000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5023810000",
+    "terManufacturer": "Molex",
+    "terSeries": "502380",
+    "terComponent": "CLIK-Mate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,15 - 1,25\n26 AWG: 1,18 - 1,28",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5023810000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5023810010",
+    "terManufacturer": "Molex",
+    "terSeries": "502380",
+    "terComponent": "CLIK-Mate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,15 - 1,25\n26 AWG: 1,18 - 1,28",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5023810010"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5054311000",
+    "terManufacturer": "Molex",
+    "terSeries": "505432, 505565",
+    "terComponent": "Micro-Lock Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,08 - 1,18\n28 AWG: 1,18 - 1,28\n26 AWG: 1,19 - 1,28",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,05",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5054311000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5054311100",
+    "terManufacturer": "Molex",
+    "terSeries": "505432, 505565",
+    "terComponent": "Micro-Lock Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,08 - 1,18\n28 AWG: 1,18 - 1,28\n26 AWG: 1,19 - 1,28",
+    "terInsOdFrom": "0,7",
+    "terInsOdTo": "1,05",
+    "terMaterial": "Copper Alloy / Gold 0,10µm",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5054311100"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "781720410",
+    "terManufacturer": "Molex",
+    "terSeries": "78172",
+    "terComponent": "Pico-EZmate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "781720411",
+    "terInsCrimpHeight": "0,78",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,7",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/781720410"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2040175021",
+    "terManufacturer": "Molex",
+    "terSeries": "212132",
+    "terComponent": "Pico-EZmate Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 0,80 - 0,85\n28 AWG: 0,81 - 0,85",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2040175021"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2140935000",
+    "terManufacturer": "Molex",
+    "terSeries": "214092",
+    "terComponent": "OneBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "2140935100",
+    "terInsCrimpHeight": "30 AWG: 0,95 - 1,05\n28 AWG: 1,05 - 1,15",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,7",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2140935000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5011937000",
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "32 AWG: 0,9\n30 AWG: 0,95\n28 AWG: 1",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Gold 0,10µm",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5011937000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5011938000",
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "32 AWG: 0,9\n30 AWG: 0,95\n28 AWG: 1",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5011938000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5011939000",
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "32 AWG: 0,9\n30 AWG: 0,95\n28 AWG: 1",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5011939000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5013340000",
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "5013340100",
+    "terInsCrimpHeight": "32 AWG: 0,9\n30 AWG: 0,95\n28 AWG: 1",
+    "terInsOdFrom": "0,4",
+    "terInsOdTo": "0,8",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5013340000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5037650098",
+    "terManufacturer": "Molex",
+    "terSeries": "503764",
+    "terComponent": "Pico-Lock",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 0,8\n28 AWG: 0,9",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "0,7",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "1,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5037650098"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "16020086",
+    "terManufacturer": "Molex",
+    "terSeries": "70066, 70450",
+    "terComponent": "SL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,7",
+    "terInsOdFrom": "1,09",
+    "terInsOdTo": "1,65",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/16020086"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1727183111",
+    "terManufacturer": "Molex",
+    "terSeries": "172708, 200453",
+    "terComponent": "Mini-Fit TPA2",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 2,14\n18 AWG: 2,5",
+    "terInsOdFrom": "1,42",
+    "terInsOdTo": "2,1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1727183111"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2125153102",
+    "terManufacturer": "Molex",
+    "terSeries": "212514, 215913",
+    "terComponent": "Mini-Fit Max",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "2,30 - 2,70",
+    "terInsOdFrom": "2,25",
+    "terInsOdTo": "2,4",
+    "terMaterial": "Matte Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2125153102"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "560023-0721",
+    "terManufacturer": "Molex",
+    "terSeries": "34791, 34959, 206523",
+    "terComponent": "CTX50",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,20 - 1,30",
+    "terInsOdFrom": "0,95",
+    "terInsOdTo": "1,35",
+    "terMaterial": "Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/5600230721"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "89538-0251",
+    "terManufacturer": "Molex",
+    "terComponent": "RF центральный пин",
+    "terType": "Male",
+    "terGender": "Male"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1355717-1",
+    "terManufacturer": "TE",
+    "terSeries": "MQS",
+    "terComponent": "MQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,30\n26 AWG: 1,35\n24 AWG: 1,45",
+    "terMaterial": "CuNiSi F57 / Sn (Tin); Au и Ag варианты (1355717-5 и др.)",
+    "terDatasheet": "https://www.te.com/usa-en/product-1355717-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-963860-1",
+    "terManufacturer": "TE",
+    "terSeries": "MQS",
+    "terComponent": "Junior Power Timer",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "1,6",
+    "terMaterial": "Cu-сплав / Tin (plating confirmed; exact alloy code for the '5-' variant not legible, sibling '1-' / '2-' variants use CuSn4 / CuFe)",
+    "terDatasheet": "https://www.te.com/usa-en/product-5-963860-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "349052447",
+    "terManufacturer": "Molex",
+    "terSeries": "34967",
+    "terComponent": "CTX50",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,53",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/349052447"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "349056447",
+    "terManufacturer": "Molex",
+    "terSeries": "34967",
+    "terComponent": "CTX50",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,53",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Copper Alloy / Silver",
+    "terMaxCurrent": "5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/349056447"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-965906-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP",
+    "terComponent": "MCP",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "2,9 - 3,1",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "1,9",
+    "terMaterial": "Cu-сплав / Sn (Tin); Au / Ag варианты существуют, но помечены 'NOT FOR NEW APPLICATION'",
+    "terDatasheet": "https://www.te.com/usa-en/product-5-965906-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "7-1452671-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCON 1.2",
+    "terComponent": "MCON 1.2 LL (Locking-Lance)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,9",
+    "terInsOdTo": "2,4",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-968946-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachstecker 2,8x0,8 (tab)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "2,7",
+    "terInsOdTo": "3,7",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "350078-1",
+    "terManufacturer": "TE",
+    "terSeries": "Commercial MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,02",
+    "terInsOdTo": "1,91",
+    "terMaterial": "Brass / Pre-Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-962842-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachstecker 2,8x0,8 (tab)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "2,1",
+    "terInsOdTo": "2,9",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "7-1452665-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCON 1.2",
+    "terComponent": "MCON 1.2 LL (Locking-Lance)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,1",
+    "terInsOdTo": "1,75",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "7-1452659-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCON 1.2",
+    "terComponent": "MCON 1.2 LL (Locking-Lance)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,9",
+    "terInsOdTo": "2,4",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-962885-1",
+    "terManufacturer": "TE",
+    "terSeries": "MQS",
+    "terComponent": "MQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "2,9 - 3,1",
+    "terInsOdFrom": "0,9",
+    "terInsOdTo": "1,4",
+    "terMaterial": "Cu-сплав / Sn (Tin); Au / Ag варианты"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-963715-1",
+    "terManufacturer": "TE",
+    "terSeries": "MQS",
+    "terComponent": "MQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 1,70\n18 AWG: 2,05",
+    "terMaterial": "Cu-сплав / Sn (Tin); Au / Ag варианты",
+    "terDatasheet": "https://www.te.com/commerce/DocumentDelivery/DDEController?Action=srchrtrv&DocNm=114-18021&DocType=Specification+Or+Standard&DocLang=English&DocFormat=pdf&PartCntxt=5-963715-5"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "7-1452653-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCON 1.2",
+    "terComponent": "MCON 1.2 LL (Locking-Lance)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,1",
+    "terInsOdTo": "1,75",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "7-1452656-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCON 1.2",
+    "terComponent": "MCON 1.2 LL (Locking-Lance)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "1,9",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-928999-1",
+    "terManufacturer": "TE",
+    "terSeries": "MQS",
+    "terComponent": "MQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "24 AWG: 1,40\n22 AWG: 1,50",
+    "terMaterial": "Cu-сплав / Sn (Tin); Au / Ag варианты"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "61117-4",
+    "terManufacturer": "TE",
+    "terSeries": "Commercial MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdTo": "3,3",
+    "terMaterial": "Phosphor Bronze / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "7-1452668-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCON 1.2",
+    "terComponent": "MCON 1.2 LL (Locking-Lance)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "1,9",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "163555-6",
+    "terManufacturer": "TE",
+    "terSeries": "Commercial MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin) — см. notes, отличается от типового Female у остальных строк листа",
+    "terGender": "Male",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,4",
+    "terMaterial": "Brass / Tin (mating), Tin-Lead (termination area)"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-962841-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachstecker 2,8x0,8 (tab)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terMaterial": "CuSn4 / Tin"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "60294-1",
+    "terManufacturer": "TE",
+    "terSeries": "6,35 [.250]",
+    "terComponent": "TAB, FASTIN-FASTON",
+    "terType": "Male (tab)",
+    "terGender": "Male",
+    "terInsOdFrom": "2,16",
+    "terInsOdTo": "3,18",
+    "terMaterial": "Brass / без покрытия (finish '-' для -1; -2 и далее — Tin)"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "163303-6",
+    "terManufacturer": "TE",
+    "terSeries": "Commercial MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin) — см. notes",
+    "terGender": "Male",
+    "terInsOdFrom": "2,5",
+    "terInsOdTo": "3,8",
+    "terMaterial": "Brass / Tin (mating), Pre-Tin (termination area)"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1722536111",
+    "terManufacturer": "Molex",
+    "terSeries": "172256, 172258",
+    "terComponent": "ULTRA-FIT",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "22 AWG: 1,55 - 1,65\n20 AWG: 1,70 - 1,80",
+    "terMaterial": "High Conductivity Copper / Gold (mating, 0.38µm) + Tin (termination, 1.524µm)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1722536111"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSUH-003T-P0.15",
+    "terManufacturer": "JST",
+    "terSeries": "SUR",
+    "terComponent": "SUH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terDatasheet": "https://www.jst.com/products/crimp_style/ssuh-003t-p0-15/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1069-SC600",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1069"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "BL2018TS",
+    "terManufacturer": "н/д (аналог JST SM)",
+    "terSeries": "BL2018"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "173681-1",
+    "terManufacturer": "TE Connectivity",
+    "terSeries": "Multilock 040 MK-II"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500588000",
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "0,84",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "1",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/500588000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500798000",
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,10 - 1,30",
+    "terInsOdFrom": "0,5",
+    "terInsOdTo": "1,04",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/500798000"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВИ 1.0-8",
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВИ 1.0",
+    "terComponent": "НШВИ",
+    "terInsOdTo": "3",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/end-sleeves/nshvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВИ 0.5-8",
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВИ 0.5",
+    "terComponent": "НШВИ",
+    "terInsOdTo": "2,6",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/end-sleeves/nshvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВИ 0.25-8",
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВИ 0.25",
+    "terComponent": "НШВИ",
+    "terInsOdTo": "1,7",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/end-sleeves/nshvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "282109-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "18 AWG: 3,75\n17 AWG: 3,80\n16 AWG: 4,00",
+    "terInsOdFrom": "1,7",
+    "terInsOdTo": "3,3",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-282109-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "282403-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "22 AWG: 3,70\n20 AWG: 3,75",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,6",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-282403-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "282404-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "22 AWG: 3,70\n20 AWG: 3,75",
+    "terInsOdFrom": "1,2",
+    "terInsOdTo": "1,6",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-282404-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8500113",
+    "terManufacturer": "Molex",
+    "terSeries": "2695",
+    "terComponent": "KK 254",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "30 AWG: 1,33\n28 AWG: 1,33\n26 AWG: 1,33\n24 AWG: 1,39\n22 AWG: 1,42",
+    "terInsOdFrom": "1,09",
+    "terInsOdTo": "1,57",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "4",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08500113"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FDFD1.25-187(8)",
+    "terManufacturer": "Электромонтаж",
+    "terSeries": "FDFD 1.25",
+    "terComponent": "РППИ-М",
+    "terMaterial": "латунь",
+    "terDatasheet": "https://www.electro-mpo.ru/catalog/nakonechniki_gilzy/g38_nakonechniki_bystrogo_soedineniya_ploskie_krug/g3820-nakonechnik-fdfd1-25-187-latunnyy-0-5-1-5mm2/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НК 1,5-4",
+    "terManufacturer": "КВТ",
+    "terSeries": "НК 1,5",
+    "terComponent": "НК",
+    "terMaterial": "латунь Л63 / без покрытия",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/autoterminals/nk_1_5-4/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НКИ 2.5-8",
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 2.5",
+    "terComponent": "НКИ",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/ilugs/nki/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВИ 1.5-8",
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВИ 1.5",
+    "terComponent": "НШВИ",
+    "terInsOdTo": "3,6",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/end-sleeves/nshvi/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FDD2-250",
+    "terManufacturer": "Yueqing Chaodao",
+    "terSeries": "FDD 2",
+    "terComponent": "FDD",
+    "terMaxCurrent": "15",
+    "terDatasheet": "https://www.promelec.ru/product/158066/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "ГС 2,5",
+    "terManufacturer": "КВТ",
+    "terSeries": "ГС 2,5",
+    "terComponent": "ГС",
+    "terMaterial": "латунь Л63 / без покрытия",
+    "terDatasheet": "https://kvt.su/prod/insulated-terminals/autoterminals/gs_2_5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "RV1.25-3.2",
+    "terManufacturer": "Электромонтаж",
+    "terSeries": "RV 1.25",
+    "terComponent": "НКИ",
+    "terMaterial": "Медь лужёная",
+    "terDatasheet": "https://www.electro-mpo.ru/catalog/nakonechniki_gilzy/g35_nakonechniki_mednye_koltsevye_vilochnye_izolir/g3500-nakonechnik-rv1-25-3-mednyy-1-5-3-koltsevoy-/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВ 2.5-8",
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВ 2.5",
+    "terComponent": "НШВ",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/end-sleeves/nshv/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВ 4.0-9",
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВ 4.0",
+    "terComponent": "НШВ",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://kvt.su/prod/end-sleeves/nshv/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "ПМ 2.5-6",
+    "terManufacturer": "КВТ",
+    "terSeries": "ПМ 2.5",
+    "terComponent": "ПМ",
+    "terMaterial": "Медь М1 / олово-висмутовое лужение",
+    "terDatasheet": "https://kvt.su/prod/cable-lugs/cu/pm/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "08-0632",
+    "terManufacturer": "REXANT",
+    "terSeries": "РППи-м 2.5-(6.3) / РпИмп 2-250",
+    "terComponent": "РППИ-М",
+    "terMaterial": "латунь / электролитическое лужение",
+    "terDatasheet": "https://www.etm.ru/cat/nn/4285622"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1/02506-01",
+    "terManufacturer": "Атлант",
+    "terSeries": "1/02506",
+    "terComponent": "Контакт штыревой 6,3",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "покрытие — химпассивирование",
+    "terDatasheet": "https://www.promelec.ru/product/482035/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "45 7373 8528-01",
+    "terManufacturer": "Копир",
+    "terSeries": "НК 6.5",
+    "terComponent": "НК",
+    "terMaterial": "латунь / олово-висмутовое покрытие",
+    "terDatasheet": "https://akompany.ru/kabelnye-nakonechniki-klemmy-kontakty-razemy/45-7373-8528-01-nakonechnik-kolcevoy-4mm-sechenie-05-15mm2-ol"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FLVDDF1.25-187A-8",
+    "terManufacturer": "JST",
+    "terSeries": "FLVDDF1.25",
+    "terComponent": "FLVDDF",
+    "terMaterial": "медная втулка (fully-insulated with copper sleeve)",
+    "terDatasheet": "https://www.jst.fr/en/product/quick-disconnect-terminal-female-vinyl-insulated-with-funnel-entry-copper-sleeve-fully-insulated-with-copper_401"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1062-16-0122",
+    "terManufacturer": "TE",
+    "terSeries": "Size 16 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,91",
+    "terInsOdTo": "3,56",
+    "terMaterial": "Copper Alloy / Nickel, хвостовик Tin",
+    "terMaxCurrent": "13",
+    "terDatasheet": "https://www.te.com/en/product-1062-16-0122.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1062-20-0222",
+    "terManufacturer": "TE",
+    "terSeries": "Size 20 S&F",
+    "terComponent": "DEUTSCH DTM",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "2,16",
+    "terMaterial": "Copper Alloy / Nickel",
+    "terMaxCurrent": "7,5",
+    "terDatasheet": "https://www.te.com/en/product-1062-20-0222.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T2410-TBE00000R",
+    "terManufacturer": "Hsuan Mao",
+    "terSeries": "PHU, MHU, MX",
+    "terComponent": "PHU/MHU/MX",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,8",
+    "terMaterial": "Латунь / олово (Brass / Tin)",
+    "terDatasheet": "http://www.definum.ru/content/klemma-bl-f-crimp-terminal-hsuan-mao-T2410-TBE00000R-mhu-phu-mx"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "282110-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "18 AWG: 3,75 (реф.) \n17 AWG: 3,80 (реф.) \n16 AWG: 4,00 (реф.)",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-282110-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-968221-1",
+    "terManufacturer": "TE",
+    "terSeries": "MQS",
+    "terComponent": "MQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 1,70\n18 AWG: 2,05",
+    "terMaterial": "Cu-сплав / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-5-968221-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770903-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terInsOdFrom": "1,5",
+    "terInsOdTo": "2,39",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-770903-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "964286-2",
+    "terManufacturer": "TE",
+    "terSeries": "Flachsteckhülse 2,8x0,8 (receptacle)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2",
+    "terMaterial": "Bronze / Tin",
+    "terDatasheet": "https://www.te.com/en/product-964286-2.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "929939-3",
+    "terManufacturer": "TE",
+    "terSeries": "Flachsteckhülse 2,8x0,8 (receptacle)",
+    "terComponent": "AMP TIMER (receptacle)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper / Tin",
+    "terMaxCurrent": "15",
+    "terDatasheet": "https://www.te.com/en/product-929939-3.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "9670008676",
+    "terManufacturer": "HARTING",
+    "terSeries": "D-Sub",
+    "terComponent": "D-Sub High-End crimp contact",
+    "terType": "Female",
+    "terGender": "Female",
+    "terDatasheet": "https://www.harting.com/en-US/p/D-SUB-FE-HIGH-END-AWG-20-24-CRIMP-CONT-09670008676"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "350449102",
+    "terManufacturer": "Molex",
+    "terSeries": "35023",
+    "terComponent": "Board-in",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "1,55 (max.)",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "2,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/0350449102"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1072-SC600",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1072",
+    "terComponent": "DS1072",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "2,8",
+    "terMaterial": "-",
+    "terMaxCurrent": "7",
+    "terDatasheet": "https://www.connfly.com/static/upload/file/pdf/DS1072.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НК 2,5-5",
+    "terManufacturer": "КВТ",
+    "terSeries": "НК 2.5",
+    "terComponent": "НК",
+    "terMaterial": "Латунь Л63",
+    "terDatasheet": "https://www.electro-mpo.ru/catalog/nakonechniki_gilzy/g9727-nakonechnik-nk-2-5-5-koltsevoy-latunnyy-neiz/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "RV1.25-10",
+    "terManufacturer": "Электромонтаж",
+    "terSeries": "RV 1.25",
+    "terComponent": "НКИ",
+    "terMaterial": "Медь лужёная",
+    "terDatasheet": "https://www.electro-mpo.ru/catalog/nakonechniki_gilzy/g35_nakonechniki_mednye_koltsevye_vilochnye_izolir/g3506-nakonechnik-rv1-25-10-mednyy-1-5-10-koltsevo/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВ 6,0-12",
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВ 6.0",
+    "terComponent": "НШВ",
+    "terInsOdTo": "3,9",
+    "terMaterial": "Медь / гальваническое лужение",
+    "terDatasheet": "https://www.electro-mpo.ru/catalog/nakonechniki_gilzy/g39_nakonechniki_mednye_vtulochnye_izolirovannye_n/g3912_nakonechnik_nshv_6_0_12_mednyy_6mm2_vtulochn/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "НШВИ 2,5-8",
+    "terManufacturer": "Электромонтаж",
+    "terSeries": "E2508",
+    "terComponent": "НШВИ",
+    "terInsOdTo": "2,6",
+    "terMaterial": "Медь лужёная",
+    "terDatasheet": "https://www.electro-mpo.ru/catalog/nakonechniki_gilzy/g25_nakonechniki_mednye_vtulochnye_izolirovannye_i/g2524_nakonechnik_e2508_2_5_8_mednyy_2_5mm2_vtuloch/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "ПМ 10-6",
+    "terManufacturer": "КВТ",
+    "terSeries": "ПМ 10",
+    "terComponent": "ПМ",
+    "terMaterial": "Медь М1 / олово-висмутовое лужение",
+    "terDatasheet": "https://kvt.su/prod/cable-lugs/cu/pm/pm_10_6/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "РПИ-П 1.5 (4.8)",
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-П (4.8)",
+    "terComponent": "РПИ-П",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "латунь луженая",
+    "terDatasheet": "https://www.vseinstrumenti.ru/product/ploskij-razem-kvt-rpi-p-1-5-4-8-85158-7453597/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "СЦНК.685169.002",
+    "terManufacturer": "СЦНК (аналог TE/AMP)",
+    "terSeries": "2,8мм",
+    "terComponent": "Клемма гнездовая с замком",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "-",
+    "terDatasheet": "https://akompany.ru/kabelnye-nakonechniki-klemmy-kontakty-razemy/klemmy/scnk685169002-klemma-gnezdovaya-s-zamkom-s-provodom-28mm-sechenie-05-10mm2-analog-amr-927771-3"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "СЦНК.757474.052",
+    "terManufacturer": "СЦНК",
+    "terSeries": "2,8мм",
+    "terComponent": "Контакт гнездовой",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "БрОЦ-4-3 (ДПРПТ 0,3 НД, ГОСТ 1761-92)",
+    "terDatasheet": "https://stal63.ru/catalog/materialy-komplektuyushchie-instrument/kolodki-kontakty-klemmy/kontakt_gnezdovoy_stsnk_757474_052_01_pod_provod_1_25_2_5/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "19003-0129",
+    "terManufacturer": "Molex",
+    "terSeries": "19003",
+    "terComponent": "InsulKrimp Quick Disconnect",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Brass (C26000) / Tin, изоляция Nylon 94V0 / 94V2 (красная)",
+    "terMaxCurrent": "7 (18AWG) / 4 (20AWG) / 3 (22AWG)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/190030129"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "45750-3111",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "2,80 - 3,35 (справочно, зависит от профиля вставки A/B/C)",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "13",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/45750-3111"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2191970004",
+    "terManufacturer": "Molex",
+    "terSeries": "219114",
+    "terComponent": "Micro-Fit+ PCIe",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,18 - 1,28 (Ref.)",
+    "terInsOdFrom": "0,75",
+    "terInsOdTo": "0,91",
+    "terMaterial": "Tin (Sn) Plating",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2191970004"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2202260004",
+    "terManufacturer": "Molex",
+    "terSeries": "219114",
+    "terComponent": "Micro-Fit+ PCIe",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "2,30 - 2,40 (Ref.)",
+    "terInsOdFrom": "1,9",
+    "terInsOdTo": "2,3",
+    "terMaterial": "High Copper Alloy / Tin",
+    "terMaxCurrent": "9,2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2202260004"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1060-12-0166",
+    "terManufacturer": "TE",
+    "terSeries": "Size 12 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "2,87",
+    "terInsOdTo": "4,47",
+    "terMaterial": "Copper Alloy",
+    "terDatasheet": "https://www.te.com/en/product-1060-12-0166.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1062-12-0166",
+    "terManufacturer": "TE",
+    "terSeries": "Size 12 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "2,87",
+    "terInsOdTo": "4,47",
+    "terMaterial": "Copper Alloy",
+    "terDatasheet": "https://www.te.com/en/product-1062-12-0166.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1060-16-0622",
+    "terManufacturer": "TE",
+    "terSeries": "Size 16 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,54",
+    "terMaterial": "Copper Alloy",
+    "terDatasheet": "https://www.te.com/en/product-1060-16-0622.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1062-16-0622",
+    "terManufacturer": "TE",
+    "terSeries": "Size 16 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,54",
+    "terMaterial": "Copper Alloy",
+    "terDatasheet": "https://www.te.com/en/product-1062-16-0622.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1060-16-1222",
+    "terManufacturer": "TE",
+    "terSeries": "Size 16 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,9",
+    "terInsOdTo": "3,55",
+    "terMaterial": "Copper Alloy",
+    "terDatasheet": "https://www.te.com/en/product-1060-16-1222.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1062-16-1222",
+    "terManufacturer": "TE",
+    "terSeries": "Size 16 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,9",
+    "terInsOdTo": "3,55",
+    "terMaterial": "Copper Alloy",
+    "terDatasheet": "https://www.te.com/en/product-1062-16-1222.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1062-20-0122",
+    "terManufacturer": "TE",
+    "terSeries": "Size 20 S&F",
+    "terComponent": "DEUTSCH DT/DTM/DTP",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,91",
+    "terInsOdTo": "3,18",
+    "terMaterial": "Copper Alloy",
+    "terDatasheet": "https://www.te.com/en/product-1062-20-0122.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "0462-203-12141",
+    "terManufacturer": "TE",
+    "terSeries": "Size 12 Solid",
+    "terComponent": "DEUTSCH DTP/DTHD (Solid)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "2,87",
+    "terInsOdTo": "4,47",
+    "terMaterial": "Copper Alloy / Nickel",
+    "terMaxCurrent": "25",
+    "terDatasheet": "https://www.deutschconnector.com/products/deutsch_pins_and_sockets/deutsch_dtp_pins_and_sockets/0462-203-12141/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "173681-2",
+    "terManufacturer": "TE",
+    "terSeries": "Multilock 040 MK-II",
+    "terComponent": "AMP MULTILOCK 040 MK-II",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "3,7 ±0,1",
+    "terMaterial": "Phosphor Bronze / Gold (selective)",
+    "terDatasheet": "https://www.te.com/en/product-173681-2.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "19003-0135",
+    "terManufacturer": "Molex",
+    "terSeries": "19003",
+    "terComponent": "InsulKrimp Quick Disconnect",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Brass (C26000) / Tin, изоляция Nylon 94V0 / 94V2",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/190030135"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1718760-3",
+    "terManufacturer": "TE",
+    "terSeries": "MCON 1.2 (TAB)",
+    "terComponent": "MCON 1.2mm",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Copper Alloy / Silver",
+    "terDatasheet": "https://www.te.com/en/product-1718760-3.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241380-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP 1.5K (HDSCS)",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1241380-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241396-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP 2.8K",
+    "terComponent": "AMP MCP 2.8K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "4,19",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1241396-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-962916-1",
+    "terManufacturer": "TE",
+    "terComponent": "AMP MCP 2.8 (HDSCS/Timer)",
+    "terMaterial": "покрытие не установлено",
+    "terDatasheet": "https://datasheet.octopart.com/1-962916-1-TE-Connectivity-datasheet-179928042.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-968857-1",
+    "terManufacturer": "TE",
+    "terSeries": "DIN 72036",
+    "terComponent": "AMP MCP 2.8mm",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "4,19",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1-968857-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-962842-2",
+    "terManufacturer": "TE",
+    "terSeries": "Flachstecker 2,8x0,8 (tab)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "2,1",
+    "terInsOdTo": "2,9",
+    "terMaterial": "CuSn4 / Ag (Silver)",
+    "terDatasheet": "https://www.te.com/en/product-1-962842-2.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "185028-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachstecker 2,8x0,8 (tab)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terMaterial": "CuSn4 / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-185028-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241844-2",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 2",
+    "terComponent": "AMP TIMER, Micro Timer II",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "2,2",
+    "terInsOdTo": "2,4",
+    "terMaterial": "CuSn4 / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1241844-2.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241860-2",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 3",
+    "terComponent": "AMP TIMER, Micro-Timer III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terMaterial": "CuSn4 / Sn (Tin)",
+    "terDatasheet": "https://www.tme.eu/de/details/1241860-2/automotive-steckverbinder/te-connectivity/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-1534116-1",
+    "terManufacturer": "TE",
+    "terSeries": "MQS 0,64",
+    "terComponent": "MQS",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "0,35 - 0,5 мм2: 1,40",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-5-1534116-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "175124-1",
+    "terManufacturer": "TE",
+    "terSeries": "Multilock 070",
+    "terComponent": "AMP MULTILOCK 070",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terDatasheet": "https://www.te.com/en/product-175124-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "183024-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal (ранняя серия)",
+    "terComponent": "SUPERSEAL (legacy)",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-183024-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "183025-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal (ранняя серия)",
+    "terComponent": "SUPERSEAL (legacy)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-183025-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "183036-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal (ранняя серия)",
+    "terComponent": "SUPERSEAL (legacy)",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-183036-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "08-52-0071",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "08-52-0072",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Phosphor Bronze / Tin (0,90 µm)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/0008520072"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "L-KLS1-2.50-T",
+    "terManufacturer": "KLS Electronic",
+    "terSeries": "KLS1-2.50",
+    "terComponent": "KLS1-2.50",
+    "terMaterial": "Brass или Phosphor Bronze / Tin",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.compel.ru/infosheet/KLS/L-KLS1-2.50-T"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1/02506-04",
+    "terManufacturer": "Атлант",
+    "terSeries": "1/02506",
+    "terComponent": "Контакт штыревой 6,3",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "покрытие — химпассивирование или олово-висмут (не установлено)",
+    "terDatasheet": "https://klemma505.ru/product/506-1/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2108-3724390",
+    "terManufacturer": "н/д",
+    "terSeries": "2,8мм (АвтоВАЗ)",
+    "terComponent": "Контакт гнездовой серии 2,8мм",
+    "terType": "Female",
+    "terGender": "Female"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2108-3724391",
+    "terManufacturer": "н/д",
+    "terSeries": "2,8мм (АвтоВАЗ)",
+    "terComponent": "Контакт гнездовой серии 2,8мм (с фиксирующим усиком)",
+    "terType": "Female",
+    "terGender": "Female"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "282308-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terDatasheet": "https://octopart.com/282308-1-te+connectivity+/+amp-42840317"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "282465-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.automotive-connectors.com/en/Tyco-282465-1-Male-Tin-Plated-Superseal-1.5-Terminals-1.5-2.50-mm2-4000-pcs.-reel/282465-1"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "3-1447221-3",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.0",
+    "terComponent": "AMP SUPERSEAL 1.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "18 AWG: макс. 2,2 \n16 AWG: макс. 2,5",
+    "terInsOdFrom": "1,6",
+    "terInsOdTo": "2,2",
+    "terMaterial": "Copper Alloy / Gold (контакт), Tin (обжим)",
+    "terMaxCurrent": "15",
+    "terDatasheet": "https://www.te.com/en/product-3-1447221-3.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "3-1447221-4",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.0",
+    "terComponent": "AMP SUPERSEAL 1.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "макс. 2,2",
+    "terMaterial": "Copper Alloy / Gold (контакт), Tin (обжим)",
+    "terMaxCurrent": "6",
+    "terDatasheet": "https://www.te.com/en/product-3-1447221-4.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "3-350980-1",
+    "terManufacturer": "TE",
+    "terSeries": "SL-156",
+    "terComponent": "SL-156 Connector Contacts",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "6,5",
+    "terDatasheet": "https://www.te.com/en/product-3-350980-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "353907-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini CT",
+    "terComponent": "AMP Mini CT",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "2",
+    "terDatasheet": "https://www.te.com/en/product-353907-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "45.7373.8006",
+    "terManufacturer": "н/д",
+    "terType": "Female",
+    "terGender": "Female",
+    "terDatasheet": "https://furam7.ru/katalog/ehlektrika/soedinitelnye-izdeliya/kontakty-gnezdovye/4573738006-gnezdo.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "5-166054-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMPLIMITE HD-20",
+    "terComponent": "AMPLIMITE HD-20 (HDP-20)",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Brass / Gold (0,76 мкм)",
+    "terDatasheet": "https://www.lcsc.com/datasheet/lcsc_datasheet_2411220046_TE-Connectivity-5-166054-1_C573679.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "60-0046-021-P00",
+    "terManufacturer": "TE",
+    "terSeries": "Intercontec",
+    "terComponent": "Intercontec circular contact"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "60-0201-080-P24",
+    "terManufacturer": "TE",
+    "terSeries": "Intercontec",
+    "terComponent": "Intercontec circular contact socket",
+    "terType": "Female",
+    "terGender": "Female",
+    "terDatasheet": "https://my.element14.com/intercontec-te-connectivity/60-201-80-024/circular-contact-socket/dp/3796138"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "638652-2",
+    "terManufacturer": "TE",
+    "terSeries": "AMP 1.5/2.8",
+    "terComponent": "AMP 1.5/2.8 Connector System (RECPT AND TAB)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Tin plated",
+    "terDatasheet": "https://www.te.com/en/product-638652-2.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770520-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMPSEAL",
+    "terComponent": "AMPSEAL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "макс. 3,2",
+    "terMaterial": "Copper Alloy / Tin",
+    "terMaxCurrent": "17",
+    "terDatasheet": "https://www.te.com/en/product-770520-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8240-0287",
+    "terManufacturer": "Sumitomo",
+    "terSeries": "TS 025",
+    "terComponent": "TS Sealed Series (0,64мм/025)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "High-heat Copper Alloy / Tin",
+    "terDatasheet": "https://c-connector.com/products/sumitomo-8240-0287-terminal-female/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "927775-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachsteckhülse 2,8x0,8 (receptacle)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,4\n2,1",
+    "terMaterial": "CuFe / Tin",
+    "terMaxCurrent": "30",
+    "terDatasheet": "https://www.te.com/en/product-927775-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "929939-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachsteckhülse 2,8x0,8 (receptacle)",
+    "terComponent": "AMP TIMER (receptacle)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper alloy / Tin",
+    "terMaxCurrent": "15",
+    "terDatasheet": "https://www.te.com/en/product-929939-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "929967-1",
+    "terManufacturer": "TE",
+    "terSeries": "2,5mm System (DIN 72585)",
+    "terComponent": "AMP Round Connector System 2,5mm (DIN 72585)",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Copper Nickel Silicon (CuNiSi) / Tin",
+    "terMaxCurrent": "40",
+    "terDatasheet": "https://www.te.com/en/product-929967-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "963904-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K",
+    "terComponent": "AMP MCP 1.5K (Automation Ready)",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terDatasheet": "https://www.te.com/en/product-963904-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "BL2018TP",
+    "terManufacturer": "н/д",
+    "terSeries": "BL2018",
+    "terComponent": "BL2018TP",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "латунь луженая (tinned brass)",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.dart.moscow/index.php?productcode=18638"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "CC81R-2830-01-L",
+    "terManufacturer": "Samtec",
+    "terSeries": "ISD2, ITD2",
+    "terComponent": "ISD2, ITD2",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Beryllium Copper / Gold",
+    "terDatasheet": "https://www.samtec.com/partnumber/cc81r-2830-01-l?vendor=digikey"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF61-2226SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF61",
+    "terComponent": "DF61",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "22 AWG: 1,50 - 1,60\n24 AWG: 1,40 - 1,50\n26 AWG: 1,39 - 1,47",
+    "terMaxCurrent": "5",
+    "terDatasheet": "https://www.hirose.com/en/product/p/CL0666-5004-0-41"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FI-RC3-1A-1E-15000",
+    "terManufacturer": "JAE",
+    "terSeries": "FI-R",
+    "terComponent": "FI-R",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "0,8",
+    "terDatasheet": "https://www.digikey.com/en/products/detail/jae-electronics/FI-RC3-1A-1E-15000/1283327"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FI-RC3-1B-1E-15000",
+    "terManufacturer": "JAE",
+    "terSeries": "FI-R",
+    "terComponent": "FI-R",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Phosphor Bronze / Gold",
+    "terMaxCurrent": "0,7",
+    "terDatasheet": "https://www.digikey.com/en/products/detail/jae-electronics/FI-RC3-1B-1E-15000/1283328"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FI-XC3-1-15000",
+    "terManufacturer": "JAE",
+    "terSeries": "FI-X",
+    "terComponent": "FI-X",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Gold plated",
+    "terMaxCurrent": "1",
+    "terDatasheet": "https://www.digikey.com/en/products/detail/jae-electronics/FI-XC3-1-15000/1283609"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T2011-TP200000R",
+    "terManufacturer": "HSM (Hsuan Mao)",
+    "terSeries": "T2011",
+    "terComponent": "HC (PAP)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Фосфористая бронза / олово (Sn)",
+    "terMaxCurrent": "3",
+    "terDatasheet": "http://www.definum.ru/content/klemma-hc-pap-crimp-terminal-HSM-T2011-TP200000R"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8520071",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3001, 3069, 41695, 91813",
+    "terComponent": "KK 396/508",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "18 AWG: 2,51 / 2,71\n20 AWG: 2,32 / 2,43\n22 AWG: 2,17 / 2,27\n24 AWG: 2,06 / 2,23",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/0008520071"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002200",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 1,65 - 1,75\n22 AWG: 1,55 - 1,65 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold (сопряжение), Tin (обжим)",
+    "terMaxCurrent": "8",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053002200"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472300",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "20 AWG: 1,75 - 1,85\n22 AWG: 1,65 - 1,75 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terInsOdTo": "1,6",
+    "terMaterial": "High Conductivity Copper / Gold (сопряжение), Tin (обжим)",
+    "terMaxCurrent": "7,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014472300"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600042",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "16 AWG: 2,30 - 2,40",
+    "terMaterial": "Gold (Au) 0,38µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600042"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000211",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "39000212",
+    "terInsCrimpHeight": "2,85 / 3,35",
+    "terInsOdFrom": "1,8",
+    "terInsOdTo": "3,1",
+    "terMaterial": "Brass, Tin(Sn) over Nickel(Ni)",
+    "terMaxCurrent": "9",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/0039000211"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "460123151",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Plus Grounding Terminal",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "2,80 / 2,85 / 3,35",
+    "terMaterial": "Tin (Sn) plated",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/460123151"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1564982-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP 2.8K",
+    "terComponent": "AMP MCP 2.8K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,1",
+    "terInsOdTo": "1,4",
+    "terMaterial": "CuNiSi / Sn (Tin)"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241388-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP 2.8K",
+    "terComponent": "AMP MCP 2.8K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://us.rs-online.com/product/te-connectivity/1241388-1/70283561/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241390-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP 2.8K",
+    "terComponent": "AMP MCP 2.8K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "2,2",
+    "terInsOdTo": "3",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1241390-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1564984-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP 2.8K",
+    "terComponent": "AMP MCP 2.8K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "3,94 (О-crimp for single-wire-seal 963294-1, insulation-Ø 1,2-2,0 мм)",
+    "terInsOdFrom": "1,1",
+    "terInsOdTo": "1,4",
+    "terMaterial": "CuNiSi / Sn (Tin)"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241394-1",
+    "terManufacturer": "TE",
+    "terSeries": "MCP 2.8K",
+    "terComponent": "AMP MCP 2.8K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "4,06 (О-crimp for single-wire-seal 963293-1, insulation-Ø 2,0-2,7 мм)",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,7",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://us.rs-online.com/product/te-connectivity/1241394-1/70283563/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-963860-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachstecker 2,8x0,8 (tab)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "1,15",
+    "terInsOdTo": "1,6",
+    "terDatasheet": "https://uk.farnell.com/amp-te-connectivity/1-963860-1/contact-crimp-tab-24-20awg-reel/dp/2360665"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-962843-1",
+    "terManufacturer": "TE",
+    "terSeries": "Flachstecker 2,8x0,8 (tab)",
+    "terComponent": "Junior Power Timer",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdFrom": "2,4",
+    "terInsOdTo": "3,7",
+    "terMaterial": "CuSn / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1-962843-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1564980-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,1",
+    "terInsOdTo": "1,4",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/usa-en/product-1564980-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241374-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.alliedelec.com/product/te-connectivity/1241374-1/70283554/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241376-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K (double termination)",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1241376-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1564324-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "single-wire-seal 964971-1, insulation-Ø 1,2 - 1,6 мм",
+    "terInsOdFrom": "1,1",
+    "terInsOdTo": "1,4",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/usa-en/product-1564324-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1418884-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "single-wire-seal 964972-1 (или 2287497-1 при Ø1,2-2,4мм, до 120°C), insulation-Ø 1,9 - 2,4 мм",
+    "terInsOdFrom": "1,9",
+    "terInsOdTo": "2,4",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1418884-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1718558-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "single-wire-seal 964972-1 (или 2287497-1), insulation-Ø 1,9 - 2,4 мм",
+    "terInsOdFrom": "1,9",
+    "terInsOdTo": "2,4",
+    "terMaterial": "CuNiSi / Sn (Tin)"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1534334-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP MCP 1.5K",
+    "terComponent": "AMP MCP 1.5K",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "2,2",
+    "terInsOdTo": "2,4",
+    "terMaterial": "CuNiSi / Sn (Tin)",
+    "terDatasheet": "https://www.te.com/en/product-1534334-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "962942-1",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 2",
+    "terComponent": "AMP TIMER, Micro Timer II",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,15",
+    "terInsOdTo": "1,6",
+    "terDatasheet": "https://www.te.com/en/product-962942-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "962943-1",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 2",
+    "terComponent": "AMP TIMER, Micro Timer II",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terDatasheet": "https://www.newark.com/amp-te-connectivity/962943-1/rectangular-power-contact-micro/dp/55W5078"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "964261-2",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 2",
+    "terComponent": "AMP TIMER, Micro Timer II",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,15",
+    "terInsOdTo": "1,6",
+    "terDatasheet": "https://www.te.com/en/product-964261-2.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "965914-1",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 2",
+    "terComponent": "AMP TIMER, Micro Timer II",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,15",
+    "terInsOdTo": "1,6",
+    "terDatasheet": "https://www.te.com/en/product-965914-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "969022-1",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 2",
+    "terComponent": "AMP TIMER, Micro Timer II",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terDatasheet": "https://www.te.com/en/product-969022-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "968052-1",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 3",
+    "terComponent": "AMP TIMER, Micro-Timer III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,4",
+    "terInsOdTo": "2,1",
+    "terDatasheet": "https://us.rs-online.com/product/te-connectivity/968052-1/70286107/"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1241858-2",
+    "terManufacturer": "TE",
+    "terSeries": "Micro Timer 3",
+    "terComponent": "AMP TIMER, Micro-Timer III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,15",
+    "terInsOdTo": "1,6",
+    "terDatasheet": "https://www.te.com/en/product-1241858-2.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "282466-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "16 AWG: 4,00 (реф.)\n14 AWG: 4,40 (реф.)",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-282466-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "284262-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Male",
+    "terGender": "Male",
+    "terDatasheet": "https://www.te.com/en/product-284262-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "284263-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal 1.5",
+    "terComponent": "AMP SUPERSEAL 1.5",
+    "terType": "Male",
+    "terGender": "Male",
+    "terDatasheet": "https://www.te.com/en/product-284263-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "173682-1",
+    "terManufacturer": "TE",
+    "terSeries": "Multilock 040 MK-II",
+    "terComponent": "AMP MULTILOCK 040 MK-II",
+    "terType": "Male",
+    "terGender": "Male",
+    "terMaterial": "Brass / Tin",
+    "terMaxCurrent": "5",
+    "terDatasheet": "https://www.te.com/en/product-173682-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "183035-1",
+    "terManufacturer": "TE",
+    "terSeries": "Superseal (ранняя серия)",
+    "terComponent": "SUPERSEAL (legacy)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Phosphor Bronze / Tin",
+    "terMaxCurrent": "14",
+    "terDatasheet": "https://www.te.com/en/product-183035-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770835-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terArticleBag": "794059-1",
+    "terInsOdFrom": "0,89",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-770835-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-770835-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terArticleBag": "1-794059-0",
+    "terInsOdFrom": "0,89",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-770835-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770834-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terArticleBag": "794058-1",
+    "terInsOdFrom": "0,89",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-770834-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-770834-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terArticleBag": "1-794058-0",
+    "terInsOdFrom": "0,89",
+    "terInsOdTo": "1,27",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-770834-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770901-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terArticleBag": "770985-1",
+    "terInsOdFrom": "1,19",
+    "terInsOdTo": "1,75",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-770901-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-770901-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terArticleBag": "1-770985-0",
+    "terInsOdFrom": "1,19",
+    "terInsOdTo": "1,75",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-770901-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770902-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terArticleBag": "770986-1",
+    "terInsOdFrom": "1,19",
+    "terInsOdTo": "1,75",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-770902-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-770902-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terArticleBag": "1-770986-0",
+    "terInsOdFrom": "1,19",
+    "terInsOdTo": "1,75",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-770902-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-770903-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terArticleBag": "1-770987-0",
+    "terInsOdFrom": "1,5",
+    "terInsOdTo": "2,39",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-770903-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770904-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terArticleBag": "770988-1",
+    "terInsOdFrom": "1,5",
+    "terInsOdTo": "2,39",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-770904-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-770904-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terArticleBag": "1-770988-0",
+    "terInsOdFrom": "1,5",
+    "terInsOdTo": "2,39",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-770904-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "794406-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terArticleBag": "171638-1",
+    "terInsOdFrom": "2,01",
+    "terInsOdTo": "3,2",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-794406-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-794406-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terInsOdFrom": "2,01",
+    "terInsOdTo": "3,2",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-794406-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "794407-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terArticleBag": "171639-1",
+    "terInsOdFrom": "2,01",
+    "terInsOdTo": "3,2",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-794407-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1-794407-0",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terInsOdFrom": "2,01",
+    "terInsOdTo": "3,2",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-1-794407-0.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "794831-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terInsOdFrom": "1,27",
+    "terInsOdTo": "2,11",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-794831-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "794406-3",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terInsOdFrom": "1,27",
+    "terInsOdTo": "2,11",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-794406-3.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "794831-3",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terInsOdFrom": "1,27",
+    "terInsOdTo": "2,11",
+    "terMaterial": "Brass / Gold",
+    "terDatasheet": "https://www.te.com/en/product-794831-3.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1586537-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Male (Pin)",
+    "terGender": "Male",
+    "terInsOdFrom": "1,27",
+    "terInsOdTo": "2,11",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-1586537-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1586538-1",
+    "terManufacturer": "TE",
+    "terSeries": "Mini-Universal MATE-N-LOK",
+    "terComponent": "MATE-N-LOK",
+    "terType": "Female (Socket)",
+    "terGender": "Female",
+    "terInsOdFrom": "1,27",
+    "terInsOdTo": "2,11",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.te.com/en/product-1586538-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "770520-3",
+    "terManufacturer": "TE",
+    "terSeries": "AMPSEAL",
+    "terComponent": "AMPSEAL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "макс. 3,2",
+    "terMaterial": "Copper Alloy / Gold",
+    "terMaxCurrent": "17",
+    "terDatasheet": "https://www.te.com/en/product-770520-3.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "638652-1",
+    "terManufacturer": "TE",
+    "terSeries": "AMP 1.5/2.8",
+    "terComponent": "AMP 1.5/2.8 Connector System (RECPT AND TAB)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Tin plated",
+    "terDatasheet": "https://www.te.com/en/product-638652-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "929975-1",
+    "terManufacturer": "TE",
+    "terSeries": "2,5mm System (DIN 72585)",
+    "terComponent": "AMP Round Connector System 2,5mm (DIN 72585)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terDatasheet": "https://www.te.com/en/product-929975-1.html"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FLVDDF1.25-110A-8",
+    "terManufacturer": "JST",
+    "terSeries": "FLVDDF1.25",
+    "terComponent": "FLVDDF",
+    "terMaterial": "медная втулка (fully-insulated with copper sleeve)",
+    "terDatasheet": "https://www.jst-mfg.com/product/pdf/eng/eTAPE-ON.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FLVDDF1.25-187A-5",
+    "terManufacturer": "JST",
+    "terSeries": "FLVDDF1.25",
+    "terComponent": "FLVDDF",
+    "terMaterial": "медная втулка (fully-insulated with copper sleeve)",
+    "terDatasheet": "https://www.jst-mfg.com/product/pdf/eng/eTAPE-ON.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "FLVDDF1.25-250A",
+    "terManufacturer": "JST",
+    "terSeries": "FLVDDF1.25",
+    "terComponent": "FLVDDF",
+    "terMaterial": "медная втулка (fully-insulated with copper sleeve)",
+    "terDatasheet": "https://www.jst-mfg.com/product/pdf/eng/eTAPE-ON.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF61-2628SCF",
+    "terManufacturer": "Hirose",
+    "terSeries": "DF61",
+    "terComponent": "DF61",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,30 - 1,40\n26 AWG: 1,40 - 1,50",
+    "terInsOdFrom": "0,88",
+    "terInsOdTo": "0,98",
+    "terDatasheet": "https://www.hirose.com/en/product/p/CL0666-5005-2-00"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "T-DS1072-SC800",
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1072",
+    "terComponent": "DS1072",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdFrom": "1,3",
+    "terInsOdTo": "2,8",
+    "terMaterial": "Full gold flash",
+    "terMaxCurrent": "7",
+    "terDatasheet": "https://www.connfly.com/static/upload/file/pdf/DS1072.pdf"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8500063",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Brass / Tin 5,08µm (Matte)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08500063"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8550103",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8550104",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Brass / Gold 0,38µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08550103"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8560105",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8560106",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Brass / Gold 0,51µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08560105"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8550133",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8550134",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Brass / Gold 0,76µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08550133"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8500105",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8500106",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Brass / Tin 2,54µm (Hot Dip)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08500105"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8500119",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8500120",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Brass / Tin 3,81µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08500119"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000286",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Brass / Tin 0,90µm (Pre-Plated)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000286"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8520811",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8520812",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Phosphor Bronze / Tin 2,54µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08520811"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8650114",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8650115",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Phosphor Bronze / Gold 0,38µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08650114"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8580121",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8580122",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Phosphor Bronze / Gold 0,51µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08580121"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8580114",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "8580115",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Phosphor Bronze / Gold 0,76µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08580114"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8500281",
+    "terManufacturer": "Molex",
+    "terSeries": "2139, 3069, 41695",
+    "terComponent": "KK 396 (legacy KK 156)",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsOdTo": "2,79",
+    "terMaterial": "Phosphor Bronze / Tin 3,81µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/08500281"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "39000453",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,46\n26 AWG: 1,46\n24 AWG: 1,46\n22 AWG: 1,46",
+    "terMaterial": "Copper / Reflowed Matte Tin (отдельный вариант платировки, совпадает с 5556T2 / 5556T2L по типоразмеру)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/39000453"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "457501111",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "457501112",
+    "terInsCrimpHeight": "20 AWG: 2,24\n18 AWG: 2,38",
+    "terMaterial": "Copper Alloy / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/457501111"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "457501211",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "457501212",
+    "terInsCrimpHeight": "20 AWG: 2,24\n18 AWG: 2,38",
+    "terMaterial": "Copper Alloy / Gold 0,76µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/457501211"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "457502211",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "24 AWG: 2,21\n22 AWG: 2,24",
+    "terMaterial": "Copper Alloy / Gold 0,76µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/457502211"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "457503112",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "2,80 - 3,35 (справочно, зависит от профиля вставки A/B/C)",
+    "terMaterial": "Copper Alloy / Tin (Bag)",
+    "terMaxCurrent": "13",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/457503112"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "457503511",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "2,80 - 3,35 (справочно, зависит от профиля вставки A/B/C)",
+    "terMaterial": "Copper Alloy / Tin (Lubricated)",
+    "terMaxCurrent": "13",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/457503511"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "457503211",
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "457503212",
+    "terInsCrimpHeight": "2,80 - 3,35 (справочно, зависит от профиля вставки A/B/C)",
+    "terMaterial": "Copper Alloy / Gold 0,76µm (Selective)",
+    "terMaxCurrent": "13",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/457503211"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "460121141",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "460121142",
+    "terInsCrimpHeight": "20 AWG: 2,24\n18 AWG: 2,38",
+    "terMaterial": "Copper Alloy / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/460121141"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "460121241",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "460121242",
+    "terInsCrimpHeight": "20 AWG: 2,24\n18 AWG: 2,38",
+    "terMaterial": "Copper Alloy / Gold 0,76µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/460121241"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "460123141",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "460123142",
+    "terInsCrimpHeight": "2,80 - 3,35 (справочно, зависит от профиля вставки A/B/C)",
+    "terMaterial": "Copper Alloy / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/460123141"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "460123241",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticleBag": "460123242",
+    "terInsCrimpHeight": "2,80 - 3,35 (справочно, зависит от профиля вставки A/B/C)",
+    "terMaterial": "Copper Alloy / Gold 0,76µm (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/460123241"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "460123251",
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Plus",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "2,80 - 3,35 (справочно, зависит от профиля вставки A/B/C)",
+    "terInsOdFrom": "1,5",
+    "terMaterial": "Gold (Au) 0,76µm plated (Selective)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/460123251"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190124",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "1,4",
+    "terInsOdFrom": "1",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Phosphor Bronze / Tin (не-пре-платированный, отличается от 901190109 Pre-Plated)",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190124"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "901190125",
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "28 AWG: 1,55\n26 AWG: 1,3",
+    "terInsOdFrom": "0,8",
+    "terInsOdTo": "1,2",
+    "terMaterial": "Phosphor Bronze / Tin (не-пре-платированный, отличается от 901190120 Pre-Plated)",
+    "terMaxCurrent": "3",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/901190125"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "350449902",
+    "terManufacturer": "Molex",
+    "terSeries": "35023",
+    "terComponent": "Board-in",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsOdTo": "1,5",
+    "terMaterial": "Brass / Tin (Pre-Plated)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/350449902"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "350449104",
+    "terManufacturer": "Molex",
+    "terSeries": "35023",
+    "terComponent": "Board-in",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "1,7 (max.)",
+    "terInsOdTo": "1,9",
+    "terMaterial": "Brass / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/350449104"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001900",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 1,65 - 1,75\n22 AWG: 1,55 - 1,65 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,025µm (Flash)",
+    "terMaxCurrent": "8",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053001900"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002100",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 1,65 - 1,75\n22 AWG: 1,55 - 1,65 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Tin (Matte, 1,50µm)",
+    "terMaxCurrent": "8",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053002100"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002300",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 1,65 - 1,75\n22 AWG: 1,55 - 1,65 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,76µm",
+    "terMaxCurrent": "8",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053002300"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002400",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "20 AWG: 1,65 - 1,75\n22 AWG: 1,55 - 1,65 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,76µm (Lubricated)",
+    "terMaxCurrent": "8",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053002400"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001100",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,55 (UL1061) / 1,65 (UL1007)\n24 AWG: 1,60 (UL1061) / 1,70 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Tin (Matte, 1,50µm)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053001100"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001200",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,55 (UL1061) / 1,65 (UL1007)\n24 AWG: 1,60 (UL1061) / 1,70 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,38µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053001200"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001300",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,55 (UL1061) / 1,65 (UL1007)\n24 AWG: 1,60 (UL1061) / 1,70 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,76µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053001300"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001400",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,55 (UL1061) / 1,65 (UL1007)\n24 AWG: 1,60 (UL1061) / 1,70 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,76µm (Lubricated)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053001400"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001810",
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "26 AWG: 1,55 (UL1061) / 1,65 (UL1007)\n24 AWG: 1,60 (UL1061) / 1,70 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,025µm (Flash)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/1053001810"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472800",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "20 AWG: 1,75 - 1,85\n22 AWG: 1,65 - 1,75 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,025µm (Flash)",
+    "terMaxCurrent": "7,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014472800"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472200",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "20 AWG: 1,75 - 1,85\n22 AWG: 1,65 - 1,75 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,38µm",
+    "terMaxCurrent": "7,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014472200"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472600",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "20 AWG: 1,75 - 1,85\n22 AWG: 1,65 - 1,75 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,76µm (Lubricated)",
+    "terMaxCurrent": "7,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014472600"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472400",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "20 AWG: 1,75 - 1,85\n22 AWG: 1,65 - 1,75 (UL1061) / 1,75 - 1,85 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Tin (Matte, 2,54µm, Lubricated)",
+    "terMaxCurrent": "7,5",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014472400"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471800",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "26 AWG: 1,40 - 1,60 (UL1061) / 1,50 - 1,65 (UL1007)\n24 AWG: 1,45 - 1,65 (UL1061) / 1,55 - 1,75 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,025µm (Flash)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014471800"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471200",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "26 AWG: 1,40 - 1,60 (UL1061) / 1,50 - 1,65 (UL1007)\n24 AWG: 1,45 - 1,65 (UL1061) / 1,55 - 1,75 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,38µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014471200"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471300",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "26 AWG: 1,40 - 1,60 (UL1061) / 1,50 - 1,65 (UL1007)\n24 AWG: 1,45 - 1,65 (UL1061) / 1,55 - 1,75 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,76µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014471300"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471600",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "26 AWG: 1,40 - 1,60 (UL1061) / 1,50 - 1,65 (UL1007)\n24 AWG: 1,45 - 1,65 (UL1061) / 1,55 - 1,75 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Gold 0,76µm (Lubricated)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014471600"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471400",
+    "terManufacturer": "Molex",
+    "terSeries": "200277, 201444",
+    "terComponent": "Nano-Fit",
+    "terType": "Male",
+    "terGender": "Male",
+    "terInsCrimpHeight": "26 AWG: 1,40 - 1,60 (UL1061) / 1,50 - 1,65 (UL1007)\n24 AWG: 1,45 - 1,65 (UL1061) / 1,55 - 1,75 (UL1007)",
+    "terMaterial": "High Conductivity Copper / Tin (Matte, 2,54µm, Lubricated)",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2014471400"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600031",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "18 AWG: 2,05 - 2,15",
+    "terMaterial": "Copper Alloy / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600031"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600032",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "18 AWG: 2,05 - 2,15",
+    "terMaterial": "Copper Alloy / Gold 0,38µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600032"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600033",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "18 AWG: 2,05 - 2,15",
+    "terMaterial": "Copper Alloy / Gold 0,75µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600033"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600041",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "16 AWG: 2,30 - 2,40",
+    "terMaterial": "Copper Alloy / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600041"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600043",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terInsCrimpHeight": "16 AWG: 2,30 - 2,40",
+    "terMaterial": "Copper Alloy / Gold 0,75µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600043"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600021",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600021"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600022",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy / Gold 0,38µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600022"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600023",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy / Gold 0,75µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600023"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600011",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy / Tin",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600011"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600012",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy / Gold 0,38µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600012"
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2064600013",
+    "terManufacturer": "Molex",
+    "terSeries": "206461, 215759",
+    "terComponent": "Micro-Fit+",
+    "terType": "Female",
+    "terGender": "Female",
+    "terMaterial": "Copper Alloy / Gold 0,75µm",
+    "terDatasheet": "https://www.molex.com/en-us/products/part-detail/2064600013"
+   }
+  }
+ ]
+}
