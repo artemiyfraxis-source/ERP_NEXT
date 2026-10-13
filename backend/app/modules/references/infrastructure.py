@@ -19,7 +19,10 @@ from .cable_structure import (
     ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
     HookupWire, WireGauge, same_card,
 )
-from .domain import ReferenceEntry, ReferenceKind, TechOperationRecord, TechOperationTab
+from .domain import (
+    EDITABLE_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent,
+    TechOperationRecord, TechOperationTab,
+)
 
 
 class ReferenceEntryRow(Base):
@@ -543,6 +546,78 @@ class SqlAlchemyCableStructureRepository:
                 "full_names_changed": len(renamed)}
 
 
+# --- «Склад → база данных» journal (migration 0116): append-only, the repository only adds and reads ---
+
+STOCK_LINK_EVENTS = tuple(event.value for event in StockLinkEvent)
+STOCK_LINK_TABS = tuple(sorted(tab.value for tab in EDITABLE_TABS))
+
+
+class ReferenceStockLinkRow(Base):
+    __tablename__ = "reference_stock_links"
+    __table_args__ = (
+        CheckConstraint("event IN ('linked', 'created', 'updated')", name="ck_reference_stock_links_event"),
+        CheckConstraint("record_tab IN ('coax', 'mat', 'ob', 'op', 'prov', 'ter')", name="ck_reference_stock_links_tab"),
+        CheckConstraint("length(trim(grn)) > 0", name="ck_reference_stock_links_grn"),
+        CheckConstraint("length(trim(record_text)) > 0", name="ck_reference_stock_links_record_text"),
+        CheckConstraint("length(trim(actor_name)) > 0", name="ck_reference_stock_links_actor"),
+        Index("ix_reference_stock_links_record_id", "record_id"),
+        Index("ix_reference_stock_links_lot_id", "lot_id"),
+        Index("ix_reference_stock_links_occurred_at", "occurred_at"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event: Mapped[str] = mapped_column(String(16), nullable=False)
+    lot_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_lots.id", ondelete="RESTRICT", name="fk_reference_stock_links_lot_id"),
+        nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False)
+    package: Mapped[str] = mapped_column(String(32), nullable=False)
+    article: Mapped[str] = mapped_column(String(1024), nullable=False)
+    name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    record_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tech_operation_records.id", ondelete="SET NULL", name="fk_reference_stock_links_record_id"),
+        nullable=True)
+    record_tab: Mapped[str] = mapped_column(String(16), nullable=False)
+    record_text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    changes: Mapped[list] = mapped_column(JSON, nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class SqlAlchemyStockLinkRepository:
+    def __init__(self, session: Session): self.session = session
+
+    def add(self, entry: StockLinkEntry) -> None:
+        article = entry.article
+        self.session.add(ReferenceStockLinkRow(
+            id=entry.id, occurred_at=entry.occurred_at, event=entry.event.value, lot_id=article.lot_id,
+            warehouse=article.warehouse, grn=article.grn, package=article.package, article=article.article,
+            name=article.name, record_id=entry.record_id, record_tab=entry.record_tab.value,
+            record_text=entry.record_text,
+            changes=[{"field": change.field, "old": change.old, "new": change.new} for change in entry.changes],
+            actor_id=entry.actor_id, actor_name=entry.actor_name,
+        ))
+
+    def list(self, *, record_id: UUID | None = None, lot_id: UUID | None = None, limit: int = 500) -> list[StockLinkEntry]:
+        """Newest first."""
+        statement = select(ReferenceStockLinkRow)
+        if record_id is not None: statement = statement.where(ReferenceStockLinkRow.record_id == record_id)
+        if lot_id is not None: statement = statement.where(ReferenceStockLinkRow.lot_id == lot_id)
+        rows = self.session.scalars(statement.order_by(
+            ReferenceStockLinkRow.occurred_at.desc(), ReferenceStockLinkRow.id.desc()).limit(limit))
+        return [StockLinkEntry(
+            id=row.id, occurred_at=row.occurred_at, event=StockLinkEvent(row.event),
+            article=StockArticle(lot_id=row.lot_id, warehouse=row.warehouse, grn=row.grn, package=row.package,
+                                 article=row.article, name=row.name),
+            record_id=row.record_id, record_tab=TechOperationTab(row.record_tab), record_text=row.record_text,
+            changes=tuple(StockLinkChange(str(item.get("field", "")), str(item.get("old", "")), str(item.get("new", "")))
+                          for item in row.changes or []),
+            actor_id=row.actor_id, actor_name=row.actor_name,
+        ) for row in rows]
+
+
 class SqlAlchemyReferencesUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
@@ -552,6 +627,7 @@ class SqlAlchemyReferencesUnitOfWork:
         self.tech_operations = SqlAlchemyTechOperationRepository(self.session)
         self.cable_structure = SqlAlchemyCableStructureRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.stock_links = SqlAlchemyStockLinkRepository(self.session)
         return self
     def __exit__(self, exc_type, exc, traceback) -> None:
         if self.session is None: return

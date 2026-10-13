@@ -12,6 +12,7 @@ import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
 import { CoaxConnectors } from "./CoaxConnectors";
+import { StockLinksJournal } from "./StockLinksJournal";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -197,6 +198,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [stockLog, setStockLog] = useState(false);
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
   const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
@@ -399,13 +401,18 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const editingRecord = editing?.id ? tech.records.find((record) => record.id === editing.id) : null;
 
   return <section className="page references-page">
-    <header className="page-head"><h1>База данных</h1>{current && count(current) !== null && <span className="page-count">{count(current)}</span>}</header>
+    <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
+      <div className="page-actions">
+        <button type="button" className={stockLog ? "secondary small active" : "secondary small"} aria-pressed={stockLog} onClick={() => setStockLog((value) => !value)}>Журнал «Склад → база»</button>
+      </div>
+    </header>
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>
         <div className="db-tab-row">{group.tabs.map((def) => {
           const n = count(def);
-          return <button key={def.id} type="button" className={tab === def.id ? "db-tab active" : "db-tab"} aria-pressed={tab === def.id} onClick={() => setTab(def.id)}>
+          const active = tab === def.id && !stockLog;
+          return <button key={def.id} type="button" className={active ? "db-tab active" : "db-tab"} aria-pressed={active} onClick={() => { setTab(def.id); setStockLog(false); }}>
             {def.label}{n !== null && <span className="db-tab-count" aria-hidden="true">{n}</span>}
           </button>;
         })}</div>
@@ -413,6 +420,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     </nav>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+
+    {stockLog && <StockLinksJournal fieldTitle={fieldTitle} />}
+    <div hidden={stockLog}>
 
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
     {tab === "connectors" && <ConnectorGallery />}
@@ -439,6 +449,10 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
         <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
+        {editing.id !== null && <div className="db-edit-stock">
+          <h3>Со склада</h3>
+          <StockLinksJournal recordId={editing.id} fieldTitle={fieldTitle} />
+        </div>}
       </div>}
       {techTab === "ob" ? <EquipmentCards
         records={tech.records}
@@ -503,6 +517,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       onSaved={cablesSaved}
       onError={(message) => { setNotice(""); setError(message); }}
     />}
+    </div>
   </section>;
 }
 

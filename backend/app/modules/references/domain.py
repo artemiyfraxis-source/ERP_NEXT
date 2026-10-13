@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Iterable
@@ -446,3 +447,45 @@ def _clean_cell(value: str) -> str:
     if text.startswith("="):
         raise ReferenceValidationError("Формулы вводить нельзя")
     return text
+
+
+# --- «Склад → база данных»: the journal of stock articles taken into a record (T14, 13.10.2026) ---
+
+class StockLinkEvent(str, Enum):
+    LINKED = "linked"  # the stock article is tied to an existing record; the record does not change
+    CREATED = "created"  # a new record made from the stock article
+    UPDATED = "updated"  # fields of an existing record changed from the stock article
+
+
+@dataclass(frozen=True)
+class StockArticle:
+    """One warehouse lot as the journal keeps it: a snapshot (the lot may be renamed later, the row stays as it was)."""
+    lot_id: UUID
+    warehouse: str
+    grn: str
+    package: str
+    article: str
+    name: str
+
+
+@dataclass(frozen=True)
+class StockLinkChange:
+    field: str
+    old: str
+    new: str
+
+
+@dataclass(frozen=True)
+class StockLinkEntry:
+    id: UUID
+    occurred_at: datetime
+    event: StockLinkEvent
+    article: StockArticle
+    # The record as it was right after the event. `record_id` is None once the record is gone (a mirror reload
+    # deletes rows it does not keep); the tab and the text stay, so the row still says what was linked.
+    record_id: UUID | None
+    record_tab: TechOperationTab
+    record_text: str
+    changes: tuple[StockLinkChange, ...]
+    actor_id: UUID
+    actor_name: str
