@@ -115,7 +115,7 @@ export function BoxLabelPanel({ number, box, stage = "", fixed = false, close }:
       {box && <span>{[box.item, stage || `этап ${box.operation_position}`].join(" · ")}</span>}
       <span className="box-label-no">№ учёта {number}</span>
     </div>
-    <p className="box-label-hint">{fixed ? "Коробка снова ждёт подтверждения мастера." : "Коробка ждёт подтверждения мастера. Без подписи её не возьмут дальше."}</p>
+    <p className="box-label-hint">{fixed ? "Коробка исправлена и снова сдана." : "Коробка сдана. Без подписи её не возьмут дальше."}</p>
     <div className="box-label-actions">
       <button type="button" className="secondary" disabled={!box} onClick={() => void copy()}>Копировать код</button>
       <button type="button" className="secondary" disabled={!box} onClick={print}>Печать этикетки</button>

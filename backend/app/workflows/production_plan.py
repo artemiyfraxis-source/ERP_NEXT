@@ -45,7 +45,7 @@ from app.modules.production.plan_sheet import (
     sheet_cells,
     sheet_group,
 )
-from app.modules.production.traceability import BoxStatus, ProductionBox
+from app.modules.production.traceability import TAKEABLE_BOX, ProductionBox
 from app.modules.requests.domain import Request
 from app.modules.shipping.domain import FinishedGood
 from app.modules.techcards.kitsets import Kitset
@@ -177,8 +177,8 @@ def kit_stage_facts(
     has a planned window); a partly placed КБ stays below. «В работе»: a work session or a «взял» of a share on any
     live task of the КБ — a launched task alone, or an issued kit, is no longer work (owner 12.10).
 
-    ``boxes`` — production boxes, ``inspected`` — ids of the boxes ОТК inspected: a final-operation box confirmed by
-    the master (the ОТК queue) or inspected means production of the КБ is over. Shared by the production plan and
+    ``boxes`` — production boxes, ``inspected`` — ids of the boxes ОТК inspected: a final-operation box handed in (the
+    ОТК queue — no master confirmation since 13.10) or inspected means production of the КБ is over. Shared by the production plan and
     the project kitset list (SUPPLYMAP portalKitsetList).
     """
     marks = dict(marks)
@@ -227,13 +227,13 @@ def kit_stage_facts(
     by_id = {task.id: task for task in tasks if task.status is not ProductionStatus.CANCELLED}
     for box in boxes:
         task = by_id.get(box.task_id)
-        if task is None or not (box.status is BoxStatus.CONFIRMED or box.id in inspected):
+        if task is None or not (box.status in TAKEABLE_BOX or box.id in inspected):
             continue
         try:
             final = task.final_operation.id
         except ProductionValidationError:
             continue
-        # Коробка последней операции в очереди ОТК (подтверждена мастером) или уже проверена ОТК.
+        # Коробка последней операции в очереди ОТК (сдана монтажником) или уже проверена ОТК.
         if box.operation_id == final:
             facts["qc"].add(kit_stage_key(task.project, task.item))
     # Регистр ГП (0111): принято / упаковано / отгружено всего по КБ — счётчики, которые двигает только ход журнала ГП.

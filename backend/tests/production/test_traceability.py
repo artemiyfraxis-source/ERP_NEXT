@@ -80,8 +80,10 @@ def test_submission_box_is_closed_at_once_and_checked_as_an_input_like_supplymap
     )
 
     assert (box.number, box.status, box.quantity, box.closed_by) == ("000001-8", BoxStatus.OPERATOR_CLOSED, Decimal("5"), "Оператор")
-    assert box.input_error(item="708К.4КБ1", previous_position=1) == (
-        "Коробка 000001-8 — «Закрыта оператором»: брать можно только подтверждённую мастером."
+    # Сданная коробка берётся на вход сразу (подтверждения мастером нет с 13.10), старая подтверждённая — тоже.
+    assert box.input_error(item="708к.4кб1", previous_position=1) == ""
+    assert box.return_to_operator("Пересчитать").input_error(item="708К.4КБ1", previous_position=1) == (
+        "Коробка 000001-8 — «Возвращена»: брать можно только сданную коробку."
     )
     confirmed = box.confirm("Мастер", now)
     assert confirmed.input_error(item="708к.4кб1", previous_position=1) == ""
@@ -143,7 +145,7 @@ def test_only_the_operator_of_a_returned_box_may_correct_it():
     returned = _returned_box(operator_id)
     closed = returned.correct(replaced_good=Decimal("10"), good=Decimal("8"), operator_id=operator_id, actor="Оператор", now=now)
 
-    with pytest.raises(ProductionValidationError, match="не возвращена мастером"):
+    with pytest.raises(ProductionValidationError, match="не возвращена"):
         closed.correct(replaced_good=Decimal("8"), good=Decimal("7"), operator_id=operator_id, actor="Оператор", now=now)
     with pytest.raises(ProductionValidationError, match="сдавал другой оператор"):
         returned.correct(replaced_good=Decimal("10"), good=Decimal("8"), operator_id=uuid4(), actor="Чужой", now=now)

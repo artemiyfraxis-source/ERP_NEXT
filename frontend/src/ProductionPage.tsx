@@ -40,7 +40,6 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [operators, setOperators] = useState<ProductionOperator[]>([]);
   const [viewerSite, setViewerSite] = useState("");
   const [execution, setExecution] = useState<{ session: ProductionWorkSession | null; boxes: ProductionBox[] }>({ session: null, boxes: [] });
-  const [boxes, setBoxes] = useState<ProductionBox[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -77,16 +76,13 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
         mine
           ? Promise.resolve({ operators: [{ id: principal.user.id, name: principal.user.name, site: "" }] })
           : canOverview ? productionApi.operators() : Promise.resolve({ operators: [] }),
-        mine
-          ? productionApi.execution(viewAs)
-          : canOverview ? productionApi.boxes() : Promise.resolve({ boxes: [] }),
+        mine ? productionApi.execution(viewAs) : Promise.resolve(null),
       ]);
       setTasks(taskResult.tasks);
       setActFor((taskResult as { can_act?: boolean }).can_act ? viewAs : null);
       setOperators(operatorResult.operators);
       setViewerSite((operatorResult as { viewer_site?: string }).viewer_site ?? "");
-      if (mine) setExecution(executionResult as { session: ProductionWorkSession | null; boxes: ProductionBox[] });
-      else setBoxes(executionResult.boxes);
+      if (mine && executionResult) setExecution(executionResult);
       if (!mine && canOverview) {
         // Праздники — для подсветки Ганта, компетенции — для метки допуска в карточке назначения (prodSkillTag_).
         const [calendarResult, skillResult] = await Promise.all([
@@ -168,7 +164,8 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
     {showLaunch && canEdit && <LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
-    {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
+    {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
+        на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
     {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
     {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
@@ -467,7 +464,7 @@ function factText(task: ProductionTask, operation: ProductionOperation) {
   const main = processed ? `сдано ${fact?.good} из ${requiredOf(task, operation)}${Number(fact?.defect) ? `, брак ${fact?.defect}` : ""}` : "факта нет";
   const ok = Number(operation.wip?.ok ?? 0);
   const closed = Number(operation.wip?.closed ?? 0);
-  return main + (ok || closed ? ` · в коробках ${ok}${closed ? ` + ${closed} ждут подтверждения` : ""}` : "");
+  return main + (ok || closed ? ` · в коробках ${ok}${closed ? ` + ${closed} ждут ОТК` : ""}` : "");
 }
 
 // Задание (prodRenderTask_): Гант операций с фактом, авторасчёт, отмена; клик по операции — карточка назначения.
@@ -1010,7 +1007,7 @@ function BoxCorrection({ box, busy, mutate, onDone, onBehalfOf = "" }: {
 }
 
 // prodWorkStart_: первая операция начинается сразу (складские партии — по желанию), дальше оператор вводит номера
-// входных коробок с предыдущего этапа, подтверждённых мастером; штуки из них берутся при сдаче.
+// входных коробок с предыдущего этапа — сданных (подтверждения мастером нет с 13.10); штуки из них берутся при сдаче.
 function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
   task: ProductionTask;
   operation: ProductionOperation;
@@ -1049,7 +1046,7 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
     {error && <small className="danger-text">{error}</small>}
     {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
     {!first && <>
-      <div className="sw-title">Из каких коробок берёте детали <small>({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`})</small></div>
+      <div className="sw-title">Из каких коробок берёте детали <small>({source ? `${source}; сданные` : `с этапа ${previousStage(operation)}, сданные`})</small></div>
       {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
         onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
         <b>{boxTitle(chip)}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
@@ -1059,43 +1056,6 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
     </>}
     <button className="primary sw-go" disabled={busy || needBox || wrongMaterial} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs, { onBehalfOf, key: key.current }))}>Начать работу</button>
     {why && <small className="sw-why">{why}</small>}
-  </div>;
-}
-
-function BoxReview({ boxes, operators, busy, mutate }: {
-  boxes: ProductionBox[];
-  operators: ProductionOperator[];
-  busy: boolean;
-  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-}) {
-  const [reasons, setReasons] = useState<Record<string, string>>({});
-  const [returning, setReturning] = useState<Record<string, boolean>>({});
-  const [query, setQuery] = useState("");
-  const pending = boxes.filter((box) => box.status === "Закрыта оператором");
-  if (!pending.length) return null;
-  const shown = pending.filter((box) => boxMatches(box, query));
-  const confirmAll = () => mutate("confirm-all", async () => {
-    for (const box of pending) await productionApi.boxAction(box.id, "confirm", box.version);
-  });
-  return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span>
-    {pending.length > 3 && <input className="search box-search" type="search" aria-label="Найти коробку по коду" placeholder="Код с коробки или номер" value={query} onChange={(event) => setQuery(event.target.value)} />}
-    {pending.length > 1 && <button className="primary small" disabled={busy} onClick={() => void confirmAll()}>Подтвердить все</button>}</div>
-    {!shown.length && <div className="empty">Нет коробки с кодом «{query}» — проверьте код на коробке.</div>}
-    <div className="box-grid">{shown.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
-      <BoxName box={box} />
-      <span>{box.item} · этап {box.operation_position}</span>
-      <span>{box.quantity} шт · {operators.find((operator) => operator.id === box.operator_id)?.name ?? box.operator_id}</span>
-      <button className="primary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "confirm", box.version))}>Подтвердить</button>
-      {returning[box.id]
-        ? <>
-          <label>Причина возврата<textarea value={reasons[box.id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [box.id]: event.target.value }))} /></label>
-          <div className="box-return-act">
-            <button className="secondary small" disabled={busy || !(reasons[box.id] ?? "").trim()} onClick={() => void mutate(box.id, () => productionApi.returnBox(box.id, box.version, reasons[box.id]))}>Вернуть оператору</button>
-            <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: false }))}>Отмена</button>
-          </div>
-        </>
-        : <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: true }))}>Вернуть…</button>}
-    </div>)}</div>
   </div>;
 }
 

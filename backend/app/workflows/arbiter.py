@@ -17,8 +17,9 @@
    Остальное закрывают руками (POST /api/project-tasks/{id}/close).
 
 Цеховые уведомления (`NOTICES`) идут тем же ходом, но вместо задачи кладут в outbox `notification.requested` по одному
-сообщению на человека и событие (ключ — id события и id человека, повтор ничего не добавляет): коробка сдана → мастерам
-площадки сдавшего; подтверждена → монтажникам операций, которые её берут на вход; возвращена → сдавшему.
+сообщению на человека и событие (ключ — id события и id человека, повтор ничего не добавляет): коробка сдана (или
+исправлена) → монтажникам операций, которые её берут на вход (подтверждения мастером нет с 13.10 — коробку последней
+операции проверяет ОТК, её на вход никто не берёт); возвращена ОТК → сдавшему.
 
 Этапы закупки и приёмки остаются в `procurement_stage` / `receipt_stage` — арбитр их не дублирует.
 """
@@ -36,7 +37,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.modules.fulfillment.domain import project_of
 from app.modules.fulfillment.infrastructure import SqlAlchemyFulfillmentRepository
-from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.operations.domain import ProjectTask
 from app.modules.operations.infrastructure import SqlAlchemyProjectTaskRepository
 from app.modules.production.domain import ProductionStatus
@@ -49,7 +49,7 @@ from app.modules.production.infrastructure import (
 )
 from app.modules.production.launchable import route_from_document, stage_name
 from app.modules.production.plan import kit_key_from_purpose, normalize_project_number
-from app.modules.production.traceability import BoxStatus
+from app.modules.production.traceability import TAKEABLE_BOX, BoxStatus
 from app.modules.shipping.domain import ShipmentStatus
 from app.modules.shipping.infrastructure import ShipmentLineRow, ShipmentRow, SqlAlchemyFinishedGoodsRepository
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardRepository
@@ -257,10 +257,10 @@ RULES: tuple[Rule, ...] = (
 RULE_BY_TRIGGER: dict[str, Rule] = {rule.trigger: rule for rule in RULES}
 
 
-# ── Цеховые уведомления: коробка сдана / подтверждена / возвращена ────────
+# ── Цеховые уведомления: коробка сдана / возвращена ────────
 
 SHOP_NOTICE_KIND = "production"
-DEFAULT_SITE = "ЦАР"  # у монтажника без площадки — площадка по умолчанию (как у мастера)
+TAKEABLE = frozenset(status.value for status in TAKEABLE_BOX)
 
 
 @dataclass(frozen=True)
@@ -286,39 +286,6 @@ def _box_of(session: Session, trigger: Trigger) -> ProductionBoxRow | None:
         return None
 
 
-def _site(value: str | None) -> str:
-    return str(value or "").strip() or DEFAULT_SITE
-
-
-def _label(session: Session, box: ProductionBoxRow) -> tuple[str, str] | None:
-    """«ПЗ-0412» и название операции, которой сдана коробка."""
-    row = session.execute(
-        select(ProductionTaskRow.number, ProductionOperationRow.stage)
-        .join(ProductionOperationRow, ProductionOperationRow.task_id == ProductionTaskRow.id)
-        .where(ProductionOperationRow.id == box.operation_id)
-    ).first()
-    return None if row is None else (row[0], row[1])
-
-
-def _handed_notice(session: Session, trigger: Trigger) -> list[Notice]:
-    """Сдана коробка → мастерам площадки сдавшего: ждёт подтверждения."""
-    box = _box_of(session, trigger)
-    label = None if box is None else _label(session, box)
-    if box is None or label is None or not box.number or box.status != BoxStatus.OPERATOR_CLOSED.value:
-        return []  # коробку уже подтвердили или вернули — ждать нечего (и старые события журнала не будят людей)
-    maker = session.get(IdentityUserRow, box.operator_id)
-    site = _site(maker.site if maker is not None else None)
-    masters = [
-        row for row in session.scalars(
-            select(IdentityUserRow).where(IdentityUserRow.site_master.is_(True), IdentityUserRow.active.is_(True))
-            .order_by(IdentityUserRow.name, IdentityUserRow.id)
-        ) if _site(row.site) == site
-    ]
-    number, stage = label
-    body = f"Коробка {box.number} ждёт подтверждения: {number}, {stage}, {_count(box.quantity)} шт"
-    return [Notice(master.id, "Коробка ждёт подтверждения", body, box.number) for master in masters]
-
-
 def _route_names(session: Session) -> dict[str, str]:
     """Код операции → русское название по маршрутам выданных техкарт (так же, как в карточке сотрудника)."""
     names: dict[str, str] = {}
@@ -331,11 +298,12 @@ def _route_names(session: Session) -> dict[str, str]:
     return names
 
 
-def _confirmed_notice(session: Session, trigger: Trigger) -> list[Notice]:
-    """Подтверждена коробка → монтажникам операций, которые берут её на вход: можно начинать."""
+def _ready_notice(session: Session, trigger: Trigger) -> list[Notice]:
+    """Сдана коробка → монтажникам операций, которые берут её на вход: можно начинать. Коробку последней операции
+    на вход не берёт никто — по ней писем нет, она в очереди ОТК."""
     box = _box_of(session, trigger)
-    if box is None or not box.number or box.status != BoxStatus.CONFIRMED.value:
-        return []
+    if box is None or not box.number or box.status not in TAKEABLE:
+        return []  # коробку уже вернули или израсходовали — ждать нечего (и старые события журнала не будят людей)
     notices: list[Notice] = []
     seen: set[UUID] = set()
     names: dict[str, str] | None = None
@@ -369,9 +337,9 @@ def _returned_notice(session: Session, trigger: Trigger) -> list[Notice]:
 
 # тип события журнала → кому и что сообщить; модули пишут эти события сами (production/execution.py)
 NOTICES: dict[str, Callable[[Session, Trigger], list[Notice]]] = {
-    "production.output_recorded": _handed_notice,  # монтажник сдал коробку
-    "production.box_corrected": _handed_notice,  # исправил возвращённую — снова ждёт мастера
-    "production.box_confirmed": _confirmed_notice,
+    "production.output_recorded": _ready_notice,  # монтажник сдал коробку — следующим можно начинать
+    "production.box_corrected": _ready_notice,  # исправил возвращённую — снова годится (последняя — снова у ОТК)
+    "production.box_confirmed": _ready_notice,  # подтверждение мастером — до 13.10, события старого журнала
     "production.box_returned": _returned_notice,
 }
 

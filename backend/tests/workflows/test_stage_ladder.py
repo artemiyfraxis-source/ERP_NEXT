@@ -109,7 +109,10 @@ def test_a_final_operation_box_in_the_qc_queue_or_inspected_is_at_qc():
 
 def test_a_box_not_yet_at_qc_keeps_the_kb_at_work():
     task = _task(started=True)
-    assert _stage((task,), (_box(task, BoxStatus.OPERATOR_CLOSED),)) == "В работе"  # мастер ещё не подтвердил
+    assert _stage((task,), (_box(task, BoxStatus.RETURNED),)) == "В работе"  # возвращена на исправление
+    assert _stage((task,), (_box(task, BoxStatus.OPEN),)) == "В работе"
+    # Сдана с последней операции — уже в очереди ОТК: подтверждения мастером нет (13.10).
+    assert _stage((task,), (_box(task, BoxStatus.OPERATOR_CLOSED),)) == "ОТК"
     assert _stage((task,), (_box(task, operation=EARLIER),)) == "В работе"  # не последняя операция
     cancelled = _task(ProductionStatus.CANCELLED)
     assert _stage((cancelled,), (_box(cancelled),)) == "Новый"

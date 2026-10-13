@@ -576,6 +576,16 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     ).json()["session"]
     box = client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "10"}).json()["box"]
     app.dependency_overrides[authenticated_principal] = master
+    # Подтверждения мастером нет (13.10): маршрута /confirm нет, вернуть коробку мастер без правки «ОТК» не может.
+    assert client.post(f"/api/production/boxes/{box['id']}/confirm", json={"version": box["version"]}).status_code in (404, 405)
+    refused = client.post(
+        f"/api/production/boxes/{box['id']}/return", json={"version": box["version"], "reason": "Пересчитать"},
+    )
+    assert refused.status_code == 403
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("10000000-0000-0000-0000-000000000001"), name="Контролёр", department="ОТК"),
+        email="qc@example.test", roles=frozenset({"qc"}), permissions={"quality": "edit"},
+    )
     box = client.post(
         f"/api/production/boxes/{box['id']}/return", json={"version": box["version"], "reason": "Пересчитать"},
     ).json()["box"]
@@ -599,7 +609,7 @@ def test_operator_corrects_returned_box_down_through_api(production_api):
     assert corrected.json()["box"]["status"] == "Закрыта оператором"
     assert corrected.json()["output"]["correction_of_id"] == outputs.json()["outputs"][0]["id"]
     assert again.status_code == 422
-    assert "не возвращена мастером" in again.json()["detail"]
+    assert "не возвращена" in again.json()["detail"]
     assert [item["id"] for item in after.json()["outputs"]] == [corrected.json()["output"]["id"]]
 
 
