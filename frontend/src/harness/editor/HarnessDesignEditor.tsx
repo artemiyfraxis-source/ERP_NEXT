@@ -133,6 +133,8 @@ export interface HarnessDesignEditorProps {
   /** View mode (ERP: no «Проекты: правка»): pan, zoom and select-to-inspect only — no drag, no edits, never saved.
    *  Load-time normalisation still runs in memory so the drawing looks as it does for the editor. */
   readonly readOnly?: boolean;
+  /** Телефон: просмотр (readOnly) без инструментов и панелей — поле, масштаб и переключатель «Схема Э4 / Чертёж». */
+  readonly phoneView?: boolean;
   /** Выгрузка листа (PNG / PDF): страница получает порт отрисовки чертежа; null — поле закрыто. */
   readonly onExportPort?: (port: HarnessExportPort | null) => void;
   /** Where the document windows get their rows (connection table, cut list, specification). Defaults to the ERP server
@@ -748,6 +750,7 @@ export function HarnessDesignEditor({
   onClose,
   onViewChange,
   readOnly = false,
+  phoneView = false,
   onExportPort,
 }: HarnessDesignEditorProps) {
   const readOnlyRef = useRef(readOnly);
@@ -1816,6 +1819,7 @@ export function HarnessDesignEditor({
         }}
       ><HarnessEditorWorkspace
         readOnly={readOnly}
+        phoneView={phoneView}
         onExportPort={onExportPort}
         harnessId={harnessId}
         harnessDesignation={harnessDesignation}
