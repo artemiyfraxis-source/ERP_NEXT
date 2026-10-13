@@ -10,6 +10,7 @@ import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
+import { CoaxConnectors } from "./CoaxConnectors";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -437,7 +438,13 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         onError={(message) => { setNotice(""); setError(message); }}
         focusId={focusTool}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
-      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <DataTable
+      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+        records={tech.records}
+        cableOf={cableOf}
+        canEdit={canEdit}
+        onEdit={startEdit}
+        toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Запись</button> : undefined}
+      /> : <DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}

@@ -126,7 +126,10 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
   `terArticleBag` (тот же контакт в упаковке BAG — вторая колонка той же строки, не отдельная строка),
   `terInsCrimpHeight`, `terInsOdFrom`, `terInsOdTo`, `terMaterial` («Металл / Покрытие»), `terMaxCurrent` (А),
   `terDatasheet` (ссылка на сайт производителя);
-- `coax`: `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire`;
+- `coax`: `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire`; колонки карточки разъёма принимаются и до того, как они
+  есть у строк: «Тип пина», «Тип экрана», «Серия», «Пол», «Полярность», «Исполнение», «Монтаж», «Центральный
+  контакт», «Крепление экрана», «Волновое сопротивление, Ом», «Частота до, ГГц», «Материал корпуса», «Покрытие»,
+  «Габариты», «Наименование», «Ссылка», «Примечание», «Источник данных»;
 - `ob`: `baseValue`, `obType`.
 
 Колонки листа («Шаг разьема», «Артикул контакта (REEL)», «Инв. номер»…) — как их показывает «База данных»; точный
@@ -181,6 +184,11 @@ post wire-gauges '{"rows":[{"fields":{"awg":"22","section_mm2":"0,35","conductor
 # Монтажные провода: тело — файл backend/data/cables/hookup-wires.json как есть (не {"rows": …})
 curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
   --data @backend/data/cables/hookup-wires.json "$ERP/api/references/import/hookups?dry_run=1"
+
+# Коаксиальные разъёмы gsm-repiteri.ru (311 разъёмов → строки «разъём × кабель» БД.КОАКС): тело собрано
+# `python -m app.modules.references.coax_connectors` из backend/data/cables/coax-connectors-gsm.json
+curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
+  --data @backend/data/cables/coax-connectors-gsm.import.json "$ERP/api/references/import/coax?dry_run=1"
 
 # Поля таблицы
 curl -s -H "Authorization: Bearer $ERP_TOKEN" "$ERP/api/references/import/ter/schema"
