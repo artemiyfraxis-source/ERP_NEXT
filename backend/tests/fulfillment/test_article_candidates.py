@@ -303,3 +303,15 @@ def test_kitset_binding_logs_the_pair_too_and_the_report_reads_it(api):
         assert row.details["kd_article"] == "GHR-04V-S" and row.details["lot_article"] == "ghr04vs"
         assert (row.details["match_kind"], row.details["via"]) == ("fuzzy-separators", "kitset")
         assert "GHR-04V-S;ghr04vs;fuzzy-separators;1" in article_bindings_report.report(session)
+
+
+def test_stock_reads_do_not_lose_lots_past_a_page(api):
+    """The whole-stock reads («Возможно есть», «Заявка по расчёту», /lots) once cut at 5000 lots: none is lost now."""
+    client, factory, _sessions = api
+    total = 5003
+    put(factory, *(lot(f"FRX.26.{index:07d}", "1", f"ART-{index}", "Контакт") for index in range(total)))
+
+    assert len(client.get("/api/issues/lots").json()["lots"]) == total
+    with factory() as uow:
+        assert len(uow.warehouse.filtered(include_zero=False)) == total
+        assert len(uow.warehouse.filtered(warehouse="ЦАР", include_zero=False)) == total
