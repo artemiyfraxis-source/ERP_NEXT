@@ -21,6 +21,7 @@ import { openPrintSheet } from "./print";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
+import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
   chooserColumns, ColumnChooser, columnTitle, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
@@ -61,7 +62,7 @@ function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, 
  *  `readOnly` — «режим просмотра» (ID-6): the stock is read, every entry/move/writeoff/edit control is gone
  *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes).
  *  `finishedGoods` — the viewer reads «Отгрузка»: the «Готовая продукция» tab (read-only, owner 12.10.2026). */
-export function WarehousePage({ admin = false, readOnly = false, finishedGoods = false }: { admin?: boolean; readOnly?: boolean; finishedGoods?: boolean } = {}) {
+export function WarehousePage({ admin = false, readOnly = false, finishedGoods = false, canEditReferences = false }: { admin?: boolean; readOnly?: boolean; finishedGoods?: boolean; canEditReferences?: boolean } = {}) {
   // `?section=stock&view=goods` opens «Готовая продукция» (a link, a screenshot).
   const [view, setView] = useState<"stock" | "goods">(() => new URLSearchParams(window.location.search).get("view") === "goods" ? "goods" : "stock");
   if (finishedGoods && view === "goods") return <section className="page stock-page">
@@ -69,7 +70,7 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
     <StockViews view={view} onChange={setView} />
     <FinishedGoodsPanel />
   </section>;
-  return <StockPage admin={admin} readOnly={readOnly} views={finishedGoods ? <StockViews view={view} onChange={setView} /> : null} />;
+  return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={finishedGoods ? <StockViews view={view} onChange={setView} /> : null} />;
 }
 
 /** «Материалы» | «Готовая продукция» под заголовком склада. */
@@ -80,7 +81,7 @@ function StockViews({ view, onChange }: { view: "stock" | "goods"; onChange: (vi
   </div>;
 }
 
-function StockPage({ admin, readOnly, views }: { admin: boolean; readOnly: boolean; views: ReactNode }) {
+function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boolean; readOnly: boolean; canEditReferences: boolean; views: ReactNode }) {
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
@@ -375,6 +376,7 @@ function StockPage({ admin, readOnly, views }: { admin: boolean; readOnly: boole
             onMove={(item) => { setMoveLot(item); setMoveOpen(true); }}
             history={admin || !readOnly}
             readOnly={readOnly}
+            canLink={canEditReferences}
           />)}</tbody>
         </table>
       </div>}
@@ -638,7 +640,7 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
   }
 }
 
-function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly }: {
+function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly, canLink }: {
   group: WarehouseGroup;
   columns: ColumnKey[];
   pinned: ColumnKey;
@@ -650,6 +652,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   onMove: (lot: WarehouseLot) => void;
   history: boolean;
   readOnly: boolean;
+  canLink: boolean;
 }) {
   return <>
     {group.label && <tr className="stock-group-row"><td colSpan={columns.length}><span className="stock-group-label">{group.label} · {countLabel(group.totals?.articles ?? group.articles.length, ["артикул", "артикула", "артикулов"])}</span>{group.totals && <span className="stock-group-sum"> · {countLabel(group.totals.lots, ["партия", "партии", "партий"])}{group.totals.units.length === 1 ? ` · остаток ${group.totals.balance} ${group.totals.units[0]}` : ""}{group.totals.units.length === 1 && Number(group.totals.reserved) > 0 ? ` · резерв ${group.totals.reserved} ${group.totals.units[0]}` : ""}</span>}</td></tr>}
@@ -660,7 +663,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
           {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned))}
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={columns.length}><div className="lot-cards">
-          {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} />)}
+          {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} canLink={canLink} />)}
         </div></td></tr>}
       </Fragment>;
     })}
@@ -1352,7 +1355,7 @@ function LotHistoryDialog({ lot, onClose }: { lot: WarehouseLot; onClose: () => 
   </LotDialog>;
 }
 
-function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
+function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLink }: {
   lot: WarehouseLot;
   busy: boolean;
   disabled: boolean;
@@ -1360,9 +1363,11 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
   onMove: (lot: WarehouseLot) => void;
   history: boolean;
   readOnly: boolean;
+  /** «Справочник» на правку: кнопка «В базу данных…». */
+  canLink: boolean;
 }) {
   // Every action is a window over the stock, as the buttons on a SUPPLYMAP partition card (− / + / ✎ / История).
-  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history">("");
+  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "link">("");
   const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
@@ -1380,19 +1385,21 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
         {Number(lot.reserved) > 0 && <span title={lot.reserve_note || undefined}>резерв {lot.reserved} {lot.unit}{lot.reserve_note ? ` · ${lot.reserve_note.replace(/^резерв: /, "")}` : ""}</span>}
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
-      {(!readOnly || history) && <div className="lot-card-actions">
+      {(!readOnly || history || canLink) && <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
           <button className="secondary small" disabled={disabled} onClick={() => onMove(lot)}>{busy ? "Сохраняем…" : "Переместить"}</button>
           <button className="secondary small" disabled={disabled} onClick={() => setDialog("edit")}>✎ Правка</button>
         </>}
+        {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
       </div>}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
-      {history && dialog === "history" && <LotHistoryDialog lot={lot} onClose={close} />}
+      {canLink && dialog === "link" && <StockLinkDialog lot={lot} onClose={close} />}
+      {history && dialog === "history" &&<LotHistoryDialog lot={lot} onClose={close} />}
     </article>
   );
 }

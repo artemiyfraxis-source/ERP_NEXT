@@ -24,7 +24,8 @@ import { alignDrawingConnectorIndexes, drawingObjectIndexScene, moveDrawingIndex
 import { type PhysicalCovering, coveringMaterial, standardCovering, standardCoveringOver } from "./physical-coverings";
 import { PhysicalTopologyPanel } from "./PhysicalTopologyPanel";
 import { routePhysicalWires } from "./physical-wire-routing";
-import { physicalWireDisplay, physicalWirePoints } from "./physical-wire-geometry";
+import { physicalRouteEndPoint, physicalWireDisplay, physicalWirePoints } from "./physical-wire-geometry";
+import { openWireEndMetadata } from "./open-wire-ends";
 import { ensureConnectorExits, branchPhysicalSegment, connectPhysicalNodeToSegment } from "./physical-topology";
 import { physicalNodePoint } from "./physical-ports";
 import { joiningPipeEndpoint, joiningPipeExit, migrateJoiningPipes } from "./physical-joining-pipes";
@@ -461,8 +462,8 @@ export function designToScene(
     };
   });
   const wires: EditorSceneObject[] = document.wires.flatMap((wire, index) => {
-    const start = view === "drawing" && wire.drawingEndpoints ? wire.drawingEndpoints.from : contactPointForWire(document, wire.from, wire.to, view, materializedConnectorIds,drawingConnectorIds);
-    const end = view === "drawing" && wire.drawingEndpoints ? wire.drawingEndpoints.to : contactPointForWire(document, wire.to, wire.from, view, materializedConnectorIds,drawingConnectorIds);
+    const start = view === "drawing" && wire.drawingEndpoints ? wire.drawingEndpoints.from : contactPointForWire(document, wire.from, wire.to, view, materializedConnectorIds,drawingConnectorIds) ?? (view === "drawing" ? physicalRouteEndPoint(document, wire.id, "from") : null);
+    const end = view === "drawing" && wire.drawingEndpoints ? wire.drawingEndpoints.to : contactPointForWire(document, wire.to, wire.from, view, materializedConnectorIds,drawingConnectorIds) ?? (view === "drawing" ? physicalRouteEndPoint(document, wire.id, "to") : null);
     if (!start || !end) return [];
     const physicalPoints = view === "drawing" ? physicalWirePoints(document, wire.id, start, end) : null;
     const wireDisplay = view === "drawing" && physicalPoints ? physicalWireDisplay(document,wire.id,start,end) : undefined;
@@ -510,6 +511,7 @@ export function designToScene(
         freeFrom: String(!!wire.drawingEndpoints && !document.connectors.some(connector => connector.id === wire.from.connectorId)),
         freeTo: String(!!wire.drawingEndpoints && !document.connectors.some(connector => connector.id === wire.to.connectorId)),
         detachedDrawing: String(!!wire.drawingEndpoints),
+        ...openWireEndMetadata(wire),
         drawingPairId: document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.id ?? "",
         drawingPairWireIds: JSON.stringify(document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.wireIds ?? []),
         materialSourceKey: wire.materialBinding?.sourceKey ?? "",

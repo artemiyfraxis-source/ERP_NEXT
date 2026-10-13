@@ -1,5 +1,6 @@
 import { artworkWireDiameter, artworkJacketAnchor, renderPartSvg } from "../wire-blank-artwork";
 import { drawVolumeStroke, drawVolumeSurface } from "./drawing-volume";
+import { drawOpenWireEnds } from "./open-wire-ends";
 import { commonParallelSpan, commonHorizontalPairSpan, parallelSpanWorld, parallelSpanLocal, type ParallelSpan } from "./e4-parallel-spans";
 import { intersectSegments, segmentsParallel } from "./segment-geometry";
 import type { PhysicalDragMode } from "./physical-editing";
@@ -2219,6 +2220,7 @@ export function drawEditorSceneObject(
     for(const stroke of object.visibleWireStrokes??object.paths.map(points=>({points,width:lineWidth,radius:undefined}))){traceDrawingRoute(context,stroke.points,stroke.radius??object.routeRadius);strokeE4Wire(context,object.color,selected?stroke.width+1:stroke.width);if(object.metadata?.volumeShading === "true")drawVolumeStroke(context,stroke.width);}
     drawWireStripProfiles(context, object, selected);
     drawWireDrawingEndStyles(context, object, selected, componentTemplateImageCache);
+    drawOpenWireEnds(context, object, "drawing", selected);
     context.restore();return;
   }
   if (object.kind === "physical-node") {
@@ -2292,6 +2294,7 @@ export function drawEditorSceneObject(
         drawWireStripProfiles(context, object, selected);
         drawWireDrawingEndStyles(context, object, selected, componentTemplateImageCache);
       }
+      if (object.kind === "wire") drawOpenWireEnds(context, object, view, selected);
       if (selected) {
         context.fillStyle = "#ffffff";
         context.strokeStyle = "#1179ac";

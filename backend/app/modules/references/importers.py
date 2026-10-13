@@ -23,8 +23,17 @@ A file that is not this format at all is refused whole; a bad gauge, series or s
    not by the mark text («МГТФ 0,2» = «МГТФ 0,20»). A matched row keeps its id and mark; the cells the file gives are
    written (only a changed meaning), the row is marked edited in ERP so a mirror reload keeps it; its structure is
    created or updated. A size no row has becomes a new БД.ПРОВ row with its structure. Nothing is renamed or deleted.
-3. report: the БД.ПРОВ marks the shape rule calls монтажный that the база монтажных sends to «прочие».
+3. report: the БД.ПРОВ marks the shape rule calls монтажный that the база монтажных sends to «прочие» — a picture of
+   the table as it is, not something the load does (the load never writes «Тип провода» / «Число жил» / the mark).
 Run twice — the second run changes nothing.
+
+`fill_empty=True` (owner 13.10.2026, after a prod dry run would have rewritten 63 filled cells: «UL 758; AWM Style
+1061» → «UL 758, AWM Style 1061», the real colours of ПВАМ 0,35 → the series palette): only EMPTY places are written —
+a БД.ПРОВ cell that is blank, a structure value that is not known; «Источник данных» only when blank, then with the
+sources of the cells this run fills. No size is added to the size table, no БД.ПРОВ row is created (both reported in
+`refused` with the reason), step 3 is skipped (`moved_out_of_montage` stays empty). The structure's series and size
+are kept as stored. `hookup-wires.strands-colors.json` is the payload for it: the strand lay of НВ-4, ПВАМ, МС 15-11,
+ПуГВ, МГШВ and the series colours of ПВАМ and ПуГВ, cut from `hookup-wires.json`.
 
 `import_rows(table, uow, rows, …)` (below) loads rows into one table by its natural key through the shared bulk
 import (`app/shared/bulk_import.py`): БД.ТЕР / БД.КОАКС / БД.ПРОВ / БД.МАТ / БД.ОБ, the maps «ссылка → поставщик»,
@@ -350,6 +359,7 @@ class ImportReport:
     """The shape of the shared bulk import report: created / updated (what → [old, new]) / unchanged / refused, key =
     the БД.ПРОВ mark; plus the size table and the marks the база монтажных sends from монтажные to «прочие»."""
     dry_run: bool
+    fill_empty: bool = False
     created: list[str] = field(default_factory=list)
     updated: list[dict] = field(default_factory=list)  # [{"key": mark, "changes": {what: [old, new]}}]
     unchanged: int = 0
@@ -375,7 +385,7 @@ class ImportReport:
                 "hookups_updated": self.hookups_updated, "moved_out_of_montage": len(self.moved_out_of_montage)}
 
     def as_dict(self) -> dict:
-        return {"dry_run": self.dry_run, "created": list(self.created),
+        return {"dry_run": self.dry_run, "fill_empty": self.fill_empty, "created": list(self.created),
                 "updated": [{"key": item["key"], "changes": dict(item["changes"])} for item in self.updated],
                 "unchanged": self.unchanged, "refused": [dict(item) for item in self.refused],
                 "moved_out_of_montage": list(self.moved_out_of_montage), "gauges_added": list(self.gauges_added),
@@ -404,6 +414,10 @@ def _value_text(value: object, gauges: Mapping) -> str:
     return shown(value) if isinstance(value, (Decimal, int)) and not isinstance(value, bool) else str(value)
 
 
+FILL_EMPTY_NO_GAUGE = "только пустые ячейки: размера нет в таблице сечений — не добавлен"
+FILL_EMPTY_NO_ROW = "только пустые ячейки: строки этого размера в БД.ПРОВ нет — не создана"
+
+
 def _gauge_step(seed: HookupSeed, uow: UnitOfWork, report: ImportReport) -> list[WireGauge]:
     gauges = uow.cable_structure.gauges()
     report.gauges_in_file = len(seed.gauges)
@@ -413,6 +427,9 @@ def _gauge_step(seed: HookupSeed, uow: UnitOfWork, report: ImportReport) -> list
         by_section = next((gauge for gauge in gauges if gauge.section_mm2 == item.section_mm2), None)
         diameter = item.conductor_d_mm.value if item.conductor_d_mm else None
         found = by_awg or by_section
+        if found is None and report.fill_empty:
+            report.refused.append({"key": label, "reason": FILL_EMPTY_NO_GAUGE})
+            continue
         if found is None:
             gauge = WireGauge.create(awg=item.awg or "", section_mm2=item.section_mm2, conductor_d_mm=diameter or "",
                                      position=max((gauge.position for gauge in gauges), default=-1) + 1)
@@ -451,22 +468,34 @@ def _merged_sources(cell: str, sources: list[str]) -> str:
     return _SOURCE_SEPARATOR.join(part for part in [text, *fresh] if part)
 
 
-def _cells(fields: Mapping[str, str], series: SeedSeries, size: SeedSize) -> dict[str, str]:
+def _cells(fields: Mapping[str, str], series: SeedSeries, size: SeedSize, *, fill_empty: bool = False) -> dict[str, str]:
     """БД.ПРОВ cells to write: only the values the file gives, only where the cell means something else («48 (ном.)
-    / 1000 (испыт.)» is 48 V and stays as typed). Sources the cell does not name yet are appended."""
+    / 1000 (испыт.)» is 48 V and stays as typed). Sources the cell does not name yet are appended. `fill_empty`: only
+    blank cells; «Источник данных» only when blank, with the sources of the cells filled now."""
     def cell(name: str) -> str:
         return str(fields.get(name) or "").strip()
 
+    def open_(name: str) -> bool:
+        return not (fill_empty and cell(name))
+
+    given_by_cell = {STANDARD_FIELD: series.standard, STRANDS_FIELD: size.strands, COLORS_FIELD: size.colors,
+                     INSULATION_FIELD: series.insulation_material, OUTER_FIELD: size.outer_dia_mm,
+                     VOLTAGE_FIELD: size.voltage_v, TEMP_MIN_FIELD: size.temp_min_c, TEMP_MAX_FIELD: size.temp_max_c}
     wanted: dict[str, str] = {}
-    for name, given in ((STANDARD_FIELD, series.standard), (STRANDS_FIELD, size.strands), (COLORS_FIELD, size.colors),
-                        (INSULATION_FIELD, series.insulation_material)):
-        if given is not None and cell(name) != given.value:
+    for name in (STANDARD_FIELD, STRANDS_FIELD, COLORS_FIELD, INSULATION_FIELD):
+        given = given_by_cell[name]
+        if given is not None and cell(name) != given.value and open_(name):
             wanted[name] = str(given.value)
-    if size.outer_dia_mm is not None and decimal_or_none(cell(OUTER_FIELD)) != size.outer_dia_mm.value:
+    if size.outer_dia_mm is not None and decimal_or_none(cell(OUTER_FIELD)) != size.outer_dia_mm.value and open_(OUTER_FIELD):
         wanted[OUTER_FIELD] = shown(size.outer_dia_mm.value)
-    for name, given in ((VOLTAGE_FIELD, size.voltage_v), (TEMP_MIN_FIELD, size.temp_min_c), (TEMP_MAX_FIELD, size.temp_max_c)):
-        if given is not None and leading_int(cell(name)) != given.value:
+    for name in (VOLTAGE_FIELD, TEMP_MIN_FIELD, TEMP_MAX_FIELD):
+        given = given_by_cell[name]
+        if given is not None and leading_int(cell(name)) != given.value and open_(name):
             wanted[name] = shown(given.value)
+    if fill_empty:
+        if wanted and not cell(SOURCE_FIELD):
+            wanted[SOURCE_FIELD] = _merged_sources("", [given_by_cell[name].source for name in wanted])
+        return wanted
     sources = [given.source for given in (
         series.standard, series.conductor_material, series.insulation_material, size.strands, size.conductor_dia_mm,
         size.insulation_thickness_mm, size.outer_dia_mm, size.voltage_v, size.temp_min_c, size.temp_max_c, size.colors,
@@ -477,13 +506,19 @@ def _cells(fields: Mapping[str, str], series: SeedSeries, size: SeedSize) -> dic
     return wanted
 
 
-def _hookup(mark: str, base: HookupWire | None, parsed, gauge: WireGauge, series: SeedSeries, size: SeedSize) -> HookupWire:
-    """The structure: what is stored (or, not structured yet, what the row says), the file's values over it."""
+def _hookup(mark: str, base: HookupWire | None, parsed, gauge: WireGauge, series: SeedSeries, size: SeedSize, *,
+            fill_empty: bool = False) -> HookupWire:
+    """The structure: what is stored (or, not structured yet, what the row says), the file's values over it;
+    `fill_empty` — the file's values only where nothing is known, the stored series and size kept."""
     def given(value: Sourced | None, current):
-        return current if value is None else value.value
+        if value is None or (fill_empty and current not in (None, "")):
+            return current
+        return value.value
 
+    keep = fill_empty and base is not None
     return HookupWire.create(
-        id=base.id if base else None, mark=mark, series=series.key, gauge_id=gauge.id,
+        id=base.id if base else None, mark=mark, series=base.series if keep else series.key,
+        gauge_id=base.gauge_id if keep else gauge.id,
         insulation=given(series.insulation_material, base.insulation if base else parsed.insulation),
         outer_d_mm=given(size.outer_dia_mm, base.outer_d_mm if base else parsed.outer_d_mm),
         voltage_v=given(size.voltage_v, base.voltage_v if base else parsed.voltage_v),
@@ -495,14 +530,16 @@ def _hookup(mark: str, base: HookupWire | None, parsed, gauge: WireGauge, series
 
 
 def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime, *, dry_run: bool = False,
-                   source: str = "api") -> ImportReport:
+                   source: str = "api", fill_empty: bool = False) -> ImportReport:
     """The база монтажных проводов from its parsed file (see the module doc). A file that is not the format is refused
     whole before anything is read (`HookupSeedError`); a bad row is refused with its reason and the rest applies; a
     dry run reports the same and writes nothing. Never deletes, never renames. One audit event per run that changes
-    something (`source` — who loads: erp | api | warehouse); a run that changes nothing leaves no event."""
+    something (`source` — who loads: erp | api | warehouse); a run that changes nothing leaves no event.
+    `fill_empty` — only empty cells, no new sizes or rows, no step 3 (module doc)."""
     check_source(source)
     seed = hookup_seed(payload)
-    report = ImportReport(dry_run=dry_run, sizes_in_file=seed.sizes, refused=[dict(item) for item in seed.refused])
+    report = ImportReport(dry_run=dry_run, fill_empty=fill_empty, sizes_in_file=seed.sizes,
+                          refused=[dict(item) for item in seed.refused])
     with uow:
         gauges = _gauge_step(seed, uow, report)
         by_id = {gauge.id: gauge for gauge in gauges}
@@ -518,7 +555,7 @@ def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime
             key = cable_key(mark)
             if not key:
                 continue
-            if key not in overrides and left_hookups(record.fields, mark, dia_keys):
+            if not fill_empty and key not in overrides and left_hookups(record.fields, mark, dia_keys):
                 report.moved_out_of_montage.append(mark)
             series = hookup_series(mark)
             if series is None:
@@ -541,6 +578,9 @@ def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime
                         report.refused.append({"key": size.mark,
                                                "reason": "в БД.ПРОВ есть строка с этой маркой другого размера"})
                         continue
+                    if fill_empty:
+                        report.refused.append({"key": size.mark, "reason": FILL_EMPTY_NO_ROW})
+                        continue
                     _create(series, size, gauge, by_id, uow, now, report)
                     continue
                 done: set[str] = set()
@@ -549,7 +589,7 @@ def import_hookups(uow: UnitOfWork, payload: object, actor: Actor, now: datetime
 
         if report.changed or report.hookups_created or report.hookups_updated:
             _audit("references.hookup_wires_imported", actor, now,
-                   {**report.counts(), "dry_run": dry_run, "source": source}, uow)
+                   {**report.counts(), "dry_run": dry_run, "source": source, "fill_empty": fill_empty}, uow)
             if not dry_run:
                 uow.commit()
     return report
@@ -568,7 +608,8 @@ def _update(record: TechOperationRecord, series: SeedSeries, size: SeedSize, gau
     if key not in done:  # twins of one mark share one structure
         done.add(key)
         stored = hookups.get(key)
-        wire = _hookup(mark, stored, parse_hookup(mark, record.fields, list(by_id.values())), gauge, series, size)
+        wire = _hookup(mark, stored, parse_hookup(mark, record.fields, list(by_id.values())), gauge, series, size,
+                       fill_empty=report.fill_empty)
         for name, label in _HOOKUP_LABELS:
             old = getattr(stored, name) if stored else None
             new_text = _value_text(getattr(wire, name), by_id)
@@ -581,7 +622,7 @@ def _update(record: TechOperationRecord, series: SeedSeries, size: SeedSize, gau
                 report.hookups_created += 1
             else:
                 report.hookups_updated += 1
-    cells = _cells(record.fields, series, size)
+    cells = _cells(record.fields, series, size, fill_empty=report.fill_empty)
     if cells:
         changes.update({name: [str(record.fields.get(name) or ""), value] for name, value in cells.items()})
         updated = replace(record, fields={**record.fields, **cells}, edited_in_erp=True)
@@ -699,7 +740,7 @@ class _TechTable:
     forms: Callable[[tuple[str, ...]], tuple[tuple[str, object], ...]]
     virtual: str = ""  # a key that is the record's display text, not a field (БД.ОБ «Для базы» = baseValue)
     cell: Callable[[str, Any], Any] = _cell  # a row value as stored (БД.ТЕР: units of the base, technologist's fields)
-    card_columns: tuple[str, ...] = ()  # sheet columns a load may bring before any row has them (БД.КОАКС card)
+    card_columns: tuple[str, ...] = ()  # sheet columns a load may bring before any row has them (КОАКС card, ТЕР L− note)
 
     @property
     def sheet_columns(self) -> bool:
@@ -732,9 +773,13 @@ COAX_CARD_COLUMNS = (
     "Наименование", "Ссылка", "Примечание", "Источник данных",
 )
 
+# БД.ТЕР columns a load may bring before any row has them: the note on where a terminal's L− came from (owner
+# 13.10.2026, «попробуй на первое время заполнить сам L-» — data/terminals/ter-lminus.json marks its estimates there).
+TER_CARD_COLUMNS = ("Источник L-",)
+
 TECH_TABLES: dict[str, _TechTable] = {
     "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms,
-                      cell=_ter_cell),
+                      cell=_ter_cell, card_columns=TER_CARD_COLUMNS),
     "coax": _TechTable(TechOperationTab.COAX, "БД.КОАКС — коаксиальные разъёмы", ("coaxArticle", "coaxWire"),
                        lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),),
                        card_columns=COAX_CARD_COLUMNS),

@@ -1,0 +1,9 @@
+.stock-link-dialog { width: min(640px, calc(100vw - 32px)); }
+.stock-link-dialog .stock-link-results { display: grid; max-height: 240px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.stock-link-dialog .stock-link-results button { text-align: left; border: 0; border-bottom: 1px solid var(--border); background: var(--card); padding: 6px 10px; font-size: 13px; cursor: pointer; }
+.stock-link-dialog .stock-link-results button:last-child { border-bottom: 0; }
+.stock-link-dialog .stock-link-results button:hover { background: var(--accent); }
+.stock-link-dialog .stock-link-results button[aria-pressed="true"] { background: var(--accent); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
+.stock-link-dialog .stock-link-done { display: grid; gap: 6px; }
+.stock-link-dialog .stock-link-changes { margin: 0; padding-left: 18px; font-size: 13px; }
+@media (pointer: coarse) { .stock-link-dialog .stock-link-results button { min-height: 40px; } }

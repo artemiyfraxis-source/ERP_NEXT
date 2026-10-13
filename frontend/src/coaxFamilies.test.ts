@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CableRow } from "./api";
-import { coaxFamily, coaxFamilyName, coaxNaming, compareFamilies, sortCoax } from "./coaxFamilies";
+import { coaxFamily, coaxFamilyName, coaxNaming, compareFamilies, coaxGroupOf, sortCoax } from "./coaxFamilies";
 
 const row = (cable: string, extra: Partial<CableRow> = {}): CableRow => ({
   id: cable, kind: "coax", auto_kind: "coax", reason: "", manual: false, cable, record: null, dia: null, dia_hint: null, ...extra,
@@ -32,6 +32,13 @@ describe("coax families", () => {
     const input = [row("LMR-195"), row("RG316"), row("RG-174"), row("RG-58 A/U"), row("RG-58 C/U")];
     expect(sortCoax(input).map((item) => item.cable)).toEqual(["RG-58 A/U", "RG-58 C/U", "RG-174", "RG316", "LMR-195"]);
     expect(input[0].cable).toBe("LMR-195");
+  });
+
+  it("gathers one-cable families into «Прочие семейства», keeps multi-row families and the unnamed apart", () => {
+    const rows = [row("RG-58 A/U"), row("RG-58 C/U"), row("RG-141"), row("RG-178"), row("LMR-195"), row("LMR-400"), row("SYV-50"), row("")];
+    const group = coaxGroupOf(rows);
+    expect(rows.map(group)).toEqual(["RG-58", "RG-58", "Прочие семейства", "Прочие семейства", "LMR", "LMR", "Прочие семейства", "Без семейства"]);
+    expect(sortCoax(rows).map((item) => item.cable)).toEqual(["RG-58 A/U", "RG-58 C/U", "LMR-195", "LMR-400", "RG-141", "RG-178", "SYV-50", ""]);
   });
 
   it("reads full name and aliases off the card", () => {

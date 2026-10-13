@@ -320,7 +320,7 @@ def available_lots(
     reserves of any of its КБ) count as available: `available` = ДОСТУПНО + `reserved` (the project's part), the same
     shape as /api/kitsets/lots."""
     with uow_factory() as uow:
-        lots = uow.warehouse.list(limit=5000, query=q, include_zero=False)
+        lots = uow.warehouse.filtered(query=q, include_zero=False)
         held = project_reserve_by_lot(uow, lots, project.strip())
     candidates = [
         lot for lot in lots
@@ -410,7 +410,7 @@ def positions_candidates(
 
 def _candidates(uow, project: str, positions: dict[tuple[str, str], str]) -> dict:
     """One pass over the stock for every (article, name) position: by the name, else by the КД article."""
-    lots = uow.warehouse.list(limit=5000, include_zero=False) if positions else []
+    lots = uow.warehouse.filtered(include_zero=False) if positions else []
     held = project_reserve_by_lot(uow, lots, project)
     free = [lot for lot in lots if free_for_project(lot, held) > 0]
     result = []

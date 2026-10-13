@@ -212,7 +212,7 @@ const CODED: RouteOp[] = [
 
 it("names the operations in Russian on the cards, keeps the card codes in the hint and marks a replaced card", () => {
   mount({ ops: CODED, finalName: "Кабель USB" });
-  expect(cards().map((card) => card.querySelector(".rc-title")?.textContent)).toEqual(["Нарезанные провода", "Сторона А собрана", "Готовый кабель"]);
+  expect(cards().map((card) => card.querySelector(".rc-title")?.textContent)).toEqual(["Нарезанные и обжатые провода", "Сторона А собрана", "Готовый кабель"]);
   // Коды карт на карточке не пишутся — только в подсказке операции.
   expect(canvas().textContent).not.toMatch(/CUT_WIRE|INS_terminal|TWIST/);
   expect(op(/Резка с обжимом/)).toHaveAttribute("title", expect.stringContaining("Карта CUT_WIRE+1crimp"));
@@ -255,4 +255,21 @@ it("offers «Вернуть порядок генератора» when the order
   expect(screen.getByText("свой порядок операций")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Вернуть порядок генератора" }));
   expect(onResetOrder).toHaveBeenCalled();
+});
+
+it("draws «Обжатые провода» between the cut wires and the sides with the wires and their terminals", () => {
+  const ops: RouteOp[] = [
+    { position: 1, key: "cutWire", type: "cutWire", code: "", label: "Резка — 2 кабеля", minutes: null },
+    { position: 2, key: "prsTermA1", type: "prsTerm", code: "", label: "Опрессовка терминалов А1", minutes: null, side: "A" },
+    { position: 3, key: "insTermA1", type: "insTerm", code: "", label: "Монтаж в разъём А1", minutes: null, side: "A" },
+    { position: 4, key: "prsTermB1", type: "prsTerm", code: "", label: "Опрессовка терминалов В1", minutes: null, side: "B" },
+    { position: 5, key: "insTermB1", type: "insTerm", code: "", label: "Монтаж в разъём В1", minutes: null, side: "B" },
+  ];
+  const wire = { key: "u1", label: "А1:1 → В1:1", title: "1 · НВ4 красный", color: "#d7322d", left: "cut" as const, right: "cut" as const };
+  mount({ ops, art: { wires: [wire], tubes: [], crimped: [{ ...wire, left: "terminal", right: "terminal" }], faces: { A: [], B: [] } } });
+  expect(cards().map((card) => card.querySelector(".rc-title")?.textContent)).toEqual(["Нарезанные провода", "Обжатые провода", "Сторона А собрана", "Готовый кабель"]);
+  const crimped = cards()[1];
+  expect([...crimped.querySelectorAll(".rc-op-name")].map((name) => name.textContent)).toEqual(["Опрессовка терминалов А1", "Опрессовка терминалов В1"]);
+  expect(crimped.querySelectorAll(".rc-wire svg")).toHaveLength(1);
+  expect(crimped).toHaveTextContent("А1:1 → В1:1");
 });

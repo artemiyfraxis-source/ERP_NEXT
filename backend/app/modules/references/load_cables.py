@@ -1,7 +1,7 @@
 """Структурная база кабелей: разбор монтажных проводов и карточки коаксиальных кабелей из файла.
 
     ERP_DATABASE_URL=... python -m app.modules.references.load_cables [--file путь] [--dry-run]
-    ERP_DATABASE_URL=... python -m app.modules.references.load_cables --hookups [--file путь] [--dry-run]
+    ERP_DATABASE_URL=... python -m app.modules.references.load_cables --hookups [--file путь] [--fill-empty] [--dry-run]
     ERP_DATABASE_URL=... python -m app.modules.references.load_cables --coax-vocabulary [--file путь] [--dry-run]
 
 Все шаги идемпотентны (сервер запускает их при каждом обновлении, `deploy/update.sh`):
@@ -27,7 +27,8 @@ weight_g_m)}]}. Одна запись — один кабель. КСВН в ф�
 `--hookups` — только база монтажных проводов из `backend/data/cables/hookup-wires.json` (`importers.import_hookups`,
 формат там же): недостающие сечения добавляются, размеры серий сопоставляются со строками БД.ПРОВ по серии и
 сечению, ячейки и структура обновляются на месте, недостающие размеры создаются; ничего не переименовывается и не
-удаляется. Запускается руками (в `deploy/update.sh` не входит); второй запуск ничего не меняет.
+удаляется. Запускается руками (в `deploy/update.sh` не входит); второй запуск ничего не меняет. `--fill-empty` —
+только пустые ячейки: заполненная не трогается, сечения и строки не создаются, шаг 3 не считается.
 
 `--coax-vocabulary` — один раз, руками (в `deploy/update.sh` не входит): ячейки «Тип провода», «Изоляция», «Экран»
 коаксиальных строк БД.ПРОВ получают слова словаря `backend/data/cables/coax-vocabulary.json` (записи «БД.ПРОВ» его
@@ -68,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
                                                                      f"{VOCABULARY_FILE.name} с --coax-vocabulary)")
     parser.add_argument("--dry-run", action="store_true", help="проверить и посчитать, ничего не записывая")
     parser.add_argument("--hookups", action="store_true", help="только база монтажных проводов из hookup-wires.json")
+    parser.add_argument("--fill-empty", action="store_true", help="с --hookups: писать только в пустые ячейки")
     parser.add_argument("--articles", type=Path, default=ARTICLES_FILE, help=f"полные названия и артикулы, по умолчанию {ARTICLES_FILE.name}")
     parser.add_argument("--coax-vocabulary", action="store_true",
                         help=f"один раз: ячейки коаксиальных строк БД.ПРОВ словами {VOCABULARY_FILE.name}")
@@ -83,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     mode = "проверка, ничего не записано" if args.dry_run else "записано"
     if args.hookups:
         try:
-            report = import_hookups(factory(), read_seed(args.file or HOOKUPS_FILE), ACTOR, now, dry_run=args.dry_run)
+            report = import_hookups(factory(), read_seed(args.file or HOOKUPS_FILE), ACTOR, now, dry_run=args.dry_run,
+                                    fill_empty=args.fill_empty)
         except (OSError, ValueError, ReferenceValidationError) as error:
             print(f"База монтажных проводов не загружена: {error}", file=sys.stderr)
             return 1
@@ -146,7 +149,7 @@ def hookup_summary(report: ImportReport, mode: str) -> str:
         return [title, *(f"     — {item}" for item in items)] if items else []
 
     lines = [
-        f"База монтажных проводов ({mode}):",
+        f"База монтажных проводов ({mode}{', только пустые ячейки' if report.fill_empty else ''}):",
         f"1. Сечения: в файле {report.gauges_in_file}, добавлено {len(report.gauges_added)}, "
         f"расходятся с таблицей {len(report.gauge_mismatches)} (не изменены)",
         *block("   добавлены:", report.gauges_added), *block("   расходятся:", report.gauge_mismatches),
@@ -157,6 +160,7 @@ def hookup_summary(report: ImportReport, mode: str) -> str:
         *block("   обновлены:", (f"{item['key']}: " + "; ".join(f"{name} «{old}» → «{new}»" for name, (old, new) in item["changes"].items())
                                  for item in report.updated)),
         *block("   отклонены:", (f"{item['key']}: {item['reason']}" for item in report.refused)),
+        "3. Ушли из монтажных в «прочие»: не считается — загрузка класс строк не меняет" if report.fill_empty else
         f"3. Ушли из монтажных в «прочие» (марка не из базы монтажных): {len(report.moved_out_of_montage)}",
         *block("   марки:", report.moved_out_of_montage),
     ]

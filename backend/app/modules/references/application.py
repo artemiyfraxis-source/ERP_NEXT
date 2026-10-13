@@ -25,7 +25,8 @@ from .equipment import (
     prepare_equipment,
 )
 from .technology import (
-    TECH_SNAPSHOT_SCHEMA_VERSION, schema_display_text, schema_keys, sync_schema_fields, terminal_card_problems,
+    TECH_SNAPSHOT_SCHEMA_VERSION, schema_columns, schema_display_text, schema_keys, stored_schema_keys, sync_schema_fields,
+    terminal_card_problems,
 )
 
 
@@ -249,8 +250,10 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     fields = dict(record.fields)
     display = record.display_text
     refused: list[str] = []
+    stored = stored_schema_keys(record.tab.value)
     for edit in edits:
-        known = edit.field in record.fields or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
+        known = (edit.field in record.fields or edit.field in stored
+                 or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS))
         if not known:
             refused.append(f"{edit.field}: поля нет в записи")
             continue
@@ -273,11 +276,15 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
         fields = prepare_equipment(fields, others, self_id=record.id, creating=False, previous=record.fields)
         if before_base == record.fields.get(BASE_KEY, "") and fields_base(fields) != fields.get(BASE_KEY):
             fields[BASE_KEY] = fields_base(fields)
-    # A sheet column edit also moves the schema value the generator reads (Название → opName).
+    # A sheet column edit also moves the schema value the generator reads (Название → opName); a schema value edited
+    # (the generator's «Записать в БД»: terLMinus) goes to its sheet column too, else the sync takes it back.
     edited = {edit.field for edit in edits}
+    for key, column in schema_columns(record.tab.value, record.fields).items():
+        if key in edited and column not in edited:
+            fields[column] = fields[key]
     synced = sync_schema_fields(record.tab.value, fields)
     keys = schema_keys(record.tab.value)
-    fields = {key: (synced[key] if key in keys and key not in edited else value) for key, value in synced.items()}
+    fields = {key: (fields[key] if key in keys and key in edited else value) for key, value in synced.items()}
     _check_terminal_card(record.tab, fields)
     display = schema_display_text(record.tab.value, fields) or display
     updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)

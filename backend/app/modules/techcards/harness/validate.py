@@ -17,6 +17,7 @@ only the references a write brings in are looked up, so a book edited later neve
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Iterable, Mapping
@@ -69,6 +70,10 @@ class _Check:
             self.fail(str(error))
             return None
         return number
+
+
+def _finite(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
 
 
 def _items(check: _Check, content: Mapping[str, Any], key: str) -> dict[str, Mapping[str, Any]]:
@@ -186,7 +191,8 @@ def _connectors(check: _Check, connectors: Mapping[str, Mapping[str, Any]]) -> d
 def _endpoint(check: _Check, wire_id: str, wire: Mapping[str, Any], key: str, side: str, *,
               contacts: Mapping[str, set[str] | None], junctions: Mapping[str, list[str]],
               screens: Mapping[str, list[str]], screen_rows: Mapping[str, Mapping[str, Any]]) -> None:
-    """One end of a wire: a contact of a connector, a splice that lists the wire, a screen the wire is not inside —
+    """One end of a wire: a contact of a connector, a splice that lists the wire, a screen the wire is not inside, an
+    open end with its point on the scheme (`{freeEnd: {x, y}, connectorId: "", contactId: ""}` — a splice tail) —
     or nothing at all (a free end, `{connectorId: "", contactId: ""}`)."""
     where = f"{_wire_label(wire_id, wire)}, конец {side}"
     if key not in wire:
@@ -198,6 +204,17 @@ def _endpoint(check: _Check, wire_id: str, wire: Mapping[str, Any], key: str, si
         return
     junction, screen = end.get("junctionId"), end.get("screenId")
     connector_id, contact_id = _text(end.get("connectorId")), _text(end.get("contactId"))
+    if "freeEnd" in end:
+        point = end.get("freeEnd")
+        if junction is not None or screen is not None or connector_id or contact_id:
+            check.fail(f"{where}: свободный конец не может стоять на контакте, сростке или экране")
+        elif not isinstance(point, Mapping) or not all(_finite(point.get(axis)) for axis in ("x", "y")):
+            check.fail(f"{where}: у свободного конца нет точки на схеме")
+        else:
+            other = wire.get("to" if key == "from" else "from")
+            if isinstance(other, Mapping) and "freeEnd" in other:
+                check.fail(f"{where}: у провода свободным может быть только один конец")
+        return
     if junction is not None and screen is not None:
         check.fail(f"{where}: конец не может быть и на сростке, и на экране")
         return

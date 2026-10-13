@@ -383,6 +383,16 @@ class SqlAlchemyShipmentRepository:
             AuditEventRow.aggregate_id == shipment_id, AuditEventRow.event_type == "shipping.created",
         ).order_by(AuditEventRow.occurred_at).limit(1))
         return dict(details) if isinstance(details, dict) else None
+    def packer(self, shipment_id: UUID) -> tuple[UUID, str] | None:
+        """Кто упаковал: последний, кто разложил по коробам («shipping.boxes_laid_out»), иначе кто сформировал
+        PL/DN («shipping.packed»). Имя — из карточки сотрудника на момент действия (actor_name журнала)."""
+        for event_type in ("shipping.boxes_laid_out", "shipping.packed"):
+            row = self.session.execute(select(AuditEventRow.actor_id, AuditEventRow.actor_name).where(
+                AuditEventRow.aggregate_id == shipment_id, AuditEventRow.event_type == event_type,
+            ).order_by(AuditEventRow.occurred_at.desc(), AuditEventRow.id.desc()).limit(1)).first()
+            if row is not None:
+                return row[0], row[1]
+        return None
     def reserve_number(self, day: date) -> str:
         stamp = day.strftime("%Y%m%d"); key = f"shipment-{stamp}"
         row = self.session.scalar(select(ShippingSequenceRow).where(ShippingSequenceRow.name == key).with_for_update())

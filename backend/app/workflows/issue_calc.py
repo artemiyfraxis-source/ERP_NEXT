@@ -149,7 +149,7 @@ def issue_calc_preview(
     if not calc.items:
         raise IssueCalcError("В расчёте не найдено позиций.")
     with fulfillment_uow() as uow:
-        lots = uow.warehouse.list(limit=5000, warehouse=warehouse, include_zero=False)
+        lots = uow.warehouse.filtered(warehouse=warehouse, include_zero=False)
         held = project_reserve_by_lot(uow, lots, calc.project)
         stock = [lot for lot in lots if free_for_project(lot, held) > 0]
     positions = [CalcPosition(item.name, calc_number(item.quantity), item.unit) for item in calc.items]

@@ -1,9 +1,15 @@
 """БД.ОБ cleanup: ПР → Оборудование, «.X» rows, БД.ОП references; the loader keeps them from coming back."""
 
+import json
 from datetime import datetime, timezone
+from uuid import uuid4
 
+import pytest
+from sqlalchemy import text
+
+from app.modules.references.domain import TechOperationRecord, TechOperationTab
 from app.modules.references.technology import sheet_snapshot_records
-from app.workflows.equipment_cleanup import format_plan, run
+from app.workflows.equipment_cleanup import build_plan, format_plan, main, run
 from tests.factories import Actor
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
@@ -63,3 +69,69 @@ def test_cleanup_plan_apply_and_idempotence(references_api):
     assert ops["ZZ"]["Машина"] == "T21(R)/Станция паяльная ЛАЗЕР"  # only a whole reference is re-pointed
 
     assert run(uow_factory(), actor, now, apply=True).empty
+
+    with uow_factory() as uow:
+        events = [(row[0], row[1] if isinstance(row[1], dict) else json.loads(row[1]))
+                  for row in uow.session.execute(text("select event_type, details from audit_events"))]
+    kinds = [kind for kind, _details in events]
+    assert kinds.count("references.equipment_retyped") == 1 and kinds.count("references.operation_repointed") == 1
+    assert kinds.count("references.equipment_removed") == 1 and kinds.count("references.equipment_cleanup") == 1
+    removed = next(details for kind, details in events if kind == "references.equipment_removed")
+    assert removed["inventory"] == "ОБ.071.X" and removed["fields"]["Артикул"] == "T21(R)"  # kept whole in the journal
+
+
+def _record(tab, display, **fields):
+    return TechOperationRecord(id=uuid4(), tab=tab, display_text=display, normalized_search="", source_sheet="",
+                               sort_key="", fields=dict(fields))
+
+
+def _ob(inv, article, name, kind="Оборудование", **extra):
+    return _record(TechOperationTab.EQUIPMENT, f"{article}/{name}", **{
+        "Тип": kind, "Инв. номер": inv, "Артикул": article, "Наменование": name, "Для базы": f"{article}/{name}", **extra})
+
+
+def _op(number, **cells):
+    return _record(TechOperationTab.OPERATION, number, **{"Номер": number, **cells})
+
+
+def test_reference_found_regardless_of_case_and_spaces():
+    unit, x = _ob("ОБ.071.1", "T21", "Станция"), _ob("ОБ.071.X", "T21(R)", "Станция")
+    plan = build_plan([unit, x], [_op("SDR", **{"Машина": "  t21(R) /  станция ;ОБ.071.X"})])
+    assert [after for *_rest, after in plan.repointed] == ["  T21/Станция ;ОБ.071.X"]
+    assert plan.deleted == [] and "операция SDR · Машина" in plan.kept[0][1]  # its inventory number is still named
+
+
+def test_x_row_named_by_a_matrix_is_kept_but_operations_still_move():
+    unit, x = _ob("ОБ.069.1", "КВТ", "Пресс"), _ob("ОБ.069.X", "КВТ(R)", "Пресс")
+    matrix = _ob("ОСН.001", "M1", "Матрица", "Матрицы", **{"Для инструмента": "ОБ.069.X"})
+    plan = build_plan([unit, x, matrix], [_op("CRM", **{"Машина": "КВТ(R)/Пресс"})])
+    assert len(plan.repointed) == 1 and plan.deleted == []
+    assert "матрица ОСН.001" in plan.kept[0][1]
+
+
+def test_x_row_alone_owning_a_crimp_code_or_linked_to_stock_is_kept():
+    unit = _ob("ОБ.070.1", "S", "Клещи", "Обжимной инструмент")
+    coded = _ob("ОБ.070.X", "S(R)", "Клещи", "Обжимной инструмент", **{"Код в базе терминалов": "S10"})
+    assert "код обжима S10" in build_plan([unit, coded], []).kept[0][1]
+    shared = _ob("ОБ.070.2", "S", "Клещи", "Обжимной инструмент", **{"Код в базе терминалов": "S10"})
+    assert build_plan([unit, shared, coded], []).deleted == [coded]
+    assert "привязок склада: 2" in build_plan([unit, coded, shared], [], {coded.id: 2}).kept[0][1]
+
+
+def test_kept_x_row_of_the_retired_type_is_retyped():
+    lonely = _ob("ОБ.099.X", "BZW(R)", "Стрипер", "Оборудование (ПР)")
+    plan = build_plan([lonely], [])
+    assert plan.retyped == [lonely] and plan.deleted == [] and not plan.empty
+
+
+def test_x_row_whose_text_is_the_model_text_is_deleted():
+    unit, x = _ob("ОБ.044.1", "BZW", "Стрипер"), _ob("ОБ.044.X", "BZW", "Стрипер")
+    plan = build_plan([unit, x], [_op("STR", **{"Машина": "BZW/Стрипер"})])
+    assert plan.deleted == [x] and plan.repointed == []
+
+
+def test_cli_modes(monkeypatch, capsys):
+    with pytest.raises(SystemExit):
+        main(["--dry-run", "--apply"])
+    monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
+    assert main(["--dry-run"]) == 2 and "ERP_DATABASE_URL" in capsys.readouterr().err

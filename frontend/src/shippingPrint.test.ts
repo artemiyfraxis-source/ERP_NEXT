@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ShippingForm } from "./api";
-import { buildShippingFormsHtml } from "./shippingPrint";
+import { buildBoxLabelsHtml, buildShippingFormsHtml, type BoxLabel } from "./shippingPrint";
 
 const pl: ShippingForm = {
   kind: "pl", title: "УПАКОВОЧНАЯ ВЕДОМОСТЬ",
@@ -43,5 +43,31 @@ describe("buildShippingFormsHtml", () => {
     expect(parse(html).querySelectorAll("section.form")).toHaveLength(2);
     expect(html).toContain("@page { size: A4 portrait");
     expect(html).toContain("Кабельная сборка &lt;SMA&gt;");
+  });
+});
+
+const label: BoxLabel = {
+  shipper: 'ООО "ЗЭП ФРАКСИС"', consignee: "АО <Получатель>", address: "Москва, ул. Складская, 1", project: "228К.20.2",
+  pl_number: "PL228К.20.2-2", place: "Упаковка 1/2", items: [{ item_index: "КБ1", quantity: "6", unit: "шт" }, { item_index: "КБ2", quantity: "2,5", unit: "м" }],
+  net: "11", dims: "32x25x21",
+};
+
+describe("buildBoxLabelsHtml", () => {
+  it("prints one A6 label per box: shipper, consignee, project and PL, place, KB contents, weight and dims", () => {
+    const html = buildBoxLabelsHtml([label, { ...label, place: "Упаковка 2/2", net: "", dims: "" }]);
+    const doc = parse(html);
+    const [first, second] = [...doc.querySelectorAll("section.label")];
+
+    expect(html).toContain("@page { size: A6 portrait");
+    expect(doc.title).toBe("Этикетки PL228К.20.2-2");
+    expect(first.querySelector(".shipper")?.textContent).toContain('ООО "ЗЭП ФРАКСИС"');
+    expect(first.querySelector(".consignee")?.textContent).toBe("АО <Получатель>");
+    expect(html).toContain("АО &lt;Получатель&gt;");
+    expect([...first.querySelectorAll(".refs strong")].map((cell) => cell.textContent)).toEqual(["228К.20.2", "PL228К.20.2-2"]);
+    expect(first.querySelector(".place")?.textContent).toBe("Упаковка 1/2");
+    expect([...first.querySelectorAll("tbody tr")].map((row) => [...row.children].map((cell) => cell.textContent))).toEqual([["КБ1", "6", "шт"], ["КБ2", "2,5", "м"]]);
+    expect([first.querySelector(".net")?.textContent, first.querySelector(".dims")?.textContent]).toEqual(["11", "32x25x21"]);
+    // Не измеренный короб — пустая строка под вес и габариты.
+    expect([second.querySelector(".net")?.textContent, second.querySelector(".dims")?.textContent]).toEqual(["", ""]);
   });
 });

@@ -11,7 +11,7 @@ import {
   type TechOperationRecord,
 } from "./api";
 import { CATEGORIES, CATEGORY_CELL, cableCategory, cableGroup, compareCables } from "./cableCategory";
-import { coaxFamily, coaxNaming, sortCoax } from "./coaxFamilies";
+import { coaxGroupOf, coaxNaming, sortCoax } from "./coaxFamilies";
 import { MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
@@ -84,6 +84,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
     const own = data.rows.filter((row) => row.kind === kind);
     return grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
   }, [data.rows, kind, grouped]);
+  const coaxGroup = useMemo(() => coaxGroupOf(rows), [rows]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
@@ -143,7 +144,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}
-      groupBy={grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxFamily : undefined}
+      groupBy={grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
       presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
       toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}

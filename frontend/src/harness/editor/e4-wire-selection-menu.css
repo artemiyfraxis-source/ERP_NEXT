@@ -64,3 +64,46 @@
 .harness-root .e4-wire-menu input:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 28%, transparent); outline-offset: 1px; }
 .harness-root .e4-wire-menu button:disabled,
 .harness-root .e4-wire-menu fieldset:disabled { opacity: .5; cursor: default; }
+
+/* ERP-вид меню проводов Э4 (13.10.2026): шрифт приложения, текст 12–13 px без капслока, кнопки 30 px, пояснения —
+   строкой внизу меню вместо «i». */
+.harness-root .e4-wire-menu { width: 300px; font-family: inherit; font-size: 13px; line-height: 1.4; }
+.harness-root .e4wm-header { min-height: 0; padding: 10px 8px 10px 12px; background: var(--card); }
+.harness-root .e4wm-header span { color: var(--muted-foreground); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.harness-root .e4wm-header strong { font-size: 14px; font-weight: 600; }
+.harness-root .e4wm-close { width: 30px; height: 30px; border-radius: 6px; }
+.harness-root .e4wm-close:hover { background: var(--accent); color: var(--foreground); }
+.harness-root .e4wm-section { padding: 10px 12px; gap: 8px; }
+.harness-root .e4wm-section legend { margin-bottom: 6px; color: var(--foreground); font-size: 13px; font-weight: 600; }
+.harness-root .e4wm-scope-hint,
+.harness-root .e4wm-hint,
+.harness-root .e4wm-feature-toggle small { color: var(--muted-foreground); font-size: 12px; }
+.harness-root .e4wm-crossing-options button,
+.harness-root .e4wm-variant-buttons button,
+.harness-root .e4wm-screen-side button { border-radius: 6px; color: var(--foreground); font-family: inherit; font-size: 12px; }
+.harness-root .e4wm-crossing-options button.active,
+.harness-root .e4wm-variant-buttons button.active,
+.harness-root .e4wm-screen-side button.active { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--sheet-selected); color: var(--primary); font-weight: 600; box-shadow: none; }
+.harness-root .e4wm-feature-toggle { color: var(--foreground); }
+.harness-root .e4wm-feature-toggle strong { font-size: 13px; font-weight: 600; }
+.harness-root .e4wm-feature-icon { border-radius: 6px; font-family: inherit; font-size: 16px; }
+.harness-root .e4wm-setting-label,
+.harness-root .e4wm-number-field,
+.harness-root .e4wm-screen-settings,
+.harness-root .e4wm-screen-side-label { color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.harness-root .e4wm-screen-settings .start,
+.harness-root .e4wm-screen-settings .end { font-size: 11px; font-weight: 400; }
+.harness-root .e4wm-screen-settings output { font-weight: 600; font-variant-numeric: tabular-nums; }
+.harness-root .e4wm-number-field input { height: 30px; border-radius: 6px; font-family: inherit; font-size: 13px; }
+.harness-root .e4wm-footer { display: grid; gap: 6px; padding: 10px 12px; }
+.harness-root .e4wm-footer button { min-height: 30px; border-radius: 6px; color: var(--foreground); font-family: inherit; font-size: 12.5px; font-weight: 500; }
+.harness-root .e4wm-footer button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); color: var(--foreground); }
+.harness-root .e4wm-footer button[aria-pressed="true"] { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--sheet-selected); color: var(--primary); }
+.harness-root .e4-wire-menu button:focus-visible,
+.harness-root .e4-wire-menu input:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+@media (pointer: coarse) {
+  .harness-root .e4wm-footer button,
+  .harness-root .e4wm-close,
+  .harness-root .e4wm-screen-side button,
+  .harness-root .e4wm-variant-buttons button { min-height: 40px; }
+}

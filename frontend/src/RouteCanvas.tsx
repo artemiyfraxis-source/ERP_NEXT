@@ -3,6 +3,7 @@ import { connectorFace, connectorFaceUnits } from "./connectorArt";
 import { renderWireSvg } from "./harness/wire-blank-artwork";
 import { ART_ROWS, CARD_KIND_LABEL, contentSize, fullHex, linkGeometry, type CardKind, type FaceThumb, type Rect, type Size, type TubeThumb, type WireThumb } from "./routeCards";
 import { formatPerUnit } from "./routeLogic";
+import "./RouteCanvas.css";
 
 /* Холст маршрута в стиле ERP: карточки полуфабрикатов (вид, название, «N комплектующих · шт · мин», рисунок), связи
    ортогональными линиями, на связи — число штук (только когда не 1) и «+» / «×». Один компонент у «Схемы
@@ -32,6 +33,27 @@ export type CanvasLink = {
 const ZOOM_MIN = 0.3, ZOOM_MAX = 1.6, ZOOM_STEP = 0.1;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const STEP = 8, BIG_STEP = 40;
+
+const TOOLS_GAP = 64; // свёрнутая метка связи (число штук или точка) не шире этого — соседние метки разведены не ближе
+
+/** Метки связей одного ряда стоят у своей середины, но не ближе TOOLS_GAP друг к другу: сдвигаются вправо и всей
+    группой влево, чтобы середина группы осталась на месте. */
+export function spreadLinkTools(points: Array<{ id: string; x: number; y: number }>): Map<string, number> {
+  const result = new Map(points.map((point) => [point.id, point.x]));
+  const rows: Array<typeof points> = [];
+  for (const point of [...points].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    const row = rows.find((items) => Math.abs(items[0].y - point.y) < 16);
+    if (row) row.push(point); else rows.push([point]);
+  }
+  for (const row of rows) {
+    row.sort((a, b) => a.x - b.x);
+    const placed: number[] = [];
+    row.forEach((point, index) => placed.push(index === 0 ? point.x : Math.max(point.x, placed[index - 1] + TOOLS_GAP)));
+    const shift = row.reduce((sum, point, index) => sum + placed[index] - point.x, 0) / row.length;
+    row.forEach((point, index) => result.set(point.id, Math.max(0, Math.round(placed[index] - shift))));
+  }
+  return result;
+}
 
 function isControl(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest("button, input, select, textarea, a, label");
@@ -143,6 +165,14 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
   }
 
   const interactive = !!(onSelect || onMove);
+  const toolLinks = links.filter((link) => {
+    const qty = link.qty != null && link.qty !== 1;
+    return byId.has(link.from) && byId.has(link.to) && (qty || onInsert || onRemoveLink);
+  });
+  const toolX = spreadLinkTools(toolLinks.map((link) => {
+    const { mid } = linkGeometry(byId.get(link.from)!, byId.get(link.to)!);
+    return { id: link.id, x: mid.x, y: mid.y };
+  }));
   return <div className="rc">
     {controls && <div className="rc-tools" role="toolbar" aria-label="Холст маршрута">
       {tools}
@@ -171,15 +201,17 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
               return <path key={link.id} className={active ? "rc-link is-active" : "rc-link"} d={linkGeometry(from, to).d} markerEnd="url(#rc-arrow)" />;
             })}
           </svg>
-          {links.map((link) => {
-            const from = byId.get(link.from), to = byId.get(link.to);
+          {toolLinks.map((link) => {
             const qty = link.qty != null && link.qty !== 1 ? link.qty : null;
-            if (!from || !to || (qty === null && !onInsert && !onRemoveLink)) return null;
-            const { mid } = linkGeometry(from, to);
-            return <div key={link.id} className="rc-link-tools" style={{ left: mid.x, top: mid.y }}>
+            const { mid } = linkGeometry(byId.get(link.from)!, byId.get(link.to)!);
+            // «+» и «×» раскрываются при наведении и фокусе на метке связи (Tab по кнопкам тоже раскрывает), число штук видно всегда.
+            return <div key={link.id} className="rc-link-tools" style={{ left: toolX.get(link.id) ?? mid.x, top: mid.y }}>
               {qty !== null && <span className="rc-qty" title={`Берёт ${formatPerUnit(qty)} шт на одну штуку`}>{formatPerUnit(qty)} шт</span>}
-              {onInsert && <button type="button" className="rc-link-btn" title="Вставить карточку" aria-label={`Вставить карточку: ${link.label}`} onClick={() => onInsert(link.id)}>+</button>}
-              {onRemoveLink && <button type="button" className="rc-link-btn is-danger" title="Удалить связь" aria-label={`Удалить связь: ${link.label}`} onClick={() => onRemoveLink(link.id)}>×</button>}
+              {qty === null && <span className="rc-link-dot" aria-hidden="true" />}
+              <span className="rc-link-btns">
+                {onInsert && <button type="button" className="rc-link-btn" title="Вставить карточку" aria-label={`Вставить карточку: ${link.label}`} onClick={() => onInsert(link.id)}>+</button>}
+                {onRemoveLink && <button type="button" className="rc-link-btn is-danger" title="Удалить связь" aria-label={`Удалить связь: ${link.label}`} onClick={() => onRemoveLink(link.id)}>×</button>}
+              </span>
             </div>;
           })}
           {shown.map((card) => <article key={card.id} data-card={card.id}

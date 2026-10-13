@@ -343,8 +343,11 @@ class SqlAlchemyWarehouseRepository:
         warehouse: str | None = None,
         include_zero: bool = False,
     ) -> list[StockLot]:
-        """Every lot under the same filters as `list`, no paging (the source of the group totals)."""
-        rows = self.session.scalars(select(StockLotRow).where(*self._filters(warehouse, include_zero)))
+        """Every lot under the same filters as `list`, no paging, in the same id order (the source of the group
+        totals and of the whole-stock reads that must not lose lots past a page)."""
+        rows = self.session.scalars(
+            select(StockLotRow).where(*self._filters(warehouse, include_zero)).order_by(StockLotRow.id)
+        )
         lots = [_domain(row) for row in rows]
         if str(query or "").strip():
             lots = [lot for lot in lots if self._matches(lot, query)]

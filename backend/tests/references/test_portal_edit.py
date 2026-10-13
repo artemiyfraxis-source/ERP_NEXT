@@ -139,3 +139,43 @@ def test_created_row_gets_schema_values_from_sheet_columns(references_api):
     assert response.status_code in (200, 201)
     assert response.json()["fields"]["obType"] == "Станок"
     assert response.json()["display_text"] == "EW-05F/Автомат"
+
+
+def test_generator_edit_of_a_terminal_schema_value_is_kept_and_reaches_its_sheet_column(references_api):
+    # «Записать в БД» of the generator writes terLPlus / terLMinus (owner 13.10.2026: «после записывания введённое число
+    # удаляется»): the record keeps the sheet columns L+ / L-, and the sync from them must not take the new value back.
+    record = _seed_record(references_api, tab="ter", fields={
+        "Артикул контакта (REEL)": "500798000", "Аппликатор": "S19", "L+": "", "L-": "", "Шаг разьема": "1,25",
+        "terArticle": "500798000", "terApplicator": "S19", "terLPlus": "", "terLMinus": "", "terStep": "1,25",
+    })
+    url = f"/api/references/tech-operations/{record['id']}"
+
+    response = references_api.patch(url, json={"edits": [
+        {"field": "terLPlus", "old": "", "value": "5"}, {"field": "terLMinus", "old": "", "value": "3,5"},
+    ]})
+    again = references_api.get("/api/references/tech-operations", params={"tab": "ter"}).json()["records"][0]["fields"]
+    # the next edit of another field (the sheet columns sync again) keeps them too
+    later = references_api.patch(url, json={"edits": [{"field": "terApplicator", "old": "S19", "value": "S19/A2"}]})
+
+    assert response.status_code == 200, response.text
+    fields = response.json()["fields"]
+    assert (fields["terLPlus"], fields["L+"], fields["terLMinus"], fields["L-"]) == ("5", "5", "3,5", "3,5")
+    assert (again["terLPlus"], again["terLMinus"]) == ("5", "3,5")
+    assert later.status_code == 200
+    assert (later.json()["fields"]["terLMinus"], later.json()["fields"]["Аппликатор"]) == ("3,5", "S19/A2")
+
+
+def test_generator_can_write_a_terminal_schema_value_the_record_never_had(references_api):
+    # A БД.ТЕР row added by hand before L− was asked for has no terLMinus at all: «Записать в БД» still writes it.
+    record = _seed_record(references_api, tab="ter", fields={"terArticle": "SSHL-002T-P0.2", "terLPlus": "5"})
+
+    response = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={
+        "edits": [{"field": "terLMinus", "old": "", "value": "10"}],
+    })
+    unknown = references_api.patch(f"/api/references/tech-operations/{record['id']}", json={
+        "edits": [{"field": "нет такого", "old": "", "value": "1"}],
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()["fields"]["terLMinus"] == "10"
+    assert unknown.status_code == 409
