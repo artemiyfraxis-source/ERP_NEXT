@@ -160,3 +160,110 @@ export function etkRouteLine(route: EtkRoute | null): string {
     return `${chip.number} ${chip.name}${meta ? ` (${meta})` : ""}`;
   }).join("; ")}`;
 }
+
+/* ── ПФ ЭТК (владелец + Василий 13.10): ЭТК режется на полуфабрикаты; ПФ — это блок схемы (`document.route`), не
+   отдельная сущность. Порядок `block.ops` — порядок работы внутри ПФ, номера операций ЭТК не меняются («05, 03» в одном
+   ПФ можно). Считается здесь из документа; сервер считает то же (`pf_documents` в techcards/domain/route.py). */
+
+export type EtkPfRow = { name?: string; art?: string; norm?: string; unit?: string };
+
+export interface EtkPfInput {
+  /** Номер ПФ-источника и его название. */
+  number: number;
+  name: string;
+  /** «×2» только когда на штуку нужно не одна штука. */
+  times: string;
+}
+
+export interface EtkPfGroup {
+  key: string;
+  /** ПФ-n: по порядку блоков схемы (по первому номеру операции). */
+  number: number;
+  name: string;
+  final: boolean;
+  /** Позиции операций ЭТК (1-based) в порядке работы. */
+  ops: number[];
+  /** Комплектующие всех операций ПФ, один артикул сложен. */
+  components: EtkPfRow[];
+  /** Полуфабрикаты из других ПФ (входящие стрелки). */
+  inputs: EtkPfInput[];
+  /** Что ПФ отдаёт дальше — результат его последней операции. */
+  output: EtkPfRow[];
+  /** Норма ПФ, мин на партию: Σ норм его операций. */
+  minutes: number;
+}
+
+export type EtkPfOperation = { components?: unknown; result?: unknown; time?: unknown; times?: unknown };
+type PfRoute = { blocks: Array<{ key: string; name: string; ops: number[]; final: boolean }>; edges: Array<{ from: string; to: string; per_unit: number }> };
+
+function rows(value: unknown): EtkPfRow[] {
+  return (Array.isArray(value) ? value : []).map(record).map((row) => ({
+    ...(row.name != null ? { name: String(row.name) } : {}), ...(row.art != null ? { art: String(row.art) } : {}),
+    ...(row.norm != null ? { norm: String(row.norm) } : {}), ...(row.unit != null ? { unit: String(row.unit) } : {}),
+  }));
+}
+
+/** Норма операции ЭТК, мин на партию (как `_operation_minutes` на сервере): Σ строк времени, без них — секунды карты. */
+export function operationMinutes(operation: EtkPfOperation | null | undefined, batch: number): number {
+  const time = (Array.isArray(operation?.time) ? operation.time : []).map(record);
+  if (time.length) return time.reduce((sum, row) => sum + num(row.norm), 0);
+  const times = record(operation?.times);
+  return (num(times.operation_seconds) * (batch > 0 ? batch : 1) + num(times.setup_seconds)) / 60;
+}
+
+/** Сложить строки одного артикула (без артикула — названия) и единицы; строка без числа остаётся своей. */
+function sumRows(list: EtkPfRow[]): EtkPfRow[] {
+  const result: EtkPfRow[] = [];
+  const index = new Map<string, EtkPfRow>();
+  for (const row of list) {
+    const id = (row.art || row.name || "").trim();
+    const value = Number(String(row.norm ?? "").replace(",", "."));
+    const counted = row.norm != null && row.norm !== "" && Number.isFinite(value);
+    const key = `${id}\u0000${(row.unit || "").trim()}`;
+    const same = id && counted ? index.get(key) : undefined;
+    if (same) {
+      same.norm = String(Math.round((num(same.norm) + value) * 10000) / 10000).replace(".", ",");
+      continue;
+    }
+    const copy = { ...row };
+    if (id && counted) index.set(key, copy);
+    result.push(copy);
+  }
+  return result;
+}
+
+/** ПФ документа: по блоку схемы на ПФ в порядке схемы, с входом (комплектующие и полуфабрикаты других ПФ), выходом
+ *  и нормой. Схема — сохранённая или правимая на экране (её блоки без итогов: норма считается по операциям). */
+export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[], batch = 1): EtkPfGroup[] {
+  if (!route) return [];
+  const first = (ops: number[]) => (ops.length ? Math.min(...ops) : Number.MAX_SAFE_INTEGER);
+  const blocks = [...route.blocks].sort((a, b) => first(a.ops) - first(b.ops) || a.key.localeCompare(b.key));
+  const number = new Map(blocks.map((block, index) => [block.key, index + 1]));
+  const byKey = new Map(blocks.map((block) => [block.key, block]));
+  return blocks.map((block): EtkPfGroup => {
+    const own = block.ops.map((position) => operations[position - 1]).filter((operation): operation is EtkPfOperation => !!operation);
+    const last = own[own.length - 1];
+    return {
+      key: block.key,
+      number: number.get(block.key) ?? 0,
+      name: block.name.trim(),
+      final: block.final,
+      ops: [...block.ops],
+      components: sumRows(own.flatMap((operation) => rows(operation.components))),
+      inputs: route.edges.filter((edge) => edge.to === block.key && byKey.has(edge.from))
+        .map((edge) => ({
+          number: number.get(edge.from) ?? 0,
+          name: byKey.get(edge.from)!.name.trim(),
+          times: edge.per_unit === 1 ? "" : `×${String(edge.per_unit).replace(".", ",")}`,
+        }))
+        .sort((a, b) => a.number - b.number),
+      output: last ? rows(last.result) : [],
+      minutes: own.reduce((sum, operation) => sum + operationMinutes(operation, batch), 0),
+    };
+  });
+}
+
+/** Номер операции ЭТК в списке: «01», «05». */
+export function opNumber(position: number): string {
+  return String(position).padStart(2, "0");
+}

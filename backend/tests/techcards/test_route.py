@@ -131,7 +131,8 @@ def test_hand_edited_scheme_groups_operations_into_blocks_and_rolls_up_per_unit(
 
     assert document["operations"] == plain["operations"] and document["topology"] == plain["topology"]
     assert route["source"] == "manual" and route["final"] == "B"
-    assert [(block["key"], block["ops"]) for block in route["blocks"]] == [("cut", [1]), ("A", [2, 3]), ("B", [4, 5])]
+    # A hand-made block keeps its order of work (ПФ, 13.10): «3, 2» stays «3, 2».
+    assert [(block["key"], block["ops"]) for block in route["blocks"]] == [("cut", [1]), ("A", [3, 2]), ("B", [4, 5])]
     by_key = blocks(route)
     assert by_key["cut"]["name"] == blocks(plain["route"])["b1"]["name"]
     assert by_key["A"]["name"] == "Сторона А" and by_key["B"]["name"] == config["assemblyName"]

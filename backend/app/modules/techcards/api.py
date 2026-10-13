@@ -41,6 +41,7 @@ from .application import (
     EditTechcardOperationCommand,
     RebuildProjectTechcardCommand,
     OperationLibraryEditedError,
+    SaveTechcardRouteCommand,
     ReplaceOperationLibraryCommand,
     UnitOfWork,
     create_project_techcard,
@@ -51,6 +52,7 @@ from .application import (
     issue_project_techcard,
     rebuild_project_techcard,
     replace_operation_library,
+    save_project_route,
 )
 
 from .domain.coax import КоаксСборка
@@ -128,6 +130,10 @@ class AutoBuildTechcardPayload(VersionPayload):
 
 class EditOperationPayload(VersionPayload):
     operation: dict[str, Any]
+
+
+class RoutePayload(VersionPayload):
+    route: dict[str, Any]
 
 
 class RecordStepPayload(BaseModel):
@@ -748,6 +754,27 @@ def edit_project_etk_operation(
         now=now,
         operation_key=operation_key,
         operation=payload.operation,
+    ), uow_factory()))
+    return etk.one(card)
+
+
+@router.put("/techcards/projects/{card_id}/route")
+def save_project_etk_route(
+    card_id: UUID,
+    payload: RoutePayload,
+    principal: Annotated[Principal, Depends(techcards_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    etk: Annotated[EtkCards, Depends(etk_cards)],
+) -> dict:
+    """«Сохранить ПФ»: операции ЭТК, разложенные технологом по полуфабрикатам (блоки схемы, порядок операций внутри
+    блока — порядок работы). Схема проверяется целиком (422 «Схема полуфабрикатов: …»); выданная ЭТК — новой ревизией."""
+    card = _run(lambda: save_project_route(SaveTechcardRouteCommand(
+        card_id=card_id,
+        expected_version=payload.version,
+        actor=principal.actor,
+        now=now,
+        route=payload.route,
     ), uow_factory()))
     return etk.one(card)
 

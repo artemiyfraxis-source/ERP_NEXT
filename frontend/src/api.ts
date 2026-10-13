@@ -3327,6 +3327,12 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify({ version, operation }),
     }),
+  /** «Сохранить ПФ»: операции ЭТК по полуфабрикатам (блоки схемы, порядок операций в блоке — порядок работы). */
+  saveRoute: (cardId: string, version: number, route: Record<string, unknown>) =>
+    api<ProjectTechcard>(`/api/techcards/projects/${cardId}/route`, {
+      method: "PUT",
+      body: JSON.stringify({ version, route }),
+    }),
   importGrapher: (filename: string, contentBase64: string, components: Array<{ id: string; article: string; name: string }> = [],
     sheet: GrapherSheetRow[] = []) =>
     api<GrapherImportResult>("/api/techcards/grapher/import", {
