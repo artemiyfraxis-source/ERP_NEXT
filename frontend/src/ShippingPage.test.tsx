@@ -52,7 +52,7 @@ function stub(shipments: unknown[] = [], goods: unknown[] = [good], addressees: 
     if (url === "/api/shipping/upd-files") return json({ shipment: { ...shipment, version: 2 } });
     if (url === "/api/shipping/project-addressees") return json({ addressees });
     if (url === "/api/production/finished-goods-ready") return json({ boxes: [] });
-    if (url.startsWith("/api/shipping/shipments/s1/print")) return json({ sheets: [{ title: "PL", subtitle: "", columns: ["#"], rows: [["КБ1"]], note: "", sign: "" }] });
+    if (url.startsWith("/api/shipping/shipments/s1/print")) return json({ forms: [{ kind: "pl", title: "УПАКОВОЧНАЯ ВЕДОМОСТЬ", head: [{ label: "Номер документа", value: "PL1", side: "" }], columns: ["GRN"], rows: [["КБ1"]], blank_rows: 0, sign_label: "Штамп / подпись кладовщика:", sign_name: "" }] });
     if (url === "/api/shipping/shipments/s1/ship") return json({ shipment, closed: true, why: "" });
     if (url === "/api/shipping/shipments/s2/unship") return json({ shipment: { ...shippedOne, status: "Упакована", shipped_at: null } });
     if (url === "/api/shipping/project-ship") return json({ shipment: { ...shipment, status: "Упакована" }, shipped: false, closed: false, why: "", replayed: false });
@@ -233,6 +233,7 @@ describe("ShippingPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Печать PL" }));
     await waitFor(() => expect(printed.print).toHaveBeenCalled());
+    expect(printed.html[0]).toContain("УПАКОВОЧНАЯ ВЕДОМОСТЬ");
     fireEvent.click(screen.getByRole("button", { name: "Отгрузить" }));
     expect(await screen.findByText("Отгружено и закрыто: ОТГ-20260922-01")).toBeInTheDocument();
     expect(sent("/api/shipping/shipments/s1/ship")).toEqual({ version: 3 });
