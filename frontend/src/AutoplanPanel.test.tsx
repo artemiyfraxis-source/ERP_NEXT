@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { AutoplanPanel } from "./AutoplanPanel";
 import type { AutoplanContext, AutoplanPreview, AutoplanProposal } from "./api";
+import type { SemiLeftover } from "./SemiLeftovers";
 
 const A = "10000000-0000-0000-0000-00000000000a";
 const B = "10000000-0000-0000-0000-00000000000b";
@@ -55,11 +56,20 @@ const context: AutoplanContext = {
   ],
 };
 
+// Остаток нарезки отменённого ПЗ-0007 того же изделия, что у нового задания 708К КБ2 (этап 1, CRIMP-1).
+let leftovers: SemiLeftover[] = [];
+const LEFTOVER: SemiLeftover = {
+  task_id: "70000000-0000-0000-0000-000000000007", task_number: "ПЗ-0007", task_status: "Отменено", project: "708К", item: "КБ2",
+  operation_id: "71000000-0000-0000-0000-000000000007", position: 1, code: "CRIMP-1", stage: "Опрессовка терминалов",
+  produced: "10", consumed: "4", in_boxes: "6", needed: "0", surplus: "6",
+  boxes: [{ id: "b1", number: "104233", status: "Подтверждена", available: "6" }],
+};
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); leftovers = []; });
 
 function mockApi(applyResponse: () => Response) {
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
@@ -70,6 +80,7 @@ function mockApi(applyResponse: () => Response) {
     if (path === "/api/production/autoplan/context") return json(context);
     if (path === "/api/production/autoplan/preview") return json(preview);
     if (path === "/api/production/autoplan/apply") return applyResponse();
+    if (path === "/api/production/leftovers") return json({ leftovers });
     throw new Error(`Unexpected request: ${path}`);
   });
   return calls;
@@ -220,4 +231,24 @@ it("orders projects by the production plan deadline when the plan has one", asyn
   expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
     "708К · ДЛ 07.10 · 1 новая КБ", "591K.3 · ДЛ 09.10 · 1 задание",
   ]);
+});
+
+it("shows semi-finished leftovers and hints «из остатков» on the operation that would make them again", async () => {
+  leftovers = [LEFTOVER];
+  mockApi(() => json({ applied: 0, tasks: [], created: [] }));
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} />);
+  expect(await screen.findByText(/Остатки полуфабрикатов · 1 позиция, 6 шт/)).toBeInTheDocument();
+  await openPreview();
+  const hints = screen.getAllByText(/из остатков/);
+  expect(hints).toHaveLength(1);
+  expect(hints[0]).toHaveTextContent("из остатков 6 шт · ПЗ-0007");
+  expect(hints[0].closest(".autoplan-row")).toHaveTextContent("708К КБ2");
+});
+
+it("says there are no leftovers and hints nothing", async () => {
+  mockApi(() => json({ applied: 0, tasks: [], created: [] }));
+  render(<AutoplanPanel close={() => undefined} onApplied={() => undefined} />);
+  expect(await screen.findByText("Остатков полуфабрикатов нет.")).toBeInTheDocument();
+  await openPreview();
+  expect(screen.queryByText(/из остатков/)).toBeNull();
 });
