@@ -32,6 +32,7 @@ import { DowntimeReport } from "./DowntimeReport";
 import { JobPanel } from "./JobPlan";
 import { AutoTextarea } from "./AutoTextarea";
 import { StatusChip } from "./StatusChip";
+import { BoxLabelPanel, BoxName, boxMatches, boxTitle } from "./BoxLabel";
 import { deadlineChips, feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf, taskItemLabel, windowText } from "./productionGraph";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
@@ -61,7 +62,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [viewAs, setViewAs] = useState("");
   // За кого сервер разрешил работать (id из ответа на его очередь): пока очередь не загрузилась — только просмотр.
   const [actFor, setActFor] = useState<string | null>(null);
-  const [shown, setShown] = useState<{ number: string; fixed: boolean } | null>(null);
+  const [shown, setShown] = useState<{ number: string; fixed: boolean; box?: ProductionBox } | null>(null);
   const [staff, setStaff] = useState<ProductionOperator[]>([]);
   const [staffSite, setStaffSite] = useState("");
   const canEdit = canAct(principal, "production");
@@ -169,10 +170,10 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
     {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
-    {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number) => setShown({ number, fixed: false })} />}
+    {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
     {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
-      onSubmitted={(number) => setShown({ number, fixed: false })} onCorrected={(number) => setShown({ number, fixed: true })} />}
-    {shown && <BoxNumberDialog number={shown.number} fixed={shown.fixed} close={() => setShown(null)} />}
+      onSubmitted={(number, box) => setShown({ number, box, fixed: false })} onCorrected={(number, box) => setShown({ number, box, fixed: true })} />}
+    {shown && <ShownBox shown={shown} boxes={execution.boxes} tasks={tasks} close={() => setShown(null)} />}
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
       task={selectedTask}
@@ -705,7 +706,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
   readOnly?: boolean;
   /** Работа за выбранного сотрудника: его id уходит с каждым действием, право проверяет сервер. */
   onBehalfOf?: string;
-  onSubmitted: (number: string) => void;
+  onSubmitted: (number: string, box?: ProductionBox) => void;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [starting, setStarting] = useState("");
@@ -770,7 +771,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
         <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span> · норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>
         {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
-        {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number) => { setSubmitting(false); onSubmitted(number); }} />}
+        {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => { setSubmitting(false); onSubmitted(number, box); }} />}
         {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
         {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
       </div>
@@ -856,7 +857,7 @@ function OperationEtk({ principal, task, operation }: { principal: Principal; ta
   return <div className="panel mo-etk">
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!error && !view && <div className="empty">Загрузка…</div>}
-    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} sketchSource={{
+    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} sketchSource={{
       list: () => productionApi.operationEtkSketches(task.id, operation.id),
       url: (key, at) => productionApi.operationEtkSketchUrl(task.id, operation.id, key, at),
     }} />}
@@ -877,7 +878,7 @@ function SubmitWorkForm({ session, operation, busy, mutate, onBehalfOf = "", onS
   operation: ProductionOperation | undefined;
   busy: boolean;
   onBehalfOf?: string;
-  onSubmitted: (number: string) => void;
+  onSubmitted: (number: string, box?: ProductionBox) => void;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [good, setGood] = useState("");
@@ -896,7 +897,7 @@ function SubmitWorkForm({ session, operation, busy, mutate, onBehalfOf = "", onS
     {Number(defect) > 0 && <><label>Характер брака<input aria-label="Характер брака" value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label className="defect-text">Описание брака<AutoTextarea aria-label="Описание брака" multiline value={defectDescription} onChange={setDefectDescription} /></label></>}
     <button className="primary" disabled={busy || !good || (Number(defect) > 0 && (!defectCharacter.trim() || !defectDescription.trim()))} onClick={() => void mutate(session.id, async () => {
       const result = await productionApi.submitWork(session.id, good, defect || "0", defectCharacter, defectDescription, { ...work, key: `${session.id}:submit` });
-      onSubmitted(result.box.number ?? "");
+      onSubmitted(result.box.number ?? "", result.box);
       setGood(""); setDefect("0"); setDefectCharacter(""); setDefectDescription("");
       return result;
     })}>Сдать</button>
@@ -913,8 +914,8 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   readOnly?: boolean;
   ownerName?: string;
   onBehalfOf?: string;
-  onSubmitted: (number: string) => void;
-  onCorrected: (number: string) => void;
+  onSubmitted: (number: string, box?: ProductionBox) => void;
+  onCorrected: (number: string, box?: ProductionBox) => void;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [correcting, setCorrecting] = useState("");
@@ -935,7 +936,7 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
     {execution.boxes.length > 0 && <div className="panel execution-boxes">
       <h2>{ownerName ? `Коробки: ${ownerName}` : "Мои коробки"}</h2>
       <div className="box-grid">{execution.boxes.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
-        <strong>{box.number ?? "Номер после закрытия"}</strong>
+        <BoxName box={box} />
         <span>{box.item} · этап {box.operation_position}</span>
         <span>{box.quantity} шт · доступно {box.available}</span>
         <StatusChip status={box.status} />
@@ -947,15 +948,17 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   </>;
 }
 
-// prodBoxShow_: номер новой коробки крупно — его переписывают на коробку от руки.
-function BoxNumberDialog({ number, fixed, close }: { number: string; fixed: boolean; close: () => void }) {
-  const title = fixed ? "Коробка исправлена" : "Напишите на коробке";
-  return <div className="panel kit-modal box-dialog" role="dialog" aria-label={title}>
-    <h3>{title}</h3>
-    <p>{fixed ? "Коробка снова ждёт подтверждения мастера." : "Коробка закрыта и ждёт подтверждения мастера. Без номера её не возьмут дальше."}</p>
-    <div className="box-no">{number}</div>
-    <button className="primary" onClick={close}>Записал</button>
-  </div>;
+// prodBoxShow_: после «Сдать» — код коробки крупно (его пишут маркером), свежая коробка из списка или из ответа сдачи.
+function ShownBox({ shown, boxes, tasks, close }: {
+  shown: { number: string; fixed: boolean; box?: ProductionBox };
+  boxes: ProductionBox[];
+  tasks: ProductionTask[];
+  close: () => void;
+}) {
+  const box = boxes.find((item) => item.id === shown.box?.id) ?? shown.box;
+  // В «Моих заданиях» одно задание приходит несколькими карточками (по операции на карточку) — ищем по всем.
+  const stage = box ? tasks.flatMap((task) => task.id === box.task_id ? task.operations : []).find((item) => item.id === box.operation_id)?.stage ?? "" : "";
+  return <BoxLabelPanel number={shown.number} box={box} stage={stage} fixed={shown.fixed} close={close} />;
 }
 
 // Correction replaces one output of a returned box (SUPPLYMAP `prodWorkFix_`); the box goes back to the master.
@@ -964,7 +967,7 @@ function BoxCorrection({ box, busy, mutate, onDone, onBehalfOf = "" }: {
   busy: boolean;
   onBehalfOf?: string;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-  onDone?: (number: string) => void;
+  onDone?: (number: string, box?: ProductionBox) => void;
 }) {
   const [outputs, setOutputs] = useState<ProductionOutput[]>([]);
   const [outputId, setOutputId] = useState("");
@@ -1000,7 +1003,7 @@ function BoxCorrection({ box, busy, mutate, onDone, onBehalfOf = "" }: {
         output_id: outputId, good_quantity: good, defect_quantity: defect || "0",
         defect_character: defectCharacter, defect_description: defectDescription,
       }, onBehalfOf);
-      onDone?.(result.box.number ?? box.number ?? "");
+      onDone?.(result.box.number ?? box.number ?? "", result.box);
       return result;
     })}>Записать исправление</button>
   </div>;
@@ -1030,8 +1033,8 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"));
   }, [task.id, operation.id, operation.position]);
   const [picked, setPicked] = useState<string[]>([]);
-  const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.quantity, stage: box.stage, position: box.operation_position }))
-    ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.available, stage: "", position: box.operation_position }));
+  const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code ?? null, quantity: box.quantity, stage: box.stage, position: box.operation_position }))
+    ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code, quantity: box.available, stage: "", position: box.operation_position }));
   const typed = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
   const inputs = [...picked, ...typed.filter((item) => !picked.includes(item))];
   const materialInputs = materials.flatMap((material) => {
@@ -1041,7 +1044,7 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
   const [manual, setManual] = useState(false);
   const wrongMaterial = materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0));
   const needBox = !first && !inputs.length;
-  const why = busy ? "Идёт сохранение" : needBox ? "Выберите коробку или введите её номер" : wrongMaterial ? "Количество больше доступного в партии" : "";
+  const why = busy ? "Идёт сохранение" : needBox ? "Выберите коробку или введите её код" : wrongMaterial ? "Количество больше доступного в партии" : "";
   return <div className="start-work sw-col">
     {error && <small className="danger-text">{error}</small>}
     {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
@@ -1049,10 +1052,10 @@ function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
       <div className="sw-title">Из каких коробок берёте детали <small>({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`})</small></div>
       {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
         onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
-        <b>{chip.number}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
+        <b>{boxTitle(chip)}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
       {chips.length > 0 && !manual && !typed.length
-        ? <button type="button" className="link-button sw-manual-toggle" onClick={() => setManual(true)}>Ввести номер вручную</button>
-        : <label className="sw-manual">Ввести номер вручную<textarea aria-label="Номера коробок" rows={2} placeholder="000001-8; несколько — через запятую" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>}
+        ? <button type="button" className="link-button sw-manual-toggle" onClick={() => setManual(true)}>Ввести код вручную</button>
+        : <label className="sw-manual">Ввести код вручную<textarea aria-label="Номера коробок" rows={2} placeholder="код с коробки или номер 000001-8; несколько — через запятую" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>}
     </>}
     <button className="primary sw-go" disabled={busy || needBox || wrongMaterial} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs, { onBehalfOf, key: key.current }))}>Начать работу</button>
     {why && <small className="sw-why">{why}</small>}
@@ -1067,15 +1070,19 @@ function BoxReview({ boxes, operators, busy, mutate }: {
 }) {
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [returning, setReturning] = useState<Record<string, boolean>>({});
+  const [query, setQuery] = useState("");
   const pending = boxes.filter((box) => box.status === "Закрыта оператором");
   if (!pending.length) return null;
+  const shown = pending.filter((box) => boxMatches(box, query));
   const confirmAll = () => mutate("confirm-all", async () => {
     for (const box of pending) await productionApi.boxAction(box.id, "confirm", box.version);
   });
   return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span>
+    {pending.length > 3 && <input className="search box-search" type="search" aria-label="Найти коробку по коду" placeholder="Код с коробки или номер" value={query} onChange={(event) => setQuery(event.target.value)} />}
     {pending.length > 1 && <button className="primary small" disabled={busy} onClick={() => void confirmAll()}>Подтвердить все</button>}</div>
-    <div className="box-grid">{pending.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
-      <strong>{box.number}</strong>
+    {!shown.length && <div className="empty">Нет коробки с кодом «{query}» — проверьте код на коробке.</div>}
+    <div className="box-grid">{shown.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
+      <BoxName box={box} />
       <span>{box.item} · этап {box.operation_position}</span>
       <span>{box.quantity} шт · {operators.find((operator) => operator.id === box.operator_id)?.name ?? box.operator_id}</span>
       <button className="primary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "confirm", box.version))}>Подтвердить</button>

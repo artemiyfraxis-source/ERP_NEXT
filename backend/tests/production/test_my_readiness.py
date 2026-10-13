@@ -244,3 +244,60 @@ def test_fitter_reads_sketches_of_his_issued_card_only_and_cannot_edit_techcards
     assert foreign.status_code == 404 and traversal.status_code == 404
     assert put.status_code == 403 and delete.status_code == 403 and direct.status_code == 403
     assert stranger_list.status_code == 403 and stranger_image.status_code == 403
+
+
+def test_fitter_with_only_tasks_right_reads_the_saved_harness_of_his_task(production_api):  # noqa: F811
+    from datetime import datetime
+
+    from app.modules.techcards.kitsets import KitAssembly, Kitset
+    from tests.techcards import grapher_fixture as fx
+
+    client, operator_id = production_api
+    factory = app.state.production_uow_factory
+    task = _launch(factory, operator_id, "harness-1", link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)}))
+    other = launch_production(LaunchProductionCommand(
+        idempotency_key="harness-2", project="591K.4", item="591K.4.КБ1", name="Чужой", quantity=3,
+        fulfillment_request_id=None, deadline=None,
+        operations=link_inputs((_op(1, "Нарезка"),), {}), actor=MASTER, now=NOW,
+    ), factory())
+    now = datetime(2026, 10, 6, 10, 0)
+    with app.state.techcards_uow_factory() as uow:
+        uow.kitsets.save(Kitset(project="591K.3", customer="Заказчик", calc_source="", updated_at=now, updated_by="Технолог",
+                                created_at=now, assemblies=(KitAssembly(index="КБ1", name="Жгут", run=Decimal("5")),)))
+        uow.commit()
+    fx.library(app.state.techcards_uow_factory)
+    master_principal = app.dependency_overrides[authenticated_principal]
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=uuid4(), name="Технолог", department="Производство"),
+        email="engineer@example.test", roles=frozenset({"engineer"}), permissions={"projects": "edit"},
+    )
+    saved = client.put("/api/techcards/kitsets/591K.3/harness/КБ1", json={"design": fx.design()})
+    assert saved.status_code == 200, saved.text
+    app.dependency_overrides[authenticated_principal] = master_principal
+
+    url = f"/api/production/my/tasks/{task.id}/harness"
+    master = client.get(url)
+    _as_operator(operator_id)
+    fitter = client.get(url)
+    direct = client.get("/api/techcards/kitsets/591K.3/harness/КБ1")
+    foreign = client.get(f"/api/production/my/tasks/{other.id}/harness")
+    missing = client.get(f"/api/production/my/tasks/{uuid4()}/harness")
+
+    assert master.status_code == 200 and fitter.status_code == 200, fitter.text
+    body = fitter.json()
+    assert body["design"] == saved.json()["design"] and body["revision"] == saved.json()["revision"]
+    assert set(body) == {"document", "design", "revision", "version", "warnings"}
+    assert direct.status_code == 403  # раздел «Проекты» монтажнику по-прежнему закрыт
+    assert foreign.status_code == 403
+    assert missing.status_code == 404
+
+
+def test_task_harness_without_a_saved_drawing_is_empty(production_api):  # noqa: F811
+    client, operator_id = production_api
+    task = _launch(app.state.production_uow_factory, operator_id, "harness-3", link_inputs((_op(1, "Нарезка"),), {}))
+    _as_operator(operator_id)
+
+    response = client.get(f"/api/production/my/tasks/{task.id}/harness")
+
+    assert response.status_code == 200
+    assert response.json() == {"document": None, "design": None, "revision": None, "version": None, "warnings": []}

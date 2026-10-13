@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item
+from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, saved_harness
 from app.workflows.etk_lots import IssuedKitLots
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
@@ -430,7 +430,7 @@ def _run(operation) -> dict:
 
 def _box_result(box: ProductionBox) -> dict:
     return {
-        "id": str(box.id), "number": box.number, "version": box.version,
+        "id": str(box.id), "number": box.number, "code": box.code, "version": box.version,
         "task_id": str(box.task_id), "operation_id": str(box.operation_id),
         "item": box.item, "operation_position": box.operation_position,
         "operator_id": str(box.operator_id), "quantity": _number(box.quantity),
@@ -626,7 +626,7 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
         found = [box for box in boxes if box.operation_id == edge.input_operation_id and box.status is BoxStatus.CONFIRMED and box.available > 0]
         if found:
             ready.extend({
-                "id": str(box.id), "number": box.number, "quantity": _number(box.available),
+                "id": str(box.id), "number": box.number, "code": box.code, "quantity": _number(box.available),
                 "operation_position": box.operation_position,
                 "stage": (stage_name(source.stage) if source else "") or f"этап {position}",
             } for box in sorted(found, key=lambda item: (item.created_at, item.number or "")))
@@ -802,6 +802,29 @@ def operation_etk(
     return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
 
 
+@router.get("/my/tasks/{task_id}/harness")
+def task_harness(
+    task_id: UUID,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """Сохранённый чертёж жгута позиции задания — только чтение, без истории версий; раздел «Проекты» монтажнику не
+    нужен. Монтажнику — задание, где он назначен на любую операцию; мастеру с правом «Производство» — любое."""
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        mine = any(principal.actor.id in operation.operator_ids for operation in task.operations)
+        if not mine and not section_allowed(principal, ("production",), "view"):
+            raise HTTPException(status_code=403, detail="Задание не назначено сотруднику")
+        project, item = task.project, task.item
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    with techcards_factory() as techcards:
+        return saved_harness(techcards, project, item)
+
+
 @router.get("/my/tasks/{task_id}/operations/{operation_id}/etk/sketches")
 def operation_etk_sketches(
     task_id: UUID,
@@ -889,9 +912,13 @@ def boxes(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     task_id: UUID | None = None,
+    q: str = "",
 ) -> dict:
+    """Коробки; q — поиск по коду с коробки (без учёта точек и пробелов) или по номеру."""
     with uow_factory() as uow:
-        rows = uow.boxes.list(task_id=task_id)
+        rows = uow.boxes.search(q) if q.strip() else uow.boxes.list(task_id=task_id)
+        if q.strip() and task_id is not None:
+            rows = [box for box in rows if box.task_id == task_id]
         result = [{**_box_result(box), "qc_inspected": uow.qc.by_box(box.id) is not None} for box in rows]
     return {"boxes": result}
 
@@ -1180,6 +1207,7 @@ def qc_rejections(
             rows.append({
                 "id": str(inspection.id), "box_id": str(inspection.box_id),
                 "box_number": box.number if box else None,
+                "box_code": box.code if box else None,
                 "item": box.item if box else "",
                 "inspected_at": inspection.inspected_at.isoformat(),
                 "rejected": inspection.rejected,

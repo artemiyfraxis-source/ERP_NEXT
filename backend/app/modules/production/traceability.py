@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 import re
@@ -62,6 +62,94 @@ def validate_box_number(number: str) -> str:
     if int(check) != box_check_digit(int(body)):
         raise ProductionValidationError("Номер коробки не прошёл проверку контрольной цифры")
     return f"{body}-{check}"
+
+
+# Код коробки для подписи маркером (владелец, 13.10.2026): проект·КБ·дата·код сотрудника·номер,
+# например «180К.11·КБ1·13.10·Б07·3». Номер — порядковый у этого сотрудника по этой КБ проекта за день.
+# Шестизначный номер с контрольной цифрой остаётся ключом учёта; код — то, что пишут на коробке и по чему ищут.
+BOX_CODE_SEPARATOR = "·"
+BOX_CODE_PROJECT_LIMIT = 20
+BOX_CODE_KB_LIMIT = 12
+_KB = re.compile(r"(?:КБ|KB)[\s.\-]*(\d+)", re.IGNORECASE)
+_CYRILLIC_INITIAL = re.compile(r"[А-ЯЁ]")
+# Латиница, похожая на кириллицу: «180K.11» и «180К.11» на коробке пишутся одинаково.
+_LOOKALIKE = str.maketrans("ABCEHKMOPTXY", "АВСЕНКМОРТХУ")
+
+
+def box_code_kb(project: str, item: str) -> str:
+    """КБ в коде: «КБ1» из «КБ1», «КБ-1», «591K.3.КБ1»; иное изделие — как есть, без пробелов и разделителя."""
+    clean = re.sub(r"\s+", "", str(item or "")).replace(BOX_CODE_SEPARATOR, ".")
+    match = _KB.search(clean)
+    if match is not None:
+        return f"КБ{int(match.group(1))}"
+    prefix = re.sub(r"\s+", "", str(project or ""))
+    if prefix and clean.casefold().startswith(f"{prefix}.".casefold()):
+        clean = clean[len(prefix) + 1:]
+    return clean[:BOX_CODE_KB_LIMIT] or "КБ"
+
+
+def box_code_prefix(project: str, item: str, day: date, operator_code: str) -> str:
+    """Код без порядкового номера: проект·КБ·дд.мм·код сотрудника."""
+    clean_project = re.sub(r"\s+", "", str(project or "")).replace(BOX_CODE_SEPARATOR, ".")
+    if not clean_project:
+        raise ProductionValidationError("У задания нет проекта — код коробки не составить")
+    worker = str(operator_code or "").strip()
+    if not worker:
+        raise ProductionValidationError("Нет кода сотрудника — код коробки не составить")
+    return BOX_CODE_SEPARATOR.join((
+        clean_project[:BOX_CODE_PROJECT_LIMIT], box_code_kb(project, item), day.strftime("%d.%m"), worker,
+    ))
+
+
+def box_code(prefix: str, sequence: int) -> str:
+    if sequence < 1:
+        raise ProductionValidationError("Порядковый номер коробки начинается с 1")
+    return f"{prefix}{BOX_CODE_SEPARATOR}{sequence}"
+
+
+def box_code_sequence(code: str, prefix: str) -> int | None:
+    """Порядковый номер коробки из её кода, если код начинается этим префиксом; иначе None."""
+    head = f"{prefix}{BOX_CODE_SEPARATOR}"
+    tail = str(code or "")
+    if not tail.startswith(head) or not tail[len(head):].isdigit():
+        return None
+    return int(tail[len(head):])
+
+
+def next_box_code(prefix: str, existing: Iterable[str]) -> str:
+    """Следующий код с этим префиксом: номер на единицу больше наибольшего уже выданного."""
+    taken = [number for number in (box_code_sequence(code, prefix) for code in existing) if number is not None]
+    return box_code(prefix, max(taken, default=0) + 1)
+
+
+def box_code_key(text: str) -> str:
+    """Ключ поиска по коду: без регистра, пробелов и разделителей, латиница-двойник — кириллицей.
+
+    «180к.11 кб1 13.10 б07 3», «180К11·КБ1·1310·Б07·3» и сам код дают один ключ."""
+    clean = str(text or "").upper().translate(_LOOKALIKE).replace("Ё", "Е")
+    clean = re.sub(r"[\s.·•,;:/_\-–—]+", "", clean)
+    return re.sub(r"КВ(?=\d)", "КБ", clean)  # «KB1» латиницей
+
+
+def operator_short_code(name: str, personnel_number: str | None, taken: Iterable[str]) -> str:
+    """Короткий код сотрудника для коробки: первая буква фамилии + табельный номер (если он из цифр и свободен),
+    иначе + наименьший свободный двузначный номер среди сотрудников: «Б07». Не буква — «С» (сотрудник)."""
+    surname = str(name or "").strip().upper().replace("Ё", "Е")
+    first = surname[:1]
+    initial = first if _CYRILLIC_INITIAL.fullmatch(first) else "С"
+    # «О» и «З» от руки читаются как 0 и 3 — к ним вторая буква фамилии: «Орлов» → «ОР07».
+    if initial in "ОЗ" and _CYRILLIC_INITIAL.fullmatch(surname[1:2] or "-"):
+        initial += surname[1]
+    busy = {str(code).upper() for code in taken}
+    personnel = re.sub(r"\s+", "", str(personnel_number or ""))
+    if personnel.isdigit() and len(personnel) <= 4:
+        candidate = f"{initial}{int(personnel):02d}"
+        if candidate not in busy:
+            return candidate
+    number = 1
+    while f"{initial}{number:02d}" in busy:
+        number += 1
+    return f"{initial}{number:02d}"
 
 
 class BoxStatus(str, Enum):
@@ -134,6 +222,7 @@ class ProductionBox:
     confirmed_at: datetime | None = None
     confirmed_by: str | None = None
     return_reason: str = ""
+    code: str | None = None  # код для подписи маркером (0119); у коробок до 0119 — None
 
     @property
     def available(self) -> Decimal:
@@ -171,10 +260,11 @@ class ProductionBox:
         good: Decimal,
         actor: str,
         now: datetime,
+        code: str | None = None,
     ) -> ProductionBox:
         """prodWorkSubmit_: one submission is one box, closed by the operator at once with the good pieces."""
         return cls(
-            id=uuid4(), number=validate_box_number(number), version=1, task_id=task_id,
+            id=uuid4(), number=validate_box_number(number), code=code, version=1, task_id=task_id,
             operation_id=operation_id, item=str(item).strip(),
             operation_position=operation_position, operator_id=operator_id,
             quantity=_quantity(good, "Количество годных", allow_zero=True),

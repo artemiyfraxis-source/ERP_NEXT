@@ -691,6 +691,8 @@ export interface ProductionOperation {
 export interface ProductionReadyBox {
   id: string;
   number: string | null;
+  /** Код с коробки «180К.11·КБ1·13.10·Б07·3»; null — коробка до 13.10.2026. */
+  code?: string | null;
   /** Доступно в коробке, шт. */
   quantity: string;
   operation_position: number;
@@ -955,6 +957,8 @@ export interface ProductionScheduleVariant {
 export interface ProductionBox {
   id: string;
   number: string | null;
+  /** Код для подписи маркером «180К.11·КБ1·13.10·Б07·3»; null — коробка до 13.10.2026. */
+  code: string | null;
   version: number;
   task_id: string;
   operation_id: string;
@@ -1069,6 +1073,7 @@ export interface ProductionQcRejection {
   id: string;
   box_id: string;
   box_number: string | null;
+  box_code?: string | null;
   item: string;
   inspected_at: string;
   rejected: number;
@@ -3066,6 +3071,8 @@ export const productionApi = {
     api<{ items: OperationSketch[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches`),
   operationEtkSketchUrl: (taskId: string, operationId: string, operationKey: string, at = "") =>
     `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
+  /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
+  taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string, operatorId = "") =>

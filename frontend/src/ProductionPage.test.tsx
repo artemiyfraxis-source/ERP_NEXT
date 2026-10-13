@@ -369,12 +369,12 @@ it("corrects one output of a returned box and shows that it waits for the master
       },
     },
   ]));
-  const dialog = await screen.findByRole("dialog", { name: "Коробка исправлена" });
+  const dialog = await screen.findByRole("dialog", { name: "Коробка исправлена — подпишите заново" });
   expect(dialog).toHaveTextContent("000002-6");
   expect(screen.queryByRole("button", { name: "Доложить" })).not.toBeInTheDocument();
 });
 
-it("starts a later stage by typed box numbers and shows the new box number to write on it", async () => {
+it("starts a later stage by typed box numbers and shows the new box code to write on it", async () => {
   const requests: Array<{ path: string; body: unknown }> = [];
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
@@ -396,7 +396,10 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
       requests.push({ path, body: JSON.parse(String(init.body)) });
       if (path.endsWith("/work/start")) { current = session; return json({ session }); }
       current = null;
-      return json({ session, box: { id: "74000000-0000-0000-0000-000000000009", number: "000007-5" }, output_id: "x", defect: null });
+      return json({ session, box: {
+        id: "74000000-0000-0000-0000-000000000009", number: "000007-5", code: "180К.11·КБ1·22.09·ОП01·3",
+        task_id: later.id, operation_id: later.operations[0].id, item: "КБ1", operation_position: 2, quantity: "5", closed_at: "2026-09-22T10:00:00+03:00",
+      }, output_id: "x", defect: null });
     }
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -409,10 +412,13 @@ it("starts a later stage by typed box numbers and shows the new box number to wr
   fireEvent.change(await screen.findByLabelText("Годные изделия"), { target: { value: "5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сдать" }));
 
-  const dialog = await screen.findByRole("dialog", { name: "Напишите на коробке" });
-  expect(dialog).toHaveTextContent("000007-5");
+  const dialog = await screen.findByRole("dialog", { name: "Подпишите коробку" });
+  expect(within(dialog).getByLabelText("Код коробки")).toHaveTextContent("180К.11·КБ1·22.09·ОП01·3");
+  expect(dialog).toHaveTextContent("В коробке 5 шт");
+  expect(dialog).toHaveTextContent("№ учёта 000007-5");
+  expect(within(dialog).getByRole("button", { name: "Печать этикетки" })).toBeEnabled();
   expect(requests[0].body).toEqual({ inputs: ["000001-8", "000002-6"], materials: [] });
-  fireEvent.click(screen.getByRole("button", { name: "Записал" }));
+  fireEvent.click(screen.getByRole("button", { name: "Подписал" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
@@ -648,7 +654,7 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
   expect(await screen.findByText(new RegExp(`${FEEDS}; подтверждённые мастером`))).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: /000001-8.*5 шт · этап 1/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /000002-6.*5 шт · этап 2/ })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Ввести номер вручную" }));
+  fireEvent.click(screen.getByRole("button", { name: "Ввести код вручную" }));
   expect(screen.getByLabelText("Номера коробок")).toBeInTheDocument();
   unmount();
 
@@ -847,7 +853,7 @@ it("starts by tapping ready box chips and keeps typed numbers as a fallback", as
   fireEvent.click(second);
   expect(second).toHaveAttribute("aria-pressed", "false");
   fireEvent.click(second);
-  fireEvent.click(screen.getByRole("button", { name: "Ввести номер вручную" }));
+  fireEvent.click(screen.getByRole("button", { name: "Ввести код вручную" }));
   fireEvent.change(screen.getByLabelText("Номера коробок"), { target: { value: "000099-4, 000011-1" } });
   fireEvent.click(screen.getByRole("button", { name: "Начать работу" }));
   await waitFor(() => expect(payload).toEqual({ inputs: ["000011-1", "000012-9", "000099-4"], materials: [] }));
@@ -886,11 +892,69 @@ it("opens the operation's ETK read-only on that operation through the production
   });
   const { container } = render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-  expect(nav.querySelector("button.on")).toHaveTextContent("Опрессовка терминалов");
+  // Только операция задания: без списка операций ЭТК слева и без «← Назад / Далее» к чужим операциям.
+  expect(await screen.findByRole("heading", { name: /Опрессовка терминалов/ })).toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "Маршрут ЭТК" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Разделка кабеля")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Назад|Далее/ })).not.toBeInTheDocument();
   expect(container.querySelector(".etk-sheet")).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Пересобрать/ })).not.toBeInTheDocument();
+});
+
+it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme as Э4 and remembers what this user opened", async () => {
+  window.localStorage.clear();
+  const etk = {
+    id: "80000000-0000-0000-0000-000000000001", version: 1, project: "591K.3", item_index: "КБ1", product_name: "Жгут",
+    source_calculation: "", deadline: null, status: "Выдана", revision: 1, manual_operation_keys: [],
+    created_at: "2026-09-20T09:00:00+03:00", updated_at: "2026-09-20T09:00:00+03:00", issued_at: "2026-09-20T09:00:00+03:00",
+    document: {
+      operations: [{ position: 2, code: "OP-02", title: "Опрессовка терминалов",
+        card: { name: "Опрессовка терминалов", safety: "Работать в очках", steps: [{ number: "1", kind: "Операция", text: "Обжать терминал" }] } }],
+      connections: [
+        { wire: "НВ4 0,2 белый", from: { end: "A1", conn: "DS1071", pin: 3 }, to: { end: "B1", conn: "XHP-4", pin: 2 } },
+        { wire: "НВ4 0,2 красный", from: { end: "A1", conn: "DS1071", pin: 1 }, to: { end: "B1", conn: "XHP-4", pin: 1 } },
+      ],
+    },
+  };
+  const seen: string[] = [];
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: [] }, { code: "OP-02" }), (path) => {
+    seen.push(path);
+    if (path.endsWith("/etk")) return json({ card: etk, focus: { position: 2, code: "OP-02" } });
+    // У монтажника нет раздела «Проекты»: чертёж КБ ему не читается — схема строится по ЭТК.
+    if (path.includes("/harness/")) return new Response(JSON.stringify({ detail: "Раздел «Проекты» вам не открыт." }), { status: 403, headers: { "Content-Type": "application/json" } });
+    if (path.includes("/api/techcards/projects/")) return json({ items: [] });
+    return null;
+  });
+  const first = render(<ProductionPage principal={fitter} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
+  const steps = await screen.findByRole("region", { name: "Ход операции" });
+  expect(steps.querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("Требование безопасности").closest("details")).not.toHaveAttribute("open");
+  const schema = screen.getByText("Схема Э4 и таблица соединений").closest("details")!;
+  expect(schema).not.toHaveAttribute("open");
+  // Схема строится только открытой: чертёж не запрошен, пока блок закрыт.
+  expect(seen.some((path) => path.includes("/harness/"))).toBe(false);
+
+  fireEvent.click(screen.getByText("Схема Э4 и таблица соединений"));
+  const map = await screen.findByRole("img", { name: /Схема Э4: A1, B1/ });
+  expect([...map.querySelectorAll("text.etk-wm-pintext")].map((pin) => pin.textContent)).toEqual(["1", "3", "1", "2"]);
+  expect(map.querySelector("text.etk-wm-wire")).toHaveTextContent("НВ4 0,2 красный"); // контакт 1 — первым
+  expect(screen.getByText("Таблица соединений · 2").closest("details")).not.toHaveAttribute("open");
+  expect(map.closest(".etk-e4")).toBeNull();
+
+  fireEvent.click(within(steps).getByText("Ход операции"));
+  await waitFor(() => expect(steps.querySelector("details")).toHaveAttribute("open"));
+  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Ход операции`)).toBe("1");
+  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:schema`)).toBe("1");
+  first.unmount();
+
+  render(<ProductionPage principal={fitter} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
+  expect((await screen.findByRole("region", { name: "Ход операции" })).querySelector("details")).toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
+  window.localStorage.clear();
 });
 
 it("loads the ETK sketches of the fitter's operation through the production endpoints, not the techcards ones", async () => {
@@ -940,11 +1004,11 @@ it("keeps «Начать» disabled with a reason until a box is chosen, then le
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
   const go = await screen.findByRole("button", { name: "Начать работу" });
   expect(go).toBeDisabled();
-  expect(screen.getByText("Выберите коробку или введите её номер")).toBeInTheDocument();
+  expect(screen.getByText("Выберите коробку или введите её код")).toBeInTheDocument();
   expect(screen.queryByLabelText("Номера коробок")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /000011-1/ }));
   expect(go).toBeEnabled();
-  expect(screen.queryByText("Выберите коробку или введите её номер")).not.toBeInTheDocument();
+  expect(screen.queryByText("Выберите коробку или введите её код")).not.toBeInTheDocument();
 });
 
 it("limits the «Годные» prefill by the taken input boxes", async () => {
