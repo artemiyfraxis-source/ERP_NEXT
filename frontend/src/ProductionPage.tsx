@@ -27,6 +27,8 @@ import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay, formatDayMonth, formatMoment } from "./format";
 import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
+import { DowntimeControl } from "./DowntimeControl";
+import { DowntimeReport } from "./DowntimeReport";
 import { JobPanel } from "./JobPlan";
 import { AutoTextarea } from "./AutoTextarea";
 import { StatusChip } from "./StatusChip";
@@ -46,6 +48,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [showAutoplan, setShowAutoplan] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
+  const [showDowntime, setShowDowntime] = useState(false);
   const [holidays, setHolidays] = useState<string[]>([]);
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
@@ -153,11 +156,12 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
           {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>}
-      {canEdit && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></div>}
+      {canOverview && !mine && <div className="page-actions"><button className="secondary" aria-pressed={showDowntime} onClick={() => setShowDowntime((value) => !value)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></>}</div>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {mine && viewAs && <div className={`view-strip${acting ? " acting" : ""}`} role="status"><span>{acting ? `Работаете за сотрудника ${viewedName}` : `Вид сотрудника ${viewedName} — только просмотр`}</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
+    {showDowntime && canOverview && !mine && <DowntimeReport close={() => setShowDowntime(false)} />}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
@@ -513,6 +517,7 @@ function TaskDetail({ task, project, initialOperationId = "", tasks, operators, 
         {!done && !cancelled && <div className="task-deadlines">{deadlineChips(project, task.deadline).map((chip) => <StatusChip key={chip.kind} tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>)}</div>}</div>
       <StatusChip status={task.status} />
     </div>
+    {!done && !cancelled && <DowntimeControl taskId={task.id} performerId="" wholeTask master={canEdit} readOnly={!canEdit} />}
     {canEdit && <div className="page-actions">
       {edit && !task.handed_to && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
       {edit && !task.handed_to && finalDone && <button className="primary small" disabled={Boolean(busy)} onClick={() => void mutate(`done:${task.id}`, () => productionApi.setDone(task.id, task.version, true))}>Отметить «Выполнено»</button>}
@@ -764,6 +769,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
         {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span> · норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>
+        {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
         {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number) => { setSubmitting(false); onSubmitted(number); }} />}
         {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
         {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
@@ -773,6 +779,8 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
   // Начатая — первой, невыполненное — по дням плана; выполненное свёрнуто ниже, чтобы «Начать» не искали под сделанным.
   const active = tasks.filter((task) => !isDone(task)).sort((left, right) => Number(isRunning(right)) - Number(isRunning(left)));
   const finished = tasks.filter(isDone);
+  // Простой — на задание: полоса с «Закончить простой» — на первой невыполненной карточке задания, на остальных — строка.
+  const firstOfTask = new Set(active.filter((task, index) => active.findIndex((other) => other.id === task.id) === index).map((task) => `${task.id}:${task.operations[0]?.id}`));
   const activeMark = { title: null as string | null };
   const finishedMark = { title: null as string | null };
   return <div className="my-queue">
