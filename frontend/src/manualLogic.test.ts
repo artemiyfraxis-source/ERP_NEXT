@@ -13,6 +13,7 @@ import {
   emptyManual,
   fillKdCards,
   genParams,
+  insertBlock,
   isEmptyManual,
   kdOpSpec,
   kdStale,
@@ -359,6 +360,21 @@ describe("manual assembly: editing on the diagram", () => {
     const result = addInput(state, "b1", "b3");
     expect(result.problem).toBeTruthy();
     expect(result.state).toBe(state);
+  });
+
+  it("«+» on a link puts a new empty block between its ends, keeping the link's count on the way out", () => {
+    let state = twoBranches(); // b2 «Провод» → b1, b3 «Трубка» → b1
+    state = setPerUnit(state, "b3", "b1", 4);
+    const inserted = insertBlock(state, "b3", "b1");
+    expect(inserted.blocks.at(-1)).toEqual({ key: "b4", name: "", final: false, ops: [] });
+    expect(inserted.edges).toEqual([
+      { from: "b2", to: "b1", per_unit: 1 }, { from: "b3", to: "b4", per_unit: 1 }, { from: "b4", to: "b1", per_unit: 4 },
+    ]);
+    expect(inserted.selected).toBe("b4");
+    expect(blockOrder(inserted)).toEqual(["b2", "b3", "b4", "b1"]);
+    // Операции не трогаются; связи нет — схема прежняя.
+    expect(order(inserted)).toEqual(order(state));
+    expect(insertBlock(state, "b2", "b3")).toBe(state);
   });
 });
 
