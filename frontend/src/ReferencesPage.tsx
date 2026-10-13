@@ -419,11 +419,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     })()}
 
     {techTab && <>
-      {canEdit && editing && <div className="panel db-edit">
+      {canEdit && editing && techTab !== "ob" && <div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${editingRecord?.display_text ?? ""}`}</h2></div>
-        {techTab === "ob"
-          ? <EquipmentForm values={editing.values} isNew={editing.id === null} records={tech.records} onChange={(values) => setEditing({ ...editing, values })} />
-          : <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />}
+        <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
       </div>}
       {techTab === "ob" ? <EquipmentCards
@@ -436,6 +434,12 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         onNotice={(message) => { setError(""); setNotice(message); }}
         onError={(message) => { setNotice(""); setError(message); }}
         focusId={focusTool}
+        onSelect={() => setEditing(null)}
+        editor={canEdit && editing ? <>
+          <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${editingRecord?.display_text ?? ""}`}</h2></div>
+          <EquipmentForm values={editing.values} isNew={editing.id === null} records={tech.records} onChange={(values) => setEditing({ ...editing, values })} />
+          <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
+        </> : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
       /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <DataTable
         key={techTab}

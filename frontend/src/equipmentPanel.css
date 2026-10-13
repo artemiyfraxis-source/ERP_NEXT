@@ -1,0 +1,5 @@
+/* Правка и новая запись БД.ОБ — в правой панели рядом со списком (раскладка .eq-split задана в styles.css). */
+.eq-editor .manual-stock-head { margin: 0; }
+.eq-editor .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.eq-editor .form-grid .half, .eq-editor .form-grid label.wide { grid-column: 1 / -1; }
+.eq-editor .form-actions { display: flex; gap: 8px; }
