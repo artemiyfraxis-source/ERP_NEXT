@@ -23,6 +23,7 @@ import {
 } from "./api";
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { EtkSheet } from "./ProjectEtk";
+import { PfCardBlocks, isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay, formatDayMonth, formatMoment } from "./format";
 import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
@@ -741,7 +742,8 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     const done = isDone(task);
     const late = Boolean(finishAt && finishAt < now && !done);
     const key = `${task.id}:${operation.id}`;
-    const stage = operation.stage || `Этап ${operation.position}`;
+    const pf = isPfOperation(operation);
+    const stage = operationName(operation);
     const state = cardState(operation, running, done, now);
     const fact = operation.time_fact;
     const work = { onBehalfOf };
@@ -750,7 +752,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
         <div className="mo-h">
-          <div className="mo-name"><b>{stage}</b>{operation.code && <small className="op-code">{operation.code}</small>}</div>
+          <div className="mo-name"><b>{stage}</b>{pf ? <small className="op-code">{pfOpsText(operation)}</small> : operation.code && <small className="op-code">{operation.code}</small>}</div>
           <div className="mo-side">
             {state && <span className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
             {!readOnly && running && <>
@@ -760,13 +762,14 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
               <button className={paused ? "secondary" : "primary"} aria-expanded={submitting} onClick={() => setSubmitting((value) => !value)}>Сдать…</button>
             </>}
             {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдайте начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
-            <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>ЭТК</button>
+            <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>{pf ? "Инструкция" : "ЭТК"}</button>
           </div>
         </div>
-        <div className="mo-s">{task.number} · этап {operation.position} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>ваши {share.quantity} шт</b></> : null}</div>
-        {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
+        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>ваши {share.quantity} шт</b></> : null}</div>
+        {operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
         <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span> · норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
         <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>
+        {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
         {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
         {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => { setSubmitting(false); onSubmitted(number, box); }} />}
         {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}

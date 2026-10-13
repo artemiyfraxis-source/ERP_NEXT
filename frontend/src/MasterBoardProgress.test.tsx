@@ -136,3 +136,17 @@ describe("экран мастера: сроки и доска монтажник
     expect(legend.textContent).not.toContain("/7");
   });
 });
+
+describe("экран мастера: операция по ПФ", () => {
+  it("показывает ПФ и номера его операций, обычная операция как раньше", () => {
+    const pf = op({ id: "p1", position: 3, stage: "Опрессовка", code: "OP-5", etk_ops: [{ position: 5, code: "OP-5", stage: "Зачистка" }, { position: 6, code: "OP-6", stage: "Опрессовка" }] });
+    const plain = op({ id: "p2", position: 4, stage: "Пайка", code: "SOL-1" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [], statuses: [] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    render(<MasterBoard tasks={[task("9", "PFP", [pf, plain])]} operators={[]} skills={[]} absences={[]} canEdit={false} busy="" mutate={async () => {}} openTask={() => {}} />);
+    fireEvent.click(screen.getByText("PFP"));
+    expect(screen.getByText("ПФ-3 · Опрессовка")).toBeInTheDocument();
+    expect(screen.getByText("оп. 05·06")).toBeInTheDocument();
+    expect(screen.getByText("Пайка")).toBeInTheDocument();
+    expect(screen.getByText("SOL-1")).toBeInTheDocument();
+  });
+});

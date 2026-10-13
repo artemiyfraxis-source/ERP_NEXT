@@ -646,9 +646,9 @@ def assign_share(command: AssignShareCommand, uow: UnitOfWork) -> tuple[Producti
         touched = {task.id}
         lines = _save_moves(uow, tasks, touched, moves, command.actor, now, "share_assigned")
         warnings: list[str] = []
-        check = skill_of(skills, operation.code, command.operator_id)
+        check = skill_of(skills, operation.skill_codes, command.operator_id)
         if not check.allowed:
-            warnings.append(f"{names[command.operator_id]}: нет допуска к операции {operation.code}")
+            warnings.append(f"{names[command.operator_id]}: нет допуска к операции {', '.join(operation.skill_codes)}")
         if split.dropped:
             everyone = {item.id: item.name for item in uow.operators.list()}
             gone = ", ".join(everyone.get(value, "?") for value in split.dropped)
@@ -828,7 +828,7 @@ def _record_fact(
             if finished:
                 window = (min(before[0], now), now)
             else:
-                rate = sum((skill_of(skills, operation.code, value).coefficient for value in people), Decimal(0))
+                rate = sum((skill_of(skills, operation.skill_codes, value).coefficient for value in people), Decimal(0))
                 units = task.operation_units(operation.id, Decimal(target) - done)
                 rest = ceil(operation.seconds_per_unit * units / (rate if rate > 0 else Decimal(1)))
                 begin = next_working_moment(now, calendar.holidays, calendar.shift)
@@ -1301,10 +1301,10 @@ def _flow_people(task: ProductionTask, operation: ProductionOperation, skills) -
     с допуском (этапы идут по очереди), иначе один человек."""
     people = operation.operator_ids
     if not people and task.flow_mode is FlowMode.SEQUENTIAL and task.team:
-        people = tuple(value for value in task.team if skill_of(skills, operation.code, value).allowed)
+        people = tuple(value for value in task.team if skill_of(skills, operation.skill_codes, value).allowed)
     if not people:
         return Decimal(1)
-    return sum((skill_of(skills, operation.code, value).coefficient for value in people), Decimal(0)) or Decimal(1)
+    return sum((skill_of(skills, operation.skill_codes, value).coefficient for value in people), Decimal(0)) or Decimal(1)
 
 
 def flow_view(task_id: UUID, uow: UnitOfWork, now: datetime) -> FlowView:

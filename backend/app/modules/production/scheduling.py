@@ -145,28 +145,40 @@ def _skill(
     return skills.get(operation_code, {}).get(operator_id)
 
 
+def _codes(operation_code: str | tuple[str, ...]) -> tuple[str, ...]:
+    """Один код операции или коды ПФ (ProductionOperation.skill_codes)."""
+    return (operation_code,) if isinstance(operation_code, str) else (tuple(operation_code) or ("",))
+
+
 def _allowed(
     skills: dict[str, dict[UUID, OperatorSkill]],
-    operation_code: str,
+    operation_code: str | tuple[str, ...],
     operator_id: UUID,
 ) -> bool:
     # prodSkillOf_: while no row exists for the operation code the matrix is not filled yet and
     # admission is not checked; once one row exists, an operator without an allowed row is not admitted.
-    by_code = skills.get(operation_code)
-    if not by_code:
-        return True
-    skill = by_code.get(operator_id)
-    return skill is not None and skill.allowed
+    # A ПФ needs admission to every code of its operations.
+    for code in _codes(operation_code):
+        by_code = skills.get(code)
+        if not by_code:
+            continue
+        skill = by_code.get(operator_id)
+        if skill is None or not skill.allowed:
+            return False
+    return True
 
 
 def _rate(
     skills: dict[str, dict[UUID, OperatorSkill]],
-    operation_code: str,
+    operation_code: str | tuple[str, ...],
     operator_ids: tuple[UUID, ...],
 ) -> Decimal:
+    # A ПФ goes at the fitter's lowest coefficient among its codes.
     return sum(
-        (_skill(skills, operation_code, operator_id).coefficient
-         if _skill(skills, operation_code, operator_id) is not None else Decimal(1))
+        min(
+            (_skill(skills, code, operator_id).coefficient if _skill(skills, code, operator_id) is not None else Decimal(1))
+            for code in _codes(operation_code)
+        )
         for operator_id in operator_ids
     )
 
@@ -297,7 +309,7 @@ def schedule_task(
                 operation.id, operation.position, operation.operator_ids,
                 operation.planned_start, operation.planned_finish, False,
             )
-            current_rate = _rate(skills, operation.code, placed.operator_ids)
+            current_rate = _rate(skills, operation.skill_codes, placed.operator_ids)
             for source, needed in ready(operation, current_rate):
                 if placed.start < needed:
                     warnings.append(
@@ -307,7 +319,7 @@ def schedule_task(
         else:
             candidates = tuple(
                 operator_id for operator_id in team
-                if _allowed(skills, operation.code, operator_id)
+                if _allowed(skills, operation.skill_codes, operator_id)
             )
             if not candidates:
                 raise ProductionValidationError(
@@ -316,7 +328,7 @@ def schedule_task(
                 )
 
             def fit(crew: tuple[UUID, ...]) -> ScheduledOperation:
-                rate = _rate(skills, operation.code, crew)
+                rate = _rate(skills, operation.skill_codes, crew)
                 earliest = max([now, *(needed for _, needed in ready(operation, rate))])
                 plan = plan_operation(
                     operation=operation, quantity=task.operation_units(operation.id), operator_ids=crew,
@@ -339,7 +351,7 @@ def schedule_task(
                 if not improving:
                     break
                 placed = min(improving, key=lambda item: (item.finish, item.start))
-            current_rate = _rate(skills, operation.code, placed.operator_ids)
+            current_rate = _rate(skills, operation.skill_codes, placed.operator_ids)
             for operator_id in placed.operator_ids:
                 occupied.setdefault(operator_id, []).append(BusyInterval(
                     f"{task.number} · этап {operation.position}", placed.start, placed.finish,

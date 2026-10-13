@@ -58,7 +58,7 @@ from .domain import FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, Pr
 from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
     item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, ready_cards,
-    route_from_document, stage_name,
+    route_from_document, semifinished_steps, stage_name,
 )
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
@@ -377,6 +377,11 @@ def _result(task: ProductionTask, facts: dict | None = None, delivered: int | No
                 "transfer_batch": _number(item.transfer_batch) if item.transfer_batch is not None else None,
             } for item in operation.inputs],
             "final": operation.id == final_id,
+            # Задание по ПФ (13.10): операции ЭТК этого полуфабриката по порядку; пусто — операция задания и есть
+            # одна операция ЭТК (номер ЭТК = position).
+            "etk_ops": [{
+                "position": item.position, "code": operation_code(item.code), "stage": stage_name(item.stage),
+            } for item in operation.etk_ops],
             # Доли по людям: штуки (None — вся операция бригадой), своё окно, факт «взял»/«закончил».
             "shares": [{
                 "operator_id": str(share.operator_id), "quantity": share.quantity,
@@ -807,7 +812,12 @@ def operation_etk(
         result = card_views(techcards, [card], issued=issued_lots)[0] if card is not None else None
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
-    return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
+    # position — операция ЭТК, на которой открыть карту (у ПФ — его первая); positions — все операции ЭТК этой
+    # операции задания по порядку ПФ (без ПФ — одна).
+    positions = list(operation.etk_positions)
+    return {"card": result, "focus": {
+        "position": positions[0], "positions": positions, "code": operation_code(operation.code),
+    }}
 
 
 @router.get("/my/tasks/{task_id}/harness")
@@ -1679,6 +1689,19 @@ def refresh_task_norms(
     if card is None or card.status is not TechcardStatus.ISSUED:
         raise HTTPException(status_code=422, detail=f"Техкарта «{task.project} {task.item}» не выдана — нормы брать неоткуда")
     steps = launch_route(card.document).steps
+    if any(operation.etk_ops for operation in task.operations):
+        # Задание по ПФ: нормы ПФ — суммы его операций; состав ПФ (операции ЭТК и их коды) должен быть прежним.
+        try:
+            steps = semifinished_steps(steps)
+        except ProductionValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        fresh ={step.position: [(item.position, item.code) for item in step.etk_ops] for step in steps}
+        own = {operation.position: [(item.position, item.code) for item in operation.etk_ops] for operation in task.operations}
+        if fresh != own:
+            raise HTTPException(status_code=422, detail=(
+                "Полуфабрикаты техкарты изменились (другой состав ПФ или коды операций) — нормы не обновлены. "
+                "Запустите новое задание по выданной техкарте"
+            ))
     norms = {step.position: (step.code, step.seconds_per_unit, step.setup_seconds) for step in steps}
     return _run(lambda: refresh_norms(RefreshNormsCommand(
         task_id=task_id, expected_version=payload.version, techcard_id=card.id, revision=card.revision,

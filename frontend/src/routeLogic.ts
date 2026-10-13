@@ -41,10 +41,12 @@ export function parsePositive(text: string): number | null {
   return text.trim() !== "" && Number.isFinite(number) && number > 0 ? number : null;
 }
 
-function ordered(route: Route): Route {
+/** Блоки — по первому номеру операции, стрелки — по блокам. `keep` — порядок операций внутри блока ручной (ПФ ЭТК,
+    13.10: порядок `block.ops` и есть порядок работы, «05, 03» в одном ПФ можно); без него операции идут по возрастанию. */
+function ordered(route: Route, keep = false): Route {
   const first = (block: RouteBlock) => (block.ops.length ? Math.min(...block.ops) : 0);
   const blocks = route.blocks
-    .map((block) => ({ ...block, ops: [...block.ops].sort((a, b) => a - b) }))
+    .map((block) => ({ ...block, ops: keep ? [...block.ops] : [...block.ops].sort((a, b) => a - b) }))
     .sort((a, b) => first(a) - first(b) || a.key.localeCompare(b.key));
   const order = new Map(blocks.map((block, index) => [block.key, index]));
   const edges = [...route.edges].sort((a, b) => (order.get(a.from) ?? -1) - (order.get(b.from) ?? -1)
@@ -87,8 +89,8 @@ export function parseRoute(raw: unknown): Route | null {
 }
 
 /** Тело `build_config.route`: имя только если его правили руками (пустое сервер берёт из результата последней операции). */
-export function routePayload(route: Route): Record<string, unknown> {
-  const sorted = ordered(route);
+export function routePayload(route: Route, keep = false): Record<string, unknown> {
+  const sorted = ordered(route, keep);
   return {
     blocks: sorted.blocks.map((block) => ({
       key: block.key,
@@ -340,15 +342,17 @@ function sumEdges(edges: RouteEdge[]): RouteEdge[] {
 
 /** Склеить соседние блоки: операции вместе, остаётся ключ, название и «итоговость» нижнего (того, что берёт полуфабрикат);
     стрелки обоих переходят к склеенному, общие складываются. */
-export function mergeBlocks(route: Route, upstream: string, downstream: string): Route {
+export function mergeBlocks(route: Route, upstream: string, downstream: string, keep = false): Route {
   const up = route.blocks.find((block) => block.key === upstream);
   const down = route.blocks.find((block) => block.key === downstream);
-  if (!up || !down) return route;
-  const merged: RouteBlock = { key: down.key, name: down.name, ops: [...up.ops, ...down.ops].sort((a, b) => a - b), final: down.final, components: [...up.components, ...down.components] };
+  if (!up || !down || up === down) return route;
+  const ops = [...up.ops, ...down.ops];
+  const merged: RouteBlock = { key: down.key, name: down.name, ops: keep ? ops : ops.sort((a, b) => a - b), final: down.final || (keep && up.final), components: [...up.components, ...down.components] };
   const edges = route.edges
     .filter((edge) => !(edge.from === upstream && edge.to === downstream))
-    .map((edge) => ({ ...edge, from: edge.from === upstream ? downstream : edge.from, to: edge.to === upstream ? downstream : edge.to }));
-  return ordered({ blocks: route.blocks.filter((block) => block.key !== upstream && block.key !== down.key).concat(merged), edges: sumEdges(edges) });
+    .map((edge) => ({ ...edge, from: edge.from === upstream ? downstream : edge.from, to: edge.to === upstream ? downstream : edge.to }))
+    .filter((edge) => edge.from !== edge.to);
+  return ordered({ blocks: route.blocks.filter((block) => block.key !== upstream && block.key !== down.key).concat(merged), edges: sumEdges(edges) }, keep);
 }
 
 function freeKey(route: Route): string {
@@ -358,27 +362,61 @@ function freeKey(route: Route): string {
 
 /** Разделить блок после операции `after`: новый блок — операции до неё (получает входы блока), старый — остальные
     (сохраняет ключ, название, выходы); между ними стрелка «1 шт». */
-export function splitBlock(route: Route, key: string, after: number): Route {
+export function splitBlock(route: Route, key: string, after: number, keep = false): Route {
   const block = route.blocks.find((item) => item.key === key);
   if (!block) return route;
-  const head = block.ops.filter((position) => position <= after);
-  const tail = block.ops.filter((position) => position > after);
+  // `keep`: делим по месту операции в ручном порядке блока, а не по номеру.
+  const cut = block.ops.indexOf(after) + 1;
+  const head = keep ? block.ops.slice(0, cut) : block.ops.filter((position) => position <= after);
+  const tail = keep ? block.ops.slice(cut) : block.ops.filter((position) => position > after);
   if (!head.length || !tail.length) return route;
   const created: RouteBlock = { key: freeKey(route), name: "", ops: head, final: false, components: block.components };
   const blocks = route.blocks.map((item) => (item.key === key ? { ...item, ops: tail, components: [] } : item)).concat(created);
   const edges = route.edges.map((edge) => (edge.to === key ? { ...edge, to: created.key } : edge)).concat({ from: created.key, to: key, per_unit: 1 });
-  return ordered({ blocks, edges });
+  return ordered({ blocks, edges }, keep);
 }
 
-/** Перенести операцию в другой блок (из блока, где она не единственная). */
-export function moveOp(route: Route, position: number, to: string): Route {
+/** Перенести операцию в другой блок (из блока, где она не единственная). `at` — место в целевом блоке (ручной порядок
+    ПФ: порядок операций сохраняется, в том же блоке — перестановка); без него — в конец и по возрастанию. */
+export function moveOp(route: Route, position: number, to: string, at?: number): Route {
   const from = route.blocks.find((block) => block.ops.includes(position));
-  if (!from || from.key === to || from.ops.length < 2 || !route.blocks.some((block) => block.key === to)) return route;
+  const keep = at !== undefined;
+  if (!from || !route.blocks.some((block) => block.key === to)) return route;
+  const insert = (ops: number[]) => {
+    const next = [...ops];
+    next.splice(keep ? Math.max(0, Math.min(at, next.length)) : next.length, 0, position);
+    return next;
+  };
+  if (from.key === to) {
+    if (!keep) return route;
+    const ops = insert(from.ops.filter((item) => item !== position));
+    return { ...route, blocks: route.blocks.map((block) => (block.key === to ? { ...block, ops } : block)) };
+  }
+  if (from.ops.length < 2) return route;
   return ordered({
     blocks: route.blocks.map((block) => (block.key === from.key ? { ...block, ops: block.ops.filter((item) => item !== position) }
-      : block.key === to ? { ...block, ops: [...block.ops, position] } : block)),
+      : block.key === to ? { ...block, ops: insert(block.ops) } : block)),
     edges: route.edges,
-  });
+  }, keep);
+}
+
+/** ПФ ЭТК: перенести операцию в ПФ `to` на место `at` (ручной порядок). Единственная операция своего ПФ уносит его с
+    собой: ПФ сливается с целевым (его входы и выходы переходят к целевому). `to` = null — операция уходит в новый ПФ,
+    который питает прежний (1 шт на штуку). */
+export function placeOp(route: Route, position: number, to: string | null, at = 0): Route {
+  const from = route.blocks.find((block) => block.ops.includes(position));
+  if (!from) return route;
+  if (to === null) {
+    if (from.ops.length < 2) return route;
+    const created: RouteBlock = { key: freeKey(route), name: "", ops: [position], final: false, components: [] };
+    return ordered({
+      blocks: route.blocks.map((block) => (block.key === from.key ? { ...block, ops: block.ops.filter((item) => item !== position) } : block))
+        .concat(created),
+      edges: route.edges.concat({ from: created.key, to: from.key, per_unit: 1 }),
+    }, true);
+  }
+  if (from.key !== to && from.ops.length === 1) return moveOp(mergeBlocks(route, from.key, to, true), position, to, at);
+  return moveOp(route, position, to, at);
 }
 
 export function renameBlock(route: Route, key: string, name: string): Route {
