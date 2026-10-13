@@ -6,7 +6,7 @@ import {
 } from "./api";
 import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
-import { openPrintSheets } from "./print";
+import { openShippingForms } from "./shippingPrint";
 import { formatDate } from "./format";
 import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
@@ -562,7 +562,7 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
   const late = overdue(shipment);
   const print = async (document: "pl" | "dn") => {
     setPrintError("");
-    try { openPrintSheets((await shippingApi.print(shipment.id, document)).sheets); }
+    try { openShippingForms((await shippingApi.print(shipment.id, document)).forms); }
     catch (reason) { setPrintError(failureText(reason, "Не удалось подготовить печать")); }
   };
   const uploadUpd = (file: File | undefined) => {

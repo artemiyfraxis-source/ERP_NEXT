@@ -558,6 +558,18 @@ export interface PrintSheet {
   sign: string;
 }
 
+/** Лист PL/DN отгрузки по образцу владельца: шапка «подпись | значение | реквизиты», позиции, пустые строки. */
+export interface ShippingForm {
+  kind: "pl" | "dn";
+  title: string;
+  head: { label: string; value: string; side: string }[];
+  columns: string[];
+  rows: string[][];
+  blank_rows: number;
+  sign_label: string;
+  sign_name: string;
+}
+
 export interface FulfillmentRequest {
   id: string;
   number: string;
@@ -3165,7 +3177,7 @@ export const shippingApi = {
   boxes: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/boxes`, {
     method: "PUT", body: JSON.stringify(payload),
   }),
-  print: (shipmentId: string, document: "pl" | "dn") => api<{ sheets: PrintSheet[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
+  print: (shipmentId: string, document: "pl" | "dn") => api<{ forms: ShippingForm[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
   /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
