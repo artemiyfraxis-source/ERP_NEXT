@@ -9,8 +9,11 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import re
 from typing import Any, Iterable, Mapping, Sequence
 
+from dataclasses import replace as _replace
+
+from .domain.pf_split import generator_split, same_split
 from .domain.route import (
-    Block, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_totals,
+    Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_totals,
 )
 from .etk_marking import apply_marking, mark_length
 from .operation_cards import OperationCardTemplate
@@ -1054,8 +1057,45 @@ def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[Route
             position=position, type=str(source.get("type") or operation.get("type") or ""),
             code=str(operation.get("code") or ""), name=name or f"Операция {position}",
             minutes=_operation_minutes(operation, quantity),
+            side=str(source.get("side") or operation.get("side") or ""), key=str(source.get("opKey") or ""),
         ))
     return ops, str(config.get("assemblyName") or kit.get("name") or ""), quantity
+
+
+# Вкладки генератора (13.10): типовые — «Межплатная» и «КОАКС» — режут ЭТК на ПФ сами (domain/pf_split.py);
+# «Сложную сборку» владелец раскладывает по ПФ сам в «Править ПФ» — автоматики там нет; «Ручная сборка» — свои блоки.
+TYPICAL_TABS = frozenset({"inter", "coax"})
+COMPLEX_TAB = "complex"
+# Операции, которые генератор ставит только на «Сложной сборке» (сростки, герметизация, складывание жилы).
+_COMPLEX_TYPES = frozenset({"splice", "seal", "foldCore"})
+
+
+def generator_tab(config: Mapping[str, Any] | None) -> str:
+    """The generator tab a build config came from: «manual», «coax», «inter» or «complex»; "" — no config (an ETK
+    moved from SUPPLYMAP). The generator says it (`tab`, since 13.10); an older config is told by what only «Сложная
+    сборка» writes: more than two connectors, wire links by pins, splices, sealing, a folded core, a connector label."""
+    if not isinstance(config, Mapping) or not config:
+        return ""
+    if config.get("mode") == MANUAL_MODE:
+        return MANUAL_MODE
+    tab = str(config.get("tab") or "").strip()
+    if tab in TYPICAL_TABS or tab == COMPLEX_TAB:
+        return tab
+    if config.get("mode") == "coax":
+        return "coax"
+    ops = [item for item in _list(config.get("ops")) if isinstance(item, Mapping)]
+    endpoints = [item.get(name) for item in ops for name in ("ep", "epB") if isinstance(item.get(name), Mapping)]
+    if (config.get("bigAssembly") or config.get("connections") or any(item.get("type") in _COMPLEX_TYPES for item in ops)
+            or any(str(end.get("label") or "").strip() or end.get("fold") for end in endpoints)):
+        return COMPLEX_TAB
+    return "inter"
+
+
+def _generated_split(ops: Sequence[RouteOp], final_name: str, current: Route | None = None) -> Route | None:
+    try:
+        return generator_split(ops, final_name, current)
+    except (RouteError, KeyError, ValueError):
+        return None
 
 
 def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | None:
@@ -1065,8 +1105,9 @@ def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | Non
     if not ops:
         return None
     config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
+    stored = document.get("route") if isinstance(document.get("route"), Mapping) else {}
     candidates = [(config.get("route"), True)] if strict else [
-        (document.get("route"), isinstance(document.get("route"), Mapping) and document["route"].get("source") != "derived"),
+        (stored, bool(stored) and stored.get("source") != "derived"),
         (config.get("route"), True),
     ]
     route = None
@@ -1075,12 +1116,48 @@ def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | Non
             continue
         try:
             route = parse_route(raw, ops, final_name, manual=manual)
+            if raw is stored and stored.get("source") == "generated":
+                route = _replace(route, generated=True)
             break
         except RouteError:
             if strict:
                 raise
+    # A typical generator tab cuts its ETK into ПФ by itself (owner 13.10) — only a config that says its tab, so a
+    # rebuild of an old config keeps its scheme until the generator builds it anew.
+    if route is None and strict and str(config.get("tab") or "").strip() in TYPICAL_TABS:
+        route = _generated_split(ops, final_name)
     route = route or derive_route(ops, final_name)
     return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
+
+
+def propose_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """«Предложить разбивку на ПФ»: the ПФ split the ETK should have — «Ручная сборка» its own blocks
+    (`build_config.route`, else the chain of its list), any other ETK the generator's rule over its operations and
+    current scheme. {route, same, rule}: `same` — the ETK is already cut so; nothing is saved. None — no operations."""
+    if not isinstance(document, Mapping):
+        return None
+    ops, final_name, quantity = _route_ops(document, strict=False)
+    if not ops:
+        return None
+    current_json = document_route(document)
+    current = parse_route(current_json, ops, final_name, manual=True) if current_json else None
+    config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
+    route: Route | None = None
+    rule = "generator"
+    if generator_tab(config) == MANUAL_MODE:
+        rule = "blocks"
+        try:
+            route = parse_route(config["route"], ops, final_name, manual=True) if config.get("route") else chain_route(ops, final_name)
+        except RouteError:
+            route = None
+    if route is None:
+        rule = "generator"
+        route = _generated_split(ops, final_name, current) or derive_route(ops, final_name)
+    return {
+        "route": route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity)),
+        "same": same_split(route, current),
+        "rule": rule,
+    }
 
 
 # ── Ручная сборка (владелец 04.10): кастомные и нетиповые провода, под которые типовые генераторы не подходят.

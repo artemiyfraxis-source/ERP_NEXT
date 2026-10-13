@@ -80,7 +80,7 @@ from .generator_drafts import (
     get_generator_draft,
     save_generator_draft,
 )
-from .etk_builder import attach_route
+from .etk_builder import attach_route, propose_route
 from .etk_parts import attach_parts
 from .template_sheets import TemplateDraftConflict, TemplateSheetNotFound
 from .template_sheet_service import (
@@ -777,6 +777,23 @@ def save_project_etk_route(
         route=payload.route,
     ), uow_factory()))
     return etk.one(card)
+
+
+@router.post("/techcards/projects/{card_id}/route/propose", dependencies=[Depends(techcards_edit_principal)])
+def propose_project_etk_route(
+    card_id: UUID,
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+) -> dict:
+    """«Предложить разбивку на ПФ»: схема ПФ по правилу генератора (ручная сборка — её блоки) для правки технологом.
+    Ничего не сохраняет: сохраняет «Сохранить ПФ» (PUT …/route). `same` — ЭТК уже разбита так."""
+    with uow_factory() as uow:
+        card = uow.techcards.get(card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Карточка проекта не найдена")
+    proposal = propose_route(card.document)
+    if proposal is None:
+        raise HTTPException(status_code=422, detail="Электронная техкарта ещё не собрана")
+    return proposal
 
 
 @router.get("/techcards/projects/{card_id}/revisions", dependencies=[Depends(techcards_view_principal)])

@@ -60,7 +60,7 @@ export function etkRouteOf(document: Record<string, unknown> | null | undefined)
     .filter((edge) => known.has(String(edge.from)) && known.has(String(edge.to)))
     .map((edge) => ({ from: String(edge.from), to: String(edge.to), per_unit: num(edge.per_unit) || 1 }));
   return {
-    source: raw.source === "manual" ? "manual" : "derived",
+    source: raw.source === "manual" || raw.source === "generated" ? raw.source : "derived",
     final: String(raw.final ?? blocks.find((block) => block.final)?.key ?? ""),
     blocks,
     edges,
