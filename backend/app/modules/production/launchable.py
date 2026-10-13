@@ -11,7 +11,9 @@ from uuid import UUID
 
 from app.modules.techcards.etk_builder import operation_norms
 
-from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, link_inputs
+from .domain import (
+    EtkOperation, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, link_inputs,
+)
 from .plan import kit_stage_key
 
 
@@ -37,6 +39,13 @@ class RouteStep:
     block_name: str = ""
     final: bool = False
     inputs: tuple[BlockInput, ...] = ()
+    # Задание по ПФ (13.10): блок нарисован технологом (ручная схема) — номер блока в схеме (номер ПФ, с 1) и место
+    # шага в порядке операций блока (порядок `block.ops` = порядок внутри ПФ, с 0). Схемы нет — manual False.
+    manual: bool = False
+    block_number: int = 0
+    block_place: int = 0
+    # Шаг-ПФ (semifinished_steps): операции ЭТК этого полуфабриката по порядку; у шага-операции ЭТК пусто.
+    etk_ops: tuple[EtkOperation, ...] = ()
 
 
 # Типы операций генератора ТК (tcGenLogic ops[].type) по-русски. Конфиг генератора не пишет stage/typeLabel, поэтому
@@ -97,6 +106,8 @@ class _Block:
     name: str  # "" — назвать по этапу шага
     final: bool
     inputs: tuple[BlockInput, ...]
+    number: int = 0  # номер блока в нарисованной схеме (номер ПФ); 0 — цепочка без схемы
+    order: tuple[int, ...] = ()  # шаги блока (индексы) в порядке `block.ops`
 
 
 def _per_unit(value: object) -> Decimal:
@@ -154,6 +165,8 @@ def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]
     keyed = _keyed_steps(count, op_keys)
     blocks: dict[str, Mapping[str, Any]] = {}
     owner: dict[int, str] = {}
+    numbers: dict[str, int] = {}
+    orders: dict[str, list[int]] = {}
     for number, block in enumerate(route["blocks"], start=1):
         key = str(block.get("key") or "").strip() if isinstance(block, Mapping) else ""
         if not key:
@@ -163,6 +176,8 @@ def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]
         if not isinstance(block.get("ops"), list):
             return None, f"у блока «{key}» нет списка операций"
         blocks[key] = block
+        numbers[key] = number
+        orders[key] = []
         for op_key in block["ops"]:
             index = _step_of(op_key, count, keyed)
             if index < 0:
@@ -170,6 +185,7 @@ def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]
             if index in owner:
                 return None, f"операция {index + 1} входит в два блока — «{owner[index]}» и «{key}»"
             owner[index] = key
+            orders[key].append(index)
     missing = [str(index + 1) for index in range(count) if index not in owner]
     if missing:
         return None, (f"операция {missing[0]} не входит" if len(missing) == 1 else f"операции {', '.join(missing)} не входят") + " ни в один блок"
@@ -181,7 +197,7 @@ def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]
         incoming[target].append(BlockInput(source, _per_unit(edge.get("per_unit"))))
     return [
         _Block(owner[index], str(blocks[owner[index]].get("name") or "").strip(), bool(blocks[owner[index]].get("final")),
-               tuple(incoming[owner[index]]))
+               tuple(incoming[owner[index]]), numbers[owner[index]], tuple(orders[owner[index]]))
         for index in range(count)
     ], ""
 
@@ -270,6 +286,9 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
             block_name=blocks[index].name or stage,
             final=blocks[index].final,
             inputs=blocks[index].inputs,
+            manual=blocks[index].number > 0,
+            block_number=blocks[index].number,
+            block_place=blocks[index].order.index(index) if blocks[index].number else 0,
         ))
     return LaunchRoute(tuple(steps), warnings)
 
@@ -337,8 +356,59 @@ def route_inputs(route: Sequence[RouteStep]) -> dict[int, tuple[tuple[int, Decim
     return result
 
 
+def semifinished_steps(route: Sequence[RouteStep]) -> tuple[RouteStep, ...]:
+    """Шаги-ПФ (владелец + Василий, 13.10: задание монтажника = один документ полуфабриката): по шагу на блок
+    нарисованной схемы. Номер — номер ПФ (блока в схеме), этап — название ПФ, код — код его первой операции, норма —
+    сумма норм его операций (подготовка и штучное время складываются), входы — ПФ-предшественники с per_unit.
+    Операции ЭТК — etk_ops в порядке блока. Маршрут без нарисованной схемы — пусто: задание идёт по операциям ЭТК."""
+    if not route or not all(getattr(step, "manual", False) and getattr(step, "block_number", 0) > 0 for step in route):
+        return ()
+    members: dict[str, list[RouteStep]] = {}
+    for step in route:
+        members.setdefault(_step_block(step), []).append(step)
+    numbers: dict[str, int] = {}
+    for key, steps in members.items():
+        steps.sort(key=lambda step: (step.block_place, step.position))
+        if len({step.block_number for step in steps}) != 1:
+            raise ProductionValidationError(f"Схема полуфабрикатов: у блока «{key}» два номера")
+        numbers[key] = steps[0].block_number
+    if len(set(numbers.values())) != len(numbers):
+        raise ProductionValidationError("Схема полуфабрикатов: номер полуфабриката повторяется")
+    result: list[RouteStep] = []
+    for key, steps in sorted(members.items(), key=lambda item: numbers[item[0]]):
+        first = steps[0]
+        for item in first.inputs:
+            if str(getattr(item, "block", "") or "").strip() not in members:
+                raise ProductionValidationError(f"Схема полуфабрикатов: блок «{item.block}» не найден в маршруте")
+        result.append(RouteStep(
+            position=numbers[key], code=first.code, stage=first.block_name or first.stage,
+            description="; ".join(step.description for step in steps if step.description),
+            seconds_per_unit=sum((step.seconds_per_unit for step in steps), Decimal(0)),
+            setup_seconds=sum((step.setup_seconds for step in steps), Decimal(0)),
+            block=key, block_name=first.block_name, final=first.final, inputs=first.inputs,
+            manual=True, block_number=numbers[key],
+            etk_ops=tuple(EtkOperation(step.position, step.code, step.stage) for step in steps),
+        ))
+    return tuple(result)
+
+
 def launch_operations(route: Sequence[RouteStep], quantity: int) -> tuple[ProductionOperation, ...]:
-    """Операции нового задания по маршруту выданной техкарты: блок схемы и явные входы (сетевой график)."""
+    """Операции нового задания по маршруту выданной техкарты: блок схемы и явные входы (сетевой график).
+
+    Нарисованная технологом схема — операция задания на каждый ПФ (semifinished_steps): одна коробка на ПФ, входы —
+    коробки предыдущих ПФ. Без схемы — как прежде, операция задания на каждую операцию ЭТК."""
+    semis = semifinished_steps(route)
+    if semis:
+        numbers = {step.block: step.position for step in semis}
+        operations = tuple(ProductionOperation.create(
+            position=step.position, code=step.code, stage=step.stage, description=step.description,
+            seconds_per_unit=step.seconds_per_unit, setup_seconds=step.setup_seconds, quantity=quantity,
+            stage_key=step.block, etk_ops=step.etk_ops,
+        ) for step in semis)
+        return link_inputs(operations, {
+            step.position: tuple((numbers[item.block], Decimal(item.per_unit)) for item in step.inputs)
+            for step in semis if step.inputs
+        })
     operations = tuple(ProductionOperation.create(
         position=step.position, code=step.code, stage=step.stage, description=step.description,
         seconds_per_unit=step.seconds_per_unit, setup_seconds=step.setup_seconds, quantity=quantity,
