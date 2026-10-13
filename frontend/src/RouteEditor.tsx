@@ -30,7 +30,8 @@ const coarsePointer = () => { try { return !!window.matchMedia?.("(pointer: coar
 
 /**
  * Схема полуфабрикатов сборки генератора (ARCH-TRACK-1; карточки — владелец 12.10): карточки физических полуфабрикатов
- * («Нарезанные провода», «Нарезанные трубки», «Сторона А собрана», «Сторона В собрана», «Готовый кабель») с рисунком и
+ * («Нарезанные провода», «Нарезанные трубки», «Обжатые провода», «Сторона А собрана», «Сторона В собрана», «Готовый
+ * кабель») с рисунком и
  * своими операциями — название, время на штуку, код карты в подсказке; на связи — сколько штук берёт следующая
  * карточка, когда не одну. Карточки — вид поверх блоков схемы ЭТК (routeCards.genCards): операция открывает свой блок —
  * он настраивается как в генераторе. Без правок схема собирается автоматически (`value` = null); любая правка делает
@@ -137,6 +138,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const cardArt = (card: GenCard): ReactNode => {
     if (card.id === "wires") return art.wires.length ? <WireThumbs wires={art.wires} /> : null;
     if (card.id === "tubes") return art.tubes.length ? <TubeThumbs tubes={art.tubes} /> : null;
+    if (card.id === "crimped" && !card.final) return art.crimped.length ? <WireThumbs wires={art.crimped} /> : null;
     if (card.final) return art.faces.A.length || art.faces.B.length ? <FinalThumb a={art.faces.A} b={art.faces.B} color={art.wires[0]?.color} /> : null;
     const faces = art.faces[card.id === "B" ? "B" : "A"];
     return faces.length ? <FacesThumb faces={faces} /> : null;
