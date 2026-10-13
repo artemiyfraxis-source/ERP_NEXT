@@ -841,6 +841,27 @@ def schema_keys(tab: str) -> frozenset[str]:
     return frozenset(field.key for field in _TECH_SCHEMA[tab][0]) | frozenset(_DERIVED_KEYS.get(tab, ()))
 
 
+def stored_schema_keys(tab: str) -> frozenset[str]:
+    """Schema values a record of the tab stores (terLPlus, terLMinus…): editable even when the record lacks the key."""
+    if tab not in _TECH_SCHEMA:
+        return frozenset()
+    return frozenset(field.key for field in _TECH_SCHEMA[tab][0] if field.store)
+
+
+def schema_columns(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
+    """Stored schema value → the record's sheet column it is read from (terLMinus → «L-»), as `sync_schema_fields`
+    resolves it; a value whose column the record lacks is left out."""
+    if tab not in _TECH_SCHEMA:
+        return {}
+    keys = schema_keys(tab)
+    columns = [name for name in fields if name not in keys]
+    if not columns:
+        return {}
+    schema_fields = _TECH_SCHEMA[tab][0]
+    resolved = _resolve_schema(schema_fields, columns)
+    return {field.key: columns[resolved[field.key]] for field in schema_fields if field.store and resolved[field.key] >= 0}
+
+
 def sync_schema_fields(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
     """Sheet columns → the schema values the generator reads (opName, terArticle…), as the import derives them.
     A record without sheet columns (imported before they were kept) is returned unchanged."""

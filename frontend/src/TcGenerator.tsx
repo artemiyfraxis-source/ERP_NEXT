@@ -70,6 +70,7 @@ import {
   manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
+import { lMinusMissing, lMinusSuggestion, terChanges, terEditProblem, terLost, terNewFields, terSaved, terSavedText, withTerRecord } from "./terDbSave";
 import { MarkTable, markTotal } from "./GenMarkTable";
 import { DrawingButton, DrawingNoteView, configDrawingProblem } from "./GenDrawing";
 import { TwistGroups } from "./GenTwistGroups";
@@ -194,6 +195,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [grapher, setGrapher] = useState<{ data: GrapherImportResult; pick: number } | null>(null);
   const [terEdits, setTerEdits] = useState<Record<string, Record<string, string>>>({});
   const [terNorms, setTerNorms] = useState<Record<string, TerminalResolution | null>>({});
+  // Итог «Записать в БД» у кнопки разъёма: записано / ошибка (введённое тогда остаётся в полях).
+  const [terNotes, setTerNotes] = useState<Record<string, { text: string; error: boolean; busy: boolean }>>({});
   const [coaxAdd, setCoaxAdd] = useState<Record<string, Record<string, string>>>({});
   // Распиновка: раскрытые после проверки панели разъёмов и вопрос «не проверена» перед «Создать».
   const [pinOpen, setPinOpen] = useState<Record<string, boolean>>({});
@@ -276,8 +279,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // init(): каждый монтаж засевает форму из состава набора и строк расчёта (autoFillAllWires, applyCalcTin_).
   // Layout-эффект: вкладки появляются в том же коммите, что и справочники; обычный эффект стартует позже, и клик по
   // вкладке в этом окне затирался бы засевом (под нагрузкой тесты «Ручной сборки» теряли клик).
+  // Засев — один раз на карту и набор: обновлённый справочник («Записать в БД», «Добавить в БД.КОАКС») форму не
+  // пересевает — иначе введённое после засева (длина по чертежу, концы) пропадало.
+  const seededFor = useRef<{ card: string; kit: KitsetBom } | null>(null);
   useLayoutEffect(() => {
     if (!refs || !kit) return;
+    if (seededFor.current && seededFor.current.card === card.id && seededFor.current.kit === kit) return;
+    seededFor.current = { card: card.id, kit };
     const restored = manualFromConfig(card.document?.build_config);
     // Метки по КД собранной карты возвращаются в форму: следующая сборка их не теряет.
     const markRows = markRowsFromConfig(card.document?.build_config);
@@ -559,6 +567,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinAutoKey, pinCountsKey]);
   const cut = gen.cutLengthInfo();
+  const lMinusGaps = useMemo(() => lMinusMissing(gen, S), [gen, S]);
   const hasB = gen.endpointsOnSide_("B").length > 0;
   const crimpSides = gen.crimpCutSides_();
   const crimpTinTerm = gen.crimpTinNoApplicator_();
@@ -611,26 +620,37 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     setStatus({ text: `Кабели из ${harness.designation || "чертежа"} подставлены в «Кабели»${grapherHasCorrections(groups) ? " — по длине реза с поправками чертежа" : ""}`, error: false });
   }
 
+  /** «Записать в БД»: нормы терминала — в БД.ТЕР; записанное сверяется с ответом сервера и остаётся в форме, справочник
+      генератора (и его кэш) обновляется этой записью; итог — строкой у кнопки. */
   async function saveTer(ep: Endpoint) {
     const term = gen.getCompById(ep.termId);
-    if (!term) return;
-    const rec = gen.findTerRecord_(term.art);
+    if (!term || !refs) return;
+    const article = term.art || term.name;
+    const rec = gen.findTerRecord_(article);
     const edits = terEdits[ep.id] || {};
-    const keys: Array<[string, string]> = [["lPlus", "terLPlus"], ["lMinus", "terLMinus"], ["step", "terStep"], ["applicator", "terApplicator"]];
+    const note = (text: string, error: boolean, busy = false) => setTerNotes((current) => ({ ...current, [ep.id]: { text, error, busy } }));
+    const problem = terEditProblem(edits);
+    if (problem) { note(problem, true); return; }
+    const created = !rec?.id;
+    if (created && !window.confirm(`Артикула «${article}» нет в БД.ТЕР.\nДобавить новую запись?`)) return;
+    note("Записываю в БД.ТЕР…", false, true);
     try {
-      if (rec?.id) {
-        const changes = keys.filter(([key]) => key in edits && edits[key] !== (rec as unknown as Record<string, string>)[key])
-          .map(([key, field]) => ({ field, old: rec.fields?.[field] || "", value: edits[key].trim() }));
-        if (changes.length) await referencesApi.editRecord(rec.id, changes);
-      } else {
-        if (!window.confirm(`Артикул «${term.art}» не найден в БД.ТЕР.\nДобавить новую запись?`)) return;
-        await referencesApi.createRecord("ter", { terArticle: term.art, ...Object.fromEntries(keys.map(([key, field]) => [field, (edits[key] || "").trim()])) });
+      const changes = rec?.id ? terChanges(rec, edits) : [];
+      const record = rec?.id
+        ? (changes.length ? await referencesApi.editRecord(rec.id, changes) : null)
+        : await referencesApi.createRecord("ter", terNewFields(article, edits));
+      const saved = record ? terSaved(record) : rec;
+      const lost = saved ? terLost(edits, saved) : [];
+      if (record && saved) {
+        const next = { ...refs, terRecords: withTerRecord(refs.terRecords, saved) };
+        refsCache = Promise.resolve(next);
+        setRefs(next);
       }
+      if (lost.length) { note(`БД.ТЕР не сохранила: ${lost.join(", ")} — значение осталось в форме, запишите ещё раз`, true); return; }
       setTerEdits((current) => { const next = { ...current }; delete next[ep.id]; return next; });
-      setRefs(await loadRefs(true));
-      setStatus({ text: rec?.id ? "✓ Готово" : "✓ Добавлено в БД", error: false });
+      note(terSavedText(article, edits, created), false);
     } catch (reason) {
-      setStatus({ text: "⚠ " + (reason instanceof Error ? reason.message : "Ошибка"), error: true });
+      note(`Не записано в БД.ТЕР: ${failureText(reason, "ошибка сервера")}`, true);
     }
   }
 
@@ -769,8 +789,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const ter = term ? gen.findTerRecord_(term.art) : null;
     const set = (patch: Partial<Endpoint>) => update((current) => updateEndpoint(D, current, ep.id, patch));
     const terValues = { lPlus: ter?.lPlus || "", lMinus: ter?.lMinus || "", step: ter?.step || "", applicator: ter?.applicator || "", ...(terEdits[ep.id] || {}) };
-    const terDirty = !!terEdits[ep.id] && Object.entries(terEdits[ep.id]).some(([key, value]) => value !== ((ter as unknown as Record<string, string>)?.[key] || ""));
-    const setTer = (key: string, value: string) => setTerEdits((current) => ({ ...current, [ep.id]: { ...(current[ep.id] || {}), [key]: value } }));
+    const edits = terEdits[ep.id];
+    const terDirty = !!edits && (ter ? terChanges(ter, edits).length > 0 : Object.values(edits).some((value) => !!value?.trim()));
+    const terNote = terNotes[ep.id];
+    // «От краёв разъёмов»: без L− конец не вычитается из длины по чертежу — подсказка из той же серии БД.ТЕР, если есть.
+    const lMinusEmpty = crimp && !!term && S.measureMode === "outer" && !terValues.lMinus.trim();
+    const lMinusHint = lMinusEmpty ? lMinusSuggestion(D.terRecords || [], ter) : null;
+    const setTer = (key: string, value: string) => {
+      setTerEdits((current) => ({ ...current, [ep.id]: { ...(current[ep.id] || {}), [key]: value } }));
+      setTerNotes((current) => { if (!current[ep.id] || current[ep.id].busy) return current; const next = { ...current }; delete next[ep.id]; return next; });
+    };
     const norm = terNorms[ep.id];
     // «Применить» подставляет аппликатор подбора в поле БД.ТЕР, когда подбор однозначен и отличается от записанного.
     const picks = norm ? norm.by_section.filter((item) => item.found && item.applicator) : [];
@@ -821,7 +849,15 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {([["lPlus", "L+", "мм"], ["lMinus", "L−", "мм"], ["step", "Шаг", "мм"]] as const).map(([key, label, unit]) =>
           <Field key={key} label={label}><UnitInput unit={unit} value={terValues[key]} placeholder="—" onChange={(event) => setTer(key, event.target.value)} /></Field>)}
         <Field label="Аппликатор" className="wide"><input value={terValues.applicator} placeholder="—" onChange={(event) => setTer("applicator", event.target.value)} /></Field>
-        {terDirty && <button type="button" className="secondary small" onClick={() => void saveTer(ep)}>Записать в БД</button>}
+        {terDirty && <button type="button" className="secondary small" disabled={terNote?.busy} onClick={() => void saveTer(ep)}>Записать в БД</button>}
+        {terNote && <small className={terNote.error ? "tone-danger" : "tone-ok"} role={terNote.error ? "alert" : "status"}>{terNote.text}</small>}
+      </div>}
+      {lMinusEmpty && <div className="ep-norm">
+        <span className="tone-warn">L− не задан — длина реза этот конец не вычитает</span>
+        {lMinusHint && <>
+          <span>Подсказка: {lMinusHint.value} мм — как у {lMinusHint.from.slice(0, 2).join(", ")}{lMinusHint.from.length > 2 ? ` и ещё ${lMinusHint.from.length - 2}` : ""} той же серии (не записано)</span>
+          <button type="button" className="btn-link" onClick={() => setTer("lMinus", lMinusHint.value)}>Подставить</button>
+        </>}
       </div>}
       {crimp && norm && norm.by_section.length > 0 && <div className="ep-norm">
         <span>Подбор по сечению: {norm.by_section.map((item) => `${item.section || "сечение?"} → ${item.found ? `${item.applicator || "аппл. —"}, h=${item.crimp_height || "—"}${item.pull_force ? `, F=${item.pull_force}` : ""}${item.range_only ? " (по вилке)" : ""}` : "нет нормы"}`).join("; ")}</span>
@@ -1085,6 +1121,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {cut.tone !== "none" && <div className={cut.tone === "warn" ? "cut-result warn" : "cut-result"}>
           <span>Длина реза <b>{cut.value}</b></span><small>{cut.formula}</small></div>}
       </div>}
+      {lMinusGaps.length > 0 && <div className="warning-inline">Нет L− в БД.ТЕР: {lMinusGaps.join(", ")} — длина реза эти концы не вычитает. Впишите L− в разъёме и «Записать в БД».</div>}
       <div className="wire-list">
         {S.wires.length > 0 && <div className={`${wireCols} head`} aria-hidden="true"><span>Кабель</span>{S.advancedLength && <span>Длина по чертежу</span>}<span>Кол-во</span>{anyCores && <><span>Жил</span><span>Разделка</span></>}<span /></div>}
         {!S.wires.length && <div className="gempty">Нет кабелей — добавьте кабель из состава</div>}
