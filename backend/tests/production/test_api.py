@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import re
 from uuid import UUID
 
 import pytest
@@ -904,3 +905,34 @@ def test_terminal_project_status_event_and_stage_kinds_still_work_next_to_refuse
     assert [r.status_code for r in (closed, block, unblock, stage)] == [201] * 4
     row = client.get("/api/production/plan").json()["rows"][0]
     assert row["terminal"] is True and row["group"] == "closed"
+
+
+def test_submit_returns_box_code_and_box_search_finds_it(production_api):
+    """Код коробки (13.10): после «Сдать» монтажник видит код для подписи; поиск коробок находит её по коду."""
+    client, operator_id = production_api
+    master = app.dependency_overrides[authenticated_principal]
+    operator = lambda: Principal(
+        actor=Actor(id=operator_id, name="Оператор", department="Производство"),
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
+    )
+    task = launch_from_card(client, "box-code-api-v1", "180К.11", "КБ1", 5, [("", "Подготовка", 0, 0)]).json()["task"]
+    task = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id)]},
+    ).json()["task"]
+    app.dependency_overrides[authenticated_principal] = operator
+    started = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/work/start", json={"inputs": []},
+    ).json()["session"]
+    submitted = client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "5"})
+    app.dependency_overrides[authenticated_principal] = master
+    box = submitted.json()["box"]
+    found = client.get("/api/production/boxes", params={"q": box["code"].replace("·", " ").lower()})
+    missing = client.get("/api/production/boxes", params={"q": "999Х.1·КБ1"})
+
+    assert submitted.status_code == 200, submitted.text
+    assert re.fullmatch(r"180К\.11·КБ1·\d\d\.\d\d·ОП01·1", box["code"]), box["code"]
+    assert found.status_code == 200, found.text
+    assert [item["id"] for item in found.json()["boxes"]] == [box["id"]]
+    assert found.json()["boxes"][0]["code"] == box["code"]
+    assert missing.json()["boxes"] == []

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
@@ -46,6 +47,8 @@ class BoxRepository(Protocol):
     def by_number(self, number: str) -> ProductionBox | None: ...
     def list(self, *, task_id: UUID | None = None, operator_id: UUID | None = None, limit: int = 500) -> Sequence[ProductionBox]: ...
     def reserve_number(self) -> str: ...
+    def reserve_code(self, *, project: str, item: str, operator_id: UUID, day: date) -> str: ...
+    def by_code(self, text: str) -> Sequence[ProductionBox]: ...
     def save(self, box: ProductionBox) -> None: ...
 
 
@@ -333,20 +336,34 @@ def material_operation(task: ProductionTask) -> ProductionOperation:
     return min((item for item in task.operations if not item.inputs), key=lambda item: item.position)
 
 
+def _box_by_label(raw: str, uow: ExecutionUnitOfWork) -> ProductionBox:
+    """Коробка по номеру (000123-4) или по коду с коробки (180К.11·КБ1·13.10·Б07·3, разделители любые)."""
+    try:
+        number = validate_box_number(raw)
+    except ProductionValidationError as error:
+        found = list(uow.boxes.by_code(raw))
+        if len(found) == 1:
+            return found[0]
+        if len(found) > 1:
+            raise ProductionValidationError(f"Код «{str(raw).strip()}» подходит к нескольким коробкам — введите его с точками, как на коробке.") from error
+        raise ProductionValidationError(f"«{str(raw).strip()}» — нет такой коробки: введите код с коробки или номер 000123-4.") from error
+    box = uow.boxes.by_number(number)
+    if box is None:
+        raise ProductionValidationError(f"Коробки {number} нет в учёте.")
+    return box
+
+
 def _input_boxes(numbers: Sequence[str], item: str, previous_position: int | tuple[int, ...], uow: ExecutionUnitOfWork, task_id: UUID | None = None) -> list[ProductionBox]:
-    """prodCheckInputs_: boxes by the numbers as typed, repeats skipped, first refusal reason raised."""
-    seen: set[str] = set()
+    """prodCheckInputs_: boxes by the numbers (or box codes) as typed, repeats skipped, first refusal reason raised."""
+    seen: set[UUID] = set()
     boxes: list[ProductionBox] = []
     for raw in numbers:
         if not str(raw or "").strip():
             continue
-        number = validate_box_number(raw)
-        if number in seen:
+        box = _box_by_label(raw, uow)
+        if box.id in seen:
             continue
-        seen.add(number)
-        box = uow.boxes.by_number(number)
-        if box is None:
-            raise ProductionValidationError(f"Коробки {number} нет в учёте.")
+        seen.add(box.id)
         error = box.input_error(item=item, previous_position=previous_position, task_id=task_id)
         if error:
             raise ProductionValidationError(error)
@@ -479,6 +496,14 @@ def cancel_work(command: SessionCommand, uow: ExecutionUnitOfWork) -> WorkSessio
         return cancelled
 
 
+MOSCOW = ZoneInfo("Europe/Moscow")
+
+
+def _shop_day(now: datetime) -> date:
+    """День цеха для кода коробки: по Москве (наивное время — уже московское)."""
+    return now.astimezone(MOSCOW).date() if now.tzinfo is not None else now.date()
+
+
 def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[WorkSession, ProductionBox, ProductionOutput, DefectRecord | None]:
     with uow:
         worker = _worker(command)
@@ -529,6 +554,7 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
             task_id=task.id, operation_id=operation.id, item=task.item,
             operation_position=operation.position, operator_id=worker.id,
             number=uow.boxes.reserve_number(), good=good, actor=worker.name, now=command.now,
+            code=uow.boxes.reserve_code(project=task.project, item=task.item, operator_id=worker.id, day=_shop_day(command.now)),
         )
         running = session.running_seconds(command.now)
         completed = session.complete(command.now)

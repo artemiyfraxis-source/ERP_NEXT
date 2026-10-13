@@ -8,6 +8,7 @@ import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { fetchBoxLabels, openBoxLabels, openShippingForms } from "./shippingPrint";
 import { formatDate } from "./format";
+import { BoxName, boxTitle } from "./BoxLabel";
 import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
 import { GoodsStateBar, goodsPieces, sumPieces } from "./FinishedGoodsStates";
@@ -735,14 +736,14 @@ function FinishedGoodsHandoff({ boxes, goods, busy, mutate }: { boxes: FinishedG
   const [selected, setSelected] = useState<Record<string, string>>({});
   const target = (box: FinishedGoodsReadyBox) => selected[box.id] ?? boxCandidates(box, goods)[0]?.id ?? "";
   const columns: DataColumn<FinishedGoodsReadyBox>[] = [
-    { key: "number", title: "Коробка", value: (box) => box.number ?? "", render: (box) => <strong>{box.number}</strong> },
+    { key: "number", title: "Коробка", value: (box) => [box.code, box.number].filter(Boolean).join(" "), render: (box) => <BoxName box={box} /> },
     { key: "item", title: "Проект · КБ", value: (box) => `${box.project} · ${box.task_item}` },
     { key: "quantity", title: "Кол-во", value: (box) => box.quantity, numeric: true },
     { key: "confirmed", title: "Подтверждена", value: (box) => box.confirmed_at ?? "", render: (box) => formatDate(box.confirmed_at) || <span className="muted">—</span> },
     { key: "good", title: "КБ в готовой продукции", value: (box) => target(box), render: (box) => {
       const candidates = boxCandidates(box, goods);
       if (!candidates.length) return <span className="tone-danger">нет КБ проекта в готовой продукции</span>;
-      return <select aria-label={`КБ для коробки ${box.number}`} value={target(box)} onClick={(event) => event.stopPropagation()} onChange={(event) => setSelected((current) => ({ ...current, [box.id]: event.target.value }))}>
+      return <select aria-label={`КБ для коробки ${boxTitle(box)}`} value={target(box)} onClick={(event) => event.stopPropagation()} onChange={(event) => setSelected((current) => ({ ...current, [box.id]: event.target.value }))}>
         {candidates.map((good) => <option key={good.id} value={good.id}>{good.project} · {good.item_index} · {good.name}</option>)}</select>;
     } },
   ];
@@ -753,6 +754,6 @@ function FinishedGoodsHandoff({ boxes, goods, busy, mutate }: { boxes: FinishedG
     <h2>Коробки из цеха после ОТК <span className="page-count">{boxes.length}</span></h2>
     <DataTable label="Коробки из цеха" rows={boxes} columns={columns} rowKey={(box) => box.id} compactBelow={8}
       bulkActions={[{ label: "Принять на склад", run: handoff, disabled: (rows) => Boolean(busy) || !rows.some(target) }]}
-      rowLabel={(box) => `коробка ${box.number}`} />
+      rowLabel={(box) => `коробка ${boxTitle(box)}`} />
   </div>;
 }

@@ -691,6 +691,8 @@ export interface ProductionOperation {
 export interface ProductionReadyBox {
   id: string;
   number: string | null;
+  /** Код с коробки «180К.11·КБ1·13.10·Б07·3»; null — коробка до 13.10.2026. */
+  code?: string | null;
   /** Доступно в коробке, шт. */
   quantity: string;
   operation_position: number;
@@ -955,6 +957,8 @@ export interface ProductionScheduleVariant {
 export interface ProductionBox {
   id: string;
   number: string | null;
+  /** Код для подписи маркером «180К.11·КБ1·13.10·Б07·3»; null — коробка до 13.10.2026. */
+  code: string | null;
   version: number;
   task_id: string;
   operation_id: string;
@@ -1069,6 +1073,7 @@ export interface ProductionQcRejection {
   id: string;
   box_id: string;
   box_number: string | null;
+  box_code?: string | null;
   item: string;
   inspected_at: string;
   rejected: number;
