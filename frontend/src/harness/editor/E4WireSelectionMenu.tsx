@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import { InfoHint } from "../InfoHint";
+import { HelpLine } from "../HelpLine";
 import {
   clampScreenPosition,
   e4WireSelectionCapabilities,
@@ -255,6 +256,7 @@ export function E4WireSelectionMenu({
           Разгруппировать выбранное
         </button>
       </footer>
+      <HelpLine />
     </aside>
   );
 }

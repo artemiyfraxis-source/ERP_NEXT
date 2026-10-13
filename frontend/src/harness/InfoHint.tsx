@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { helpLineFor, helpOwner } from "./HelpLine";
 
 /** Coordinates belong to the viewport, never to a clipping/stacking ancestor. */
 export function infoHintPosition(anchor: { left: number; top: number; bottom: number }, size: { width: number; height: number }, viewport: { width: number; height: number }) {
@@ -14,6 +15,8 @@ export function infoHintPosition(anchor: { left: number; top: number; bottom: nu
   };
 }
 
+const CONTROL = ":is(button, select, input, textarea):not(.info-hint *)";
+
 export function InfoHint({ children }: { readonly children: ReactNode }) {
   const id = useId();
   const root = useRef<HTMLSpanElement>(null);
@@ -22,7 +25,8 @@ export function InfoHint({ children }: { readonly children: ReactNode }) {
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const cancelClose = () => clearTimeout(closeTimer.current);
-  const show = () => { cancelClose(); setOpen(true); };
+  // In a panel with a help line the text goes to that line (HelpLine), not to a popup.
+  const show = () => { cancelClose(); if (!helpLineFor(root.current)) setOpen(true); };
   const leave = () => {
     cancelClose();
     closeTimer.current = setTimeout(() => {
@@ -31,6 +35,21 @@ export function InfoHint({ children }: { readonly children: ReactNode }) {
   };
 
   useLayoutEffect(() => () => clearTimeout(closeTimer.current), []);
+  // Mark the explained control for the panel's help line; screen readers get the text as its description.
+  useLayoutEffect(() => {
+    const hint = root.current, text = tooltip.current?.textContent?.trim();
+    const owner = hint && helpOwner(hint);
+    if (!owner || !text) return;
+    owner.dataset.help = text;
+    const control = owner.matches(CONTROL) ? owner : owner.querySelector<HTMLElement>(CONTROL);
+    const described = control?.getAttribute("aria-describedby")?.split(" ").filter(Boolean) ?? [];
+    if (control && !described.includes(id)) control.setAttribute("aria-describedby", [...described, id].join(" "));
+    return () => {
+      if (owner.dataset.help === text) delete owner.dataset.help;
+      const rest = control?.getAttribute("aria-describedby")?.split(" ").filter(token => token && token !== id) ?? [];
+      if (control) { if (rest.length) control.setAttribute("aria-describedby", rest.join(" ")); else control.removeAttribute("aria-describedby"); }
+    };
+  }, [children, id]);
   useLayoutEffect(() => {
     const tip = tooltip.current, trigger = button.current;
     if (!open || !tip || !trigger) return;

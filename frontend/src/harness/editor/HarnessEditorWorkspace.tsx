@@ -1,5 +1,6 @@
 import type { PhysicalDragMode } from "./physical-editing";
 import { InfoHint } from "../InfoHint";
+import { HelpLine } from "../HelpLine";
 import type { CoveringDragPart } from "./covering-layout";
 import {type PhysicalContextAction,type PhysicalContextTarget} from "./physical-coverings";
 import type { DimensionMode } from "./drawing-dimensions";
@@ -863,6 +864,7 @@ export function HarnessEditorWorkspace({
             <ReadOnlyFieldset readOnly={readOnly}>{documentActions}</ReadOnlyFieldset>
             {readOnly && viewActions}
           </div>
+          {utilityPanelOpen && <HelpLine idle="Наведите на настройку — здесь появится пояснение" />}
         </aside>}
         <div className="he-touch-layer" onPointerDownCapture={touchDown} onPointerMoveCapture={touchMove} onPointerUpCapture={touchUp} onPointerCancelCapture={touchUp}>
         <CanvasViewport
@@ -1005,6 +1007,7 @@ export function HarnessEditorWorkspace({
               </section>}</>
             )}
           </ReadOnlyFieldset></div>
+          <HelpLine idle="Наведите на поле — здесь появится пояснение" />
         </aside>
 
         <aside id="he-material-panel" className="he-material-panel" aria-label="Список материальных объектов" hidden={!materialPanelOpen || phoneView}>
