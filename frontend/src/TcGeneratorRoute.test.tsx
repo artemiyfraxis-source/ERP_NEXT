@@ -200,7 +200,7 @@ it("USB: cards name the operations in Russian, codes stay in the hint, the repla
   mountUsb();
   await screen.findByText("Схема полуфабрикатов");
   expect(screen.getAllByText("Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2")).toHaveLength(2); // список и схема
-  expect(cardTitles()).toEqual(["Нарезанные провода", "Сторона А собрана", "Готовый кабель"]);
+  expect(cardTitles()).toEqual(["Нарезанные и обжатые провода", "Сторона А собрана", "Готовый кабель"]);
   expect(scheme().textContent).not.toMatch(/CUT_WIRE|INS_terminal/);
   const cut = schemeOp(/Резка с обжимом/);
   expect(cut.getAttribute("title")).toContain("Карта CUT_WIRE+1crimp");
@@ -222,7 +222,7 @@ it("USB: «Выше» on a block reorders the operations, the build sends that o
   // Список операций и схема — в новом порядке; шаблоны операций остались при них. Сторона В собирается раньше,
   // готовый кабель — после стороны А.
   expect(opList()).toEqual(["Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5"]);
-  expect(cardTitles()).toEqual(["Нарезанные провода", "Сторона В собрана", "Готовый кабель"]);
+  expect(cardTitles()).toEqual(["Нарезанные и обжатые провода", "Сторона В собрана", "Готовый кабель"]);
   expect(schemeNames()).toEqual([
     "Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5",
   ]);
