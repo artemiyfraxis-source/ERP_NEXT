@@ -46,6 +46,7 @@ from uuid import UUID
 
 from .domain import (
     BusyInterval,
+    EtkOperation,
     OperatorSkill,
     ProductionOperation,
     ProductionTask,
@@ -221,8 +222,9 @@ def setup_key(
 
 
 def operation_keys(task: ProductionTask, document: Mapping[str, Any] | None) -> tuple[dict[UUID, SetupKey], tuple[str, ...]]:
-    """Ключи наладки операций задания по текущей выданной техкарте (позиция этапа = номер операции ЭТК). Нет
-    техкарты или код этапа расходится с ней — ключ по коду операции и предупреждение."""
+    """Ключи наладки операций задания по текущей выданной техкарте (позиция этапа = номер операции ЭТК; у задания
+    по ПФ — etk_ops, ключ ПФ собирается из ключей его операций). Нет техкарты или код расходится с ней — ключ по коду
+    операции и предупреждение."""
     if not isinstance(document, Mapping):
         return (
             {operation.id: fallback_key(operation.code, operation.stage) for operation in task.operations},
@@ -235,21 +237,46 @@ def operation_keys(task: ProductionTask, document: Mapping[str, Any] | None) -> 
     keys: dict[UUID, SetupKey] = {}
     warnings: list[str] = []
     for operation in task.operations:
-        index = operation.position - 1
-        step = route[index] if 0 <= index < len(route) else None
-        if step is None or step.code != operation.code:
-            keys[operation.id] = fallback_key(operation.code, operation.stage)
-            warnings.append(
-                f"{task.number} · этап {operation.position}: код {operation.code or '—'} не совпадает с техкартой "
-                f"({step.code or '—' if step else 'нет этапа'}) — наладка по коду операции"
-            )
+        # Операция задания по ПФ — наладки всех её операций ЭТК по порядку ПФ; без ПФ — своя операция ЭТК.
+        parts = operation.etk_ops or (EtkOperation(operation.position, operation.code, operation.stage),)
+        found: list[SetupKey] = []
+        for part in parts:
+            index = part.position - 1
+            step = route[index] if 0 <= index < len(route) else None
+            if step is None or step.code != part.code:
+                warnings.append(
+                    f"{task.number} · этап {operation.position}: код {part.code or '—'} не совпадает с техкартой "
+                    f"({step.code or '—' if step else 'нет этапа'}) — наладка по коду операции"
+                    if not operation.etk_ops else
+                    f"{task.number} · ПФ {operation.position}, операция ЭТК {part.position}: код {part.code or '—'} "
+                    f"не совпадает с техкартой ({step.code or '—' if step else 'нет операции'}) — наладка по коду ПФ"
+                )
+                break
+            found.append(setup_key(
+                code=part.code, stage=part.stage,
+                built=built[index] if index < len(built) else None,
+                config_op=config_ops[index] if index < len(config_ops) else None, config=config,
+            ))
+        else:
+            keys[operation.id] = found[0] if len(found) == 1 else semifinished_key(found)
             continue
-        keys[operation.id] = setup_key(
-            code=operation.code, stage=operation.stage,
-            built=built[index] if index < len(built) else None,
-            config_op=config_ops[index] if index < len(config_ops) else None, config=config,
-        )
+        keys[operation.id] = fallback_key(operation.code, operation.stage)
     return keys, tuple(warnings)
+
+
+def semifinished_key(parts: Sequence[SetupKey]) -> SetupKey:
+    """Наладка ПФ из наладок его операций ЭТК по порядку: семейство и точный ключ — их цепочки (переналадка между
+    двумя ПФ нулевая, только если все их операции налажены одинаково). Станок — первый учётный станок ПФ (его
+    занятость ограничена единицами БД.ОБ), без него — станок первой операции."""
+    machine = next((part for part in parts if part.limited), parts[0])
+    return SetupKey(
+        machine.machine,
+        tuple(value for part in parts for value in part.family),
+        tuple(value for part in parts for value in part.exact),
+        "; ".join(dict.fromkeys(part.label for part in parts)),
+        "; ".join(dict.fromkeys(part.family_label or part.label for part in parts)),
+        machine.machine_label, machine.limited,
+    )
 
 
 @dataclass(frozen=True)
@@ -384,7 +411,7 @@ class _Planner:
                             operation.id, operation.position, operation.operator_ids,
                             operation.planned_start, operation.planned_finish, False,
                         ),
-                        operation, _rate(data.skills, operation.code, operation.operator_ids),
+                        operation, _rate(data.skills, operation.skill_codes, operation.operator_ids),
                     )
                 key = data.keys.get(operation.id)
                 if key is None:
@@ -443,7 +470,7 @@ class _Planner:
 
     def earliest(self, operation: ProductionOperation, operator_id: UUID) -> datetime:
         task = self.task_of[operation.id]
-        rate = _rate(self.data.skills, operation.code, (operator_id,))
+        rate = _rate(self.data.skills, operation.skill_codes, (operator_id,))
         lower = self.data.start
         for edge in operation.inputs:
             plan = self.plans.get(edge.input_operation_id)
@@ -462,7 +489,7 @@ class _Planner:
         data = self.data
         key = data.keys[operation.id]
         task = self.task_of[operation.id]
-        rate = _rate(data.skills, operation.code, (operator_id,))
+        rate = _rate(data.skills, operation.skill_codes, (operator_id,))
         items = self.streams.get(self._stream(key, operator_id), [])
         capacity = self._capacity(key)
         start = self._next(earliest)
@@ -513,7 +540,7 @@ class _Planner:
         self.plans[operation_id] = (
             ScheduledOperation(operation_id, operation.position, (operator_id,), slot.start, slot.finish, True),
             replace(operation, setup_seconds=Decimal(slot.changeover)),
-            _rate(self.data.skills, operation.code, (operator_id,)),
+            _rate(self.data.skills, operation.skill_codes, (operator_id,)),
         )
         self.placements.append(Placement(
             self.task_of[operation_id].id, operation_id, operator_id, slot.start, slot.finish, key,
@@ -563,7 +590,7 @@ class _Planner:
         best: tuple[tuple, UUID, _Slot] | None = None
         allowed = False
         for index, operator_id in enumerate(self.data.team):
-            if not _allowed(self.data.skills, operation.code, operator_id):
+            if not _allowed(self.data.skills, operation.skill_codes, operator_id):
                 continue
             allowed = True
             slot = self.slot(operation, operator_id, self.earliest(operation, operator_id))
@@ -594,7 +621,7 @@ class _Planner:
                 (
                     candidate for candidate in self._ready()
                     if self.data.keys[candidate].family == family
-                    and _allowed(self.data.skills, self.ops[candidate].code, operator_id)
+                    and _allowed(self.data.skills, self.ops[candidate].skill_codes, operator_id)
                 ),
                 key=lambda candidate: (self.data.keys[candidate].exact != exact, self.priority(candidate)),
             )
