@@ -23,6 +23,7 @@ import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm"
 import { hasFullAccess } from "./navigation";
 import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
 import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
+import { EtkPfList } from "./EtkPfList";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
    PortalApp kitCardRender_ → mountGen_ / renderTc_ → renderEtk_). */
@@ -509,8 +510,9 @@ function RouteStrip({ route, current, onPick }: { route: EtkRoute; current: numb
   </section>;
 }
 
-/** Операция, на которой открыть ЭТК (экран «Мои задания»): по коду, иначе по номеру этапа. */
-export interface EtkFocus { code: string; position: number }
+/** Операция, на которой открыть ЭТК (экран «Мои задания»): по коду, иначе по номеру этапа. `positions` — задание по
+ *  ПФ: только эти операции ЭТК (1-based позиции, в порядке работы ПФ), каждая свёрнута. */
+export interface EtkFocus { code?: string; position?: number; positions?: number[] }
 
 /** Операция ЭТК задания: код и номер этапа вместе (один код бывает у двух операций — «Монтаж терминалов» стороны А
  *  и В), иначе по коду, иначе по номеру этапа; не нашлась — первая. */
@@ -519,14 +521,21 @@ export function focusIndex(list: EtkOperation[], focus?: EtkFocus): number {
   const both = list.findIndex((item) => focus.code && opCode(item) === focus.code && item.position === focus.position);
   if (both >= 0) return both;
   const byCode = list.findIndex((item) => focus.code && opCode(item) === focus.code);
-  return byCode >= 0 ? byCode : Math.max(0, list.findIndex((item) => item.position === focus.position));
+  const position = focus.position ?? focus.positions?.[0];
+  return byCode >= 0 ? byCode : Math.max(0, list.findIndex((item) => item.position === position));
+}
+
+/** Операции задания по ПФ: позиции `focus.positions`, которые есть в ЭТК, в их порядке; меньше двух — не ПФ-задание. */
+export function focusOperations(list: EtkOperation[], focus?: EtkFocus): number[] {
+  const positions = (focus?.positions ?? []).filter((position, at, all) => position >= 1 && position <= list.length && all.indexOf(position) === at);
+  return positions.length > 1 ? positions : [];
 }
 
 /** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_).
  *  В задании монтажника (`task`) — только операция задания: без списка операций слева, без «← Назад / Далее» и
  *  полосы маршрута (владелец 13.10: «слева не должно быть следующих операций»). */
-function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focus, task = false }: {
-  card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void;
+function EtkView({ card, canEdit, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false }: {
+  card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void; onRouteSaved: (updated: ProjectTechcard) => void;
   sketches: OperationSketch[]; onSketches: () => void; sketchUrl: (key: string, at: string) => string; focus?: EtkFocus;
   task?: boolean;
 }) {
@@ -540,6 +549,25 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
   const next = list[index + 1];
   const route = etkRouteOf(card.document);
   const uploaded = sketches.find((item) => item.operation_key === etkOperationKey(operation));
+  const batch = String(record(card.document?.kit).part_quantity ?? "");
+  const sketchOf = (item: EtkOperation) => {
+    const found = sketches.find((sketch) => sketch.operation_key === etkOperationKey(item));
+    return found ? sketchUrl(etkOperationKey(item), found.uploaded_at) : "";
+  };
+  const several = task ? focusOperations(list, focus) : [];
+
+  // Задание по ПФ: только его операции в порядке работы, каждая свёрнута до щелчка (инструкция не мешает списку).
+  if (several.length) {
+    return <div className="etk-task-ops" aria-label="Операции задания">{several.map((position) => {
+      const item = list[position - 1];
+      return <details key={`${etkOperationKey(item)}:${position}`} className="etk-task-op">
+        <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item) && <small>{navSub(item)}</small>}</summary>
+        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch}
+          sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(item)} canEdit={false} url={sketchUrl}
+            sketch={sketches.find((sketch) => sketch.operation_key === etkOperationKey(item))} onChanged={onSketches} />} />
+      </details>;
+    })}</div>;
+  }
 
   /** Чип блока: открыть его первую операцию (1-based позиция в ЭТК) и подвести к ней экран. */
   function pick(position: number) {
@@ -557,8 +585,12 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
     onSaved(updated);
   }
 
-  const view = <div className={task ? "etk-wrap etk-wrap-task" : "etk-wrap"}>
-    {!task && <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
+  const grouped = !task && route !== null;
+  const view = <div className={task ? "etk-wrap etk-wrap-task" : grouped ? "etk-wrap etk-wrap-pf" : "etk-wrap"}>
+    {grouped && <EtkPfList card={card} list={list} selected={index} canEdit={canEdit} onSaved={onRouteSaved}
+      onPick={(position) => { setSelected(position); setEditing(false); }}
+      title={etkTitle} sub={(item) => [navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ")} sketch={sketchOf} />}
+    {!task && !grouped && <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
       <button key={`${etkOperationKey(item)}:${position}`} className={position === index ? "on" : ""} onClick={() => { setSelected(position); setEditing(false); }}>
         <span className="etk-no">{String(item.position || position + 1).padStart(2, "0")}</span>
         <span>{etkTitle(item)}{(navSub(item) || item.edited) && <small>{[navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ")}</small>}</span>
@@ -577,7 +609,7 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
         onSave={save}
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
-          batch={String(record(card.document?.kit).part_quantity ?? "")}
+          batch={batch}
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>Править операцию</button> : null}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />
@@ -660,6 +692,9 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
+    }} onRouteSaved={(updated) => {
+      onChange(updated);
+      setNotice(`ПФ сохранены${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} />
     {!list.length && <div className="etk-empty">ЭТК ещё не собрана — откройте «Генератор» и нажмите «Создать».</div>}
     {revisions.length > 0 && <EtkFold block="revs" className="etk-revs" summary={`Журнал ревизий · ${revisions.length}`}>

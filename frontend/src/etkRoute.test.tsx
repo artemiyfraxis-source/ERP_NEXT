@@ -144,16 +144,19 @@ async function renderSheet(route?: EtkRoute) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("ETK strip «Маршрут»", () => {
-  it("is absent for a linear route and the ETK renders byte for byte as without a scheme", async () => {
+  it("is absent for a linear route: the list goes by ПФ, one per block; an ETK without a scheme keeps the flat list", async () => {
     const withLinear = await renderSheet(linear);
     expect(withLinear.container.querySelector(".etk-route")).toBeNull();
     expect(screen.queryByRole("region", { name: "Маршрут полуфабрикатов" })).toBeNull();
-    const html = withLinear.container.innerHTML;
+    expect(screen.getAllByRole("region", { name: /^ПФ-\d/ }).map((group) => group.getAttribute("aria-label"))).toEqual([
+      "ПФ-1 · Операция 1", "ПФ-2 · Операция 2", "ПФ-3 · Операция 3",
+    ]);
     withLinear.unmount();
     vi.restoreAllMocks();
     const without = await renderSheet();
-    expect(without.container.innerHTML).toBe(html);
-    expect(html).toContain("etk-nav-route");
+    expect(without.container.querySelector(".etk-route")).toBeNull();
+    expect(without.container.querySelector(".etk-pf")).toBeNull();
+    expect(without.container.innerHTML).toContain("etk-nav-route");
   });
 
   it("shows chips with name, operations, time and what feeds each block, final marked, above the route list", async () => {
