@@ -512,11 +512,13 @@ export interface FulfillmentLot {
   available: string;
 }
 
-/** «Возможно есть»: a warehouse lot that may be a КД position; `kind` exact — the same article, fuzzy — a lookalike. */
+/** «Возможно есть»: a warehouse lot that may be a КД position; `kind` exact — the same article, fuzzy — a lookalike;
+ * `by` — matched by the position's name (against the lot's article) or, as the fallback, by the КД article. */
 export interface FulfillmentCandidate extends FulfillmentLot {
   lot_id: string;
   kind: "exact" | "fuzzy";
   match: string;
+  by?: "name" | "article";
 }
 
 export interface FulfillmentPositionCandidates {

@@ -32,14 +32,45 @@ NOW = datetime(2026, 10, 12, 12, 0)
         ("НВ4", "", "HB4", "", "exact"),  # Cyrillic twins of Latin letters
         ("SHF-001T-0.8BS", "", "SHF001T 0.8BS", "", "fuzzy-separators"),
         ("GHR-04V-S", "", "", "Колодка GHR-04V-S 4pin", "fuzzy-in_name"),
-        ("BL2018TS", "SHF-001T-0.8BS", "SHF-001T-0.8BS", "Контакт", "fuzzy-kit_name"),
+        ("BL2018TS", "SHF-001T-0.8BS", "SHF-001T-0.8BS", "Контакт", "exact-name_article"),  # the name is the lot
+        ("BL2018P-04", "SMP-04V-BC", "smp04v-bc", "Корпус", "fuzzy-name_separators"),
+        ("BL2018P-04", "SMP-04V-BC", "", "Корпус SMP-04V-BC JST", "fuzzy-name_in"),
+        ("BL2018P-04", "Корпус SMP-04V-BC", "SMP-04V-BC", "", "fuzzy-name_in"),
+        ("", "НВ4 0,2 красный", "НВ-4 0,20 красн.", "", "fuzzy-name_wire"),
+        ("ПВВС 4х0,35мм, черный", "ПВВС 4х0,35мм, черный", "ПВВС 4x0,35 черн.", "", "fuzzy-name_wire"),
         ("НВ4 0,2 красный", "", "НВ-4 0,20 красн.", "", "fuzzy-wire"),
         ("", "Вилка USB-A на кабель", "", "вилка usb-a на кабель", "fuzzy-name"),
     ],
 )
 def test_match_tiers(kd, kd_name, lot, lot_name, label):
     found = article_match.match_lot(kd, kd_name, lot, lot_name)
-    assert found is not None and found.label == label
+    assert (found.label if found else None) == label
+
+
+def test_name_is_matched_against_the_lot_article_and_the_kd_article_is_only_the_fallback():
+    """Owner, 13.10.2026: «сверка … не по артикулу КД, а по наименованию с артикулом на складе»."""
+    by_name = SimpleNamespace(article="SMP-04V-BC", name="Корпус разъёма")
+    by_article = SimpleNamespace(article="BL2018P-04", name="Корпус")
+    other = SimpleNamespace(article="SMP-02V-BC", name="Корпус 2pin")
+
+    found = article_match.candidates("BL2018P-04", "SMP-04V-BC", [other, by_article, by_name])
+    assert [(match.label, match.basis, lot.article) for match, lot in found] == [
+        ("exact-name_article", "name", "SMP-04V-BC"),
+    ]
+    assert [match.kind for match, _lot in found] == ["exact"]
+
+    fallback = article_match.candidates("BL2018P-04", "SMP-04V-BC", [other, by_article])
+    assert [(match.label, match.basis, lot.article) for match, lot in fallback] == [("exact", "article", "BL2018P-04")]
+
+
+def test_a_name_finding_nothing_gives_no_false_match():
+    lots = [
+        SimpleNamespace(article="SMP-02V-BC", name="Корпус 2pin"),  # one digit off
+        SimpleNamespace(article="SHF-001T-0.8BS", name="Контакт"),
+        SimpleNamespace(article="SMP", name="Корпус"),  # too short to stand inside a name
+    ]
+    assert article_match.candidates("BL2018P-04", "SMP-04V-BC", lots) == []
+    assert article_match.candidates("", "Корпус SMP-04V-BC", lots) == []
 
 
 @pytest.mark.parametrize(
@@ -48,6 +79,8 @@ def test_match_tiers(kd, kd_name, lot, lot_name, label):
         ("НВ4 0,2 красный", "НВ-4 0,35 красн.", ""),  # another size
         ("НВ4 0,2 красный", "НВ-4 0,20 синий", ""),  # another colour
         ("НВ4 0,2 красный", "МГТФ 0,20 красн.", ""),  # another series
+        ("ПВВС 4х0,35 черный", "ПВВС 2х0,35 черный", ""),  # another number of cores
+        ("ПВВС 4х0,35 черный", "ПВВС 0,35 черный", ""),
         ("BL2018TS", "XYZ99", "Совсем другая деталь"),
         ("", "", ""),
     ],
@@ -130,11 +163,36 @@ def test_project_candidates_in_one_pass_exact_before_fuzzy_and_only_lots_with_a_
     assert response.status_code == 200, response.text
     positions = {item["article"]: item for item in response.json()["positions"]}
     assert set(positions) == {"GHR-04V-S", "QQQ-777"}  # only this project's positions
-    assert [(c["grn"], c["match"], c["kind"]) for c in positions["GHR-04V-S"]["candidates"]] == [
-        ("FRX.26.0000001", "exact", "exact"), ("FRX.26.0000002", "fuzzy-separators", "fuzzy"),
-    ]
+    assert [(c["grn"], c["match"], c["kind"], c["by"]) for c in positions["GHR-04V-S"]["candidates"]] == [
+        ("FRX.26.0000001", "exact", "exact", "article"), ("FRX.26.0000002", "fuzzy-separators", "fuzzy", "article"),
+    ]  # «Колодка 4pin» names no lot: the КД article is the fallback
     assert positions["GHR-04V-S"]["candidates"][0]["available"] == "10"
     assert positions["QQQ-777"]["candidates"] == [] and positions["QQQ-777"]["more"] == 0
+
+
+def test_project_candidates_match_the_name_against_the_lot_article_and_say_so(api):
+    """Owner, 13.10.2026 (533К.12): «BL2018P-04 / SMP-04V-BC» is the lot SMP-04V-BC, not a lot of the КД article."""
+    client, factory, _ = api
+    put(
+        factory,
+        lot("FRX.26.0000001", "10", "SMP-04V-BC", "Корпус разъёма"),
+        lot("FRX.26.0000002", "4", "BL2018P-04", "Корпус"),
+        lot("FRX.26.0000003", "6", "I-DS1069-SCW004", "Разъём"),
+    )
+    create(client, "533К.12 · КБ1 · Жгут", ("BL2018P-04", "SMP-04V-BC", "2"), ("I-DS1069-SCW004", "I-DS1069-SCW004", "1"),
+           ("BL2018TS", "SHF-001T-0.8BS", "5"))
+
+    response = client.get("/api/issues/projects/533К.12/candidates")
+
+    assert response.status_code == 200, response.text
+    positions = {item["article"]: item for item in response.json()["positions"]}
+    assert [(c["grn"], c["kind"], c["by"]) for c in positions["BL2018P-04"]["candidates"]] == [
+        ("FRX.26.0000001", "exact", "name"),
+    ]
+    assert [(c["grn"], c["kind"], c["by"]) for c in positions["I-DS1069-SCW004"]["candidates"]] == [
+        ("FRX.26.0000003", "exact", "name"),
+    ]
+    assert positions["BL2018TS"]["candidates"] == []  # nothing like the name or the article: no false match
 
 
 def test_candidates_for_named_positions_without_any_kit_request(api):

@@ -351,7 +351,8 @@ def project_candidates(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
 ) -> dict:
     """«Возможно есть» (owner 12.10.2026): for every position of the project's requests, the warehouse lots that may be
-    it — exact article first, then fuzzy (`app.shared.article_match`) — in ONE pass over the stock. `available` is what
+    it — by the position's name first, the КД article only when the name finds nothing; exact before fuzzy
+    (`app.shared.article_match`), `by` says which — in ONE pass over the stock. `available` is what
     the project's kit can take (ДОСТУПНО + its own reserve), a lot with nothing to take is not offered. Read-only."""
     project = project.strip()
     with uow_factory() as uow:
@@ -408,7 +409,7 @@ def positions_candidates(
 
 
 def _candidates(uow, project: str, positions: dict[tuple[str, str], str]) -> dict:
-    """One pass over the stock for every (article, name) position: exact article first, then fuzzy."""
+    """One pass over the stock for every (article, name) position: by the name, else by the КД article."""
     lots = uow.warehouse.list(limit=5000, include_zero=False) if positions else []
     held = project_reserve_by_lot(uow, lots, project)
     free = [lot for lot in lots if free_for_project(lot, held) > 0]
@@ -432,6 +433,7 @@ def _candidates(uow, project: str, positions: dict[tuple[str, str], str]) -> dic
                 "available": _number(free_for_project(lot, held)),
                 "kind": match.kind,
                 "match": match.label,
+                "by": match.basis,
             } for match, lot in found[:_CANDIDATES_SHOWN]],
             "more": max(len(found) - _CANDIDATES_SHOWN, 0),
         })
