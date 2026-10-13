@@ -20,6 +20,8 @@ import {
   WRAP_SLOTS_,
   addEndpoint,
   applyGrapherGroups,
+  autoPickTerminals,
+  complexByHand,
   cableRecFromFields,
   grapherHasCorrections,
   grapherLengthText,
@@ -73,10 +75,12 @@ import { DrawingButton, DrawingNoteView, configDrawingProblem } from "./GenDrawi
 import { TwistGroups } from "./GenTwistGroups";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
 import {
-  addBranch, assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
+  addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
   setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin,
 } from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
+import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
+import { useTerminalPairs } from "./useTerminalPairs";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
@@ -278,7 +282,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // Метки по КД собранной карты возвращаются в форму: следующая сборка их не теряет.
     const markRows = markRowsFromConfig(card.document?.build_config);
     // Свой порядок операций собранной карты («Выше/Ниже» в схеме) возвращается в форму вместе с метками.
-    const base = { ...initState(D), opOrder: restored ? [] : opOrderFromConfig(card.document?.build_config) };
+    // Новая карта «Сложной сборки» — без засева кабелей (владелец 13.10); пересборка — с ним: распиновка прошлой сборки
+    // привязана к кабелям засева.
+    const init = initState(D);
+    const base = { ...(card.document?.build_config ? init : complexByHand(init)), opOrder: restored ? [] : opOrderFromConfig(card.document?.build_config) };
     const seeded = markRows.length ? { ...base, mark: true, markRows } : base;
     // Распиновка и её проверка — из прошлой сборки (build_config.pinout), если разъёмы и провода те же.
     const fromBuild = restored ? switchGenTab(seeded, "manual") : restorePinout(D, seeded, card.document?.build_config);
@@ -525,6 +532,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const pinFree = freeSide(gen, S);
   const pinHousings = usePinHousings(pinEnds.map((end) => end.conn));
   const pinCounts = Object.fromEntries(pinEnds.map((end) => [end.id, pinHousings[end.conn]?.n || null]));
+  // «Сложная сборка»: терминал разъёма — по парам базы разъёмов, как только они прочитаны (кроме выбранного вручную).
+  const termPairs = useTerminalPairs(complex ? S.endpoints.map((ep) => compLabel(ep.connId)).filter((art) => art !== "?") : []);
+  const termPairsKey = complex ? JSON.stringify(termPairs) : "";
+  useEffect(() => {
+    if (!termPairsKey || termPairsKey === "{}") return;
+    setS((current) => { const next = autoPickTerminals(D, current, termPairs); return next === current ? current : { ...next, times: {} }; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [termPairsKey]);
   // Экран кабеля — не отдельный провод резки: на эскизах маршрута его нет.
   const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList.filter((u) => !u.shield), pinHousings, pinFree);
   // Автозаполнение (владелец 12.10): распиновка пустая, а число контактов каждого разъёма известно из базы разъёмов —
@@ -534,7 +549,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const pinCountsKey = pinEnds.map((end) => pinCounts[end.id] ?? "?").join(",");
   const pinAutoDone = useRef(new Set<string>());
   useEffect(() => {
-    if (!pinAutoKey || pinAutoDone.current.has(pinAutoKey)) return;
+    // «Сложная сборка» (владелец 13.10): распиновку ставит технолог, автозаполнения нет.
+    if (complex || !pinAutoKey || pinAutoDone.current.has(pinAutoKey)) return;
     if (pinEnds.some((end) => end.wires.some((w) => w.text))) { pinAutoDone.current.add(pinAutoKey); return; }
     if (pinEnds.some((end) => !pinCounts[end.id])) return;
     pinAutoDone.current.add(pinAutoKey);
@@ -1116,7 +1132,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {sideSection("B")}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
       <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} />
-        <button type="button" className="secondary small" disabled={drawBusy || !links.list.length}
+        <button type="button" className="secondary small" disabled={drawBusy || (!links.list.length && !(S.splices || []).length)}
           title={links.list.length ? "Чертёж жгута позиции по разъёмам, проводам и распиновке формы" : "Сначала задайте контакты проводов на разъёмах"}
           onClick={() => void buildDrawing()}>{drawBusy ? "Строю чертёж…" : drawingExists ? "Обновить чертёж" : "Построить чертёж"}</button></div>
       {drawNote && <div className={drawNote.error ? "error-banner gen-drawing-note" : "gen-drawing-note"} role={drawNote.error ? "alert" : "status"}>
@@ -1127,13 +1143,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>}
       <PinoutBoard ends={pinEnds} links={links.list} units={pinUnitList} housings={pinHousings} free={pinFree}
         wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={[...pinFitWarnings(pinEnds, pinCounts), ...routingWarnings(D, S)]}
-        branches={S.branches || []} complex={complex}
+        branches={S.branches || []} complex={complex} joins={{ splices: S.splices, tails: S.tails }}
+        onJoin={(end, value) => update((current) => (value === "" ? leaveJoin(D, current, end) : value === "tail" ? setTail(D, current, end) : joinSplice(D, current, end, value)))}
         onBranch={(from, toEpId, toPin, mode) => update((current) => addBranch(D, current, from, toEpId, toPin, mode))}
         onBranchMode={(extra, mode) => update((current) => setBranchMode(D, current, extra, mode))}
         onRemoveBranch={(extra) => update((current) => removeBranch(D, current, extra))}
         onCoreColor={(idx, unit, color) => update((current) => setCoreColor(D, current, idx, unit, color))}
         onCoreNet={(idx, unit, net) => update((current) => setCoreNet(D, current, idx, unit, net))}
-        onAssign={(epId, idx, unit, pin) => update((current) => assignPin(D, current, epId, idx, unit, pin))}
+        onAssign={(epId, idx, unit, pin) => update((current) => assignPinJoined(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
         onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}

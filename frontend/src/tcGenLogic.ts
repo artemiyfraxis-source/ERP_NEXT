@@ -9,6 +9,7 @@
  */
 import { markLabel, markSpecs, type MarkMat, type MarkRow, type MarkSpec } from "./tcGenMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
+import { pickTerminals, type TerminalPairs } from "./terminalPick";
 
 /** `art` — what the row actually uses (selects, gauge, terminals, ETK); `kd` — the КД article it replaced, display only. */
 export type Comp = { id: string; type: string; name: string; art: string; kd?: string; qty: number | string; length?: number };
@@ -65,6 +66,8 @@ export type Endpoint = {
   pins?: Record<number, string>;
   /** «Распиновка проверена»: подпись проверенной распиновки (pinoutCheck.ts); другая подпись — флаг снят. */
   pinChecked?: string;
+  /** Терминал выбран генератором по разъёму (terminalPick.ts); false — выбран вручную, генератор его не трогает. */
+  termAuto?: boolean;
 };
 /** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
 export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };
@@ -82,12 +85,27 @@ export type OpTimes = { tmpl: string; tPrep: string; tOp: string; tMachine: stri
  *  второй конец идёт на контакт `toPin` разъёма `to` отдельным проводом `extra` — через сросток или двойной обжим. */
 export type Branch = { main: number; extra: number; mode: "splice" | "double"; from: string; pin: number; to: string; toPin: number };
 
+/** Конец провода: жила `unit` строки «Кабели» `idx` на стороне `side` (tcGenSplices.ts). */
+export type WireEnd = { idx: number; unit: number; side: Side };
+/** Сросток (обжимная гильза, владелец 13.10): концы проводов, соединённые в одной точке, — провод 0,5 с разъёма и три
+ *  провода 0,2 к разъёмам и в хвост. Концы в сростке не идут на контакты разъёмов своей стороны. */
+export type Splice = { id: string; ends: WireEnd[] };
+/** Конец в сростке или свободный конец («хвост» без разъёма) — на этой стороне провод не ждёт контакта. */
+export function endJoined(S: Pick<GenState, "splices" | "tails">, idx: number, unit: number, side: Side): "splice" | "tail" | null {
+  const hit = (e: WireEnd) => e.idx === idx && e.unit === unit && e.side === side;
+  if ((S.splices || []).some((s) => s.ends.some(hit))) return "splice";
+  return (S.tails || []).some(hit) ? "tail" : null;
+}
+
 export type GenState = {
   tab: Tab;
   wires: WireEntry[];
   nextWireIdx: number;
   /** Ответвления проводов (pinoutCheck.addBranch); нет ключа — ответвлений нет. */
   branches?: Branch[];
+  /** Сростки и свободные концы, нарисованные вручную (tcGenSplices.ts); нет ключа — их нет. */
+  splices?: Splice[];
+  tails?: WireEnd[];
   endpoints: Endpoint[];
   nextEndpointId: number;
   advancedLength: boolean;
@@ -663,7 +681,9 @@ export function makeGen(D: GenData, S: GenState) {
     });
     S.endpoints.forEach((e) => {
       const set = new Set(routedWireIdxs_(e));
-      wires.forEach((w) => { if (set.has(w.idx)) ends -= qty(w); });
+      // Провод ×N, разведённый по контактам нескольких разъёмов стороны (сростки «Сложной сборки»), приходит сюда не
+      // всеми концами — столько, сколько здесь контактов.
+      wires.forEach((w) => { if (set.has(w.idx)) ends -= wireCores_(w) > 1 ? qty(w) : Math.min(qty(w), endUnits_(e, w)); });
     });
     return Math.max(0, ends - spliceEnds_());
   }
@@ -2000,8 +2020,36 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
   }
   const g = makeGen(D, S);
   S = switchGenTab(S, g.isCoaxAssembly_() ? "coax" : g.isComplexKit_() ? "complex" : "inter");
+  // «Сложная сборка»: терминал разъёма — по совместимости корпуса с терминалами состава (не нашёлся — как раньше).
+  if (S.tab === "complex") S = autoPickTerminals(D, S);
   S = applyCalcTin_(D, S);
   return S;
+}
+
+/** Новая карта на «Сложной сборке» (владелец 13.10: «в сложной сборке не нужно автоподбора конфигурации проводов»):
+ *  кабели, длины и свивку технолог задаёт сам — засев из состава снимается. Пакетная сборка (tcGenBatch) и пересборка
+ *  карты (распиновка прошлой сборки читается по засеянным кабелям) засев сохраняют. */
+export function complexByHand(S: GenState): GenState {
+  if (S.tab !== "complex") return S;
+  return { ...S, wires: [{ idx: 0, compId: "", length: 0, qty: 1 }], nextWireIdx: 1, advancedLength: false, drawingLength: 0, sharedLengthText: "",
+    lenFromCalc: false, twist: { ...S.twist, enabled: false, pairs: [], wires: null } };
+}
+
+/** Терминалы разъёмов «Сложной сборки» по совместимости с корпусом (terminalPick.ts): у разъёма, терминал которого не
+ *  выбран вручную. `pairs` — пары «корпус → терминалы» базы разъёмов. `clear` — у этих разъёмов (или у всех) терминал
+ *  снимается, если совместимый не нашёлся (разъём только что выбран), у остальных — остаётся как есть. */
+export function autoPickTerminals(D: GenData, S: GenState, pairs?: TerminalPairs, clear: "all" | string | null = null): GenState {
+  if (S.tab !== "complex") return S;
+  const picks = pickTerminals(makeGen(D, S), S, pairs);
+  let next = S;
+  S.endpoints.forEach((ep) => {
+    if (ep.termAuto === false || ep.method !== "crimp" || !ep.connId) return;
+    const want = picks[ep.id] || (clear === "all" || clear === ep.id ? "" : ep.termId);
+    if (want === ep.termId) return;
+    next = { ...next, selectedTemplates: clearAutoTemplates(next, ep, ["prs", "ins"]),
+      endpoints: next.endpoints.map((e) => (e.id === ep.id ? { ...e, termId: want, termAuto: true } : e)) };
+  });
+  return next;
 }
 
 export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState {
@@ -2157,8 +2205,14 @@ export function updateEndpoint(D: GenData, S: GenState, id: string, patch: Parti
       next = { ...next, sdrTmpl: comp ? detectSolderConn_(comp.art) : null };
     }
   }
-  if ("termId" in patch) selectedTemplates = clearAutoTemplates(S, ep, ["prs", "ins"]);
-  return { ...S, selectedTemplates, endpoints: S.endpoints.map((e) => (e.id === id ? next : e)) };
+  if ("termId" in patch) { selectedTemplates = clearAutoTemplates(S, ep, ["prs", "ins"]); next = { ...next, termAuto: false }; }
+  const after = { ...S, selectedTemplates, endpoints: S.endpoints.map((e) => (e.id === id ? next : e)) };
+  // Выбрали разъём в «Сложной сборке» — к нему сразу его терминал из состава (владелец 13.10).
+  if ("connId" in patch && !("termId" in patch) && S.tab === "complex") {
+    const auto = { ...after, endpoints: after.endpoints.map((e) => (e.id === id && e.termAuto !== false ? { ...e, termAuto: true } : e)) };
+    return autoPickTerminals(D, auto, undefined, id);
+  }
+  return after;
 }
 
 /** wireIdxs разъёма, на который не заведён ни один провод. */

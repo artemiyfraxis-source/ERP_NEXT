@@ -7,7 +7,7 @@
  */
 import { wireColorKnown } from "./connectorArt";
 import { PALETTE, canonicalColor } from "./wireColors";
-import { formatCorePins_, makeGen, NO_WIRES, parseCorePins_, parsePinList_, sideRu_, updateWire, type Branch, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { endJoined, formatCorePins_, makeGen, NO_WIRES, parseCorePins_, parsePinList_, sideRu_, updateWire, type Branch, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side } from "./tcGenLogic";
 
 /** Цвет жилы по названию палитры: одноцветная или двухцветная («бело-синий» — основной белый, полоса синяя). */
 export function coreColor(text: string | undefined): { name: string; baseName: string; hex: string; stripe: string | null } | null {
@@ -195,6 +195,9 @@ export type PinoutRecord = {
   cores?: Array<{ pos: number; unit: number; color: string }>;
   /** Цепи жил и экранов: кабель (позиция), жила, имя цепи. */
   nets?: Array<{ pos: number; unit: number; net: string }>;
+  /** Сростки и хвосты (tcGenSplices.ts): концы проводов — кабель (позиция), жила, сторона. */
+  splices?: Array<Array<{ pos: number; unit: number; side: Side }>>;
+  tails?: Array<{ pos: number; unit: number; side: Side }>;
 };
 
 /** build_config.pinout: контакты по разъёмам и флаг проверки — чтобы пережить перезагрузку формы. Ни контактов, ни
@@ -203,12 +206,15 @@ export function pinoutRecord(gen: Gen, S: GenState): PinoutRecord | null {
   const ends = pinoutEnds(gen, S);
   const colored = gen.activeWires_().flatMap((w, pos) => (w.coreColors || []).flatMap((color, unit) => (color ? [{ pos, unit, color }] : [])));
   const named = gen.activeWires_().flatMap((w, pos) => (w.nets || []).flatMap((net, unit) => (net && net.trim() ? [{ pos, unit, net: net.trim() }] : [])));
-  if (!colored.length && !named.length && !ends.some((end) => end.checked || end.wires.some((w) => w.text))) return null;
   const pos = new Map(gen.activeWires_().map((w, i) => [w.idx, i]));
+  const endOf = (e: { idx: number; unit: number; side: Side }) => (pos.has(e.idx) ? [{ pos: pos.get(e.idx)!, unit: e.unit, side: e.side }] : []);
+  const splices = (S.splices || []).map((sp) => sp.ends.flatMap(endOf)).filter((list) => list.length);
+  const tails = (S.tails || []).flatMap(endOf);
+  if (!colored.length && !named.length && !splices.length && !tails.length && !ends.some((end) => end.checked || end.wires.some((w) => w.text))) return null;
   const keyOf = new Map(S.endpoints.map((ep) => [ep.id, endKey(gen, ep)]));
   const branches = (S.branches || []).filter((b) => pos.has(b.main) && pos.has(b.extra) && keyOf.has(b.from) && keyOf.has(b.to))
     .map((b) => ({ pos: pos.get(b.main)!, mode: b.mode, from: keyOf.get(b.from)!, pin: b.pin, to: keyOf.get(b.to)!, toPin: b.toPin }));
-  return { ...(branches.length ? { branches } : {}), ...(colored.length ? { cores: colored } : {}), ...(named.length ? { nets: named } : {}), ends: ends.map((end) => ({
+  return { ...(branches.length ? { branches } : {}), ...(splices.length ? { splices } : {}), ...(tails.length ? { tails } : {}), ...(colored.length ? { cores: colored } : {}), ...(named.length ? { nets: named } : {}), ends: ends.map((end) => ({
     end: end.key, conn: end.conn, checked: end.checked, sig: end.sig,
     wires: end.wires.filter((w) => w.text).map((w) => ({ pos: pos.get(w.idx) ?? -1, art: w.name, pins: w.text })),
   })) };
@@ -233,6 +239,13 @@ export function restorePinout(D: GenData, S: GenState, config: unknown): GenStat
     const wire = makeGen(D, next).activeWires_()[item.pos];
     if (wire && typeof item.net === "string") next = setCoreNet(D, next, wire.idx, item.unit, item.net);
   });
+  {
+    const wires = makeGen(D, next).activeWires_();
+    const endOf = (e: { pos: number; unit: number; side: Side }) => (wires[e?.pos] && (e.side === "A" || e.side === "B") && e.unit >= 0 ? [{ idx: wires[e.pos].idx, unit: e.unit, side: e.side }] : []);
+    const splices = (Array.isArray(saved.splices) ? saved.splices : []).map((list, i) => ({ id: `s${i + 1}`, ends: (Array.isArray(list) ? list : []).flatMap(endOf) })).filter((sp) => sp.ends.length);
+    const tails = (Array.isArray(saved.tails) ? saved.tails : []).flatMap(endOf);
+    if (splices.length || tails.length) next = { ...next, splices, tails };
+  }
   const gen = makeGen(D, next);
   const active = gen.activeWires_();
   const byKey = new Map(next.endpoints.map((ep) => [endKey(gen, ep), ep]));
@@ -595,7 +608,8 @@ export function routingWarnings(D: GenData, S: GenState): string[] {
       if (!legacyRouting(gen, side)) out.push(`${title}: провода не розданы по разъёмам — раздайте их на схеме, пока генератор считает все провода на каждом разъёме.`);
       return;
     }
-    const names = [...new Set(units.filter((u) => !extras.has(u.idx) && !eps.some((ep) => ep.id in u.at)).map((u) => `${u.num} · ${u.name}`))];
+    // Конец в сростке или хвосте контакта не ждёт.
+    const names = [...new Set(units.filter((u) => !extras.has(u.idx) && !eps.some((ep) => ep.id in u.at) && !endJoined(S, u.idx, u.unit, side)).map((u) => `${u.num} · ${u.name}`))];
     if (names.length) out.push(`${title}: не назначены на разъём — ${names.join(", ")}.`);
   });
   // Кабель в оболочке: жила без контакта ни на одном разъёме — не задействована (подрезать и изолировать или назначить контакт).
