@@ -6,6 +6,7 @@ import {
 } from "./api";
 import { formatDay, formatDayMonth, kbLabel } from "./format";
 import type { ProjectDeadlines } from "./MasterBoard";
+import { ShipDatePlan } from "./ShipDatePlan";
 
 const STALE_TEXT = "План изменился — обновите предложение";
 // Номер будущего задания в расчёте (backend autoplan.NEW_TASK_PREFIX): номер ПЗ дадут при применении.
@@ -309,6 +310,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {} }: {
               {!fitters.length && <small>Монтажников ЦАР нет.</small>}
             </div>
           </section>
+          {projectRow && <ShipDatePlan project={project} people={chosenPeople.map((person) => person.id)} deadline={deadlineOf(projectRow)} />}
         </>}
         {error && <div className="error-banner" role="alert">{error}</div>}
         {loading && <div className="empty">Считаем план…</div>}
