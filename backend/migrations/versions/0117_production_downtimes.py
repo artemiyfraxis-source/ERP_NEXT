@@ -23,7 +23,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0117_production_downtimes"
-down_revision: str | None = "0112_harness_route_v3"
+down_revision: str | None = "0115_terminal_contact_card"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
