@@ -216,17 +216,25 @@ test("operations replaces the owner tick with append-only audit and reliable job
   assert.equal(worker.includes("everyMinutes"), false);
 });
 
-test("every backend/data file the frontend imports is copied into the web build stage", async () => {
-  // A missing COPY passes CI (whole repo checked out) but breaks the server image build (12.10.2026, etk-marking.json).
+test("every file outside frontend/ that the frontend imports is copied into the web build stage", async () => {
+  // A missing COPY passes CI (whole repo checked out) but breaks the server image build: etk-marking.json (12.10.2026),
+  // then backend/tests/techcards/harness_generated_sample.json imported by a test (13.10.2026) — tsc -b checks tests too.
   const { readdir } = await import("node:fs/promises");
+  const { dirname, relative, resolve, sep } = await import("node:path");
   const dockerfile = await readFile(join(root, "Dockerfile"), "utf8");
-  const copied = [...dockerfile.matchAll(/^COPY (backend\/data\/\S+) /gm)].map((match) => match[1]);
-  const files = (await readdir(join(root, "frontend", "src"), { recursive: true }))
+  // Only the web stage counts: `COPY backend/ ./` of the Python stage is not visible to the frontend build.
+  const webStage = dockerfile.split(/^FROM /m).find((stage) => /^\S+ AS web\s/i.test(stage)) ?? "";
+  assert.ok(webStage, "Dockerfile has no «AS web» stage");
+  const copied = [...webStage.matchAll(/^COPY (?!--from)(\S+) /gm)].map((match) => match[1]);
+  const frontend = join(root, "frontend");
+  const files = (await readdir(join(frontend, "src"), { recursive: true }))
     .filter((name) => /\.(ts|tsx|mts)$/.test(name));
   for (const name of files) {
-    const source = await readFile(join(root, "frontend", "src", name), "utf8");
-    for (const match of source.matchAll(/from\s+["'](?:\.\.\/)+(backend\/data\/[^"']+)["']/g)) {
-      const target = match[1];
+    const source = await readFile(join(frontend, "src", name), "utf8");
+    for (const match of source.matchAll(/from\s+["']((?:\.\.\/)+[^"']+)["']/g)) {
+      const absolute = resolve(dirname(join(frontend, "src", name)), match[1]);
+      if (absolute.startsWith(frontend + sep)) continue;
+      const target = relative(root, absolute).split(sep).join("/");
       assert.ok(copied.some((path) => target === path || (path.endsWith("/") && target.startsWith(path))),
         `frontend/src/${name} imports ${target}, but the Dockerfile web stage does not COPY it`);
     }
