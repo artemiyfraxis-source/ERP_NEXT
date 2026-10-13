@@ -91,6 +91,8 @@ def test_existing_tasks_keep_their_data_get_the_default_plan_and_constraints_hol
         connection.execute("ALTER TABLE production_tasks ADD COLUMN project_key VARCHAR(255)")
         # И номер запуска КБ (0113).
         connection.execute("ALTER TABLE production_tasks ADD COLUMN launch_seq INTEGER")
+        # И операции ЭТК полуфабриката (0120).
+        connection.execute("ALTER TABLE production_operations ADD COLUMN etk_ops JSON")
 
     # Текущий код читает перенесённые задания.
     engine = create_engine(f"sqlite+pysqlite:///{database_path.as_posix()}")

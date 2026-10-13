@@ -141,7 +141,7 @@ class _Backward:
     def slot(self, operation: ProductionOperation, operator_id: UUID, bound: datetime) -> tuple[datetime, datetime] | None:
         data = self.data
         task = self.task_of[operation.id]
-        rate = _rate(data.skills, operation.code, (operator_id,))
+        rate = _rate(data.skills, operation.skill_codes, (operator_id,))
         net = ceil(operation.setup_seconds + operation.seconds_per_unit * task.operation_units(operation.id) / (rate if rate > 0 else Decimal(1)))
         clock = clock_seconds(net, data.shift)
         finish = _latest_moment(bound, data.holidays, data.shift)
@@ -159,7 +159,7 @@ class _Backward:
         best: tuple[tuple, UUID, datetime, datetime] | None = None
         allowed = False
         for index, operator_id in enumerate(self.data.team):
-            if not _allowed(self.data.skills, operation.code, operator_id):
+            if not _allowed(self.data.skills, operation.skill_codes, operator_id):
                 continue
             allowed = True
             try:

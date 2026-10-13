@@ -114,7 +114,7 @@ def localize(task: ProductionTask, reference: datetime) -> ProductionTask:
     ))
 
 
-def rate_of(skills: dict[str, dict[UUID, OperatorSkill]], code: str, operator_ids: Iterable[UUID]) -> Decimal:
+def rate_of(skills: dict[str, dict[UUID, OperatorSkill]], code: str | tuple[str, ...], operator_ids: Iterable[UUID]) -> Decimal:
     """Сумма коэффициентов исполнителей (prodOpDurationSec_); без допуска или строки компетенций — 1."""
     return sum((skill_of(skills, code, operator_id).coefficient for operator_id in operator_ids), Decimal(0))
 
@@ -130,7 +130,7 @@ def share_seconds(
     / коэффициенты. Ветка «2 на изделие» делает вдвое больше штук — и идёт вдвое дольше."""
     return operation_duration_seconds(
         operation, task.operation_units(operation.id, quantity),
-        operator_rate=rate_of(skills, operation.code, operator_ids),
+        operator_rate=rate_of(skills, operation.skill_codes, operator_ids),
     )
 
 

@@ -115,16 +115,17 @@ def test_manual_card_with_generator_ops_launches_both_drawn_branches():
     assert [step.block for step in steps] == ["w1", "w2", "w2"] + ["harness"] * 8
     assert [step.final for step in steps] == [False] * 3 + [True] * 8
 
+    # Задание по ПФ (13.10): одна операция задания на блок схемы, обе ветки сходятся в сборку.
     operations = launch_operations(steps, 100)
     position_of = {item.id: item.position for item in operations}
     inputs = {item.position: [(position_of[entry.input_operation_id], entry.per_unit) for entry in item.inputs]
               for item in operations}
-    # Both branches start on their own and both feed the first operation of the assembly block.
-    assert inputs[1] == [] and inputs[2] == []
-    assert inputs[3] == [(2, Decimal(1))]
-    assert inputs[4] == [(1, Decimal(1)), (3, Decimal(1))]
-    assert all(inputs[position] == [(position - 1, Decimal(1))] for position in range(5, 12))
-    assert [item.stage_key for item in operations] == ["w1", "w2", "w2"] + ["harness"] * 8
+    assert inputs == {1: [], 2: [], 3: [(1, Decimal(1)), (2, Decimal(1))]}
+    assert [item.stage_key for item in operations] == ["w1", "w2", "harness"]
+    assert [[part.position for part in item.etk_ops] for item in operations] == [[1], [2, 3], list(range(4, 12))]
+    assert [item.code for item in operations] == [steps[0].code, steps[1].code, steps[3].code]
+    assert sum((item.setup_seconds + item.seconds_per_unit * 100 for item in operations), Decimal(0)) == sum(
+        (step.setup_seconds + step.seconds_per_unit * 100 for step in steps), Decimal(0))
 
     # Norms as the ETK shows them, the own operation with its «на изделие» 2: 15 s × 2 per item + 60 s setup.
     assert _plan_minutes(steps, 100) == pytest.approx(_etk_minutes(document), abs=Decimal("0.01"))

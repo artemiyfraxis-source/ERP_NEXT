@@ -1107,3 +1107,48 @@ it("counts worked time without pauses", () => {
   expect(workedSeconds({ ...base, status: "В работе", pause_started_at: null, pause_seconds: 600 }, new Date("2026-10-12T15:00:00+03:00"))).toBe(3000);
   expect(workedSeconds({ ...base, status: "Пауза", pause_started_at: "2026-10-12T14:30:00+03:00", pause_seconds: 0 }, new Date("2026-10-12T15:00:00+03:00"))).toBe(1800);
 });
+
+const pfPrincipal: Principal = {
+  user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
+  roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
+};
+
+function mockMine(operation: ProductionOperation) {
+  const mine: ProductionTask = { ...task, operations: [{ ...operation, operator_ids: [pfPrincipal.user.id] }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [mine] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.endsWith("/inputs")) return json({ boxes: [{
+      id: "74000000-0000-0000-0000-000000000001", number: "000001-8", code: "180К.11·КБ1·13.10·Б07·3", version: 1, task_id: task.id, operation_id: "x", item: task.item,
+      operation_position: 2, operator_id: "x", quantity: "5", consumed: "0", reserved: "0", rejected: "0", available: "5",
+      status: "Подтверждена", created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: "",
+    }], materials: [] });
+    if (path.endsWith("/etk")) return json({ card: { document: { operations: [
+      { position: 5, card: { steps: [{ kind: "КОНТРОЛЬ", text: "Высота обжима", tolerance: "1,2 мм" }], defects: "" } },
+    ] } }, focus: { position: 5, positions: [5, 6, 7], code: "OP-01" } });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+}
+
+it("shows a semi-finished task card: ПФ name, operation numbers, inputs and collapsed requirements", async () => {
+  mockMine({ ...task.operations[0], position: 3, stage: "Опрессовка", first: false,
+    etk_ops: [{ position: 5, code: "OP-5", stage: "Зачистка" }, { position: 6, code: "OP-6", stage: "Опрессовка" }, { position: 7, code: "OP-7", stage: "Контроль" }] });
+  render(<ProductionPage principal={pfPrincipal} mine />);
+  expect(await screen.findByText("ПФ-3 · Опрессовка")).toBeInTheDocument();
+  expect(screen.getByText("оп. 05·06·07")).toBeInTheDocument();
+  expect(await screen.findByText(/Получить от предыдущей задачи/)).toBeInTheDocument();
+  expect(await screen.findByText(/180К\.11·КБ1·13\.10·Б07·3/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Инструкция" })).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Требования"));
+  expect(await screen.findByText(/Контроль: Высота обжима \(допуск: 1,2 мм\)/)).toBeInTheDocument();
+});
+
+it("keeps an old one-ETK-operation card as it was: stage name, ЭТК button, no ПФ blocks", async () => {
+  mockMine({ ...task.operations[0], first: false });
+  render(<ProductionPage principal={pfPrincipal} mine />);
+  expect(await screen.findByText("Разделка")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "ЭТК" })).toBeInTheDocument();
+  expect(screen.queryByText("Требования")).not.toBeInTheDocument();
+  expect(screen.queryByText(/ПФ-/)).not.toBeInTheDocument();
+});

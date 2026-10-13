@@ -9,7 +9,7 @@ import json
 from typing import Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker, validates
 
@@ -20,7 +20,7 @@ from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinis
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .application import Absence, DuplicateLaunch, Operator
-from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
+from .domain import DEFAULT_SHIFT, EtkOperation, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
     stage_alias,
@@ -176,6 +176,22 @@ class ProductionOperationRow(Base):
     assigned_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Блок схемы полуфабрикатов ЭТК (ARCH-TRACK-2); NULL — не известен (задания до схемы).
     stage_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Задание по ПФ (0120): операции ЭТК полуфабриката [{position, code, stage}] в порядке ПФ; NULL — операция
+    # задания и есть одна операция ЭТК (запуск без схемы, задания до 0120).
+    etk_ops: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+
+
+def _etk_ops_json(operation: ProductionOperation) -> list[dict] | None:
+    return [{"position": item.position, "code": item.code, "stage": item.stage} for item in operation.etk_ops] or None
+
+
+def _etk_ops_domain(value: object) -> tuple[EtkOperation, ...]:
+    if not isinstance(value, list):
+        return ()
+    return tuple(
+        EtkOperation(int(item["position"]), str(item.get("code") or ""), str(item.get("stage") or ""))
+        for item in value if isinstance(item, dict) and item.get("position")
+    )
 
 
 class ProductionOperationInputRow(Base):
@@ -645,6 +661,7 @@ class SqlAlchemyProductionRepository:
                 shares=tuple(by_operation.get(operation.id, ())),
                 stage_key=operation.stage_key,
                 inputs=tuple(inputs.get(operation.id, ())),
+                etk_ops=_etk_ops_domain(operation.etk_ops),
             ) for operation in operation_rows),
             techcard_id=row.techcard_id, techcard_revision=row.techcard_revision,
             flow_mode=FlowMode(row.flow_mode or FlowMode.MIXED.value),
@@ -825,6 +842,8 @@ class SqlAlchemyProductionRepository:
             stored.planned_finish = operation.planned_finish
             stored.assigned_by = operation.assigned_by
             stored.stage_key = operation.stage_key
+            if stored.etk_ops != _etk_ops_json(operation):
+                stored.etk_ops = _etk_ops_json(operation)
             for item in operation.inputs if rewrite_edges else ():
                 self.session.add(ProductionOperationInputRow(
                     id=uuid4(), operation_id=operation.id, input_operation_id=item.input_operation_id,
