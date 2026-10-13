@@ -12,6 +12,7 @@ import {
   accessLevelOf,
   canAct,
   canSee,
+  hasAccess,
   hasFullAccess,
   isBlock,
   isViewOnly,
@@ -301,7 +302,7 @@ export function App() {
         {activeSection === "procurement" && <ProcurementPage readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
         {activeSection === "stock" && <WarehousePage admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
-          finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
+          canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
