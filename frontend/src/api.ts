@@ -3090,10 +3090,6 @@ export const productionApi = {
     api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit${behalfQuery(work.onBehalfOf)}`, {
       method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
     }),
-  boxAction: (boxId: string, action: "confirm", version: number) =>
-    api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
-      method: "POST", body: JSON.stringify({ version }),
-    }),
   boxOutputs: (boxId: string) => api<{ outputs: ProductionOutput[] }>(`/api/production/boxes/${boxId}/outputs`),
   correctBox: (boxId: string, version: number, input: CorrectBoxInput, onBehalfOf = "") =>
     api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct${behalfQuery(onBehalfOf)}`, {

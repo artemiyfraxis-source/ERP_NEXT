@@ -74,13 +74,15 @@ def test_readiness_walks_from_not_submitted_to_ready_to_assemble(production_api)
     assert states[3]["state"] == "waiting_stage"
     assert states[3]["text"] == "ждёт: Нарезка А не сдан"
 
-    waiting = _box(task, 1, 104301, operator_id, "10", confirmed=False)
+    # Возвращённую на исправление коробку брать нельзя — ждём, пока монтажник её исправит.
+    waiting = _box(task, 1, 104301, operator_id, "10", confirmed=False).return_to_operator("Пересчитать")
     _save(factory, waiting)
     states, _ = _readiness(client)
     assert states[3]["state"] == "waiting_master"
-    assert states[3]["text"] == "ждёт: Нарезка А — коробка ещё у мастера"
+    assert states[3]["text"] == "ждёт: Нарезка А — коробку исправляют"
 
-    cut_a = _box(task, 1, 104302, operator_id, "10")
+    # Сданная монтажником коробка годится сразу — подтверждения мастером нет (13.10).
+    cut_a = _box(task, 1, 104302, operator_id, "10", confirmed=False)
     _save(factory, cut_a)
     states, _ = _readiness(client)
     assert states[3]["text"] == "ждёт: Нарезка Б не сдан"

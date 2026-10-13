@@ -160,6 +160,14 @@ class BoxStatus(str, Enum):
     CONSUMED = "Израсходована"
 
 
+# Одно подтверждение — ОТК (владелец, 13.10.2026: «ОТК подтверждает и все»). Мастер коробки больше не подтверждает:
+# сданная коробка («Закрыта оператором») сразу годится на вход следующей операции. ОТК проверяет только выход
+# финальной операции, а его никто не берёт на вход — поэтому «пройти мимо ОТК» через вход нельзя; на склад ГП
+# коробка уходит только «Подтверждена» (это ставит приёмка ОТК) и с записью проверки. «Подтверждена» мастером —
+# старые коробки до 13.10, они тоже годятся.
+TAKEABLE_BOX = frozenset({BoxStatus.OPERATOR_CLOSED, BoxStatus.CONFIRMED})
+
+
 class WorkStatus(str, Enum):
     ACTIVE = "В работе"
     PAUSED = "Пауза"
@@ -279,8 +287,8 @@ class ProductionBox:
         previous_position — номер этапа-входа или номера всех входов операции (сетевой график, ARCH-TRACK-2)."""
         label = self.number or "без номера"
         positions = _positions(previous_position)
-        if self.status is not BoxStatus.CONFIRMED:
-            return f"Коробка {label} — «{self.status.value}»: брать можно только подтверждённую мастером."
+        if self.status not in TAKEABLE_BOX:
+            return f"Коробка {label} — «{self.status.value}»: брать можно только сданную коробку."
         if task_id is not None and self.task_id != task_id:
             return f"Коробка {label} — из другого производственного задания."
         if self.item.lower() != str(item).strip().lower():
@@ -306,8 +314,8 @@ class ProductionBox:
 
     def reserve(self, quantity: Decimal, *, item: str, previous_position: int | Iterable[int]) -> ProductionBox:
         amount = _quantity(quantity, "Количество из коробки")
-        if self.status is not BoxStatus.CONFIRMED:
-            raise ProductionValidationError("В работу можно брать только подтверждённую коробку")
+        if self.status not in TAKEABLE_BOX:
+            raise ProductionValidationError("В работу можно брать только сданную коробку")
         if self.item != item:
             raise ProductionValidationError("В коробке другое изделие")
         if self.operation_position not in _positions(previous_position):
@@ -350,15 +358,26 @@ class ProductionBox:
             version=self.version + 1,
         )
 
-    def record_qc_rejection(self, quantity: Decimal) -> ProductionBox:
-        amount = _quantity(quantity, "Брак ОТК", allow_zero=True)
-        if self.status is not BoxStatus.CONFIRMED:
-            raise ProductionValidationError("ОТК принимает только подтверждённую коробку")
+    def qc_accept(self, rejected: Decimal, actor: str, now: datetime) -> ProductionBox:
+        """Приёмка ОТК — единственное подтверждение коробки: «Закрыта оператором» → «Подтверждена» (брак ОТК
+        снимается с остатка; всё в браке — «Израсходована»). Старая коробка, подтверждённая мастером до 13.10,
+        принимается так же, её отметка подтверждения остаётся."""
+        amount = _quantity(rejected, "Брак ОТК", allow_zero=True)
+        if self.status not in TAKEABLE_BOX:
+            raise ProductionValidationError(f"ОТК принимает только сданную коробку, а она «{self.status.value}»")
+        if self.reserved != 0 or self.consumed != 0:
+            raise ProductionValidationError("Из коробки уже брали штуки — ОТК её не принимает")
         if amount > self.available:
             raise ProductionValidationError("Брак ОТК превышает доступное количество коробки")
-        rejected = self.rejected + amount
-        status = BoxStatus.CONSUMED if self.consumed + rejected == self.quantity else self.status
-        return replace(self, rejected=rejected, status=status, version=self.version + 1)
+        total = self.rejected + amount
+        legacy = self.status is BoxStatus.CONFIRMED
+        return replace(
+            self, rejected=total,
+            status=BoxStatus.CONSUMED if self.consumed + total == self.quantity else BoxStatus.CONFIRMED,
+            confirmed_at=self.confirmed_at if legacy else now,
+            confirmed_by=self.confirmed_by if legacy else str(actor).strip(),
+            version=self.version + 1,
+        )
 
     def close(self, number: str, actor: str, now: datetime) -> ProductionBox:
         if self.status is not BoxStatus.OPEN:
@@ -375,6 +394,8 @@ class ProductionBox:
         )
 
     def confirm(self, actor: str, now: datetime) -> ProductionBox:
+        """Подтверждение мастером — до 13.10.2026; маршрута больше нет (подтверждает ОТК, `qc_accept`). Остаётся для
+        событий `production.box_confirmed` в журнале и их отката тестовых нажатий."""
         if self.status is not BoxStatus.OPERATOR_CLOSED:
             raise ProductionValidationError("Подтвердить можно только закрытую оператором коробку")
         return replace(
@@ -386,6 +407,8 @@ class ProductionBox:
         clean = str(reason or "").strip()
         if self.status is not BoxStatus.OPERATOR_CLOSED:
             raise ProductionValidationError("Вернуть можно только закрытую оператором коробку")
+        if self.reserved != 0 or self.consumed != 0:
+            raise ProductionValidationError("Из коробки уже брали штуки — вернуть её нельзя")
         if not clean:
             raise ProductionValidationError("Причина возврата обязательна")
         return replace(self, status=BoxStatus.RETURNED, return_reason=clean, version=self.version + 1)
@@ -393,10 +416,10 @@ class ProductionBox:
     def correct(
         self, *, replaced_good: Decimal, good: Decimal, operator_id: UUID, actor: str, now: datetime,
     ) -> ProductionBox:
-        """Replace one output's good quantity in a returned box and hand it back to the master (`prodWorkFix_`)."""
+        """Replace one output's good quantity in a returned box and hand it back to ОТК (`prodWorkFix_`)."""
         label = self.number or "без номера"
         if self.status is not BoxStatus.RETURNED:
-            raise ProductionValidationError(f"Коробка {label} не возвращена мастером — исправлять нечего")
+            raise ProductionValidationError(f"Коробка {label} не возвращена — исправлять нечего")
         if self.operator_id != operator_id:
             raise ProductionValidationError(f"Коробку {label} сдавал другой оператор")
         quantity = (
@@ -415,14 +438,15 @@ class ProductionBox:
     def give_back(self, quantity: Decimal) -> ProductionBox:
         """Return pieces a corrected output no longer takes; an emptied box becomes usable again."""
         amount = _quantity(quantity, "Возврат во входную коробку")
-        if self.status not in (BoxStatus.CONFIRMED, BoxStatus.CONSUMED):
-            raise ProductionValidationError("Вернуть можно только в подтверждённую или израсходованную коробку")
+        if self.status not in (*TAKEABLE_BOX, BoxStatus.CONSUMED):
+            raise ProductionValidationError("Вернуть можно только в сданную или израсходованную коробку")
         if amount > self.consumed:
             raise ProductionValidationError("Возврат больше расхода коробки")
-        return replace(
-            self, consumed=self.consumed - amount, status=BoxStatus.CONFIRMED,
-            version=self.version + 1,
-        )
+        # Израсходованная снова годится: «Подтверждена», если её подтверждали, иначе — как сдал монтажник.
+        status = self.status
+        if status is BoxStatus.CONSUMED:
+            status = BoxStatus.CONFIRMED if self.confirmed_at is not None else BoxStatus.OPERATOR_CLOSED
+        return replace(self, consumed=self.consumed - amount, status=status, version=self.version + 1)
 
 
 def _count(value: Decimal) -> str:
@@ -430,8 +454,8 @@ def _count(value: Decimal) -> str:
 
 
 def pick_inputs(sources: Sequence[ProductionBox], quantity: Decimal) -> tuple[WorkInput, ...]:
-    """Take `quantity` from confirmed boxes in the given order, as SUPPLYMAP `prodPick_`."""
-    usable = [box for box in sources if box.status is BoxStatus.CONFIRMED and box.available > 0]
+    """Take `quantity` from handed-in boxes in the given order, as SUPPLYMAP `prodPick_`."""
+    usable = [box for box in sources if box.status in TAKEABLE_BOX and box.available > 0]
     left = Decimal(quantity)
     taken: list[WorkInput] = []
     for box in usable:

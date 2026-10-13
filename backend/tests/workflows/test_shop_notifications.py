@@ -1,5 +1,5 @@
-"""Цеховые уведомления арбитра: коробка сдана → мастерам площадки, подтверждена → монтажникам следующих операций,
-возвращена → сдавшему. По одному письму на человека и событие, повтор события ничего не добавляет."""
+"""Цеховые уведомления арбитра: коробка сдана → монтажникам следующих операций (подтверждения мастером нет с 13.10),
+возвращена ОТК → сдавшему. По одному письму на человека и событие, повтор события ничего не добавляет."""
 
 from datetime import datetime
 from decimal import Decimal
@@ -102,13 +102,23 @@ def notices(shop):
         return sorted((row.payload["recipient_user_ids"], row.payload["body"], row.payload["reference"]) for row in rows)
 
 
-def test_handed_box_waits_for_the_masters_of_the_site(shop):
+def test_handed_box_tells_fitters_of_the_next_operations_without_the_master(shop):
     add_box(shop, "Закрыта оператором")
     event(shop, "production.output_recorded", {"box_id": str(shop.ids.box)}, aggregate=uuid4())
     run(shop)
-    assert notices(shop) == [(
-        str(shop.ids.master), "Коробка 000123-4 ждёт подтверждения: ПЗ-0412, Опрессовка, 50 шт", "000123-4",
-    )]  # мастер ЖУК и неактивный мастер ЦАР не получают
+    body = "Можно начинать: ПЗ-0412 Сборка — пришла коробка 000123-4 (50 шт)"
+    # Мастерам «ждёт подтверждения» больше не пишется: коробку подтверждает только ОТК.
+    assert notices(shop) == sorted([(str(shop.ids.next_a), body, "000123-4"), (str(shop.ids.next_b), body, "000123-4")])
+
+
+def test_final_operation_box_tells_nobody_it_waits_for_qc(shop):
+    add_box(shop, "Закрыта оператором")
+    with shop.sessions() as session:  # коробка последней операции: её на вход не берёт никто
+        session.get(ProductionBoxRow, shop.ids.box).operation_id = shop.ids.assemble
+        session.commit()
+    event(shop, "production.output_recorded", {"box_id": str(shop.ids.box)}, aggregate=uuid4())
+    run(shop)
+    assert notices(shop) == []
 
 
 def test_confirmed_box_tells_fitters_of_the_next_operations(shop):

@@ -152,14 +152,18 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
 }) {
   const [drafts, setDrafts] = useState<Record<string, { accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>>({});
   const [query, setQuery] = useState("");
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [returning, setReturning] = useState<Record<string, boolean>>({});
   const ready = boxes.filter((box) => {
     const task = tasks.find((item) => item.id === box.task_id);
     const operation = task?.operations.find((item) => item.id === box.operation_id);
     // В ОТК идёт коробка финальной операции схемы; операция не нашлась в задании — по старому: последний номер.
     const final = task && operation ? isFinal(task, operation) : task ? box.operation_position === Math.max(...task.operations.map((item) => item.position)) : false;
-    return box.status === "Подтверждена" && !box.qc_inspected && final;
+    // Подтверждает только ОТК (владелец, 13.10.2026): в очередь — сданная коробка; «Подтверждена» и не проверена — старые,
+    // подтверждённые мастером до 13.10.
+    return (box.status === "Закрыта оператором" || box.status === "Подтверждена") && !box.qc_inspected && final;
   });
-  if (!ready.length) return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">0</span></div><div className="empty">Коробок на проверку нет — они появятся, когда мастер подтвердит коробку с последней операции.</div></div>;
+  if (!ready.length) return <div className="panel box-review qc-review"><div className="manual-stock-head"><h2>Очередь ОТК</h2><span className="page-count">0</span></div><div className="empty">Коробок на проверку нет — они появятся, когда монтажник сдаст коробку с последней операции.</div></div>;
   // Первая правка не должна сбрасывать «Годные ОТК» с показанного количества коробки.
   const update = (box: ProductionBox, patch: Partial<{ accepted: string; rejected: string; character: string; description: string; instrumentIds: string[] }>) => setDrafts((current) => {
     const previous = current[box.id] ?? { accepted: box.available, rejected: "0", character: "", description: "", instrumentIds: [] };
@@ -184,6 +188,15 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
           defect_character: draft.character, defect_description: draft.description,
           instrument_ids: draft.instrumentIds,
         }))}>Принять ОТК</button>
+        {box.status === "Закрыта оператором" && (returning[box.id]
+          ? <>
+            <label>Причина возврата<textarea aria-label={`Причина возврата ${box.number}`} value={reasons[box.id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [box.id]: event.target.value }))} /></label>
+            <div className="box-return-act">
+              <button className="secondary small" disabled={busy || !(reasons[box.id] ?? "").trim()} onClick={() => void mutate(`qc-return:${box.id}`, () => productionApi.returnBox(box.id, box.version, (reasons[box.id] ?? "").trim()))}>Вернуть монтажнику</button>
+              <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: false }))}>Отмена</button>
+            </div>
+          </>
+          : <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: true }))}>Вернуть…</button>)}
       </div>;
     })}</div>
   </div>;

@@ -38,7 +38,6 @@ import {
   createFreeEndpoint,
   createJunctionEndpoint,
   isFreeEndpoint,
-  isJunctionEndpoint,
   wireEndpointE4Anchor,
   parseHarnessDesignDocument,
   templateTerminalChoices,
@@ -49,8 +48,9 @@ import {
 } from "./harness/editor/model";
 import type { CoveringKind, PhysicalCovering } from "./harness/editor/physical-coverings";
 import { physicalNodeLocalPoint, physicalNodePoint } from "./harness/editor/physical-ports";
-import type { PhysicalNode, PhysicalRoute, PhysicalSegment, PhysicalStep, PhysicalTopology } from "./harness/editor/physical-topology-model";
+import type { PhysicalNode, PhysicalRoute, PhysicalSegment, PhysicalTopology } from "./harness/editor/physical-topology-model";
 import { routePhysicalWires } from "./harness/editor/physical-wire-routing";
+import { fanWidth, orderByPartners, placeDrawingLabels, trunkGeometry, trunkTopology, type TrunkGeometry } from "./drawingLayout";
 import type { ComponentTemplateApi, ComponentTemplateSummary } from "./harness/component-library/component-template-api";
 
 // ── План: что рисовать ──────────────────────────────────────────────────────────────────────────────────────────
@@ -391,8 +391,6 @@ const DRAWING_B_X = 700, DRAWING_GAP_Y = 90, EXIT = 60, DRAWING_TOP = 40;
 const TUT_STUB = 60;
 /** Хвост на схеме Э4: свободный конец от узла по горизонтали, следующий хвост того же узла — ступенькой ниже. */
 const TAIL_E4 = 64, TAIL_E4_STEP = 22;
-/** Хвост на чертеже: от сростка до свободного конца; ветка к сростку от узла ветвления. */
-const TAIL_DRAWING = 80, SPLICE_BRANCH = 80;
 const COVER_COLOR: Record<CoveringKind, string> = {
   "heat-shrink": "#424c53", nylon: "#b19c77", braid: "#b19c77", "metal-braid": "#73838d", tape: "#b19c77", band: "#b19c77",
 };
@@ -481,9 +479,17 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   }
 
   // 3. Чертёж: А слева, В справа, по вертикали — вокруг нуля. Шаблон смотрит выходом не туда — поворот рисунка:
-  //    А выходом вправо, В — влево.
+  //    А выходом вправо, В — влево. Колонка В — в порядке партнёров на стороне А (меньше перекрёстков).
   const sideOf = (side: Side) => used.filter((c) => c.side === side);
-  const columns = [sideOf("A"), sideOf("B")];
+  const sideKey = new Map(used.map((c) => [c.key, c.side]));
+  const links: Array<[string, string]> = [];
+  plan.wires.forEach((w) => {
+    const [a, b] = sideKey.get(w.from.connector) === "A" ? [w.from.connector, w.to.connector] : [w.to.connector, w.from.connector];
+    if (sideKey.get(a) === "A" && sideKey.get(b) === "B") links.push([a, b]);
+  });
+  (plan.splices || []).forEach((sp) => sp.wires.filter((w) => w.side === "A")
+    .forEach((a) => sp.wires.filter((w) => w.side === "B").forEach((b) => links.push([a.end.connector, b.end.connector]))));
+  const columns = [sideOf("A"), orderByPartners(sideOf("A").map((c) => c.key), sideOf("B"), (c) => c.key, links)];
   for (const c of used) {
     const connector = connectorOf(c.key);
     if (connector.libraryBinding?.mode !== "template") continue;
@@ -649,9 +655,9 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const routed = (from: string, to: string): PhysicalSegment => ({ id: `gen-s${segments.length + 1}`, from, to, path: { kind: "routed", points: [] } });
   /** Отрезки «провод у контакта» разъёмов с ТУТ: ключ разъёма плана → участок и номер контакта. */
   const stubs = new Map<string, Array<{ segmentId: string; pin: number }>>();
-  used.forEach((c, index) => {
+  /** Выход разъёма на чертеже: точка за корпусом против середины занятых контактов (с ТУТ — ещё на отрезок дальше). */
+  const exitOf = (c: PlanConnector) => {
     const connector = connectorOf(c.key);
-    const id = `gen-n${index + 1}`;
     const wiresAt = (contactId: string) => doc.wires.filter((wire) => [wire.from, wire.to].some((end) => end.connectorId === connector.id && end.contactId === contactId));
     const touched = connector.contacts.filter((contact) => wiresAt(contact.id).length > 0);
     const points = touched.flatMap((contact) => { const p = connectorContactPosition(connector, contact.id, "drawing"); return p ? [p] : []; });
@@ -660,6 +666,34 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     const x = c.side === "A"
       ? (free ? connector.positions.drawing.x + FREE_WIDTH : Math.max(...points.map((p) => p.x))) + EXIT
       : (free ? connector.positions.drawing.x : Math.min(...points.map((p) => p.x))) - EXIT;
+    const stub = c.tutLengthMm !== undefined && touched.length ? (c.side === "A" ? TUT_STUB : -TUT_STUB) : 0;
+    return { connector, wiresAt, touched, centre, free, x, common: { x: x + stub, y: centre } };
+  };
+  // Жгут с несколькими разъёмами А, сростками или хвостами — один ствол (drawingLayout.ts): колонка В встаёт за концом
+  // ствола, веером вокруг его линии (один разъём В — прямо на линии ствола).
+  const aSide = sideOf("A"), bSide = sideOf("B");
+  const trunked = aSide.length > 1 || doc.junctions.length > 0 || doc.wires.some((wire) => isFreeEndpoint(wire.from) || isFreeEndpoint(wire.to));
+  let geometry: TrunkGeometry | null = null;
+  if (trunked) {
+    const trunk = trunkGeometry(columns[0].map((c) => exitOf(c).common), doc.junctions.length);
+    geometry = trunk;
+    const column = columns[1], boxes = column.map(extent);
+    let y = Math.max(DRAWING_TOP, trunk.trunkY - drawingTotal(column) / 2);
+    column.forEach((c, i) => {
+      doc = run(doc, { type: "move-connector", connectorId: ids.get(c.key)!, view: "drawing", position: { x: DRAWING_B_X, y: Math.round(y - boxes[i].top) } });
+      y += boxes[i].height + DRAWING_GAP_Y;
+    });
+    const exits = column.map((c) => exitOf(c).common);
+    const targetX = column.length > 1 ? trunk.endX + fanWidth(exits.map((p) => p.y - trunk.trunkY)) : trunk.endX;
+    column.forEach((c, i) => {
+      const at = connectorOf(c.key).positions.drawing;
+      doc = run(doc, { type: "move-connector", connectorId: ids.get(c.key)!, view: "drawing",
+        position: { x: Math.round(at.x + targetX - exits[i].x), y: Math.round(at.y + (column.length === 1 ? trunk.trunkY - exits[i].y : 0)) } });
+    });
+  }
+  used.forEach((c, index) => {
+    const { connector, wiresAt, touched, centre, free, x } = exitOf(c);
+    const id = `gen-n${index + 1}`;
     const exit = (nodeId: string, world: Point, wireIds?: string[]): PhysicalNode => {
       const draft: PhysicalNode = { id: nodeId, connectorId: connector.id, position: { x: 0, y: 0 }, ...(wireIds ? { wireIds } : {}) };
       return { ...draft, position: physicalNodeLocalPoint(doc, draft, world), ...(free ? { direction: c.side === "A" ? "right" as const : "left" as const } : {}) };
@@ -682,8 +716,12 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     stubs.set(c.key, own);
   });
   const stubIds = new Set([...stubs.values()].flat().map((stub) => stub.segmentId));
-  const aSide = sideOf("A"), bSide = sideOf("B");
-  if (aSide.length === 1 && bSide.length === 1) {
+  const sideOfId = (connectorId: string) => used.find((c) => ids.get(c.key) === connectorId)?.side ?? null;
+  let spliceRoutes: PhysicalRoute[] = [];
+  if (geometry) {
+    spliceRoutes = trunkTopology({ doc, nodes, segments, geometry, sideOf: sideOfId,
+      aExits: columns[0].map((c) => nodeOf.get(c.key)!), bExits: columns[1].map((c) => nodeOf.get(c.key)!) });
+  } else if (aSide.length === 1 && bSide.length === 1) {
     segments.push(routed(nodeOf.get(aSide[0].key)!, nodeOf.get(bSide[0].key)!));
   } else {
     const exits = (list: PlanConnector[]) => list.map((c) => nodes.find((n) => n.id === nodeOf.get(c.key))!);
@@ -696,7 +734,6 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     aSide.forEach((c) => segments.push(routed(nodeOf.get(c.key)!, junction.id)));
     bSide.forEach((c) => segments.push(routed(junction.id, nodeOf.get(c.key)!)));
   }
-  const spliceRoutes = spliceTopology(doc, nodes, segments, stubIds, nodeOf, (key) => used.find((c) => c.key === key)!.side, ids);
   /** Ствол и ветки — без отрезков провода у контакта. */
   const main = segments.filter((segment) => !stubIds.has(segment.id));
   let topology: PhysicalTopology = { snap: true, nodes, segments, routes: spliceRoutes };
@@ -766,129 +803,12 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const twisted = withTwistNotes(doc, plan);
   doc = twisted.document;
   warnings.push(...twisted.warnings);
+  // Подписи проводов и разъёмов ствольного чертежа — без наложений.
+  if (geometry) doc = placeDrawingLabels(doc, sideOfId);
 
   const document = JSON.parse(JSON.stringify(doc)) as HarnessDesignDocument;
   parseHarnessDesignDocument(document);
   return { document, warnings: [...new Set(warnings)], connectors: doc.connectors.length, wires: doc.wires.length };
-}
-
-/** Сростки и хвосты на чертеже (шаг 6): узел сростка с проводами с обеих сторон — на участке разъёма А его первого провода
- *  (несколько — по порядку); сросток только одной стороны — на своей ветке от узла ветвления; без узла ветвления (один
- *  разъём А, один В) — на единственном участке. Хвост — участок от сростка (или выхода разъёма) до свободного конца.
- *  Провода сростков и хвостов прокладываются здесь же (автотрасса редактора ведёт только провода между разъёмами).
- *  Меняет `nodes` и `segments`, возвращает трассы этих проводов. */
-function spliceTopology(
-  doc: HarnessDesignDocument, nodes: PhysicalNode[], segments: PhysicalSegment[], stubIds: ReadonlySet<string>,
-  nodeOf: ReadonlyMap<string, string>, sideOf: (key: string) => Side, ids: ReadonlyMap<string, string>,
-): PhysicalRoute[] {
-  const keyOf = new Map([...ids].map(([key, id]) => [id, key]));
-  const nodeById = (id: string) => nodes.find((n) => n.id === id)!;
-  const at = (id: string) => physicalNodePoint(doc, nodeById(id));
-  const hub = nodes.find((n) => n.id === "gen-j1");
-  const contactSide = (end: WireEndpoint) => (end.connectorId && keyOf.has(end.connectorId) ? sideOf(keyOf.get(end.connectorId)!) : null);
-  const spliceNode = new Map<string, string>();
-  const tipNode = new Map<string, string>();
-  /** Куда от сростка уходят его хвосты (единичный вектор). */
-  const outward = new Map<string, Point>();
-  const unit = (x: number, y: number) => { const n = Math.hypot(x, y) || 1; return { x: x / n, y: y / n }; };
-  const exits = nodes.filter((n) => n.connectorId).map((n) => physicalNodePoint(doc, n));
-  const middle = { x: exits.reduce((sum, p) => sum + p.x, 0) / Math.max(1, exits.length), y: exits.reduce((sum, p) => sum + p.y, 0) / Math.max(1, exits.length) };
-  const freshSegment = (from: string, to: string): PhysicalSegment => {
-    let n = segments.length + 1;
-    while (segments.some((s) => s.id === `gen-s${n}`)) n++;
-    // Прямой отрезок: ветка к сростку и хвост рисуются по прямой, без S-изгиба автотрассы.
-    return { id: `gen-s${n}`, from, to, path: { kind: "polyline", points: [] } };
-  };
-  const along = new Map<string, string[]>();
-  let branches = 0;
-  doc.junctions.forEach((junction) => {
-    const wires = doc.wires.filter((w) => junction.wireIds.includes(w.id));
-    const ends = wires.flatMap((w) => [w.from, w.to]).filter((end) => !isJunctionEndpoint(end) && !isFreeEndpoint(end));
-    const sides = new Set(ends.map(contactSide).filter((side): side is Side => !!side));
-    const id = `gen-n-${junction.id}`;
-    spliceNode.set(junction.id, id);
-    const anchor = ends.find((end) => contactSide(end) === "A") ?? ends[0];
-    const anchorNode = anchor ? nodeOf.get(keyOf.get(anchor.connectorId)!) : undefined;
-    const own = segments.find((s) => !stubIds.has(s.id) && (s.from === anchorNode || s.to === anchorNode));
-    if (hub && sides.size < 2) {
-      // Ветка от узла ветвления к сростку: вниз и вверх по очереди, дальше от ствола с каждой парой.
-      const k = branches++, sign = k % 2 ? -1 : 1, centre = at(hub.id);
-      const position = { x: Math.round(centre.x + SPLICE_BRANCH * 0.75), y: Math.round(centre.y + sign * SPLICE_BRANCH * (1 + Math.floor(k / 2))) };
-      nodes.push({ id, position });
-      segments.push(freshSegment(hub.id, id));
-      outward.set(id, unit(position.x - centre.x, position.y - centre.y));
-    } else if (own) along.set(own.id, [...(along.get(own.id) || []), id]);
-    else nodes.push({ id, position: at(nodes[0].id) });
-  });
-  // Сростки на участке: участок режется на цепочку от его начала к концу, узлы — на равных долях.
-  along.forEach((chain, segmentId) => {
-    const index = segments.findIndex((s) => s.id === segmentId);
-    const segment = segments[index];
-    const a = at(segment.from), b = at(segment.to);
-    chain.forEach((id, k) => {
-      const t = (k + 1) / (chain.length + 1);
-      const position = { x: Math.round(a.x + (b.x - a.x) * t), y: Math.round(a.y + (b.y - a.y) * t) };
-      nodes.push({ id, position });
-      // Поперёк участка, наружу от середины жгута.
-      const across = unit(-(b.y - a.y), b.x - a.x);
-      const sign = across.x * (position.x - middle.x) + across.y * (position.y - middle.y) >= 0 ? 1 : -1;
-      outward.set(id, { x: across.x * sign, y: across.y * sign });
-    });
-    const stops = [segment.from, ...chain, segment.to];
-    segments.splice(index, 1, ...stops.slice(1).map((to, k) => ({ ...segment, id: k ? `${segment.id}-${k}` : segment.id, from: stops[k], to })));
-  });
-  // Хвосты: свободный конец — от сростка наружу (поперёк его участка или по его ветке), от выхода разъёма — вдоль жгута
-  //     и в сторону; несколько — веером.
-  const fan = new Map<string, number>();
-  doc.wires.forEach((wire) => {
-    const free = isFreeEndpoint(wire.from) ? "from" : isFreeEndpoint(wire.to) ? "to" : null;
-    if (!free) return;
-    const other = free === "from" ? wire.to : wire.from;
-    const base = isJunctionEndpoint(other) ? spliceNode.get(other.junctionId)
-      : nodes.find((n) => n.connectorId === other.connectorId && (!n.wireIds || n.wireIds.includes(wire.id)))?.id;
-    if (!base) return;
-    const k = fan.get(base) ?? 0;
-    fan.set(base, k + 1);
-    const origin = at(base);
-    const dir = outward.get(base) ?? unit(isJunctionEndpoint(other) || sideOf(keyOf.get(other.connectorId)!) === "A" ? 1 : -1, origin.y >= middle.y ? 1 : -1);
-    const fanOut = (k % 2 ? -1 : 1) * Math.ceil(k / 2) * 28;
-    const id = `gen-n-${wire.id}`;
-    nodes.push({ id, position: { x: Math.round(origin.x + dir.x * TAIL_DRAWING - dir.y * fanOut), y: Math.round(origin.y + dir.y * TAIL_DRAWING + dir.x * fanOut) } });
-    segments.push(freshSegment(base, id));
-    tipNode.set(wire.id, id);
-  });
-  // Трассы: кратчайший путь по участкам; через выход чужого разъёма провод не идёт.
-  const endNodes = (wireId: string, end: WireEndpoint) => {
-    if (isJunctionEndpoint(end)) return [spliceNode.get(end.junctionId)].filter((id): id is string => !!id);
-    if (isFreeEndpoint(end)) return [tipNode.get(wireId)].filter((id): id is string => !!id);
-    return nodes.filter((n) => n.connectorId === end.connectorId && (!n.wireIds || n.wireIds.includes(wireId))).map((n) => n.id);
-  };
-  const routes: PhysicalRoute[] = [];
-  doc.wires.forEach((wire) => {
-    if (![wire.from, wire.to].some((end) => isJunctionEndpoint(end) || isFreeEndpoint(end))) return;
-    const sources = endNodes(wire.id, wire.from), targets = new Set(endNodes(wire.id, wire.to));
-    const previous = new Map<string, { node: string; step: PhysicalStep }>();
-    const queue = [...sources];
-    const seen = new Set(sources);
-    while (queue.length) {
-      const current = queue.shift()!;
-      if (targets.has(current)) {
-        const steps: PhysicalStep[] = [];
-        for (let node = current; previous.has(node); node = previous.get(node)!.node) steps.unshift(previous.get(node)!.step);
-        if (steps.length) routes.push({ wireId: wire.id, steps });
-        break;
-      }
-      if (nodeById(current).connectorId && !sources.includes(current)) continue;
-      segments.forEach((s) => {
-        const next = s.from === current ? s.to : s.to === current ? s.from : null;
-        if (!next || seen.has(next)) return;
-        seen.add(next);
-        previous.set(next, { node: current, step: { segmentId: s.id, reverse: s.to === current } });
-        queue.push(next);
-      });
-    }
-  });
-  return routes;
 }
 
 // ── Кнопка: план → разъёмы → документ ────────────────────────────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); forgetOpenProject(); });
 
 describe("opProgress", () => {
-  it("считает сдано, ждут подтверждения и процент из полей API", () => {
+  it("считает сдано, ждут ОТК и процент из полей API", () => {
     const progress = opProgress(tasks[0], tasks[0].operations[0], NOW);
     expect(progress).toMatchObject({ required: 500, good: 250, waiting: 50, percent: 50, flags: ["wait"] });
   });
@@ -66,17 +66,17 @@ describe("экран мастера: прогресс и «Сегодня»", ()
     mount();
     const strip = screen.getByRole("group", { name: "Сегодня" });
     expect(within(strip).getByRole("button", { name: /не начато, план истёк: 1/ })).toBeInTheDocument();
-    expect(within(strip).getByRole("button", { name: /ждёт подтверждения: 1/ })).toBeInTheDocument();
+    expect(within(strip).getByRole("button", { name: /ждёт ОТК: 1/ })).toBeInTheDocument();
     expect(within(strip).getByRole("button", { name: /позже срока задания: 1/ })).toBeInTheDocument();
   });
 
-  it("в строке операции: «сдано 250/500 · 50 ждут подтверждения», полоса и флаги", () => {
+  it("в строке операции: «сдано 250/500 · 50 ждут ОТК», полоса и флаги", () => {
     mount();
     openProject();
-    expect(screen.getByText("сдано 250/500 · 50 ждут подтверждения")).toBeInTheDocument();
+    expect(screen.getByText("сдано 250/500 · 50 ждут ОТК")).toBeInTheDocument();
     expect(screen.getAllByRole("progressbar")[0]).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getAllByText("не начато, план истёк").some((node) => node.className.includes("mb-flag danger"))).toBe(true);
-    expect(screen.getAllByText("ждёт подтверждения").some((node) => node.className.includes("mb-flag warn"))).toBe(true);
+    expect(screen.getAllByText("ждёт ОТК").some((node) => node.className.includes("mb-flag warn"))).toBe(true);
     expect(screen.getAllByText("позже срока задания").some((node) => node.className.includes("mb-flag danger"))).toBe(true);
   });
 
