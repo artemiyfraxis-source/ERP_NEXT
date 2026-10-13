@@ -10,6 +10,7 @@ import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
+import { TerminalCard, type TerminalRow } from "./TerminalCard";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -181,6 +182,10 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   // БД.ТЕР «Аппликатор»: code → the БД.ОБ record that owns it (a link to its card); the card to open after the jump.
   const [toolOwners, setToolOwners] = useState<Record<string, string>>({});
   const [focusTool, setFocusTool] = useState("");
+  // «Терминалы»: the contact card open beside the list; the pick lives in `?terminal=` (a reload reopens it).
+  const [terminalId, setTerminalId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("terminal") ?? ""; } catch { return ""; }
+  });
   const [bases, setBases] = useState<BasesResult>({ bases: [] });
   const [cables, setCables] = useState<CablesResult | null>(null);
   // Вкладка, чьи записи уже пришли: таблица строится по готовым колонкам (иначе «скрыты по умолчанию» не сработает).
@@ -362,7 +367,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
         render: long ? (record) => <span className="db-clip" title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
         hidden: techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU")),
-        numeric: values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
+        // An article of digits (Molex 39000038) is a code, not a number: no «39 000 038», as the warehouse writes it.
+        numeric: !/артикул/i.test(fieldTitle(field)) && values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };
     }),
     { key: "__source", title: "Источник", value: (record) => record.source_sheet || "", hidden: true },
@@ -370,6 +376,15 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   // БД.ТЕР: обжим одной колонкой «по сечениям» и «От AWG / До AWG» одной колонкой «AWG» (владелец 12.10); исходные
   // колонки остаются в «Колонках» и в выгрузке, но скрыты.
   const techColumns = techTab === "ter" ? mergeTerminalColumns(sheetColumns, fieldColumns) : sheetColumns;
+  function openTerminal(id: string) {
+    setTerminalId(id);
+    try {
+      const url = new URL(window.location.href);
+      if (id) url.searchParams.set("terminal", id); else url.searchParams.delete("terminal");
+      window.history.replaceState(window.history.state, "", url);
+    } catch { /* address is not writable */ }
+  }
+  const terminal = techTab === "ter" && terminalId ? tech.records.find((record) => record.id === terminalId) as TerminalRow | undefined : undefined;
   function startCreate(preset: Record<string, string> = {}) {
     const blank = Object.fromEntries(fieldColumns.map((key) => [key, ""]));
     setEditing({ id: null, values: techTab === "ob" ? { ...blank, Тип: "Оборудование", ...preset } : blank });
@@ -437,7 +452,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         onError={(message) => { setNotice(""); setError(message); }}
         focusId={focusTool}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
-      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <DataTable
+      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <div className={terminal ? "eq-split has-card" : "eq-split"}><div className="eq-list"><DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}
@@ -446,11 +461,13 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         storageKey={`db:${techTab}`}
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
-        // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел).
-        onRowClick={canEdit ? startEdit : undefined}
-        rowTitle={canEdit ? (record) => `Править: ${record.display_text}` : undefined}
+        // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел); «Терминалы» — строка
+        // открывает карточку контакта, правка из неё.
+        onRowClick={techTab === "ter" ? (record) => openTerminal(record.id) : canEdit ? startEdit : undefined}
+        rowTitle={techTab === "ter" ? (record) => `Открыть карточку: ${record.display_text}` : canEdit ? (record) => `Править: ${record.display_text}` : undefined}
+        rowClassName={techTab === "ter" ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
-      />}
+      /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
       {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}
     </>}
 

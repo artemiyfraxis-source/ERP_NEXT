@@ -35,10 +35,45 @@ class ReferenceEntryRow(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+def terminal_card_checks(dialect: str) -> dict[str, str]:
+    """БД.ТЕР contact card CHECKs over the JSON `fields` (migration 0115 holds a literal copy): gender Male / Female or
+    empty; insulation Ø from / to a positive number (decimal point or comma), from ≤ to; datasheet a http(s) link.
+    CASE keeps a text from being cast before it is known to be a number (PostgreSQL does not order AND / OR)."""
+    def value(key: str) -> str:
+        raw = f"json_extract(fields, '$.{key}')" if dialect == "sqlite" else f"(fields ->> '{key}')"
+        return f"COALESCE({raw}, '')"
+
+    def number(text: str) -> str:
+        if dialect == "sqlite":
+            return (f"({text} GLOB '[0-9]*' AND {text} NOT GLOB '*[^0-9.,]*' AND {text} NOT GLOB '*[.,]*[.,]*'"
+                    f" AND {text} NOT GLOB '*[.,]')")
+        return f"({text} ~ '^[0-9]+([.,][0-9]+)?$')"
+
+    def cast(text: str) -> str:
+        return f"CAST(REPLACE({text}, ',', '.') AS {'REAL' if dialect == 'sqlite' else 'NUMERIC'})"
+
+    def positive(text: str) -> str:
+        return f"CASE WHEN {text} = '' THEN TRUE WHEN {number(text)} THEN {cast(text)} > 0 ELSE FALSE END"
+
+    gender, od_from, od_to, sheet = (value(key) for key in ("terGender", "terInsOdFrom", "terInsOdTo", "terDatasheet"))
+    return {
+        "ck_tech_operation_records_ter_gender": f"tab <> 'ter' OR {gender} IN ('', 'Male', 'Female')",
+        "ck_tech_operation_records_ter_ins_od": (
+            f"tab <> 'ter' OR (({positive(od_from)}) AND ({positive(od_to)}) AND (CASE WHEN {number(od_from)} AND"
+            f" {number(od_to)} THEN {cast(od_from)} <= {cast(od_to)} ELSE TRUE END))"
+        ),
+        "ck_tech_operation_records_ter_datasheet": (
+            f"tab <> 'ter' OR {sheet} = '' OR {sheet} LIKE 'http://%' OR {sheet} LIKE 'https://%'"
+        ),
+    }
+
+
 class TechOperationRecordRow(Base):
     __tablename__ = "tech_operation_records"
     __table_args__ = (
         Index("ix_tech_operation_records_tab_sort", "tab", "sort_key"),
+        *(CheckConstraint(sql, name=name).ddl_if(dialect=dialect)
+          for dialect in ("sqlite", "postgresql") for name, sql in terminal_card_checks(dialect).items()),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     tab: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
