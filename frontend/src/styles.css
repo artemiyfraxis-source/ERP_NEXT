@@ -2424,7 +2424,8 @@ tr:hover .row-action, tr:focus-within .row-action, tr.open .row-action { visibil
 .staff-form-block + .staff-form-block > h3 { padding: 0 0 10px; }
 .staff-form-block + .staff-form-block > .form-grid { padding-left: 0; padding-right: 0; }
 #staff-edit-form > .form-actions { padding: 0 20px 18px; }
-.operations-queue { margin-left: auto; color: var(--muted-foreground); font-size: 13px; }
+.operations-page .page-head { flex-wrap: wrap; }
+.operations-queue { margin-left: auto; min-width: 0; color: var(--muted-foreground); font-size: 13px; text-align: right; }
 
 /* ===== T7: «Оформить заявку» — таблица позиций (RequestGrid). Свой блок, чтобы не мешать соседним правкам. ===== */
 .rg-form { padding: 0 20px 14px; display: grid; gap: 10px; min-width: 0; }
