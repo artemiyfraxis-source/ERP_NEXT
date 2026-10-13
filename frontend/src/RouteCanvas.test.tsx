@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { FacesThumb, RouteCanvas, WireThumbs, type CanvasCard } from "./RouteCanvas";
+import { FacesThumb, RouteCanvas, WireThumbs, spreadLinkTools, type CanvasCard } from "./RouteCanvas";
 
 const CARDS: CanvasCard[] = [
   { id: "wires", kind: "semiFinished", title: "Нарезанные провода", meta: "3 комплектующие · 1 шт · 2 мин", x: 32, y: 32, width: 280, height: 264 },
@@ -100,4 +100,27 @@ it("draws cut wires with their contacts and the faces of the side connectors", (
   // Разъёма нет в базе разъёмов — подпись в рамке вместо торца.
   expect(container.querySelector(".rc-face-none")).toHaveTextContent("А1");
   expect(container.querySelector("figcaption")).toHaveTextContent("А1 · XHP-2");
+});
+
+it("keeps the marks of two arrows from one card apart, each button still reachable by keyboard", () => {
+  const cards: CanvasCard[] = [
+    { ...CARDS[0], x: 100, width: 100 },
+    { id: "a", kind: "semiFinished", title: "Сторона А", meta: "1 шт", x: 0, y: 360, width: 100, height: 100 },
+    { id: "b", kind: "semiFinished", title: "Сторона В", meta: "1 шт", x: 120, y: 360, width: 100, height: 100 },
+  ];
+  mount({ cards, links: [{ id: "la", from: "wires", to: "a", label: "к А", qty: 2 }, { id: "lb", from: "wires", to: "b", label: "к В", qty: 3 }] });
+  const marks = Array.from(document.querySelectorAll<HTMLElement>(".rc-link-tools")).map((item) => parseFloat(item.style.left));
+  expect(marks).toHaveLength(2);
+  expect(Math.abs(marks[0] - marks[1])).toBeGreaterThanOrEqual(64);
+  const buttons = screen.getAllByRole("button", { name: /Вставить карточку|Удалить связь/ });
+  expect(buttons).toHaveLength(4);
+  buttons[2].focus();
+  expect(document.activeElement).toBe(buttons[2]);
+});
+
+it("spreads neighbours of one row, leaves other rows and lone marks alone", () => {
+  const spread = spreadLinkTools([{ id: "a", x: 100, y: 50 }, { id: "b", x: 110, y: 50 }, { id: "c", x: 105, y: 400 }]);
+  expect(spread.get("b")! - spread.get("a")!).toBe(64);
+  expect((spread.get("a")! + spread.get("b")!) / 2).toBeCloseTo(105, 0);
+  expect(spread.get("c")).toBe(105);
 });

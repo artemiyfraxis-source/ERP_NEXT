@@ -191,8 +191,8 @@ it("groups coax cables by family and collapses a group", async () => {
   mockApi();
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
   const rg58 = await screen.findByRole("button", { name: /RG-58 · 2/ });
-  const rg316 = screen.getByRole("button", { name: /RG-316 · 1/ });
-  expect(rg58.compareDocumentPosition(rg316) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // RG by number
+  const rg316 = screen.getByRole("button", { name: /Прочие семейства · 1/ }); // a family of one cable has no group of its own
+  expect(rg58.compareDocumentPosition(rg316) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // RG families first, single-cable ones after
   expect(rg58).toHaveAttribute("aria-expanded", "true");
   expect(screen.getByText("RG-58 A/U")).toBeInTheDocument();
   fireEvent.click(rg58);

@@ -20,15 +20,30 @@ export function coaxFamilyName(text: string): string {
 // The card's own `family` is a descriptive class («Гибкий тонкий»), not a series: the family comes from the mark.
 export const coaxFamily = (row: CableRow): string => coaxFamilyName(row.cable);
 
-/** Order of groups: RG by number, LMR, other families A–Я, the unnamed last. */
+/** Order of groups: RG by number, LMR, other families A–Я, «Прочие семейства», the unnamed last. */
 export function compareFamilies(a: string, b: string): number {
-  const rank = (name: string) => name === NO_FAMILY ? 3 : RG.test(name) ? 0 : name === "LMR" ? 1 : 2;
+  const rank = (name: string) => name === NO_FAMILY ? 4 : name === OTHER_FAMILIES ? 3 : RG.test(name) ? 0 : name === "LMR" ? 1 : 2;
   const number = (name: string) => Number(name.match(RG)?.[1] ?? 0);
   return rank(a) - rank(b) || number(a) - number(b) || a.localeCompare(b, "ru", { numeric: true });
 }
 
+/** A family of one cable would be a header as tall as its row (RG-141, RG-142, RG-178 …): those gather in one group. */
+export const OTHER_FAMILIES = "Прочие семейства";
+
+/** Group label per row: the family, or «Прочие семейства» when the family has a single cable (the unnamed stay apart). */
+export function coaxGroupOf(rows: CableRow[]): (row: CableRow) => string {
+  const sizes = new Map<string, number>();
+  for (const row of rows) sizes.set(coaxFamily(row), (sizes.get(coaxFamily(row)) ?? 0) + 1);
+  return (row) => {
+    const family = coaxFamily(row);
+    return family !== NO_FAMILY && sizes.get(family) === 1 ? OTHER_FAMILIES : family;
+  };
+}
+
+/** Rows by group (single-cable families gathered into «Прочие семейства» before the unnamed), then family, then mark. */
 export function sortCoax(rows: CableRow[]): CableRow[] {
-  return [...rows].sort((a, b) => compareFamilies(coaxFamily(a), coaxFamily(b))
+  const group = coaxGroupOf(rows);
+  return [...rows].sort((a, b) => compareFamilies(group(a), group(b)) || compareFamilies(coaxFamily(a), coaxFamily(b))
     || a.cable.localeCompare(b.cable, "ru", { numeric: true, sensitivity: "base" }));
 }
 
