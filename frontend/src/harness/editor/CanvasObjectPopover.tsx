@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { HelpLine } from "../HelpLine";
 
 export function canvasPopoverPosition(x:number,y:number,width:number,height:number,viewportWidth:number,viewportHeight:number) {
   return {left:Math.max(8,Math.min(x,viewportWidth-width-8)),top:Math.max(8,Math.min(y,viewportHeight-height-8))};
@@ -29,5 +30,6 @@ export function CanvasObjectPopover({x,y,label,children,onClose}: {
     onKeyDown={e=>{if(e.key==="Escape"){e.stopPropagation();onClose();}}}>
     <header className="ui-section-heading"><strong>{label}</strong><button type="button" className="ui-control" aria-label="Закрыть свойства" onClick={onClose}>×</button></header>
     {children}
+    <HelpLine idle="Наведите на поле — здесь появится пояснение" />
   </div>;
 }

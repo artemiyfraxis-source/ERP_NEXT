@@ -9,6 +9,7 @@ import { CutListPanel } from "../panels/CutListPanel";
 import { SpecificationTable } from "../panels/SpecificationTable";
 import { useHarnessDocumentsSource } from "../panels/documents-source";
 import { InfoHint } from "../InfoHint";
+import { HelpLine } from "../HelpLine";
 import type { WireDatabaseOption } from "./wire-database";
 import type { ConnectionTableSettings } from "./connection-table-settings";
 
@@ -46,7 +47,7 @@ function TableWindow({readOnly=false,table,perimeters,camera,document,quantity,s
       onPointerMove={e=>{if(drag.current)setDelta({x:e.clientX-drag.current.x,y:e.clientY-drag.current.y});}}
       onPointerUp={e=>{if(!drag.current)return;const start=drag.current;drag.current=null;setDelta({x:0,y:0});if(start.x!==e.clientX||start.y!==e.clientY)update({position:{x:table.position.x+(e.clientX-start.x)/camera.zoom,y:table.position.y+(e.clientY-start.y)/camera.zoom}});}}
       onPointerCancel={()=>{drag.current=null;setDelta({x:0,y:0});}}>
-      <strong>{title}</strong><InfoHint>Перетаскивайте окно за заголовок, растягивайте за угловой маркер. На маркере работают стрелки, Shift увеличивает шаг. Положение и размер сохраняются; Ctrl+Z отменяет растяжение целиком. Закреплённое окно остаётся у края при перемещении и масштабировании чертежа.</InfoHint>
+      <strong>{title}</strong><HelpLine inline /><InfoHint>Перетаскивайте окно за заголовок, растягивайте за угловой маркер. На маркере работают стрелки, Shift увеличивает шаг. Положение и размер сохраняются; Ctrl+Z отменяет растяжение целиком. Закреплённое окно остаётся у края при перемещении и масштабировании чертежа.</InfoHint>
       <select aria-label={`Закрепить: ${title}`} value={table.dock??""} onChange={e=>update({dock:(e.target.value||undefined) as DrawingTable["dock"],...(!e.target.value?{position:{x:(24-camera.offsetX)/camera.zoom,y:(24-camera.offsetY)/camera.zoom}}:{})})}>
         <option value="">На поле</option><option value="left">Слева</option><option value="right">Справа</option><option value="top">Сверху</option><option value="bottom">Снизу</option>
       </select><button type="button" className="ui-control he-table-window-download" title={`Скачать «${title}» сохранённого чертежа в Excel`} disabled={!source} onClick={()=>source?.download(table.kind,quantity)}>Скачать</button><button type="button" className="ui-control" aria-label={`Закрыть: ${title}`} onClick={()=>onChange({...d,tables:d.tables.filter(t=>t.id!==table.id)})}>×</button>

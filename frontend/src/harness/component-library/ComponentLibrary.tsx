@@ -10,6 +10,7 @@ import { useInternalDrawingClipboard, copyDrawingSelection, pasteDrawingSelectio
 import { E4ArticlePreview } from "./E4ArticlePreview";
 import { useWireDatabaseLookup } from "../editor/editor-reference-catalog";
 import { InfoHint } from "../InfoHint";
+import { HelpLine } from "../HelpLine";
 import { defaultDrawingSnaps } from "./drawing-geometry";
 import { DrawingToolIcon, drawingToolLabels } from "./DrawingToolIcon";
 import { hatchKinds, hatchLabels, type DrawingHatch } from "./drawing-hatch";
@@ -1325,7 +1326,8 @@ export function ComponentLibrary({ api, references, canEdit, onNavigationGuard }
 
         {activeGenerator && generatorMode === "source" && <aside className="generator-preview" aria-label="Результат генератора"><strong>Вариант · {draft.content.articleVariants.find(a=>a.id===selectedArticleVariantId)?.articleKey}</strong>{generatedPreview ? <TemplateCanvasV2 preview previewKey={selectedArticleVariantId} content={projectTemplateContentV3CoreToV2(generatedPreview.content)} viewId={activeGenerator.viewId} selectedId={null} onSelect={()=>{}} resolveAssetUrl={resolveAssetUrl}/> : <span role="status">{generatorPreviewError}</span>}</aside>}
         </div>
-        </div></section>}
+        </div><HelpLine idle="Наведите на поле или кнопку — здесь появится пояснение" /></section>}
+        <HelpLine idle="Наведите на поле или кнопку — здесь появится пояснение" />
       </section>}
     </div>
   </div>;
@@ -1415,7 +1417,7 @@ const colors = ["#27445a", "#000000", "#111827", "#6b7280", "#ffffff", "#dc2626"
 
 function ImageProperties({ node, disabled, edit }: { node: ImageNodeV2; disabled: boolean; edit: (changes: NodeEditV2) => void }) {
   const crop = (key: "cropX" | "cropY" | "cropWidth" | "cropHeight", value: number) => { if (value >= 0 && value <= 1) edit({ geometry: { ...node.geometry, [key]: value } }); };
-  return <><label className="check-field"><input type="checkbox" checked={node.geometry.underlay} disabled={disabled} onChange={event => edit({ geometry: { ...node.geometry, underlay: event.target.checked } })} />Подложка</label><div className="coordinate-grid"><NumericField label="Crop X" value={node.geometry.cropX} disabled={disabled} change={value => crop("cropX", value)} /><NumericField label="Crop Y" value={node.geometry.cropY} disabled={disabled} change={value => crop("cropY", value)} /><NumericField label="Crop ширина" value={node.geometry.cropWidth} disabled={disabled} change={value => crop("cropWidth", value)} /><NumericField label="Crop высота" value={node.geometry.cropHeight} disabled={disabled} change={value => crop("cropHeight", value)} /></div></>;
+  return <><label className="check-field"><input type="checkbox" checked={node.geometry.underlay} disabled={disabled} onChange={event => edit({ geometry: { ...node.geometry, underlay: event.target.checked } })} />Подложка</label><div className="coordinate-grid"><NumericField label="Обрезка X" value={node.geometry.cropX} disabled={disabled} change={value => crop("cropX", value)} /><NumericField label="Обрезка Y" value={node.geometry.cropY} disabled={disabled} change={value => crop("cropY", value)} /><NumericField label="Обрезка: ширина" value={node.geometry.cropWidth} disabled={disabled} change={value => crop("cropWidth", value)} /><NumericField label="Обрезка: высота" value={node.geometry.cropHeight} disabled={disabled} change={value => crop("cropHeight", value)} /></div></>;
 }
 
 function NumericField({ label, value, disabled, min, max, step, immediate = false, change }: { label: string; value: number; disabled?: boolean; min?: number; max?: number; step?: number; immediate?: boolean; change: (value: number) => void }) {
