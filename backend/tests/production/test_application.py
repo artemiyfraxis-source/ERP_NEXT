@@ -25,6 +25,7 @@ class ProductionRepo:
     def __init__(self):
         self.items = {}
         self.sequence = 0
+        self.seqs = {}
 
     def get(self, task_id): return self.items.get(task_id)
     def by_idempotency_key(self, key): return next((item for item in self.items.values() if item.source_idempotency_key == key), None)
@@ -32,7 +33,12 @@ class ProductionRepo:
     def reserve_number(self):
         self.sequence += 1
         return f"ПЗ-{self.sequence:04d}"
-    def add(self, task): self.items[task.id] = task
+    def last_launch_seqs(self, techcard_ids):
+        return {key: value for key, value in self.seqs.items() if key in set(techcard_ids)}
+    def add(self, task, launch_seq=None):
+        if task.id not in self.items and launch_seq is not None:
+            self.seqs[task.techcard_id] = max(self.seqs.get(task.techcard_id, 0), launch_seq)
+        self.items[task.id] = task
 
 
 class Operators:
