@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { PALETTE } from "./wireColors";
 import { techcardsApi } from "./api";
 import { connectorFace, connectorFaceUnits, isDark, type ConnectorHousing, type FaceHit } from "./connectorArt";
-import type { AutoFill, FreeSide, PinoutEnd, PinUnit } from "./pinoutCheck";
+import { plural, type AutoFill, type FreeSide, type PinoutEnd, type PinUnit } from "./pinoutCheck";
 import type { Branch, Connection } from "./tcGenLogic";
 import "./pinout.css";
 
@@ -70,7 +70,7 @@ export function PinoutEditor({ end, open, hint, onOpen, onPins, onConfirm }: {
     </div>
     {shown && <>
       <div className="ep-pins">{end.wires.map((w) => <label className="ep-pin" key={w.idx}>
-        <span>{w.name || "провод"}{w.qty > 1 ? ` ×${w.qty}` : ""}</span>
+        <span>{w.name || "провод"}{w.cable ? ` · ${w.qty} ${plural(w.qty, "жила", "жилы", "жил")}` : w.qty > 1 ? ` ×${w.qty}` : ""}</span>
         <input value={w.text} aria-label={`Контакты ${end.key}: ${w.name}`} placeholder={w.qty > 1 ? `1, 3 или 1-${w.qty}` : "конт."}
           className={w.pins.some((p) => end.dups.includes(p)) ? "is-bad" : undefined}
           onChange={(event) => onPins(w.idx, event.target.value.trim())} />

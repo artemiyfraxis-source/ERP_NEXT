@@ -20,6 +20,7 @@ import {
   WRAP_SLOTS_,
   addEndpoint,
   applyGrapherGroups,
+  cableRecFromFields,
   grapherHasCorrections,
   grapherLengthText,
   coaxDiaFromRecords,
@@ -45,6 +46,7 @@ import {
   wireDiaFromRecords,
   WIRE_DIA_MISSING_,
   WIRE_DIA_OLD_,
+  type CableRec,
   type Comp,
   type Connection,
   type Endpoint,
@@ -76,9 +78,9 @@ import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
-type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats"> & { library: LibraryCard[] };
+type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords"> & { library: LibraryCard[] };
 
-const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], library: [] };
+const EMPTY_REFS: Refs = { templates: [], ops: [], terRecords: [], coaxRecords: [], wireDia: null, coaxCableDia: null, markMats: [], cableRecords: [], library: [] };
 const TABS: Array<[Tab, string]> = [["inter", "Межплатная"], ["complex", "Сложная сборка"], ["coax", "КОАКС"], ["manual", "Ручная сборка"]];
 const WRAP_KINDS: Array<[WrapKind, string]> = [
   ["tape", "Лента — последней операцией"], ["braid", "Оплётка — до термоусадки"], ["under", "Лента под оплётку — перед ней"],
@@ -127,7 +129,7 @@ function loadRefs(force = false): Promise<Refs> {
 async function readRefs(): Promise<Refs> {
   const safe = <T,>(promise: Promise<T>, fallback: T) => promise.catch(() => fallback);
   const noRecords = { metadata: null, columns: [], records: [] };
-  const [templates, op, ter, coax, wireDia, kabCoax, mat] = await Promise.all([
+  const [templates, op, ter, coax, wireDia, kabCoax, mat, prov] = await Promise.all([
     safe(techcardsApi.templates(), { metadata: null, items: [] }),
     safe(referencesApi.techOperations("op", "", 5000), noRecords),
     safe(referencesApi.techOperations("ter", "", 5000), noRecords),
@@ -135,6 +137,8 @@ async function readRefs(): Promise<Refs> {
     safe(referencesApi.wireDia(), { columns: [], series: [], records: [] }),
     safe(referencesApi.coaxDia(), noRecords),
     safe(referencesApi.techOperations("mat", "", 5000), noRecords),
+    // БД.ПРОВ: число жил, цвета жил по порядку и экран кабеля — для распиновки и операций с оболочкой.
+    safe(referencesApi.techOperations("prov", "", 5000), noRecords),
   ]);
   return {
     templates: (templates?.items || []).map((item): Tmpl => ({ id: item.id, title: item.title, category: item.category })),
@@ -148,6 +152,7 @@ async function readRefs(): Promise<Refs> {
     wireDia: wireDiaFromRecords((wireDia?.records || []).map((record) => record.fields)),
     coaxCableDia: coaxDiaFromRecords((kabCoax?.records || []).map((record) => record.fields)),
     markMats: markMatsFromRecords((mat?.records || []).map((record) => record.fields)),
+    cableRecords: (prov?.records || []).map((record) => cableRecFromFields(record.fields || {})).filter((record): record is CableRec => !!record),
   };
 }
 
@@ -750,6 +755,25 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const picks = norm ? norm.by_section.filter((item) => item.found && item.applicator) : [];
     const pickApplicator = picks.length && picks.every((item) => item.applicator === picks[0].applicator) ? picks[0].applicator : "";
     const pinEnd = pinEnds.find((end) => end.id === ep.id);
+    // Терминалов на разъём — по жилам, что сюда приходят (часть жил кабеля может идти на другой разъём или не участвовать).
+    const routedSet = new Set(routedList);
+    const coresHere = gen.activeWires_().filter((w) => routedSet.has(w.idx)).reduce((s, w) => s + gen.endUnits_(ep, w), 0);
+    const termCount = ep.double ? Math.ceil(coresHere / gen.epPer_(ep)) : coresHere;
+    // Концы кабелей в оболочке у этого разъёма: сколько жил здесь, куда остальные, экран и незадействованные жилы.
+    const cableLines = gen.cableEnds_(ep.side).filter((x) => x.eps.includes(ep)).map((x) => {
+      const total = gen.unitCount_(x.w);
+      const others = x.eps.filter((o) => o !== ep).map((o) => `${sideRu_(o.side)}${gen.endpointOrdinal_(o)}: ${gen.endUnits_(o, x.w)}`);
+      const first = x.eps[0] === ep;
+      // Подряд идущие жилы — диапазоном: «1.11–1.19», а не девять номеров.
+      const idleUnits = first ? pinUnitList.filter((u) => u.idx === x.w.idx && x.unused.includes(u.unit)) : [];
+      const idle: string[] = [];
+      idleUnits.forEach((u, i) => {
+        const prev = idleUnits[i - 1];
+        if (prev && prev.unit === u.unit - 1) idle[idle.length - 1] = `${idle[idle.length - 1].split("–")[0]}–${u.num}`;
+        else idle.push(u.num);
+      });
+      return { key: x.w.idx, name: compLabel(x.w.compId), here: gen.endUnits_(ep, x.w), total, others, screened: first && x.screened, idle };
+    });
     return <div className="ep-card" key={ep.id}>
       <div className="ep-head">
         <b className="ep-badge">{name}</b>
@@ -764,7 +788,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <div className="gfield"><span className="gfield-label">Монтаж</span>
           <Seg label={`Монтаж ${name}`} value={crimp ? "crimp" : "solder"} options={[["crimp", "Обжим"], ["solder", "Пайка"]]} onChange={(method) => set({ method })} /></div>
         {crimp && <Field label="Терминал"
-          hint={term ? <span className={ter ? undefined : "tone-danger"}>{routedList.length} шт{ter ? "" : " · нет в БД.ТЕР"}</span> : undefined}>
+          hint={term ? <span className={ter ? undefined : "tone-danger"}>{termCount} шт{ter ? "" : " · нет в БД.ТЕР"}</span> : undefined}>
           {selectComps(bomTerms, ep.termId, (id) => set({ termId: id }), `Терминал ${name}`)}</Field>}
         {complex && <Field label="Наименование по чертежу" className="lead"><input value={ep.label} placeholder="напр. GIMBAL, NODE, PWR…" onChange={(event) => set({ label: event.target.value })} /></Field>}
       </div>
@@ -804,6 +828,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <Field label="Длина" className="mid"><UnitInput unit="мм" value={ep.shrinkLen ?? ""} placeholder={SHRINK_LEN_MM_} onChange={(event) => set({ shrinkLen: event.target.value })} /></Field>
         </>}
       </div>}
+      {cableLines.map((line) => <div className="ep-cable" key={line.key} aria-label={`Кабель ${line.name} на ${name}`}>
+        <span>Кабель <b>{line.name}</b>: жил здесь <b>{line.here}</b> из {line.total}{line.others.length > 0 && ` · остальные — ${line.others.join(", ")}`}</span>
+        {line.screened && <span>экран — скрутить и изолировать</span>}
+        {line.idle.length > 0 && <span className="tone-warn">не задействованы {line.idle.join(", ")} — обрезать и изолировать</span>}
+      </div>)}
       {pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
         onConfirm={() => { setS((current) => confirmPinout(D, current, ep.id)); setPinOpen((current) => ({ ...current, [ep.id]: false })); }}
         onPins={(wireIdx, value) => {
@@ -811,7 +840,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           if (value) pins[wireIdx] = value; else delete pins[wireIdx];
           update((current) => syncRoutes(D, updateEndpoint(D, current, ep.id, { pins })));
         }}
-        hint={ep.side === "B" && S.endpoints.some((e) => e.side === "A") ? "Контакты стыкуются по порядку: k-й здесь ↔ k-й на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2…" : undefined} />}
+        hint={ep.side === "B" && S.endpoints.some((e) => e.side === "A") ? "Контакты стыкуются по жилам: k-я жила здесь ↔ k-я на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2… «11:1-9» — жилы с 11-й на контакты 1–9." : undefined} />}
     </div>;
   }
 
@@ -1106,7 +1135,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
         onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}
-        onAutoFill={() => { const plan = autoFillPinout(D, S, pinCounts); update(() => plan.state); return plan; }} />
+        onAutoFill={() => { const plan = autoFillPinout(D, S, pinCounts, true); update(() => plan.state); return plan; }} />
       {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
         <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
       {links.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
