@@ -561,9 +561,8 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
                                    json={"good_quantity": str(KITS)})
         box = submitted["box"]
         assert Decimal(box["quantity"]) == KITS and submitted["defect"] is None
-        shop.fitter.refused("POST", f"/api/production/boxes/{box['id']}/confirm", json={"version": box["version"]})
-        box = shop.master.ok("POST", f"/api/production/boxes/{box['id']}/confirm",
-                             json={"version": box["version"]})["box"]
+        # Подтверждения мастером нет (13.10): сданная коробка сразу идёт на вход следующей операции, последняя — в ОТК.
+        assert box["status"] == "Закрыта оператором"
         previous_box = box
     last_box = previous_box
 
@@ -573,6 +572,7 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
     shop.master.refused("POST", f"/api/production/boxes/{last_box['id']}/qc", json=inspect)
     inspected = shop.qc.ok("POST", f"/api/production/boxes/{last_box['id']}/qc", json=inspect)
     last_box = inspected["box"]
+    assert last_box["status"] == "Подтверждена"  # приёмка ОТК — единственное подтверждение коробки
     assert len(inspected["serials"]) in (0, KITS)
 
     # Кладовщик ГП: принятая ОТК коробка — на склад готовой продукции, в позицию проекта.

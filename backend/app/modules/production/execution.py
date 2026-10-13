@@ -621,6 +621,8 @@ def submit_work(command: SubmitWorkCommand, uow: ExecutionUnitOfWork) -> tuple[W
 
 
 def confirm_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
+    """Подтверждение мастером — до 13.10.2026, без маршрута API: подтверждает ОТК (quality.inspect_box), а коробки
+    остальных операций годятся на вход сразу после сдачи. Остаётся ради старых событий журнала и их отката."""
     with uow:
         box = _box(command, uow)
         updated = box.confirm(command.actor.name, command.now)
@@ -631,11 +633,18 @@ def confirm_box(command: BoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
 
 
 def return_box(command: ReturnBoxCommand, uow: ExecutionUnitOfWork) -> ProductionBox:
+    """«Вернуть…» — действие ОТК (владелец, 13.10.2026): сданная коробка, из которой ещё ничего не брали и которую ОТК
+    не принимал, уходит монтажнику на исправление; после «Исправить» она снова «Закрыта оператором» (коробка последней
+    операции — снова в очереди ОТК). Взятую на вход или принятую ОТК вернуть нельзя (`return_to_operator`)."""
     with uow:
         box = _box(command, uow)
+        if uow.qc.by_box(box.id) is not None:
+            raise ProductionValidationError("Коробка уже принята ОТК — вернуть её нельзя")
         updated = box.return_to_operator(command.reason)
         uow.boxes.save(updated)
-        _audit(box.id, "production.box_returned", command.actor, command.now, {"reason": command.reason}, uow)
+        _audit(box.id, "production.box_returned", command.actor, command.now, {
+            "number": box.number, "reason": str(command.reason or "").strip(),
+        }, uow)
         uow.commit()
         return updated
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Protocol, Sequence
 from uuid import UUID, uuid4
 
@@ -166,7 +167,8 @@ def inspect_box(command: InspectBoxCommand, uow: QualityUnitOfWork) -> tuple[Pro
         if command.rejected and (not character or not description):
             raise ProductionValidationError("Для брака ОТК обязательны характер и описание")
         defect_number = f"Б-{uow.defects.reserve_number()}" if command.rejected else None
-        updated_box = box.record_qc_rejection(command.rejected)
+        # Приёмка ОТК и есть подтверждение коробки (владелец, 13.10): мастер её больше не подтверждает.
+        updated_box = box.qc_accept(Decimal(command.rejected), command.actor.name, command.now)
         uow.serials.ensure_task(task.id, task.number, task.quantity)
         serials = uow.serials.assign_qc(task.id, box.id, command.accepted, command.rejected)
         inspection = QcInspection(
@@ -179,6 +181,7 @@ def inspect_box(command: InspectBoxCommand, uow: QualityUnitOfWork) -> tuple[Pro
         uow.boxes.save(updated_box)
         uow.qc.add(inspection)
         _audit(box.id, "production.qc_accepted", command.actor, command.now, {
+            "number": box.number, "status": [box.status.value, updated_box.status.value],
             "accepted": command.accepted, "rejected": command.rejected,
             "defect_number": defect_number,
             "instrument_ids": [str(value) for value in command.instrument_ids],

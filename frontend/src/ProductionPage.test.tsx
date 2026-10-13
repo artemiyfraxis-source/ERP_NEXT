@@ -142,7 +142,7 @@ it("shows tasks on a Gantt, operation fact, and assigns with a server preview an
   render(<ProductionPage principal={principal} />);
   await openBoardProject("591K.3");
   fireEvent.click(await screen.findByRole("button", { name: /ПЗ-0001/ }));
-  expect(await screen.findByText(/сдано 6 из 10, брак 1 · в коробках 4 \+ 2 ждут подтверждения/)).toBeInTheDocument();
+  expect(await screen.findByText(/сдано 6 из 10, брак 1 · в коробках 4 \+ 2 ждут ОТК/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Разделка/ }));
   expect(await screen.findByText("нет допуска", { exact: false })).toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("Назначить Новичок"));
@@ -619,7 +619,7 @@ it("keeps a chain task as it was: no «из этапов», the second stage rea
   });
   render(<ProductionPage principal={operatorPrincipal} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
-  expect(await screen.findByText(/с этапа 1, подтверждённые мастером/)).toBeInTheDocument();
+  expect(await screen.findByText(/с этапа 1, сданные/)).toBeInTheDocument();
   expect(screen.queryByText(/из этапов/)).not.toBeInTheDocument();
   expect(screen.queryByText(/сдать/)).not.toBeInTheDocument();
 });
@@ -651,7 +651,7 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
   const { unmount } = render(<ProductionPage principal={operatorPrincipal} mine />);
   expect(await screen.findByText(new RegExp(FEEDS))).toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
-  expect(await screen.findByText(new RegExp(`${FEEDS}; подтверждённые мастером`))).toBeInTheDocument();
+  expect(await screen.findByText(new RegExp(`${FEEDS}; сданные`))).toBeInTheDocument();
   expect(await screen.findByRole("button", { name: /000001-8.*5 шт · этап 1/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /000002-6.*5 шт · этап 2/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Ввести код вручную" }));
@@ -668,7 +668,8 @@ it("tells the fitter of the assembly which stages the boxes come from, and lets 
 });
 
 // Owner 04.10.2026: «почему эти два блока вообще тут» — очередь ОТК, брак и средства измерения живут в разделе «ОТК».
-it("keeps only planning and the master's box confirmation on the resource planning screen", async () => {
+// Owner 13.10.2026: «ОТК подтверждает и все» — «Коробки на подтверждение» мастера убраны, коробки экран не тянет.
+it("keeps only planning on the resource planning screen: no box confirmation, no QC blocks", async () => {
   const adminPrincipal: Principal = { ...principal, roles: ["admin"], access_level: "admin", permissions: { production: "edit" } };
   const box = (id: string, number: string, status: string) => ({
     id, number, version: 1, task_id: task.id, operation_id: task.operations[0].id, item: task.item,
@@ -685,15 +686,18 @@ it("keeps only planning and the master's box confirmation on the resource planni
   }, [task]);
   render(<ProductionPage principal={adminPrincipal} />);
 
-  expect(await screen.findByRole("heading", { name: "Коробки на подтверждение" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Календарь цеха" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Календарь цеха" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Коробки на подтверждение" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Подтвердить" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Вернуть…" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "+ Запустить задание" })).toBeInTheDocument();
   for (const title of ["Очередь ОТК", "Средства измерения", "Брак ОТК", "Брак цеха"]) {
     expect(screen.queryByRole("heading", { name: title })).not.toBeInTheDocument();
   }
   expect(screen.queryByRole("button", { name: "+ Добавить СИ" })).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Годные ОТК 000012-0")).not.toBeInTheDocument();
-  // Данные ОТК экран планирования больше не тянет.
+  // Данные ОТК и коробки экран планирования больше не тянет.
+  expect(requested).not.toContain("/api/production/boxes");
   expect(requested).not.toContain("/api/production/defects");
   expect(requested).not.toContain("/api/production/instruments");
   expect(requested).not.toContain("/api/production/qc/rejections");
@@ -979,25 +983,6 @@ it("loads the ETK sketches of the fitter's operation through the production endp
   expect(seen.some((path) => path.includes("/api/techcards/") && path.includes("/sketches"))).toBe(false);
 });
 
-it("confirms every box waiting for the master with one button", async () => {
-  const waiting = (id: string, number: string) => ({
-    id, number, version: 2, task_id: task.id, operation_id: task.operations[0].id, item: task.item, operation_position: 1,
-    operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
-    available: "5", status: "Закрыта оператором", created_at: "2026-09-22T09:00:00+03:00",
-    closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: null,
-  });
-  const boxes = [waiting("74000000-0000-0000-0000-000000000021", "000021-2"), waiting("74000000-0000-0000-0000-000000000022", "000022-0")];
-  const confirmed: string[] = [];
-  masterFetch((path, init) => {
-    if (path === "/api/production/boxes") return json({ boxes });
-    if (path.endsWith("/confirm") && init?.method === "POST") { confirmed.push(path); return json({ box: boxes[0] }); }
-    return null;
-  }, [task]);
-  render(<ProductionPage principal={principal} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Подтвердить все" }));
-  await waitFor(() => expect(confirmed).toEqual(boxes.map((box) => `/api/production/boxes/${box.id}/confirm`)));
-});
-
 it("keeps «Начать» disabled with a reason until a box is chosen, then lets it go", async () => {
   fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: readyBoxes }));
   render(<ProductionPage principal={fitter} mine />);
@@ -1049,31 +1034,6 @@ it("titles an overdue operation that was never started «Просрочено ·
     render(<ProductionPage principal={fitter} mine />);
     expect(await screen.findByText(/Начато ранее · 04\.10/)).toBeInTheDocument();
   } finally { vi.useRealTimers(); }
-});
-
-it("folds the return reason behind «Вернуть…» in the boxes waiting for the master", async () => {
-  const box = {
-    id: "74000000-0000-0000-0000-000000000031", number: "000031-5", version: 2, task_id: task.id, operation_id: task.operations[0].id, item: task.item, operation_position: 1,
-    operator_id: "10000000-0000-0000-0000-000000000002", quantity: "5", consumed: "0", reserved: "0", rejected: "0",
-    available: "5", status: "Закрыта оператором", created_at: "2026-09-22T09:00:00+03:00",
-    closed_at: null, closed_by: null, confirmed_at: null, confirmed_by: null, return_reason: null,
-  };
-  const returned: unknown[] = [];
-  masterFetch((path, init) => {
-    if (path === "/api/production/boxes") return json({ boxes: [box] });
-    if (path.endsWith("/return") && init?.method === "POST") { returned.push(JSON.parse(String(init.body))); return json({ box }); }
-    return null;
-  }, [task]);
-  render(<ProductionPage principal={principal} />);
-  expect(await screen.findByText("000031-5")).toBeInTheDocument();
-  expect(screen.queryByLabelText("Причина возврата")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Вернуть оператору" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Вернуть…" }));
-  const confirm = screen.getByRole("button", { name: "Вернуть оператору" });
-  expect(confirm).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Причина возврата"), { target: { value: "Не хватает 1 шт" } });
-  fireEvent.click(confirm);
-  await waitFor(() => expect(returned).toHaveLength(1));
 });
 
 // Работа за сотрудника (12.10.2026): мастер с правкой планирования делает всё, что монтажник, — от его имени.

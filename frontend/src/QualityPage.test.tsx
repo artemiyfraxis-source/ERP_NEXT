@@ -151,6 +151,39 @@ it("sends to QC only the box of the final operation of the scheme", async () => 
   expect(screen.queryByLabelText("Годные ОТК 000002-6")).not.toBeInTheDocument();
 });
 
+// Подтверждает только ОТК (13.10.2026): сданная монтажником коробка последней операции — сразу в очереди.
+const handed = (number: string, position: number, operationId: string) => ({
+  ...box(number, position, operationId), status: "Закрыта оператором", confirmed_at: null, confirmed_by: null,
+});
+
+it("queues the box of the final operation as soon as the fitter hands it in, and old master-confirmed ones too", async () => {
+  qualityFetch({ boxes: [handed("000001-8", 1, cutA), handed("000003-4", 3, assembly), box("000004-2", 3, assembly), { ...handed("000005-0", 3, assembly), status: "Возвращена" }] });
+  render(<QualityPage principal={qc} />);
+  expect(await screen.findByLabelText("Годные ОТК 000003-4")).toBeInTheDocument();
+  expect(screen.getByLabelText("Годные ОТК 000004-2")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Годные ОТК 000001-8")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Годные ОТК 000005-0")).not.toBeInTheDocument();
+});
+
+it("returns a handed box to its fitter from the QC queue with a reason", async () => {
+  let returned: { path: string; body: unknown } | null = null;
+  qualityFetch({ boxes: [handed("000003-4", 3, assembly)] }, (path, body) => {
+    if (path.endsWith("/return")) { returned = { path, body }; return json({ box: { ...handed("000003-4", 3, assembly), status: "Возвращена" } }); }
+    return null;
+  });
+  render(<QualityPage principal={qc} />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Вернуть…" }));
+  const send = screen.getByRole("button", { name: "Вернуть монтажнику" });
+  expect(send).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Причина возврата 000003-4"), { target: { value: " Пересчитать " } });
+  fireEvent.click(send);
+
+  await waitFor(() => expect(returned).toEqual({
+    path: "/api/production/boxes/74000000-0000-0000-0000-000000000103/return", body: { version: 1, reason: "Пересчитать" },
+  }));
+});
+
 it("accepts a box at QC against the registered instruments that are still valid", async () => {
   let payload: unknown;
   qualityFetch(

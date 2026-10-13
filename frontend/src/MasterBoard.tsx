@@ -55,9 +55,9 @@ function isoDay(date: Date) {
 const done = (operation: ProductionOperation) => operation.state === "выполнена";
 
 // Прогресс операции для мастера (владелец, 05.10: «мастер видит, что сдано и что просрочено»). Всё считается из полей,
-// которые API уже отдаёт: fact.good, wip.closed (ждут подтверждения мастера), required_quantity, планы и дедлайн задания.
+// которые API уже отдаёт: fact.good, wip.closed (ждут ОТК или исправления), required_quantity, планы и дедлайн задания.
 export type OpFlag = "late" | "wait" | "over";
-export const FLAG_TEXT: Record<OpFlag, string> = { late: "не начато, план истёк", wait: "ждёт подтверждения", over: "позже срока задания" };
+export const FLAG_TEXT: Record<OpFlag, string> = { late: "не начато, план истёк", wait: "ждёт ОТК", over: "позже срока задания" };
 export type OpProgress = { required: number; good: number; waiting: number; percent: number; flags: OpFlag[] };
 
 export function opProgress(task: ProductionTask, operation: ProductionOperation, now: number = Date.now()): OpProgress {
@@ -539,7 +539,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                       {op.code ? <small className="op-code">{op.code}</small> : null}
                       {feedsText(item, op) && <div className="ap-man">{feedsText(item, op)}</div>}
                       {op.fact && progress.required > 0 && <div className={`mb-progress tone-${progressTone(progress, done(op))}`}>
-                        <span>сдано {progress.good}/{progress.required}{progress.waiting > 0 ? ` · ${progress.waiting} ждут подтверждения` : ""}</span>
+                        <span>сдано {progress.good}/{progress.required}{progress.waiting > 0 ? ` · ${progress.waiting} ждут ОТК` : ""}</span>
                         <span className="mb-bar" role="progressbar" aria-label="Сдано" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}><i style={{ width: `${progress.percent}%` }} /></span>
                         {!item.handed_to && progress.flags.map((flag) => <em key={flag} className={`mb-flag ${flag === "wait" ? "warn" : "danger"}`}>{FLAG_TEXT[flag]}</em>)}
                       </div>}</td>

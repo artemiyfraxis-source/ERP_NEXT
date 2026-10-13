@@ -63,7 +63,6 @@ from .launchable import (
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
 from .execution import (
-    BoxCommand,
     CorrectBoxCommand,
     DecideDefectCommand,
     HandoffBoxCommand,
@@ -72,7 +71,6 @@ from .execution import (
     StartWorkCommand,
     SubmitWorkCommand,
     cancel_work,
-    confirm_box,
     correct_box,
     decide_defect,
     handoff_box,
@@ -85,7 +83,7 @@ from .execution import (
     start_work,
     submit_work,
 )
-from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkSession
+from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkSession
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
 from .quality import (
     DecideQcRejectionCommand,
@@ -293,10 +291,18 @@ def _op_state(processed: Decimal, quantity: Decimal) -> str:
 
 
 def _facts(uow, tasks, boxes=None, outputs=None) -> dict:
-    """prodWorkFacts_ + prodWip_: per operation — good/scrap/processed and pieces in confirmed or waiting boxes.
+    """prodWorkFacts_ + prodWip_: per operation — good/scrap/processed and pieces in usable or waiting boxes.
 
+    «ok» — штуки, которые можно брать дальше: сданные коробки операций без ОТК и принятые ОТК коробки последней
+    операции; «closed» — ждут: коробки последней операции до ОТК, возвращённые на исправление, открытые.
     boxes/outputs — уже прочитанные строки этих заданий (экран «Мои задания» читает только свои ПЗ)."""
     task_ids = {task.id for task in tasks}
+    finals = set()
+    for task in tasks:
+        try:
+            finals.add(task.final_operation.id)
+        except ProductionValidationError:
+            continue
     facts: dict[UUID, dict] = {}
     for output in (outputs if outputs is not None else uow.outputs.active_for_tasks(tuple(task_ids))):
         fact = facts.setdefault(output.operation_id, {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)})
@@ -306,10 +312,10 @@ def _facts(uow, tasks, boxes=None, outputs=None) -> dict:
         if box.task_id not in task_ids or box.available <= 0:
             continue
         fact = facts.setdefault(box.operation_id, {"good": Decimal(0), "defect": Decimal(0), "ok": Decimal(0), "closed": Decimal(0)})
-        if box.status is BoxStatus.CONFIRMED:
+        if box.status is BoxStatus.CONFIRMED or (box.status is BoxStatus.OPERATOR_CLOSED and box.operation_id not in finals):
             fact["ok"] += box.available
         elif box.status in {BoxStatus.OPEN, BoxStatus.OPERATOR_CLOSED, BoxStatus.RETURNED}:
-            # Решено агентом: у SUPPLYMAP нет «Открытой» коробки, её штуки тоже ждут подтверждения мастера.
+            # Решено агентом: у SUPPLYMAP нет «Открытой» коробки, её штуки тоже ждут.
             fact["closed"] += box.available
     return facts
 
@@ -611,7 +617,7 @@ _MY_BOX_LIMIT = 2_000
 
 
 def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
-    """Готовность входов операции для карточки монтажника: можно ли начинать и какие подтверждённые коробки
+    """Готовность входов операции для карточки монтажника: можно ли начинать и какие сданные коробки
     этого ПЗ можно взять. Коробки другого ПЗ сюда не попадают."""
     if state == "выполнена":
         return {"state": "done", "text": "выполнена", "boxes": []}
@@ -623,7 +629,7 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
     for edge in operation.inputs:
         source = by_id.get(edge.input_operation_id)
         position = source.position if source else 0
-        found = [box for box in boxes if box.operation_id == edge.input_operation_id and box.status is BoxStatus.CONFIRMED and box.available > 0]
+        found = [box for box in boxes if box.operation_id == edge.input_operation_id and box.status in TAKEABLE_BOX and box.available > 0]
         if found:
             ready.extend({
                 "id": str(box.id), "number": box.number, "code": box.code, "quantity": _number(box.available),
@@ -637,14 +643,16 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
                 "text": "готово к сборке" if len(operation.inputs) > 1 else "можно начинать", "boxes": ready}
     edge, source, position = missing[0]
     label = (stage_name(source.stage) if source else "") or f"этап {position}"
+    # Сданные коробки входа берутся сразу (подтверждения мастера больше нет); ждать можно только коробку,
+    # которую монтажник ещё исправляет. Состояние «waiting_master» — прежнее имя в API.
     at_master = any(
         box.operation_id == edge.input_operation_id and box.available > 0
-        and box.status in {BoxStatus.OPEN, BoxStatus.OPERATOR_CLOSED, BoxStatus.RETURNED}
+        and box.status in {BoxStatus.OPEN, BoxStatus.RETURNED}
         for box in boxes
     )
     return {
         "state": "waiting_master" if at_master else "waiting_stage",
-        "text": f"ждёт: {label} — коробка ещё у мастера" if at_master else f"ждёт: {label} не сдан",
+        "text": f"ждёт: {label} — коробку исправляют" if at_master else f"ждёт: {label} не сдан",
         "boxes": ready,
     }
 
@@ -747,7 +755,7 @@ def available_inputs(
         rows = [box for box in uow.boxes.list(task_id=task_id) if (
             box.item == task.item
             and box.operation_id in sources
-            and box.status is BoxStatus.CONFIRMED
+            and box.status in TAKEABLE_BOX
             and box.available > 0
         )]
         materials = []
@@ -1076,14 +1084,10 @@ def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: A
     }
 
 
-@router.post("/boxes/{box_id}/confirm")
-def confirm_execution_box(box_id: UUID, payload: BoxVersionPayload, principal: Annotated[Principal, Depends(production_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    box = _execution(lambda: confirm_box(BoxCommand(box_id, payload.version, principal.actor, now), uow_factory()))
-    return {"box": _box_result(box)}
-
-
+# Подтверждения мастером нет (владелец, 13.10.2026: «ОТК подтверждает и все»): маршрута /confirm больше нет,
+# «Вернуть…» — действие очереди ОТК, по правке «ОТК».
 @router.post("/boxes/{box_id}/return")
-def return_execution_box(box_id: UUID, payload: ReturnBoxPayload, principal: Annotated[Principal, Depends(production_edit_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def return_execution_box(box_id: UUID, payload: ReturnBoxPayload, principal: Annotated[Principal, Depends(production_quality_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
     box = _execution(lambda: return_box(ReturnBoxCommand(
         box_id=box_id, expected_version=payload.version, actor=principal.actor,
         now=now, reason=payload.reason,
