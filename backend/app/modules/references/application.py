@@ -19,6 +19,7 @@ from .cable_structure import (
 )
 from .cables import DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, diameter_index
 from .domain import EDITABLE_TABS, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
 from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
     prepare_equipment,
@@ -58,11 +59,18 @@ class CableStructureRepository(Protocol):
     def replace_names(self, names: dict[str, CoaxNames]) -> dict[str, int]: ...
 
 
+class StockLinkRepository(Protocol):
+    """«Склад → база данных» journal: append-only — rows are added and read, never changed."""
+    def add(self, entry: StockLinkEntry) -> None: ...
+    def list(self, *, record_id: UUID | None = None, lot_id: UUID | None = None, limit: int = 500) -> list[StockLinkEntry]: ...
+
+
 class UnitOfWork(Protocol):
     references: ReferenceRepository
     tech_operations: TechOperationRepository
     cable_structure: CableStructureRepository
     audit: AppendOnlyRepository
+    stock_links: StockLinkRepository
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
     def commit(self) -> None: ...
@@ -213,53 +221,68 @@ def _search_text(record: TechOperationRecord) -> str:
     return " ".join(f"{record.display_text} {' '.join(record.fields.values())}".casefold().split())
 
 
-def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
-    if not command.edits or len(command.edits) > MAX_ROW_EDITS:
+def _check_edit_count(edits: tuple[FieldEdit, ...]) -> None:
+    if not edits or len(edits) > MAX_ROW_EDITS:
         raise ReferenceValidationError(f"Правок за раз: от 1 до {MAX_ROW_EDITS}")
+
+
+def _editable(record_id: UUID, uow: UnitOfWork) -> TechOperationRecord:
+    record = uow.tech_operations.get(record_id)
+    if record is None:
+        raise LookupError("Запись справочника не найдена")
+    if record.tab not in EDITABLE_TABS:
+        raise ReferenceValidationError("База только для просмотра")
+    return record
+
+
+def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: UnitOfWork) -> tuple[TechOperationRecord, TechOperationRecord]:
+    """The row edit inside an open unit of work (nothing committed): returns the record before and after."""
+    record = _editable(record_id, uow)
+    fields = dict(record.fields)
+    display = record.display_text
+    refused: list[str] = []
+    for edit in edits:
+        known = edit.field in record.fields or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
+        if not known:
+            refused.append(f"{edit.field}: поля нет в записи")
+            continue
+        try:
+            value = _clean_cell(edit.value)
+        except ReferenceValidationError as error:
+            refused.append(f"{edit.field}: {error}")
+            continue
+        if fields.get(edit.field, "") != str(edit.old or "").strip():
+            refused.append(f"{edit.field}: запись уже поменяли — откройте её заново")
+            continue
+        if display == fields.get(edit.field) and value:
+            display = value
+        fields[edit.field] = value
+    if refused:
+        raise StaleRecordError("Не записано ничего — отклонено полей: " + str(len(refused)) + "; " + "; ".join(refused))
+    if record.tab == TechOperationTab.EQUIPMENT:
+        others = [item for item in _equipment_rows(uow)]
+        before_base = fields_base(record.fields)
+        fields = prepare_equipment(fields, others, self_id=record.id, creating=False, previous=record.fields)
+        if before_base == record.fields.get(BASE_KEY, "") and fields_base(fields) != fields.get(BASE_KEY):
+            fields[BASE_KEY] = fields_base(fields)
+    # A sheet column edit also moves the schema value the generator reads (Название → opName).
+    edited = {edit.field for edit in edits}
+    synced = sync_schema_fields(record.tab.value, fields)
+    keys = schema_keys(record.tab.value)
+    fields = {key: (synced[key] if key in keys and key not in edited else value) for key, value in synced.items()}
+    display = schema_display_text(record.tab.value, fields) or display
+    updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
+    updated = replace(updated, normalized_search=_search_text(updated))
+    uow.tech_operations.save(updated)
+    if record.tab == TechOperationTab.WIRE and edited & {MARK_FIELD, *MIRRORED_FIELDS}:
+        _follow_wire_edit(uow, record, updated, edited, now)
+    return record, updated
+
+
+def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
+    _check_edit_count(command.edits)
     with uow:
-        record = uow.tech_operations.get(command.record_id)
-        if record is None:
-            raise LookupError("Запись справочника не найдена")
-        if record.tab not in EDITABLE_TABS:
-            raise ReferenceValidationError("База только для просмотра")
-        fields = dict(record.fields)
-        display = record.display_text
-        refused: list[str] = []
-        for edit in command.edits:
-            known = edit.field in record.fields or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS)
-            if not known:
-                refused.append(f"{edit.field}: поля нет в записи")
-                continue
-            try:
-                value = _clean_cell(edit.value)
-            except ReferenceValidationError as error:
-                refused.append(f"{edit.field}: {error}")
-                continue
-            if fields.get(edit.field, "") != str(edit.old or "").strip():
-                refused.append(f"{edit.field}: запись уже поменяли — откройте её заново")
-                continue
-            if display == fields.get(edit.field) and value:
-                display = value
-            fields[edit.field] = value
-        if refused:
-            raise StaleRecordError("Не записано ничего — отклонено полей: " + str(len(refused)) + "; " + "; ".join(refused))
-        if record.tab == TechOperationTab.EQUIPMENT:
-            others = [item for item in _equipment_rows(uow)]
-            before_base = fields_base(record.fields)
-            fields = prepare_equipment(fields, others, self_id=record.id, creating=False, previous=record.fields)
-            if before_base == record.fields.get(BASE_KEY, "") and fields_base(fields) != fields.get(BASE_KEY):
-                fields[BASE_KEY] = fields_base(fields)
-        # A sheet column edit also moves the schema value the generator reads (Название → opName).
-        edited = {edit.field for edit in command.edits}
-        synced = sync_schema_fields(record.tab.value, fields)
-        keys = schema_keys(record.tab.value)
-        fields = {key: (synced[key] if key in keys and key not in edited else value) for key, value in synced.items()}
-        display = schema_display_text(record.tab.value, fields) or display
-        updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
-        updated = replace(updated, normalized_search=_search_text(updated))
-        uow.tech_operations.save(updated)
-        if record.tab == TechOperationTab.WIRE and edited & {MARK_FIELD, *MIRRORED_FIELDS}:
-            _follow_wire_edit(uow, record, updated, edited, command.now)
+        record, updated = _edit_in(command.record_id, command.edits, command.now, uow)
         _audit("references.tech_record_edited", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
             "fields": [edit.field for edit in command.edits],
@@ -309,29 +332,124 @@ def _equipment_rows(uow: UnitOfWork) -> list[tuple[object, dict[str, str]]]:
     return [(item.id, item.fields) for item in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10_000)]
 
 
-def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
-    if command.tab not in EDITABLE_TABS:
+def _clean_new_fields(tab: TechOperationTab, values: dict[str, str]) -> dict[str, str]:
+    if tab not in EDITABLE_TABS:
         raise ReferenceValidationError("База только для просмотра")
-    fields = {str(key).strip(): _clean_cell(value) for key, value in command.fields.items() if str(key).strip()}
+    return {str(key).strip(): _clean_cell(value) for key, value in values.items() if str(key).strip()}
+
+
+def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork) -> TechOperationRecord:
+    """A new record inside an open unit of work (nothing committed); `fields` cleaned by `_clean_new_fields`."""
+    if tab == TechOperationTab.EQUIPMENT:
+        # Number, row and code are checked and given under this same transaction as the save.
+        fields = prepare_equipment(fields, _equipment_rows(uow), creating=True)
+    filled = [value for value in fields.values() if value]
+    if not filled:
+        raise ReferenceValidationError("Заполни хотя бы одно поле")
+    fields = sync_schema_fields(tab.value, fields)
+    display = schema_display_text(tab.value, fields) or filled[0]
+    record = TechOperationRecord.create(
+        tab=tab, display_text=display, search_text="", source_sheet="",
+        sort_key=display, fields=fields, edited_in_erp=True,
+    )
+    uow.tech_operations.save(record)
+    return record
+
+
+def create_record(command: CreateRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
+    fields = _clean_new_fields(command.tab, command.fields)
     with uow:
-        if command.tab == TechOperationTab.EQUIPMENT:
-            # Number, row and code are checked and given under this same transaction as the save.
-            fields = prepare_equipment(fields, _equipment_rows(uow), creating=True)
-        filled = [value for value in fields.values() if value]
-        if not filled:
-            raise ReferenceValidationError("Заполни хотя бы одно поле")
-        fields = sync_schema_fields(command.tab.value, fields)
-        display = schema_display_text(command.tab.value, fields) or filled[0]
-        record = TechOperationRecord.create(
-            tab=command.tab, display_text=display, search_text="", source_sheet="",
-            sort_key=display, fields=fields, edited_in_erp=True,
-        )
-        uow.tech_operations.save(record)
+        record = _create_in(command.tab, fields, uow)
         _audit("references.tech_record_created", command.actor, command.now, {
             "record_id": str(record.id), "tab": record.tab.value,
         }, uow)
         uow.commit()
     return record
+
+
+# --- «Склад → база данных»: a stock article tied to, or made into, a record; each event is journaled (T14) ---
+
+@dataclass(frozen=True)
+class LinkStockCommand:
+    """`record_id` — an existing record (with `edits` — its fields change from the article; without — only tied);
+    no `record_id` — a new record in `tab` from `fields`."""
+    article: StockArticle
+    actor: Actor
+    now: datetime
+    record_id: UUID | None = None
+    tab: TechOperationTab | None = None
+    fields: dict[str, str] | None = None
+    edits: tuple[FieldEdit, ...] = ()
+
+
+@dataclass(frozen=True)
+class StockLinkResult:
+    record: TechOperationRecord
+    entry: StockLinkEntry | None  # None: the article was already tied to this record and nothing changed — no new row
+
+
+def _journal(event: StockLinkEvent, command: LinkStockCommand, record: TechOperationRecord,
+             changes: tuple[StockLinkChange, ...], uow: UnitOfWork) -> StockLinkEntry:
+    entry = StockLinkEntry(
+        id=uuid4(), occurred_at=command.now, event=event, article=command.article, record_id=record.id,
+        record_tab=record.tab, record_text=record.display_text, changes=changes,
+        actor_id=command.actor.id, actor_name=command.actor.name,
+    )
+    uow.stock_links.add(entry)
+    return entry
+
+
+def _changes(before: dict[str, str], after: dict[str, str], named: set[str]) -> tuple[StockLinkChange, ...]:
+    """What changed, as the person named it: the fields they gave; the schema values derived from them (БД.ТЕР
+    «Product Name» → terComponent) only when none of theirs changed — the row reads once, not twice."""
+    changed = [key for key, value in after.items() if before.get(key, "") != value]
+    own = [key for key in changed if key in named] or changed
+    return tuple(StockLinkChange(key, before.get(key, ""), after[key]) for key in own)
+
+
+def link_stock_article(command: LinkStockCommand, uow: UnitOfWork) -> StockLinkResult:
+    """One event of «склад → база данных», written with the record change in one transaction: the record and its
+    journal row are saved together or not at all. Tying the same article to the same record again writes nothing."""
+    article = {"lot_id": str(command.article.lot_id), "grn": command.article.grn, "source": "warehouse"}
+    if command.record_id is None:
+        if command.tab is None:
+            raise ReferenceValidationError("Укажите базу новой записи")
+        fields = _clean_new_fields(command.tab, command.fields or {})
+        with uow:
+            record = _create_in(command.tab, fields, uow)
+            changes = _changes({}, record.fields, set(fields))
+            entry = _journal(StockLinkEvent.CREATED, command, record, changes, uow)
+            _audit("references.tech_record_created", command.actor, command.now,
+                   {"record_id": str(record.id), "tab": record.tab.value, **article}, uow)
+            uow.commit()
+        return StockLinkResult(record, entry)
+    if command.edits:
+        _check_edit_count(command.edits)
+    with uow:
+        record = _editable(command.record_id, uow)
+        if command.tab is not None and record.tab != command.tab:
+            raise ReferenceValidationError("Запись из другой базы")
+        changes: tuple[StockLinkChange, ...] = ()
+        if command.edits:
+            before, record = _edit_in(command.record_id, command.edits, command.now, uow)
+            changes = _changes(before.fields, record.fields, {edit.field for edit in command.edits})
+        if changes:
+            entry = _journal(StockLinkEvent.UPDATED, command, record, changes, uow)
+            _audit("references.tech_record_edited", command.actor, command.now, {
+                "record_id": str(record.id), "tab": record.tab.value, "fields": [change.field for change in changes],
+                **article}, uow)
+        elif uow.stock_links.list(record_id=record.id, lot_id=command.article.lot_id, limit=1):
+            return StockLinkResult(record, None)
+        else:
+            entry = _journal(StockLinkEvent.LINKED, command, record, (), uow)
+        uow.commit()
+    return StockLinkResult(record, entry)
+
+
+def stock_links(uow: UnitOfWork, *, record_id: UUID | None = None, limit: int = 500) -> list[StockLinkEntry]:
+    """The journal, newest first: of one record, or all of it."""
+    with uow:
+        return uow.stock_links.list(record_id=record_id, limit=limit)
 
 
 def duplicate_equipment(record_id: UUID, actor: Actor, now: datetime, uow: UnitOfWork) -> TechOperationRecord:
