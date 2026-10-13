@@ -15,7 +15,7 @@ Pure rules only; storage is `infrastructure.py`, flows are `application.py`."""
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import InitVar, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import UUID, uuid4
@@ -83,8 +83,11 @@ class WireGauge:
     awg: str | None  # «28», «1/0»; None — a ГОСТ-only size (0,07 мм²)
     section_mm2: Decimal
     conductor_d_mm: Decimal | None
-    strands: str
-    position: int
+    # The column «скрутка у сечения» is gone (migration 0114: strands belong to the wire). Migration 0096, frozen on
+    # main, still builds a WireGauge with the strands it seeded in this place and reads `.strands`: an init-only
+    # argument, never stored — `.strands` is always "".
+    strands: InitVar[str] = ""
+    position: int = 0
 
     @property
     def awg_number(self) -> int | None:
@@ -96,8 +99,8 @@ class WireGauge:
         return f"{self.awg} AWG · {section}" if self.awg else section
 
     @classmethod
-    def create(cls, *, awg: str, section_mm2: object, conductor_d_mm: object = "", strands: str = "",
-               position: int = 0, id: UUID | None = None) -> WireGauge:
+    def create(cls, *, awg: str, section_mm2: object, conductor_d_mm: object = "", position: int = 0,
+               id: UUID | None = None) -> WireGauge:
         clean_awg = str(awg or "").strip().upper().removesuffix("AWG").strip()
         if clean_awg and not _AWG.match(clean_awg):
             raise ReferenceValidationError("AWG: целое число (28) или 1/0…4/0; пусто — размер только по ГОСТ")
@@ -106,7 +109,7 @@ class WireGauge:
         section = positive("Сечение, мм²", section_mm2, required=True)
         diameter = positive("Ø жилы, мм", conductor_d_mm)
         return cls(id or uuid4(), str(int(clean_awg)) if clean_awg.isdigit() else (clean_awg or None), section, diameter,
-                   str(strands or "").strip(), position)
+                   position=position)
 
 
 def section_key(value: Decimal) -> str:

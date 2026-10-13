@@ -156,7 +156,6 @@ class WireGaugeRow(Base):
     awg: Mapped[str | None] = mapped_column(String(8), nullable=True)
     section_mm2: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     conductor_d_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
-    strands: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
@@ -340,7 +339,8 @@ class CoaxCableAliasRow(Base):
 
 
 def _gauge(row: WireGaugeRow) -> WireGauge:
-    return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm), row.strands, row.position)
+    return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm),
+                     position=row.position)
 
 
 def _dec(value) -> Decimal | None:
@@ -358,7 +358,7 @@ class SqlAlchemyCableStructureRepository:
         row = self.session.get(WireGaugeRow, gauge.id)
         if row is None: row = WireGaugeRow(id=gauge.id); self.session.add(row)
         row.awg = gauge.awg; row.section_mm2 = gauge.section_mm2; row.conductor_d_mm = gauge.conductor_d_mm
-        row.strands = gauge.strands; row.position = gauge.position
+        row.position = gauge.position
         self.session.flush()
 
     def delete_gauge(self, gauge_id: UUID) -> None:

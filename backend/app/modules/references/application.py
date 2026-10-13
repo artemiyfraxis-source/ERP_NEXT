@@ -402,7 +402,6 @@ class SaveGaugeCommand:
     awg: str
     section_mm2: str
     conductor_d_mm: str
-    strands: str
     actor: Actor
     now: datetime
 
@@ -435,7 +434,7 @@ def save_gauge(command: SaveGaugeCommand, uow: UnitOfWork) -> WireGauge:
             raise LookupError("Сечение не найдено — откройте таблицу заново")
         gauge = WireGauge.create(
             id=command.gauge_id, awg=command.awg, section_mm2=command.section_mm2,
-            conductor_d_mm=command.conductor_d_mm, strands=command.strands,
+            conductor_d_mm=command.conductor_d_mm,
             position=before.position if before else max((item.position for item in gauges), default=-1) + 1,
         )
         validate_gauges([item for item in gauges if item.id != gauge.id] + [gauge])

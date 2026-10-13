@@ -115,7 +115,7 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 | `suppliers` | Ссылка → поставщик | `key` (ссылка или домен: `https://www.chipdip.ru/…` = `chipdip.ru`) | `key`, `value` (поставщик) |
 | `countries` | Изготовитель → страна | `key` (изготовитель, без регистра и лишних пробелов) | `key`, `value` (страна) |
 | `gost_awg` | ГОСТ → AWG | `key` (сечение ГОСТ, мм²: `0,35` = `0.35`) | `key`, `value` (AWG, целое) |
-| `wire-gauges` | Сечения AWG ↔ мм² | `awg`, а у строки без AWG — `section_mm2` | `awg`, `section_mm2`, `conductor_d_mm`, `strands` |
+| `wire-gauges` | Сечения AWG ↔ мм² | `awg`, а у строки без AWG — `section_mm2` | `awg`, `section_mm2`, `conductor_d_mm` (скрутки у сечения нет с 0114 — она в строке провода) |
 | `hookups` | База монтажных проводов | марка БД.ПРОВ (серия + размер) | файл `hookup-wires.json` целиком (ниже) |
 
 Поля схемы — то, что читает генератор техкарт:
