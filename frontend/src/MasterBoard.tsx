@@ -18,6 +18,7 @@ import { periodWords } from "./PlanLoadSheet";
 import { KitTile } from "./ProjectCard";
 import { deadlineChips, feedsText, operationPlanText, taskItemLabel, upstreamIds, windowText } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
+import { isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 
 // Экран мастера (владелец, 29.09): после выдачи техкарты проект приходит мастеру, разбитый на операции маршрута,
 // и мастер раздаёт их монтажникам. Слева проекты → задания → операции, справа монтажники с загрузкой.
@@ -310,7 +311,7 @@ export function daySlots(operatorId: string, day: string, tasks: ProductionTask[
     const a = new Date(`${day}T${clock(from)}:00`).getTime();
     const b = new Date(`${day}T${clock(to)}:00`).getTime();
     const busy = windows.filter((window) => window.start < b && a < window.finish)
-      .map((window) => `${window.operation.stage} · ${taskItemLabel(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
+      .map((window) => `${operationName(window.operation)} · ${taskItemLabel(window.task)}${pieceLabel(window.task, window.operation, window.share)}`);
     const rest = (shift.breaks ?? []).some(([x, y]) => minutes(x) <= from && to <= minutes(y));
     // Перерыв внутри часа (обед 13:00–13:30) — подписью в ячейке: работы в этом часу меньше.
     const inside = (shift.breaks ?? []).find(([x, y]) => minutes(x) < to && from < minutes(y));
@@ -534,9 +535,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                   return <tr key={op.id} className={`${active ? "active" : ""}${done(op) ? " done" : ""}`}>
                     <td>{op.position}</td>
                     <td>{canEdit && !done(op) && !item.handed_to
-                      ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{op.stage}</button>
-                      : <span>{op.stage}</span>}
-                      {op.code ? <small className="op-code">{op.code}</small> : null}
+                      ? <button className="mb-op" aria-pressed={active} onClick={() => select(item, active ? null : op)}>{operationName(op)}</button>
+                      : <span>{operationName(op)}</span>}
+                      {isPfOperation(op) ? <small className="op-code">{pfOpsText(op)}</small> : op.code ? <small className="op-code">{op.code}</small> : null}
                       {feedsText(item, op) && <div className="ap-man">{feedsText(item, op)}</div>}
                       {op.fact && progress.required > 0 && <div className={`mb-progress tone-${progressTone(progress, done(op))}`}>
                         <span>сдано {progress.good}/{progress.required}{progress.waiting > 0 ? ` · ${progress.waiting} ждут ОТК` : ""}</span>
@@ -581,7 +582,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         </div>}
       </div>
       {site === HANDOVER_SITE ? null : task && operation
-        ? <div className="mb-target"><b>{operation.position}. {operation.stage} · {hours(operation.norm_seconds)}</b><small>{task.number} · {taskItemLabel(task)} × {task.quantity}. Нажмите на день у монтажника.</small>
+        ? <div className="mb-target"><b>{operation.position}. {operationName(operation)}{isPfOperation(operation) ? ` — ${pfOpsText(operation)}` : ""} · {hours(operation.norm_seconds)}</b><small>{task.number} · {taskItemLabel(task)} × {task.quantity}. Нажмите на день у монтажника.</small>
           <label className="mb-pieces">Штук монтажнику<input type="number" min={1} max={task.quantity} step={1} value={pieces} aria-label="Штук монтажнику" onChange={(event) => setPieces(event.target.value)} /><span>из {task.quantity}{free > 0 && free < task.quantity ? ` · не распределено ${free}` : ""} · норма {hours(Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * quantity)}</span></label>
           {quantity > free && free < task.quantity && <small>Сверх нераспределённых штуки заберём у того, кто заканчивает позже.</small>}
           <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>

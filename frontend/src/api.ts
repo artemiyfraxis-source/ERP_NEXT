@@ -683,6 +683,8 @@ export interface ProductionOperation {
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
+  /** Задание по ПФ (13.10): операции ЭТК этого полуфабриката по порядку; пусто или нет — прежняя операция с одной операцией ЭТК. */
+  etk_ops?: Array<{ position: number; code: string; stage: string }>;
   inputs?: ProductionOperationInput[];
   final?: boolean;
   required_quantity?: string;
@@ -3074,7 +3076,7 @@ export const productionApi = {
   /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
   taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
-    api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
+    api<{ card: ProjectTechcard; focus: { position: number; positions?: number[]; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string, operatorId = "") =>
     api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs${operatorId ? `?operator_id=${operatorId}` : ""}`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),

@@ -1,0 +1,8 @@
+.pf-block { display: grid; gap: 4px; font-size: 13px; }
+.pf-block > details { border-top: 1px solid var(--border); padding-top: 4px; }
+.pf-block summary { cursor: pointer; font-weight: 600; min-height: 24px; }
+.pf-block ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+.pf-block li small { display: block; color: var(--muted-foreground); }
+.pf-block .pf-hint { color: var(--muted-foreground); }
+.pf-boxes b { font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) { .pf-block summary { min-height: 40px; display: flex; align-items: center; } }
