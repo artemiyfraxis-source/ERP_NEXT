@@ -472,8 +472,8 @@
      "y": 148
     },
     "drawing": {
-     "x": 700,
-     "y": 190
+     "x": 1167,
+     "y": 184
     }
    },
    "layerIds": {
@@ -599,8 +599,8 @@
      "y": 344
     },
     "drawing": {
-     "x": 700,
-     "y": 372
+     "x": 1167,
+     "y": 366
     }
    },
    "layerIds": {
@@ -1410,66 +1410,73 @@
     "direction": "left"
    },
    {
+    "id": "gen-j0",
+    "position": {
+     "x": 387,
+     "y": 337
+    }
+   },
+   {
     "id": "gen-j1",
     "position": {
-     "x": 409,
+     "x": 987,
      "y": 337
     }
    },
    {
     "id": "gen-n-gen-sp3",
     "position": {
-     "x": 469,
-     "y": 417
+     "x": 507,
+     "y": 337
     }
    },
    {
     "id": "gen-n-gen-sp4",
     "position": {
-     "x": 469,
-     "y": 257
+     "x": 627,
+     "y": 337
     }
    },
    {
     "id": "gen-n-gen-sp1",
     "position": {
-     "x": 255,
-     "y": 163
+     "x": 747,
+     "y": 337
     }
    },
    {
     "id": "gen-n-gen-sp2",
     "position": {
-     "x": 332,
-     "y": 250
+     "x": 867,
+     "y": 337
     }
    },
    {
     "id": "gen-n-gen-sp1-w4",
     "position": {
-     "x": 315,
-     "y": 110
+     "x": 747,
+     "y": 257
     }
    },
    {
     "id": "gen-n-gen-sp2-w4",
     "position": {
-     "x": 392,
-     "y": 197
+     "x": 867,
+     "y": 417
     }
    },
    {
     "id": "gen-n-gen-sp3-w3",
     "position": {
-     "x": 517,
-     "y": 481
+     "x": 507,
+     "y": 257
     }
    },
    {
     "id": "gen-n-gen-sp4-w3",
     "position": {
-     "x": 517,
-     "y": 193
+     "x": 627,
+     "y": 417
     }
    }
   ],
@@ -1477,78 +1484,42 @@
    {
     "id": "gen-s1",
     "from": "gen-n1",
-    "to": "gen-n-gen-sp1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
-     "points": []
-    }
-   },
-   {
-    "id": "gen-s1-1",
-    "from": "gen-n-gen-sp1",
-    "to": "gen-n-gen-sp2",
-    "path": {
-     "kind": "routed",
-     "points": []
-    }
-   },
-   {
-    "id": "gen-s1-2",
-    "from": "gen-n-gen-sp2",
-    "to": "gen-j1",
-    "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
     }
    },
    {
     "id": "gen-s2",
     "from": "gen-n2",
-    "to": "gen-j1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
     }
    },
    {
     "id": "gen-s3",
     "from": "gen-n3",
-    "to": "gen-j1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
     }
    },
    {
     "id": "gen-s4",
     "from": "gen-n4",
-    "to": "gen-j1",
+    "to": "gen-j0",
     "path": {
-     "kind": "routed",
+     "kind": "polyline",
      "points": []
     }
    },
    {
     "id": "gen-s5",
-    "from": "gen-j1",
-    "to": "gen-n5",
-    "path": {
-     "kind": "routed",
-     "points": []
-    }
-   },
-   {
-    "id": "gen-s6",
-    "from": "gen-j1",
-    "to": "gen-n6",
-    "path": {
-     "kind": "routed",
-     "points": []
-    }
-   },
-   {
-    "id": "gen-s7",
-    "from": "gen-j1",
+    "from": "gen-j0",
     "to": "gen-n-gen-sp3",
     "path": {
      "kind": "polyline",
@@ -1556,8 +1527,8 @@
     }
    },
    {
-    "id": "gen-s8",
-    "from": "gen-j1",
+    "id": "gen-s6",
+    "from": "gen-n-gen-sp3",
     "to": "gen-n-gen-sp4",
     "path": {
      "kind": "polyline",
@@ -1565,7 +1536,52 @@
     }
    },
    {
+    "id": "gen-s7",
+    "from": "gen-n-gen-sp4",
+    "to": "gen-n-gen-sp1",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s8",
+    "from": "gen-n-gen-sp1",
+    "to": "gen-n-gen-sp2",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s9",
+    "from": "gen-n-gen-sp2",
+    "to": "gen-j1",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s10",
+    "from": "gen-j1",
+    "to": "gen-n5",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
     "id": "gen-s11",
+    "from": "gen-j1",
+    "to": "gen-n6",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s12",
     "from": "gen-n-gen-sp1",
     "to": "gen-n-gen-sp1-w4",
     "path": {
@@ -1574,7 +1590,7 @@
     }
    },
    {
-    "id": "gen-s12",
+    "id": "gen-s13",
     "from": "gen-n-gen-sp2",
     "to": "gen-n-gen-sp2-w4",
     "path": {
@@ -1583,7 +1599,7 @@
     }
    },
    {
-    "id": "gen-s13",
+    "id": "gen-s14",
     "from": "gen-n-gen-sp3",
     "to": "gen-n-gen-sp3-w3",
     "path": {
@@ -1592,7 +1608,7 @@
     }
    },
    {
-    "id": "gen-s14",
+    "id": "gen-s15",
     "from": "gen-n-gen-sp4",
     "to": "gen-n-gen-sp4-w3",
     "path": {
@@ -1608,6 +1624,18 @@
      {
       "segmentId": "gen-s1",
       "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
      }
     ]
    },
@@ -1615,15 +1643,15 @@
     "wireId": "gen-sp1-w3",
     "steps": [
      {
-      "segmentId": "gen-s1-1",
+      "segmentId": "gen-s8",
       "reverse": false
      },
      {
-      "segmentId": "gen-s1-2",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s5",
+      "segmentId": "gen-s10",
       "reverse": false
      }
     ]
@@ -1632,15 +1660,15 @@
     "wireId": "gen-sp1-w2",
     "steps": [
      {
-      "segmentId": "gen-s1-1",
+      "segmentId": "gen-s8",
       "reverse": false
      },
      {
-      "segmentId": "gen-s1-2",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s5",
+      "segmentId": "gen-s10",
       "reverse": false
      }
     ]
@@ -1649,7 +1677,7 @@
     "wireId": "gen-sp1-w4",
     "steps": [
      {
-      "segmentId": "gen-s11",
+      "segmentId": "gen-s12",
       "reverse": false
      }
     ]
@@ -1662,7 +1690,19 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s1-1",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
       "reverse": false
      }
     ]
@@ -1671,11 +1711,11 @@
     "wireId": "gen-sp2-w3",
     "steps": [
      {
-      "segmentId": "gen-s1-2",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s6",
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ]
@@ -1684,11 +1724,11 @@
     "wireId": "gen-sp2-w2",
     "steps": [
      {
-      "segmentId": "gen-s1-2",
+      "segmentId": "gen-s9",
       "reverse": false
      },
      {
-      "segmentId": "gen-s5",
+      "segmentId": "gen-s10",
       "reverse": false
      }
     ]
@@ -1697,7 +1737,7 @@
     "wireId": "gen-sp2-w4",
     "steps": [
      {
-      "segmentId": "gen-s12",
+      "segmentId": "gen-s13",
       "reverse": false
      }
     ]
@@ -1710,7 +1750,7 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s7",
+      "segmentId": "gen-s5",
       "reverse": false
      }
     ]
@@ -1719,7 +1759,7 @@
     "wireId": "gen-sp3-w3",
     "steps": [
      {
-      "segmentId": "gen-s13",
+      "segmentId": "gen-s14",
       "reverse": false
      }
     ]
@@ -1732,7 +1772,7 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s7",
+      "segmentId": "gen-s5",
       "reverse": false
      }
     ]
@@ -1745,7 +1785,11 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s8",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
       "reverse": false
      }
     ]
@@ -1754,7 +1798,7 @@
     "wireId": "gen-sp4-w3",
     "steps": [
      {
-      "segmentId": "gen-s14",
+      "segmentId": "gen-s15",
       "reverse": false
      }
     ]
@@ -1767,7 +1811,11 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s8",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
       "reverse": false
      }
     ]
@@ -1780,7 +1828,27 @@
       "reverse": false
      },
      {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ],
@@ -1794,7 +1862,27 @@
       "reverse": false
      },
      {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ],
@@ -1808,7 +1896,27 @@
       "reverse": false
      },
      {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
       "segmentId": "gen-s6",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s9",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s11",
       "reverse": false
      }
     ],
@@ -1819,6 +1927,92 @@
  "drawingDocuments": {
   "tables": [],
   "leaders": [],
-  "bomOrder": []
+  "bomOrder": [],
+  "indexOffsets": {
+   "gen-x1": {
+    "x": -156.5,
+    "y": 21.13
+   },
+   "gen-x2": {
+    "x": -165,
+    "y": 19.85
+   },
+   "gen-x3": {
+    "x": -156.5,
+    "y": 21.13
+   },
+   "gen-x4": {
+    "x": -165,
+    "y": 35.85
+   },
+   "gen-sp1-w4": {
+    "x": -2,
+    "y": -1
+   },
+   "gen-sp2-w4": {
+    "x": -47.5,
+    "y": -1
+   },
+   "gen-sp3-w3": {
+    "x": -2,
+    "y": -1
+   },
+   "gen-sp4-w3": {
+    "x": -47.5,
+    "y": -1
+   },
+   "gen-sp3-w2": {
+    "x": -6.07,
+    "y": 12.68
+   },
+   "gen-sp3-w1": {
+    "x": -16.22,
+    "y": 25.08
+   },
+   "gen-sp2-w3": {
+    "x": -21.65,
+    "y": 23.89
+   },
+   "gen-sp2-w2": {
+    "x": -3.97,
+    "y": 11.44
+   },
+   "gen-sp4-w2": {
+    "x": 41.92,
+    "y": 7.83
+   },
+   "gen-sp4-w1": {
+    "x": -47.25,
+    "y": -37.43
+   },
+   "gen-sp1-w3": {
+    "x": -3.97,
+    "y": 11.44
+   },
+   "gen-sp1-w2": {
+    "x": -33.29,
+    "y": -20.84
+   },
+   "gen-sp1-w1": {
+    "x": -42.33,
+    "y": -65.47
+   },
+   "gen-sp2-w1": {
+    "x": -8,
+    "y": -19
+   },
+   "gen-w2": {
+    "x": -69.72,
+    "y": 13
+   },
+   "gen-w3": {
+    "x": 175.21,
+    "y": 11.63
+   },
+   "gen-w1": {
+    "x": 51.7,
+    "y": 10.25
+   }
+  }
  }
 }
