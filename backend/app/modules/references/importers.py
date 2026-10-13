@@ -740,7 +740,7 @@ class _TechTable:
     forms: Callable[[tuple[str, ...]], tuple[tuple[str, object], ...]]
     virtual: str = ""  # a key that is the record's display text, not a field (БД.ОБ «Для базы» = baseValue)
     cell: Callable[[str, Any], Any] = _cell  # a row value as stored (БД.ТЕР: units of the base, technologist's fields)
-    card_columns: tuple[str, ...] = ()  # sheet columns a load may bring before any row has them (БД.КОАКС card)
+    card_columns: tuple[str, ...] = ()  # sheet columns a load may bring before any row has them (КОАКС card, ТЕР L− note)
 
     @property
     def sheet_columns(self) -> bool:
@@ -773,9 +773,13 @@ COAX_CARD_COLUMNS = (
     "Наименование", "Ссылка", "Примечание", "Источник данных",
 )
 
+# БД.ТЕР columns a load may bring before any row has them: the note on where a terminal's L− came from (owner
+# 13.10.2026, «попробуй на первое время заполнить сам L-» — data/terminals/ter-lminus.json marks its estimates there).
+TER_CARD_COLUMNS = ("Источник L-",)
+
 TECH_TABLES: dict[str, _TechTable] = {
     "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms,
-                      cell=_ter_cell),
+                      cell=_ter_cell, card_columns=TER_CARD_COLUMNS),
     "coax": _TechTable(TechOperationTab.COAX, "БД.КОАКС — коаксиальные разъёмы", ("coaxArticle", "coaxWire"),
                        lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),),
                        card_columns=COAX_CARD_COLUMNS),
