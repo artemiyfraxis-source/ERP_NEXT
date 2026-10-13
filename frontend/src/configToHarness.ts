@@ -42,7 +42,7 @@ function coaxPlan(config: Obj): GeneratorDrawingPlan {
   ];
   const lengthMm = positive(coax.cableLength);
   const wires: PlanWire[] = [{
-    key: "coax", group: 0, unit: 0, mark, section: wireSectionOf(mark), color: wireColorHex(mark), lengthMm,
+    key: "coax", group: 0, unit: 0, mark, section: wireSectionOf(mark), color: wireColorHex(mark), lengthMm, circuit: "",
     from: { connector: "A", pin: 1 }, to: { connector: "B", pin: 1 },
   }];
   const ops = list(config.ops).map((op) => str(op.type));
@@ -82,7 +82,7 @@ function connectionsPlan(config: Obj): GeneratorDrawingPlan {
     const from = obj(link.from), to = obj(link.to);
     wires.push({
       key: `c${index + 1}`, group, unit, mark, section: wireSectionOf(mark),
-      color: hex6(coreColor(colors[unit])?.hex) || wireColorHex(mark), lengthMm: positive(source.length),
+      color: hex6(coreColor(colors[unit])?.hex) || wireColorHex(mark), lengthMm: positive(source.length), circuit: "",
       from: { connector: str(from.end), pin: Number(from.pin) || 0 }, to: { connector: str(to.end), pin: Number(to.pin) || 0 },
     });
   });

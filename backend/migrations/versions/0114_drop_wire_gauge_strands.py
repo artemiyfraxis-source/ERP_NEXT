@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0114_drop_wire_gauge_strands"
-down_revision: str | None = "0112_harness_route_v3"
+down_revision: str | None = "0113_task_launch_seq"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

@@ -29,7 +29,7 @@ import sqlalchemy as sa
 
 
 revision: str = "0115_terminal_contact_card"
-down_revision: str | None = "0113_task_launch_seq"
+down_revision: str | None = "0114_drop_wire_gauge_strands"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

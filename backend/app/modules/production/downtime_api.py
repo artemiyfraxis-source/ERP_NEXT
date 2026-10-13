@@ -14,7 +14,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
-from app.shared.http_auth import Principal, production_overview_principal, require_section, section_allowed
+from app.shared.http_auth import (
+    Principal, authenticated_principal, production_edit_principal, production_overview_principal,
+    production_view_principal, production_view_work_principal, section_allowed,
+)
 
 from .api import _performer, _period, production_uow_factory
 from .application import UnitOfWork
@@ -27,10 +30,25 @@ from .downtime_infrastructure import SqlAlchemyDowntimeRepository
 router = APIRouter(prefix="/api/production/downtime", tags=["production"])
 
 # Отметить и закончить простой: монтажник («Задания», правка) или мастер («Планирование», правка).
-downtime_record_principal = require_section(
-    ("myops", "production"), "edit", detail="Отмечать простой может монтажник в «Заданиях» или мастер.",
+def _either(*gates: Callable[[Principal], Principal], detail: str) -> Callable[[Principal], Principal]:
+    """Passes when any of the contract gates passes (identity contract: no new gates outside it)."""
+    def dependency(principal: Annotated[Principal, Depends(authenticated_principal)]) -> Principal:
+        for gate in gates:
+            try:
+                return gate(principal)
+            except HTTPException:
+                continue
+        raise HTTPException(status_code=403, detail=detail)
+    return dependency
+
+
+downtime_record_principal = _either(
+    production_view_work_principal, production_edit_principal,
+    detail="Отмечать простой может монтажник в «Заданиях» или мастер.",
 )
-downtime_view_principal = require_section(("myops", "production"), "view", detail="Раздел «Задания» вам не открыт.")
+downtime_view_principal = _either(
+    production_view_principal, production_overview_principal, detail="Раздел «Задания» вам не открыт.",
+)
 OPEN_CONFLICT = "У задания уже открыт простой — сначала закончите его"
 
 
