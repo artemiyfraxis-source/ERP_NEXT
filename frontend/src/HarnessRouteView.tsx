@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ApiError, failureText, harnessApi, techcardsApi, type HarnessRouteRead } from "./api";
+import { ApiError, failureText, harnessApi, techcardsApi, type HarnessRouteDraft, type HarnessRouteRead } from "./api";
 import { formatMinutes } from "./etkRoute";
 import { formatMoment } from "./format";
 import { harnessDrawing } from "./harness/drawing";
@@ -27,7 +27,10 @@ import { pluralRu } from "./tcGenLogic";
    маршрута; чужое сохранение — 409 и «Загрузить сохранённый»), «Построить по чертежу» — POST после вопроса: ручные
    правки карточек пропадают. Маршрут, построенный на старой версии чертежа, помечен. Рисунок карточки — чертёж позиции
    ядром поля жгута (RouteSnapshot), чужие части приглушены; у заготовок резки — провода и оболочки. Правая панель —
-   настройки выбранной карточки: название, вид, количество, операции из библиотеки ERP, входы, состав. */
+   настройки выбранной карточки: название, вид, количество, операции из библиотеки ERP, входы, состав.
+   «Заполнить техкарту» (владелец 13.10): сначала просмотр (dry_run) — блоки и операции по порядку ЭТК справа вместо
+   панели карточки, затем «Сохранить черновик техкарты» по просмотренной версии маршрута. Пишется только черновик
+   «Ручной сборки»; техкарту из него собирает и выпускает технолог. */
 
 /** Чертёж позиции для рисунков и состава карточек: документ (нет чертежа — null) и одна сцена поля на все карточки. */
 export type RouteSource = { design: HarnessDesignDocument | null; scene: SnapshotScene | null };
@@ -71,7 +74,7 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
   project: string; index: string; canEdit: boolean;
   /** «Открыть чертёж» — вкладка «Чертёж КБn». */
   onOpenDrawing?: () => void;
-  client?: Pick<typeof harnessApi, "route" | "saveRoute" | "generateRoute">;
+  client?: Pick<typeof harnessApi, "route" | "saveRoute" | "generateRoute" | "routeDraft">;
   source?: (project: string, index: string) => Promise<RouteSource>;
   library?: () => Promise<LibraryCard[]>;
   /** Пауза перед автосохранением, мс (тесты — 0). */
@@ -88,6 +91,9 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
+  const [preview, setPreview] = useState<HarnessRouteDraft | null>(null);
+  const [filling, setFilling] = useState<"" | "preview" | "save">("");
+  const [notice, setNotice] = useState("");
   const current = useRef<RouteV3Document | null>(null);
   const revision = useRef<number | null>(null);
   const drawingRevision = useRef(0);
@@ -108,7 +114,7 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
 
   useEffect(() => {
     let live = true;
-    setRead(null); setDoc(null); setLoadError(""); setConflict(""); setErrors([]); setState("saved");
+    setRead(null); setDoc(null); setLoadError(""); setConflict(""); setErrors([]); setState("saved"); setPreview(null); setNotice("");
     blocked.current = false; pending.current = null;
     void Promise.all([client.route(project, index), source(project, index).catch(() => ({ design: null, scene: null }))])
       .then(([fresh, loaded]) => { if (live) { setDrawing(loaded); take(fresh); } })
@@ -154,6 +160,7 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
     current.current = next;
     setDoc(next);
     setProblem("");
+    setPreview(null);
     if (blocked.current) return;
     pending.current = next;
     setState("dirty");
@@ -166,7 +173,7 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
     if (read.route && !window.confirm("Построить маршрут заново по чертежу? Карточки и связи соберутся заново — ручные правки карточек пропадут.")) return;
     window.clearTimeout(timer.current);
     pending.current = null;
-    setBusy(true); setErrors([]); setProblem("");
+    setBusy(true); setErrors([]); setProblem(""); setPreview(null); setNotice("");
     try {
       take(await client.generateRoute(project, index, revision.current));
       setState("saved"); setSelected(null);
@@ -174,6 +181,26 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
       if (reason instanceof ApiError && reason.status === 409) { blocked.current = true; setConflict(reason.message); setState("conflict"); }
       else { setErrors(refusal(reason)); setState("error"); }
     } finally { setBusy(false); }
+  }
+
+  /** «Заполнить техкарту»: просмотр того, что получится, — ничего не пишется. */
+  async function fill() {
+    setFilling("preview"); setErrors([]); setNotice("");
+    try { setPreview(await client.routeDraft(project, index, revision.current, true)); }
+    catch (reason) { setPreview(null); setErrors(refusal(reason)); }
+    finally { setFilling(""); }
+  }
+
+  /** «Сохранить черновик техкарты» — по той версии маршрута, что была на просмотре. */
+  async function saveDraft() {
+    if (!preview) return;
+    setFilling("save"); setErrors([]);
+    try {
+      await client.routeDraft(project, index, preview.revision, false);
+      setPreview(null);
+      setNotice(`Черновик техкарты ${index} сохранён — технолог собирает из него ЭТК в «Ручной сборке» и выпускает её.`);
+    } catch (reason) { setErrors(refusal(reason)); }
+    finally { setFilling(""); }
   }
 
   const confirmRemoveCard = (id: string) => {
@@ -247,6 +274,9 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
       {route && <span className="muted hr-meta">ред. {route.revision} · чертёж ред. {route.drawing_revision} · {route.updated_by} {formatMoment(route.updated_at)}</span>}
       <span className="hr-actions">
         {canEdit && doc && <button type="button" className="secondary small" onClick={() => { change((value) => addCard(value)); }}>+ Карточка</button>}
+        {canEdit && route && doc && <button type="button" className="primary small" disabled={busy || filling !== "" || state !== "saved"}
+          title={state !== "saved" ? "Дождитесь сохранения маршрута" : "Карточки маршрута — черновиком «Ручной сборки»: сначала просмотр"}
+          onClick={() => void fill()}>{filling === "preview" ? "Проверяю…" : "Заполнить техкарту"}</button>}
         {canEdit && <button type="button" className={route ? "secondary small" : "primary small"} disabled={busy} onClick={() => void generate()}
           title="Карточки нарезки, сборки и готового жгута — заново по сохранённому чертежу">{busy ? "Строю…" : "Построить по чертежу"}</button>}
         {onOpenDrawing && <button type="button" className="secondary small" onClick={onOpenDrawing}>Открыть чертёж</button>}
@@ -262,6 +292,7 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
       <button type="button" className="secondary small" onClick={() => setGeneration((value) => value + 1)}>Загрузить сохранённый</button>
     </div>}
     {errors.length > 0 && <div className="error-banner hr-banner" role="alert"><span>{errors.join("; ")}</span></div>}
+    {notice && <div className="success-banner hr-banner" role="status"><span>{notice}</span></div>}
     {loadError && <div className="error-banner" role="alert">{loadError}</div>}
     {problem && <div className="warning-inline" role="alert">{problem}</div>}
     {!route || !doc ? <div className="hr-empty">
@@ -276,8 +307,9 @@ export function HarnessRouteView({ project, index, canEdit, onOpenDrawing, clien
         onRemoveCard={canEdit ? confirmRemoveCard : undefined}
         onAutoLayout={canEdit ? () => change(autoLayout) : undefined}
         tools={<span className="hr-sum">{nodes.length} {pluralRu(nodes.length, "карточка", "карточки", "карточек")} · {doc.edges.length} {pluralRu(doc.edges.length, "связь", "связи", "связей")} · {formatMinutes(total)} мин{read.complete ? "" : <span className="tone-warn"> · нет финала со всеми частями чертежа</span>}</span>} />
-      <CardPanel node={node} doc={doc} items={items} canEdit={canEdit} library={library} onClose={() => setSelected(null)}
-        onChange={(edit) => change(edit)} onRemove={confirmRemoveCard} />
+      {preview ? <DraftPreview preview={preview} index={index} saving={filling === "save"} onSave={() => void saveDraft()} onClose={() => setPreview(null)} />
+        : <CardPanel node={node} doc={doc} items={items} canEdit={canEdit} library={library} onClose={() => setSelected(null)}
+          onChange={(edit) => change(edit)} onRemove={confirmRemoveCard} />}
     </div>}
   </section>;
 }
@@ -369,6 +401,67 @@ function CardPanel({ node, doc, items, canEdit, library, onClose, onChange, onRe
       })}</ul>
     </section>
     {canEdit && <button type="button" className="danger small hr-remove" onClick={() => onRemove(node.id)}>Удалить карточку</button>}
+  </aside>;
+}
+
+/** Предупреждения сборщика ЭТК «Операция N (название): причина» с одной причиной — одной строкой «Причина: операции
+ *  1, 2, 5»; остальные как есть, в своём порядке. */
+function groupWarnings(warnings: readonly string[]): string[] {
+  const byReason = new Map<string, number[]>();
+  const result: Array<string | { reason: string }> = [];
+  for (const warning of warnings) {
+    const match = /^Операция (\d+) \(.*\): (.+)$/.exec(warning);
+    if (!match) { result.push(warning); continue; }
+    const [, position, reason] = match;
+    if (!byReason.has(reason)) { byReason.set(reason, []); result.push({ reason }); }
+    byReason.get(reason)!.push(Number(position));
+  }
+  return result.map((item) => {
+    if (typeof item === "string") return item;
+    const positions = byReason.get(item.reason)!;
+    const reason = item.reason.charAt(0).toUpperCase() + item.reason.slice(1);
+    return `${reason}: ${pluralRu(positions.length, "операция", "операции", "операции")} ${positions.join(", ")}`;
+  });
+}
+
+/** Просмотр «Заполнить техкарту» — справа от холста: блоки схемы полуфабрикатов в порядке ЭТК, у каждого — откуда он
+ *  берёт полуфабрикаты (с количеством на штуку) и его операции с номером ЭТК и временем на жгут; предупреждения сборщика. */
+function DraftPreview({ preview, index, saving, onSave, onClose }: {
+  preview: HarnessRouteDraft; index: string; saving: boolean; onSave: () => void; onClose: () => void;
+}) {
+  const ops = preview.build_config.ops ?? [];
+  const blocks = preview.route?.blocks ?? [];
+  const names = new Map(blocks.map((block) => [block.key, block.name]));
+  const minutes = (position: number) => {
+    const op = ops[position - 1];
+    return op ? (Number(op.tOp || 0) * Number(op.qty || 1)) / 60 : 0;
+  };
+  const total = ops.reduce((sum, _op, place) => sum + minutes(place + 1), 0);
+  return <aside className="hr-panel" aria-label="Техкарта из маршрута">
+    <div className="hr-panel-head">
+      <strong>Техкарта {index} из маршрута</strong>
+      <button type="button" className="hr-link" onClick={onClose}>Закрыть</button>
+    </div>
+    <span className="hr-sum">{preview.operations} {pluralRu(preview.operations, "операция", "операции", "операций")} · {blocks.length} {pluralRu(blocks.length, "блок", "блока", "блоков")} · {formatMinutes(total)} мин на жгут · маршрут ред. {preview.revision}</span>
+    <div className="hr-add">
+      <button type="button" className="primary small" disabled={saving} onClick={onSave}>{saving ? "Сохраняю…" : "Сохранить черновик техкарты"}</button>
+      <button type="button" className="secondary small" disabled={saving} onClick={onClose}>Отмена</button>
+    </div>
+    {preview.warnings.length > 0 && <div className="warning-inline" role="status">
+      {groupWarnings(preview.warnings).map((warning) => <div key={warning}>{warning}</div>)}
+    </div>}
+    {blocks.map((block) => {
+      const inputs = (preview.route?.edges ?? []).filter((edge) => edge.to === block.key)
+        .map((edge) => `${names.get(edge.from) ?? edge.from}${edge.per_unit === 1 ? "" : ` × ${formatMinutes(edge.per_unit)}`}`);
+      return <section className="hr-section" key={block.key} aria-label={`Блок «${block.name}»`}>
+        <h3>{block.name} <span className="muted">· {block.final ? "изделие" : "полуфабрикат"}</span></h3>
+        {inputs.length > 0 && <span className="hr-sum">из: {inputs.join(", ")}</span>}
+        {block.ops.map((position) => <div className="hr-row" key={position}>
+          <span>{position}. {ops[position - 1]?.label ?? `Операция ${position}`}</span>
+          <span className="hr-sum">{formatMinutes(minutes(position))} мин</span>
+        </div>)}
+      </section>;
+    })}
   </aside>;
 }
 

@@ -551,7 +551,6 @@ def print_documents(
     shipment_id: UUID,
     document: Annotated[str, Query(pattern="^(pl|dn)$")],
     _principal: Annotated[Principal, Depends(shipping_view_principal)],
-    now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:
     """PL (лист на каждый короб) или DN — по актуальным данным отправки; повторная печать = перевыпуск."""
@@ -559,12 +558,14 @@ def print_documents(
         shipment = uow.shipments.get(shipment_id)
         if shipment is None:
             raise HTTPException(status_code=404, detail="Отгрузка не найдена")
-        project = uow.addressees.get(shipment.lines[0].project) if shipment.lines else None
+        # Заказчик DN — как в реестре отгрузок: из заявки, иначе из позиции ГП, иначе получатель.
+        goods = (uow.goods.get(line.finished_good_id) for line in shipment.lines)
+        customer = shipment.customer or next((good.customer for good in goods if good and good.customer), "") or shipment.receiver
     try:
-        sheets = build_packing_lists(shipment) if document == "pl" else [build_delivery_note(shipment, project, now)]
+        forms = build_packing_lists(shipment) if document == "pl" else [build_delivery_note(shipment, customer)]
     except ShippingValidationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return {"sheets": [sheet.to_dict() for sheet in sheets]}
+    return {"forms": [form.to_dict() for form in forms]}
 
 
 @router.post("/shipments/{shipment_id}/close")

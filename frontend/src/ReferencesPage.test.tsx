@@ -110,7 +110,8 @@ it("edits a technology row with the old value and hides editing for non-admins",
 
   const { unmount } = render(<ReferencesPage principal={admin} />);
   fireEvent.click(await screen.findByRole("button", { name: "Терминалы" }));
-  fireEvent.click((await screen.findAllByText("МГТФ"))[0]); // строка целиком открывает правку
+  fireEvent.click((await screen.findAllByText("МГТФ"))[0]); // строка «Терминалов» открывает карточку контакта, правка — из неё
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
   fireEvent.change(screen.getByLabelText("Поле Сечение"), { target: { value: "0,5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
 
@@ -247,11 +248,13 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   });
 
   render(<ReferencesPage principal={admin} initialTab="coax" />);
-  expect(await screen.findByText("3,5")).toBeInTheDocument(); // D3 of RG58, not the connector's own «9»
-  expect(screen.queryByText("9")).toBeNull();
-  expect(screen.getAllByText("нет у кабеля")).toHaveLength(3);
-  expect(screen.getByRole("columnheader", { name: "D1 кабеля" })).toBeInTheDocument();
-  fireEvent.click(screen.getAllByRole("row")[1]);
+  expect(await screen.findByText("1 · 2,95 · 3,5")).toBeInTheDocument(); // D of RG58, not the connector's own «9»
+  expect(screen.queryByText(/9 · 9/)).toBeNull();
+  expect(screen.getAllByText("нет у кабеля")).toHaveLength(1);
+  expect(screen.getByRole("columnheader", { name: "D1 · D2 · D3 кабеля" })).toBeInTheDocument();
+  // Строка открывает карточку разъёма, правка — кнопкой в ней.
+  fireEvent.click(screen.getByText("BNC-C58P"));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
   expect(screen.getByLabelText("Поле L1")).toBeInTheDocument();
   expect(screen.queryByLabelText("Поле D1")).toBeNull();
 });
@@ -456,5 +459,40 @@ it("БД.ОБ: the machine card is a side panel — the list stays, another row 
   unmount();
   render(<ReferencesPage principal={admin} initialTab="ob" />);
   expect(await screen.findByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
+});
+
+it("БД.ОБ: a picked row opens the edit form in the right panel, the list stays, saving patches the record and returns to the card", async () => {
+  const patched: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010") },
+      { id: "b1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Для базы": "X/Блок питания" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    if (path === "/api/references/tech-operations/crimp-codes") return json({ missing: [] });
+    if (path === "/api/references/tech-operations/a1" && init?.method === "PATCH") {
+      patched.push(JSON.parse(String(init.body)));
+      return json({ id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: {} });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  window.history.replaceState({}, "", "/");
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByText("ОБ.010"));
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByRole("button", { name: /^Править/ }));
+  const panel = screen.getByRole("complementary", { name: "Правка оборудования" });
+  expect(within(panel).getByLabelText("Артикул")).toHaveValue("8620DX-Pro");
+  expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list stays on the left
+  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  fireEvent.change(within(panel).getByLabelText("Артикул"), { target: { value: "9999" } });
+  fireEvent.click(within(panel).getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  expect((patched[0].edits as Array<{ field: string; value: string }>).some((edit) => edit.field === "Артикул" && edit.value === "9999")).toBe(true);
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Правка оборудования" })).toBeNull());
+  expect(screen.getByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
   window.history.replaceState({}, "", "/");
 });

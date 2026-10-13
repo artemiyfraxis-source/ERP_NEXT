@@ -1,0 +1,16 @@
+/* «План и факт» производственного плана (PlanBaseline.tsx): шапка со снимком и итогами, таблица отклонений. */
+.plan-baseline .plan-section-head { row-gap: 6px; }
+.plan-baseline .baseline-meta { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted-foreground); font-size: 13px; }
+.plan-baseline .baseline-meta b { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
+.plan-baseline .baseline-summary { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+.plan-baseline .baseline-fix { margin-left: auto; }
+.plan-baseline .baseline-pair { display: inline-flex; gap: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plan-baseline .baseline-pair > span:first-child { color: var(--muted-foreground); }
+.plan-baseline .baseline-fact.is-late,
+.plan-baseline .baseline-qty.is-short { color: var(--chip-danger-fg); font-weight: 600; }
+.plan-baseline .baseline-fact.is-late.is-warning { color: var(--chip-warning-fg); }
+.plan-baseline .baseline-qty { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plan-baseline .baseline-marks { display: inline-flex; gap: 6px; flex-wrap: wrap; }
+@media (pointer: coarse) {
+  .plan-baseline .baseline-fix { min-height: 40px; }
+}

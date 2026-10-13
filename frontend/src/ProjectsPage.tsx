@@ -773,17 +773,17 @@ function SostavTab({ card, canEdit, goodsVisible = false, reload, setNote, setEr
         if ((event.target as HTMLElement).closest("a, button, input, select, label")) return;
         openGen(assembly.index);
       }}>
-        <td><strong>{assembly.index}</strong></td>
-        <td className="wrap">{assembly.name}</td>
-        <td className="num">{assembly.run}</td>
-        <td className="num">{assembly.components.length}</td>
-        <td>{kdCell(assembly)}</td>
-        <td>{assembly.techcard && assembly.techcard.stages > 0
+        <td data-label="КБ"><strong>{assembly.index}</strong></td>
+        <td className="wrap" data-label="Наименование">{assembly.name}</td>
+        <td className="num" data-label="Кол-во">{assembly.run}</td>
+        <td className="num" data-label="Позиций">{assembly.components.length}</td>
+        <td data-label="КД">{kdCell(assembly)}</td>
+        <td data-label="Техкарта">{assembly.techcard && assembly.techcard.stages > 0
           ? <button className="link-button" onClick={() => (assembly.techcard!.issued ? openTc : openGen)(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} эт.</button>
           : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
-        <td>{stageCell(assembly)}</td>
-        <td>{reviewCell(assembly)}</td>
-        {goodsVisible && <td className="kit-goods">{goodsCell(assembly)}</td>}
+        <td data-label="Этап">{stageCell(assembly)}</td>
+        <td data-label="Проверка ТК">{reviewCell(assembly)}</td>
+        {goodsVisible && <td className="kit-goods" data-label="Готовая продукция">{goodsCell(assembly)}</td>}
       </tr>)}</tbody>
     </table></div>}
     {stagePick && <StageChangeDialog project={card.project} kb={stagePick.assembly.index}

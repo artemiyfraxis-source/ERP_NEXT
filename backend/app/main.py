@@ -28,6 +28,10 @@ from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
 from .modules.production import plan_api as production_plan_api
 from .modules.production import autoplan_api as production_autoplan_api
+from .modules.production import ship_plan_api as production_ship_plan_api
+from .modules.production import leftovers_api as production_leftovers_api
+from .modules.production import downtime_api as production_downtime_api
+from .modules.production import baseline_api as production_baseline_api
 from .modules.shipping import api as shipping_api
 from .modules.references import api as references_api
 from .modules.references import wire_dia_api as references_wire_dia_api
@@ -83,6 +87,10 @@ app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)
 app.include_router(production_autoplan_api.router)
+app.include_router(production_ship_plan_api.router)
+app.include_router(production_leftovers_api.router)
+app.include_router(production_downtime_api.router)
+app.include_router(production_baseline_api.router)
 app.include_router(kitsets_api.router)
 app.include_router(assembly_api.router)
 app.include_router(harness_api.router)

@@ -62,7 +62,7 @@ from .domain import (
 from .technology import (
     _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, contact_gender, normalize_material,
     pull_force_newtons, schema_display_text, schema_keys, sync_schema_fields, terminal_card_fields,
-    terminal_card_indexes,
+    terminal_card_indexes, terminal_card_problems,
 )
 
 HOOKUP_SEED_VERSION = 1
@@ -659,7 +659,10 @@ def _ter_cell(name: str, value: Any) -> Any:
     if name == "terMaterial" or folded.startswith("материал"):
         return normalize_material(text)
     if name == "terGender":
-        return contact_gender(text)
+        gender = contact_gender(text)
+        if text and not gender:
+            raise RowRefused(f"terGender: Male или Female, а не «{text}»")
+        return gender
     return text
 
 
@@ -696,6 +699,7 @@ class _TechTable:
     forms: Callable[[tuple[str, ...]], tuple[tuple[str, object], ...]]
     virtual: str = ""  # a key that is the record's display text, not a field (БД.ОБ «Для базы» = baseValue)
     cell: Callable[[str, Any], Any] = _cell  # a row value as stored (БД.ТЕР: units of the base, technologist's fields)
+    card_columns: tuple[str, ...] = ()  # sheet columns a load may bring before any row has them (БД.КОАКС card)
 
     @property
     def sheet_columns(self) -> bool:
@@ -719,11 +723,21 @@ def _ter_forms(values: tuple[str, ...]) -> tuple[tuple[str, object], ...]:
     return (("exact", article.casefold().strip()),) + ((("normalized", normalized),) if len(normalized) >= 3 else ())
 
 
+# The coax connector card (owner 13.10.2026, the 311 connectors of gsm-repiteri.ru): БД.КОАКС sheet columns a load may
+# bring before any row has them. «Тип пина» / «Тип экрана» are the sheet's own (the generator reads them); the site's
+# words for the pin and the shield go to «Центральный контакт» / «Крепление экрана».
+COAX_CARD_COLUMNS = (
+    "Тип пина", "Тип экрана", "Серия", "Пол", "Полярность", "Исполнение", "Монтаж", "Центральный контакт",
+    "Крепление экрана", "Волновое сопротивление, Ом", "Частота до, ГГц", "Материал корпуса", "Покрытие", "Габариты",
+    "Наименование", "Ссылка", "Примечание", "Источник данных",
+)
+
 TECH_TABLES: dict[str, _TechTable] = {
     "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms,
                       cell=_ter_cell),
     "coax": _TechTable(TechOperationTab.COAX, "БД.КОАКС — коаксиальные разъёмы", ("coaxArticle", "coaxWire"),
-                       lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),)),
+                       lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),),
+                       card_columns=COAX_CARD_COLUMNS),
     "prov": _TechTable(TechOperationTab.WIRE, "БД.ПРОВ — кабели и провода", ("Марка",),
                        lambda values: (("mark", cable_key(values[0])),)),
     "mat": _TechTable(TechOperationTab.MATERIAL, "БД.МАТ — материалы", ("Наименование",),
@@ -737,7 +751,8 @@ def _sheet_columns(table: _TechTable, records: Sequence[TechOperationRecord]) ->
     if not table.sheet_columns:
         return list(BASE_COLUMNS[table.tab])
     keys = schema_keys(table.tab.value)
-    return list(dict.fromkeys(name for record in records for name in record.fields if name not in keys))
+    return list(dict.fromkeys([*(name for record in records for name in record.fields if name not in keys),
+                               *table.card_columns]))
 
 
 def _schema_values(tab: str, fields: Mapping[str, str]) -> dict[str, str]:
@@ -821,7 +836,10 @@ class _TechTarget(_Target):
             if column in given and fields[column] != fields[name]:
                 raise RowRefused(f"{name} и «{column}» — одно и то же поле, а значения разные")
             result[column] = fields[name]
-        return sync_schema_fields(tab, result)
+        synced = sync_schema_fields(tab, result)
+        if self.table.tab == TechOperationTab.TERMINAL and (problems := terminal_card_problems(synced)):
+            raise RowRefused("; ".join(problems))  # the CHECKs of migration 0115 would refuse the whole load
+        return synced
 
     @staticmethod
     def _gender(fields: dict[str, str], given: set[str], columns: list[str], resolved: Mapping[str, int]) -> None:
@@ -988,12 +1006,12 @@ class _MapTarget(_Target):
 
 # «Сечения AWG ↔ мм²»
 
-GAUGE_FIELDS = (GAUGE_KEY, "awg", "section_mm2", "conductor_d_mm", "strands")
+GAUGE_FIELDS = (GAUGE_KEY, "awg", "section_mm2", "conductor_d_mm")
 
 
 def _gauge_value(name: str, value: Any) -> Any:
     text = clean_value(name, value)
-    if not text or name in (GAUGE_KEY, "strands"):
+    if not text or name == GAUGE_KEY:
         return text
     if name == "awg":
         try:
@@ -1038,7 +1056,7 @@ class _GaugeTarget(_Target):
     @staticmethod
     def _fields(gauge: WireGauge, key: str) -> dict[str, str]:
         return {GAUGE_KEY: key, "awg": gauge.awg or "", "section_mm2": shown(gauge.section_mm2),
-                "conductor_d_mm": shown(gauge.conductor_d_mm), "strands": gauge.strands}
+                "conductor_d_mm": shown(gauge.conductor_d_mm)}
 
     def existing(self, keys):
         found, taken = {}, set()
@@ -1063,7 +1081,6 @@ class _GaugeTarget(_Target):
             gauge = WireGauge.create(
                 id=before.id if before else None, awg=values.get("awg") or "",
                 section_mm2=values.get("section_mm2") or "", conductor_d_mm=values.get("conductor_d_mm") or "",
-                strands=values.get("strands") or "",
                 position=before.position if before else max((item.position for item in self.gauges), default=-1) + 1,
             )
             validate_gauges([*others, gauge])

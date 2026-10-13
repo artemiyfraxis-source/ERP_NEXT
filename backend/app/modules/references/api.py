@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 from app.shared.clock import moscow_now
+from app.workflows.stock_article import read_stock_article
 from app.shared.http_auth import (
     Principal, references_edit_principal, references_import_principal, references_maps_edit_principal,
     references_maps_view_principal, references_view_principal, refuse_api_tokens,
@@ -23,6 +24,7 @@ from .application import (
 )
 from .crimps import change_target, change_terminal, crimp_codes, crimp_overview
 from .equipment import EXTRA_KEYS, next_instance_inventory, next_model_inventory, next_row_number
+from .application import LinkStockCommand, link_stock_article, stock_links
 from .application import (
     CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
     import_coax_cards, import_coax_names, save_gauge, save_hookup,
@@ -33,7 +35,7 @@ from .cable_structure import (
 from .cables import DIAMETERS, CableKind, CableRow, cable_counts
 from .domain import (
     BASE_COLUMNS, MAX_ROW_EDITS, SUPPLIER_BY_LINK, merge_country_pairs, VIEW_ONLY_BASES, ReferenceKind, ReferenceValidationError, TechOperationRecord,
-    TechOperationTab,
+    StockLinkEntry, TechOperationTab,
 )
 from .technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION,
@@ -43,6 +45,7 @@ from .technology import (
     normalize_terminal_fields,
     resolve_terminal,
     schema_keys,
+    terminal_card,
     wire_section,
 )
 
@@ -211,6 +214,8 @@ def tech_operations(
             "id": str(item.id), "tab": item.tab.value, "display_text": item.display_text,
             "source_sheet": item.source_sheet,
             "fields": normalize_terminal_fields(item.fields) if item.tab == TechOperationTab.TERMINAL else item.fields,
+            # «Терминалы»: the contact card by protocol v5.2, read from the record as the generator reads it.
+            **({"card": terminal_card(item.fields)} if item.tab == TechOperationTab.TERMINAL else {}),
         } for item in records],
     }
 
@@ -374,7 +379,7 @@ def _num(value) -> float | int | None:
 
 def _gauge_json(gauge: WireGauge, usage: int = 0) -> dict:
     return {"id": str(gauge.id), "awg": gauge.awg or "", "section_mm2": _num(gauge.section_mm2),
-            "conductor_d_mm": _num(gauge.conductor_d_mm), "strands": gauge.strands, "label": gauge.label, "wires": usage}
+            "conductor_d_mm": _num(gauge.conductor_d_mm), "label": gauge.label, "wires": usage}
 
 
 def _hookup_json(wire: HookupWire | None) -> dict | None:
@@ -454,14 +459,13 @@ def cables(
 class GaugePayload(BaseModel):
     awg: str = Field(default="", max_length=8)
     section_mm2: str = Field(min_length=1, max_length=32)
-    conductor_d_mm: str = Field(default="", max_length=32)
-    strands: str = Field(default="", max_length=64)
+    conductor_d_mm: str = Field(default="", max_length=32)  # an old client's «strands» is ignored (column dropped, 0114)
 
 
 def _save_gauge(gauge_id: UUID | None, payload: GaugePayload, principal: Principal, now: datetime, uow_factory) -> dict:
     gauge = _run_edit(lambda: save_gauge(SaveGaugeCommand(
         gauge_id=gauge_id, awg=payload.awg, section_mm2=payload.section_mm2, conductor_d_mm=payload.conductor_d_mm,
-        strands=payload.strands, actor=principal.actor, now=now,
+        actor=principal.actor, now=now,
     ), uow_factory()))
     return _gauge_json(gauge)
 
@@ -675,6 +679,73 @@ def create_tech_record(
         tab=tab, fields=payload.fields, actor=principal.actor, now=now,
     ), uow_factory()))
     return _record_json(record)
+
+
+# --- «Склад → база данных»: a stock article tied to / made into a record, and the journal of it (T14) ---
+
+class StockLinkPayload(BaseModel):
+    """`record_id` + no `edits` — tie the lot to the record; `record_id` + `edits` — change the record from the lot;
+    no `record_id` — a new record in `tab` from `fields`."""
+    lot_id: UUID
+    record_id: UUID | None = None
+    tab: str | None = Field(default=None, max_length=32)
+    fields: dict[str, str] = Field(default_factory=dict, max_length=100)
+    edits: list[FieldEditPayload] = Field(default_factory=list, max_length=MAX_ROW_EDITS)
+
+
+def _stock_link_json(entry: StockLinkEntry) -> dict:
+    article = entry.article
+    return {
+        "id": str(entry.id), "occurred_at": entry.occurred_at.isoformat(), "event": entry.event.value,
+        "lot_id": str(article.lot_id), "warehouse": article.warehouse, "grn": article.grn, "package": article.package,
+        "article": article.article, "name": article.name,
+        "record_id": None if entry.record_id is None else str(entry.record_id), "record_tab": entry.record_tab.value,
+        "record_text": entry.record_text,
+        "changes": [{"field": change.field, "old": change.old, "new": change.new} for change in entry.changes],
+        "actor_name": entry.actor_name,
+    }
+
+
+def _tab_of(value: str | None) -> TechOperationTab | None:
+    if value is None or value == "":
+        return None
+    if value in VIEW_ONLY_BASES:
+        raise HTTPException(status_code=422, detail="База только для просмотра")
+    try: return TechOperationTab(value)
+    except ValueError as error: raise HTTPException(status_code=422, detail="Неизвестная база") from error
+
+
+@router.post("/stock-links")
+def link_stock(
+    payload: StockLinkPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    tab = _tab_of(payload.tab)
+    warehouse = getattr(request.app.state, "warehouse_uow_factory", None)
+    if not callable(warehouse):
+        raise HTTPException(status_code=503, detail="Склад ERP не настроен")
+    article = read_stock_article(warehouse, payload.lot_id)
+    if article is None:
+        raise HTTPException(status_code=404, detail="Партия склада не найдена")
+    result = _run_edit(lambda: link_stock_article(LinkStockCommand(
+        article=article, actor=principal.actor, now=now, record_id=payload.record_id, tab=tab,
+        fields=payload.fields, edits=tuple(FieldEdit(item.field, item.old, item.value) for item in payload.edits),
+    ), uow_factory()))
+    return {"record": _record_json(result.record),
+            "entry": None if result.entry is None else _stock_link_json(result.entry)}
+
+
+@router.get("/stock-links")
+def stock_link_journal(
+    _principal: Annotated[Principal, Depends(references_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+    record_id: Annotated[UUID | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> dict:
+    return {"entries": [_stock_link_json(entry) for entry in stock_links(uow_factory(), record_id=record_id, limit=limit)]}
 
 
 # --- БД.ОБ: numbering, «Ещё такой же», «что обжимает» ---

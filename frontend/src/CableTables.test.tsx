@@ -187,6 +187,20 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
 });
 
+it("groups coax cables by family and collapses a group", async () => {
+  mockApi();
+  render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+  const rg58 = await screen.findByRole("button", { name: /RG-58 · 2/ });
+  const rg316 = screen.getByRole("button", { name: /RG-316 · 1/ });
+  expect(rg58.compareDocumentPosition(rg316) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // RG by number
+  expect(rg58).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByText("RG-58 A/U")).toBeInTheDocument();
+  fireEvent.click(rg58);
+  expect(rg58).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByText("RG-58 A/U")).toBeNull();
+  expect(screen.getByText("RG316")).toBeInTheDocument();
+});
+
 it("opens a coax card a tester reads at the VNA: markers, connectors, construction", async () => {
   mockApi();
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);

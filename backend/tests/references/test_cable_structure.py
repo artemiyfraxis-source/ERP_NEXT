@@ -37,7 +37,7 @@ def _gauges() -> list[WireGauge]:
 def _seed_gauges(uow) -> dict[str, WireGauge]:
     gauges = {}
     for awg, section, diameter in SIZES:
-        gauge = save_gauge(SaveGaugeCommand(None, awg, section, diameter, "", ACTOR, NOW), uow)
+        gauge = save_gauge(SaveGaugeCommand(None, awg, section, diameter, ACTOR, NOW), uow)
         gauges[awg or section] = gauge
     return gauges
 
@@ -162,15 +162,15 @@ def test_size_rows_keep_the_gost_awg_map_in_step(uow):
         entries = uow.references.list()
     assert gost_awg_map(entries) == {"0.05": 30, "0.08": 28, "0.12": 26, "0.35": 22, "0.5": 20, "1": 17}
 
-    save_gauge(SaveGaugeCommand(gauges["26"].id, "26", "0,13", "0,41", "7×0,16", ACTOR, NOW), uow)
+    save_gauge(SaveGaugeCommand(gauges["26"].id, "26", "0,13", "0,41", ACTOR, NOW), uow)
     with uow:
         mapped = gost_awg_map(uow.references.list())
     assert "0.12" not in mapped and mapped["0.13"] == 26
 
     with pytest.raises(ReferenceValidationError, match="Такое сечение"):
-        save_gauge(SaveGaugeCommand(None, "", "0,5", "", "", ACTOR, NOW), uow)
+        save_gauge(SaveGaugeCommand(None, "", "0,5", "", ACTOR, NOW), uow)
     with pytest.raises(ReferenceValidationError, match="Такой AWG"):
-        save_gauge(SaveGaugeCommand(None, "28", "0,09", "", "", ACTOR, NOW), uow)
+        save_gauge(SaveGaugeCommand(None, "28", "0,09", "", ACTOR, NOW), uow)
     delete_gauge(gauges["30"].id, ACTOR, NOW, uow)
     with uow:
         assert "0.05" not in gost_awg_map(uow.references.list())
@@ -183,7 +183,7 @@ def test_an_admins_own_gost_awg_entry_is_not_dropped_by_a_size_edit(uow):
         from app.modules.references.domain import ReferenceEntry
         uow.references.replace(tuple(entries) + (ReferenceEntry.create(ReferenceKind.GOST_AWG, "0,35", "23", 99),))
         uow.commit()
-    save_gauge(SaveGaugeCommand(gauges["22"].id, "22", "0,34", "0,64", "", ACTOR, NOW), uow)
+    save_gauge(SaveGaugeCommand(gauges["22"].id, "22", "0,34", "0,64", ACTOR, NOW), uow)
     with uow:
         mapped = gost_awg_map(uow.references.list())
     assert mapped["0.35"] == 23 and mapped["0.34"] == 22

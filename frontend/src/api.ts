@@ -512,11 +512,13 @@ export interface FulfillmentLot {
   available: string;
 }
 
-/** «Возможно есть»: a warehouse lot that may be a КД position; `kind` exact — the same article, fuzzy — a lookalike. */
+/** «Возможно есть»: a warehouse lot that may be a КД position; `kind` exact — the same article, fuzzy — a lookalike;
+ * `by` — matched by the position's name (against the lot's article) or, as the fallback, by the КД article. */
 export interface FulfillmentCandidate extends FulfillmentLot {
   lot_id: string;
   kind: "exact" | "fuzzy";
   match: string;
+  by?: "name" | "article";
 }
 
 export interface FulfillmentPositionCandidates {
@@ -556,6 +558,18 @@ export interface PrintSheet {
   rows: string[][];
   note: string;
   sign: string;
+}
+
+/** Лист PL/DN отгрузки по образцу владельца: шапка «подпись | значение | реквизиты», позиции, пустые строки. */
+export interface ShippingForm {
+  kind: "pl" | "dn";
+  title: string;
+  head: { label: string; value: string; side: string }[];
+  columns: string[];
+  rows: string[][];
+  blank_rows: number;
+  sign_label: string;
+  sign_name: string;
 }
 
 export interface FulfillmentRequest {
@@ -3165,7 +3179,7 @@ export const shippingApi = {
   boxes: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/boxes`, {
     method: "PUT", body: JSON.stringify(payload),
   }),
-  print: (shipmentId: string, document: "pl" | "dn") => api<{ sheets: PrintSheet[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
+  print: (shipmentId: string, document: "pl" | "dn") => api<{ forms: ShippingForm[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
   /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
@@ -4097,6 +4111,23 @@ export interface HarnessRouteRead {
   complete: boolean;
 }
 
+/** «Заполнить техкарту» (techcards/harness/route_to_assembly.py): карточки маршрута — черновиком «Ручной сборки».
+ *  `route` — схема полуфабрикатов, как её собрал сборщик ЭТК (блоки с операциями, стрелки с количеством на штуку);
+ *  `draft` — сохранённый черновик (при просмотре — null). */
+export interface HarnessRouteDraft {
+  dry_run: boolean;
+  revision: number;
+  build_config: { ops?: Array<{ label?: string; qty?: string; tOp?: string; seq?: number }> } & Record<string, unknown>;
+  operations: number;
+  route: {
+    source: string; final: string;
+    blocks: Array<{ key: string; name: string; ops: number[]; final: boolean; minutes: number }>;
+    edges: Array<{ from: string; to: string; per_unit: number }>;
+  } | null;
+  warnings: string[];
+  draft: { id: string; project: string; item_index: string; source: string; author: string; status: string; note: string; created_at: string } | null;
+}
+
 const componentsPath = "/api/techcards/harness-components";
 const componentPath = (templateId: string, revision?: number) =>
   `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
@@ -4151,6 +4182,10 @@ export const harnessApi = {
   /** «Построить по чертежу»: карточки и связи заново по сохранённому чертежу (ручные правки карточек пропадают). */
   generateRoute: (project: string, index: string, revision: number | null) =>
     api<HarnessRouteRead>(`${harnessPath(project, index)}/route/generate`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «Заполнить техкарту»: карточки маршрута — черновиком «Ручной сборки». `dryRun` — только показать результат;
+   *  без него — сохранить черновик по просмотренной версии маршрута `revision` (изменился после просмотра — 409). */
+  routeDraft: (project: string, index: string, revision: number | null, dryRun: boolean) =>
+    api<HarnessRouteDraft>(`${harnessPath(project, index)}/route/draft${dryRun ? "?dry_run=true" : ""}`, { method: "POST", body: JSON.stringify({ revision }) }),
   /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
   exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
   /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */

@@ -20,6 +20,8 @@ import {
   WRAP_SLOTS_,
   addEndpoint,
   applyGrapherGroups,
+  autoPickTerminals,
+  complexByHand,
   cableRecFromFields,
   grapherHasCorrections,
   grapherLengthText,
@@ -69,12 +71,16 @@ import {
 } from "./manualLogic";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { MarkTable, markTotal } from "./GenMarkTable";
+import { DrawingButton, DrawingNoteView, configDrawingProblem } from "./GenDrawing";
+import { TwistGroups } from "./GenTwistGroups";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
 import {
-  addBranch, assignPin, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
-  setBranchMode, setCoreColor, swapPins, syncRoutes, unassignPin,
+  addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
+  setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin,
 } from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
+import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
+import { useTerminalPairs } from "./useTerminalPairs";
 import { MARK_KIND_DEFAULT, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
@@ -276,7 +282,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // Метки по КД собранной карты возвращаются в форму: следующая сборка их не теряет.
     const markRows = markRowsFromConfig(card.document?.build_config);
     // Свой порядок операций собранной карты («Выше/Ниже» в схеме) возвращается в форму вместе с метками.
-    const base = { ...initState(D), opOrder: restored ? [] : opOrderFromConfig(card.document?.build_config) };
+    // Новая карта «Сложной сборки» — без засева кабелей (владелец 13.10); пересборка — с ним: распиновка прошлой сборки
+    // привязана к кабелям засева.
+    const init = initState(D);
+    const base = { ...(card.document?.build_config ? init : complexByHand(init)), opOrder: restored ? [] : opOrderFromConfig(card.document?.build_config) };
     const seeded = markRows.length ? { ...base, mark: true, markRows } : base;
     // Распиновка и её проверка — из прошлой сборки (build_config.pinout), если разъёмы и провода те же.
     const fromBuild = restored ? switchGenTab(seeded, "manual") : restorePinout(D, seeded, card.document?.build_config);
@@ -309,20 +318,19 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   }, [manualTab, harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const harnessNow = drawing?.key === harnessKey ? drawing : null;
 
-  // «Построить чертёж» (владелец 12.10): есть ли у позиции чертёж — читается один раз за карту на типовых вкладках,
-  // по нему кнопка «Построить» или «Обновить».
-  const typicalTab = S.tab !== "coax" && !manualTab;
+  // «Построить чертёж» (владелец 12.10): есть ли у позиции чертёж — читается один раз за карту (кнопка есть на всех
+  // вкладках), по нему кнопка «Построить» или «Обновить».
   const [kdDrawing, setKdDrawing] = useState<{ key: string; exists: boolean } | null>(null);
   const [drawBusy, setDrawBusy] = useState(false);
   const [drawResult, setDrawResult] = useState<{ key: string; text: string; error: boolean; warnings: string[] } | null>(null);
   useEffect(() => {
-    if (!typicalTab || kdDrawing?.key === harnessKey) return;
+    if (kdDrawing?.key === harnessKey) return;
     let alive = true;
     harnessApi.drawing(card.project, card.item_index)
       .then((found) => { if (alive) setKdDrawing({ key: harnessKey, exists: !!found?.design }); })
       .catch(() => { if (alive) setKdDrawing({ key: harnessKey, exists: false }); });
     return () => { alive = false; };
-  }, [typicalTab, harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [harnessKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const drawingExists = kdDrawing?.key === harnessKey && kdDrawing.exists;
   const drawNote = drawResult?.key === harnessKey ? drawResult : null;
 
@@ -362,8 +370,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   /** «Построить чертёж» / «Обновить чертёж»: форма → чертёж жгута позиции (generatorToHarness.ts, грузится лениво вместе
    *  с кодом редактора). Чертёж правили после построения (или он не из генератора) — сначала вопрос; прежняя версия
-   *  закрывается в истории версий, построенная записывается своей закрытой строкой. */
-  async function buildDrawing() {
+   *  закрывается в истории версий, построенная записывается своей закрытой строкой. `fromConfig` — «Коакс» и «Ручная
+   *  сборка»: чертёж по конфигурации сборки (configToHarness.ts). */
+  async function buildDrawing(fromConfig?: Record<string, unknown>) {
     const { project, item_index: index } = card;
     setDrawBusy(true); setDrawResult(null);
     try {
@@ -373,7 +382,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       if (current !== null && builder.generatedRevision(project, index) !== current &&
           !window.confirm(`Перезаписать ручные правки?\n\nЧертёж ${index} правили после построения или делали не в генераторе. Он будет построен заново по форме; прежняя версия останется в истории версий чертежа.`)) return;
       const { libraryTemplates } = await import("./harness/library/library");
-      const built = await builder.buildGeneratorDrawing(D, S, pinHousings, libraryTemplates());
+      const built = fromConfig
+        ? await (await import("./configToHarness")).buildConfigDrawing(fromConfig, pinHousings, libraryTemplates())
+        : await builder.buildGeneratorDrawing(D, S, pinHousings, libraryTemplates());
       if (current !== null) await harnessApi.checkpoint(project, index, current);
       const saved = await harnessApi.save(project, index, built.document as unknown as Record<string, unknown>, current, { checkpoint: true });
       builder.rememberGeneratedRevision(project, index, saved.revision);
@@ -521,7 +532,16 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const pinFree = freeSide(gen, S);
   const pinHousings = usePinHousings(pinEnds.map((end) => end.conn));
   const pinCounts = Object.fromEntries(pinEnds.map((end) => [end.id, pinHousings[end.conn]?.n || null]));
-  const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList, pinHousings, pinFree);
+  // «Сложная сборка»: терминал разъёма — по парам базы разъёмов, как только они прочитаны (кроме выбранного вручную).
+  const termPairs = useTerminalPairs(complex ? S.endpoints.map((ep) => compLabel(ep.connId)).filter((art) => art !== "?") : []);
+  const termPairsKey = complex ? JSON.stringify(termPairs) : "";
+  useEffect(() => {
+    if (!termPairsKey || termPairsKey === "{}") return;
+    setS((current) => { const next = autoPickTerminals(D, current, termPairs); return next === current ? current : { ...next, times: {} }; });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [termPairsKey]);
+  // Экран кабеля — не отдельный провод резки: на эскизах маршрута его нет.
+  const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList.filter((u) => !u.shield), pinHousings, pinFree);
   // Автозаполнение (владелец 12.10): распиновка пустая, а число контактов каждого разъёма известно из базы разъёмов —
   // провода встают по порядку сами (одна сторона — 1…N, две — пин-в-пин). Один раз на набор разъёмов и проводов:
   // очищенную вручную распиновку не перезаполняет; не помещается — не трогает, предупреждение под схемой.
@@ -529,7 +549,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const pinCountsKey = pinEnds.map((end) => pinCounts[end.id] ?? "?").join(",");
   const pinAutoDone = useRef(new Set<string>());
   useEffect(() => {
-    if (!pinAutoKey || pinAutoDone.current.has(pinAutoKey)) return;
+    // «Сложная сборка» (владелец 13.10): распиновку ставит технолог, автозаполнения нет.
+    if (complex || !pinAutoKey || pinAutoDone.current.has(pinAutoKey)) return;
     if (pinEnds.some((end) => end.wires.some((w) => w.text))) { pinAutoDone.current.add(pinAutoKey); return; }
     if (pinEnds.some((end) => !pinCounts[end.id])) return;
     pinAutoDone.current.add(pinAutoKey);
@@ -757,7 +778,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const pinEnd = pinEnds.find((end) => end.id === ep.id);
     // Терминалов на разъём — по жилам, что сюда приходят (часть жил кабеля может идти на другой разъём или не участвовать).
     const routedSet = new Set(routedList);
-    const coresHere = gen.activeWires_().filter((w) => routedSet.has(w.idx)).reduce((s, w) => s + gen.endUnits_(ep, w), 0);
+    // Экран, заведённый на контакт, — ещё один терминал.
+    const coresHere = gen.activeWires_().filter((w) => routedSet.has(w.idx)).reduce((s, w) => s + gen.endUnits_(ep, w) + gen.shieldPinsAt_(ep, w).length, 0);
     const termCount = ep.double ? Math.ceil(coresHere / gen.epPer_(ep)) : coresHere;
     // Концы кабелей в оболочке у этого разъёма: сколько жил здесь, куда остальные, экран и незадействованные жилы.
     const cableLines = gen.cableEnds_(ep.side).filter((x) => x.eps.includes(ep)).map((x) => {
@@ -772,7 +794,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         if (prev && prev.unit === u.unit - 1) idle[idle.length - 1] = `${idle[idle.length - 1].split("–")[0]}–${u.num}`;
         else idle.push(u.num);
       });
-      return { key: x.w.idx, name: compLabel(x.w.compId), here: gen.endUnits_(ep, x.w), total, others, screened: first && x.screened, idle };
+      // Экран на контакте — у своего разъёма «на контакт N»; не заведён никуда — «скрутить и изолировать» у первого разъёма.
+      const shieldHere = x.shieldPins.filter((p) => p.ep === ep).map((p) => p.pin);
+      const shieldIdle = first && x.screened ? Math.max(0, x.shields - x.shieldPins.length) : 0;
+      return { key: x.w.idx, name: compLabel(x.w.compId), here: gen.endUnits_(ep, x.w), total, others, shieldHere, shieldIdle, idle };
     });
     return <div className="ep-card" key={ep.id}>
       <div className="ep-head">
@@ -830,7 +855,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>}
       {cableLines.map((line) => <div className="ep-cable" key={line.key} aria-label={`Кабель ${line.name} на ${name}`}>
         <span>Кабель <b>{line.name}</b>: жил здесь <b>{line.here}</b> из {line.total}{line.others.length > 0 && ` · остальные — ${line.others.join(", ")}`}</span>
-        {line.screened && <span>экран — скрутить и изолировать</span>}
+        {line.shieldHere.length > 0 && <span>экран — на контакт <b>{line.shieldHere.join(", ")}</b></span>}
+        {line.shieldIdle > 0 && <span>экран{line.shieldIdle > 1 ? ` ×${line.shieldIdle}` : ""} — скрутить и изолировать</span>}
         {line.idle.length > 0 && <span className="tone-warn">не задействованы {line.idle.join(", ")} — обрезать и изолировать</span>}
       </div>)}
       {pinEnd && <PinoutEditor end={pinEnd} open={!!pinOpen[ep.id]} onOpen={(open) => setPinOpen((current) => ({ ...current, [ep.id]: open }))}
@@ -937,28 +963,19 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </section>;
   };
 
-  const twistToggle = <Toggle key="twist" checked={S.twist.enabled} title="Свивка" hint="парами или все провода вместе" onChange={(on) => update((current) => {
+  const twistToggle = <Toggle key="twist" checked={S.twist.enabled} title="Свивка" hint="пары, группы из трёх и больше или все провода вместе" onChange={(on) => update((current) => {
     const auto = makeGen(D, current).autoDetectTwistPairs();
     const pairs = on && !current.twist.pairs.length ? (auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }]) : current.twist.pairs;
     return { ...current, twist: { ...current.twist, enabled: on, pairs } };
   })}>
-    <Seg label="Как свивать" value={S.twist.mode} options={[["pairs", "Парами"], ["all", "Все вместе"]]}
+    <Seg label="Как свивать" value={S.twist.mode} options={[["pairs", "Пары и группы"], ["all", "Все вместе"]]}
       onChange={(mode) => update((current) => ({ ...current, twist: { ...current.twist, mode } }))} />
-    {S.twist.mode === "pairs" ? <div className="twist-pairs">
-      <span className="gfield-label">Пары для свивки</span>
-      {S.twist.pairs.map((pair, i) => <div className="twist-pair-row" key={i}>
-        {(["a", "b"] as const).map((key) => <select key={key} aria-label={`Пара ${i + 1} ${key}`} value={pair[key]} onChange={(event) => update((current) => ({ ...current, twist: { ...current.twist, pairs: current.twist.pairs.map((p, j) => (j === i ? { ...p, [key]: event.target.value } : p)) } }))}>
-          <option value="">—</option>{active.map((w, pos) => <option key={w.idx} value={pos}>{compLabel(w.compId)}</option>)}</select>)}
-        <button type="button" className="btn-remove" title="Убрать пару" aria-label={`Убрать пару ${i + 1}`} onClick={() => update((current) => ({ ...current, twist: { ...current.twist, pairs: current.twist.pairs.filter((_, j) => j !== i) } }))}>×</button>
-      </div>)}
-      <div className="row-actions">
-        <button type="button" className="btn-add" onClick={() => update((current) => ({ ...current, twist: { ...current.twist, pairs: [...current.twist.pairs, { a: "", b: "" }] } }))}>+ Добавить пару</button>
-        <button type="button" className="btn-add" title="Определить пары по запасу длины из спецификации" onClick={() => update((current) => {
-          const auto = makeGen(D, current).autoDetectTwistPairs();
-          return { ...current, twist: { ...current.twist, pairs: auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }] } };
-        })}>Авто</button>
-      </div>
-    </div> : <div className="chip-row">{active.map((w, pos) => <Chip key={w.idx} checked={gen.twistWireIndices_().includes(pos)} onChange={() => update((current) => {
+    {S.twist.mode === "pairs" ? <TwistGroups rows={S.twist.pairs} wires={active.map((w, pos) => ({ pos, label: compLabel(w.compId) }))} problems={gen.twistProblems_()}
+      onChange={(pairs) => update((current) => ({ ...current, twist: { ...current.twist, pairs } }))}
+      onAuto={() => update((current) => {
+        const auto = makeGen(D, current).autoDetectTwistPairs();
+        return { ...current, twist: { ...current.twist, pairs: auto.length ? auto.map(([a, b]) => ({ a: String(a), b: String(b) })) : [{ a: "", b: "" }] } };
+      })} /> : <div className="chip-row">{active.map((w, pos) => <Chip key={w.idx} checked={gen.twistWireIndices_().includes(pos)} onChange={() => update((current) => {
       const now = makeGen(D, current).twistWireIndices_();
       return { ...current, twist: { ...current.twist, wires: now.includes(pos) ? now.filter((i) => i !== pos) : [...now, pos] } };
     })}>{compLabel(w.compId)}</Chip>)}</div>}
@@ -1115,7 +1132,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {sideSection("B")}
     {(pinEnds.length > 0 || links.list.length > 0 || links.warnings.length > 0) && <section className="gsec full ep-links" aria-label="Соединения по распиновке">
       <div className="gsec-head"><h3>Соединения по распиновке</h3><PinoutChip ends={pinEnds} />
-        <button type="button" className="secondary small" disabled={drawBusy || !links.list.length}
+        <button type="button" className="secondary small" disabled={drawBusy || (!links.list.length && !(S.splices || []).length)}
           title={links.list.length ? "Чертёж жгута позиции по разъёмам, проводам и распиновке формы" : "Сначала задайте контакты проводов на разъёмах"}
           onClick={() => void buildDrawing()}>{drawBusy ? "Строю чертёж…" : drawingExists ? "Обновить чертёж" : "Построить чертёж"}</button></div>
       {drawNote && <div className={drawNote.error ? "error-banner gen-drawing-note" : "gen-drawing-note"} role={drawNote.error ? "alert" : "status"}>
@@ -1126,12 +1143,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>}
       <PinoutBoard ends={pinEnds} links={links.list} units={pinUnitList} housings={pinHousings} free={pinFree}
         wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={[...pinFitWarnings(pinEnds, pinCounts), ...routingWarnings(D, S)]}
-        branches={S.branches || []} complex={complex}
+        branches={S.branches || []} complex={complex} joins={{ splices: S.splices, tails: S.tails }}
+        onJoin={(end, value) => update((current) => (value === "" ? leaveJoin(D, current, end) : value === "tail" ? setTail(D, current, end) : joinSplice(D, current, end, value)))}
         onBranch={(from, toEpId, toPin, mode) => update((current) => addBranch(D, current, from, toEpId, toPin, mode))}
         onBranchMode={(extra, mode) => update((current) => setBranchMode(D, current, extra, mode))}
         onRemoveBranch={(extra) => update((current) => removeBranch(D, current, extra))}
         onCoreColor={(idx, unit, color) => update((current) => setCoreColor(D, current, idx, unit, color))}
-        onAssign={(epId, idx, unit, pin) => update((current) => assignPin(D, current, epId, idx, unit, pin))}
+        onCoreNet={(idx, unit, net) => update((current) => setCoreNet(D, current, idx, unit, net))}
+        onAssign={(epId, idx, unit, pin) => update((current) => assignPinJoined(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
         onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}
@@ -1156,7 +1175,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   const coaxSections = <>
     <section className="gsec" aria-label="Коакс-кабель">
-      <div className="gsec-head"><h3>Коакс-кабель</h3></div>
+      <div className="gsec-head"><h3>Коакс-кабель</h3>
+        <DrawingButton busy={drawBusy} exists={drawingExists} problem={configDrawingProblem(config)} onBuild={() => void buildDrawing(config)} /></div>
+      <DrawingNoteView note={drawNote} index={card.item_index} onOpen={onOpenDrawing} />
       <div className="opt-grid">
         <Field label="Длина по чертежу"><UnitInput unit="мм" aria-label="Длина коакс-кабеля" type="number" min={1} value={S.coax.len} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, len: event.target.value } }))} /></Field>
         <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
@@ -1193,6 +1214,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           onChanged={(changed) => setDrafts((current) => ({ ...current, items: current.items.map((item) => (item.id === changed.id ? changed : item)) }))} />}
         {manualTab && <ManualAssembly state={manual} onChange={(next) => { setRouteError(""); setManual(next); }} library={refs.library} opRecs={D.ops} components={components}
           partQty={partQty} finalName={finalName} error={routeError} kd={kdOffer} />}
+        {manualTab && <section className="gsec full" aria-label="Чертёж жгута">
+          <div className="gsec-head"><h3>Чертёж жгута</h3>
+            <DrawingButton busy={drawBusy} exists={drawingExists} problem={configDrawingProblem(manualCfg)} onBuild={() => void buildDrawing(manualCfg)} /></div>
+          <DrawingNoteView note={drawNote} index={card.item_index} onOpen={onOpenDrawing} />
+        </section>}
       </div></div>
 
       {/* Итог (владелец 04.10): операции, схема и одна кнопка — справа и всегда на виду; на планшете — внизу. */}

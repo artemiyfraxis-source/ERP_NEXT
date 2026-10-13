@@ -19,7 +19,10 @@ from .cable_structure import (
     ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
     HookupWire, WireGauge, same_card,
 )
-from .domain import ReferenceEntry, ReferenceKind, TechOperationRecord, TechOperationTab
+from .domain import (
+    EDITABLE_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent,
+    TechOperationRecord, TechOperationTab,
+)
 
 
 class ReferenceEntryRow(Base):
@@ -35,10 +38,45 @@ class ReferenceEntryRow(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+def terminal_card_checks(dialect: str) -> dict[str, str]:
+    """БД.ТЕР contact card CHECKs over the JSON `fields` (migration 0115 holds a literal copy): gender Male / Female or
+    empty; insulation Ø from / to a positive number (decimal point or comma), from ≤ to; datasheet a http(s) link.
+    CASE keeps a text from being cast before it is known to be a number (PostgreSQL does not order AND / OR)."""
+    def value(key: str) -> str:
+        raw = f"json_extract(fields, '$.{key}')" if dialect == "sqlite" else f"(fields ->> '{key}')"
+        return f"COALESCE({raw}, '')"
+
+    def number(text: str) -> str:
+        if dialect == "sqlite":
+            return (f"({text} GLOB '[0-9]*' AND {text} NOT GLOB '*[^0-9.,]*' AND {text} NOT GLOB '*[.,]*[.,]*'"
+                    f" AND {text} NOT GLOB '*[.,]')")
+        return f"({text} ~ '^[0-9]+([.,][0-9]+)?$')"
+
+    def cast(text: str) -> str:
+        return f"CAST(REPLACE({text}, ',', '.') AS {'REAL' if dialect == 'sqlite' else 'NUMERIC'})"
+
+    def positive(text: str) -> str:
+        return f"CASE WHEN {text} = '' THEN TRUE WHEN {number(text)} THEN {cast(text)} > 0 ELSE FALSE END"
+
+    gender, od_from, od_to, sheet = (value(key) for key in ("terGender", "terInsOdFrom", "terInsOdTo", "terDatasheet"))
+    return {
+        "ck_tech_operation_records_ter_gender": f"tab <> 'ter' OR {gender} IN ('', 'Male', 'Female')",
+        "ck_tech_operation_records_ter_ins_od": (
+            f"tab <> 'ter' OR (({positive(od_from)}) AND ({positive(od_to)}) AND (CASE WHEN {number(od_from)} AND"
+            f" {number(od_to)} THEN {cast(od_from)} <= {cast(od_to)} ELSE TRUE END))"
+        ),
+        "ck_tech_operation_records_ter_datasheet": (
+            f"tab <> 'ter' OR {sheet} = '' OR {sheet} LIKE 'http://%' OR {sheet} LIKE 'https://%'"
+        ),
+    }
+
+
 class TechOperationRecordRow(Base):
     __tablename__ = "tech_operation_records"
     __table_args__ = (
         Index("ix_tech_operation_records_tab_sort", "tab", "sort_key"),
+        *(CheckConstraint(sql, name=name).ddl_if(dialect=dialect)
+          for dialect in ("sqlite", "postgresql") for name, sql in terminal_card_checks(dialect).items()),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     tab: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
@@ -156,7 +194,6 @@ class WireGaugeRow(Base):
     awg: Mapped[str | None] = mapped_column(String(8), nullable=True)
     section_mm2: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     conductor_d_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
-    strands: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
@@ -340,7 +377,8 @@ class CoaxCableAliasRow(Base):
 
 
 def _gauge(row: WireGaugeRow) -> WireGauge:
-    return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm), row.strands, row.position)
+    return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm),
+                     position=row.position)
 
 
 def _dec(value) -> Decimal | None:
@@ -358,7 +396,7 @@ class SqlAlchemyCableStructureRepository:
         row = self.session.get(WireGaugeRow, gauge.id)
         if row is None: row = WireGaugeRow(id=gauge.id); self.session.add(row)
         row.awg = gauge.awg; row.section_mm2 = gauge.section_mm2; row.conductor_d_mm = gauge.conductor_d_mm
-        row.strands = gauge.strands; row.position = gauge.position
+        row.position = gauge.position
         self.session.flush()
 
     def delete_gauge(self, gauge_id: UUID) -> None:
@@ -508,6 +546,78 @@ class SqlAlchemyCableStructureRepository:
                 "full_names_changed": len(renamed)}
 
 
+# --- «Склад → база данных» journal (migration 0116): append-only, the repository only adds and reads ---
+
+STOCK_LINK_EVENTS = tuple(event.value for event in StockLinkEvent)
+STOCK_LINK_TABS = tuple(sorted(tab.value for tab in EDITABLE_TABS))
+
+
+class ReferenceStockLinkRow(Base):
+    __tablename__ = "reference_stock_links"
+    __table_args__ = (
+        CheckConstraint("event IN ('linked', 'created', 'updated')", name="ck_reference_stock_links_event"),
+        CheckConstraint("record_tab IN ('coax', 'mat', 'ob', 'op', 'prov', 'ter')", name="ck_reference_stock_links_tab"),
+        CheckConstraint("length(trim(grn)) > 0", name="ck_reference_stock_links_grn"),
+        CheckConstraint("length(trim(record_text)) > 0", name="ck_reference_stock_links_record_text"),
+        CheckConstraint("length(trim(actor_name)) > 0", name="ck_reference_stock_links_actor"),
+        Index("ix_reference_stock_links_record_id", "record_id"),
+        Index("ix_reference_stock_links_lot_id", "lot_id"),
+        Index("ix_reference_stock_links_occurred_at", "occurred_at"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event: Mapped[str] = mapped_column(String(16), nullable=False)
+    lot_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_lots.id", ondelete="RESTRICT", name="fk_reference_stock_links_lot_id"),
+        nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False)
+    package: Mapped[str] = mapped_column(String(32), nullable=False)
+    article: Mapped[str] = mapped_column(String(1024), nullable=False)
+    name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    record_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tech_operation_records.id", ondelete="SET NULL", name="fk_reference_stock_links_record_id"),
+        nullable=True)
+    record_tab: Mapped[str] = mapped_column(String(16), nullable=False)
+    record_text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    changes: Mapped[list] = mapped_column(JSON, nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class SqlAlchemyStockLinkRepository:
+    def __init__(self, session: Session): self.session = session
+
+    def add(self, entry: StockLinkEntry) -> None:
+        article = entry.article
+        self.session.add(ReferenceStockLinkRow(
+            id=entry.id, occurred_at=entry.occurred_at, event=entry.event.value, lot_id=article.lot_id,
+            warehouse=article.warehouse, grn=article.grn, package=article.package, article=article.article,
+            name=article.name, record_id=entry.record_id, record_tab=entry.record_tab.value,
+            record_text=entry.record_text,
+            changes=[{"field": change.field, "old": change.old, "new": change.new} for change in entry.changes],
+            actor_id=entry.actor_id, actor_name=entry.actor_name,
+        ))
+
+    def list(self, *, record_id: UUID | None = None, lot_id: UUID | None = None, limit: int = 500) -> list[StockLinkEntry]:
+        """Newest first."""
+        statement = select(ReferenceStockLinkRow)
+        if record_id is not None: statement = statement.where(ReferenceStockLinkRow.record_id == record_id)
+        if lot_id is not None: statement = statement.where(ReferenceStockLinkRow.lot_id == lot_id)
+        rows = self.session.scalars(statement.order_by(
+            ReferenceStockLinkRow.occurred_at.desc(), ReferenceStockLinkRow.id.desc()).limit(limit))
+        return [StockLinkEntry(
+            id=row.id, occurred_at=row.occurred_at, event=StockLinkEvent(row.event),
+            article=StockArticle(lot_id=row.lot_id, warehouse=row.warehouse, grn=row.grn, package=row.package,
+                                 article=row.article, name=row.name),
+            record_id=row.record_id, record_tab=TechOperationTab(row.record_tab), record_text=row.record_text,
+            changes=tuple(StockLinkChange(str(item.get("field", "")), str(item.get("old", "")), str(item.get("new", "")))
+                          for item in row.changes or []),
+            actor_id=row.actor_id, actor_name=row.actor_name,
+        ) for row in rows]
+
+
 class SqlAlchemyReferencesUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
         self.session_factory = session_factory; self.session: Session | None = None; self.committed = False
@@ -517,6 +627,7 @@ class SqlAlchemyReferencesUnitOfWork:
         self.tech_operations = SqlAlchemyTechOperationRepository(self.session)
         self.cable_structure = SqlAlchemyCableStructureRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.stock_links = SqlAlchemyStockLinkRepository(self.session)
         return self
     def __exit__(self, exc_type, exc, traceback) -> None:
         if self.session is None: return

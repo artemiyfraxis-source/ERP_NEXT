@@ -352,6 +352,17 @@ export function addInputBlock(state: ManualState, to: string): ManualState {
   return addBlock({ ...state, selected: to });
 }
 
+/** «+» на связи `from → to`: новый пустой блок между ними — `from` идёт в него по одной штуке, он в `to` столько, сколько
+    брала связь; новый блок выбирается. Цикла так не получить. Нет такой связи — схема прежняя. */
+export function insertBlock(state: ManualState, from: string, to: string): ManualState {
+  const link = state.edges.find((edge) => edge.from === from && edge.to === to);
+  if (!link) return state;
+  const key = freeKey(state.blocks);
+  const edges = state.edges.filter((edge) => edge !== link)
+    .concat({ from, to: key, per_unit: 1 }, { from: key, to, per_unit: link.per_unit });
+  return { ...state, blocks: [...state.blocks, { key, name: "", final: false, ops: [] }], edges, selected: key };
+}
+
 /** Блок без своего названия или с «Блок N» — его можно назвать по первой операции. */
 export function hasDefaultName(block: Pick<ManualBlock, "name">): boolean {
   return !block.name.trim() || /^Блок \d+$/.test(block.name.trim());

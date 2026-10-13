@@ -143,21 +143,3 @@ export function printStoredDocument(url: string): void {
   frame.src = url;
   document.body.appendChild(frame);
 }
-
-/** Several sheets in one print job, each on its own page (packing list per box — `shipBuildDocs_`). */
-export function buildPrintSheetsHtml(sheets: PrintSheet[]): string {
-  const bodies = sheets.map((sheet) => {
-    const html = buildPrintSheetHtml(sheet);
-    return html.slice(html.indexOf("<body>") + 6, html.lastIndexOf("</body>"));
-  });
-  const title = sheets[0]?.title ?? "";
-  return `<!doctype html><html><head><meta charset="utf-8">` +
-    `<title>${escapeHtml(title)}</title><style>${PRINT_CSS} .sheet + .sheet { page-break-before: always; }</style></head><body>` +
-    bodies.map((body) => `<div class="sheet">${body}</div>`).join("") +
-    `</body></html>`;
-}
-
-export function openPrintSheets(sheets: PrintSheet[]): void {
-  if (sheets.length === 1) { openPrintSheet(sheets[0]); return; }
-  openPrintHtml(buildPrintSheetsHtml(sheets));
-}

@@ -13,6 +13,10 @@ def _stocked(client, *, item_index="КБ1", ordered="40", accepted="6", project=
     return good
 
 
+def _head(form):
+    return {row["label"]: row["value"] for row in form["head"]}
+
+
 def _shipment(client, lines, **extra):
     body = {"receiver": "Получатель", "shipping_point": "Москва", "terms": "ДОСТАВКА ТК", "upd_type": "ЭДО", "lines": lines}
     body.update(extra)
@@ -85,8 +89,8 @@ def test_boxes_are_checked_pack_the_shipment_and_print_pl_per_box_and_one_dn(shi
         {"kind": "Пакет", "gross": "1,5", "items": [{"item_index": "КБ2", "quantity": "5"}]},
     ]})
     packed = laid.json()["shipment"]
-    pl = client.get(f"/api/shipping/shipments/{shipment['id']}/print", params={"document": "pl"}).json()["sheets"]
-    dn = client.get(f"/api/shipping/shipments/{shipment['id']}/print", params={"document": "dn"}).json()["sheets"]
+    pl = client.get(f"/api/shipping/shipments/{shipment['id']}/print", params={"document": "pl"}).json()["forms"]
+    dn = client.get(f"/api/shipping/shipments/{shipment['id']}/print", params={"document": "dn"}).json()["forms"]
 
     assert "Разложено не всё упакованное: КБ2 — 0 из 5" in short.json()["detail"]
     assert "вес брутто" in bad_weight.json()["detail"]
@@ -94,12 +98,10 @@ def test_boxes_are_checked_pack_the_shipment_and_print_pl_per_box_and_one_dn(shi
     assert packed["places"] == 2 and packed["weight"] == "14" and packed["tk_note"] == "Не кантовать"
     assert [box["gross"] for box in packed["boxes"]] == ["12,5", "1,5"]
     assert len(pl) == 2
-    assert pl[0]["rows"] == [["КБ1", "A-КБ1", "Жгут КБ1", "10", "шт", "ГП.26.0000001"]]
-    assert "BXN 2 / 2" in pl[1]["subtitle"]
-    assert dn[0]["rows"][1] == ["КБ2", "A-КБ2", "Жгут КБ2", "5", "шт", "PL591К.3-1", "BXN 2"]
-    assert "Заказ №: PO-7" in dn[0]["subtitle"] and "Спецификация №: 591К.3" in dn[0]["subtitle"]
-    assert "Примечания для ТК: Не кантовать" in dn[0]["subtitle"]
-    assert "☑ УПД передана посредством ЭДО" in dn[0]["note"] and "Общий вес (брутто), кг: 14" in dn[0]["note"]
+    assert pl[0]["rows"] == [["ГП.26.0000001", "КБ1", "Жгут КБ1", "10", "шт"]]
+    assert _head(pl[1])["Упаковка №"] == "BXN 2/2"
+    assert [row[1] for row in dn[0]["rows"]] == ["КБ1", "КБ2"]
+    assert _head(dn[0])["Кол-во упаковок:"] == "2"
 
     # Перевыпуск: номера сохраняются, короба заменяются.
     again = client.put(url, json={"version": packed["version"], "boxes": [
@@ -119,7 +121,7 @@ def test_print_needs_documents_and_defaults_to_one_box(shipping_api):
     assert refused.status_code == 409
     assert refused.json()["detail"] == "Сначала сформируйте отгрузочные документы"
     assert default.status_code == 200
-    assert "BXN 1 / 1" in default.json()["sheets"][0]["subtitle"]
+    assert _head(default.json()["forms"][0])["Упаковка №"] == "BXN 1/1"
 
 
 def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(shipping_api):

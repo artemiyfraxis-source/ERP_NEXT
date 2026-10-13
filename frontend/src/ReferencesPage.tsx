@@ -10,6 +10,9 @@ import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
+import { TerminalCard, type TerminalRow } from "./TerminalCard";
+import { CoaxConnectors } from "./CoaxConnectors";
+import { StockLinksJournal } from "./StockLinksJournal";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -181,6 +184,10 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   // БД.ТЕР «Аппликатор»: code → the БД.ОБ record that owns it (a link to its card); the card to open after the jump.
   const [toolOwners, setToolOwners] = useState<Record<string, string>>({});
   const [focusTool, setFocusTool] = useState("");
+  // «Терминалы»: the contact card open beside the list; the pick lives in `?terminal=` (a reload reopens it).
+  const [terminalId, setTerminalId] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("terminal") ?? ""; } catch { return ""; }
+  });
   const [bases, setBases] = useState<BasesResult>({ bases: [] });
   const [cables, setCables] = useState<CablesResult | null>(null);
   // Вкладка, чьи записи уже пришли: таблица строится по готовым колонкам (иначе «скрыты по умолчанию» не сработает).
@@ -191,6 +198,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [stockLog, setStockLog] = useState(false);
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
   const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
@@ -362,7 +370,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
         render: long ? (record) => <span className="db-clip" title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
         hidden: techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU")),
-        numeric: values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
+        // An article of digits (Molex 39000038) is a code, not a number: no «39 000 038», as the warehouse writes it.
+        numeric: !/артикул/i.test(fieldTitle(field)) && values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };
     }),
     { key: "__source", title: "Источник", value: (record) => record.source_sheet || "", hidden: true },
@@ -370,6 +379,15 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   // БД.ТЕР: обжим одной колонкой «по сечениям» и «От AWG / До AWG» одной колонкой «AWG» (владелец 12.10); исходные
   // колонки остаются в «Колонках» и в выгрузке, но скрыты.
   const techColumns = techTab === "ter" ? mergeTerminalColumns(sheetColumns, fieldColumns) : sheetColumns;
+  function openTerminal(id: string) {
+    setTerminalId(id);
+    try {
+      const url = new URL(window.location.href);
+      if (id) url.searchParams.set("terminal", id); else url.searchParams.delete("terminal");
+      window.history.replaceState(window.history.state, "", url);
+    } catch { /* address is not writable */ }
+  }
+  const terminal = techTab === "ter" && terminalId ? tech.records.find((record) => record.id === terminalId) as TerminalRow | undefined : undefined;
   function startCreate(preset: Record<string, string> = {}) {
     const blank = Object.fromEntries(fieldColumns.map((key) => [key, ""]));
     setEditing({ id: null, values: techTab === "ob" ? { ...blank, Тип: "Оборудование", ...preset } : blank });
@@ -383,13 +401,18 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const editingRecord = editing?.id ? tech.records.find((record) => record.id === editing.id) : null;
 
   return <section className="page references-page">
-    <header className="page-head"><h1>База данных</h1>{current && count(current) !== null && <span className="page-count">{count(current)}</span>}</header>
+    <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
+      <div className="page-actions">
+        <button type="button" className={stockLog ? "secondary small active" : "secondary small"} aria-pressed={stockLog} onClick={() => setStockLog((value) => !value)}>Журнал «Склад → база»</button>
+      </div>
+    </header>
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>
         <div className="db-tab-row">{group.tabs.map((def) => {
           const n = count(def);
-          return <button key={def.id} type="button" className={tab === def.id ? "db-tab active" : "db-tab"} aria-pressed={tab === def.id} onClick={() => setTab(def.id)}>
+          const active = tab === def.id && !stockLog;
+          return <button key={def.id} type="button" className={active ? "db-tab active" : "db-tab"} aria-pressed={active} onClick={() => { setTab(def.id); setStockLog(false); }}>
             {def.label}{n !== null && <span className="db-tab-count" aria-hidden="true">{n}</span>}
           </button>;
         })}</div>
@@ -397,6 +420,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     </nav>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
+
+    {stockLog && <StockLinksJournal fieldTitle={fieldTitle} />}
+    <div hidden={stockLog}>
 
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
     {tab === "connectors" && <ConnectorGallery />}
@@ -419,12 +445,14 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     })()}
 
     {techTab && <>
-      {canEdit && editing && <div className="panel db-edit">
-        <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${editingRecord?.display_text ?? ""}`}</h2></div>
-        {techTab === "ob"
-          ? <EquipmentForm values={editing.values} isNew={editing.id === null} records={tech.records} onChange={(values) => setEditing({ ...editing, values })} />
-          : <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />}
+      {canEdit && editing && techTab !== "ob" && <div className="panel db-edit">
+        <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
+        <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
+        {editing.id !== null && <div className="db-edit-stock">
+          <h3>Со склада</h3>
+          <StockLinksJournal recordId={editing.id} fieldTitle={fieldTitle} />
+        </div>}
       </div>}
       {techTab === "ob" ? <EquipmentCards
         records={tech.records}
@@ -436,8 +464,20 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         onNotice={(message) => { setError(""); setNotice(message); }}
         onError={(message) => { setNotice(""); setError(message); }}
         focusId={focusTool}
+        onSelect={() => setEditing(null)}
+        editor={canEdit && editing ? <>
+          <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
+          <EquipmentForm values={editing.values} isNew={editing.id === null} records={tech.records} onChange={(values) => setEditing({ ...editing, values })} />
+          <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
+        </> : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
-      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <DataTable
+      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+        records={tech.records}
+        cableOf={cableOf}
+        canEdit={canEdit}
+        onEdit={startEdit}
+        toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Запись</button> : undefined}
+      /> : <div className={terminal ? "eq-split has-card" : "eq-split"}><div className="eq-list"><DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}
@@ -446,11 +486,13 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         storageKey={`db:${techTab}`}
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
-        // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел).
-        onRowClick={canEdit ? startEdit : undefined}
-        rowTitle={canEdit ? (record) => `Править: ${record.display_text}` : undefined}
+        // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел); «Терминалы» — строка
+        // открывает карточку контакта, правка из неё.
+        onRowClick={techTab === "ter" ? (record) => openTerminal(record.id) : canEdit ? startEdit : undefined}
+        rowTitle={techTab === "ter" ? (record) => `Открыть карточку: ${record.display_text}` : canEdit ? (record) => `Править: ${record.display_text}` : undefined}
+        rowClassName={techTab === "ter" ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
-      />}
+      /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
       {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}
     </>}
 
@@ -475,6 +517,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       onSaved={cablesSaved}
       onError={(message) => { setNotice(""); setError(message); }}
     />}
+    </div>
   </section>;
 }
 

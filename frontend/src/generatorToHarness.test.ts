@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { addEndpoint, initState, switchGenTab, updateEndpoint, type GenData, type GenState, type TerRec } from "./tcGenLogic";
+import { addEndpoint, initState, makeGen, switchGenTab, updateEndpoint, type GenData, type GenState, type TerRec } from "./tcGenLogic";
+import { pinoutRecord, restorePinout, setCoreNet } from "./pinoutCheck";
 import {
   buildHarnessDocument, planFromGenerator, resolveConnectorSources, wireSectionOf, type ConnectorSource, type GeneratorDrawingPlan,
 } from "./generatorToHarness";
@@ -126,10 +127,10 @@ it("draws a twisted pair on the segments both wires run through", () => {
   expect(document.diffPairs).toEqual([{ id: "gen-p1", wireIds: ["gen-w1", "gen-w2"], step: 25, amplitude: 7, variant: 1 }]);
   expect(routeOf(document, "gen-w1")).toEqual(routeOf(document, "gen-w2"));
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
-  // «Все вместе» больше двух — не пара: свивка не рисуется, сказано почему.
+  // «Все вместе» больше двух — не пара, а свитая группа (twistGroups.test.ts, twistDrawing.test.ts).
   const all = planFromGenerator(D, { ...twisted, twist: { ...twisted.twist, mode: "all", wires: null } });
   expect(all.pairs).toEqual([]);
-  expect(all.warnings.some((w) => w.includes("Свивка всех проводов вместе (4)"))).toBe(true);
+  expect(all.twistGroups).toEqual([plan.wires.map((w) => w.key)]);
 });
 
 it("falls back to a generic housing for a connector the library does not know, and flags it", async () => {
@@ -167,19 +168,73 @@ it("places a connector from the component library by its article", async () => {
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
 });
 
-it("puts solder TUT at its end and the braid over the whole harness", () => {
+it("puts a solder TUT on every wire at its contact (not one tube over the bundle) and the braid over the whole harness", () => {
   const S = threeEnded();
   const solder = updateEndpoint(D, S, "a1", { method: "solder", tutLen: "15" });
   const braided = { ...solder, wrap: { enabled: true, slots: [{ mat: "w", kind: "braid" as const, len: "320" }, ...solder.wrap.slots.slice(1)] } };
   const plan = planFromGenerator(D, braided);
   const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
-  const coverings = document.physicalTopology!.coverings!;
-  expect(coverings.map((c) => [c.name, c.kind, c.lengthMm, c.spans.map((s) => s.segmentId)])).toEqual([
-    ["ТУТ на пайку XS1", "heat-shrink", 15, ["gen-s1"]],
-    ["МГТФ 0,12 белый", "braid", 320, ["gen-s1", "gen-s2", "gen-s3"]],
+  const topology = document.physicalTopology!;
+  // У XS1 у каждого контакта свой выход и отрезок до общего узла разъёма gen-n1, дальше — ствол и ветки, как раньше.
+  expect(topology.segments.map((s) => [s.id, s.from, s.to])).toEqual([
+    ["gen-s1", "gen-n1-1", "gen-n1"], ["gen-s2", "gen-n1-2", "gen-n1"], ["gen-s3", "gen-n1-3", "gen-n1"], ["gen-s4", "gen-n1-4", "gen-n1"],
+    ["gen-s5", "gen-n1", "gen-j1"], ["gen-s6", "gen-j1", "gen-n2"], ["gen-s7", "gen-j1", "gen-n3"],
   ]);
-  expect(coverings[0].spans[0]).toMatchObject({ from: 0 });
+  expect(topology.nodes.filter((n) => n.id.startsWith("gen-n1-")).map((n) => n.wireIds)).toEqual([["gen-w1"], ["gen-w2"], ["gen-w3"], ["gen-w4"]]);
+  expect(document.wires.map((w) => routeOf(document, w.id))).toEqual([
+    ["gen-s1", "gen-s5", "gen-s6"], ["gen-s2", "gen-s5", "gen-s6"], ["gen-s3", "gen-s5", "gen-s7"], ["gen-s4", "gen-s5", "gen-s7"],
+  ]);
+  const coverings = topology.coverings!;
+  expect(coverings.map((c) => [c.name, c.kind, c.lengthMm, c.spans.map((s) => s.segmentId)])).toEqual([
+    ["ТУТ на пайку XS1 · конт. 1", "heat-shrink", 15, ["gen-s1"]],
+    ["ТУТ на пайку XS1 · конт. 2", "heat-shrink", 15, ["gen-s2"]],
+    ["ТУТ на пайку XS1 · конт. 3", "heat-shrink", 15, ["gen-s3"]],
+    ["ТУТ на пайку XS1 · конт. 4", "heat-shrink", 15, ["gen-s4"]],
+    ["МГТФ 0,12 белый", "braid", 320, ["gen-s5", "gen-s6", "gen-s7"]],
+  ]);
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
+});
+
+it("a two-ended harness with solder TUT keeps one trunk with its length dimension; termoshrink sleeves stay over the bundle", () => {
+  const S = updateEndpoint(D, twoEnded(), "b1", { method: "solder", tutLen: "" });
+  const sleeved = { ...S, hs: { enabled: true, manual: true, rows: [{ compId: "w", len: "30", cnt: "1" }] } };
+  const plan = planFromGenerator(D, sleeved);
+  const { document, warnings } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  const topology = document.physicalTopology!;
+  expect(topology.segments.map((s) => [s.from, s.to])).toEqual([
+    ["gen-n2-1", "gen-n2"], ["gen-n2-2", "gen-n2"], ["gen-n2-3", "gen-n2"], ["gen-n2-4", "gen-n2"], ["gen-n1", "gen-n2"],
+  ]);
+  expect(document.drawingDocuments!.dimensions).toMatchObject([{ segmentId: "gen-s5", lengthMm: 300 }]);
+  expect(warnings.some((w) => w.startsWith("Длины ствола и веток"))).toBe(false);
+  const coverings = topology.coverings!;
+  // ТУТ без длины — длина по чертежу авто; рукав термоусадки — у конца XS1 на стволе, поверх всего пучка.
+  expect(coverings.map((c) => [c.name, c.lengthMode, c.spans.map((s) => s.segmentId)])).toEqual([
+    ["ТУТ на пайку XS2 · конт. 1", "auto", ["gen-s1"]], ["ТУТ на пайку XS2 · конт. 2", "auto", ["gen-s2"]],
+    ["ТУТ на пайку XS2 · конт. 3", "auto", ["gen-s3"]], ["ТУТ на пайку XS2 · конт. 4", "auto", ["gen-s4"]],
+    ["МГТФ 0,12 белый", "manual", ["gen-s5"]],
+  ]);
+  expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
+});
+
+it("carries net names from the pinout onto the drawing: the wire and both contact rows", () => {
+  let S = twoEnded();
+  S = setCoreNet(D, S, idx(S, "r"), 0, "+5V");
+  S = setCoreNet(D, S, idx(S, "k"), 0, " GND ");
+  const plan = planFromGenerator(D, S);
+  expect(plan.wires.map((w) => w.circuit)).toEqual(["+5V", "GND", "", ""]);
+  const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  expect(document.wires.map((w) => w.circuit)).toEqual(["+5V", "GND", "", ""]);
+  // Перекрёст: чёрный (GND) — XS1:2 → XS2:3.
+  expect([contactRow(document, "XS1", 1).circuit, contactRow(document, "XS2", 1).circuit]).toEqual(["+5V", "+5V"]);
+  expect([contactRow(document, "XS1", 2).circuit, contactRow(document, "XS2", 3).circuit]).toEqual(["GND", "GND"]);
+  expect(contactRow(document, "XS1", 3).circuit).toBe("");
+  expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
+  // Снять цепь — пустая строка; запись распиновки хранит цепи и возвращает их в свежую форму.
+  expect(setCoreNet(D, S, idx(S, "r"), 0, "").wires.find((w) => w.compId === "r")!.nets).toBeUndefined();
+  const record = pinoutRecord(makeGen(D, S), S);
+  expect(record?.nets).toEqual([{ pos: 0, unit: 0, net: "+5V" }, { pos: 1, unit: 0, net: "GND" }]);
+  const restored = restorePinout(D, twoEnded(), { pinout: record });
+  expect(planFromGenerator(D, restored).wires.map((w) => w.circuit)).toEqual(["+5V", "GND", "", ""]);
 });
 
 it("refuses to draw a harness with no pinout", () => {

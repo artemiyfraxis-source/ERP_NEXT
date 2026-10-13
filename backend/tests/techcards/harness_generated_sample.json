@@ -603,11 +603,57 @@
   "nodes": [
    {
     "id": "gen-n1",
+    "position": {
+     "x": 238,
+     "y": 191
+    }
+   },
+   {
+    "id": "gen-n1-1",
     "connectorId": "gen-x1",
     "position": {
      "x": 178,
-     "y": 52
+     "y": 28
     },
+    "wireIds": [
+     "gen-w1"
+    ],
+    "direction": "right"
+   },
+   {
+    "id": "gen-n1-2",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 44
+    },
+    "wireIds": [
+     "gen-w2"
+    ],
+    "direction": "right"
+   },
+   {
+    "id": "gen-n1-3",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 60
+    },
+    "wireIds": [
+     "gen-w3"
+    ],
+    "direction": "right"
+   },
+   {
+    "id": "gen-n1-4",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 76
+    },
+    "wireIds": [
+     "gen-w4"
+    ],
     "direction": "right"
    },
    {
@@ -631,7 +677,7 @@
    {
     "id": "gen-j1",
     "position": {
-     "x": 409,
+     "x": 439,
      "y": 191
     }
    }
@@ -639,6 +685,42 @@
   "segments": [
    {
     "id": "gen-s1",
+    "from": "gen-n1-1",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s2",
+    "from": "gen-n1-2",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s3",
+    "from": "gen-n1-3",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s4",
+    "from": "gen-n1-4",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s5",
     "from": "gen-n1",
     "to": "gen-j1",
     "path": {
@@ -647,7 +729,7 @@
     }
    },
    {
-    "id": "gen-s2",
+    "id": "gen-s6",
     "from": "gen-j1",
     "to": "gen-n2",
     "path": {
@@ -656,7 +738,7 @@
     }
    },
    {
-    "id": "gen-s3",
+    "id": "gen-s7",
     "from": "gen-j1",
     "to": "gen-n3",
     "path": {
@@ -674,7 +756,11 @@
       "reverse": false
      },
      {
-      "segmentId": "gen-s2",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
       "reverse": false
      }
     ],
@@ -684,11 +770,15 @@
     "wireId": "gen-w2",
     "steps": [
      {
-      "segmentId": "gen-s1",
+      "segmentId": "gen-s2",
       "reverse": false
      },
      {
-      "segmentId": "gen-s2",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
       "reverse": false
      }
     ],
@@ -698,11 +788,15 @@
     "wireId": "gen-w3",
     "steps": [
      {
-      "segmentId": "gen-s1",
+      "segmentId": "gen-s3",
       "reverse": false
      },
      {
-      "segmentId": "gen-s3",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
       "reverse": false
      }
     ],
@@ -712,11 +806,15 @@
     "wireId": "gen-w4",
     "steps": [
      {
-      "segmentId": "gen-s1",
+      "segmentId": "gen-s4",
       "reverse": false
      },
      {
-      "segmentId": "gen-s3",
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
       "reverse": false
      }
     ],
@@ -726,7 +824,7 @@
   "coverings": [
    {
     "id": "gen-c1",
-    "name": "ТУТ на пайку XS1",
+    "name": "ТУТ на пайку XS1 · конт. 1",
     "kind": "heat-shrink",
     "width": 0,
     "color": "#424c53",
@@ -735,8 +833,56 @@
     "spans": [
      {
       "segmentId": "gen-s1",
-      "from": 0,
-      "to": 0.14
+      "from": 0.1,
+      "to": 0.9
+     }
+    ]
+   },
+   {
+    "id": "gen-c2",
+    "name": "ТУТ на пайку XS1 · конт. 2",
+    "kind": "heat-shrink",
+    "width": 0,
+    "color": "#424c53",
+    "lengthMode": "manual",
+    "lengthMm": 15,
+    "spans": [
+     {
+      "segmentId": "gen-s2",
+      "from": 0.1,
+      "to": 0.9
+     }
+    ]
+   },
+   {
+    "id": "gen-c3",
+    "name": "ТУТ на пайку XS1 · конт. 3",
+    "kind": "heat-shrink",
+    "width": 0,
+    "color": "#424c53",
+    "lengthMode": "manual",
+    "lengthMm": 15,
+    "spans": [
+     {
+      "segmentId": "gen-s3",
+      "from": 0.1,
+      "to": 0.9
+     }
+    ]
+   },
+   {
+    "id": "gen-c4",
+    "name": "ТУТ на пайку XS1 · конт. 4",
+    "kind": "heat-shrink",
+    "width": 0,
+    "color": "#424c53",
+    "lengthMode": "manual",
+    "lengthMm": 15,
+    "spans": [
+     {
+      "segmentId": "gen-s4",
+      "from": 0.1,
+      "to": 0.9
      }
     ]
    }

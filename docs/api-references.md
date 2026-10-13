@@ -115,7 +115,7 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 | `suppliers` | Ссылка → поставщик | `key` (ссылка или домен: `https://www.chipdip.ru/…` = `chipdip.ru`) | `key`, `value` (поставщик) |
 | `countries` | Изготовитель → страна | `key` (изготовитель, без регистра и лишних пробелов) | `key`, `value` (страна) |
 | `gost_awg` | ГОСТ → AWG | `key` (сечение ГОСТ, мм²: `0,35` = `0.35`) | `key`, `value` (AWG, целое) |
-| `wire-gauges` | Сечения AWG ↔ мм² | `awg`, а у строки без AWG — `section_mm2` | `awg`, `section_mm2`, `conductor_d_mm`, `strands` |
+| `wire-gauges` | Сечения AWG ↔ мм² | `awg`, а у строки без AWG — `section_mm2` | `awg`, `section_mm2`, `conductor_d_mm` (скрутки у сечения нет с 0114 — она в строке провода) |
 | `hookups` | База монтажных проводов | марка БД.ПРОВ (серия + размер) | файл `hookup-wires.json` целиком (ниже) |
 
 Поля схемы — то, что читает генератор техкарт:
@@ -126,7 +126,10 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
   `terArticleBag` (тот же контакт в упаковке BAG — вторая колонка той же строки, не отдельная строка),
   `terInsCrimpHeight`, `terInsOdFrom`, `terInsOdTo`, `terMaterial` («Металл / Покрытие»), `terMaxCurrent` (А),
   `terDatasheet` (ссылка на сайт производителя);
-- `coax`: `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire`;
+- `coax`: `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire`; колонки карточки разъёма принимаются и до того, как они
+  есть у строк: «Тип пина», «Тип экрана», «Серия», «Пол», «Полярность», «Исполнение», «Монтаж», «Центральный
+  контакт», «Крепление экрана», «Волновое сопротивление, Ом», «Частота до, ГГц», «Материал корпуса», «Покрытие»,
+  «Габариты», «Наименование», «Ссылка», «Примечание», «Источник данных»;
 - `ob`: `baseValue`, `obType`.
 
 Колонки листа («Шаг разьема», «Артикул контакта (REEL)», «Инв. номер»…) — как их показывает «База данных»; точный
@@ -140,7 +143,11 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 мм² из AWG не считаются. Усилие обрыва хранится в Н: значения в kgf/кгс умножаются на 9,8, в lbf — на 4,448
 (округление до 0,1); AWG пишется без «#»; материал — «Металл / Покрытие». Значения обжима, которых нет в документации
 производителя, не присылайте: пустое не усредняется и не подставляется. `terGender`, расходящийся с присланным в той
-же строке «Тип контакта», отклоняет строку; присланный без него становится типом контакта. Тело загрузки из зеркала
+же строке «Тип контакта», отклоняет строку; присланный без него становится типом контакта. База (миграция 0115) держит
+карточку проверками: `terGender` — Male, Female или пусто (непонятное слово отклоняет строку); `terInsOdFrom` /
+`terInsOdTo` — пусто или число мм больше нуля, «от» ≤ «до» (с учётом уже записанного); `terDatasheet` — пусто или
+ссылка http(s)://. Такая строка отклоняется с причиной, остальные пишутся. `GET /api/references/tech-operations?tab=ter`
+отдаёт у каждой записи `card` — карточку контакта для экрана «Терминалы». Тело загрузки из зеркала
 БД.ТЕР (по артикулу REEL: производитель, серия, тип и карточка контакта):
 `python -m app.modules.references.load_mirror --export-ter ter.json`.
 
@@ -181,6 +188,11 @@ post wire-gauges '{"rows":[{"fields":{"awg":"22","section_mm2":"0,35","conductor
 # Монтажные провода: тело — файл backend/data/cables/hookup-wires.json как есть (не {"rows": …})
 curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
   --data @backend/data/cables/hookup-wires.json "$ERP/api/references/import/hookups?dry_run=1"
+
+# Коаксиальные разъёмы gsm-repiteri.ru (311 разъёмов → строки «разъём × кабель» БД.КОАКС): тело собрано
+# `python -m app.modules.references.coax_connectors` из backend/data/cables/coax-connectors-gsm.json
+curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
+  --data @backend/data/cables/coax-connectors-gsm.import.json "$ERP/api/references/import/coax?dry_run=1"
 
 # Поля таблицы
 curl -s -H "Authorization: Bearer $ERP_TOKEN" "$ERP/api/references/import/ter/schema"

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { assignPin, autoFillPinout, pinoutEnds, pinUnits, routingWarnings, unassignPin } from "./pinoutCheck";
+import { assignPin, autoFillPinout, pinFitWarnings, pinoutEnds, pinUnits, routingWarnings, SHIELD_COLOR, unassignPin } from "./pinoutCheck";
 import {
   addEndpoint, cableRecFromFields, formatCorePins_, initState, makeGen, parseCorePins_, parsePinList_, switchGenTab, updateEndpoint, updateWire,
   type CableRec, type GenData, type GenState,
@@ -198,4 +198,98 @@ it("«Построить чертёж» draws the multi-core cable as one jacket
   expect(segments.map((s) => s.specificationItemId ?? "")).toEqual([document.cables[0].id, "", ""]);
   const through = (id: string) => document.physicalTopology!.routes.filter((r) => r.steps.some((s) => s.segmentId === id)).length;
   expect(segments.map((s) => through(s.id))).toEqual([19, 10, 9]);
+});
+
+// Экран на контакт (владелец 13.10): экран (дренаж) экранированного кабеля заводится на контакт разъёма, как жила.
+const SCREENED = data({ ...HELU, screen: "оплётка луж. медь" });
+const shieldUnit = (S: GenState, d: GenData = SCREENED) => pinUnits(g(S, d), S).find((u) => u.shield)!;
+/** Пин-в-пин 19 жил, экран — на контакт 20 разъёма `ep` (и `ep2`, если задан). */
+function shieldOn(ep: string, ep2?: string): GenState {
+  let S = pinToPin(SCREENED);
+  const u = shieldUnit(S);
+  S = assignPin(SCREENED, S, ep, u.idx, u.unit, 20);
+  return ep2 ? assignPin(SCREENED, S, ep2, u.idx, u.unit, 20) : S;
+}
+
+it("a screened cable has one shield in the palette after its cores; it is not a core: no warning while it is not on a contact", () => {
+  const S = pinToPin(SCREENED);
+  const units = pinUnits(g(S, SCREENED), S);
+  expect(units).toHaveLength(20);
+  const u = shieldUnit(S);
+  expect([u.num, u.unit, u.name, u.color, u.at]).toEqual(["1.Э", 19, "экран Helukabel 15201", SHIELD_COLOR, {}]);
+  expect(routingWarnings(SCREENED, S)).toEqual([]);
+  // Неэкранированный кабель — без экрана.
+  expect(pinUnits(g(pinToPin()), pinToPin()).some((x) => x.shield)).toBe(false);
+});
+
+it("shield on contact 20 at both ends: a connection, a 20th terminal per end, its own ETK row and «twist into a lead»", () => {
+  const S = shieldOn("a1", "b1");
+  const idx = S.wires[0].idx;
+  expect(S.endpoints.find((e) => e.id === "a1")!.pins![idx]).toBe(Array.from({ length: 20 }, (_, i) => i + 1).join(", "));
+  expect(shieldUnit(S).at).toEqual({ a1: 20, b1: 20 });
+  const links = g(S, SCREENED).connections_();
+  expect(links.warnings).toEqual([]);
+  expect(links.list).toHaveLength(20);
+  expect(links.list[19]).toMatchObject({ wire: "Helukabel 15201 · экран", shield: true, from: { end: "А1", pin: 20 }, to: { end: "В1", pin: 20 } });
+  const prs = opsOf(S, SCREENED).filter((op) => op.type === "prsTerm");
+  expect(prs.map(terms)).toEqual([20, 20]);
+  expect(prs[0].wires).toEqual([expect.objectContaining({ qty: 1, cores: 19 }), expect.objectContaining({ name: "Экран Helukabel 15201", qty: 1 })]);
+  expect(prs[0].pins).toEqual([Array.from({ length: 19 }, (_, i) => i + 1).join(", "), "20"]);
+  expect(g(S, SCREENED).getActiveOps().filter((op) => op.tmplWant === "TWST_SHILED").map((op) => op.label)).toEqual([
+    "Скрутка экрана в вывод на контакт А1·20 — 1 шт", "Скрутка экрана в вывод на контакт В1·20 — 1 шт",
+  ]);
+  expect(pinoutEnds(g(S, SCREENED), S).map((end) => end.summary)).toEqual([
+    "19 жил + экран (конт. 20), прямой порядок", "19 жил + экран (конт. 20), прямой порядок",
+  ]);
+  expect(routingWarnings(SCREENED, S)).toEqual([]);
+  // Контакт 20 у 19-контактного разъёма — проверка «контакта нет» видит и экран.
+  expect(pinFitWarnings(pinoutEnds(g(S, SCREENED), S), { a1: 19, b1: 20 })).toEqual([
+    "А1 (DF1B-18DS-2.5RC): 19 контактов, а 20 проводов — всем контакта не хватит.", "А1 (DF1B-18DS-2.5RC): контакта 20 нет — у разъёма 19 контактов.",
+  ]);
+});
+
+it("shield on a contact at А only (grounded at one end): no pairing warning, В insulates its shield", () => {
+  const S = shieldOn("a1");
+  const links = g(S, SCREENED).connections_();
+  expect(links.warnings).toEqual([]);
+  expect(links.list).toHaveLength(19);
+  expect(opsOf(S, SCREENED).filter((op) => op.type === "prsTerm").map(terms)).toEqual([20, 19]);
+  expect(g(S, SCREENED).getActiveOps().filter((op) => op.tmplWant === "TWST_SHILED").map((op) => op.label)).toEqual([
+    "Скрутка экрана в вывод на контакт А1·20 — 1 шт", "Скрутка и изоляция экрана В1 — 1 шт",
+  ]);
+  expect(g(S, SCREENED).cableEnds_("B")[0].unused).toEqual([]);
+  // Автозаполнение раздаёт жилы заново, а экран на контакте 20 оставляет.
+  const again = autoFillPinout(SCREENED, S, { a1: 20, b1: 19 }).state;
+  expect(shieldUnit(again).at).toEqual({ a1: 20 });
+  expect(pinUnits(g(again, SCREENED), again).filter((u) => !u.shield).every((u) => u.at.a1 === u.unit + 1)).toBe(true);
+  // Снять экран с контакта — снова «скрутить и изолировать».
+  const off = unassignPin(SCREENED, S, "a1", S.wires[0].idx, 19);
+  expect(shieldUnit(off).at).toEqual({});
+  expect(opsOf(off, SCREENED).filter((op) => op.type === "prsTerm").map(terms)).toEqual([19, 19]);
+});
+
+it("autofill steps around a shield already on a contact; the shield on a soldered connector gets its own heat-shrink", () => {
+  let S = pinToPin(SCREENED);
+  const u = shieldUnit(S);
+  S = assignPin(SCREENED, S, "a1", u.idx, u.unit, 1);
+  const filled = autoFillPinout(SCREENED, S, { a1: 20, b1: 19 });
+  const a1 = pinUnits(g(filled.state, SCREENED), filled.state);
+  expect(a1.find((x) => x.shield)!.at).toEqual({ a1: 1 });
+  expect(a1.filter((x) => !x.shield).map((x) => x.at.a1)).toEqual(Array.from({ length: 19 }, (_, i) => i + 2));
+  expect(filled.warnings).toEqual([]);
+  // Пайка на А: ТУТ на 19 жил и экран — 20.
+  const solder = { ...filled.state, endpoints: filled.state.endpoints.map((e) => (e.id === "a1" ? { ...e, method: "solder" as const, methodAuto: false, tutLen: "10" } : e)) };
+  expect(g(solder, SCREENED).getActiveOps().filter((op) => op.type === "cutTut").reduce((s, op) => s + (op.tutCount || 0), 0)).toBe(20);
+});
+
+it("«Построить чертёж»: a shield on contacts at both ends is a wire «Экран …» inside the same jacketed cable", () => {
+  const S = { ...shieldOn("a1", "b1"), drawingLength: 300, sharedLengthText: "300" };
+  const plan = planFromGenerator(SCREENED, S);
+  expect(plan.wires).toHaveLength(20);
+  expect(plan.wires[19]).toMatchObject({ mark: "Экран Helukabel 15201", shield: true, section: "", color: "#B0A089", from: { pin: 20 }, to: { pin: 20 } });
+  expect(plan.cables[0].wireKeys).toHaveLength(20);
+  const free: ConnectorSource = { kind: "free", contactCount: null, libraryCode: null };
+  const { document } = buildHarnessDocument(plan, Object.fromEntries(plan.connectors.map((c) => [c.key, free])));
+  expect(document.cables[0].memberWireIds).toHaveLength(20);
+  expect(document.connectors[0].contacts.find((c) => c.number === 20)).toMatchObject({ wire: "Экран Helukabel 15201" });
 });

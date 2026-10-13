@@ -17,8 +17,11 @@
  *  • buildGeneratorDrawing — всё вместе для кнопки.
  */
 import { wireColorKnown, type ConnectorHousing } from "./connectorArt";
-import { JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
-import { coreColor } from "./pinoutCheck";
+import { endJoined, JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { spliceLabel, spliceOf } from "./tcGenSplices";
+import { coreColor, SHIELD_COLOR } from "./pinoutCheck";
+import { planTwist } from "./twistGroups";
+import { withTwistNotes } from "./twistDrawing";
 import { applyEditorCommand, createConnector, createWire, type EditorCommand } from "./harness/editor/commands";
 import {
   createConnectorInstanceFromComponentTemplate,
@@ -32,6 +35,8 @@ import {
   connectorContactPosition,
   connectorE4TableGeometry,
   createEmptyHarnessDesign,
+  createJunctionEndpoint,
+  wireEndpointE4Anchor,
   parseHarnessDesignDocument,
   templateTerminalChoices,
   type ConnectorInstance,
@@ -70,6 +75,10 @@ export interface PlanWire {
   readonly section: string;
   /** Цвет изоляции, #RRGGBB ("" — в наименовании цвета нет). */
   readonly color: string;
+  /** Цепь («GND», «CAN_H») из распиновки генератора; "" — не задана. */
+  readonly circuit: string;
+  /** Экран кабеля, заведённый на контакты (позиция после жил). */
+  readonly shield?: boolean;
   readonly lengthMm: number | null;
   readonly from: { readonly connector: string; readonly pin: number };
   readonly to: { readonly connector: string; readonly pin: number };
@@ -94,13 +103,38 @@ export interface PlanCovering {
   readonly coveringKind: CoveringKind;
 }
 
+/** Провод сростка: с контакта разъёма своей стороны в сросток (`side` — сторона контакта). */
+export interface PlanSpliceWire {
+  readonly key: string;
+  readonly mark: string;
+  readonly section: string;
+  readonly color: string;
+  readonly circuit: string;
+  readonly lengthMm: number | null;
+  readonly side: Side;
+  readonly end: { readonly connector: string; readonly pin: number };
+}
+
+/** Сросток формы (tcGenSplices.ts) — узел соединения чертежа: провода с контактов сходятся в нём. Хвосты (свободные
+ *  концы) чертёж не держит — они в замечаниях с длиной. */
+export interface PlanSplice {
+  readonly key: string;
+  readonly label: string;
+  readonly wires: readonly PlanSpliceWire[];
+  readonly tails: readonly string[];
+}
+
 export interface GeneratorDrawingPlan {
   readonly connectors: readonly PlanConnector[];
   readonly wires: readonly PlanWire[];
+  /** Сростки «Сложной сборки»; нет — пусто. */
+  readonly splices?: readonly PlanSplice[];
   /** Кабели в оболочке (на форме — кабель с числом жил больше одной). */
   readonly cables: readonly PlanCable[];
   /** Свитые пары — ключи проводов. */
   readonly pairs: readonly (readonly [string, string])[];
+  /** Свитые группы из трёх проводов и больше — ключи проводов (в редакторе пара только из двух: группа — надписью). */
+  readonly twistGroups?: readonly (readonly string[])[];
   readonly twistPitchMm: number | null;
   readonly coverings: readonly PlanCovering[];
   readonly warnings: readonly string[];
@@ -151,56 +185,79 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
   const active = gen.activeWires_();
   const wires: PlanWire[] = [];
   const cables: PlanCable[] = [];
+  // Сростки: провод, у которого один конец на контакте разъёма, а другой в сростке, — провод узла; хвост — в замечания.
+  const splices = new Map<string, { wires: PlanSpliceWire[]; tails: string[] }>();
+  const spliced = new Map<number, number>();
+  (S.splices || []).forEach((sp) => splices.set(sp.id, { wires: [], tails: [] }));
+  active.forEach((w) => {
+    const mark = compText(w.compId);
+    const length = positive(S.advancedLength ? w.length : S.drawingLength);
+    const colors = gen.coreColors_(w);
+    for (let k = 0; k < gen.unitCount_(w); k++) {
+      const pinsOn = (side: Side) => gen.endpointsOnSide_(side).filter((ep) => gen.routedWireIdxs_(ep).includes(w.idx))
+        .flatMap((ep) => { const p = gen.corePinsOf_(ep, w.idx)[k]; return p != null ? [{ connector: ep.id, pin: p }] : []; });
+      const sides = (["A", "B"] as Side[]).map((side) => ({ side, pins: pinsOn(side), sp: spliceOf(S, { idx: w.idx, unit: k, side }) }));
+      const [a, b] = sides;
+      const join = sides.filter((x) => x.sp);
+      if (!join.length) continue;
+      spliced.set(w.idx, (spliced.get(w.idx) || 0) + 1);
+      const name = `${mark || "провод"}${length ? ` ${length} мм` : ""}`;
+      if (join.length === 2) { warnings.push(`${name}: провод между сростками ${spliceLabel(S, a.sp!.id)} и ${spliceLabel(S, b.sp!.id)} — на чертеже не показан.`); continue; }
+      const at = join[0], other = at === a ? b : a;
+      const bucket = splices.get(at.sp!.id)!;
+      if (other.pins.length) {
+        other.pins.forEach((pin, j) => bucket.wires.push({ key: `${w.idx}.${k}${j ? `.${j}` : ""}`, mark, section: wireSectionOf(mark),
+          color: hex6(coreColor(colors[k])?.hex) || wireColorHex(mark), circuit: (w.nets?.[k] || "").trim(), lengthMm: length, side: other.side, end: pin }));
+      } else bucket.tails.push(endJoined(S, w.idx, k, other.side) === "tail" ? `хвост ${name}` : `${name} (второй конец не задан)`);
+    }
+  });
   active.forEach((w, group) => {
     const mark = compText(w.compId);
     const routed = ordered.filter((ep) => gen.routedWireIdxs_(ep).includes(w.idx));
     const ends = routed.map((ep) => ({ ep, cores: gen.corePinsOf_(ep, w.idx) })).filter((x) => x.cores.some((p) => p != null));
     const qty = gen.unitCount_(w);
     if (ends.length < 2) {
-      if (routed.length >= 2) warnings.push(`${mark || "Провод"}: распиновка не задана — на чертёж не попал.`);
+      if (routed.length >= 2 && !spliced.has(w.idx)) warnings.push(`${mark || "Провод"}: распиновка не задана — на чертёж не попал.`);
       return;
     }
     const length = positive(S.advancedLength ? w.length : S.drawingLength);
     const colors = gen.coreColors_(w);
     const mine: PlanWire[] = [];
     let drawn = 0;
-    for (let k = 0; k < qty; k++) {
+    // Жилы, затем экраны (экран на контактах двух разъёмов — провод чертежа «Экран …» внутри того же кабеля).
+    for (let k = 0; k < qty + gen.shieldCount_(w); k++) {
       const at = ends.filter((x) => x.cores[k] != null);
       if (at.length < 2) continue;
-      drawn++;
-      const color = hex6(coreColor(colors[k])?.hex) || wireColorHex(mark);
+      const shield = k >= qty;
+      if (!shield) drawn++;
+      const color = shield ? SHIELD_HEX : hex6(coreColor(colors[k])?.hex) || wireColorHex(mark);
+      const circuit = (w.nets?.[k] || "").trim();
       at.slice(1).forEach((x, j) => mine.push({
-        key: j ? `${w.idx}.${k}.${j}` : `${w.idx}.${k}`, group, unit: k, mark, section: wireSectionOf(mark), color,
-        lengthMm: length, from: { connector: at[0].ep.id, pin: at[0].cores[k]! }, to: { connector: x.ep.id, pin: x.cores[k]! },
+        key: j ? `${w.idx}.${k}.${j}` : `${w.idx}.${k}`, group, unit: k, mark: shield ? `Экран ${mark}`.trim() : mark, section: shield ? "" : wireSectionOf(mark), color,
+        circuit, lengthMm: length, from: { connector: at[0].ep.id, pin: at[0].cores[k]! }, to: { connector: x.ep.id, pin: x.cores[k]! },
+        ...(shield ? { shield: true } : {}),
       }));
     }
     wires.push(...mine);
-    if (drawn < qty) warnings.push(`${mark || "Провод"}: на чертеже ${drawn} из ${qty} — у остальных нет контактов.`);
+    if (drawn + (spliced.get(w.idx) || 0) < qty) warnings.push(`${mark || "Провод"}: на чертеже ${drawn} из ${qty} — у остальных нет контактов.`);
     const per = gen.wireCores_(w);
     if (per > 1) {
       const strip = positive(w.jacket || JACKET_STRIP_MM_);
+      const cableOf = (unit: number) => (unit >= qty ? unit - qty : Math.floor(unit / per));
       for (let c = 0; c * per < qty; c++) {
-        const keys = mine.filter((x) => Math.floor(x.unit / per) === c).map((x) => x.key);
+        const keys = mine.filter((x) => cableOf(x.unit) === c).map((x) => x.key);
         if (keys.length) cables.push({ key: `${w.idx}#${c}`, mark, wireKeys: keys, lengthMm: length, stripMm: strip });
       }
     }
   });
   if (wires.some((wire) => wire.lengthMm === null)) warnings.push("Длина по чертежу не задана — провода без длины.");
 
-  const pairs: Array<[string, string]> = [];
-  if (S.twist.enabled) {
-    const unitsOf = (group: number) => wires.filter((wire) => wire.group === group);
-    if (S.twist.mode === "pairs") {
-      gen.getTwistPairs().forEach(([a, b]) => {
-        const left = unitsOf(a), right = unitsOf(b);
-        for (let i = 0; i < Math.min(left.length, right.length); i++) pairs.push([left[i].key, right[i].key]);
-      });
-    } else {
-      const units = gen.twistWireIndices_().flatMap(unitsOf);
-      if (units.length === 2) pairs.push([units[0].key, units[1].key]);
-      else if (units.length > 2) warnings.push(`Свивка всех проводов вместе (${units.length}) — на чертеже пары только по два провода, свивка не показана.`);
-    }
-  }
+  // Свивка (twistGroups.ts): группа из двух — свитая пара, из трёх и больше — группа.
+  const twist = S.twist.enabled
+    ? planTwist(S.twist.mode, S.twist.mode === "pairs" ? gen.getTwistPairs() : [gen.twistWireIndices_()],
+      (group) => wires.filter((wire) => wire.group === group).map((wire) => wire.key))
+    : { pairs: [], groups: [] };
+  const pairs = twist.pairs;
 
   const coverings: PlanCovering[] = [];
   connectors.forEach((c) => {
@@ -227,7 +284,13 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
       coverings.push({ kind: "wrap", name: comp.art || comp.name, lengthMm: positive(slot.len), coveringKind: slot.kind === "braid" ? "braid" : "tape" });
     });
   }
-  return { connectors, wires, cables, pairs, twistPitchMm: positive(S.twist.pitch), coverings, warnings };
+  const planSplices: PlanSplice[] = (S.splices || []).flatMap((sp) => {
+    const got = splices.get(sp.id)!;
+    const label = spliceLabel(S, sp.id);
+    if (got.tails.length) warnings.push(`Сросток ${label}: ${got.tails.join(", ")} — свободный конец на чертеже не показан, дорисуйте его в редакторе.`);
+    return got.wires.length ? [{ key: sp.id, label, wires: got.wires, tails: got.tails }] : [];
+  });
+  return { connectors, wires, cables, pairs, ...(twist.groups.length ? { twistGroups: twist.groups } : {}), twistPitchMm: positive(S.twist.pitch), coverings, warnings, ...(planSplices.length ? { splices: planSplices } : {}) };
 }
 
 // ── Разъём по артикулу: библиотека компонентов или свободный корпус ─────────────────────────────────────────────────
@@ -303,12 +366,16 @@ const freeHeight = (contacts: number) => Math.max(72, 44 + contacts * 16);
 const E4_GAP_X = 240, E4_GAP_Y = 48;
 /** Раскладка чертежа: от выхода А до выхода В ~ 520, узел ветвления посередине, разъёмы В разнесены по вертикали. */
 const DRAWING_B_X = 700, DRAWING_GAP_Y = 90, EXIT = 60, DRAWING_TOP = 40;
+/** Отрезок провода от контакта до общего узла разъёма — под ТУТ на пайку. */
+const TUT_STUB = 60;
 const COVER_COLOR: Record<CoveringKind, string> = {
   "heat-shrink": "#424c53", nylon: "#b19c77", braid: "#b19c77", "metal-braid": "#73838d", tape: "#b19c77", band: "#b19c77",
 };
 const DIRECTION_ANGLE = { right: 0, down: 90, left: 180, up: 270 } as const;
 /** Оболочка многожильного кабеля на участке чертежа. */
 const CABLE_JACKET = "#3b4652";
+/** Экран (дренаж) на чертеже — лужёная медь, как на схеме распиновки. */
+const SHIELD_HEX = hex6(SHIELD_COLOR);
 
 function run(document: HarnessDesignDocument, command: EditorCommand): HarnessDesignDocument {
   return applyEditorCommand(document, command);
@@ -318,10 +385,14 @@ function run(document: HarnessDesignDocument, command: EditorCommand): HarnessDe
  *  ошибку, если результат не прошёл разбор редактора. */
 export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readonly<Record<string, ConnectorSource>>): GeneratorDrawing {
   const warnings: string[] = [...plan.warnings];
-  if (!plan.wires.length) throw new Error("Нет соединений по распиновке — задайте контакты проводов на разъёмах.");
-  const used = plan.connectors.filter((c) => plan.wires.some((w) => w.from.connector === c.key || w.to.connector === c.key));
+  const spliceWires = (plan.splices || []).flatMap((sp) => sp.wires);
+  if (!plan.wires.length && !spliceWires.length) throw new Error("Нет соединений по распиновке — задайте контакты проводов на разъёмах.");
+  /** Концы проводов на контактах: провода с контакта на контакт и провода сростков. */
+  const contactEnds = [...plan.wires.flatMap((w) => [w.from, w.to].map((end) => ({ end, wire: w as Pick<PlanWire, "mark" | "section" | "color" | "circuit"> }))),
+    ...spliceWires.map((w) => ({ end: w.end, wire: w }))];
+  const used = plan.connectors.filter((c) => contactEnds.some((x) => x.end.connector === c.key));
   const ids = new Map(used.map((c, i) => [c.key, `gen-x${i + 1}`]));
-  const maxPin = (key: string) => Math.max(0, ...plan.wires.flatMap((w) => [w.from, w.to].filter((end) => end.connector === key).map((end) => end.pin)));
+  const maxPin = (key: string) => Math.max(0, ...contactEnds.filter((x) => x.end.connector === key).map((x) => x.end.pin));
   const label = (c: PlanConnector) => `${c.designation}${c.article ? ` (${c.article})` : ""}`;
 
   // 1. Разъёмы: шаблон библиотеки или свободный корпус; сторона В — таблица контактами влево (к стороне А).
@@ -337,7 +408,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
           id, designation: c.designation, articleVariantId: source.articleVariantId, e4Position: { x: 0, y: 0 }, drawingPosition: { x: 0, y: 0 },
         });
         const numbers = new Set(connector.contacts.map((contact) => contact.number));
-        const missing = [...new Set(plan.wires.flatMap((w) => [w.from, w.to]).filter((end) => end.connector === c.key && !numbers.has(end.pin)).map((end) => end.pin))];
+        const missing = [...new Set(contactEnds.map((x) => x.end).filter((end) => end.connector === c.key && !numbers.has(end.pin)).map((end) => end.pin))];
         if (missing.length) {
           warnings.push(`${label(c)}: в шаблоне библиотеки нет контактов ${missing.join(", ")} — разъём нарисован свободным корпусом.`);
           connector = null;
@@ -362,10 +433,10 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const connectorOf = (key: string) => doc.connectors.find((item) => item.id === ids.get(key))!;
   const contactOf = (key: string, pin: number) => connectorOf(key).contacts.find((contact) => contact.number === pin)!;
 
-  // 2. Таблица контактов: марка, сечение, цвет, терминал — на обоих концах провода.
+  // 2. Таблица контактов: марка, сечение, цвет, терминал и цепь — на обоих концах провода.
   const terminalWarned = new Set<string>();
-  for (const wire of plan.wires) {
-    for (const end of [wire.from, wire.to]) {
+  for (const { end, wire } of contactEnds) {
+    {
       const c = used.find((item) => item.key === end.connector)!;
       const connector = connectorOf(end.connector);
       const contact = contactOf(end.connector, end.pin);
@@ -379,7 +450,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       }
       doc = run(doc, {
         type: "update-contact", connectorId: connector.id, contactId: contact.id, wire: wire.mark, wireSection: wire.section,
-        ...(wire.color ? { color: wire.color } : {}), ...(terminal ? { terminalArticle: terminal } : {}),
+        ...(wire.color ? { color: wire.color } : {}), ...(terminal ? { terminalArticle: terminal } : {}), ...(wire.circuit ? { circuit: wire.circuit } : {}),
       });
     }
   }
@@ -440,7 +511,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       const from = { connectorId: ids.get(wire.from.connector)!, contactId: contactOf(wire.from.connector, wire.from.pin).id };
       const to = { connectorId: ids.get(wire.to.connector)!, contactId: contactOf(wire.to.connector, wire.to.pin).id };
       try {
-        next = run(next, { type: "add-wire", wire: createWire(id, from, to, wire.lengthMm, "", wire.color || "#334155", 0, 0, 1, wire.color ? from : undefined) });
+        next = run(next, { type: "add-wire", wire: createWire(id, from, to, wire.lengthMm, wire.circuit, wire.color || "#334155", 0, 0, 1, wire.color ? from : undefined) });
         done.set(wire.key, id);
       } catch (reason) {
         failed.push(`${wire.mark || "Провод"} ${wire.from.pin}→${wire.to.pin}: не лёг на схему (${reason instanceof Error ? reason.message : "ошибка"}).`);
@@ -456,6 +527,41 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   doc = wired.next;
   const wireIds = wired.done;
   warnings.push(...wired.failed);
+
+  // 4а. Сростки — узлы соединения схемы: провода с контактов сходятся в узле. Узел редактора держится не меньше чем на двух
+  //     проводах, а у контакта один вывод: первый провод сростка кладётся с контакта на контакт второго, узел — на его
+  //     середину вместе с проводом третьего контакта, затем первый провод переводится концом в узел, и в узел заводятся
+  //     второй и остальные. Сросток только из двух проводов узлом не нарисовать — контакты соединены одним проводом.
+  (plan.splices || []).forEach((sp, index) => {
+    const tag = `gen-sp${index + 1}`;
+    const contact = (w: PlanSpliceWire) => ({ connectorId: ids.get(w.end.connector)!, contactId: contactOf(w.end.connector, w.end.pin).id });
+    const node = createJunctionEndpoint(tag);
+    const wireOf = (w: PlanSpliceWire, id: string) => createWire(id, w.side === "A" ? contact(w) : node, w.side === "A" ? node : contact(w), w.lengthMm, w.circuit,
+      w.color || "#334155", 0, 0, 1, w.color ? contact(w) : undefined);
+    const [m0, m1, m2, ...rest] = [...sp.wires].sort((a, b) => (a.side === b.side ? 0 : a.side === "A" ? -1 : 1));
+    try {
+      if (!m1) { warnings.push(`Сросток ${sp.label}: на контактах один провод — на чертеже не показан.`); return; }
+      if (!m2) {
+        doc = run(doc, { type: "add-wire", wire: createWire(`${tag}-w1`, contact(m0), contact(m1), null, m0.circuit || m1.circuit, m0.color || "#334155") });
+        warnings.push(`Сросток ${sp.label}: два провода — на схеме контакты соединены напрямую, гильзу и длины отрезков проставьте в редакторе.`);
+        return;
+      }
+      const first = `${tag}-w1`;
+      let next = run(doc, { type: "add-wire", wire: createWire(first, contact(m0), contact(m1), m0.lengthMm, m0.circuit, m0.color || "#334155", 0, 0, 1, m0.color ? contact(m0) : undefined) });
+      const line = next.wires.find((w) => w.id === first)!;
+      const pts = [wireEndpointE4Anchor(next, line.from)!.position, ...line.e4Route, wireEndpointE4Anchor(next, line.to)!.position];
+      let best = 0;
+      pts.slice(1).forEach((p, i) => { if (Math.hypot(p.x - pts[i].x, p.y - pts[i].y) > Math.hypot(pts[best + 1].x - pts[best].x, pts[best + 1].y - pts[best].y)) best = i; });
+      const position = { x: (pts[best].x + pts[best + 1].x) / 2, y: (pts[best].y + pts[best + 1].y) / 2 };
+      next = run(next, { type: "create-junction", junction: { id: tag, position, wireIds: [first, `${tag}-w3`] }, branchWire: wireOf(m2, `${tag}-w3`) });
+      next = run(next, { type: "reconnect-wire", wireId: first, end: "to", endpoint: node });
+      next = run(next, { type: "add-wire", wire: wireOf(m1, `${tag}-w2`) });
+      rest.forEach((w, j) => { next = run(next, { type: "add-wire", wire: wireOf(w, `${tag}-w${j + 4}`) }); });
+      doc = next;
+    } catch (reason) {
+      warnings.push(`Сросток ${sp.label}: узел на схему не лёг (${reason instanceof Error ? reason.message : "ошибка"}) — дорисуйте его в редакторе.`);
+    }
+  });
 
   // 4б. Кабели в оболочке: жилы — провода чертежа, собранные в кабель (длина реза и снятие оболочки — у кабеля).
   const cableMembers = new Map<string, string[]>();
@@ -487,25 +593,47 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   });
 
   // 6. Физическая трасса: выход у каждого разъёма, узел ветвления, ствол А → узел и ветка на каждый разъём В.
+  //    Разъём с ТУТ на пайку: у каждого контакта с проводом свой выход и свой короткий отрезок до общего узла разъёма —
+  //    на нём трубка этого провода (ТУТ надевают на каждый провод, а не одной трубкой на весь пучок).
   const nodes: PhysicalNode[] = [];
   const nodeOf = new Map<string, string>();
+  const segments: PhysicalSegment[] = [];
+  const routed = (from: string, to: string): PhysicalSegment => ({ id: `gen-s${segments.length + 1}`, from, to, path: { kind: "routed", points: [] } });
+  /** Отрезки «провод у контакта» разъёмов с ТУТ: ключ разъёма плана → участок и номер контакта. */
+  const stubs = new Map<string, Array<{ segmentId: string; pin: number }>>();
   used.forEach((c, index) => {
     const connector = connectorOf(c.key);
     const id = `gen-n${index + 1}`;
-    const touched = connector.contacts.filter((contact) => doc.wires.some((wire) => [wire.from, wire.to].some((end) => end.contactId === contact.id)));
+    const wiresAt = (contactId: string) => doc.wires.filter((wire) => [wire.from, wire.to].some((end) => end.connectorId === connector.id && end.contactId === contactId));
+    const touched = connector.contacts.filter((contact) => wiresAt(contact.id).length > 0);
     const points = touched.flatMap((contact) => { const p = connectorContactPosition(connector, contact.id, "drawing"); return p ? [p] : []; });
     const centre = points.length ? points.reduce((sum, p) => sum + p.y, 0) / points.length : connector.positions.drawing.y + extent(c).height / 2;
     const free = connector.libraryBinding?.mode !== "template";
     const x = c.side === "A"
       ? (free ? connector.positions.drawing.x + FREE_WIDTH : Math.max(...points.map((p) => p.x))) + EXIT
       : (free ? connector.positions.drawing.x : Math.min(...points.map((p) => p.x))) - EXIT;
-    const draft: PhysicalNode = { id, connectorId: connector.id, position: { x: 0, y: 0 } };
-    const world: Point = { x, y: centre };
-    nodes.push({ ...draft, position: physicalNodeLocalPoint(doc, draft, world), ...(free ? { direction: c.side === "A" ? "right" as const : "left" as const } : {}) });
+    const exit = (nodeId: string, world: Point, wireIds?: string[]): PhysicalNode => {
+      const draft: PhysicalNode = { id: nodeId, connectorId: connector.id, position: { x: 0, y: 0 }, ...(wireIds ? { wireIds } : {}) };
+      return { ...draft, position: physicalNodeLocalPoint(doc, draft, world), ...(free ? { direction: c.side === "A" ? "right" as const : "left" as const } : {}) };
+    };
     nodeOf.set(c.key, id);
+    if (c.tutLengthMm === undefined || !touched.length) {
+      nodes.push(exit(id, { x, y: centre }));
+      return;
+    }
+    nodes.push({ id, position: { x: Math.round(x + (c.side === "A" ? TUT_STUB : -TUT_STUB)), y: Math.round(centre) } });
+    const own: Array<{ segmentId: string; pin: number }> = [];
+    touched.forEach((contact, j) => {
+      const nodeId = `${id}-${j + 1}`;
+      const y = connectorContactPosition(connector, contact.id, "drawing")?.y ?? centre;
+      nodes.push(exit(nodeId, { x, y }, wiresAt(contact.id).map((wire) => wire.id)));
+      const segment = routed(nodeId, id);
+      segments.push(segment);
+      own.push({ segmentId: segment.id, pin: contact.number });
+    });
+    stubs.set(c.key, own);
   });
-  const segments: PhysicalSegment[] = [];
-  const routed = (from: string, to: string): PhysicalSegment => ({ id: `gen-s${segments.length + 1}`, from, to, path: { kind: "routed", points: [] } });
+  const stubIds = new Set([...stubs.values()].flat().map((stub) => stub.segmentId));
   const aSide = sideOf("A"), bSide = sideOf("B");
   if (aSide.length === 1 && bSide.length === 1) {
     segments.push(routed(nodeOf.get(aSide[0].key)!, nodeOf.get(bSide[0].key)!));
@@ -520,6 +648,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     aSide.forEach((c) => segments.push(routed(nodeOf.get(c.key)!, junction.id)));
     bSide.forEach((c) => segments.push(routed(junction.id, nodeOf.get(c.key)!)));
   }
+  /** Ствол и ветки — без отрезков провода у контакта. */
+  const main = segments.filter((segment) => !stubIds.has(segment.id));
   let topology: PhysicalTopology = { snap: true, nodes, segments, routes: [] };
   topology = routePhysicalWires({ ...doc, physicalTopology: topology }, topology);
   // Участок, по которому идут все жилы кабеля и только они, — кабель в оболочке (ствол до разделки); ветки к разным
@@ -527,6 +657,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   if (cableMembers.size) {
     const through = (segmentId: string) => new Set(topology.routes.filter((route) => route.steps.some((step) => step.segmentId === segmentId)).map((route) => route.wireId));
     topology = { ...topology, segments: topology.segments.map((segment) => {
+      if (stubIds.has(segment.id)) return segment;
       const inside = through(segment.id);
       const cable = [...cableMembers].find(([, members]) => members.length === inside.size && members.every((id) => inside.has(id)));
       return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : segment;
@@ -536,47 +667,56 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const unrouted = doc.wires.filter((wire) => !topology.routes.some((route) => route.wireId === wire.id)).length;
   if (unrouted) warnings.push(`${unrouted} провод(а) без трассы на чертеже — проложите их в редакторе.`);
 
-  // 7. Оболочки: ТУТ на пайку и отрезки термоусадки — у своего конца, оплётка/лента — по всему жгуту.
+  // 7. Оболочки: ТУТ на пайку — трубка на каждый провод у своего контакта; отрезки термоусадки — у своего конца поверх
+  //    пучка; оплётка/лента — по всему жгуту.
   const coverings: PhysicalCovering[] = [];
   const endSpan = (key: string, share: number) => {
     const node = nodeOf.get(key);
-    const segment = segments.find((s) => s.from === node || s.to === node);
+    const segment = main.find((s) => s.from === node || s.to === node);
     if (!segment) return null;
     return segment.from === node ? { segmentId: segment.id, from: 0, to: share } : { segmentId: segment.id, from: 1 - share, to: 1 };
   };
   const stacked = new Map<string, number>();
   plan.coverings.forEach((covering) => {
-    const id = `gen-c${coverings.length + 1}`;
     const length = covering.lengthMm === null ? { lengthMode: "auto" as const, lengthMm: null } : { lengthMode: "manual" as const, lengthMm: covering.lengthMm };
-    const common = { id, name: covering.name, kind: covering.coveringKind, width: 0, color: COVER_COLOR[covering.coveringKind], ...length };
+    const common = () => ({ id: `gen-c${coverings.length + 1}`, name: covering.name, kind: covering.coveringKind, width: 0, color: COVER_COLOR[covering.coveringKind], ...length });
     if (covering.kind === "wrap") {
-      coverings.push({ ...common, spans: segments.map((s) => ({ segmentId: s.id, from: 0, to: 1 })) });
+      coverings.push({ ...common(), spans: main.map((s) => ({ segmentId: s.id, from: 0, to: 1 })) });
       return;
     }
     if (!covering.at || !ids.has(covering.at)) return;
+    const own = covering.kind === "tut" ? stubs.get(covering.at) : undefined;
+    if (own) {
+      own.forEach((stub) => coverings.push({ ...common(), name: `${covering.name} · конт. ${stub.pin}`, spans: [{ segmentId: stub.segmentId, from: 0.1, to: 0.9 }] }));
+      return;
+    }
     const layer = stacked.get(covering.at) ?? 0;
     stacked.set(covering.at, layer + 1);
     const span = endSpan(covering.at, Math.min(0.45, 0.14 + layer * 0.06));
-    if (span) coverings.push({ ...common, spans: [span] });
+    if (span) coverings.push({ ...common(), spans: [span] });
   });
   if (coverings.length) doc = run(doc, { type: "set-physical-topology", topology: { ...doc.physicalTopology!, coverings } });
 
   // 8. Размер: один участок А → В и одна длина у всех проводов — размер на участке (длины проводов идут от него).
   const lengths = [...new Set(doc.wires.map((wire) => wire.lengthMm))];
-  if (segments.length === 1 && lengths.length === 1 && lengths[0] !== null) {
-    const segment = doc.physicalTopology!.segments[0];
+  const trunk = main.length === 1 ? doc.physicalTopology!.segments.find((segment) => segment.id === main[0].id) : undefined;
+  if (trunk && lengths.length === 1 && lengths[0] !== null) {
     const dimension: DrawingDimension = {
-      id: "gen-d1", segmentId: segment.id, from: 0, to: segment.path.points.length + 1, pointCount: segment.path.points.length + 2,
-      routeKey: segmentDimensionKey(doc, segment.id), mode: "aligned", modeOverride: false, offset: 40, lengthMm: lengths[0],
+      id: "gen-d1", segmentId: trunk.id, from: 0, to: trunk.path.points.length + 1, pointCount: trunk.path.points.length + 2,
+      routeKey: segmentDimensionKey(doc, trunk.id), mode: "aligned", modeOverride: false, offset: 40, lengthMm: lengths[0],
     };
     doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [], showDimensions: true, dimensions: [dimension] } });
   } else {
     // Пустые документы чертежа: без них редактор рисует «старые» размеры каждого провода косыми линиями через поле.
     doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [] } });
-    if (segments.length > 1 && lengths.some((length) => length !== null)) {
+    if (main.length > 1 && lengths.some((length) => length !== null)) {
       warnings.push("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
     }
   }
+
+  const twisted = withTwistNotes(doc, plan);
+  doc = twisted.document;
+  warnings.push(...twisted.warnings);
 
   const document = JSON.parse(JSON.stringify(doc)) as HarnessDesignDocument;
   parseHarnessDesignDocument(document);

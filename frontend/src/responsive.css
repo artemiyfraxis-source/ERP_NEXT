@@ -178,3 +178,61 @@
   html .harness-root .he-canvas-status, html .harness-root .he-zoom-select { font-size: 11px; }
   html .harness-root .he-settings-help { font-size: 11px; }
 }
+
+/* ── Телефон: «Состав» проекта и строки заявки карточками, подписи полей партии склада, подсказка по нажатию ── */
+@media (max-width: 720px) {
+  /* «Состав»: сборка — карточка; КБ и наименование сверху, остальное «подпись: значение». */
+  .kit-sostav { width: auto; max-width: none; }
+  .kit-sostav > table.grid { display: block; width: 100%; min-width: 0; }
+  .kit-sostav > table.grid > thead { display: none; }
+  .kit-sostav > table.grid > tbody { display: grid; gap: 8px; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) {
+    display: grid; grid-template-columns: minmax(0, 1fr); padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: auto; min-width: 0; max-width: none;
+    padding: 3px 0; border: 0; background: none; font-size: 14px; text-align: right; white-space: normal; overflow-wrap: anywhere;
+  }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td::before {
+    content: attr(data-label); flex: 0 1 auto; max-width: 45%; color: var(--muted-foreground); font-size: 12px; text-align: left;
+  }
+  .table-wrap.kit-sostav > table.grid > tbody > tr:nth-child(n):not(.group-row):not(.detail) > td { background: none; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td:first-child { display: block; font-size: 15px; text-align: left; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td:first-child::before { content: none; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td.wrap { min-width: 0; max-width: none; }
+  .kit-sostav td.num { text-align: right; }
+  .kit-sostav select { min-height: 40px; }
+
+  /* Строки заявки: позиция — карточка, у каждого поля своя подпись над полем; страница не шире экрана. */
+  .rg-common-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rg-common-grid .rg-point { grid-column: 1 / -1; }
+  .rg-common input, .rg-common select, .rg-bulk input, .rg-bulk select { min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .rg-scroll { max-height: none; overflow: visible; border: 0; background: none; }
+  .rg-table { display: block; min-width: 0; width: 100%; }
+  .rg-table > thead { display: none; }
+  .rg-table > tbody { display: grid; gap: 8px; }
+  .rg-table > tbody > tr:nth-child(n) {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  }
+  .rg-table > tbody > tr.rg-row-bad { border-color: #b91c1c; }
+  .rg-table > tbody > tr:nth-child(n) > td { display: block; width: auto; min-width: 0; border: 0; white-space: normal; }
+  .rg-table > tbody > tr > td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted-foreground); font-size: 12px; }
+  .rg-table > tbody > tr > td.rg-no { grid-column: 1 / -1; padding: 0 !important; text-align: left; font-weight: 600; }
+  .rg-table > tbody > tr > td.rg-no .rg-own { display: inline; margin-left: 8px; }
+  .rg-table > tbody > tr > td.rg-col-name, .rg-table > tbody > tr > td.rg-col-comment, .rg-table > tbody > tr > td.rg-col-link { grid-column: 1 / -1; }
+  .rg-table td input, .rg-table td select { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+  .rg-table > tbody > tr > td.rg-act { grid-column: 1 / -1; padding: 0 !important; text-align: left; }
+  .rg-table tbody .rg-act .rg-link { opacity: 1; }
+
+  /* Склад: подпись поля перед значением, как в остальных карточках. */
+  .stock-page .stock-table > tbody > tr > td[data-label]:not([data-label=""])::before { content: attr(data-label) ": "; color: var(--muted-foreground); font-size: 12px; }
+  .stock-page .stock-table > tbody > tr > td.stock-name[data-label]::before { content: none; }
+}
+
+/* Подсказка по нажатию (tapHint.ts): всплывающая строка рядом с элементом, не перехватывает нажатия. */
+.tap-hint {
+  position: fixed; z-index: 1000; max-width: calc(100vw - 16px); padding: 6px 10px; border-radius: 6px;
+  background: var(--foreground); color: var(--card); font-size: 13px; line-height: 1.35; pointer-events: none; overflow-wrap: anywhere;
+}

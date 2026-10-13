@@ -30,11 +30,13 @@ def test_the_generated_drawing_passes_the_server_validator():
 
 def test_the_sample_is_a_y_harness_with_every_wire_routed():
     topology = SAMPLE["physicalTopology"]
+    # У паяного XS1 каждый контакт выходит своим отрезком — ТУТ на пайку надевается на каждый провод.
     assert [(s["from"], s["to"]) for s in topology["segments"]] == [
+        *[(f"gen-n1-{pin}", "gen-n1") for pin in range(1, 5)],
         ("gen-n1", "gen-j1"), ("gen-j1", "gen-n2"), ("gen-j1", "gen-n3"),
     ]
     assert {route["wireId"] for route in topology["routes"]} == {wire["id"] for wire in SAMPLE["wires"]}
-    assert [c["name"] for c in topology["coverings"]] == ["ТУТ на пайку XS1"]
+    assert [c["name"] for c in topology["coverings"]] == [f"ТУТ на пайку XS1 · конт. {pin}" for pin in range(1, 5)]
 
 
 def test_build_saves_the_drawing_and_update_keeps_the_previous_version_in_history(harness_api):  # noqa: F811

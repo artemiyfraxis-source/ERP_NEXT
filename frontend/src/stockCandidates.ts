@@ -21,6 +21,9 @@ export const CANDIDATE_LEGEND: Array<{ tone: CandidateTone; text: string }> = [
   { tone: "done", text: "уже набрано" },
 ];
 
+/** What the lot matched by (owner, 13.10.2026: the position's name against the warehouse article first, the КД article
+    only when the name finds nothing). */
 export function matchText(candidate: FulfillmentCandidate) {
+  if (candidate.by === "name") return candidate.kind === "exact" ? "по наименованию" : "похоже по наименованию";
   return candidate.kind === "exact" ? "тот же артикул" : "похожий артикул";
 }

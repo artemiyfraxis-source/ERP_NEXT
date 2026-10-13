@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import { resetPinoutHousings } from "./PinoutDiagram";
@@ -54,4 +54,26 @@ it("a 19-core cable from БД.ПРОВ: 19 terminals per connector, the cable li
   await waitFor(() => expect(within(palette).getAllByRole("button", { name: /Цвет жилы/ })).toHaveLength(19));
   expect(within(palette).getByRole("button", { name: "Цвет жилы 1.2" })).toHaveAttribute("title", "коричневый");
   expect(screen.getAllByText(/Скрутка и изоляция экрана/).length).toBeGreaterThan(0);
+});
+
+it("the shield goes on a contact like a core: the card says which contact, a 20th terminal, the net name from the hand panel", async () => {
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kit} />);
+  expect(await screen.findByLabelText("Жил в кабеле 1")).toHaveValue(19);
+  const palette = screen.getByRole("group", { name: "Провода" });
+  // Экран — в палитре после жил, без выбора цвета; пока не на контакте — «скрутить и изолировать».
+  const chip = await within(palette).findByRole("button", { name: /^1\.Э\s*экран Helukabel 15201/ });
+  expect(chip).toHaveTextContent("скрутить и изолировать");
+  expect(within(palette).getAllByRole("button", { name: /Цвет жилы/ })).toHaveLength(19);
+  fireEvent.change(screen.getByLabelText("Контакты А1: Helukabel 15201"), { target: { value: "1-20" } });
+  fireEvent.change(screen.getByLabelText("Контакты В1: Helukabel 15201"), { target: { value: "1-20" } });
+  const a1 = screen.getByLabelText("Кабель Helukabel 15201 на А1");
+  expect(a1).toHaveTextContent("экран — на контакт 20");
+  expect(a1).not.toHaveTextContent("скрутить и изолировать");
+  expect(screen.getAllByText(/^20 шт/)).toHaveLength(2);
+  expect(screen.getAllByText(/Скрутка экрана в вывод на контакт А1·20/).length).toBeGreaterThan(0);
+  expect(screen.getByRole("list", { name: "Соединения" }).querySelector('[data-wire="1.Э"]')).toHaveAttribute("data-from", "А1·20");
+  // Цепь — в строке провода «в руке»; на чипе видна.
+  fireEvent.click(within(palette).getByRole("button", { name: /^1\.Э\s*экран/ }));
+  fireEvent.change(screen.getByLabelText("Цепь 1.Э"), { target: { value: "SHIELD" } });
+  expect(within(palette).getByRole("button", { name: /^1\.Э\s*экран/ })).toHaveTextContent("цепь SHIELD");
 });

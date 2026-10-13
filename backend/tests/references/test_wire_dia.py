@@ -112,8 +112,8 @@ def real_base(sessions):  # noqa: F811
     монтажные structured (deploy), then `load_cables --hookups` with the real hookup-wires.json (T1)."""
     factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)  # noqa: E731
     load_mirror(MIRROR, factory(), dry_run=False, now=NOW)
-    for awg, section, diameter, strands in _migration_gauges():
-        save_gauge(SaveGaugeCommand(None, awg, section, diameter, strands, ACTOR, NOW), factory())
+    for awg, section, diameter, _strands in _migration_gauges():  # the strands column is gone (0114)
+        save_gauge(SaveGaugeCommand(None, awg, section, diameter, ACTOR, NOW), factory())
     structure_hookups(ACTOR, NOW, factory)
     report = import_hookups(factory(), json.loads(HOOKUPS.read_text(encoding="utf-8")), ACTOR, NOW)
     with factory() as uow:
