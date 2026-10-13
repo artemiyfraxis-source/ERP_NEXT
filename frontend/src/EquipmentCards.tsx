@@ -7,6 +7,7 @@ import {
   inventoryRange, invOf, nameOf, norm, operationField, operationsOfModel, pick, placeOf, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
+import "./equipmentPanel.css";
 import { headerLabel, valueLabel } from "./referenceLabels";
 
 /** БД.ОБ: the list is one row per model (owner 12.10.2026: «дубли одного и того же свернуть»), a row opens the machine
@@ -44,7 +45,7 @@ function FieldList({ items }: { items: Array<[string, string]> }) {
   }</dd></div>)}</dl>;
 }
 
-export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate, onChanged, onNotice, onError, focusId, toolbar }: {
+export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate, onChanged, onNotice, onError, focusId, toolbar, editor, onSelect }: {
   records: TechOperationRecord[];
   operations: TechOperationRecord[];
   canEdit: boolean;
@@ -56,6 +57,10 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   /** A record to open (from the «Аппликатор» link in БД.ТЕР). */
   focusId?: string;
   toolbar?: ReactNode;
+  /** The edit / create form: shown in the right-hand panel instead of the card, the list stays on the left. */
+  editor?: ReactNode;
+  /** A row was picked or the card closed: the page drops an open editor. */
+  onSelect?: () => void;
 }) {
   const [openId, setOpenId] = useState(() => focusId || new URLSearchParams(window.location.search).get("equipment") || "");
   const panelRef = useRef<HTMLElement>(null);
@@ -66,6 +71,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const select = (id: string) => {
     setOpenId(id);
     setOpQuery("");
+    onSelect?.();
     try {
       const url = new URL(window.location.href);
       if (id) url.searchParams.set("equipment", id); else url.searchParams.delete("equipment");
@@ -111,7 +117,11 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   }
 
   let panel: ReactNode = null;
-  if (open) {
+  if (editor) {
+    panel = <aside className="eq-panel" aria-label="Правка оборудования" ref={panelRef}>
+      <article className="panel eq-card eq-editor">{editor}</article>
+    </aside>;
+  } else if (open) {
     const field = operationField(open.type);
     const linked = opsOf(open);
     const linkedIds = new Set(linked.map((op) => op.id));
@@ -126,11 +136,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     const subtitle = [open.article, open.maker, open.type, place].filter(Boolean).join(" · ");
     const setOperation = (op: TechOperationRecord, column: string, value: string) =>
       referencesApi.editRecord(op.id, [{ field: column, old: op.fields[column] ?? "", value }]);
-    // The edit form sits above the list: bring it into view.
-    const edit = (record: TechOperationRecord) => {
-      onEdit(record);
-      try { document.querySelector(".workspace")?.scrollTo?.({ top: 0 }); } catch { /* no scrolling in tests */ }
-    };
+    const edit = onEdit;
 
     // Коды терминалов есть только у обжимного инструмента и матриц (owner 12.10.2026).
     const withCodes = open.type === CRIMP_TOOL_TYPE || open.type === MATRIX_TYPE;
@@ -203,7 +209,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   ];
   const presets = types.map(([name]) => ({ label: name, test: (model: EquipmentModel) => model.type === name }));
   const missing = codes?.missing ?? [];
-  return <div className={open ? "eq-split has-card" : "eq-split"}>
+  return <div className={open || editor ? "eq-split has-card" : "eq-split"}>
     <div className="eq-list">
       {missing.length > 0 && <details className="eq-missing">
         <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>

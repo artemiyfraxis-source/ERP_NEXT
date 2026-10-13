@@ -458,3 +458,38 @@ it("БД.ОБ: the machine card is a side panel — the list stays, another row 
   expect(await screen.findByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
   window.history.replaceState({}, "", "/");
 });
+
+it("БД.ОБ: a picked row opens the edit form in the right panel, the list stays, saving patches the record and returns to the card", async () => {
+  const patched: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010") },
+      { id: "b1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Для базы": "X/Блок питания" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    if (path === "/api/references/tech-operations/crimp-codes") return json({ missing: [] });
+    if (path === "/api/references/tech-operations/a1" && init?.method === "PATCH") {
+      patched.push(JSON.parse(String(init.body)));
+      return json({ id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: {} });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  window.history.replaceState({}, "", "/");
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByText("ОБ.010"));
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByRole("button", { name: /^Править/ }));
+  const panel = screen.getByRole("complementary", { name: "Правка оборудования" });
+  expect(within(panel).getByLabelText("Артикул")).toHaveValue("8620DX-Pro");
+  expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list stays on the left
+  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  fireEvent.change(within(panel).getByLabelText("Артикул"), { target: { value: "9999" } });
+  fireEvent.click(within(panel).getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  expect((patched[0].edits as Array<{ field: string; value: string }>).some((edit) => edit.field === "Артикул" && edit.value === "9999")).toBe(true);
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Правка оборудования" })).toBeNull());
+  expect(screen.getByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
+});
