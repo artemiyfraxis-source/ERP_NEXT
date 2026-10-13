@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { FulfillmentPage } from "./FulfillmentPage";
-import { candidateTone } from "./FulfillmentBulkLots";
+import { candidateTone, matchText } from "./FulfillmentBulkLots";
 import type { FulfillmentRequest, Principal } from "./api";
 import { capturePrintFrames } from "./testPrintFrames";
 
@@ -735,6 +735,18 @@ it("paints the row yellow for lookalikes only or too little exact, red when noth
   await openWithCandidates([]);
   expect(await screen.findByText("не найдено")).toBeInTheDocument();
   expect(positionRow()).toHaveClass("cand-none");
+});
+
+it("says what the lot matched by: the position's name first, the КД article as the fallback (owner, 13.10.2026)", async () => {
+  const lot = projectLots[0];
+  expect(matchText({ ...candidateOf(lot, "exact"), by: "name" })).toBe("по наименованию");
+  expect(matchText({ ...candidateOf(lot, "fuzzy"), by: "name" })).toBe("похоже по наименованию");
+  expect(matchText({ ...candidateOf(lot, "exact"), by: "article" })).toBe("тот же артикул");
+  expect(matchText(candidateOf(lot, "fuzzy"))).toBe("похожий артикул");
+
+  await openWithCandidates([{ ...candidateOf(lot, "exact"), match: "exact-name_article", by: "name" } as ReturnType<typeof candidateOf>]);
+  expect(await screen.findByText("по наименованию")).toBeInTheDocument();
+  expect(positionRow()).toHaveClass("cand-ok");
 });
 
 it("«Возможно есть» is for those who can pick: the viewer gets neither the column nor the request", async () => {
