@@ -84,6 +84,13 @@ describe("схема Э4 в задании", () => {
     expect(document.querySelector(".etk-wiremap")).toBeNull();
   });
 
+  it("в карточке задания чертёж читается маршрутом заданий, а не раздела «Проекты»", async () => {
+    const fetch = answer(200, { document: { id: "d" }, design: { objects: [] }, revision: 3 });
+    render(<EtkHarnessE4 project="614К.1" index="КБ1" model={model} taskId="t-1" />);
+    expect(await screen.findByTestId("e4-editor")).toHaveAttribute("data-view", "e4");
+    expect(fetch.mock.calls.map((call) => String(call[0]))).toEqual(["/api/production/my/tasks/t-1/harness"]);
+  });
+
   it("чертежа нет — плоская схема по ЭТК", async () => {
     answer(200, { document: null, design: null, revision: null });
     render(<EtkHarnessE4 project="614К.1" index="КБ1" model={model} />);

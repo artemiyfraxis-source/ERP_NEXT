@@ -3071,6 +3071,8 @@ export const productionApi = {
     api<{ items: OperationSketch[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches`),
   operationEtkSketchUrl: (taskId: string, operationId: string, operationKey: string, at = "") =>
     `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
+  /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
+  taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string, operatorId = "") =>
