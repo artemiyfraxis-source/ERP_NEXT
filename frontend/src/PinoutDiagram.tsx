@@ -70,7 +70,7 @@ export function PinoutEditor({ end, open, hint, onOpen, onPins, onConfirm }: {
     </div>
     {shown && <>
       <div className="ep-pins">{end.wires.map((w) => <label className="ep-pin" key={w.idx}>
-        <span>{w.name || "провод"}{w.cable ? ` · ${w.qty} ${plural(w.qty, "жила", "жилы", "жил")}` : w.qty > 1 ? ` ×${w.qty}` : ""}</span>
+        <span>{w.name || "провод"}{w.cable ? ` · ${w.qty} ${plural(w.qty, "жила", "жилы", "жил")}` : w.qty > 1 ? ` ×${w.qty}` : ""}{w.shields > 0 ? ` + экран${w.shieldPins.length ? ` (конт. ${w.shieldPins.join(", ")})` : ""}` : ""}</span>
         <input value={w.text} aria-label={`Контакты ${end.key}: ${w.name}`} placeholder={w.qty > 1 ? `1, 3 или 1-${w.qty}` : "конт."}
           className={w.pins.some((p) => end.dups.includes(p)) ? "is-bad" : undefined}
           onChange={(event) => onPins(w.idx, event.target.value.trim())} />
@@ -117,7 +117,7 @@ export function PinoutAsk({ ends, onCheck, onCreate, onCancel }: {
 const MIN_STEP = 28, MAX_STEP = 44, FACE_WIDTH = 420, ROUND_STEP = 40, PAD = 10;
 const NEUTRAL = "#8a94a6", OUTLINE = "#3b4652";
 
-const unitText = (u: PinUnit) => `${u.num} · ${u.name || "провод"}${u.colorName ? ` · ${u.colorName}` : ""}`;
+const unitText = (u: PinUnit) => `${u.num} · ${u.name || "провод"}${u.colorName ? ` · ${u.colorName}` : ""}${u.net?.trim() ? ` · цепь ${u.net.trim()}` : ""}`;
 
 /** Торец разъёма со стороны проводов — тот же рисунок, что в «База данных → Разъёмы»; гнёзда с координатами для щелчка. */
 function housingFace(hs: ConnectorHousing | null, byPin: Record<number, string>) {
@@ -326,7 +326,7 @@ function CoreColorPopover({ unit, onPick, onClose }: { unit: PinUnit; onPick: (c
 /** Палитра проводов, рука и схема: щелчок по проводу берёт его, щелчок по контакту ставит; щелчок по занятому
  *  контакту берёт его провод — следующий щелчок по контакту того же разъёма меняет их местами (свободный — перенос).
  *  Перетаскивание провода или занятого контакта делает то же. Esc или повторный щелчок — отпустить. */
-export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor }: {
+export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor, onCoreNet }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -348,6 +348,8 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
   onRemoveBranch?: (extra: number) => void;
   /** Цвет жилы с палитры: кабель, жила, название цвета (null — сбросить). */
   onCoreColor?: (idx: number, unit: number, color: string | null) => void;
+  /** Цепь жилы или экрана: кабель, жила, имя ("" — снять). */
+  onCoreNet?: (idx: number, unit: number, net: string) => void;
 }) {
   const [hand, setHand] = useState<PinHand | null>(null);
   const [fill, setFill] = useState<{ notes: string[]; warnings: string[] } | null>(null);
@@ -383,7 +385,8 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
         return;
       }
     }
-    if (!(epId in unit.at) && !dest?.multi) return; // провод не заведён в этот разъём
+    // Провод не заведён в этот разъём. Экран — на любой разъём, куда приходит его кабель.
+    if (!(epId in unit.at) && !dest?.multi && !(unit.shield && dest?.wires.some((w) => w.idx === unit.idx))) return;
     onAssign(epId, unit.idx, unit.unit, pin);
     // Провод ещё без контакта на другом разъёме — остаётся в руке: следующий щелчок — туда.
     const rest = Object.entries(unit.at).some(([id, p]) => id !== epId && p == null);
@@ -463,10 +466,11 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
             onClick={() => { if (!suppress.current) { setFill(null); setHand(held && !hand?.epId ? null : { key: u.key }); } }}
             onPointerDown={(event) => grab({ key: u.key }, event)}>
             <span className="pin-swatch is-spacer" aria-hidden="true" /><span className="pin-num">{u.num}</span><span className="pin-chip-name">{u.name || "провод"}{u.colorName ? ` · ${u.colorName}` : ""}</span>
-            <small>{[place_(u) || (free_.length ? "" : "без разъёма"), free_.length ? `не назначен: сторона ${free_.join(", ")}` : ""].filter(Boolean).join(" · ")}</small>
+            <small>{[place_(u) || (u.shield ? "скрутить и изолировать" : free_.length ? "" : "без разъёма"), free_.length && !u.shield ? `не назначен: сторона ${free_.join(", ")}` : "", u.net?.trim() ? `цепь ${u.net.trim()}` : ""].filter(Boolean).join(" · ")}</small>
           </button>
-          <button type="button" className="pin-color-dot" aria-label={`Цвет жилы ${u.num}`} aria-expanded={palette === u.key} title={u.colorName || "выбрать цвет жилы"}
-            onClick={() => setPalette(palette === u.key ? null : u.key)}><Swatch color={u.color} stripe={u.stripe} /></button>
+          {u.shield ? <span className="pin-color-dot is-static" aria-hidden="true"><Swatch color={u.color} /></span>
+            : <button type="button" className="pin-color-dot" aria-label={`Цвет жилы ${u.num}`} aria-expanded={palette === u.key} title={u.colorName || "выбрать цвет жилы"}
+              onClick={() => setPalette(palette === u.key ? null : u.key)}><Swatch color={u.color} stripe={u.stripe} /></button>}
           {palette === u.key && <CoreColorPopover unit={u} onClose={() => setPalette(null)} onPick={(color) => onCoreColor?.(u.idx, u.unit, color)} />}
           </span>;
         })}
@@ -477,11 +481,14 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
       <span className="pin-hand-what"><Swatch color={handUnit.color} stripe={handUnit.stripe} /><span className="pin-num">{handUnit.num}</span> {handUnit.name || "провод"}{handUnit.colorName ? ` · ${handUnit.colorName}` : ""}
         {hand?.epId && hand.pin != null && <span className="muted"> · {keyOf(hand.epId)}, конт. {hand.pin}</span>}</span>
       <span className="muted">{hand?.epId ? `другой контакт ${keyOf(hand.epId)} — поменять местами; другой разъём — добавить ответвление` : "щёлкните контакт"} · Esc — отпустить</span>
-      <label className="pin-hand-color">Провод
+      {!handUnit.shield && <label className="pin-hand-color">Провод
         <select aria-label="Провод на контакте" value={handUnit.compId} onChange={(event) => onRecolor(handUnit.idx, event.target.value)}>
           {!wireOptions.some((o) => o.id === handUnit.compId) && <option value={handUnit.compId}>{handUnit.name || "—"}</option>}
           {wireOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select></label>
+        </select></label>}
+      {onCoreNet && <label className="pin-hand-net">Цепь
+        <input value={handUnit.net ?? ""} maxLength={64} placeholder="напр. GND" aria-label={`Цепь ${handUnit.num}`}
+          onChange={(event) => onCoreNet(handUnit.idx, handUnit.unit, event.target.value)} /></label>}
       {hand?.epId && hand.pin != null && <button type="button" className="secondary small"
         onClick={() => { onUnassign(hand.epId!, handUnit.idx, handUnit.unit); setHand(null); }}>Снять с контакта</button>}
       <button type="button" className="btn-link" onClick={() => setHand(null)}>Отпустить</button>
