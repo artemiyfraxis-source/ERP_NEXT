@@ -36,6 +36,7 @@ from app.shared.identity import Actor
 from app.shared.project_number import normalize_project_number
 
 from .application import (
+    DuplicateLaunch,
     LaunchProductionCommand,
     UnitOfWork,
     _busy,
@@ -214,13 +215,16 @@ def _new_task(card: ReadyCard, quantity: int, actor: Actor, now: datetime) -> Pr
     return replace(task, id=task_id)
 
 
-def _launch_command(card: ReadyCard, quantity: int, key: str, actor: Actor, now: datetime) -> LaunchProductionCommand:
-    """Тот же запуск, что «Создать задание» на доске: весь тираж, срок техкарты, без комплекта."""
+def _launch_command(
+    card: ReadyCard, quantity: int, key: str, actor: Actor, now: datetime, seen_launch_seq: int,
+) -> LaunchProductionCommand:
+    """Тот же запуск, что «Создать задание» на доске: весь тираж, срок техкарты, без комплекта; номер запуска КБ —
+    следующий после того, что автоплан видел до расчёта."""
     return LaunchProductionCommand(
         idempotency_key=key, project=card.project, item=card.index, name=card.name, quantity=quantity,
         fulfillment_request_id=None, deadline=card.deadline, operations=launch_operations(card.route.steps, quantity),
         actor=actor, now=now, techcard_id=card.techcard_id,
-        techcard_revision=card.revision if card.revision >= 1 else None,
+        techcard_revision=card.revision if card.revision >= 1 else None, seen_launch_seq=seen_launch_seq,
     )
 
 
@@ -473,6 +477,9 @@ def apply_autoplan(
     with uow:
         for task_id in sorted({item[0] for item in command.items}, key=str):
             uow.production.lock(task_id)
+        # Номера запусков КБ — до расчёта: «Создать задание», прошедшее после этого чтения, займёт тот же номер, и
+        # запуск автоплана упрётся в уникальность, а не создаст второе задание по КБ.
+        seen = uow.production.last_launch_seqs([card.techcard_id for card in ready])
         preview = _prepare(command.plan, uow, cards, units, ready)
         if preview.fingerprint != command.fingerprint:
             raise StaleAutoplan("Данные изменились после предпросмотра — пересчитайте автоплан")
@@ -497,10 +504,13 @@ def apply_autoplan(
             if task_id in preview.new_tasks:
                 new = preview.new_tasks[task_id]
                 # Один ключ на техкарту в этом плане: повтор того же применения не запустит КБ дважды.
-                task, fresh = launch_task(_launch_command(
-                    new.card, new.task.quantity, f"autoplan:{new.card.techcard_id}:{command.fingerprint[:32]}",
-                    actor, now,
-                ), uow)
+                try:
+                    task, fresh = launch_task(_launch_command(
+                        new.card, new.task.quantity, f"autoplan:{new.card.techcard_id}:{command.fingerprint[:32]}",
+                        actor, now, seen.get(new.card.techcard_id, 0),
+                    ), uow)
+                except DuplicateLaunch as error:
+                    raise StaleAutoplan("Задание по этой КБ уже создано — пересчитайте автоплан") from error
                 if not fresh:
                     raise StaleAutoplan("Задание по этой КБ уже создано — пересчитайте автоплан")
                 created.append(task)

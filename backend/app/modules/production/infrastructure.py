@@ -6,9 +6,11 @@ from dataclasses import replace
 from datetime import date, datetime, time
 from decimal import Decimal
 import json
+from typing import Sequence
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker, validates
 
 from app.modules.identity.infrastructure import IdentityUserRow
@@ -17,7 +19,7 @@ from app.modules.fulfillment.infrastructure import FulfillmentLineRow, Fulfillme
 from app.modules.shipping.infrastructure import FinishedGoodRow, SqlAlchemyFinishedGoodsRepository
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
-from .application import Absence, Operator
+from .application import Absence, DuplicateLaunch, Operator
 from .domain import DEFAULT_SHIFT, FlowMode, OperationInput, OperationShare, OperatorSkill, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift
 from .plan import (
     KIT_STAGES, PLAN_KINDS, PLAN_STAGE_AUTO, PROJECT_TERMINALS, PlanEvent, PlanProjectSnapshot, normalize_project_number,
@@ -75,6 +77,8 @@ class ProductionTaskRow(Base):
             name="ck_production_tasks_early_quantity",
         ),
         CheckConstraint("techcard_revision IS NULL OR techcard_revision >= 1", name="ck_production_tasks_techcard_revision"),
+        # Миграция 0113: один номер запуска на КБ — два запуска одной КБ из одного состояния не создадут два задания.
+        Index("ux_production_tasks_techcard_launch_seq", "techcard_id", "launch_seq", unique=True),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -103,6 +107,8 @@ class ProductionTaskRow(Base):
     # № проекта для сравнения (`normalize_project_number`, миграция project_keys): трек проекта читает по индексу.
     # Ставится сам при записи `project`; NULL — строка вставлена мимо ORM, такие читаются и сверяются в Python.
     project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Номер запуска КБ (1, 2, … по техкарте; launch_task); NULL — задание без техкарты.
+    launch_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -710,10 +716,23 @@ class SqlAlchemyProductionRepository:
         row.value += 1
         return f"ПЗ-{row.value:04d}"
 
-    def add(self, task: ProductionTask) -> None:
+    def last_launch_seqs(self, techcard_ids: Sequence[UUID]) -> dict[UUID, int]:
+        """Последний номер запуска каждой из техкарт (нет заданий — техкарты нет в ответе)."""
+        if not techcard_ids:
+            return {}
+        return {
+            techcard_id: int(seq) for techcard_id, seq in self.session.execute(
+                select(ProductionTaskRow.techcard_id, func.max(ProductionTaskRow.launch_seq))
+                .where(ProductionTaskRow.techcard_id.in_(set(techcard_ids)))
+                .group_by(ProductionTaskRow.techcard_id)
+            ) if seq is not None
+        }
+
+    def add(self, task: ProductionTask, launch_seq: int | None = None) -> None:
         row = self.session.get(ProductionTaskRow, task.id)
         if row is None:
-            row = ProductionTaskRow(id=task.id)
+            # Номер запуска пишется только при создании задания; потом он не меняется.
+            row = ProductionTaskRow(id=task.id, launch_seq=launch_seq)
             self.session.add(row)
         row.number = task.number
         row.source_idempotency_key = task.source_idempotency_key
@@ -734,7 +753,13 @@ class SqlAlchemyProductionRepository:
         row.flow_mode = task.flow_mode.value
         row.transfer_batch = task.transfer_batch
         row.early_quantity = task.early_quantity
-        self.session.flush()
+        try:
+            self.session.flush()
+        except IntegrityError as error:
+            # Тот же номер запуска этой КБ уже занят другим запуском из того же состояния.
+            if launch_seq is not None and "launch_seq" in str(error.orig):
+                raise DuplicateLaunch() from error
+            raise
         stored_team = tuple(self.session.scalars(
             select(ProductionTaskTeamRow.operator_id).where(ProductionTaskTeamRow.task_id == task.id)
             .order_by(ProductionTaskTeamRow.position)

@@ -87,7 +87,7 @@ def database(tmp_path, monkeypatch):
         Base.metadata.tables["procurement_stock_covers"].create(connection)
         # План задания (Цель 2, миграция после 0088): колонки задания, команда и сдачи площадки.
         for column in ("techcard_id CHAR(32)", "techcard_revision INTEGER", "flow_mode VARCHAR(16) NOT NULL DEFAULT 'mixed'",
-                       "transfer_batch INTEGER", "early_quantity INTEGER"):
+                       "transfer_batch INTEGER", "early_quantity INTEGER", "launch_seq INTEGER"):  # launch_seq — 0113
             connection.execute(text(f"ALTER TABLE production_tasks ADD COLUMN {column}"))
         Base.metadata.tables["production_task_team"].create(connection)
         Base.metadata.tables["production_task_deliveries"].create(connection)

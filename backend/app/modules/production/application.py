@@ -60,6 +60,13 @@ class ConcurrentProductionUpdate(RuntimeError):
     pass
 
 
+class DuplicateLaunch(ConcurrentProductionUpdate):
+    """Эту КБ одновременно запустил другой запуск (автоплан или «Создать задание»): его задание уже создано."""
+
+    def __init__(self, message: str = "Задание по этой КБ уже создано — обновите"):
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class Operator:
     id: UUID
@@ -103,7 +110,8 @@ class ProductionRepository(Protocol):
     def planned(self, since: datetime) -> Sequence[ProductionTask]: ...
     def lock(self, task_id: UUID) -> None: ...
     def reserve_number(self) -> str: ...
-    def add(self, task: ProductionTask) -> None: ...
+    def last_launch_seqs(self, techcard_ids: Sequence[UUID]) -> dict[UUID, int]: ...
+    def add(self, task: ProductionTask, launch_seq: int | None = None) -> None: ...
     def worked(self, task_ids: Sequence[UUID]) -> set[UUID]: ...
     def delete(self, task_id: UUID) -> None: ...
 
@@ -162,6 +170,9 @@ class LaunchProductionCommand:
     # Техкарта и её ревизия, с которых взяты нормы (план задания, «Обновить нормы из ЭТК»).
     techcard_id: UUID | None = None
     techcard_revision: int | None = None
+    # Последний номер запуска этой КБ, который видел запускающий (автоплан читает его до расчёта); None — читается
+    # при запуске. Задание получает следующий номер; занятый номер — DuplicateLaunch.
+    seen_launch_seq: int | None = None
 
 
 @dataclass(frozen=True)
@@ -276,7 +287,8 @@ def launch_production(command: LaunchProductionCommand, uow: UnitOfWork) -> Prod
 def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[ProductionTask, bool]:
     """Запуск задания внутри открытой единицы работы, без коммита: номер ПЗ, ключ идемпотентности, серийники, аудит.
     Один путь для «Создать задание» и автоплана (он пишет задание и его расписание одним коммитом).
-    Возвращает задание и True, если оно создано сейчас (False — ключ уже запускал это же задание)."""
+    Возвращает задание и True, если оно создано сейчас (False — ключ уже запускал это же задание).
+    Задание по техкарте получает следующий номер запуска КБ; два запуска из одного состояния — DuplicateLaunch."""
     key = str(command.idempotency_key or "").strip()
     if not key:
         raise ProductionValidationError("Idempotency key обязателен")
@@ -286,6 +298,14 @@ def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[Prod
         if existing.source_fingerprint != fingerprint:
             raise ProductionValidationError("Idempotency key уже использован для другого задания")
         return existing, False
+    # Номер запуска КБ читается до номера ПЗ: номер ПЗ берётся под замком, и после ожидания замка параллельный
+    # запуск уже был бы виден — а гонку должна поймать уникальность (techcard_id, launch_seq).
+    launch_seq = None
+    if command.techcard_id is not None:
+        seen = command.seen_launch_seq
+        if seen is None:
+            seen = uow.production.last_launch_seqs((command.techcard_id,)).get(command.techcard_id, 0)
+        launch_seq = seen + 1
     task = ProductionTask.create(
         number=uow.production.reserve_number(),
         source_idempotency_key=key,
@@ -302,7 +322,7 @@ def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[Prod
         techcard_id=command.techcard_id,
         techcard_revision=command.techcard_revision,
     )
-    uow.production.add(task)
+    uow.production.add(task, launch_seq)
     uow.serials.ensure_task(task.id, task.number, task.quantity)
     _audit(task, "production.launched", command.actor, command.now, {"number": task.number}, uow)
     return task, True
