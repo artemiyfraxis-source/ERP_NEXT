@@ -1,5 +1,5 @@
 import { Component, Suspense, useEffect, useState, type ReactNode } from "react";
-import { harnessApi } from "./api";
+import { harnessApi, productionApi } from "./api";
 import { wireColor } from "./connectorArt";
 import type { EtkTopologyData } from "./etkDraw";
 import { HarnessEditorLazy, loadHarnessDrawing, type HarnessDrawingPorts, type HarnessEditorCatalogApi } from "./harness";
@@ -194,15 +194,16 @@ class E4Boundary extends Component<{ fallback: ReactNode; children: ReactNode },
 
 type Loaded = { state: "loading" } | { state: "map" } | { state: "e4"; ports: HarnessDrawingPorts; catalog: HarnessEditorCatalogApi };
 
-/** Схема Э4 позиции: сохранённый чертёж — только просмотр; иначе плоская схема по ЭТК. */
-export function EtkHarnessE4({ project, index, model }: { project: string; index: string; model: WireMapModel | null }) {
+/** Схема Э4 позиции: сохранённый чертёж — только просмотр; иначе плоская схема по ЭТК. В карточке задания (`taskId`)
+ *  чертёж читается маршрутом заданий — раздел «Проекты» монтажнику не нужен; технолог (без `taskId`) — маршрутом проекта. */
+export function EtkHarnessE4({ project, index, model, taskId }: { project: string; index: string; model: WireMapModel | null; taskId?: string }) {
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
   useEffect(() => {
     let live = true;
     setLoaded({ state: "loading" });
     const map = () => { if (live) setLoaded({ state: "map" }); };
     try {
-      harnessApi.drawing(project, index).then((found) => {
+      (taskId ? productionApi.taskHarness(taskId) : harnessApi.drawing(project, index)).then((found) => {
         if (!found?.design) return map();
         return loadHarnessDrawing().then(({ harnessDrawing, createErpHarnessEditorCatalog }) => {
           const catalog = createErpHarnessEditorCatalog();
@@ -212,7 +213,7 @@ export function EtkHarnessE4({ project, index, model }: { project: string; index
       }).catch(map);
     } catch { map(); }
     return () => { live = false; };
-  }, [project, index]);
+  }, [project, index, taskId]);
 
   const flat = model ? <div className="etk-wiremap-wrap"><EtkWireMap model={model} /></div>
     : <div className="empty">Схема жгута не задана: нет ни чертежа, ни таблицы соединений.</div>;

@@ -12,6 +12,8 @@ from .application import UnitOfWork
 from .connector_housings import attach_housings
 from .etk_builder import attach_route
 from .etk_parts import EtkLot, EtkLots, attach_parts
+from .harness import application as harness
+from .harness.application import HarnessNotFound
 from .kitsets import Kitset, project_key
 from .project_cards import ProjectTechcard, TechcardStatus
 
@@ -88,13 +90,32 @@ def card_views(
     return [card_view(card, identify, lots.get(card.id)) for card in cards]
 
 
-def issued_card_for_item(uow: UnitOfWork, project: str, item: str) -> ProjectTechcard | None:
-    """The issued card of the project and the КБ index taken from the item («591K.3КБ1» or «591K.3.КБ1»)."""
-    project = str(project or "").strip()
+def _item_index(project: str, item: str) -> str:
     rest = str(item or "").strip()
     if project and rest.lower().startswith(project.lower()):
         rest = rest[len(project):]
-    index = rest.lstrip(". ").strip()
+    return rest.lstrip(". ").strip()
+
+
+def saved_harness(uow: UnitOfWork, project: str, item: str) -> dict[str, Any]:
+    """The saved harness drawing of the item, read-only and without the revision history, in the shape the editor
+    reads it (`document`, `design`, `revision`, `version`, `warnings`; no drawing — `design: None`). Production shows it
+    to the fitter, who has no «Проекты» right."""
+    project = str(project or "").strip()
+    index = _item_index(project, item)
+    try:
+        if not project or not index:
+            raise HarnessNotFound(index)
+        kitset, index = harness.position(uow, project, index)
+        return harness.view(harness.current(uow, kitset.project, index))
+    except HarnessNotFound:
+        return harness.view(None)
+
+
+def issued_card_for_item(uow: UnitOfWork, project: str, item: str) -> ProjectTechcard | None:
+    """The issued card of the project and the КБ index taken from the item («591K.3КБ1» or «591K.3.КБ1»)."""
+    project = str(project or "").strip()
+    index = _item_index(project, item)
     if not project or not index:
         return None
     for candidate in dict.fromkeys((index, index.upper())):

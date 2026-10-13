@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item
+from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, saved_harness
 from app.workflows.etk_lots import IssuedKitLots
 from app.modules.techcards.project_cards import TechcardStatus
 from app.shared.clock import MOSCOW, moscow_now
@@ -800,6 +800,29 @@ def operation_etk(
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
     return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
+
+
+@router.get("/my/tasks/{task_id}/harness")
+def task_harness(
+    task_id: UUID,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """Сохранённый чертёж жгута позиции задания — только чтение, без истории версий; раздел «Проекты» монтажнику не
+    нужен. Монтажнику — задание, где он назначен на любую операцию; мастеру с правом «Производство» — любое."""
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        mine = any(principal.actor.id in operation.operator_ids for operation in task.operations)
+        if not mine and not section_allowed(principal, ("production",), "view"):
+            raise HTTPException(status_code=403, detail="Задание не назначено сотруднику")
+        project, item = task.project, task.item
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    with techcards_factory() as techcards:
+        return saved_harness(techcards, project, item)
 
 
 @router.get("/my/tasks/{task_id}/operations/{operation_id}/etk/sketches")

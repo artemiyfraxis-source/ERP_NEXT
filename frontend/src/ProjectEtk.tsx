@@ -86,7 +86,7 @@ function topology(document: ProjectTechcard["document"]): EtkTopology | null {
     Свёрнута, пока её не откроют (владелец 13.10). В задании монтажника (`task`) — вид «Схема Э4», как в редакторе
     чертежа: сохранённый чертёж КБ только для просмотра или плоская схема по ЭТК; таблица соединений — под ней, свёрнута. */
 function HarnessView({ value, list, connections, raw, task }: {
-  value: EtkTopology | null; list: EtkOperation[]; connections: string[][]; raw?: unknown; task?: { project: string; index: string };
+  value: EtkTopology | null; list: EtkOperation[]; connections: string[][]; raw?: unknown; task?: { project: string; index: string; taskId?: string };
 }) {
   const table = connections.length > 0 && <table className="etk-result-table etk-links" aria-label="Таблица соединений">
     <thead><tr>{ETK_CONNECTION_COLUMNS.map((column, index) => <th key={index}>{column}</th>)}</tr></thead>
@@ -95,7 +95,7 @@ function HarnessView({ value, list, connections, raw, task }: {
   </table>;
   if (task) {
     return <EtkFold block="schema" className="etk-schema" lazy summary={`Схема Э4${connections.length ? " и таблица соединений" : ""}`}>
-      <EtkHarnessE4 project={task.project} index={task.index} model={wireMapModel(raw, value as EtkTopologyData | null, harnessPins(list))} />
+      <EtkHarnessE4 project={task.project} index={task.index} taskId={task.taskId} model={wireMapModel(raw, value as EtkTopologyData | null, harnessPins(list))} />
       {table && <EtkFold block="links" className="etk-links-fold" summary={`Таблица соединений · ${connections.length}`}>{table}</EtkFold>}
     </EtkFold>;
   }
@@ -602,10 +602,12 @@ function stamp(value: string | null | undefined) {
     ревизий свёрнут. Правят операции здесь («Править операцию»); пересборка — в «Генераторе». */
 export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
 
-export function EtkSheet({ card, principal, title, focus, task = false, onChange, onRebuild, sketchSource }: {
+export function EtkSheet({ card, principal, title, focus, task = false, taskId, onChange, onRebuild, sketchSource }: {
   card: ProjectTechcard; principal: Principal; title?: ReactNode; focus?: EtkFocus;
   /** Задание монтажника: только операция `focus`, схема — вид Э4. */
   task?: boolean;
+  /** Задание, чьей карточке принадлежит ЭТК: схема Э4 читает чертёж маршрутом заданий. */
+  taskId?: string;
   onChange: (card: ProjectTechcard) => void; onRebuild?: () => void;
   /** Откуда брать эскизы; по умолчанию раздел техкарт. Монтажнику экран «Мои задания» даёт свой источник. */
   sketchSource?: EtkSketchSource;
@@ -654,7 +656,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, onChange
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)}
-      raw={card.document?.connections} task={task ? { project: card.project, index: card.item_index } : undefined} />
+      raw={card.document?.connections} task={task ? { project: card.project, index: card.item_index, taskId } : undefined} />
     <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
