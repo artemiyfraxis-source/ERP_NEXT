@@ -74,7 +74,7 @@ async function openManual() {
   expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
 }
 
-const blocks = () => [...document.querySelectorAll(".route-block")].map((block) => block.textContent || "");
+const blocks = () => [...document.querySelectorAll("[aria-label=\"Блоки схемы\"] .rc-card")].map((block) => block.textContent || "");
 const derives = (fetch: ReturnType<typeof mockApi>) => fetch.mock.calls.filter(([input]) => decodeURIComponent(String(input)).endsWith("/derive")).length;
 
 it("keeps «Предложить из КД» off with a hint when the position has no harness drawing", async () => {

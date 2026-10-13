@@ -99,10 +99,11 @@ it("«Поправить вручную» opens the typical assembly in the manu
 
   // Собранная сборка открывается схемой, без панели блока; нажатый блок её открывает.
   expect(screen.queryByRole("region", { name: /^Блок «/ })).not.toBeInTheDocument();
-  // Итоговый блок — его операции первыми, изделие — строкой «итог: …», полное название — в подсказке.
-  expect(screen.getByTitle("Жгут XHP 150мм").querySelector(".route-block-name")).toHaveTextContent("Резка с разделкой · опрессовка терминалов");
-  expect(screen.getByTitle("Жгут XHP 150мм")).toHaveTextContent("итог: Жгут XHP 150мм");
-  fireEvent.click(screen.getByTitle("Жгут XHP 150мм"));
+  // Итоговая карточка — названа своими операциями, изделие — строкой «итог: …».
+  const product = screen.getByRole("article", { name: /^ФИНАЛ: / });
+  expect(product.querySelector(".rc-title")).toHaveTextContent("Резка с разделкой · опрессовка терминалов");
+  expect(product.querySelector(".rc-sub")).toHaveTextContent("итог: Жгут XHP 150мм");
+  fireEvent.keyDown(product, { key: "Enter" });
   // Блок схемы и обе операции; итог назван своими операциями (изделие — строкой «итог: …»), не типами.
   expect(screen.getByRole("region", { name: "Блок «Резка с разделкой · опрессовка терминалов»" })).toBeInTheDocument();
   const first = screen.getByLabelText("Операция 1: Резка с разделкой");
@@ -179,7 +180,7 @@ it("lists the drafts of the position, opens one into the manual assembly and bui
 
 /** Названия блоков схемы. */
 function blockNames() {
-  return [...document.querySelectorAll(".route-block")].map((block) => block.textContent || "").join("|");
+  return [...document.querySelectorAll("[aria-label=\"Блоки схемы\"] .rc-card")].map((block) => block.textContent || "").join("|");
 }
 
 it("does not finalise the draft when the build fails", async () => {

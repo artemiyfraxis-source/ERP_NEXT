@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { AutoTextarea } from "./AutoTextarea";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatMinutes, pluralBlocks } from "./etkRoute";
-import { PerUnit, RouteDiagram, numberRange } from "./RouteDiagram";
-import { blockCodes, routeTotals, type RouteBlock, type RouteEdge, type RouteOp } from "./routeLogic";
+import { PerUnit } from "./RouteDiagram";
+import { RouteCanvas, type CanvasCard } from "./RouteCanvas";
+import { CARD_KIND_LABEL, GEN_CARD, GEN_SPACING, layoutByDepth, widestRow, type Size } from "./routeCards";
+import type { RouteBlock, RouteEdge, RouteOp } from "./routeLogic";
 import {
   addBlock,
   addCustomOp,
@@ -18,6 +20,7 @@ import {
   cardNorms,
   genParams,
   inputCandidates,
+  insertBlock,
   kdChangeText,
   manualRoute,
   manualShortTitle,
@@ -47,6 +50,7 @@ import {
 } from "./manualLogic";
 import type { Comp, OpRec } from "./tcGenLogic";
 import { Field, UnitInput } from "./GenControls";
+import "./ManualAssembly.css";
 
 type Change = (next: (current: ManualState) => ManualState) => void;
 
@@ -164,7 +168,7 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
   const field = (key: "qty" | "prepMin" | "opSec", label: string, unit: string, name: string, placeholder: string) =>
     <Field label={label}><UnitInput unit={unit} inputMode="decimal" aria-label={`${name}: ${title}`} value={op[key]} placeholder={placeholder}
       onChange={(event) => set({ [key]: event.target.value })} /></Field>;
-  return <div className={open ? "manual-op is-open" : "manual-op"} aria-label={`Операция ${position}: ${title}`}>
+  return <div className={open ? "manual-op is-open" : "manual-op"} aria-label={`Операция ${position}: ${title}`} data-seq={op.seq}>
     <div className="manual-op-head">
       <button type="button" className="manual-op-fold" aria-expanded={open} aria-label={`${open ? "Свернуть" : "Развернуть"} операцию ${position}: ${title}`}
         title={open ? "Свернуть" : "Открыть: норма, параметры, результат"} onClick={toggle}><span className="op-badge">{position}</span></button>
@@ -223,10 +227,18 @@ export function ManualOpCard({ op, position, first, last, partQty, components, o
   </div>;
 }
 
+const coarsePointer = () => { try { return !!window.matchMedia?.("(pointer: coarse)").matches; } catch { return false; } };
+/** Карточка блока: ширина 200…400 по месту (как «Схема полуфабрикатов»), строка подписи под названием, низ карточки с «+ Вход». */
+const CARD_MIN = 200, CARD_MAX = 400, SUB_ROW = 16, FOOT = 34, FOOT_COARSE = 48;
+const SPACING = { ...GEN_SPACING, margin: 16 };
+
 /**
- * «Ручная сборка» — схема первой (владелец 05.10): технолог рисует блоки (итог и полуфабрикаты, которые в него входят),
- * выбирает блок и кладёт в него операции — «+ Операция из библиотеки» (клик по строке) и «+ Своя операция».
- * Номера операций идут по схеме: входы раньше блоков, которые их берут.
+ * «Ручная сборка» — схема первой (владелец 05.10; карточками, как «Маршрут КБn», — 13.10): блоки схемы — карточки
+ * полуфабрикатов холста маршрута (RouteCanvas): вид, название, «N оп. · мин», операции блока строками; связи — стрелками
+ * с числом штук, «+» на связи вставляет блок, «×» убирает связь. Карточка или её операция открывает справа панель блока:
+ * название, вид, входы и сколько штук берёт каждый, операции — «+ Операция из библиотеки» (клик по строке) и «+ Своя
+ * операция». Раскладка карточек — рядами по входам (positions не хранятся, build_config прежний). Номера операций идут
+ * по схеме: входы раньше блоков, которые их берут.
  */
 export function ManualAssembly({ state, onChange, library, opRecs, components, partQty, finalName, error, kd }: {
   state: ManualState; onChange: Change; library: LibraryCard[]; opRecs: OpRec[]; components: Comp[]; partQty: number;
@@ -241,8 +253,23 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const [paneOpen, setPaneOpen] = useState(() => !state.ops.length);
   const panel = useRef<HTMLDivElement>(null);
   const seen = useRef(state.selected);
+  // Операция, нажатая на карточке, — к ней панель прокручивается после отрисовки.
+  const reveal = useRef<number | null>(null);
+  // Ширина места под холстом — карточки делят её по самому широкому ряду.
+  const [boxWidth, setBoxWidth] = useState(0);
+  const observer = useRef<ResizeObserver | null>(null);
+  const canvasBox = useRef<HTMLDivElement | null>(null);
+  const boxRef = useCallback((element: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    canvasBox.current = element;
+    if (!element) return;
+    setBoxWidth(element.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    observer.current = new ResizeObserver(() => setBoxWidth(element.clientWidth));
+    observer.current.observe(element);
+  }, []);
   const { route, ops: routeOps } = useMemo(() => manualRoute(state, partQty), [state, partQty]);
-  const totals = useMemo(() => routeTotals(route, routeOps, partQty), [route, routeOps, partQty]);
   const ordered = useMemo(() => orderedOps(state), [state]);
   // Длинное название блока от генератора — коротко по операциям, целиком — в подсказке.
   const named = (block: RouteBlock, ops: RouteOp[] = routeOps) => manualShortTitle(block, ops, finalName);
@@ -255,10 +282,6 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const total = ordered.reduce((sum, op) => sum + opMinutes(op, partQty), 0);
   const blockName = title(block);
   const ownByKey = new Map(state.blocks.map((item) => [item.key, item]));
-  const mark = (item: RouteBlock) => {
-    const meta = ownByKey.get(item.key);
-    return { kind: blockKind(state, item.key), quantity: meta?.quantity, checked: meta?.checked };
-  };
 
   const select = (key: string) => { onChange((current) => selectBlock(current, key)); setProblem(""); setAdded(""); setNameOnPick(false); setPaneOpen(true); };
   // Выбрали блок (на схеме или в «Итоге») — панель блока открывается и подъезжает в видимую часть.
@@ -268,6 +291,18 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
     setPaneOpen(true);
     panel.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
   }, [block.key]);
+  // Нажатая на карточке операция — открыта в панели и видна.
+  useEffect(() => {
+    const seq = reveal.current;
+    if (seq === null) return;
+    reveal.current = null;
+    panel.current?.querySelector(`[data-seq="${seq}"]`)?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  });
+  const openOp = (key: string, seq: number) => {
+    reveal.current = seq;
+    setOpened((current) => new Set(current).add(seq));
+    if (key !== block.key || !paneOpen) select(key);
+  };
   const order = blockOrder(state);
   const move = (key: string, dir: -1 | 1) => {
     const result = moveBlock(state, key, dir, (item) => { const found = byKey.get(item); return found ? title(found) : item; });
@@ -283,16 +318,24 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
     event.preventDefault();
     if (event.altKey) { move(block.key, dir); return; }
     const next = order[order.indexOf(block.key) + dir];
-    if (next) select(next);
+    if (!next) return;
+    select(next);
+    // С карточки — фокус на соседнюю карточку, чтобы стрелки шли дальше.
+    if ((event.target as HTMLElement).closest?.("[data-card]")) {
+      window.setTimeout(() => canvasBox.current?.querySelector<HTMLElement>(`[data-card="${next}"]`)?.focus(), 0);
+    }
   };
   const toggleOp = (seq: number) => setOpened((current) => { const next = new Set(current); if (!next.delete(seq)) next.add(seq); return next; });
   const addInputTo = (to: string) => {
     onChange((current) => addInputBlock(current, to));
     setProblem(""); setAdded(""); setPicking(true); setNameOnPick(true); setPaneOpen(true);
   };
-  const connect = (from: string, to: string) => {
-    if (state.edges.some((edge) => edge.from === from && edge.to === to)) return;
-    edgeEdit((current) => addInput(current, from, to, finalName));
+  // «+» на связи: новый блок между её концами, библиотека — сразу в него (блок назовётся по операции).
+  const insertOn = (linkId: string) => {
+    const edge = state.edges.find((item) => `${item.from}>${item.to}` === linkId);
+    if (!edge) return;
+    onChange((current) => insertBlock(current, edge.from, edge.to));
+    setProblem(""); setAdded(""); setPicking(true); setNameOnPick(true); setPaneOpen(true);
   };
   const edgeEdit = (edit: (current: ManualState) => EdgeEdit) => {
     const result = edit(state);
@@ -315,6 +358,65 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
   const blockOps = own.ops.map((seq) => bySeq.get(seq)).filter((op): op is ManualOp => !!op);
   const moveTargets = order.filter((key) => key !== block.key).map((key) => ({ key, title: title(byKey.get(key)!) }));
 
+  // Карточки блоков — по порядку схемы, рядами по входам (как «Маршрут КБn»); высота — по числу операций.
+  const coarse = coarsePointer();
+  const opRow = coarse ? 40 : GEN_CARD.opRow;
+  const columns = widestRow(order, state.edges);
+  const cardWidth = boxWidth
+    ? Math.max(CARD_MIN, Math.min(CARD_MAX, Math.floor((boxWidth - 2 * SPACING.margin - SPACING.gapX * (columns - 1)) / columns)))
+    : GEN_CARD.width;
+  const product = finalName.trim();
+  const subtitleOf = (item: RouteBlock) => (item.final && product && title(item) !== product ? `итог: ${product}` : "");
+  const sizes = new Map(order.map((key): [string, Size] => {
+    const item = byKey.get(key)!;
+    const rows = ownByKey.get(key)?.ops.length ?? 0;
+    return [key, { width: cardWidth, height: GEN_CARD.head + (subtitleOf(item) ? SUB_ROW : 0) + rows * opRow + (coarse ? FOOT_COARSE : FOOT) + GEN_CARD.pad }];
+  }));
+  const places = layoutByDepth(order, state.edges, (key) => sizes.get(key)!, SPACING);
+  const cards: CanvasCard[] = order.map((key) => {
+    const item = byKey.get(key)!;
+    const meta = ownByKey.get(key)!;
+    const kind = blockKind(state, key);
+    const ops = meta.ops.map((seq) => bySeq.get(seq)).filter((op): op is ManualOp => !!op);
+    const minutes = ops.reduce((sum, op) => sum + opMinutes(op, partQty), 0);
+    const name = title(item);
+    const quantity = meta.quantity && meta.quantity !== 1 ? `${meta.quantity} шт · ` : "";
+    const gone = ops.filter((op) => op.kdGone).length;
+    return {
+      id: key, kind, title: name, subtitle: subtitleOf(item) || undefined, ...places.get(key)!, ...sizes.get(key)!,
+      meta: ops.length ? `${quantity}${ops.length} оп. · ${formatMinutes(minutes)} мин` : `${quantity}нет операций`,
+      body: <>
+        {ops.length > 0 && <ol className="rc-ops" aria-label={`Операции блока «${name}»`}>
+          {ops.map((op) => {
+            const number = position.get(op.seq) ?? 0;
+            const label = opTitle(op, number);
+            const time = opMinutes(op, partQty);
+            return <li key={op.seq}>
+              <button type="button" className={paneOpen && opened.has(op.seq) && block.key === key ? "rc-op is-selected" : "rc-op"}
+                title={[`Открыть операцию ${number}: ${label}`, op.code ? `Карта ${op.code}` : ""].filter(Boolean).join("\n")}
+                onClick={() => openOp(key, op.seq)}>
+                <span className="rc-op-no">{number}</span>
+                <span className="rc-op-name">{label}</span>
+                {op.kdGone && <span className="rc-op-note" title="Этой операции больше нет в КД">нет в КД</span>}
+                <span className={time > 0 ? "rc-op-time" : "rc-op-time tone-warn"}>{time > 0 ? `${formatMinutes(time)} мин` : "нет нормы"}</span>
+              </button>
+            </li>;
+          })}
+        </ol>}
+        <div className="ma-card-foot">
+          {meta.checked && <span className="ma-checked" title="Проверено мастером">✓ проверено</span>}
+          {gone > 0 && !meta.checked && <span className="ma-gone">нет в КД: {gone}</span>}
+          <button type="button" className="ma-card-add" title="Добавить вход — новый блок, который идёт в этот"
+            aria-label={`Добавить вход в блок «${name}»`} onClick={() => addInputTo(key)}>+ Вход</button>
+        </div>
+      </>,
+    };
+  });
+  const titleOf = (key: string) => { const found = byKey.get(key); return found ? title(found) : key; };
+  const links = state.edges.map((edge) => ({
+    id: `${edge.from}>${edge.to}`, from: edge.from, to: edge.to, qty: edge.per_unit, label: `«${titleOf(edge.from)}» → «${titleOf(edge.to)}»`,
+  }));
+
   return <section className="gsec full manual-assembly" aria-label="Схема сборки" onKeyDown={onKey}>
     <div className="gsec-head manual-hdr">
       <h3>Схема сборки</h3>
@@ -328,19 +430,20 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
     {kd?.proposal && <KdProposalBar proposal={kd.proposal} />}
     <div className={paneOpen ? "manual-body has-pane" : "manual-body"}>
     <div className="manual-diagram">
-    <p className="route-link-hint manual-keys">↑ ↓ — порядок блоков · + — новый вход · → — соединить с другим блоком · клавиши: ↑/↓ — блок, Alt+↑/↓ — сдвинуть, Esc — закрыть панель</p>
-    <RouteDiagram route={route} title={title} hint={(item) => named(item).full} codes={(item) => blockCodes(item, routeOps)} numbers={(item) => numberRange(item.ops)} totals={totals}
-      selected={paneOpen ? block.key : ""} marks={mark} onMove={move} sequence={order} product={finalName.trim()}
-      onSelect={select} edgeLabel={edgeLabel} onPerUnit={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
-      onAddInput={addInputTo} onConnect={connect} onEdgeEdit={() => setProblem("")}
-      onEdgeQuantity={(edge, value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))}
-      onEdgeRemove={(edge) => edgeEdit((current) => removeInput(current, edge.from, edge.to, finalName))} />
+    <p className="route-link-hint manual-keys">Карточка или операция — открыть блок · «+» на стрелке — блок между · ↑/↓ — соседний блок, Alt+↑/↓ — сдвинуть</p>
+    <div className="ma-canvas" ref={boxRef}>
+      <RouteCanvas cards={cards} links={links} label="Блоки схемы" controls={false} fit="width" margin={SPACING.margin}
+        selected={paneOpen ? block.key : null} onSelect={(key) => { if (key) select(key); else setPaneOpen(false); }}
+        onInsert={insertOn}
+        onRemoveLink={(id) => { const edge = state.edges.find((item) => `${item.from}>${item.to}` === id); if (edge) edgeEdit((current) => removeInput(current, edge.from, edge.to, finalName)); }} />
+    </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {problem && <div className="warning-inline" role="alert">{problem}</div>}
     </div>
 
     {paneOpen && <div className="manual-block" ref={panel} role="region" aria-label={`Блок «${blockName}»`}>
       <div className="manual-block-bar">
+        <span className={`ma-kind is-${blockKind(state, block.key)}`}>{CARD_KIND_LABEL[blockKind(state, block.key)]}</span>
         <strong title={named(block).full}>Блок «{blockName}»</strong>
         <span className="manual-block-order" role="group" aria-label="Порядок блока">
           <button type="button" className="secondary small" disabled={order.indexOf(block.key) <= 0} onClick={() => move(block.key, -1)}>↑ Выше</button>
@@ -361,6 +464,8 @@ export function ManualAssembly({ state, onChange, library, opRecs, components, p
               const name = from ? title(from) : edge.from;
               return <span className="manual-input" key={edge.from}>
                 <button type="button" className="btn-link" onClick={() => select(edge.from)}>{name}</button>
+                <PerUnit value={edge.per_unit} label={edgeLabel(edge)} unit="шт" lead="берёт"
+                  onChange={(value) => onChange((current) => setPerUnit(current, edge.from, edge.to, value))} />
                 <button type="button" className="btn-remove" title="Убрать вход" aria-label={`Убрать вход «${name}»`}
                   onClick={() => edgeEdit((current) => removeInput(current, edge.from, block.key, finalName))}>×</button>
               </span>;
