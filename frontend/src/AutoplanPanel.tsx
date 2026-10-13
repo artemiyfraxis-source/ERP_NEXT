@@ -7,6 +7,7 @@ import {
 import { formatDay, formatDayMonth, kbLabel } from "./format";
 import type { ProjectDeadlines } from "./MasterBoard";
 import { ShipDatePlan } from "./ShipDatePlan";
+import { LeftoverHint, SemiLeftoversList, leftoverMatches, useSemiLeftovers } from "./SemiLeftovers";
 
 const STALE_TEXT = "План изменился — обновите предложение";
 // Номер будущего задания в расчёте (backend autoplan.NEW_TASK_PREFIX): номер ПЗ дадут при применении.
@@ -123,6 +124,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {} }: {
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ preview: AutoplanPreview; request: AutoplanRequest } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const semi = useSemiLeftovers();
 
   const dialogRef = useRef<HTMLFormElement>(null);
   const closeRef = useRef(close);
@@ -158,6 +160,12 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {} }: {
   const listed = tasks.length + ready.length;
   const shownPeriod = result ? result.preview.period : context?.period;
   const groups = useMemo(() => (result ? group(result.preview.proposals) : []), [result]);
+  // КБ строки предложения — для подсказки «из остатков»: у задания из контекста, у будущего — КБ техкарты.
+  const kbOf = useMemo(() => new Map<string, { project: string; item: string }>([
+    ...(context?.tasks ?? []).map((task) => [task.id, { project: task.project, item: task.item }] as const),
+    ...(result?.preview.new_tasks ?? []).map((task) => [task.task_id, { project: task.project, item: task.index }] as const),
+  ]), [context, result]);
+  const leftoversFor = (item: AutoplanProposal) => leftoverMatches(semi.rows ?? [], { ...item, ...(kbOf.get(item.task_id) ?? { project: "", item: "" }) });
   const today = isoDay(new Date());
   const maxDay = isoDay(new Date(Date.now() + ((context?.max_days ?? 56) - 1) * 86_400_000));
 
@@ -312,6 +320,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {} }: {
           </section>
           {projectRow && <ShipDatePlan project={project} people={chosenPeople.map((person) => person.id)} deadline={deadlineOf(projectRow)} />}
         </>}
+        {context && <SemiLeftoversList rows={semi.rows} error={semi.error} />}
         {error && <div className="error-banner" role="alert">{error}</div>}
         {loading && <div className="empty">Считаем план…</div>}
         {result && !loading && <div className="autoplan-result">
@@ -330,7 +339,7 @@ export function AutoplanPanel({ close, onApplied, projectDeadlines = {} }: {
                   {batch.items.map((item) => <div key={key(item)} className="autoplan-row">
                     <input type="checkbox" aria-label={`${item.task_number}, ${item.stage}`} checked={selected.has(key(item))} onChange={(event) => toggle([item], event.target.checked)} />
                     <TaskCell item={item} />
-                    <span className="autoplan-op">{item.stage}{item.code && <small>{item.code}</small>}</span>
+                    <span className="autoplan-op">{item.stage}{item.code && <small>{item.code}</small>}<LeftoverHint matches={leftoversFor(item)} /></span>
                     <span className="autoplan-slot">{slotText(item.start, item.finish)}</span>
                     <span className="autoplan-change">{item.changeover_seconds > 0 ? `переналадка ${minutesText(item.changeover_seconds)}` : "без переналадки"}</span>
                   </div>)}
