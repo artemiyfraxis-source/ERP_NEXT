@@ -21,6 +21,8 @@ import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
 import { hasFullAccess } from "./navigation";
+import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
+import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
    PortalApp kitCardRender_ → mountGen_ / renderTc_ → renderEtk_). */
@@ -80,19 +82,29 @@ function topology(document: ProjectTechcard["document"]): EtkTopology | null {
 
 /** Схема жгута один раз, компактной SVG-картинкой, как в SUPPLYMAP (etkDrawHarness_): разъёмы, пучок жил, число
     проводов и длина. Раскладку контактов показывает только операция монтажа, где она нужна. Под схемой — таблица
-    соединений провод за проводом, когда распиновка задана на обоих концах (перекрёст виден по номерам контактов). */
-function HarnessView({ value, list, connections }: { value: EtkTopology | null; list: EtkOperation[]; connections: string[][] }) {
+    соединений провод за проводом, когда распиновка задана на обоих концах (перекрёст виден по номерам контактов).
+    Свёрнута, пока её не откроют (владелец 13.10). В задании монтажника (`task`) — вид «Схема Э4», как в редакторе
+    чертежа: сохранённый чертёж КБ только для просмотра или плоская схема по ЭТК; таблица соединений — под ней, свёрнута. */
+function HarnessView({ value, list, connections, raw, task }: {
+  value: EtkTopology | null; list: EtkOperation[]; connections: string[][]; raw?: unknown; task?: { project: string; index: string };
+}) {
+  const table = connections.length > 0 && <table className="etk-result-table etk-links" aria-label="Таблица соединений">
+    <thead><tr>{ETK_CONNECTION_COLUMNS.map((column, index) => <th key={index}>{column}</th>)}</tr></thead>
+    <tbody>{connections.map((row) => <tr key={row[0]}>{row.map((cell, index) =>
+      <td key={index} className={index === 0 || index === 3 || index === 5 ? "num" : undefined}>{cell}</td>)}</tr>)}</tbody>
+  </table>;
+  if (task) {
+    return <EtkFold block="schema" className="etk-schema" lazy summary={`Схема Э4${connections.length ? " и таблица соединений" : ""}`}>
+      <EtkHarnessE4 project={task.project} index={task.index} model={wireMapModel(raw, value as EtkTopologyData | null, harnessPins(list))} />
+      {table && <EtkFold block="links" className="etk-links-fold" summary={`Таблица соединений · ${connections.length}`}>{table}</EtkFold>}
+    </EtkFold>;
+  }
   const svg = etkDrawHarness(value as EtkTopologyData | null, harnessPins(list));
   if (!svg && !connections.length) return null;
-  return <details className="etk-schema" open>
-    <summary>{svg ? "Схема жгута" : "Таблица соединений"}{svg && connections.length > 0 ? " и таблица соединений" : ""}</summary>
+  return <EtkFold block="schema" className="etk-schema" summary={`${svg ? "Схема жгута" : "Таблица соединений"}${svg && connections.length > 0 ? " и таблица соединений" : ""}`}>
     {svg && <div className="etk-harness" dangerouslySetInnerHTML={{ __html: svg }} />}
-    {connections.length > 0 && <table className="etk-result-table etk-links" aria-label="Таблица соединений">
-      <thead><tr>{ETK_CONNECTION_COLUMNS.map((column, index) => <th key={index}>{column}</th>)}</tr></thead>
-      <tbody>{connections.map((row) => <tr key={row[0]}>{row.map((cell, index) =>
-        <td key={index} className={index === 0 || index === 3 || index === 5 ? "num" : undefined}>{cell}</td>)}</tr>)}</tbody>
-    </table>}
-  </details>;
+    {table}
+  </EtkFold>;
 }
 
 /** Распиновка из операций монтажа — по узлу схемы «артикул разъёма::сторона»: провода видны в своих гнёздах. */
@@ -260,7 +272,7 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
     </header>
     {etkChips(raw).length > 0 && <div className="etk-chips" aria-label="Параметры операции">{etkChips(raw).map(([label, value]) =>
       <span key={label}><small>{label}</small><MarkMissing text={value} /></span>)}</div>}
-    {safety && <details className="etk-safety"><summary>Требование безопасности</summary><div>{safety}</div></details>}
+    {safety && <EtkFold block="safety" className="etk-safety" summary="Требование безопасности"><div>{safety}</div></EtkFold>}
     {!operation.card && <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
     <EtkSection label="Вход" number={next()}>
       {hasInput ? <div className="etk-flow">
@@ -301,10 +313,12 @@ function SolderPanel({ mode }: { mode: SolderMode }) {
 }
 
 /** Блок ЭТК, который сворачивается щелчком по заголовку, как «Типовые дефекты» (владелец, 12.10: «не могу скрыть»).
- *  Открыт по умолчанию; печать (etkPrint.ts) печатает все блоки. */
+ *  Закрыт по умолчанию, открытое помнится (владелец 13.10: «по дефолту всё свёрнуто»); печать (etkPrint.ts) печатает
+ *  все блоки. */
 function EtkSection({ label, number, children }: { label: string; number: number; children: ReactNode }) {
+  const fold = useEtkFold(`sec:${label}`);
   return <section className="etk-sec" aria-label={label}>
-    <details className="etk-fold" open>
+    <details className="etk-fold" open={fold.open} onToggle={fold.onToggle}>
       <summary><h4><span className="etk-sec-n">{number}</span>{label}</h4></summary>
       {children}
     </details>
@@ -316,7 +330,8 @@ function EtkSection({ label, number, children }: { label: string; number: number
 function DefectsView({ text, code, number }: { text: string; code: string; number: number }) {
   const parsed = parseDefects(text);
   const count = parsed.groups.reduce((sum, group) => sum + group.items.length, 0);
-  return <details className="etk-sec etk-defects etk-fold" open aria-label="Типовые дефекты">
+  const fold = useEtkFold("sec:Типовые дефекты");
+  return <details className="etk-sec etk-defects etk-fold" open={fold.open} onToggle={fold.onToggle} aria-label="Типовые дефекты">
     <summary><h4><span className="etk-sec-n">{number}</span>Типовые дефекты{count ? ` · ${count}` : ""}</h4></summary>
     {count ? <>
       {parsed.intro.length > 0 && <small className="etk-def-intro">{parsed.intro.join(" · ")}</small>}
@@ -497,17 +512,26 @@ function RouteStrip({ route, current, onPick }: { route: EtkRoute; current: numb
 /** Операция, на которой открыть ЭТК (экран «Мои задания»): по коду, иначе по номеру этапа. */
 export interface EtkFocus { code: string; position: number }
 
-/** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_). */
-function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focus }: {
+/** Операция ЭТК задания: код и номер этапа вместе (один код бывает у двух операций — «Монтаж терминалов» стороны А
+ *  и В), иначе по коду, иначе по номеру этапа; не нашлась — первая. */
+export function focusIndex(list: EtkOperation[], focus?: EtkFocus): number {
+  if (!focus) return 0;
+  const both = list.findIndex((item) => focus.code && opCode(item) === focus.code && item.position === focus.position);
+  if (both >= 0) return both;
+  const byCode = list.findIndex((item) => focus.code && opCode(item) === focus.code);
+  return byCode >= 0 ? byCode : Math.max(0, list.findIndex((item) => item.position === focus.position));
+}
+
+/** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_).
+ *  В задании монтажника (`task`) — только операция задания: без списка операций слева, без «← Назад / Далее» и
+ *  полосы маршрута (владелец 13.10: «слева не должно быть следующих операций»). */
+function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focus, task = false }: {
   card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void;
   sketches: OperationSketch[]; onSketches: () => void; sketchUrl: (key: string, at: string) => string; focus?: EtkFocus;
+  task?: boolean;
 }) {
   const list = operations(card.document);
-  const [selected, setSelected] = useState(() => {
-    if (!focus) return 0;
-    const found = list.findIndex((item) => focus.code && opCode(item) === focus.code);
-    return found >= 0 ? found : Math.max(0, list.findIndex((item) => item.position === focus.position));
-  });
+  const [selected, setSelected] = useState(() => focusIndex(list, focus));
   const [editing, setEditing] = useState(false);
   const main = useRef<HTMLDivElement>(null);
   if (!list.length) return null;
@@ -533,13 +557,13 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
     onSaved(updated);
   }
 
-  const view = <div className="etk-wrap">
-    <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
+  const view = <div className={task ? "etk-wrap etk-wrap-task" : "etk-wrap"}>
+    {!task && <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
       <button key={`${etkOperationKey(item)}:${position}`} className={position === index ? "on" : ""} onClick={() => { setSelected(position); setEditing(false); }}>
         <span className="etk-no">{String(item.position || position + 1).padStart(2, "0")}</span>
         <span>{etkTitle(item)}{(navSub(item) || item.edited) && <small>{[navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ")}</small>}</span>
       </button>)}
-    </nav>
+    </nav>}
     <div className="etk-main" ref={main}>
       {editing && operation.card ? <TcCardEditForm
         code={opCode(operation)}
@@ -557,15 +581,15 @@ function EtkView({ card, canEdit, onSaved, sketches, onSketches, sketchUrl, focu
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>Править операцию</button> : null}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />
-        <div className="etk-nav">
+        {!task && <div className="etk-nav">
           <button className="secondary small" disabled={!index} onClick={() => setSelected(index - 1)}>← Назад</button>
           <button className="secondary small" disabled={!next} onClick={() => setSelected(index + 1)}>Далее: {next ? etkTitle(next) : "—"} →</button>
-        </div>
+        </div>}
       </>}
     </div>
   </div>;
   // Линейная схема (и ЭТК без схемы): тот же элемент, что и раньше, без обёртки.
-  return route && etkRouteBranches(route)
+  return !task && route && etkRouteBranches(route)
     ? <><RouteStrip route={route} current={index + 1} onPick={pick} />{view}</>
     : view;
 }
@@ -578,8 +602,10 @@ function stamp(value: string | null | undefined) {
     ревизий свёрнут. Правят операции здесь («Править операцию»); пересборка — в «Генераторе». */
 export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
 
-export function EtkSheet({ card, principal, title, focus, onChange, onRebuild, sketchSource }: {
+export function EtkSheet({ card, principal, title, focus, task = false, onChange, onRebuild, sketchSource }: {
   card: ProjectTechcard; principal: Principal; title?: ReactNode; focus?: EtkFocus;
+  /** Задание монтажника: только операция `focus`, схема — вид Э4. */
+  task?: boolean;
   onChange: (card: ProjectTechcard) => void; onRebuild?: () => void;
   /** Откуда брать эскизы; по умолчанию раздел техкарт. Монтажнику экран «Мои задания» даёт свой источник. */
   sketchSource?: EtkSketchSource;
@@ -614,7 +640,7 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild, s
     } finally { setBusy(false); }
   }
 
-  return <div className="etk-sheet">
+  return <EtkFoldScope user={principal.user.id}><div className="etk-sheet">
     <div className="etk-top">
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{countLabel(list.length, ["операция", "операции", "операций"])} · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
@@ -627,16 +653,17 @@ export function EtkSheet({ card, principal, title, focus, onChange, onRebuild, s
     {notice && <div className="success-banner">{notice}</div>}
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
-    <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)} />
-    <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
+    <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)}
+      raw={card.document?.connections} task={task ? { project: card.project, index: card.item_index } : undefined} />
+    <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} />
     {!list.length && <div className="etk-empty">ЭТК ещё не собрана — откройте «Генератор» и нажмите «Создать».</div>}
-    {revisions.length > 0 && <details className="etk-revs"><summary>Журнал ревизий · {revisions.length}</summary>
+    {revisions.length > 0 && <EtkFold block="revs" className="etk-revs" summary={`Журнал ревизий · ${revisions.length}`}>
       {revisions.map((revision) => <div key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span className="muted">{revision.actor_name} · {stamp(revision.occurred_at)}</span></div>)}
-    </details>}
-  </div>;
+    </EtkFold>}
+  </div></EtkFoldScope>;
 }
 
 /** «Генератор» сборки: форма и ОДНА кнопка. Нет ТК — «Создать» (сборка ЭТК и выдача сразу, как файл техкарты в

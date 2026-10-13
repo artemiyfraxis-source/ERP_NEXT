@@ -886,11 +886,69 @@ it("opens the operation's ETK read-only on that operation through the production
   });
   const { container } = render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-  expect(nav.querySelector("button.on")).toHaveTextContent("Опрессовка терминалов");
+  // Только операция задания: без списка операций ЭТК слева и без «← Назад / Далее» к чужим операциям.
+  expect(await screen.findByRole("heading", { name: /Опрессовка терминалов/ })).toBeInTheDocument();
+  expect(screen.queryByRole("navigation", { name: "Маршрут ЭТК" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Разделка кабеля")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Назад|Далее/ })).not.toBeInTheDocument();
   expect(container.querySelector(".etk-sheet")).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Пересобрать/ })).not.toBeInTheDocument();
+});
+
+it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme as Э4 and remembers what this user opened", async () => {
+  window.localStorage.clear();
+  const etk = {
+    id: "80000000-0000-0000-0000-000000000001", version: 1, project: "591K.3", item_index: "КБ1", product_name: "Жгут",
+    source_calculation: "", deadline: null, status: "Выдана", revision: 1, manual_operation_keys: [],
+    created_at: "2026-09-20T09:00:00+03:00", updated_at: "2026-09-20T09:00:00+03:00", issued_at: "2026-09-20T09:00:00+03:00",
+    document: {
+      operations: [{ position: 2, code: "OP-02", title: "Опрессовка терминалов",
+        card: { name: "Опрессовка терминалов", safety: "Работать в очках", steps: [{ number: "1", kind: "Операция", text: "Обжать терминал" }] } }],
+      connections: [
+        { wire: "НВ4 0,2 белый", from: { end: "A1", conn: "DS1071", pin: 3 }, to: { end: "B1", conn: "XHP-4", pin: 2 } },
+        { wire: "НВ4 0,2 красный", from: { end: "A1", conn: "DS1071", pin: 1 }, to: { end: "B1", conn: "XHP-4", pin: 1 } },
+      ],
+    },
+  };
+  const seen: string[] = [];
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: [] }, { code: "OP-02" }), (path) => {
+    seen.push(path);
+    if (path.endsWith("/etk")) return json({ card: etk, focus: { position: 2, code: "OP-02" } });
+    // У монтажника нет раздела «Проекты»: чертёж КБ ему не читается — схема строится по ЭТК.
+    if (path.includes("/harness/")) return new Response(JSON.stringify({ detail: "Раздел «Проекты» вам не открыт." }), { status: 403, headers: { "Content-Type": "application/json" } });
+    if (path.includes("/api/techcards/projects/")) return json({ items: [] });
+    return null;
+  });
+  const first = render(<ProductionPage principal={fitter} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
+  const steps = await screen.findByRole("region", { name: "Ход операции" });
+  expect(steps.querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByText("Требование безопасности").closest("details")).not.toHaveAttribute("open");
+  const schema = screen.getByText("Схема Э4 и таблица соединений").closest("details")!;
+  expect(schema).not.toHaveAttribute("open");
+  // Схема строится только открытой: чертёж не запрошен, пока блок закрыт.
+  expect(seen.some((path) => path.includes("/harness/"))).toBe(false);
+
+  fireEvent.click(screen.getByText("Схема Э4 и таблица соединений"));
+  const map = await screen.findByRole("img", { name: /Схема Э4: A1, B1/ });
+  expect([...map.querySelectorAll("text.etk-wm-pintext")].map((pin) => pin.textContent)).toEqual(["1", "3", "1", "2"]);
+  expect(map.querySelector("text.etk-wm-wire")).toHaveTextContent("НВ4 0,2 красный"); // контакт 1 — первым
+  expect(screen.getByText("Таблица соединений · 2").closest("details")).not.toHaveAttribute("open");
+  expect(map.closest(".etk-e4")).toBeNull();
+
+  fireEvent.click(within(steps).getByText("Ход операции"));
+  await waitFor(() => expect(steps.querySelector("details")).toHaveAttribute("open"));
+  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Ход операции`)).toBe("1");
+  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:schema`)).toBe("1");
+  first.unmount();
+
+  render(<ProductionPage principal={fitter} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
+  expect((await screen.findByRole("region", { name: "Ход операции" })).querySelector("details")).toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
+  window.localStorage.clear();
 });
 
 it("loads the ETK sketches of the fitter's operation through the production endpoints, not the techcards ones", async () => {
