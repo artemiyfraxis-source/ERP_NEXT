@@ -156,6 +156,10 @@ describe("ProjectsPage", () => {
     expect(status.textContent).toBe("в пр-ве 3принято 4упак. 3отгр. 0");
     expect(status.getAttribute("title")).toBe("Последние ходы:\n12.10 11:00 Упаковано: 3 шт · ОТГ-1 — Кладовщик\n12.10 10:00 Принято складом: 7 шт — Кладовщик");
     expect(screen.getByRole("columnheader", { name: "Готовая продукция" })).toBeTruthy();
+    // Телефон: каждая ячейка «Состава» несёт подпись колонки, из неё рисуется карточка сборки.
+    const row = status.closest("tr")!;
+    expect(Array.from(row.querySelectorAll("td")).map((cell) => cell.getAttribute("data-label")))
+      .toEqual(["КБ", "Наименование", "Кол-во", "Позиций", "КД", "Техкарта", "Этап", "Проверка ТК", "Готовая продукция"]);
   });
 
   it("does not ask for the finished-goods status without access to «Отгрузка»", async () => {

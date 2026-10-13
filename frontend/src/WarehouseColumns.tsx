@@ -153,3 +153,30 @@ export function ColumnChooser({ keys, hidden, flat, onToggle, onMove, onReset }:
     </div>}
   </div>;
 }
+
+/** Phone card mode of the stock tables: every cell gets the caption of its column («Остаток», «Место»…) as `data-label`,
+ *  read from the header — the cells are drawn in WarehousePage, which this keeps untouched. Sort arrows are not a caption. */
+export function labelStockCells(root: ParentNode = document) {
+  root.querySelectorAll<HTMLTableElement>("table.stock-table").forEach((table) => {
+    const heads = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th")).map((th) => (th.textContent ?? "").replace(/[▲▼]/g, "").trim());
+    table.querySelectorAll<HTMLTableRowElement>("tbody > tr").forEach((row) => {
+      if (row.classList.contains("stock-group-row") || row.classList.contains("stock-cards-row")) return;
+      Array.from(row.cells).forEach((cell, index) => {
+        const label = heads[index] ?? "";
+        if (cell.getAttribute("data-label") !== label) cell.setAttribute("data-label", label);
+      });
+    });
+  });
+}
+
+/** Keeps `labelStockCells` current while the screen redraws (one pass per frame). Returns the stop function. */
+export function watchStockLabels(doc: Document = document): () => void {
+  const win = doc.defaultView;
+  if (!win || typeof win.MutationObserver !== "function") return () => undefined;
+  let frame = 0;
+  const run = () => { frame = 0; labelStockCells(doc); };
+  const observer = new win.MutationObserver(() => { if (!frame) frame = win.requestAnimationFrame(run); });
+  observer.observe(doc.body, { childList: true, subtree: true });
+  run();
+  return () => { observer.disconnect(); if (frame) win.cancelAnimationFrame(frame); };
+}
