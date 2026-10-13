@@ -699,6 +699,7 @@ class _TechTable:
     forms: Callable[[tuple[str, ...]], tuple[tuple[str, object], ...]]
     virtual: str = ""  # a key that is the record's display text, not a field (БД.ОБ «Для базы» = baseValue)
     cell: Callable[[str, Any], Any] = _cell  # a row value as stored (БД.ТЕР: units of the base, technologist's fields)
+    card_columns: tuple[str, ...] = ()  # sheet columns a load may bring before any row has them (БД.КОАКС card)
 
     @property
     def sheet_columns(self) -> bool:
@@ -722,11 +723,21 @@ def _ter_forms(values: tuple[str, ...]) -> tuple[tuple[str, object], ...]:
     return (("exact", article.casefold().strip()),) + ((("normalized", normalized),) if len(normalized) >= 3 else ())
 
 
+# The coax connector card (owner 13.10.2026, the 311 connectors of gsm-repiteri.ru): БД.КОАКС sheet columns a load may
+# bring before any row has them. «Тип пина» / «Тип экрана» are the sheet's own (the generator reads them); the site's
+# words for the pin and the shield go to «Центральный контакт» / «Крепление экрана».
+COAX_CARD_COLUMNS = (
+    "Тип пина", "Тип экрана", "Серия", "Пол", "Полярность", "Исполнение", "Монтаж", "Центральный контакт",
+    "Крепление экрана", "Волновое сопротивление, Ом", "Частота до, ГГц", "Материал корпуса", "Покрытие", "Габариты",
+    "Наименование", "Ссылка", "Примечание", "Источник данных",
+)
+
 TECH_TABLES: dict[str, _TechTable] = {
     "ter": _TechTable(TechOperationTab.TERMINAL, "БД.ТЕР — контакты, терминалы и разъёмы", ("terArticle",), _ter_forms,
                       cell=_ter_cell),
     "coax": _TechTable(TechOperationTab.COAX, "БД.КОАКС — коаксиальные разъёмы", ("coaxArticle", "coaxWire"),
-                       lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),)),
+                       lambda values: (("pair", (_folded(values[0]), cable_key(values[1]))),),
+                       card_columns=COAX_CARD_COLUMNS),
     "prov": _TechTable(TechOperationTab.WIRE, "БД.ПРОВ — кабели и провода", ("Марка",),
                        lambda values: (("mark", cable_key(values[0])),)),
     "mat": _TechTable(TechOperationTab.MATERIAL, "БД.МАТ — материалы", ("Наименование",),
@@ -740,7 +751,8 @@ def _sheet_columns(table: _TechTable, records: Sequence[TechOperationRecord]) ->
     if not table.sheet_columns:
         return list(BASE_COLUMNS[table.tab])
     keys = schema_keys(table.tab.value)
-    return list(dict.fromkeys(name for record in records for name in record.fields if name not in keys))
+    return list(dict.fromkeys([*(name for record in records for name in record.fields if name not in keys),
+                               *table.card_columns]))
 
 
 def _schema_values(tab: str, fields: Mapping[str, str]) -> dict[str, str]:

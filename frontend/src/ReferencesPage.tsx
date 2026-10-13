@@ -11,6 +11,7 @@ import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
+import { CoaxConnectors } from "./CoaxConnectors";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -456,7 +457,13 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
           <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         </> : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
-      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : <div className={terminal ? "eq-split has-card" : "eq-split"}><div className="eq-list"><DataTable
+      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+        records={tech.records}
+        cableOf={cableOf}
+        canEdit={canEdit}
+        onEdit={startEdit}
+        toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Запись</button> : undefined}
+      /> : <div className={terminal ? "eq-split has-card" : "eq-split"}><div className="eq-list"><DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}

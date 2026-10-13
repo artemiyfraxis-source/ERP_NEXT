@@ -248,11 +248,13 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   });
 
   render(<ReferencesPage principal={admin} initialTab="coax" />);
-  expect(await screen.findByText("3,5")).toBeInTheDocument(); // D3 of RG58, not the connector's own «9»
-  expect(screen.queryByText("9")).toBeNull();
-  expect(screen.getAllByText("нет у кабеля")).toHaveLength(3);
-  expect(screen.getByRole("columnheader", { name: "D1 кабеля" })).toBeInTheDocument();
-  fireEvent.click(screen.getAllByRole("row")[1]);
+  expect(await screen.findByText("1 · 2,95 · 3,5")).toBeInTheDocument(); // D of RG58, not the connector's own «9»
+  expect(screen.queryByText(/9 · 9/)).toBeNull();
+  expect(screen.getAllByText("нет у кабеля")).toHaveLength(1);
+  expect(screen.getByRole("columnheader", { name: "D1 · D2 · D3 кабеля" })).toBeInTheDocument();
+  // Строка открывает карточку разъёма, правка — кнопкой в ней.
+  fireEvent.click(screen.getByText("BNC-C58P"));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
   expect(screen.getByLabelText("Поле L1")).toBeInTheDocument();
   expect(screen.queryByLabelText("Поле D1")).toBeNull();
 });
