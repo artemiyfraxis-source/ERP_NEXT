@@ -72,6 +72,8 @@ export interface DataTableProps<T> {
   groupBy?: (row: T) => string;
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
   groupLabel?: (name: string, rows: T[]) => string;
+  /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
+  collapsibleGroups?: boolean;
   bulkActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
@@ -222,6 +224,7 @@ export function DataTable<T>({
   allLast = false,
   groupBy,
   groupLabel,
+  collapsibleGroups,
   bulkActions = [],
   renderDetail,
   rowClassName,
@@ -241,6 +244,7 @@ export function DataTable<T>({
 }: DataTableProps<T>) {
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
@@ -538,12 +542,19 @@ export function DataTable<T>({
                       })()}
                       {(() => {
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
-                        return <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
+                        const title = <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
+                        return collapsibleGroups
+                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => setCollapsed((current) => {
+                            const next = new Set(current);
+                            if (!next.delete(name)) next.add(name);
+                            return next;
+                          })} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
+                          : title;
                       })()}
                     </td>
                   </tr>
                 )}
-                {groupRows.map(renderRow)}
+                {!(collapsibleGroups && collapsed.has(name)) && groupRows.map(renderRow)}
               </Fragment>
             ))}
             {!shown.length && <tr><td colSpan={span} className="empty">{emptyText}</td></tr>}

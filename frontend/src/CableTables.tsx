@@ -11,6 +11,7 @@ import {
   type TechOperationRecord,
 } from "./api";
 import { CATEGORIES, CATEGORY_CELL, cableCategory, cableGroup, compareCables } from "./cableCategory";
+import { coaxFamily, coaxNaming, sortCoax } from "./coaxFamilies";
 import { MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
@@ -81,7 +82,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   // «Кабели»: groups by category and screen, natural order inside (series, cores, section as numbers).
   const rows = useMemo(() => {
     const own = data.rows.filter((row) => row.kind === kind);
-    return grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : own;
+    return grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
   }, [data.rows, kind, grouped]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
 
@@ -119,6 +120,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   ];
 
   const detail = (row: CableRow) => <>
+    {kind === "coax" && <CoaxNames row={row} />}
     {row.card && <CoaxCardView card={row.card} exact={Boolean(row.card_exact)} />}
     {canEdit
       ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
@@ -140,12 +142,23 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
       storageKey={`db:cables:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
-      groupBy={grouped ? (row) => cableGroup(cells(row)).label : undefined}
+      collapsibleGroups={kind === "coax"}
+      groupBy={grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxFamily : undefined}
       presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
       toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />
   </>;
+}
+
+/** Full name and aliases of a coax cable, above its card. */
+function CoaxNames({ row }: { row: CableRow }) {
+  const { fullName, aliases } = coaxNaming(row);
+  if (!fullName && !aliases.length) return null;
+  return <div className="reference-fields cable-card">
+    {fullName && <span><small>Полное название</small>{fullName}</span>}
+    {aliases.length > 0 && <span><small>Другие названия</small>{aliases.join(" · ")}</span>}
+  </div>;
 }
 
 /** Read-only card: every БД.ПРОВ cell of the row and its D1·D2·D3. */
