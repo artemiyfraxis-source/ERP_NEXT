@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PALETTE } from "./wireColors";
 import { techcardsApi } from "./api";
@@ -7,7 +7,7 @@ import { plural, type AutoFill, type FreeSide, type PinoutEnd, type PinUnit } fr
 import { endJoined, type Branch, type Connection, type GenState, type Side, type WireEnd } from "./tcGenLogic";
 import { latinArt, pinCountFromArt } from "./terminalPick";
 import { spliceLabel, spliceOf } from "./tcGenSplices";
-import { PinoutLinks } from "./PinoutLinks";
+import { PinoutLinks, type SchemeInfo } from "./PinoutLinks";
 import "./pinout.css";
 
 /* Распиновка в генераторе ТК: панель контактов в карточке разъёма, отметка «проверена», схема соединений
@@ -142,7 +142,7 @@ type Cell = { pin: number; units: PinUnit[]; dup: boolean };
  *  защёлкой, у круглых — кольцо контактов). Гнёзда — кнопки: щелчок, Enter или пробел ставит провод из руки; занятое
  *  гнездо залито цветом жилы, на нём номер провода. Разъёма нет в базе — пронумерованные квадраты по порядку.
  *  Разъём с одной стороны — под торцем список свободных концов с обработкой (лужение, зачистка или без неё). */
-export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, onCell, onGrab, onBranchMode, onRemoveBranch }: {
+export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, scheme, drawing, onCell, onGrab, onBranchMode, onRemoveBranch }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -152,6 +152,9 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
   branches?: Branch[];
   /** Сростки и хвосты (tcGenSplices.ts) — для схемы связей. */
   joins?: Pick<GenState, "splices" | "tails">;
+  /** Схема связей: обозначения разъёмов, терминалы, свивка; `drawing` — вкладка «Чертёж» по той же форме. */
+  scheme?: SchemeInfo;
+  drawing?: () => ReactNode;
   onCell?: (epId: string, pin: number) => void;
   onGrab?: (epId: string, pin: number, event: ReactPointerEvent) => void;
   onBranchMode?: (extra: number, mode: Branch["mode"]) => void;
@@ -171,7 +174,7 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
     const held = !!hand && hand.epId === end.id && hand.pin === c.pin;
     const cls = ["pin-cell", used && "is-used", c.dup && "is-dup", held && "is-held", color && !isDark(color) && "is-light"].filter(Boolean).join(" ");
     const names = c.units.map(unitText).join("; ");
-    const label = `${end.key}, контакт ${c.pin}: ${used ? names : "свободен"}${c.dup ? " — занят дважды" : ""}`;
+    const label = `${end.key}, контакт ${c.pin}: ${used ? names : "свободен"}${c.dup ? " — занят дважды" : end.doubled.includes(c.pin) ? " — двойной обжим" : ""}`;
     const hover = `контакт ${c.pin} · ${used ? c.units.map((u) => u.name || "провод").join(", ") : "свободен"}`;
     return {
       used, cls, hover,
@@ -203,10 +206,15 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
             return <g key={hit.pin} className={p.cls} {...p.handlers}>
               <title>{p.hover}</title>
               <circle className="pin-hit" cx={hit.x} cy={hit.y} r={hit.r} />
-              {p.used && <g className="pin-badge" aria-hidden="true">
-                <circle cx={hit.x + hit.r * 0.78} cy={hit.y - hit.r * 0.78} r={7} />
-                <text x={hit.x + hit.r * 0.78} y={hit.y - hit.r * 0.78 + 3.2} textAnchor="middle">{c.units.length > 1 ? `×${c.units.length}` : c.units[0].num}</text>
-              </g>}
+              {p.used && (() => {
+                // Двойной обжим — оба номера провода («1+2»), иначе номер или «×N».
+                const text = c.units.length > 1 ? (end.doubled.includes(hit.pin) ? c.units.map((u) => u.num).join("+") : `×${c.units.length}`) : c.units[0].num;
+                const cx = hit.x + hit.r * 0.78, cy = hit.y - hit.r * 0.78, w = Math.max(14, text.length * 6 + 6);
+                return <g className={end.doubled.includes(hit.pin) ? "pin-badge is-double" : "pin-badge"} aria-hidden="true">
+                  {w > 14 ? <rect x={cx - w / 2} y={cy - 7} width={w} height={14} rx={7} /> : <circle cx={cx} cy={cy} r={7} />}
+                  <text x={cx} y={cy + 3.2} textAnchor="middle">{text}</text>
+                </g>;
+              })()}
             </g>;
           })}
         </svg>
@@ -246,7 +254,7 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
     <div className={free ? "pin-sides is-one" : "pin-sides"}>
       {(["A", "B"] as const).map((side) => sideOf(side).length > 0 && <div className="pin-side" key={side} data-side={side}>{sideOf(side).map(endView)}</div>)}
     </div>
-    {!free && <PinoutLinks ends={ends} units={units} housings={housings} joins={joins} />}
+    {!free && <PinoutLinks ends={ends} units={units} housings={housings} joins={joins} info={scheme} drawing={drawing} />}
     {free && <div className="pin-free-block">
       <div className="pin-free-head">{`Сторона ${free.side === "B" ? "В" : "А"} — свободные концы`}</div>
       <ul className="pin-free-list">{units.filter((u) => Object.values(u.at).some((p) => p != null)).map((u) => {
@@ -334,7 +342,7 @@ function CoreColorPopover({ unit, onPick, onClose }: { unit: PinUnit; onPick: (c
 /** Палитра проводов, рука и схема: щелчок по проводу берёт его, щелчок по контакту ставит; щелчок по занятому
  *  контакту берёт его провод — следующий щелчок по контакту того же разъёма меняет их местами (свободный — перенос).
  *  Перетаскивание провода или занятого контакта делает то же. Esc или повторный щелчок — отпустить. */
-export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, joins = {}, onJoin, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor, onCoreNet }: {
+export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, joins = {}, scheme, drawing, onJoin, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor, onCoreNet, onDouble, onUndouble }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -361,18 +369,26 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
   onCoreColor?: (idx: number, unit: number, color: string | null) => void;
   /** Цепь жилы или экрана: кабель, жила, имя ("" — снять). */
   onCoreNet?: (idx: number, unit: number, net: string) => void;
+  /** Двойной обжим в контакте: второй провод в занятый контакт; «Убрать второй провод» — в контакте остаётся `keep`. */
+  onDouble?: (epId: string, idx: number, unit: number, pin: number) => void;
+  onUndouble?: (epId: string, pin: number, keep: { idx: number; unit: number }) => void;
+  /** Схема связей под торцами и вкладка «Чертёж» (PinoutLinks). */
+  scheme?: SchemeInfo;
+  drawing?: () => ReactNode;
 }) {
   const [hand, setHand] = useState<PinHand | null>(null);
   const [fill, setFill] = useState<{ notes: string[]; warnings: string[] } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [palette, setPalette] = useState<string | null>(null);
   const [branch, setBranch] = useState<{ from: PinHand; toEp: string; toPin: number; mode: Branch["mode"] } | null>(null);
+  /** Провод с палитры — на контакт, где уже есть другой провод: поставить вместо или вторым (двойной обжим). */
+  const [busy, setBusy] = useState<{ key: string; epId: string; pin: number } | null>(null);
   const handUnit = hand ? units.find((u) => u.key === hand.key) ?? null : null;
   const keyOf = (epId: string) => ends.find((end) => end.id === epId)?.key ?? "";
 
   useEffect(() => {
     if (!hand) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { setHand(null); setBranch(null); } };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { setHand(null); setBranch(null); setBusy(null); } };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [hand]);
@@ -398,13 +414,30 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
     }
     // Провод не заведён в этот разъём. Экран — на любой разъём, куда приходит его кабель.
     if (!(epId in unit.at) && !dest?.multi && !(unit.shield && dest?.wires.some((w) => w.idx === unit.idx))) return;
+    // Контакт занят одним другим проводом — спросить: вместо него или вторым в тот же терминал (двойной обжим).
+    const occupants = units.filter((u) => u.key !== unit.key && u.at[epId] === pin);
+    if (from.pin == null && onDouble && dest && !dest.double && occupants.length === 1 && !unit.shield && !occupants[0].shield) {
+      setBusy({ key: unit.key, epId, pin });
+      return;
+    }
     onAssign(epId, unit.idx, unit.unit, pin);
     // Провод ещё без контакта на другом разъёме — остаётся в руке: следующий щелчок — туда.
     const rest = Object.entries(unit.at).some(([id, p]) => id !== epId && p == null);
     setHand(rest ? { key: unit.key } : null);
   }
+  /** Ответ на «контакт занят»: вместо (как раньше) или вторым проводом; провод без контакта на другом разъёме — в руке. */
+  function settle(mode: "replace" | "double") {
+    const unit = busy && units.find((u) => u.key === busy.key);
+    if (!busy || !unit) return setBusy(null);
+    if (mode === "double") onDouble?.(busy.epId, unit.idx, unit.unit, busy.pin);
+    else onAssign(busy.epId, unit.idx, unit.unit, busy.pin);
+    setBusy(null);
+    const rest = Object.entries(unit.at).some(([id, p]) => id !== busy.epId && p == null);
+    setHand(rest ? { key: unit.key } : null);
+  }
   function clickCell(epId: string, pin: number) {
     if (suppress.current) return;
+    setBusy(null);
     if (hand) return place(hand, epId, pin);
     setBranch(null);
     const occupant = units.find((u) => u.at[epId] === pin);
@@ -522,10 +555,23 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
             <option value="tail">хвост (без разъёма)</option>
           </select></label>;
       })}
+      {hand?.epId && hand.pin != null && onUndouble && ends.find((e) => e.id === hand.epId)?.doubled.includes(hand.pin) && <button type="button" className="secondary small"
+        onClick={() => { onUndouble(hand.epId!, hand.pin!, { idx: handUnit.idx, unit: handUnit.unit }); setHand(null); }}>Убрать второй провод</button>}
       {hand?.epId && hand.pin != null && <button type="button" className="secondary small"
         onClick={() => { onUnassign(hand.epId!, handUnit.idx, handUnit.unit); setHand(null); }}>Снять с контакта</button>}
       <button type="button" className="btn-link" onClick={() => setHand(null)}>Отпустить</button>
     </div> : <small className="muted pin-hint">Щёлкните провод, затем контакт (или перетащите). Щелчок по занятому контакту — перенести, поменять местами или добавить ответвление. Тёмный значок у контакта — номер провода. Кружок у провода — цвет жилы.</small>}
+    {busy && (() => {
+      const unit = units.find((u) => u.key === busy.key);
+      const other = units.find((u) => u.key !== busy.key && u.at[busy.epId] === busy.pin);
+      if (!unit || !other) return null;
+      return <div className="pin-branch" role="group" aria-label="Контакт занят">
+        <span className="pin-hand-what">{keyOf(busy.epId)}, конт. {busy.pin} занят: <Swatch color={other.color} stripe={other.stripe} /><span className="pin-num">{other.num}</span> {other.name || "провод"}</span>
+        <button type="button" className="secondary small" onClick={() => settle("double")}>Второй провод в этот контакт (двойной обжим)</button>
+        <button type="button" className="secondary small" onClick={() => settle("replace")}>Поставить вместо</button>
+        <button type="button" className="btn-link" onClick={() => setBusy(null)}>Отмена</button>
+      </div>;
+    })()}
     {handUnit && branch && hand?.epId && hand.pin != null && <div className="pin-branch" role="group" aria-label="Ответвление">
       <span className="pin-hand-what">Ответвление: <Swatch color={handUnit.color} stripe={handUnit.stripe} /><span className="pin-num">{handUnit.num}</span> {keyOf(hand.epId)}, конт. {hand.pin} → {keyOf(branch.toEp)}, конт. {branch.toPin}</span>
       <span className="pin-mode-seg" role="group" aria-label="Как разветвить">
@@ -538,7 +584,7 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
       }}>Добавить ответвление</button>
       <button type="button" className="btn-link" onClick={() => setBranch(null)}>Отмена</button>
     </div>}
-    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand} branches={branches} joins={joins}
+    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand} branches={branches} joins={joins} scheme={scheme} drawing={drawing}
       onBranchMode={onBranchMode} onRemoveBranch={onRemoveBranch}
       onCell={clickCell} onGrab={(epId, pin, event) => {
         const occupant = units.find((u) => u.at[epId] === pin);

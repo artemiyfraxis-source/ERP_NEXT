@@ -52,7 +52,9 @@
 .pin-diagram .pin-cell.is-dup .pin-hit { stroke: var(--tone-danger); stroke-width: 3; }
 .pin-diagram .pin-cell.is-held .pin-hit { stroke: var(--primary); stroke-width: 3; stroke-dasharray: 4 2; }
 .pin-diagram.has-hand .pin-end.is-target .pin-cell:not(.is-used) .pin-hit { stroke: var(--primary); stroke-dasharray: 3 2; }
-.pin-diagram .pin-badge circle { fill: var(--foreground); stroke: var(--card); stroke-width: 1.5; }
+.pin-diagram .pin-badge circle, .pin-diagram .pin-badge rect { fill: var(--foreground); stroke: var(--card); stroke-width: 1.5; }
+/* Двойной обжим — два номера провода на одном контакте, цветом бренда. */
+.pin-diagram .pin-badge.is-double rect { fill: var(--primary); }
 .pin-diagram .pin-badge text { fill: var(--card); font-size: 9.5px; font-weight: 700; }
 .pin-diagram .pin-cell.is-dup .pin-badge circle { fill: var(--tone-danger); }
 
