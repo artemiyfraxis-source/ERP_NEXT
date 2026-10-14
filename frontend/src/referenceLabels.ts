@@ -56,3 +56,17 @@ export function valueLabel(header: string, value: string): string {
   if (key === "расположение") return SITES[text.trim().toLocaleLowerCase("ru-RU")] ?? text;
   return text;
 }
+
+/** Подписи ключей схемы БД.ТЕР/ОБ/ОП/КОАКС (поля записи приходят под ключом схемы). */
+export const FIELD_TITLES: Record<string, string> = {
+  baseValue: "Для базы", obType: "Тип",
+  opNumber: "Номер", opName: "Название", tOp: "Время операции, с", tPrep: "Время подготовки, с", tMachine: "Время машины, с/оп; с/м",
+  terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Наименование", connType: "Тип разъёма",
+  terType: "Тип контакта", artISL: "Артикул ISL", artSAG: "Артикул SAG", terArticle: "Артикул контакта", terLPlus: "L+",
+  terLMinus: "L−", terStep: "Шаг", terApplicator: "Аппликатор", terStrip: "Длина зачистки, мм",
+  terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, Н", terPullForceMax: "Усилие обрыва до, Н",
+  coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
+};
+
+/** Русский заголовок поля записи: ключ схемы → карта, иначе заголовок листа. */
+export const fieldTitle = (field: string) => FIELD_TITLES[field] ?? headerLabel(field);

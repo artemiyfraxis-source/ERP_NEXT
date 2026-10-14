@@ -82,12 +82,51 @@ export function contentSize(rects: readonly Rect[], margin = V3_SPACING.margin, 
 
 const r2 = (value: number) => Math.round(value * 10) / 10;
 
+const LANE_GAP = 14;
+const hitsRect = (x1: number, y1: number, x2: number, y2: number, rect: Rect) =>
+  Math.max(x1, x2) > rect.x - 2 && Math.min(x1, x2) < rect.x + rect.width + 2
+  && Math.max(y1, y2) > rect.y - 2 && Math.min(y1, y2) < rect.y + rect.height + 2;
+
+/** Связь, что шла бы прямо под чужой карточкой, обходит её сбоку («Обжатые провода → Готовый кабель» под «Сторона А
+    собрана» был не виден): вниз из входа, в сторону до полосы у края закрывающих карточек, вниз вдоль неё, к цели. */
+function detourGeometry(sx: number, sy: number, tx: number, ty: number, obstacles: readonly Rect[]): { d: string; mid: Point } | null {
+  const my = ty - Math.min(32, (ty - sy) / 2);
+  const crossed = (rect: Rect) => hitsRect(sx, sy, sx, my, rect) || hitsRect(sx, my, tx, my, rect) || hitsRect(tx, my, tx, ty, rect);
+  const inSpan = obstacles.filter((rect) => rect.y < ty && rect.y + rect.height > sy);
+  let blockers = inSpan.filter(crossed);
+  if (blockers.length === 0) return null;
+  let lane = sx;
+  for (let pass = 0; pass < 6; pass += 1) {
+    const left = Math.min(...blockers.map((rect) => rect.x)) - LANE_GAP;
+    const right = Math.max(...blockers.map((rect) => rect.x + rect.width)) + LANE_GAP;
+    lane = left < LANE_GAP || Math.abs(sx - right) + Math.abs(tx - right) <= Math.abs(sx - left) + Math.abs(tx - left) ? right : left;
+    const more = inSpan.filter((rect) => !blockers.includes(rect) && hitsRect(lane, sy, lane, ty, rect));
+    if (more.length === 0) break;
+    blockers = [...blockers, ...more];
+  }
+  const y1 = sy + 12, y2 = ty - 12;
+  const points: Point[] = [{ x: sx, y: sy }, { x: sx, y: y1 }, { x: lane, y: y1 }, { x: lane, y: y2 }, { x: tx, y: y2 }, { x: tx, y: ty }];
+  let d = `M${r2(sx)},${r2(sy)}`;
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const a = points[i - 1], b = points[i], c = points[i + 1];
+    const radius = Math.min(6, (Math.abs(b.x - a.x) + Math.abs(b.y - a.y)) / 2, (Math.abs(c.x - b.x) + Math.abs(c.y - b.y)) / 2);
+    if (radius <= 0) continue;
+    const unit = (p: Point, q: Point) => ({ x: Math.sign(q.x - p.x), y: Math.sign(q.y - p.y) });
+    const u = unit(b, a), v = unit(b, c);
+    d += ` L${r2(b.x + u.x * radius)},${r2(b.y + u.y * radius)} Q${r2(b.x)},${r2(b.y)} ${r2(b.x + v.x * radius)},${r2(b.y + v.y * radius)}`;
+  }
+  d += ` L${r2(tx)},${r2(ty)}`;
+  return { d, mid: { x: lane, y: (sy + ty) / 2 } };
+}
+
 /** Связь от низа карточки-входа к верху карточки, что её берёт. Цель ниже — ортогональная линия со скруглёнными
     углами: вниз, вдоль зазора над целью, вниз; строго под входом — прямая. Цель выше или рядом (карточку утащили) —
     плавная S-кривая. `mid` — где стоят число штук и кнопки «+» / «×». */
-export function linkGeometry(from: Rect, to: Rect): { d: string; mid: Point } {
+export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = []): { d: string; mid: Point } {
   const sx = from.x + from.width / 2, sy = from.y + from.height, tx = to.x + to.width / 2, ty = to.y;
   if (ty - sy >= 24) {
+    const around = detourGeometry(sx, sy, tx, ty, obstacles);
+    if (around) return around;
     if (Math.abs(sx - tx) < 1) return { d: `M${r2(sx)},${r2(sy)} V${r2(ty)}`, mid: { x: sx, y: (sy + ty) / 2 } };
     const my = ty - Math.min(32, (ty - sy) / 2);
     const dir = tx > sx ? 1 : -1;
