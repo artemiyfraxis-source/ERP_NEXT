@@ -22,6 +22,7 @@ import {
   applyGrapherGroups,
   autoPickTerminals,
   complexByHand,
+  ensureSeparateLengths,
   savedComplex,
   cableRecFromFields,
   grapherHasCorrections,
@@ -41,7 +42,6 @@ import {
   syncCoverRow_,
   syncHsWithBraid_,
   terFromFields,
-  toggleLengthMode,
   twistPitchForZ0_,
   twistZ0_,
   updateEndpoint,
@@ -70,6 +70,7 @@ import {
   MANUAL_MODE, cardCategory, cardLabel, emptyManual, fillKdCards, isEmptyManual, kdStale, kdSummary, kdVersionOf, manualConfig, manualFromConfig,
   manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
+import { ComplexCables } from "./ComplexCables";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { lMinusMissing, lMinusSuggestion, terChanges, terEditProblem, terLost, terNewFields, terSaved, terSavedText, withTerRecord } from "./terDbSave";
 import { MarkTable, markTotal } from "./GenMarkTable";
@@ -302,7 +303,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const fromBuild = restored ? switchGenTab(seeded, "manual") : restorePinout(D, seeded, card.document?.build_config);
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
     const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: {}, coaxAdd: {} });
-    setManual(form.manual); setS(form.S); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
+    setManual(form.manual); setS(ensureSeparateLengths(form.S)); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
     setStatus({ text: "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
@@ -509,7 +510,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Любая правка формы перерисовывает карточку операций (refresh → renderOpsCard): ручные времена сбрасываются
   // к БД.ОП. Правка самих времён — setTime, она карточку не перерисовывает.
   const update = (patch: Partial<GenState> | ((current: GenState) => GenState)) =>
-    setS((current) => ({ ...(typeof patch === "function" ? patch(current) : { ...current, ...patch }), times: {} }));
+    setS((current) => ({ ...ensureSeparateLengths(typeof patch === "function" ? patch(current) : { ...current, ...patch }), times: {} }));
 
   // «Маркировка по КД»: материал по умолчанию — бирка из состава (её строка набора и спишется).
   const [markDrawing, setMarkDrawing] = useState<{ busy: boolean; note: string }>({ busy: false, note: "" });
@@ -1114,17 +1115,20 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const typicalSections = <>
     <section className="gsec gen-cables" aria-label="Кабели">
       <div className="gsec-head"><h3>Кабели</h3>
-        {complex && <button type="button" className="btn-link" onClick={() => update((current) => toggleLengthMode(current, makeGen(D, current).sharedLength()))}>{S.advancedLength ? "← общая длина" : "раздельная длина ▸"}</button>}
         <label className="btn-link">из чертежа<input aria-label="Экспорт TECHMAP-GRAPHER" type="file" hidden accept=".json,.zip,.techmap-project.zip" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void grapherFile(file); }} /></label>
       </div>
       <Seg label="Как задана длина" value={S.measureMode} options={MEASURE_MODES} onChange={(measureMode) => update({ measureMode })} />
-      {!S.advancedLength && <div className="cut-row">
+      {!complex && !S.advancedLength && <div className="cut-row">
         <Field label="Длина по чертежу" className="short"><UnitInput unit="мм" aria-label="Длина по чертежу" type="number" min={1} placeholder="—" value={S.sharedLengthText}
           onChange={(event) => update({ sharedLengthText: event.target.value, drawingLength: parseDecimal_(event.target.value) || 0 })} /></Field>
         {cut.tone !== "none" && <div className={cut.tone === "warn" ? "cut-result warn" : "cut-result"}>
           <span>Длина реза <b>{cut.value}</b></span><small>{cut.formula}</small></div>}
       </div>}
       {lMinusGaps.length > 0 && <div className="warning-inline">Нет L− в БД.ТЕР: {lMinusGaps.join(", ")} — длина реза эти концы не вычитает. Впишите L− в разъёме и «Записать в БД».</div>}
+      {complex
+        ? <ComplexCables wires={S.wires} anyCores={anyCores} coresOf={(w) => gen.wireCores_(w)} update={update}
+          select={(w, n) => selectComps(wireOptions, w.compId, (id) => update((current) => updateWire(current, w.idx, { compId: id })), `Кабель ${n + 1}`, "— выберите —")} />
+        : <>
       <div className="wire-list">
         {S.wires.length > 0 && <div className={`${wireCols} head`} aria-hidden="true"><span>Кабель</span>{S.advancedLength && <span>Длина по чертежу</span>}<span>Кол-во</span>{anyCores && <><span>Жил</span><span>Разделка</span></>}<span /></div>}
         {!S.wires.length && <div className="gempty">Нет кабелей — добавьте кабель из состава</div>}
@@ -1143,6 +1147,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           </div>;
         })}
       </div>
+</>
+      }
       <button type="button" className="btn-add" onClick={() => update((current) => ({ ...current, wires: [...current.wires, { idx: current.nextWireIdx, compId: "", length: 0, qty: 1 }], nextWireIdx: current.nextWireIdx + 1 }))}>+ Добавить кабель</button>
     </section>
     {grapher && (() => {

@@ -2096,6 +2096,30 @@ export function toggleLengthMode(S: GenState, shared: number): GenState {
   return first ? { ...S, advancedLength: false, drawingLength: first.length, sharedLengthText: String(first.length) } : { ...S, advancedLength: false };
 }
 
+/** «Сложная сборка» (владелец 14.10): у каждого кабеля своя длина, общего поля нет. Старая карта с общей длиной
+ *  открывается с ней в каждой строке без длины — ничего не теряется. */
+export function ensureSeparateLengths(S: GenState): GenState {
+  if (S.tab !== "complex" || S.advancedLength) return S;
+  const shared = Number(S.drawingLength) || Number(String(S.sharedLengthText).replace(",", ".")) || 0;
+  return { ...S, advancedLength: true, wires: shared > 0 ? S.wires.map((w) => (w.length ? w : { ...w, length: shared })) : S.wires };
+}
+
+/** Копия кабеля (состав, длина, кол-во, жилы, разделка) сразу под исходным. */
+export function duplicateWire(S: GenState, idx: number): GenState {
+  const at = S.wires.findIndex((w) => w.idx === idx);
+  if (at < 0) return S;
+  const copy: WireEntry = { ...S.wires[at], idx: S.nextWireIdx };
+  return { ...S, wires: [...S.wires.slice(0, at + 1), copy, ...S.wires.slice(at + 1)], nextWireIdx: S.nextWireIdx + 1 };
+}
+
+/** «Длину всем ниже»: длина этой строки — в каждую строку ниже, где длина пуста. Заполненные не трогаются. */
+export function fillLengthBelow(S: GenState, idx: number): GenState {
+  const at = S.wires.findIndex((w) => w.idx === idx);
+  const len = at < 0 ? 0 : S.wires[at].length || 0;
+  if (len <= 0) return S;
+  return { ...S, wires: S.wires.map((w, i) => (i > at && !(w.length > 0) ? { ...w, length: len } : w)) };
+}
+
 export function switchGenTab(S: GenState, tab: Tab): GenState {
   let next = S;
   if (tab === "inter" && S.advancedLength) next = toggleLengthMode(S, S.drawingLength);
