@@ -141,6 +141,10 @@ def test_generator_tab_reads_the_marker_and_tells_old_complex_configs_by_their_f
     assert generator_tab(config(tab="inter")) == "inter"
     assert generator_tab(config(tab="complex")) == "complex"
     assert generator_tab(config()) == "inter"
+    # Pinout connections are in almost every generated harness: they do not make a simple cable complex.
+    pinout = [{"from": "X1:1", "to": "X2:1"}]
+    assert generator_tab(config(connections=pinout)) == "inter"
+    assert generator_tab(config(bigAssembly=True)) == "complex"
     assert generator_tab(config("kit-708К.2-КБ1.json")) == "complex"
     assert generator_tab({"mode": "coax", "ops": []}) == "coax"
     assert generator_tab({"mode": "manual", "ops": []}) == "manual"
