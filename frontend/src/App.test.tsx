@@ -230,8 +230,8 @@ it("opens native finished-goods and shipping at the shipping route", async () =>
   render(<App />);
 
   expect(await screen.findByRole("heading", { name: "Отгрузка", level: 1 })).toBeInTheDocument();
-  // Кладовщик начинает с того, что сдал цех: первой открывается «Из производства».
-  expect(await screen.findByText("В производстве нет КБ, которые ждут склада.")).toBeInTheDocument();
+  // Приёмка с производства — отдельный раздел; «Отгрузка» открывается на «На складе».
+  expect(await screen.findByText(/На складе ничего не ждёт упаковки/)).toBeInTheDocument();
 });
 
 it("opens native references at the references route", async () => {
