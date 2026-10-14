@@ -22,6 +22,7 @@ import {
   applyGrapherGroups,
   autoPickTerminals,
   complexByHand,
+  savedComplex,
   cableRecFromFields,
   grapherHasCorrections,
   grapherLengthText,
@@ -294,7 +295,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // привязана к кабелям засева.
     const init = initState(D);
     const base = { ...(card.document?.build_config ? init : complexByHand(init)), opOrder: restored ? [] : opOrderFromConfig(card.document?.build_config) };
-    const seeded = markRows.length ? { ...base, mark: true, markRows } : base;
+    // Старая карта «Сложной сборки» открывается на своей вкладке (иначе эвристика состава показывала «Межплатную»).
+    const onTab = !restored && savedComplex(card.document?.build_config) ? switchGenTab(base, "complex") : base;
+    const seeded = markRows.length ? { ...onTab, mark: true, markRows } : onTab;
     // Распиновка и её проверка — из прошлой сборки (build_config.pinout), если разъёмы и провода те же.
     const fromBuild = restored ? switchGenTab(seeded, "manual") : restorePinout(D, seeded, card.document?.build_config);
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.

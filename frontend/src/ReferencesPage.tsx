@@ -14,7 +14,7 @@ import { TerminalCard, type TerminalRow } from "./TerminalCard";
 import { CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { operationCardCount } from "./TechcardsPage";
-import { cleanHeader, headerLabel, valueLabel } from "./referenceLabels";
+import { cleanHeader, fieldTitle, headerLabel, valueLabel } from "./referenceLabels";
 import {
   failureText,
   referencesApi,
@@ -90,15 +90,7 @@ const VIEW_ONLY_TABS: DbTab[] = ["kab_coax"];
 const TAB_STORAGE = "erp-db-tab";
 // Record fields are SUPPLYMAP DB_SCHEMA keys (TcOpsDb.gs, backend technology._TECH_SCHEMA); the sheet's own header
 // is what people know, so the column shows that. Unknown keys (БД.ПРОВ, БД.МАТ, СПР.КАБ) are headers already.
-const FIELD_TITLES: Record<string, string> = {
-  baseValue: "Для базы", obType: "Тип",
-  opNumber: "Номер", opName: "Название", tOp: "Время операции, с", tPrep: "Время подготовки, с", tMachine: "Время машины, с/оп; с/м",
-  terManufacturer: "Производитель", terSeries: "Серия", terComponent: "Наименование", connType: "Тип разъёма",
-  terType: "Тип контакта", artISL: "Артикул ISL", artSAG: "Артикул SAG", terArticle: "Артикул контакта", terLPlus: "L+",
-  terLMinus: "L−", terStep: "Шаг", terApplicator: "Аппликатор", terStrip: "Длина зачистки, мм",
-  terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, Н", terPullForceMax: "Усилие обрыва до, Н",
-  coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
-};
+
 const headerKey = (field: string) => cleanHeader(field).toLocaleLowerCase("ru-RU");
 
 function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields: string[]): DataColumn<TechOperationRecord>[] {
@@ -141,7 +133,6 @@ function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields
 }
 
 // Заголовки листа, которых нет в карте: без переносов строк, русские слова вместо английских (referenceLabels.ts).
-const fieldTitle = (field: string) => FIELD_TITLES[field] ?? headerLabel(field);
 // Столбцы БД.ТЕР, нужные редко (ссылка, источник, материал, диаметры изоляции, пневма): в «Колонках», по умолчанию скрыты —
 // остальные (артикулы, шаг, обжим) укладываются в ширину ноутбука (аудит БД-3).
 const TER_RARE = new Set(["пневма автомат", "отр", "диаметр изоляции от, мм", "диаметр изоляции до, мм", "материал контакта", "ссылка на datasheet на сайте производителя", "источник высоты обжима"]);

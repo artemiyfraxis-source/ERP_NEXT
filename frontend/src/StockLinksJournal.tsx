@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { failureText, type TechOperationTab } from "./api";
+import { fieldTitle as defaultFieldTitle } from "./referenceLabels";
 import { EMPTY, formatDateTime } from "./format";
 import { STOCK_LINK_EVENT_LABELS, stockLinksApi, type StockLinkEntry, type StockLinkEvent } from "./stockLinksApi";
 
@@ -11,7 +12,7 @@ const BASE_LABELS: Record<string, string> = {
 };
 const EVENT_TONES: Record<StockLinkEvent, string> = { linked: "tone-info", created: "tone-ok", updated: "tone-warn" };
 
-export function StockLinksJournal({ recordId, fieldTitle = (field) => field }: {
+export function StockLinksJournal({ recordId, fieldTitle = defaultFieldTitle }: {
   /** Запись базы; без неё — весь журнал. */
   recordId?: string;
   fieldTitle?: (field: string) => string;

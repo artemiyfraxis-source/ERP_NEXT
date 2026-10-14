@@ -46,6 +46,13 @@ describe("связь карточек", () => {
     expect(side.d).toBe("M100,100 V160 Q100,168 108,168 H392 Q400,168 400,176 V200");
     expect(side.mid).toEqual({ x: 250, y: 168 });
   });
+  it("goes around a card standing right on the way, so the link stays visible", () => {
+    const blocker = { x: -50, y: 150, width: 300, height: 80 };
+    const around = linkGeometry(card(0, 0), card(0, 400), [blocker]);
+    expect(around.d).toContain("L264,382");
+    expect(around.mid.x).toBeGreaterThan(250);
+    expect(linkGeometry(card(0, 0), card(0, 400), [{ x: 600, y: 150, width: 100, height: 80 }]).d).toBe("M100,100 V400");
+  });
   it("bends smoothly when the target was dragged above its input", () => {
     expect(linkGeometry(card(0, 300), card(300, 0)).d).toMatch(/^M100,400 C/);
   });

@@ -128,6 +128,8 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
   }, [controls, fitted]);
 
   const byId = new Map(shown.map((card) => [card.id, card]));
+  // Связь обходит чужие карточки на пути, а не идёт под ними.
+  const geometry = (link: CanvasLink) => linkGeometry(byId.get(link.from)!, byId.get(link.to)!, shown.filter((card) => card.id !== link.from && card.id !== link.to));
   const step = (delta: number) => setManualZoom(clamp(Math.round((zoom + delta) * 10) / 10, ZOOM_MIN, ZOOM_MAX));
 
   function pointerDown(card: CanvasCard, event: ReactPointerEvent<HTMLElement>) {
@@ -170,7 +172,7 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
     return byId.has(link.from) && byId.has(link.to) && (qty || onInsert || onRemoveLink);
   });
   const toolX = spreadLinkTools(toolLinks.map((link) => {
-    const { mid } = linkGeometry(byId.get(link.from)!, byId.get(link.to)!);
+    const { mid } = geometry(link);
     return { id: link.id, x: mid.x, y: mid.y };
   }));
   return <div className="rc">
@@ -198,12 +200,12 @@ export function RouteCanvas({ cards, links, label, selected = null, onSelect, on
               const from = byId.get(link.from), to = byId.get(link.to);
               if (!from || !to) return null;
               const active = selected === link.from || selected === link.to;
-              return <path key={link.id} className={active ? "rc-link is-active" : "rc-link"} d={linkGeometry(from, to).d} markerEnd="url(#rc-arrow)" />;
+              return <path key={link.id} className={active ? "rc-link is-active" : "rc-link"} d={geometry(link).d} markerEnd="url(#rc-arrow)" />;
             })}
           </svg>
           {toolLinks.map((link) => {
             const qty = link.qty != null && link.qty !== 1 ? link.qty : null;
-            const { mid } = linkGeometry(byId.get(link.from)!, byId.get(link.to)!);
+            const { mid } = geometry(link);
             // «+» и «×» раскрываются при наведении и фокусе на метке связи (Tab по кнопкам тоже раскрывает), число штук видно всегда.
             return <div key={link.id} className="rc-link-tools" style={{ left: toolX.get(link.id) ?? mid.x, top: mid.y }}>
               {qty !== null && <span className="rc-qty" title={`Берёт ${formatPerUnit(qty)} шт на одну штуку`}>{formatPerUnit(qty)} шт</span>}
