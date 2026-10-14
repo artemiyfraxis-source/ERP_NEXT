@@ -3752,5 +3752,9 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .op-raw .op-groups { margin-top: 8px; }
 .op-ctl-chip { display: inline-block; margin-bottom: 2px; padding: 0 7px; border-radius: 999px; background: var(--ctl-bg); color: var(--ctl-text); border: 1px solid var(--ctl-line); font-size: 11px; font-weight: 600; line-height: 1.6; }
 .tr-steps tr.ctl td:first-child { box-shadow: inset 3px 0 0 var(--ctl-line); }
-.op-bar { bottom: 0; margin: 12px 0 0; }
+.op-bar { bottom: 0; margin: 12px -18px -16px; }
+.tr-paper.template-detail { padding: 16px 18px; }
+.tr-head.with-act { grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; }
+.tr-head > .tr-head-act { display: flex; gap: 8px; margin-left: 10px; white-space: nowrap; }
+@media (max-width: 1048px) { .tr-head.with-act { grid-template-columns: 1fr; } .tr-head-act { margin-left: 0; } }
 .tc-edit .op-params { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }

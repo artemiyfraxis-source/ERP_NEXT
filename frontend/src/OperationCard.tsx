@@ -137,19 +137,20 @@ export function OperationCard({ code, name, template, op, canEditTemplate, canEd
     />;
   }
 
-  const head = <div className="tr-head">
+  const head = (actions?: ReactNode) => <div className={`tr-head${actions ? " with-act" : ""}`}>
     <div><small>Операция</small><b className="tr-code">{code}</b></div>
     <div className="tr-head-name"><small>Наименование</small><b>{template?.name || name || "—"}</b></div>
     <div><small>Время операции</small><b>{template
       ? (template.norms_known === false ? "справочник не загружен" : norms ? seconds(norms.operation_seconds || fields.tOp, type) : <span className="danger-text">нет в БД.ОП</span>)
       : seconds(fields.tOp, type)}</b></div>
     <div><small>Подготовка</small><b>{seconds(norms?.setup_seconds || fields.tPrep, type, true)}</b></div>
+    {actions && <div className="tr-head-act">{actions}</div>}
   </div>;
 
   if (editing) {
     // Шаблона нет или права на него нет — правятся только параметры строки БД.ОП.
     return <article className="panel template-detail tr-paper" aria-label="Правка параметров операции">
-      {head}
+      {head()}
       {params(true)}
       <div className="tc-bar op-bar">
         {error && <span className="error-banner tc-error" role="alert">{error}</span>}
@@ -160,8 +161,7 @@ export function OperationCard({ code, name, template, op, canEditTemplate, canEd
   }
 
   return <article className="panel template-detail tr-paper">
-    <div className="form-actions"><button className="secondary" onClick={onBack}>← Все операции</button>{(templateEditable || opEditable) && <button className="primary" onClick={startEdit}>Править</button>}</div>
-    {head}
+    {head(<><button className="secondary" onClick={onBack}>← Все операции</button>{(templateEditable || opEditable) && <button className="primary" onClick={startEdit}>Править</button>}</>)}
     {!template && <div className="warning-inline">Шаблона листа (БД.ТК) у этой операции нет: шагов, оснастки и контроля нет.</div>}
     {template?.document.safety && <div className="warning-inline"><strong>Требование безопасности</strong><br />{template.document.safety.replace(SAFETY_HEAD, "")}</div>}
     {params(false)}
