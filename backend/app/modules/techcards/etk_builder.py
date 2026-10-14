@@ -1073,7 +1073,7 @@ _COMPLEX_TYPES = frozenset({"splice", "seal", "foldCore"})
 def generator_tab(config: Mapping[str, Any] | None) -> str:
     """The generator tab a build config came from: «manual», «coax», «inter» or «complex»; "" — no config (an ETK
     moved from SUPPLYMAP). The generator says it (`tab`, since 13.10); an older config is told by what only «Сложная
-    сборка» writes: more than two connectors, wire links by pins, splices, sealing, a folded core, a connector label."""
+    сборка» writes: a big-assembly flag, splices, sealing, a folded core, a connector label."""
     if not isinstance(config, Mapping) or not config:
         return ""
     if config.get("mode") == MANUAL_MODE:
@@ -1085,7 +1085,7 @@ def generator_tab(config: Mapping[str, Any] | None) -> str:
         return "coax"
     ops = [item for item in _list(config.get("ops")) if isinstance(item, Mapping)]
     endpoints = [item.get(name) for item in ops for name in ("ep", "epB") if isinstance(item.get(name), Mapping)]
-    if (config.get("bigAssembly") or config.get("connections") or any(item.get("type") in _COMPLEX_TYPES for item in ops)
+    if (config.get("bigAssembly") or any(item.get("type") in _COMPLEX_TYPES for item in ops)
             or any(str(end.get("label") or "").strip() or end.get("fold") for end in endpoints)):
         return COMPLEX_TAB
     return "inter"
