@@ -12,7 +12,7 @@ import {
   type TechcardRevision,
   failureText,
 } from "./api";
-import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkChips, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
+import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { ETK_PART_SOURCE, etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, etkSemiSource, formatMinutes } from "./etkRoute";
@@ -246,6 +246,21 @@ function MarkMissing({ text }: { text: string }) {
   return <>{parts.map((part, index) => <Fragment key={index}>{part}{index < parts.length - 1 && <b className="tone-danger">{ETK_NOT_SET}</b>}</Fragment>)}</>;
 }
 
+/** Параметры операции в шапке: «Сторона А» | «Общие» | «Сторона В» (колонка стороны — только если конец обрабатывается).
+ *  Значение крупно (планшет у станка), подпись мелко; «не задано» — тоном опасности. */
+function EtkParamBlock({ params }: { params: EtkParams }) {
+  const [left, right] = [params.sides.find((side) => side.end === "A"), params.sides.find((side) => side.end === "B")];
+  const columns = [left && { key: "A", title: left.title, items: left.items }, { key: "common", title: "Общие", items: params.common },
+    right && { key: "B", title: right.title, items: right.items }].filter((column) => column && column.items.length);
+  if (!columns.length) return null;
+  return <div className="etk-params" aria-label="Параметры операции" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
+    {columns.map((column) => column && <section key={column.key} aria-label={column.title}>
+      <strong>{column.title}</strong>
+      <dl>{column.items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><MarkMissing text={value} /></dd></div>)}</dl>
+    </section>)}
+  </div>;
+}
+
 /** Допуск шага, которого нет в данных («длина не задана» у нарезки трубок-маркеров) — красным, как «не задано» пайки. */
 const NOT_SET = /не задан/i;
 
@@ -309,8 +324,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
       </div>
       {actions}
     </header>
-    {etkChips(raw).length > 0 && <div className="etk-chips" aria-label="Параметры операции">{etkChips(raw).map(([label, value]) =>
-      <span key={label}><small>{label}</small><MarkMissing text={value} /></span>)}</div>}
+    <EtkParamBlock params={etkParams(raw)} />
     {safety && <EtkFold block="safety" className="etk-safety" summary="Требование безопасности"><div>{safety}</div></EtkFold>}
     {!operation.card && <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
     <EtkSection label="Вход" number={next()}>
@@ -490,10 +504,9 @@ export function ToolingBySection({ tooling, fixed = false }: { tooling: EtkTool[
 function editContext(operation: EtkOperation, batch: string, sketchUrl: string): EditContext {
   const raw = operation as Record<string, unknown>;
   const figure = etkFigure(raw);
-  const chips = etkChips(raw);
+  const params = etkParams(raw);
   return {
-    chips: chips.length ? <div className="etk-chips" aria-label="Параметры операции">{chips.map(([label, value]) =>
-      <span key={label}><small>{label}</small><MarkMissing text={value} /></span>)}</div> : undefined,
+    chips: <EtkParamBlock params={params} />,
     input: operation.components?.length || operation.semis?.length
       ? <PickList semis={operation.semis} parts={operation.components} fields={raw.fields} semiFrom={etkSemiSource(null, operation.position || 0)} /> : undefined,
     sketch: figure || sketchUrl ? <div className="etk-fig-row">

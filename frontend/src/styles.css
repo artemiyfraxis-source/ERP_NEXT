@@ -3829,3 +3829,15 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .etk-pick td.num { text-align: right; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
 .etk-pick-from { color: var(--muted-foreground); white-space: nowrap; }
 .etk-pick-semi td { background: color-mix(in srgb, var(--primary) 6%, transparent); }
+
+/* Параметры операции в шапке ЭТК: Сторона А | Общие | Сторона В. Значения читаются с руки у станка. */
+.etk-params { display: grid; gap: 0; margin: 12px 0 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #f7f9f7; }
+.etk-params section { padding: 8px 14px 10px; border-left: 1px solid var(--border); min-width: 0; }
+.etk-params section:first-child { border-left: 0; }
+.etk-params section > strong { display: block; margin: 0 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted-foreground); }
+.etk-params dl { margin: 0; display: grid; max-width: 520px; }
+.etk-params dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; border-top: 1px dotted var(--border); }
+.etk-params dl > div:first-child { border-top: 0; }
+.etk-params dt { font-size: 12px; color: var(--muted-foreground); flex: none; }
+.etk-params dd { margin: 0; font-size: 16px; font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+@media (max-width: 1100px) { .etk-params { grid-template-columns: 1fr !important; } .etk-params section { border-left: 0; border-top: 1px solid var(--border); } .etk-params section:first-child { border-top: 0; } }
