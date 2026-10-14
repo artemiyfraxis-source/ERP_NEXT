@@ -490,6 +490,51 @@ def test_project_status_in_one_click(kitset_api):
     assert [event["kind"] for event in card["journal"][:2]] == ["Дедлайн", "Этап КБ"]
 
 
+def test_project_folder_link_is_set_changed_cleared_and_journaled(kitset_api):
+    client, _lot = kitset_api
+    _load(client)
+    url = "/api/techcards/kitsets/708К.4/folder"
+    assert client.get("/api/techcards/kitsets/708К.4").json()["folder_url"] is None
+
+    set_ = client.put(url, json={"url": " https://drive.google.com/drive/folders/abc "})
+    assert set_.status_code == 200, set_.text
+    card = set_.json()["card"]
+    assert card["folder_url"] == "https://drive.google.com/drive/folders/abc"
+    assert card["journal"][0]["kind"] == "Комментарий" and "не задана → https://drive.google.com" in card["journal"][0]["text"]
+    assert client.get("/api/techcards/kitsets/708К.4").json()["folder_url"] == card["folder_url"]
+
+    # Та же ссылка второй раз — не правка, журнал не растёт.
+    again = client.put(url, json={"url": "https://drive.google.com/drive/folders/abc"}).json()["card"]
+    assert len(again["journal"]) == len(card["journal"])
+
+    changed = client.put(url, json={"url": "http://server/projects/708"}).json()["card"]
+    assert changed["folder_url"] == "http://server/projects/708"
+
+    # Обновление из расчёта ссылку не стирает.
+    assert _load(client).status_code == 200
+    assert client.get("/api/techcards/kitsets/708К.4").json()["folder_url"] == "http://server/projects/708"
+
+    cleared = client.put(url, json={"url": ""}).json()["card"]
+    assert cleared["folder_url"] is None and "ссылка убрана" in cleared["journal"][0]["text"]
+
+
+@pytest.mark.parametrize("bad", ["drive.google.com/x", "ftp://host/x", "javascript:alert(1)", "https://", "https://a b", "https://x/" + "a" * 1100])
+def test_project_folder_link_refuses_non_http_urls(kitset_api, bad):
+    client, _lot = kitset_api
+    _load(client)
+    res = client.put("/api/techcards/kitsets/708К.4/folder", json={"url": bad})
+    assert res.status_code == 422, res.text
+    assert client.get("/api/techcards/kitsets/708К.4").json()["folder_url"] is None
+
+
+def test_project_folder_link_needs_edit_right_and_a_known_project(kitset_api):
+    client, _lot = kitset_api
+    _load(client)
+    assert client.put("/api/techcards/kitsets/нет/folder", json={"url": "https://x.test/a"}).status_code == 404
+    app.dependency_overrides[authenticated_principal] = _principal({"projects": "view"})
+    assert client.put("/api/techcards/kitsets/708К.4/folder", json={"url": "https://x.test/a"}).status_code == 403
+
+
 def _side_effects(lot):
     """What a stage change must never touch: kit requests, the lot's stock and reserve, shop tasks, goods."""
     with app.state.fulfillment_uow_factory() as uow:

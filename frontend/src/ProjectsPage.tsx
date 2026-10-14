@@ -400,6 +400,7 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   const [warning, setWarning] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [folderOpen, setFolderOpen] = useState(false);
 
   /* kitRefresh: перечитать расчёт по сохранённой ссылке. Номер карточки передаётся явно: в ячейке расчёта он бывает
      короче («720К.»), и обновление завело бы рядом вторую карточку. */
@@ -478,11 +479,14 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
       {(canEdit || (canRequest && card.calc_source)) && <CardMoreMenu project={card.project}
         refreshing={refreshing} onRefresh={canEdit ? () => void refresh() : undefined}
         onRequest={canRequest && card.calc_source ? () => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project }) : undefined}
+        onFolder={canEdit ? () => setFolderOpen(true) : undefined}
         onDelete={canEdit ? () => setDeleting(true) : undefined} />}
     </header>
-    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.deadline && <> · дедлайн {formatDay(card.deadline)}</>} · обновлено {formatDateTime(card.updated_at)} {card.updated_by}</p>
+    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.folder_url && <> · <a className="kit-calc-link" href={card.folder_url} target="_blank" rel="noopener">папка</a></>}{card.deadline && <> · дедлайн {formatDay(card.deadline)}</>} · обновлено {formatDateTime(card.updated_at)} {card.updated_by}</p>
     {blockerInfo && <p className="kit-blocker"><StatusChip status={blockerInfo.type} /> <span>с {formatDay(blockerInfo.since)} · {blockerInfo.text} — {blockerInfo.who}</span></p>}
     {note && <div className="kit-actions"><span className="muted">{note}</span></div>}
+    {folderOpen && <FolderDialog project={card.project} current={card.folder_url || ""} onClose={() => setFolderOpen(false)}
+      onSaved={(next) => { setCard(next); setFolderOpen(false); }} />}
     {deleting && <DeleteProjectDialog project={card.project} remove={remove} onClose={() => setDeleting(false)} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {warning && <div className="warning-banner" role="alert">{warning}</div>}
@@ -520,8 +524,8 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
 /** «Ещё ▾» карточки проекта: «Обновить из расчёта», «Оформить заявку из расчёта» и — последним, красным — «Удалить
  *  проект…». Заявка — отдельный шаг, как в SUPPLYMAP: «Оформить заявку → Из расчёта» открывается с этой ссылкой и
  *  номером, оператор проверяет строки. Пункт показан только если действие доступно. */
-function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onDelete }: {
-  project: string; refreshing: boolean; onRefresh?: () => void; onRequest?: () => void; onDelete?: () => void;
+function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onFolder, onDelete }: {
+  project: string; refreshing: boolean; onRefresh?: () => void; onRequest?: () => void; onFolder?: () => void; onDelete?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -541,9 +545,54 @@ function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onDelete }: {
     {open && <div className="more-menu-list" role="menu">
       {onRefresh && <button type="button" role="menuitem" autoFocus disabled={refreshing} onClick={() => { setOpen(false); onRefresh(); }}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
       {onRequest && <button type="button" role="menuitem" autoFocus={!onRefresh} onClick={() => { setOpen(false); onRequest(); }}>Оформить заявку из расчёта</button>}
-      {onDelete && <button type="button" role="menuitem" className="kit-more-danger" autoFocus={!onRefresh && !onRequest} onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>}
+      {onFolder && <button type="button" role="menuitem" autoFocus={!onRefresh && !onRequest} onClick={() => { setOpen(false); onFolder(); }}>Папка проекта…</button>}
+      {onDelete && <button type="button" role="menuitem" className="kit-more-danger" autoFocus={!onRefresh && !onRequest && !onFolder} onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>}
     </div>}
   </div>;
+}
+
+/** Ссылка на папку проекта: поле адреса, «Сохранить» (пусто — то же, что убрать) и «Убрать ссылку», если она задана. */
+export function folderUrlError(value: string) {
+  const url = value.trim();
+  if (!url) return "";
+  if (url.length > 1024) return "Ссылка длиннее 1024 символов.";
+  try {
+    const parsed = new URL(url);
+    if ((parsed.protocol === "http:" || parsed.protocol === "https:") && !/\s/.test(url)) return "";
+  } catch { /* не адрес */ }
+  return "Введите ссылку, начинающуюся с http:// или https://";
+}
+
+function FolderDialog({ project, current, onSaved, onClose }: {
+  project: string; current: string; onSaved: (card: KitsetCard) => void; onClose: () => void;
+}) {
+  const [value, setValue] = useState(current);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(url: string) {
+    if (busy) return;
+    const invalid = folderUrlError(url);
+    if (invalid) { setError(invalid); return; }
+    setBusy(true); setError("");
+    try { onSaved((await kitsetsApi.setFolder(project, url.trim())).card); }
+    catch (reason) { setError(message(reason, "Не удалось сохранить ссылку")); setBusy(false); }
+  }
+  return createPortal(<div className="dialog-overlay" onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.stopPropagation(); onClose(); } }}
+    onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <form className="move-dialog panel" noValidate role="dialog" aria-modal="true" aria-label={`Папка проекта ${project}`}
+      onSubmit={(event) => { event.preventDefault(); void submit(value); }}>
+      <h2>Папка проекта {project}</h2>
+      <label>Ссылка на папку
+        <input type="url" autoFocus value={value} placeholder="https://…" onChange={(event) => { setValue(event.target.value); setError(""); }} />
+      </label>
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      <div className="move-actions page-actions">
+        <button type="submit" className="primary" disabled={busy}>{busy ? "Сохраняю…" : "Сохранить"}</button>
+        {current && <button type="button" className="secondary" disabled={busy} onClick={() => void submit("")}>Убрать ссылку</button>}
+        <button type="button" className="secondary" disabled={busy} onClick={onClose}>Отмена</button>
+      </div>
+    </form>
+  </div>, document.body);
 }
 
 /** Подтверждение удаления проекта: что уйдёт и что останется (DELETE_TEXT), красная кнопка с номером проекта; фокус —
