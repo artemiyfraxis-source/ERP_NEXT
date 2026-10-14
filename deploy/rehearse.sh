@@ -145,7 +145,7 @@ fi
 echo "== временный пользователь проверки в копии"
 "${compose[@]}" run --rm -T -e ERP_NEW_USER_PASSWORD="$check_password" api \
   python -m app.identity_admin create-user --login "$check_login" --email "$check_login@erp.local" \
-  --name 'Проверка обновления' --department 'Руководящий состав' --level admin >/dev/null \
+  --name 'Проверка обновления' --department 'Руководящий состав' --level superadmin >/dev/null \
   || fail checks "не создался временный пользователь в копии"
 
 echo "== новая версия на копии"
