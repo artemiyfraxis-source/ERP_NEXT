@@ -4,6 +4,7 @@ import { HarnessEditorLazy, loadHarnessDrawing, type DrawingSaveState, type Harn
 import { HarnessHistory } from "./HarnessHistory";
 import { closeHarness, openLibrary } from "./harnessNav";
 import { ExportMenu } from "./harness/export/ExportMenu";
+import { PhoneMoreMenu } from "./harness/PhoneMoreMenu";
 import type { HarnessExportPort } from "./harness/export/port";
 import { usePhoneView } from "./harness/phone-view";
 import { readFileBase64 } from "./ProjectsPage";
@@ -58,6 +59,8 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
   const [note, setNote] = useState("");
   const [generation, setGeneration] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const phone = usePhoneView();
   const edit = canEdit && !phone;
@@ -147,7 +150,16 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
   const heading = `${index}${title ? ` ${title}` : ""}`;
   const tone: Tone = state === "conflict" || state === "error" ? "danger" : state === "saving" ? "warning" : "success";
   return <section className={phone ? "harness-page harness-page-phone" : "harness-page"} aria-label={`Чертёж жгута ${heading}`}>
-    <header className="harness-page-head">
+    {phone ? <header className="harness-page-head">
+      <button className="secondary small harness-page-back" aria-label="Назад" title="Назад" onClick={onBack}>←</button>
+      <h1>{heading}</h1>
+      <PhoneMoreMenu open={moreOpen} onOpenChange={setMoreOpen}>
+        <span className="harness-more-status">Только просмотр</span>
+        <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); setHistoryOpen(true); }}>История версий</button>
+        <button type="button" role="menuitem" onClick={() => { setMoreOpen(false); setExportOpen(true); }}>Выгрузить…</button>
+      </PhoneMoreMenu>
+      <ExportMenu bare open={exportOpen} onOpenChange={setExportOpen} project={project} index={index} heading={heading} port={() => exportPort.current} version={() => ports?.revision() ?? null} />
+    </header> : <header className="harness-page-head">
       <button className="secondary small" onClick={onBack}>← Назад</button>
       <h1>{heading}</h1>
       <span className="muted">Чертёж жгута</span>
@@ -168,7 +180,8 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
           title="Заменить чертёж файлом .techmap-project.zip из TECHMAP-GRAPHER">Загрузить .zip</button>}
       </span>
       <input ref={fileRef} type="file" accept=".zip" hidden data-testid="harness-zip" onChange={(event) => { void importZip(event.target.files?.[0]); event.target.value = ""; }} />
-    </header>
+    </header>}
+    {phone && note && <p className="muted harness-page-note-phone" role="status">{note}</p>}
     {copy && <div className="harness-conflict" role="alert">
       <span><b>Ваши правки от {formatMoment(copy.at)} не сохранены</b> — {conflictReason(copy.message)}. Правки остались на экране:
         возьмите сохранённую версию или сохраните свою поверх неё.</span>
