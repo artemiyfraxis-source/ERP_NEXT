@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable } from "./CableStructure";
 import type { CableRow, Principal } from "./api";
@@ -187,18 +187,21 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
 });
 
-it("groups coax cables by family and collapses a group", async () => {
-  mockApi();
+it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups collapse", async () => {
+  const lmr: CableRow = { id: "w-lmr", kind: "coax", auto_kind: "coax", reason: "тип «коаксиальный»", manual: false, cable: "LMR-195",
+    record: wire("w-lmr", { "Марка": "LMR-195" }), dia: null, dia_hint: null };
+  mockApi([], [lmr, ...ROWS]);
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
-  const rg58 = await screen.findByRole("button", { name: /RG-58 · 2/ });
-  const rg316 = screen.getByRole("button", { name: /Прочие семейства · 1/ }); // a family of one cable has no group of its own
-  expect(rg58.compareDocumentPosition(rg316) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // RG families first, single-cable ones after
-  expect(rg58).toHaveAttribute("aria-expanded", "true");
-  expect(screen.getByText("RG-58 A/U")).toBeInTheDocument();
-  fireEvent.click(rg58);
-  expect(rg58).toHaveAttribute("aria-expanded", "false");
+  const rg = await screen.findByRole("button", { name: /RG · 3/ });
+  const lmrGroup = screen.getByRole("button", { name: /LMR · 1/ });
+  expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // RG first, LMR after
+  const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
+  expect(marks).toEqual(["RG58", "RG-58 A/U", "RG316", "LMR-195"]); // RG58 = RG-58: the base mark, then its A/U
+  expect(rg).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(rg);
+  expect(rg).toHaveAttribute("aria-expanded", "false");
   expect(screen.queryByText("RG-58 A/U")).toBeNull();
-  expect(screen.getByText("RG316")).toBeInTheDocument();
+  expect(screen.getByText("LMR-195")).toBeInTheDocument();
 });
 
 it("opens a coax card a tester reads at the VNA: markers, connectors, construction", async () => {
@@ -321,4 +324,78 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   const row16 = screen.getByText("ПуГВ 16").closest("tr") as HTMLElement;
   expect(row16.querySelector(".wire-dot")).toBeNull();
   expect(within(row16).getAllByText("—").length).toBeGreaterThan(0);
+});
+
+describe("coax cells edited right in the table (owner 14.10: «ещё бы как-то столбцы отредактировать»)", () => {
+  const cellOf = (cable: string, header: string) => {
+    const line = screen.getByText(cable, { selector: "td.key strong" }).closest("tr") as HTMLElement;
+    const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === header);
+    return line.querySelectorAll("td")[index] as HTMLElement;
+  };
+  const type = (cell: HTMLElement, value: string) => {
+    fireEvent.click(cell);
+    fireEvent.keyDown(cell, { key: "Enter" });
+    const input = within(cell).getByRole("textbox");
+    fireEvent.change(input, { target: { value } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    return input;
+  };
+
+  it("shows «Поставщик» before «Производители» and writes a БД.ПРОВ cell with its old value, then reads the list again", async () => {
+    const calls = mockApi();
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+    expect(heads.indexOf("Поставщик")).toBe(heads.indexOf("Производители") - 1);
+
+    type(cellOf("RG316", "Волновое сопротивление, Ом"), "75");
+    await waitFor(() => expect(calls.find((call) => call.method === "PATCH")).toMatchObject({
+      path: "/api/references/tech-operations/w-rg316",
+      body: { edits: [{ field: "Волновое сопротивление, Ом", old: "50", value: "75" }] },
+    }));
+    await waitFor(() => expect(calls.filter((call) => call.path === "/api/references/cables")).toHaveLength(2)); // reloaded
+    expect(screen.queryByText(/сохранён/)).toBeNull(); // no banner per cell
+    expect(screen.queryByText("Карточка RG-316")).toBeNull(); // the row did not open
+  });
+
+  it("writes D1–D3 of a cell the way the editor does: the old three and the new one", async () => {
+    const calls = mockApi();
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    type(cellOf("RG316", "D2 диэлектрик, мм"), "1,5");
+    await waitFor(() => expect(calls.find((call) => call.path === "/api/references/cables/diameters")?.body).toEqual({
+      cable: "RG316", dia_id: "d-316", old: { D1: "0,5", D2: "1,48", D3: "1,95" }, value: { D1: "0,5", D2: "1,5", D3: "1,95" },
+    }));
+  });
+
+  it("keeps the typed value with the reason when the cell was changed meanwhile", async () => {
+    mockApi();
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const answer = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => init?.method === "PATCH"
+      ? new Response(JSON.stringify({ detail: "Не записано ничего — отклонено полей: 1; Экран: запись уже поменяли — откройте её заново" }), { status: 409, headers: { "Content-Type": "application/json" } })
+      : answer(input, init));
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    const input = type(cellOf("RG316", "Наружный диаметр, мм"), "2,5");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Ячейку уже поменяли — в таблице свежее значение. Enter запишет ваше, Esc отменит.");
+    expect(input).toHaveValue("2,5");
+  });
+
+  it("leaves the mark, the card and fields the record lacks to the record window; no edit right — no editable cells", async () => {
+    mockApi();
+    const { unmount } = render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(cellOf("RG316", "Марка кабеля")).not.toHaveClass("dt-editable");
+    expect(cellOf("RG316", "Карточка")).not.toHaveClass("dt-editable");
+    expect(cellOf("RG316", "Изоляция")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: the server would refuse it
+    expect(cellOf("RG316", "Экран")).not.toHaveClass("dt-editable");
+    expect(cellOf("RG58", "Тип провода")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
+    expect(cellOf("RG58", "D1 жила, мм")).toHaveClass("dt-editable");
+    unmount();
+
+    render(<ReferencesPage principal={{ ...admin, roles: ["foreman"], access_level: "foreman", permissions: { erpref: "view" } }} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(document.querySelector("td.dt-editable")).toBeNull();
+  });
 });

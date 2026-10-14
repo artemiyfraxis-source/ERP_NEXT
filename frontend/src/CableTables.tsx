@@ -1,8 +1,9 @@
 import { PageWindow } from "./PageWindow";
 import { useMemo, useState, type ReactNode } from "react";
-import { DataTable, type DataColumn } from "./DataTable";
+import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
 import { CABLE_KIND_LABELS, CoaxCardView, num, spanText } from "./CableStructure";
 import {
+  ApiError,
   failureText,
   referencesApi,
   type CableDiameters,
@@ -40,7 +41,8 @@ const MARK = "Марка";
 const TYPE = "Тип провода";
 // The columns a technologist reads per list, in this order; every other БД.ПРОВ column is in «Колонки».
 const SHOWN: Record<CableKind, string[]> = {
-  coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт", "Производители"],
+  // «Поставщик» (where the shop buys it) before «Производители» (owner 14.10: «тут больше надо не производитель, а поставщик»).
+  coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт", "Поставщик", "Производители"],
   wire: [TYPE, "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Изоляция", "Цвета", "Темп. от, °C", "Темп. до, °C", "Напряжение, В"],
   multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт", "Производители"],
   other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В", "Стандарт", "Производители"],
@@ -57,6 +59,13 @@ const cardState = (row: CableRow) => !row.card ? "нет карточки"
 const NUMBER = /^-?\d[\d\s]*([.,]\d+)?$/;
 const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
 const diaText = (dia: CableDiameters) => DIAMETERS.map((name) => dia[name] || "—").join(" · ");
+/** A refusal of a cell written in the table, in the words of the cell: a 409 means the rows are read again under it. */
+const cellFailure = (reason: unknown) => new Error(reason instanceof ApiError && reason.status === 409
+  ? "Ячейку уже поменяли — в таблице свежее значение. Enter запишет ваше, Esc отменит."
+  : failureText(reason, "Не записано"));
+// Cells not written from the table: the mark renames the cable (its D-row and links follow it) and the category is a
+// choice list — both stay in the record's own editor.
+const NOT_IN_CELL = new Set([MARK, CATEGORY_CELL]);
 
 type Draft = { fields: Record<string, string>; dia: Record<Diameter, string>; kind: CableKind };
 
@@ -87,13 +96,32 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   }, [data.rows, kind, grouped]);
   const coaxGroup = useMemo(() => coaxGroupOf(rows), [rows]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
+  // A cell edited right in the table goes the way of the record's editor: one field with its old value (the server
+  // refuses it when the record changed meanwhile), D1–D3 with the old three. No edit right — no editable cells.
+  const fieldEdit = (name: string): DataCellEdit<CableRow> | undefined => canEdit && !NOT_IN_CELL.has(name) ? {
+    enabled: (row) => Boolean(row.record && name in row.record.fields),
+    save: async (row, value) => {
+      try {
+        await referencesApi.editRecord(row.record!.id, [{ field: name, old: field(row, name), value }]);
+      } catch (reason) { throw cellFailure(reason); }
+    },
+  } : undefined;
+  const diaEdit = (name: Diameter): DataCellEdit<CableRow> | undefined => canEdit ? {
+    value: (row) => row.dia?.[name] ?? "",
+    save: async (row, value) => {
+      const old = Object.fromEntries(DIAMETERS.map((item) => [item, row.dia?.[item] ?? ""]));
+      try {
+        await referencesApi.saveCableDiameters({ cable: row.cable, dia_id: row.dia?.id ?? null, old, value: { ...old, [name]: value } });
+      } catch (reason) { throw cellFailure(reason); }
+    },
+  } : undefined;
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
   const textColumn = (name: string, hidden: boolean): DataColumn<CableRow> => {
     const values = rows.map((row) => field(row, name)).filter((value) => value && value !== "—");
     const long = values.some((value) => value.length > 28);
     return {
-      key: name, title: name, value: (row) => field(row, name), hidden,
+      key: name, title: name, value: (row) => field(row, name), hidden, edit: fieldEdit(name),
       render: long ? (row) => <span className="cable-clip" title={field(row, name)}>{field(row, name)}</span> : undefined,
       numeric: values.length > 0 && values.every((value) => NUMBER.test(value)),
     };
@@ -102,15 +130,15 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   const columns: DataColumn<CableRow>[] = [
     { key: "cable", title: kind === "wire" ? "Марка провода" : "Марка кабеля", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
     ...(kind === "coax" ? DIAMETERS.map((name): DataColumn<CableRow> => ({
-      key: name, title: DIA_TITLES[name], numeric: true, value: (row) => row.dia?.[name] ?? "",
+      key: name, title: DIA_TITLES[name], numeric: true, value: (row) => row.dia?.[name] ?? "", edit: diaEdit(name),
       render: (row) => row.dia
         ? row.dia[name] || <span className="muted">—</span>
         : <span className="tone-warn" title={`Нет D1–D3 — генератор возьмёт диаметры из записи разъёма${row.dia_hint ? `; похожий кабель: ${row.dia_hint.cable}` : ""}`}>—</span>,
     })) : []),
     ...(kind === "coax" ? [
       { key: "__span", title: "Диапазон VNA", value: (row: CableRow) => row.card ? spanText(row.card) : "" },
-      { key: "__op", title: "Рабочая частота, ГГц", numeric: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) },
-      { key: "__fc", title: "Частота среза, ГГц", numeric: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) },
+      { key: "__op", title: "Рабочая частота, ГГц", numeric: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) || <span className="cell-empty">—</span> },
+      { key: "__fc", title: "Частота среза, ГГц", numeric: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) || <span className="cell-empty">—</span> },
       {
         key: "__card", title: "Карточка", value: cardState,
         render: (row: CableRow) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
@@ -141,7 +169,10 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
       rows={rows}
       columns={columns}
       rowKey={(row) => row.id}
-      storageKey={`db:cables:${kind}`}
+      rowLabel={(row) => row.cable}
+      onEdited={() => onSaved("")}
+      // The saved column set lists every hidden column, «Поставщик» among them until 14.10: coax starts from a new key.
+      storageKey={kind === "coax" ? "db:cables:coax:2" : `db:cables:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}
