@@ -203,6 +203,13 @@ function rows(value: unknown): EtkPfRow[] {
   }));
 }
 
+/** Название результата последней операции блока, если оно одно; иначе пусто (берётся имя блока схемы). */
+function resultNameOf(block: { ops: number[] }, operations: EtkPfOperation[]): string {
+  const last = operations[block.ops[block.ops.length - 1] - 1];
+  const list = last ? rows(last.result) : [];
+  return list.length === 1 ? (list[0].name ?? "").trim() : "";
+}
+
 /** Норма операции ЭТК, мин на партию (как `_operation_minutes` на сервере): Σ строк времени, без них — секунды карты. */
 export function operationMinutes(operation: EtkPfOperation | null | undefined, batch: number): number {
   const time = (Array.isArray(operation?.time) ? operation.time : []).map(record);
@@ -253,7 +260,8 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
       inputs: route.edges.filter((edge) => edge.to === block.key && byKey.has(edge.from))
         .map((edge) => ({
           number: number.get(edge.from) ?? 0,
-          name: byKey.get(edge.from)!.name.trim(),
+          // Название входа — результат последней операции ПФ-источника, слово в слово (как в его «Результате»).
+          name: resultNameOf(byKey.get(edge.from)!, operations) || byKey.get(edge.from)!.name.trim(),
           times: edge.per_unit === 1 ? "" : `×${String(edge.per_unit).replace(".", ",")}`,
         }))
         .sort((a, b) => a.number - b.number),
@@ -266,4 +274,27 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
 /** Номер операции ЭТК в списке: «01», «05». */
 export function opNumber(position: number): string {
   return String(position).padStart(2, "0");
+}
+
+/** Откуда фитеру брать комплектующие операции. */
+export const ETK_PART_SOURCE = "со склада по комплектации";
+
+/** Откуда фитеру брать полуфабрикат на входе операции `position`: внутри ПФ — с предыдущей операции этого ПФ; первая
+ *  операция ПФ берёт коробки других ПФ («из ПФ-2, коробка с операции 03»). Номера ПФ — как в списке ПФ ЭТК (по первой
+ *  операции). Без схемы — с предыдущей операции списка; у самой первой источника нет. */
+export function etkSemiSource(route: EtkRoute | null, position: number): string {
+  const block = route?.blocks.find((item) => item.ops.includes(position));
+  if (!route || !block) return position > 1 ? `с операции ${opNumber(position - 1)}` : "";
+  const at = block.ops.indexOf(position);
+  if (at > 0) return `с операции ${opNumber(block.ops[at - 1])}`;
+  const first = (ops: number[]) => (ops.length ? Math.min(...ops) : Number.MAX_SAFE_INTEGER);
+  const order = [...route.blocks].sort((a, b) => first(a.ops) - first(b.ops) || a.key.localeCompare(b.key));
+  const byKey = new Map(route.blocks.map((item) => [item.key, item]));
+  const feeds = route.edges.filter((edge) => edge.to === block.key && byKey.has(edge.from)).map((edge) => {
+    const source = byKey.get(edge.from)!;
+    const number = order.findIndex((item) => item.key === source.key) + 1;
+    const lastOp = source.ops[source.ops.length - 1];
+    return `ПФ-${number}${lastOp ? `, коробка с операции ${opNumber(lastOp)}` : ""}`;
+  });
+  return feeds.length ? `из ${feeds.join("; ")}` : position > 1 ? `с операции ${opNumber(position - 1)}` : "";
 }

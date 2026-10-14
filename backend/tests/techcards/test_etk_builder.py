@@ -279,7 +279,7 @@ def test_cut_crimping_both_sides_carries_both_terminals_once_and_no_manual_crimp
     assert cut["fields"]["applicator"] == "A2/A7"
     assert cut["fields"]["crimpHeight"] == "0,60 - 0,75 (А) / 0,48 - 0,52 (В)"
     assert _result_name(_both_sides_config("SPH-002T-P0.5S")["ops"][0], {}, "") == (
-        "НВ4 0,2 160мм; ст. А: обжат терм. SXH-001T-P0.6N; ст. В: обжат терм. SPH-002T-P0.5S")
+        "Провода нарезаны: НВ4 0,2 — 4 шт по 160 мм; сторона А: обжаты терминалы SXH-001T-P0.6N; сторона В: обжаты терминалы SPH-002T-P0.5S")
 
 
 def test_cut_crimping_two_contacts_names_each_ends_crimp_spec_and_missing_norms():
@@ -356,7 +356,7 @@ def test_splice_topology_and_strip_cable_do_not_advance_main_chain():
     }
     document = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
 
-    assert document["operations"][1]["result"][0]["name"].endswith("(концы разделаны)")
+    assert document["operations"][1]["result"][0]["name"].endswith("; концы разделаны")
     assert any(node.get("kind") == "splice" for node in document["topology"]["nodes"])
     assert sum(edge["count"] for edge in document["topology"]["edges"]) == 4
 
@@ -596,7 +596,7 @@ def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their
     ]
     # Норма БД.ОП на штуку × 5 меток на изделие × 38 шт + подготовка: 20 × 5 × 38 / 60 + 2 = 65,33 мин.
     assert [row["norm"] for row in op["time"]] == ["65,33"]
-    assert op["result"][0]["name"].endswith("(маркирован)")
+    assert op["result"][0]["name"].endswith("; маркировка нанесена")
     assert op["card"]["steps"]
 
 
@@ -612,3 +612,23 @@ def test_product_mark_with_a_tab_goes_to_the_etk_in_russian_and_feeds_the_materi
         ("Разъём X1", "Термотрубка", "у разъёма"), ("Изделие КБ1", "Хлястик", "на изделии"),
     ]
     assert {c["art"] for c in op["components"]} == {"Термотрубка", "Хлястик"}
+
+def test_wires_text_uses_full_word_with_russian_plural():
+    from app.modules.techcards.etk_builder import _wires_text
+
+    assert [_wires_text(n) for n in (1, 2, 4, 5, 11, 12, 21, 22, 25, 111)] == [
+        "1 провод", "2 провода", "4 провода", "5 проводов", "11 проводов", "12 проводов",
+        "21 провод", "22 провода", "25 проводов", "111 проводов"]
+
+
+def test_input_of_every_operation_is_the_previous_result_word_for_word():
+    """Резка → опрессовка А → монтаж А → опрессовка В → монтаж В: «Вход» n-й операции — «Результат» (n−1)-й, то же
+    наименование и то же количество; ЭТК и печать берут обе строки из одних полей документа."""
+    from tests.techcards.test_etk_golden import CARDS, LIBRARY, _kit
+
+    document = build_etk(_kit("720К.-КБ1"), CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    operations = document["operations"]
+    assert len(operations) == 5
+    for before, after in zip(operations, operations[1:]):
+        assert [(row["name"], row["norm"]) for row in after["semis"]] == [(row["name"], row["norm"]) for row in before["result"]]
+    assert operations[2]["result"][0]["name"] == "Сторона А собрана: провода вставлены в разъём Molex 39012140"
