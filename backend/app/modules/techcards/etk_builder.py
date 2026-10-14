@@ -130,7 +130,9 @@ def _term_count(op: Mapping[str, Any], config: Mapping[str, Any]) -> int:
     if endpoint.get("double"):
         per_terminal = max(2, int(_number(endpoint.get("perTerm"), Decimal(2))))
         return (count + per_terminal - 1) // per_terminal
-    return count
+    # Двойной обжим в отдельных контактах (генератор, `doublePins`): два провода в контакте — один терминал на двоих.
+    doubled = {pin for pin in endpoint.get("doublePins") or [] if isinstance(pin, int) and not isinstance(pin, bool) and pin > 0}
+    return max(0, count - len(doubled))
 
 
 def _wire_name(wire: Mapping[str, Any]) -> str:

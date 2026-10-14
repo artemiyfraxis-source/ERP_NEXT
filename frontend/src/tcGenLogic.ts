@@ -58,6 +58,9 @@ export type Endpoint = {
   id: string; side: Side; connId: string; method: "crimp" | "solder"; methodAuto: boolean;
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
   label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
+  /** Двойной обжим в отдельных контактах (владелец 14.10: «с одного контакта два провода»): контакты, где два провода в одном
+   *  терминале. Весь разъём двойным обжимом — `double`. */
+  doublePins?: number[];
   /** Припуск на пайку, мм: сколько провода уходит в чашку/на лепесток паяльного разъёма — прибавляется к длине реза. */
   solderAllow?: string;
   /** «Термоусадка поверх разъёма»: рукав на тыльной части разъёма (корпус + выход проводов). Поля необязательны — старые
@@ -343,6 +346,14 @@ export const sideRu_ = (s: string) => (s === "B" ? "В" : "А");
  *  k-я жила (кабелей × жил), null — эта жила сюда не идёт. Запись — как раньше, «1, 2, 3» или «1-6» с первой жилы
  *  подряд; «11:1-9» — с 11-й жилы на контакты 1…9 (жилы 1–10 сюда не идут); «_» — пропуск одной жилы. Строка старого
  *  сохранения читается как прежде: жилы с первой подряд. Мусор отбрасывается, диапазон не длиннее 200. */
+/** Контакты разъёма с двойным обжимом (`doublePins`), где сейчас два провода и больше — по строкам контактов `pins`. */
+export function doubledPinsOf_(ep: Pick<Endpoint, "doublePins" | "pins"> | null | undefined): number[] {
+  if (!ep?.doublePins?.length) return [];
+  const count: Record<number, number> = {};
+  Object.values(ep.pins || {}).forEach((text) => parseCorePins_(text).forEach((p) => { if (p != null) count[p] = (count[p] || 0) + 1; }));
+  return [...new Set(ep.doublePins)].filter((p) => (count[p] || 0) >= 2).sort((a, b) => a - b);
+}
+
 export function parseCorePins_(value: unknown): Array<number | null> {
   const out: Array<number | null> = [];
   String(value ?? "").split(/[,;\s]+/).forEach((token) => {
@@ -441,6 +452,8 @@ export function makeGen(D: GenData, S: GenState) {
   const endpointOrdinal_ = (ep: Endpoint) => endpointsOnSide_(ep.side).indexOf(ep) + 1;
   const firstCrimpEndpoint_ = (side: Side) => endpointsOnSide_(side).find((e) => e.method === "crimp") || null;
   const epPer_ = (ep: Endpoint | null) => (isComplex_() ? Math.max(2, parseInt(String(ep?.perTerm ?? ""), 10) || 2) : 2);
+  /** Контакты разъёма с двойным обжимом, где сейчас действительно два провода (один терминал на двоих). */
+  const epDoublePins_ = (ep: Endpoint | null) => doubledPinsOf_(ep);
 
   function findTerRecord_(art: string | undefined): TerRec | null {
     if (!art) return null;
@@ -768,7 +781,7 @@ export function makeGen(D: GenData, S: GenState) {
   function crimpCutBlock_(side: Side): "" | "applicator" | "other" {
     const eps = endpointsOnSide_(side);
     if (!eps.length || eps.some((e) => e.method !== "crimp" || !e.termId || e.termId !== eps[0].termId
-        || e.double || (e.fold && isComplex_()) || isRjEndpoint_(e))) return "other";
+        || e.double || epDoublePins_(e).length > 0 || (e.fold && isComplex_()) || isRjEndpoint_(e))) return "other";
     const t = getCompById(eps[0].termId);
     if (!t || LUG_RE_.test(t.art || t.name || "")) return "other";
     const routed = new Set(eps.flatMap(routedWireIdxs_));
@@ -1109,7 +1122,9 @@ export function makeGen(D: GenData, S: GenState) {
       DIODE_RE_.test(txt(c)) || SEAL_RE_.test(txt(c)))) return true;
     const terms = getByTypes(["терминал", "terminal", "контакт"]).reduce((n, c) => n + qty(c), 0);
     const solder = S.endpoints.some((e) => e.method === "solder");
-    const ends = activeWires_().reduce((n, w) => n + (Number(w.qty) || 1) * (wireCores_(w) || 1), 0) * 2;
+    // Двойной обжим в контакте — один терминал на два конца.
+    const ends = activeWires_().reduce((n, w) => n + (Number(w.qty) || 1) * (wireCores_(w) || 1), 0) * 2
+      - S.endpoints.reduce((n, e) => n + (e.double ? 0 : epDoublePins_(e).length), 0);
     return terms > 0 && !solder && S.endpoints.length > 1 && terms !== ends;
   }
   function complexWarning() {
@@ -1352,7 +1367,7 @@ export function makeGen(D: GenData, S: GenState) {
           else if (e.method === "crimp" && isRjEndpoint_(e)) len = RJ_STRIP_MM_;
           // Без ротора кабель разделывают у разъёма («Разделка кабеля под обжим»), при резке его конец не трогают.
           else if (e.method === "crimp" && isJacketedCable_(w)) len = S.rotor ? w.jacket || JACKET_STRIP_MM_ : null;
-          else if (e.method === "crimp" && e.double) {
+          else if (e.method === "crimp" && (e.double || epDoublePins_(e).length > 0)) {
             const t = e.termId ? getCompById(e.termId) : null;
             const r = t ? findTerRecord_(t.art) : null;
             len = r && r.strip ? r.strip : "—";
@@ -1471,7 +1486,8 @@ export function makeGen(D: GenData, S: GenState) {
         if (term && !crimpSides.includes(side)) {
           ops.push({ type: "prsTerm", opKey: endpointOpKey_(side, ord, "prs"), side, ord, epId: ep.id,
             label: `Опрессовка ${LUG_RE_.test(term.art || term.name || "") ? "наконечников" : "терминалов"} ${tag}`
-              + (ep.double ? ` (${epPer_(ep) > 2 ? "по " + epPer_(ep) + " провода" : "двойной обжим"})` : "") + (ep.fold && isComplex_() ? " (жила сложена)" : ""),
+              + (ep.double ? ` (${epPer_(ep) > 2 ? "по " + epPer_(ep) + " провода" : "двойной обжим"})` : epDoublePins_(ep).length ? ` (двойной обжим: конт. ${epDoublePins_(ep).join(", ")})` : "")
+              + (ep.fold && isComplex_() ? " (жила сложена)" : ""),
             cat: `Опрессовка терминалов (${sideRu_(side)})`, tmplHint: lugTmplHint_(term.art || term.name) || undefined,
             termArt: term.art || term.name || "", firstTerm: !firstTermSeen });
           firstTermSeen = true;
@@ -1800,6 +1816,7 @@ export function makeGen(D: GenData, S: GenState) {
         connArt: conn ? (conn.art || conn.name || "") : "", connName: conn ? (conn.name || "") : "",
         termArt: term ? (term.art || term.name || "") : "", termName: term ? (term.name || "") : "",
         sdrTmpl: ep ? ep.sdrTmpl : null, double: ep ? !!ep.double : false, perTerm: ep ? epPer_(ep) : 2,
+        ...(ep && !ep.double && epDoublePins_(ep).length ? { doublePins: epDoublePins_(ep) } : {}),
         fold: ep ? !!ep.fold && isComplex_() : false, label: ep ? (ep.label || "") : "",
       };
     };
@@ -1901,7 +1918,7 @@ export function makeGen(D: GenData, S: GenState) {
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
     cableRecOf_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
-    endpointOrdinal_, epPer_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
+    endpointOrdinal_, epPer_, epDoublePins_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,

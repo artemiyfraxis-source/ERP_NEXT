@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import { addEndpoint, initState, makeGen, switchGenTab, updateEndpoint, type GenData, type GenState, type TerRec } from "./tcGenLogic";
-import { pinoutRecord, restorePinout, setCoreNet } from "./pinoutCheck";
+import { doublePin, pinoutEnds, pinoutRecord, restorePinout, setCoreNet, undoublePin } from "./pinoutCheck";
 import {
   buildHarnessDocument, planFromGenerator, resolveConnectorSources, wireSectionOf, type ConnectorSource, type GeneratorDrawingPlan,
 } from "./generatorToHarness";
@@ -250,4 +250,45 @@ it("matches the sample the server validator checks (backend/tests/techcards/harn
   const plan = planFromGenerator(D, updateEndpoint(D, twisted, "a1", { method: "solder", tutLen: "15" }));
   const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4, "JST XH")));
   expect(document).toEqual(serverSample);
+});
+
+it("double crimp in one contact: both wires into В·1 on the drawing, one terminal less in the build config, kept by the pinout record", () => {
+  const S0 = twoEnded();
+  const S = doublePin(D, S0, "b1", idx(S0, "k"), 0, 1);
+  expect(S.endpoints.find((e) => e.id === "b1")!.doublePins).toEqual([1]);
+  expect(pinoutEnds(makeGen(D, S), S).find((e) => e.id === "b1")).toMatchObject({ dups: [], doubled: [1] });
+  // Третий провод в тот же контакт не встаёт.
+  expect(doublePin(D, S, "b1", idx(S, "w"), 0, 1)).toBe(S);
+
+  const plan = planFromGenerator(D, S);
+  expect(plan.wires.filter((w) => w.to.pin === 1 && w.to.connector === "b1").map((w) => w.mark)).toEqual(["МГТФ 0,12 красный", "МГТФ 0,12 черный"]);
+  const { document, warnings } = buildHarnessDocument(plan, sourcesOf(plan, free()));
+  expect(warnings.filter((w) => /не лёг|без трассы/.test(w))).toEqual([]);
+  // У контакта редактора один вывод: второй провод — в узле на первом у самого контакта; на чертеже оба проложены.
+  const b1 = document.connectors.find((c) => c.designation === "XS2")!;
+  const contact = b1.contacts.find((c) => c.number === 1)!;
+  const atContact = document.wires.filter((w) => [w.from, w.to].some((end) => "contactId" in end && end.connectorId === b1.id && end.contactId === contact.id));
+  expect(atContact).toHaveLength(1);
+  const crimp = document.junctions.find((j) => j.id.startsWith("gen-dc"))!;
+  expect(crimp.wireIds).toHaveLength(2);
+  expect(crimp.wireIds).toContain(atContact[0].id);
+  expect(document.wires).toHaveLength(4);
+  expect(document.wires.every((w) => document.physicalTopology!.routes.some((r) => r.wireId === w.id))).toBe(true);
+
+  const gen = makeGen(D, S);
+  const { cfg } = gen.validate();
+  const prs = (cfg.ops as Array<{ type: string; label?: string; ep?: { doublePins?: number[] }; side?: string }>).find((op) => op.type === "prsTerm" && op.side === "B")!;
+  expect(prs.ep!.doublePins).toEqual([1]);
+  expect(gen.getActiveOps().find((op) => op.type === "prsTerm" && op.side === "B")!.label).toMatch(/\(двойной обжим: конт\. 1\)$/);
+  expect(gen.epDoublePins_(S.endpoints.find((e) => e.id === "b1")!)).toEqual([1]);
+
+  // Сборка → перезагрузка формы: контакт с двойным обжимом остаётся.
+  const record = pinoutRecord(gen, S)!;
+  expect(record.ends.find((e) => e.end === "В1")!.double).toEqual([1]);
+  expect(restorePinout(D, S0, { pinout: record }).endpoints.find((e) => e.id === "b1")!.doublePins).toEqual([1]);
+
+  // «Убрать второй провод»: красный остаётся, чёрный снят; двойного обжима больше нет.
+  const back = undoublePin(D, S, "b1", 1, { idx: idx(S, "r"), unit: 0 });
+  expect(back.endpoints.find((e) => e.id === "b1")!.doublePins).toBeUndefined();
+  expect(makeGen(D, back).getActiveOps().find((op) => op.type === "prsTerm" && op.side === "B")!.label).not.toMatch(/двойной/);
 });
