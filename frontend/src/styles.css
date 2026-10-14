@@ -4374,3 +4374,14 @@ tr.upd-row-bad td { background: var(--chip-danger-bg); }
 .doc-upd-invoices > h3 { margin: 4px 0 0; font-size: 13px; font-weight: 600; }
 .doc-upd-invoices p { margin: 0; }
 .doc-rejected { margin-right: 10px; white-space: nowrap; }
+/* ---- Документы закупки: сведение блоков (14.10) — таблицы не шире панели, мелкий текст и ссылки как в ERP ---- */
+.upd-registry > *, .upd-card-view > * { min-width: 0; }
+.upd-registry > .table-wrap { max-width: calc(100% - 40px); }
+.doc-upd-invoices, .doc-upd-invoices p, .doc-list, .doc-checks, .move-dialog .muted, .doc-hit-head, .doc-hit p { font-size: 13px; }
+.doc-list a, .doc-checks a, .doc-upd-invoices a, .doc-hit a, .move-dialog a:not(.secondary), .data-table td a:not(.secondary) {
+  color: var(--primary); text-decoration: none;
+}
+.doc-list a:hover, .doc-checks a:hover, .doc-upd-invoices a:hover, .doc-hit a:hover, .move-dialog a:not(.secondary):hover,
+.data-table td a:not(.secondary):hover { text-decoration: underline; }
+.hint { margin: 4px 0 8px; color: var(--muted-foreground); font-size: 13px; }
+.table-panel > .hint, .table-panel > .page-sub { margin-left: 20px; margin-right: 20px; }

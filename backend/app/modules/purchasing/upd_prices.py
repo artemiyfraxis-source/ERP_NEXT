@@ -454,7 +454,8 @@ def catalog(session: Session, q: str = "", page: int = 1) -> dict:
             "last_date": header["date"], "last_supplier": seller,
             "min_price": min(prices) if prices else None, "max_price": max(prices) if prices else None,
         })
-    entries.sort(key=lambda e: (-e["purchases"], e["name"].casefold()))
+    # Lines with no unit price (insurance, cargo tracking — services without a quantity) go last.
+    entries.sort(key=lambda e: (e["min_price"] is None, -e["purchases"], e["name"].casefold()))
     return {
         "total": len(entries), "page": page, "page_size": PAGE_SIZE,
         "entries": entries[(page - 1) * PAGE_SIZE:page * PAGE_SIZE],
