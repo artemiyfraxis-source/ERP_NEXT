@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PALETTE } from "./wireColors";
 import { techcardsApi } from "./api";
@@ -7,7 +7,7 @@ import { plural, type AutoFill, type FreeSide, type PinoutEnd, type PinUnit } fr
 import { endJoined, type Branch, type Connection, type GenState, type Side, type WireEnd } from "./tcGenLogic";
 import { latinArt, pinCountFromArt } from "./terminalPick";
 import { spliceLabel, spliceOf } from "./tcGenSplices";
-import { PinoutLinks } from "./PinoutLinks";
+import { PinoutLinks, type SchemeInfo } from "./PinoutLinks";
 import "./pinout.css";
 
 /* Распиновка в генераторе ТК: панель контактов в карточке разъёма, отметка «проверена», схема соединений
@@ -142,7 +142,7 @@ type Cell = { pin: number; units: PinUnit[]; dup: boolean };
  *  защёлкой, у круглых — кольцо контактов). Гнёзда — кнопки: щелчок, Enter или пробел ставит провод из руки; занятое
  *  гнездо залито цветом жилы, на нём номер провода. Разъёма нет в базе — пронумерованные квадраты по порядку.
  *  Разъём с одной стороны — под торцем список свободных концов с обработкой (лужение, зачистка или без неё). */
-export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, onCell, onGrab, onBranchMode, onRemoveBranch }: {
+export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, scheme, drawing, onCell, onGrab, onBranchMode, onRemoveBranch }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -152,6 +152,9 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
   branches?: Branch[];
   /** Сростки и хвосты (tcGenSplices.ts) — для схемы связей. */
   joins?: Pick<GenState, "splices" | "tails">;
+  /** Схема связей: обозначения разъёмов, терминалы, свивка; `drawing` — вкладка «Чертёж» по той же форме. */
+  scheme?: SchemeInfo;
+  drawing?: () => ReactNode;
   onCell?: (epId: string, pin: number) => void;
   onGrab?: (epId: string, pin: number, event: ReactPointerEvent) => void;
   onBranchMode?: (extra: number, mode: Branch["mode"]) => void;
@@ -246,7 +249,7 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
     <div className={free ? "pin-sides is-one" : "pin-sides"}>
       {(["A", "B"] as const).map((side) => sideOf(side).length > 0 && <div className="pin-side" key={side} data-side={side}>{sideOf(side).map(endView)}</div>)}
     </div>
-    {!free && <PinoutLinks ends={ends} units={units} housings={housings} joins={joins} />}
+    {!free && <PinoutLinks ends={ends} units={units} housings={housings} joins={joins} info={scheme} drawing={drawing} />}
     {free && <div className="pin-free-block">
       <div className="pin-free-head">{`Сторона ${free.side === "B" ? "В" : "А"} — свободные концы`}</div>
       <ul className="pin-free-list">{units.filter((u) => Object.values(u.at).some((p) => p != null)).map((u) => {
@@ -334,7 +337,7 @@ function CoreColorPopover({ unit, onPick, onClose }: { unit: PinUnit; onPick: (c
 /** Палитра проводов, рука и схема: щелчок по проводу берёт его, щелчок по контакту ставит; щелчок по занятому
  *  контакту берёт его провод — следующий щелчок по контакту того же разъёма меняет их местами (свободный — перенос).
  *  Перетаскивание провода или занятого контакта делает то же. Esc или повторный щелчок — отпустить. */
-export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, joins = {}, onJoin, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor, onCoreNet }: {
+export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, joins = {}, scheme, drawing, onJoin, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor, onCoreNet }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -361,6 +364,9 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
   onCoreColor?: (idx: number, unit: number, color: string | null) => void;
   /** Цепь жилы или экрана: кабель, жила, имя ("" — снять). */
   onCoreNet?: (idx: number, unit: number, net: string) => void;
+  /** Схема связей под торцами и вкладка «Чертёж» (PinoutLinks). */
+  scheme?: SchemeInfo;
+  drawing?: () => ReactNode;
 }) {
   const [hand, setHand] = useState<PinHand | null>(null);
   const [fill, setFill] = useState<{ notes: string[]; warnings: string[] } | null>(null);
@@ -538,7 +544,7 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
       }}>Добавить ответвление</button>
       <button type="button" className="btn-link" onClick={() => setBranch(null)}>Отмена</button>
     </div>}
-    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand} branches={branches} joins={joins}
+    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand} branches={branches} joins={joins} scheme={scheme} drawing={drawing}
       onBranchMode={onBranchMode} onRemoveBranch={onRemoveBranch}
       onCell={clickCell} onGrab={(epId, pin, event) => {
         const occupant = units.find((u) => u.at[epId] === pin);

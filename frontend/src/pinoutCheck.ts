@@ -294,6 +294,13 @@ export type PinUnit = {
   net?: string;
 };
 
+/** Сечение из марки: «24 AWG», иначе число с запятой («МГТФ 0,12» → «0,12 мм²»); нет — "". */
+export function wireSectionOf(mark: string): string {
+  const awg = /(\d+)\s*awg/i.exec(mark);
+  if (awg) return `${awg[1]} AWG`;
+  const decimals = mark.replace(/\d+\s*[хx×*]\s*(?=\d)/g, " ").match(/\d+[.,]\d+/g);
+  return decimals ? `${decimals[decimals.length - 1].replace(".", ",")} мм²` : "";
+}
 /** Цвет экрана на схеме — лужёная медь. */
 export const SHIELD_COLOR = "#b0a089";
 

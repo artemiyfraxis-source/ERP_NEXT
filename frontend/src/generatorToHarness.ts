@@ -19,7 +19,7 @@
 import { wireColorKnown, type ConnectorHousing } from "./connectorArt";
 import { endJoined, JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
 import { spliceLabel, spliceOf } from "./tcGenSplices";
-import { coreColor, SHIELD_COLOR } from "./pinoutCheck";
+import { coreColor, SHIELD_COLOR, wireSectionOf } from "./pinoutCheck";
 import { planTwist } from "./twistGroups";
 import { withTwistNotes } from "./twistDrawing";
 import { applyEditorCommand, createConnector, createWire, type EditorCommand } from "./harness/editor/commands";
@@ -165,13 +165,8 @@ export function wireColorHex(mark: string): string {
   return hex6(wireColorKnown(mark));
 }
 
-/** Сечение из марки: «24 AWG», иначе число с запятой («МГТФ 0,12» → «0,12 мм²»); нет — "". */
-export function wireSectionOf(mark: string): string {
-  const awg = /(\d+)\s*awg/i.exec(mark);
-  if (awg) return `${awg[1]} AWG`;
-  const decimals = mark.replace(/\d+\s*[хx×*]\s*(?=\d)/g, " ").match(/\d+[.,]\d+/g);
-  return decimals ? `${decimals[decimals.length - 1].replace(".", ",")} мм²` : "";
-}
+/** Сечение из марки — в pinoutCheck.ts (его читает и схема связей генератора, без кода редактора). */
+export { wireSectionOf };
 
 /** Что рисовать по форме генератора: те же соединения, что уходят в ЭТК (`connections_`: жила за жилой — её контакт
  *  на первом разъёме, А раньше В, ↔ её контакт на каждом следующем), но с номером кабеля и разъёмом формы. Жилы кабеля
