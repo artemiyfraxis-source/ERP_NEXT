@@ -232,7 +232,8 @@ const DETAIL_LABELS: Record<string, string> = {
 /* Уровни доступа по ключу: `level` и `access_level` в деталях событий хранят ключ, а не подпись. */
 const LEVEL_NAMES: Record<string, string> = {
   superadmin: "Суперадминистратор", admin: "Администратор", commercial: "Коммерческое руководство",
-  tech_lead: "Технический руководитель", foreman: "Бригадир", operator: "Оператор",
+  tech_lead: "Технический руководитель", pm: "Менеджер по проектам", storekeeper: "Кладовщик", foreman: "Бригадир",
+  operator: "Оператор",
 };
 const LEVEL_KEYS = new Set(["level", "access_level"]);
 

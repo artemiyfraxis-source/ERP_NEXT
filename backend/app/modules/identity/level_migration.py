@@ -41,7 +41,6 @@ from app.shared.notifications import LEGACY_ROLE_AUDIENCES
 
 from .audiences import AUDIENCE_LABELS, AUDIENCE_RULES, in_audience
 from .domain import (
-    ACCESS_LEVELS,
     FULL_ACCESS_LEVELS,
     LEVEL_SECTION_LABELS,
     LEVEL_SEED,
@@ -90,6 +89,15 @@ ROLE_TO_LEVEL: dict[str, str] = {
     "staff": "operator",
 }
 UNKNOWN_ROLE_LEVEL = "operator"
+# The levels as of the transfer (0086's frozen LEVELS): «Администратор» was one, «Менеджер по проектам» and
+# «Кладовщик» (14.10.2026) were not. The transfer and the report run on these, so they keep computing what 0086 did.
+TRANSFER_LEVELS = ("superadmin", "admin", "commercial", "tech_lead", "foreman", "operator")
+TRANSFER_FULL_LEVELS = frozenset({"superadmin", "admin"})
+# The live «роль → уровень» for an employee saved with a legacy role and no level (an old screen, a fixture): the
+# transfer's map, except the retired «Администратор» level — role admin (a full-access role) lands on superadmin, the
+# only full level a person can hold since 14.10.2026. The other roles keep their level (решено агентом — проверить):
+# receiver/pm do not move to the new storekeeper/pm levels — the owner assigns those by hand in «Сотрудники».
+CURRENT_ROLE_TO_LEVEL: dict[str, str] = {**ROLE_TO_LEVEL, "admin": "superadmin"}
 
 # Route role lists of shared/http_auth.py (+ shipping_editor_principal of shipping/api.py) as of 04.10.2026.
 _ADMIN = frozenset({"admin"})
@@ -285,6 +293,12 @@ class Transfer:
 
 
 def level_for_role(role: str | None) -> str:
+    """The level of an employee saved today with a legacy role and no level (CURRENT_ROLE_TO_LEVEL)."""
+    return CURRENT_ROLE_TO_LEVEL.get(str(role or "").strip(), UNKNOWN_ROLE_LEVEL)
+
+
+def transfer_level_for_role(role: str | None) -> str:
+    """The level the transfer (0086) gave the role — frozen, «Администратор» included."""
     return ROLE_TO_LEVEL.get(str(role or "").strip(), UNKNOWN_ROLE_LEVEL)
 
 
@@ -395,7 +409,7 @@ def transfer(snapshot: Snapshot) -> Transfer:
     for person in people:
         role = str(person.role or "").strip()
         assignments[person.id] = Assignment(
-            access_level=level_for_role(role),
+            access_level=transfer_level_for_role(role),
             shop_worker=shop_worker_rule(role, person.site, person.department),
             site_master=site_master_rule(role),
             legacy_role=role,
@@ -408,8 +422,8 @@ def transfer(snapshot: Snapshot) -> Transfer:
             archived[person.id] = dict(sorted(exceptions.items()))
 
     levels: dict[str, dict[str, str]] = {}
-    for level in ACCESS_LEVELS:
-        if level in FULL_ACCESS_LEVELS:
+    for level in TRANSFER_LEVELS:
+        if level in TRANSFER_FULL_LEVELS:
             levels[level] = {section: EDIT for section in TRANSFER_SECTIONS}
             continue
         members = [person for person in people if assignments[person.id].access_level == level]

@@ -37,11 +37,14 @@ from app.modules.identity.level_migration import (
     OLD_SECTIONS,
     TRANSFER_SECTIONS,
     ROLE_TO_LEVEL,
+    TRANSFER_LEVELS,
     Person,
     Snapshot,
+    level_for_role,
     old_permissions,
     person_permissions_after,
     transfer,
+    transfer_level_for_role,
     usable,
     verify,
 )
@@ -498,3 +501,15 @@ def test_usable_follows_the_role_lists():
         "myops": "edit", "erpref": "view",
     }
     assert usable("buyer", {}) == {section: "edit" for section in TRANSFER_SECTIONS}
+
+
+def test_live_role_to_level_keeps_the_old_roles_and_moves_admin_to_superadmin():
+    """14.10.2026: «Администратор» is no level — the legacy role admin lands on superadmin for a new or re-roled
+    employee; every other role keeps the transfer's level (receiver/pm do not move to storekeeper/pm). The transfer
+    itself stays frozen on 0086's levels."""
+    assert level_for_role("admin") == "superadmin" and transfer_level_for_role("admin") == "admin"
+    for role in sorted(set(ROLE_TO_LEVEL) - {"admin"}):
+        assert level_for_role(role) == transfer_level_for_role(role) == ROLE_TO_LEVEL[role], role
+    assert level_for_role("receiver") == "foreman" and level_for_role("pm") == "commercial"
+    assert level_for_role("unknown") == "operator"
+    assert TRANSFER_LEVELS == ("superadmin", "admin", "commercial", "tech_lead", "foreman", "operator")
