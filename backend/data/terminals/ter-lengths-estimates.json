@@ -1,0 +1,675 @@
+{
+ "rows": [
+  {
+   "fields": {
+    "terArticle": "SZH-002T-P0.5",
+    "terLMinus": "0,8",
+    "Источник L-": "примерно: L+ = длина контакта 4 мм по чертежу; L− = ZHR 4,8 мм − L+ 4 мм; JST eZH, Contact + Housing, https://www.jst-mfg.com/product/pdf/eng/eZH.pdf",
+    "terLPlus": "4"
+   },
+   "old": {
+    "terArticle": "SZH-002T-P0.5",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SZH-003T-P0.5",
+    "terLMinus": "0,8",
+    "Источник L-": "примерно: L+ = длина контакта 4 мм по чертежу; L− = ZHR 4,8 мм − L+ 4 мм; JST eZH, Contact + Housing, https://www.jst-mfg.com/product/pdf/eng/eZH.pdf",
+    "terLPlus": "4"
+   },
+   "old": {
+    "terArticle": "SZH-003T-P0.5",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500588000",
+    "terLMinus": "0,65",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = PicoBlade 51021 3,95 мм − L+ 3,3 мм; Molex 51021, лист каталога MX01 A-119, https://static.chipdip.ru/lib/405/DOC047405434.pdf",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "500588000",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500588001",
+    "terLMinus": "0,65",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = PicoBlade 51021 3,95 мм − L+ 3,3 мм; Molex 51021, лист каталога MX01 A-119, https://static.chipdip.ru/lib/405/DOC047405434.pdf",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "500588001",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500588020",
+    "terLMinus": "0,65",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = PicoBlade 51021 3,95 мм − L+ 3,3 мм; Molex 51021, лист каталога MX01 A-119, https://static.chipdip.ru/lib/405/DOC047405434.pdf",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "500588020",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500798000",
+    "terLMinus": "0,65",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = PicoBlade 51021 3,95 мм − L+ 3,3 мм; Molex 51021, лист каталога MX01 A-119, https://static.chipdip.ru/lib/405/DOC047405434.pdf",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "500798000",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500798001",
+    "terLMinus": "0,65",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = PicoBlade 51021 3,95 мм − L+ 3,3 мм; Molex 51021, лист каталога MX01 A-119, https://static.chipdip.ru/lib/405/DOC047405434.pdf",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "500798001",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "500798020",
+    "terLMinus": "0,65",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = PicoBlade 51021 3,95 мм − L+ 3,3 мм; Molex 51021, лист каталога MX01 A-119, https://static.chipdip.ru/lib/405/DOC047405434.pdf",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "500798020",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-2630SCF",
+    "terLMinus": "0,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = DF13 4 мм − L+ 3,3 мм; Hirose DF13, каталог B244, https://datasheet.lcsc.com/datasheet/pdf/64333dc9655d4e31b6b072799d4297c9.pdf?productCode=C88348",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "DF13-2630SCF",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-2630SCFA",
+    "terLMinus": "0,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = DF13 4 мм − L+ 3,3 мм; Hirose DF13, каталог B244, https://datasheet.lcsc.com/datasheet/pdf/64333dc9655d4e31b6b072799d4297c9.pdf?productCode=C88348",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "DF13-2630SCFA",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-3032SCF",
+    "terLMinus": "0,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = DF13 4 мм − L+ 3,3 мм; Hirose DF13, каталог B244, https://datasheet.lcsc.com/datasheet/pdf/64333dc9655d4e31b6b072799d4297c9.pdf?productCode=C88348",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "DF13-3032SCF",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF13-3032SCFA",
+    "terLMinus": "0,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = DF13 4 мм − L+ 3,3 мм; Hirose DF13, каталог B244, https://datasheet.lcsc.com/datasheet/pdf/64333dc9655d4e31b6b072799d4297c9.pdf?productCode=C88348",
+    "terLPlus": "3,3"
+   },
+   "old": {
+    "terArticle": "DF13-3032SCFA",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2147205000",
+    "terLMinus": "0,55",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Zero-Hachi 214719 3,15 мм − L+ 2,6 мм; Molex 2147190000-SD, https://datasheet.lcsc.com/datasheet/pdf/c7076ff0722df1ed5ce187d7673c4af7.pdf?productCode=C7603638",
+    "terLPlus": "2,6"
+   },
+   "old": {
+    "terArticle": "2147205000",
+    "terLPlus": "5",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "SSHL-002T-P0.2",
+    "terLMinus": "0,7",
+    "Источник L-": "примерно: L+ 5 мм оставлен как в базе; L− = GHR 5,7 мм − L+ 5 мм; JST eGH, Housing, https://www.jst-mfg.com/product/pdf/eng/eGH.pdf"
+   },
+   "old": {
+    "terArticle": "SSHL-002T-P0.2",
+    "terLPlus": "5",
+    "terLMinus": "10",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-2022SCF",
+    "terLMinus": "2",
+    "Источник L-": "примерно: L+ = длина контакта 9,5 мм по чертежу; L− = DF1B-*S / *DS / *ES / *DES (гнездо) 11,5 мм − L+ 9,5 мм; Hirose DF1B, каталог 01.07.2020, Single Row Socket и Crimping Contact for Socket, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028; по чертежу контакта коробка гнезда 6,1 мм: если L+ — глубина конца провода от стыка, то L+ 6,1 и L− 5,4",
+    "terLPlus": "9,5"
+   },
+   "old": {
+    "terArticle": "DF1B-2022SCF",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-2022SCFA",
+    "terLMinus": "2",
+    "Источник L-": "примерно: L+ = длина контакта 9,5 мм по чертежу; L− = DF1B-*S / *DS / *ES / *DES (гнездо) 11,5 мм − L+ 9,5 мм; Hirose DF1B, каталог 01.07.2020, Single Row Socket и Crimping Contact for Socket, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028; по чертежу контакта коробка гнезда 6,1 мм: если L+ — глубина конца провода от стыка, то L+ 6,1 и L− 5,4",
+    "terLPlus": "9,5"
+   },
+   "old": {
+    "terArticle": "DF1B-2022SCFA",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-2428SCF",
+    "terLMinus": "2",
+    "Источник L-": "примерно: L+ = длина контакта 9,5 мм по чертежу; L− = DF1B-*S / *DS / *ES / *DES (гнездо) 11,5 мм − L+ 9,5 мм; Hirose DF1B, каталог 01.07.2020, Single Row Socket и Crimping Contact for Socket, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028; по чертежу контакта коробка гнезда 6,1 мм: если L+ — глубина конца провода от стыка, то L+ 6,1 и L− 5,4",
+    "terLPlus": "9,5"
+   },
+   "old": {
+    "terArticle": "DF1B-2428SCF",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-2428SCFA",
+    "terLMinus": "2",
+    "Источник L-": "примерно: L+ = длина контакта 9,5 мм по чертежу; L− = DF1B-*S / *DS / *ES / *DES (гнездо) 11,5 мм − L+ 9,5 мм; Hirose DF1B, каталог 01.07.2020, Single Row Socket и Crimping Contact for Socket, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028; по чертежу контакта коробка гнезда 6,1 мм: если L+ — глубина конца провода от стыка, то L+ 6,1 и L− 5,4",
+    "terLPlus": "9,5"
+   },
+   "old": {
+    "terArticle": "DF1B-2428SCFA",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-30SCF",
+    "terLMinus": "2",
+    "Источник L-": "примерно: L+ = длина контакта 9,5 мм по чертежу; L− = DF1B-*S / *DS / *ES / *DES (гнездо) 11,5 мм − L+ 9,5 мм; Hirose DF1B, каталог 01.07.2020, Single Row Socket и Crimping Contact for Socket, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028; по чертежу контакта коробка гнезда 6,1 мм: если L+ — глубина конца провода от стыка, то L+ 6,1 и L− 5,4",
+    "terLPlus": "9,5"
+   },
+   "old": {
+    "terArticle": "DF1B-30SCF",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-30SCFA",
+    "terLMinus": "2",
+    "Источник L-": "примерно: L+ = длина контакта 9,5 мм по чертежу; L− = DF1B-*S / *DS / *ES / *DES (гнездо) 11,5 мм − L+ 9,5 мм; Hirose DF1B, каталог 01.07.2020, Single Row Socket и Crimping Contact for Socket, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028; по чертежу контакта коробка гнезда 6,1 мм: если L+ — глубина конца провода от стыка, то L+ 6,1 и L− 5,4",
+    "terLPlus": "9,5"
+   },
+   "old": {
+    "terArticle": "DF1B-30SCFA",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-2022PCF",
+    "terLMinus": "4,6",
+    "Источник L-": "примерно: L+ = длина контакта 13,9 мм по чертежу; L− = DF1B-*EP / *DEP, DF1BA (вилка) 18,5 мм − L+ 13,9 мм; Hirose DF1B, каталог 01.07.2020, In-line Plug и Crimping Contact for Plug, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028",
+    "terLPlus": "13,9"
+   },
+   "old": {
+    "terArticle": "DF1B-2022PCF",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-2022PCFB",
+    "terLMinus": "4,6",
+    "Источник L-": "примерно: L+ = длина контакта 13,9 мм по чертежу; L− = DF1B-*EP / *DEP, DF1BA (вилка) 18,5 мм − L+ 13,9 мм; Hirose DF1B, каталог 01.07.2020, In-line Plug и Crimping Contact for Plug, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028",
+    "terLPlus": "13,9"
+   },
+   "old": {
+    "terArticle": "DF1B-2022PCFB",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-2428PCF",
+    "terLMinus": "4,6",
+    "Источник L-": "примерно: L+ = длина контакта 13,9 мм по чертежу; L− = DF1B-*EP / *DEP, DF1BA (вилка) 18,5 мм − L+ 13,9 мм; Hirose DF1B, каталог 01.07.2020, In-line Plug и Crimping Contact for Plug, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028",
+    "terLPlus": "13,9"
+   },
+   "old": {
+    "terArticle": "DF1B-2428PCF",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1-PD2428SCFB",
+    "terLMinus": "4,6",
+    "Источник L-": "примерно: L+ = длина контакта 13,9 мм по чертежу; L− = DF1B-*EP / *DEP, DF1BA (вилка) 18,5 мм − L+ 13,9 мм; Hirose DF1B, каталог 01.07.2020, In-line Plug и Crimping Contact for Plug, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028",
+    "terLPlus": "13,9"
+   },
+   "old": {
+    "terArticle": "DF1-PD2428SCFB",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-30PCF",
+    "terLMinus": "4,6",
+    "Источник L-": "примерно: L+ = длина контакта 13,9 мм по чертежу; L− = DF1B-*EP / *DEP, DF1BA (вилка) 18,5 мм − L+ 13,9 мм; Hirose DF1B, каталог 01.07.2020, In-line Plug и Crimping Contact for Plug, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028",
+    "terLPlus": "13,9"
+   },
+   "old": {
+    "terArticle": "DF1B-30PCF",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "DF1B-30PCFB",
+    "terLMinus": "4,6",
+    "Источник L-": "примерно: L+ = длина контакта 13,9 мм по чертежу; L− = DF1B-*EP / *DEP, DF1BA (вилка) 18,5 мм − L+ 13,9 мм; Hirose DF1B, каталог 01.07.2020, In-line Plug и Crimping Contact for Plug, https://datasheet.lcsc.com/datasheet/pdf/ba434fb92ec248c0cb9579d7a1b767a6.pdf?productCode=C392028",
+    "terLPlus": "13,9"
+   },
+   "old": {
+    "terArticle": "DF1B-30PCFB",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8500113",
+    "terLMinus": "2,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = KK 254, 2695 12,7 мм − L+ 10,5 мм; Molex 26950000-SD (SD-2695), https://static.chipdip.ru/lib/879/DOC011879936.pdf; на чертеже «провод в корпус» 6,73 мм: если L+ — глубина конца провода от стыка, то L+ 5,97 и L− 6,73",
+    "terLPlus": "10,5"
+   },
+   "old": {
+    "terArticle": "8500113",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002200",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053002200",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001900",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053001900",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002100",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053002100",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002300",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053002300",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053002400",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053002400",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001100",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053001100",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001200",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053001200",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001300",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053001300",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001400",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053001400",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "1053001810",
+    "terLMinus": "2,7",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 105307 / 105308 (розетка) 15,7 мм − L+ 13 мм; Molex SD-105307-100, SD-105308-100, https://static.chipdip.ru/lib/115/DOC043115887.pdf",
+    "terLPlus": "13"
+   },
+   "old": {
+    "terArticle": "1053001810",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472300",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014472300",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472800",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014472800",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472200",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014472200",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472600",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014472600",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014472400",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014472400",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471800",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014471800",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471200",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014471200",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471300",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014471300",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471600",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014471600",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "2014471400",
+    "terLMinus": "3,2",
+    "Источник L-": "примерно: L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B); L− = Nano-Fit 200277 / 201444 (вилка) 18,9 мм − L+ 15,7 мм; Molex 2002771000-SD, 2014441000-SD, https://static.chipdip.ru/lib/158/DOC011158288.pdf",
+    "terLPlus": "15,7"
+   },
+   "old": {
+    "terArticle": "2014471400",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "L-KLS1-2.50-T",
+    "terLMinus": "1,5",
+    "Источник L-": "примерно: L+ = длина контакта 6,45 мм по чертежу; L− = L-KLS1-2.50-NN-H 7,95 мм − L+ 6,45 мм; KLS L-KLS1-2.50-XX-H и L-KLS1-2.50-T, https://static.chipdip.ru/lib/526/DOC059526514.pdf",
+    "terLPlus": "6,45"
+   },
+   "old": {
+    "terArticle": "L-KLS1-2.50-T",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  }
+ ]
+}

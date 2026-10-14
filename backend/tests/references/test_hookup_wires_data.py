@@ -72,5 +72,12 @@ def test_strand_lay_and_series_colours_are_filled_where_a_source_gives_them():
     for key in ("ПВАМ", "ПуГВ"):
         colors = series[key]["colors"]["value"]
         assert len(colors) >= 11 and len(set(colors)) == len(colors) and "чёрный" in colors, key
-    assert series["МК 26-13"]["colors"] is None and all(size["strands"] is None for size in series["МК 26-13"]["sizes"])
-    assert series["МГТФ"]["colors"] is None
+    # 14.10.2026 (владелец: «найди значения сам или поставь примерные»): МК 26-13 and the МГТФ colour are filled, each
+    # one marked «примерно» in its source — never passed off as a first-hand value.
+    mk = series["МК 26-13"]
+    assert len(mk["colors"]["value"]) == 8 and mk["colors"]["source"].startswith("примерно: ")
+    assert mk["standard"]["value"] == "ТУ 16.К05-016-2003" and mk["standard"]["source"].startswith("примерно: ")
+    for size in mk["sizes"]:
+        assert size["strands"]["source"].startswith("примерно: ") and size["outer_dia_mm"]["source"].startswith("примерно: ")
+    assert [size["strands"]["value"] for size in mk["sizes"]] == ["14×0,08", "24×0,08", "19×0,12", "19×0,15", "19×0,18"]
+    assert series["МГТФ"]["colors"]["value"] == ["белый"] and series["МГТФ"]["colors"]["source"].startswith("примерно: ")

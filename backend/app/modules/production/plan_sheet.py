@@ -123,6 +123,7 @@ def sheet_cells(
     else:
         supplied = "Ч/Т"
     in_stock = bool(supply and supply.total and supply.stock >= supply.total)
+    to_buy = supply.total - supply.customer_supplied if supply else 0
     if supply is None or not supply.total:
         arrival = ""
     elif in_stock:
@@ -138,8 +139,8 @@ def sheet_cells(
         "customer_supplied": supplied,
         "kit_checked": "нет",
         "kit_present": _flag(in_stock),
-        # Решено агентом — проверить: ЗКП читаем как «на проект есть заявки» (смысл колонки владелец не назвал).
-        "zkp": _flag(bool(supply and supply.total)),
+        # Владелец 14.10: ЗКП — «что купили», а не «есть заявки»: каждая покупная позиция (без давальческих) оплачена.
+        "zkp": _flag(bool(supply) and to_buy > 0 and supply.purchased >= to_buy),
         "kit_arrival": arrival,
         "tc_ready": _flag(bool(kits) and all(item.tc for item in kits)),
         "test_sb": "нет",
