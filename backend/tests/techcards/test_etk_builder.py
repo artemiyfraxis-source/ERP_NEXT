@@ -654,3 +654,36 @@ def test_generator_form_snapshot_in_build_config_does_not_change_the_etk():
                         operation_library_commit=LIBRARY["sourceCommit"])
     assert {k: v for k, v in snapped.items() if k != "build_config"} == {k: v for k, v in plain.items() if k != "build_config"}
     assert snapped["build_config"]["gen_state"]["v"] == 1
+
+
+def _diameter_config(wire: dict) -> dict:
+    return {
+        "assemblyName": "Жгут", "partQty": 10, "wires": [dict(wire)],
+        "ops": [{"type": "cutWire", "templateId": "cut-wire-автомат-резка", "opNum": "CUT_WIRE", "side": "A",
+                 "tPrep": 60, "tOp": 2, "wires": [dict(wire)]}],
+    }
+
+
+def test_wire_diameters_from_the_wire_record_reach_the_etk_and_a_wire_without_one_has_none():
+    from app.modules.references.cable_structure import HookupWire, WireGauge
+    from app.workflows.techcard_build import enrich_wire_diameters
+
+    gauge = WireGauge.create(awg="24", section_mm2="0.2", conductor_d_mm="0.61")
+    bare = WireGauge.create(awg="22", section_mm2="0.35")
+    hookups = [HookupWire.create(mark="МГТФ-0,2", series="МГТФ", gauge_id=gauge.id, outer_d_mm="1.2"),
+               HookupWire.create(mark="ПВ3 0,35", series="ПВ3", gauge_id=bare.id)]
+    prov = [{"Марка": "ПВ3 0,35", "Наружный диаметр, мм": "1,9"}]
+
+    def built(art: str) -> dict:
+        config = enrich_wire_diameters(_diameter_config({"name": "Провод", "art": art, "qty": 1, "length": 100}),
+                                       hookups, [gauge, bare], prov)
+        return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]["fields"]["wires"][0]
+
+    both = built("мгтф 0,2")
+    assert (both["outerDiameter"], both["conductorDiameter"]) == (1.2, 0.61)
+    # The record has no conductor Ø: the outer one comes from the БД.ПРОВ cell, the conductor one is absent.
+    outer_only = built("ПВ3-0,35")
+    assert outer_only["outerDiameter"] == 1.9 and "conductorDiameter" not in outer_only
+    # No record at all: nothing is invented.
+    none = built("НЕТ-В-БАЗЕ")
+    assert "outerDiameter" not in none and "conductorDiameter" not in none

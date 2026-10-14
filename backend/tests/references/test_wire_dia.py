@@ -289,7 +289,7 @@ def test_the_etk_build_takes_gost_awg_from_the_sizes_table_else_the_stored_map(r
 
         def __enter__(self):
             uow = self.inner.__enter__()
-            uow.cable_structure = SimpleNamespace(gauges=lambda: [])
+            uow.cable_structure = SimpleNamespace(gauges=lambda: [], hookups=lambda: [])
             return uow
 
         def __exit__(self, *exc):
@@ -303,9 +303,10 @@ def test_the_etk_build_takes_gost_awg_from_the_sizes_table_else_the_stored_map(r
 
 def test_the_build_does_not_touch_wire_lengths_or_the_twist_diameter_of_a_config(real_base):
     """Issued ETKs are snapshots: the twist allowance and the wire Ø live in the saved build_config the generator
-    sent; the build (and the «Автопересборка» refresh, which reuses that config) only adds terminal norms."""
+    sent; the build (and the «Автопересборка» refresh, which reuses that config) only adds terminal norms and the wire diameters (Ø keys)."""
     config = {"wires": [{"name": "МГТФ 0,12", "art": "МГТФ 0,12", "qty": 2, "length": 163}],
               "twist": {"enabled": True, "pitch": "20", "wireDia": "0,9", "mode": "all", "pairs": [], "wireIndices": [0]},
               "ops": [{"type": "cutWire", "wires": [{"art": "МГТФ 0,12"}]}]}
     built, _stamp = techcard_build.with_technology(config, real_base.factory)
-    assert built["wires"] == config["wires"] and built["twist"] == config["twist"]
+    assert [{k: v for k, v in wire.items() if k not in ("outerDiameter", "conductorDiameter")} for wire in built["wires"]] == config["wires"]
+    assert built["twist"] == config["twist"]
