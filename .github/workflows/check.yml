@@ -11,9 +11,11 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels its previous run; runs on main are never cancelled (each merge is checked, and a cancelled
+# run mails the owner like a failure — 14.10).
 concurrency:
   group: check-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Backend and frontend run side by side; `check` below is the one status to read before a merge.
