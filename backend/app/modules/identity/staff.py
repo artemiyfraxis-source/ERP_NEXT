@@ -61,9 +61,9 @@ from .level_migration import followed_flags, level_for_role, shop_worker_rule, s
 DEPARTMENTS_AGGREGATE = uuid5(NAMESPACE_URL, "fraxis-erp:identity:departments")
 DEPARTMENTS_LIMIT = 500
 LAST_ADMIN = (
-    "Нужен хотя бы один активный суперадминистратор или администратор — иначе некому будет вернуть права."
+    "Нужен хотя бы один активный суперадминистратор — иначе некому будет вернуть права."
 )
-SUPERADMIN_ONLY = "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор."
+SUPERADMIN_ONLY = "Уровень «Суперадминистратор» выдаёт и снимает только суперадминистратор."
 
 
 class StaffConflict(ValueError):

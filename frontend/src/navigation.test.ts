@@ -213,9 +213,13 @@ it("tells a card open for reading only: all its keys are view grants, never for 
   expect(viewOnly(as("admin", { warehouse: "view" }), "stock")).toBe(false);
 });
 
-it("names the six access levels in Russian and shows an unknown key as it is", () => {
-  expect(Object.keys(ACCESS_LEVEL_LABELS)).toEqual(["superadmin", "admin", "commercial", "tech_lead", "foreman", "operator"]);
+it("names the seven access levels in Russian (and the admin-mode session) and shows an unknown key as it is", () => {
+  expect(Object.keys(ACCESS_LEVEL_LABELS)).toEqual([
+    "superadmin", "commercial", "tech_lead", "pm", "storekeeper", "foreman", "operator", "admin",
+  ]);
   expect(accessLevelLabel("superadmin")).toBe("Суперадминистратор");
+  expect(accessLevelLabel("pm")).toBe("Менеджер по проектам");
+  expect(accessLevelLabel("storekeeper")).toBe("Кладовщик");
   expect(accessLevelLabel("admin")).toBe("Администратор");
   expect(accessLevelLabel("commercial")).toBe("Коммерческое руководство");
   expect(accessLevelLabel("tech_lead")).toBe("Технический руководитель");

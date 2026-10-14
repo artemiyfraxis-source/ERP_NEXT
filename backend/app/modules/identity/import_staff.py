@@ -61,12 +61,13 @@ ACCESS_BACKUP_RELATIVE = Path("_local") / "access-backup-2026-09-01.json"
 TEST_EMAILS = frozenset({"artemiyfraxis@gmail.com"})
 
 # SUPPLYMAP role keys → ERP access levels (docs/migration/access-levels-plan.md: management → Суперадминистратор,
-# admin → Администратор, prodhead / buyer → Технический руководитель, master / receiver → Бригадир, staff → Оператор).
+# admin → Суперадминистратор (the «Администратор» level is gone since 14.10.2026), prodhead / buyer → Технический
+# руководитель, master / receiver → Бригадир, staff → Оператор).
 # A role missing here lands on «staff» → Оператор, not on a silent wider level. The flags follow the plan: «Мастер
 # площадки» = master, «Монтажник» = staff with a site or a «монтаж» department. The SUPPLYMAP role itself is kept as
 # the legacy role (one release).
 ROLE_MAP = {
-    "admin": "admin",
+    "admin": "superadmin",
     "buyer": "tech_lead",
     "receiver": "foreman",
     "prodhead": "tech_lead",

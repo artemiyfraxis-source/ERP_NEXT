@@ -10,7 +10,7 @@ import { SuggestInput } from "./SuggestInput";
  *  never shown again; the list says whether a PIN is assigned (`pinSet`). Кадровые поля «Личной карточки»
  *  (табельный номер, должность, квалификация, «в должности с», руководитель) and the department heads live here too.
  *  Доступ — уровень (owner 04.10.2026) плюс два флага человека, «Монтажник» и «Мастер площадки»; the levels
- *  «Суперадминистратор» и «Администратор» are given and taken only by a superadministrator. */
+ *  «Суперадминистратор» is given and taken only by a superadministrator. */
 
 /** `managerText` is what the manager field shows; `manager_id` is set only when it names someone from the list. */
 type Draft = EmployeeCreate & { active: boolean; managerText: string };
@@ -23,7 +23,7 @@ const EMPTY_DRAFT: Draft = {
 const errorText = (reason: unknown, fallback: string) => reason instanceof Error ? reason.message : fallback;
 /** Tooltips that keep the two things apart: the access level drives permissions, the position is a personnel fact. */
 const LEVEL_HINT = "что сотрудник может открывать и править в ERP; должность — в блоке «Кадры»";
-const LEVEL_LOCKED_HINT = "Уровни «Суперадминистратор» и «Администратор» выдаёт и снимает только суперадминистратор";
+const LEVEL_LOCKED_HINT = "Уровень «Суперадминистратор» выдаёт и снимает только суперадминистратор";
 const SITE_HINT = "ЦАР / ЖУК — площадка, на которой работает сотрудник; пусто — все площадки";
 const SHOP_WORKER_HINT = "Исполнитель операций в цеху: ему назначают задания производства";
 const SITE_MASTER_HINT = "Руководит монтажниками площадки: они видны в его личной карточке";
@@ -296,7 +296,7 @@ export function StaffPage({ openCard, openUserId }: {
 function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange, onSave, onCancel }: {
   data: StaffDirectory;
   labels: Map<string, string>;
-  /** The session is a superadministrator: the only level that may give or take «Суперадминистратор» / «Администратор». */
+  /** The session is a superadministrator: the only level that may give or take «Суперадминистратор». */
   actorIsSuperadmin: boolean;
   editing: { id: string | null; draft: Draft };
   busy: boolean;

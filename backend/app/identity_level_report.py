@@ -28,9 +28,10 @@ from uuid import UUID
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Connection
 
-from app.modules.identity.domain import ACCESS_LEVELS, FULL_ACCESS_LEVELS, LEVEL_LABELS, LEVEL_SECTION_LABELS
+from app.modules.identity.domain import FULL_ACCESS_LEVELS, LEVEL_SECTION_LABELS, level_label
 from app.modules.identity.level_migration import (
     OLD_ROLE_LABELS,
+    TRANSFER_LEVELS,
     Person,
     Snapshot,
     Transfer,
@@ -186,10 +187,10 @@ def render_text(
                           + "; ".join(differences[:10]))
 
     lines += ["", "Матрица уровней (строка = пересечение того, что реально могли люди уровня)"]
-    for level in ACCESS_LEVELS:
+    for level in TRANSFER_LEVELS:
         members = sum(item.access_level == level for item in result.people.values())
         row = "всегда полный доступ" if level in FULL_ACCESS_LEVELS else _cells_text(result.levels[level])
-        lines.append(f"  {LEVEL_LABELS[level]} ({members}): {row}")
+        lines.append(f"  {level_label(level)} ({members}): {row}")
 
     lines += ["", "Люди"]
     for check in checks.people:
@@ -200,7 +201,7 @@ def render_text(
             continue
         state = "" if person.active else " · отключён"
         role = OLD_ROLE_LABELS.get(person.role, person.role)
-        lines.append(f"  {person.name} ({person.login}) · {role} → {LEVEL_LABELS[item.access_level]}{state}")
+        lines.append(f"  {person.name} ({person.login}) · {role} → {level_label(item.access_level)}{state}")
         title = f"«{item.job_title}»" + (" (заполнена по роли)" if item.job_title != person.job_title else "")
         lines.append(
             f"    должность: {title} · монтажник: {_yes(item.shop_worker)} · мастер площадки: {_yes(item.site_master)}"

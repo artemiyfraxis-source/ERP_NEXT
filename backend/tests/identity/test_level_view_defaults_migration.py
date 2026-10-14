@@ -51,7 +51,8 @@ def test_frozen_defaults_are_the_level_seed_cells_of_the_three_sections():
         (level, section)
         for level, row in LEVEL_SEED.items()
         for section in row
-        if section in SECTIONS and level not in FULL_ACCESS_LEVELS
+        # pm / storekeeper came later (0124) with rows of their own.
+        if section in SECTIONS and level not in FULL_ACCESS_LEVELS and level not in ("pm", "storekeeper")
     }
     assert set(_migration().VIEW_DEFAULTS) == seeded
 
