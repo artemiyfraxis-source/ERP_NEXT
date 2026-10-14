@@ -132,37 +132,7 @@ describe("ProjectsPage", () => {
     expect(screen.getByRole("menuitem", { name: "Снять ХОЛД" })).toBeTruthy();
   });
 
-  it("shows the end-to-end finished-goods status of each КБ in «Состав» with the last moves on hover", async () => {
-    const goods = {
-      project: "708К.4", states: [], moves: [
-        { id: "m2", item_index: "КБ1", kind: "pack", kind_label: "Упаковано", quantity: "3", from: "accepted", to: "packed", from_label: "", to_label: "",
-          shipment_id: "s1", shipment_number: "ОТГ-1", actor: "Кладовщик", occurred_at: "2026-10-12T11:00:00", reason: "" },
-        { id: "m1", item_index: "КБ1", kind: "accept", kind_label: "Принято складом", quantity: "7", from: "production", to: "accepted", from_label: "", to_label: "",
-          shipment_id: null, shipment_number: null, actor: "Кладовщик", occurred_at: "2026-10-12T10:00:00", reason: "" },
-      ],
-      kbs: [{ item_index: "КБ1", name: "Жгут питания", unit: "шт", good_id: "g1", needed: "10", delivered: "7", waiting: "0",
-        pieces: { production: "3", accepted: "4", packed: "3", shipped: "0" }, totals: { accepted: "7", packed: "3", shipped: "0" },
-        has_tasks: true, journal_ok: true, shipments: [] }],
-    };
-    const base = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation(async (input, init) => {
-      const url = decodeURIComponent(String(input));
-      if (url === "/api/shipping/finished-goods/project?project=708К.4") return json(goods);
-      return base(input, init);
-    });
-    window.history.replaceState({}, "", "/?section=projects&project=708К.4");
-    render(<ProjectsPage principal={{ ...editor, permissions: { projects: "edit", shipping: "view" } }} />);
-    const status = await screen.findByRole("img", { name: "в производстве 3 шт, принято складом 4 шт, упаковано 3 шт, отгружено 0 шт" });
-    expect(status.textContent).toBe("в пр-ве 3принято 4упак. 3отгр. 0");
-    expect(status.getAttribute("title")).toBe("Последние ходы:\n12.10 11:00 Упаковано: 3 шт · ОТГ-1 — Кладовщик\n12.10 10:00 Принято складом: 7 шт — Кладовщик");
-    expect(screen.getByRole("columnheader", { name: "Готовая продукция" })).toBeTruthy();
-    // Телефон: каждая ячейка «Состава» несёт подпись колонки, из неё рисуется карточка сборки.
-    const row = status.closest("tr")!;
-    expect(Array.from(row.querySelectorAll("td")).map((cell) => cell.getAttribute("data-label")))
-      .toEqual(["КБ", "Наименование", "Кол-во", "Позиций", "КД", "Техкарта", "Этап", "Проверка ТК", "Готовая продукция"]);
-  });
-
-  it("does not ask for the finished-goods status without access to «Отгрузка»", async () => {
+  it("«Состав» has no finished-goods column and never asks for it (owner 14.10)", async () => {
     window.history.replaceState({}, "", "/?section=projects&project=708К.4");
     render(<ProjectsPage principal={editor} />);
     expect(await screen.findByLabelText("Этап КБ1")).toBeTruthy();
