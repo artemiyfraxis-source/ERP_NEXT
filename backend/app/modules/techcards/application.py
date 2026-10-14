@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import date, datetime
+import re
 from typing import Any, Protocol, Sequence
 from uuid import UUID, uuid4
 
@@ -23,6 +24,7 @@ from .etk_builder import _route_ops, build_etk
 from .domain.route import RouteError, parse_route, route_json, route_totals
 from .project_cards import operation_key
 from .scheme_corrections import EVENT as SCHEME_CORRECTED, scheme_correction
+from .template_sheets import make_template_id
 
 
 class TechcardRepository(Protocol):
@@ -438,6 +440,108 @@ def edit_operation_record(command: EditOperationRecordCommand, uow: UnitOfWork) 
         ))
         uow.commit()
         return current.with_edit(edit, changed_at=command.now, changed_by=command.actor.name)
+
+
+# ── Новая операция: карточка-шаблон (БД.ТК) под новый код; строку БД.ОП пишет app/workflows/new_operation.py ──
+
+MAX_OPERATION_CODE = 64
+MAX_OPERATION_NAME = 200
+_OPERATION_CODE = re.compile(r"^[^\s|]+$")
+# Пустая карточка: шапка листа, как у шаблонов ERP, и один шаг-подсказка — без шага шаблон не читается.
+BLANK_STEP = "‹опишите операцию›"
+_BLANK_HEAD = (
+    ("ПРЕДПРИЯТИЕ", "", "ОБОЗНАЧЕНИЕ ДОКУМЕНТА", "", "", "РЕВИЗИЯ", "РМ"),
+    ("ООО «ЗЭП «ФРАКСИС»", "", "", "", "", "‹рев.›"),
+    ("НАИМЕНОВАНИЕ ИЗДЕЛИЯ (СБОРКИ ПО КД)", "", "", "", "  КОД ИЗДЕЛИЯ", "НОМЕР ПРОЕКТА"),
+    ("‹наименование изделия по КД›",),
+    ("Обозначение", "", "Содержание операции"),
+    ("", "№ ", "Наименование ", "", "", "", "№ Инв."),
+    ("", "№ ", "ОПИСАНИЕ ОПЕРАЦИИ, ПРИМЕНЯЕМЫХ МАТЕРИАЛОВ И ОСНАСТКИ", "", "", "", "Допуск"),
+    ("Операция", "1", BLANK_STEP, "", "", "", "-"),
+)
+
+
+@dataclass(frozen=True)
+class NewOperation:
+    code: str
+    name: str
+    copy_of: str = ""
+    category: str = ""
+
+
+def new_operation(code: object, name: object, copy_of: object = "", category: object = "") -> NewOperation:
+    """The request cleaned and checked: the code becomes the title «КОД | Название» of the card, so it has no spaces
+    and no «|»."""
+    clean_code, clean_name = str(code or "").strip(), " ".join(str(name or "").split())
+    if not clean_code:
+        raise TechcardValidationError("Укажите номер операции")
+    if len(clean_code) > MAX_OPERATION_CODE or not _OPERATION_CODE.match(clean_code):
+        raise TechcardValidationError(
+            f"Номер операции — до {MAX_OPERATION_CODE} знаков без пробелов и «|», например CUT_WIRE_auto")
+    if not clean_name:
+        raise TechcardValidationError("Укажите название операции")
+    if len(clean_name) > MAX_OPERATION_NAME:
+        raise TechcardValidationError(f"Название операции — до {MAX_OPERATION_NAME} знаков")
+    return NewOperation(clean_code, clean_name, str(copy_of or "").strip(), " ".join(str(category or "").split()))
+
+
+def operation_template_codes(uow: UnitOfWork) -> set[str]:
+    return {row.code for row in uow.operation_cards.sheets()}
+
+
+def create_operation_templates_in(
+    operation: NewOperation, actor: Actor, now: datetime, uow: UnitOfWork,
+) -> list[OperationCardTemplate]:
+    """The card template(s) of a new operation inside an open unit of work (nothing committed). Blank — the sheet head
+    and one hint step; a copy — every block (A)/(B) of `copy_of` with its steps, tooling, defects, safety and pictures,
+    an ERP edit of the record included. Saved as an ERP sheet (`saved_at`): a SUPPLYMAP library reload keeps it."""
+    repo = uow.operation_cards
+    catalog = repo.sheets()
+    taken = operation.code.casefold()
+    if any(row.code.casefold() == taken for row in catalog):
+        raise TechcardValidationError(
+            f"Операция с номером «{operation.code}» уже есть — номер операции должен быть уникальным")
+    if operation.copy_of:
+        sources = sorted((row for row in catalog if row.code == operation.copy_of), key=lambda row: (row.side, row.id))
+        if not sources:
+            raise TechcardValidationError(f"Операции «{operation.copy_of}» для копии нет среди карточек операций")
+    else:
+        sources = []
+    ids = {row.id for row in catalog}
+    created: list[OperationCardTemplate] = []
+    edit: OperationRecordEdit | None = None
+    for source in sources or [None]:
+        title = f"{operation.code} | {operation.name}" + (f" ({source.side})" if source is not None and source.side else "")
+        if source is None:
+            rows: list[list[str]] = [[title], *(list(row) for row in _BLANK_HEAD)]
+            images, category = None, operation.category
+        else:
+            rows = [list(row) for row in source.raw_rows] or [[]]
+            rows[0] = [title, *rows[0][1:]]
+            images, category = source.images, operation.category or source.category
+            current = repo.get(source.id)
+            if current is not None and current.changed_at is not None:
+                edit = OperationRecordEdit(
+                    name=operation.name, safety=current.safety, defects=current.defects, revision=current.revision,
+                    steps=current.steps, tooling=current.tooling,
+                )
+        template_id = make_template_id(title, ids)
+        ids.add(template_id)
+        try:
+            card = parse_operation_template(source_id=template_id, title=title, category=category, rows=rows,
+                                            images=images)
+        except ValueError as error:
+            raise TechcardValidationError(str(error)) from error
+        if card.code != operation.code:
+            raise TechcardValidationError(f"Номер «{operation.code}» занят служебной карточкой — выберите другой")
+        description = f"Новая операция, копия {operation.copy_of}" if source is not None else "Новая операция"
+        repo.save_sheet(card, description=description, saved_at=now, saved_by=actor.name)
+        created.append(card)
+    if edit is not None:
+        # Одна запись на код: правка исходной записи ложится на все блоки копии (как tcRecordsByCode_).
+        repo.edit(operation.code, edit, changed_at=now, changed_by=actor.name)
+        created = [card.with_edit(edit, changed_at=now, changed_by=actor.name) for card in created]
+    return created
 
 
 # Кто «сохранил» шаблон поставки ERP: по этой подписи сид отличает свой шаблон от пересохранённого человеком.

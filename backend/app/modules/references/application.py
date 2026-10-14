@@ -6,7 +6,7 @@ import hashlib
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
 
 from app.shared.events import AuditEvent
@@ -66,6 +66,12 @@ class StockLinkRepository(Protocol):
     """«Склад → база данных» journal: append-only — rows are added and read, never changed."""
     def add(self, entry: StockLinkEntry) -> None: ...
     def list(self, *, record_id: UUID | None = None, lot_id: UUID | None = None, limit: int = 500) -> list[StockLinkEntry]: ...
+
+
+class OperationTemplateCodes(Protocol):
+    """Port (app/workflows/new_operation.py): the codes of the operation card templates (БД.ТК), read in the same
+    transaction as the БД.ОП write. A unit of work without it (`operation_templates` absent) skips the template check."""
+    def codes(self) -> set[str]: ...
 
 
 class UnitOfWork(Protocol):
@@ -286,6 +292,8 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     keys = schema_keys(record.tab.value)
     fields = {key: (fields[key] if key in keys and key in edited else value) for key, value in synced.items()}
     _check_terminal_card(record.tab, fields)
+    if record.tab == TechOperationTab.OPERATION:
+        _check_operation_code(record, fields, uow)
     display = schema_display_text(record.tab.value, fields) or display
     updated = replace(record, fields=fields, display_text=display, edited_in_erp=True)
     updated = replace(updated, normalized_search=_search_text(updated))
@@ -348,6 +356,57 @@ def _equipment_rows(uow: UnitOfWork) -> list[tuple[object, dict[str, str]]]:
     return [(item.id, item.fields) for item in uow.tech_operations.list(tab=TechOperationTab.EQUIPMENT, query="", limit=10_000)]
 
 
+# --- БД.ОП: «Номер» is the operation code, the key that joins the row to its card template (БД.ТК) ---
+
+OPERATION_CODE_KEY = "opNumber"
+OPERATION_NAME_KEY = "opName"
+
+
+def operation_code(fields: Mapping[str, str]) -> str:
+    return str(fields.get(OPERATION_CODE_KEY) or "").strip()
+
+
+def _operation_rows(uow: UnitOfWork) -> list[TechOperationRecord]:
+    return list(uow.tech_operations.list(tab=TechOperationTab.OPERATION, query="", limit=100_000))
+
+
+def _check_operation_code(before: TechOperationRecord | None, fields: Mapping[str, str], uow: UnitOfWork) -> None:
+    """«Номер» of a БД.ОП row is unique (letter case aside: «cut» next to «CUT» is a typo, not a second operation), and
+    a row is not renamed away from a card template only it carries. Read under the transaction of the write."""
+    new = operation_code(fields)
+    old = operation_code(before.fields) if before is not None else ""
+    if new == old:
+        return
+    others = [item for item in _operation_rows(uow) if before is None or item.id != before.id]
+    if new and any(operation_code(item.fields).casefold() == new.casefold() for item in others):
+        raise ReferenceValidationError(f"Операция с номером «{new}» уже есть — номер операции должен быть уникальным")
+    templates: OperationTemplateCodes | None = getattr(uow, "operation_templates", None)
+    if (old and templates is not None and old in templates.codes()
+            and not any(operation_code(item.fields) == old for item in others)):
+        raise ReferenceValidationError(
+            f"Номер «{old}» не меняется: по нему к строке привязана карточка операции, она осталась бы без строки. "
+            "Нужна другая операция — добавьте новую"
+        )
+
+
+def create_operation_row_in(code: str, name: str, copy_of: str, uow: UnitOfWork) -> TechOperationRecord:
+    """A new БД.ОП row inside an open unit of work (nothing committed): «Номер» = `code`, «Название» = `name`. A copy
+    takes every other cell of the first row of `copy_of` (the time norms among them); otherwise the row gets the
+    columns of the existing rows, empty. The code's uniqueness is checked by `_create_in` under the same transaction."""
+    rows = _operation_rows(uow)
+    source = next((item for item in rows if copy_of and operation_code(item.fields) == copy_of), None)
+    if source is not None:
+        fields = dict(source.fields)
+    else:
+        fields = {key: "" for key in (rows[0].fields if rows else {})}
+    fields.update({OPERATION_CODE_KEY: code, OPERATION_NAME_KEY: name})
+    columns = schema_columns(TechOperationTab.OPERATION.value, fields)
+    for key, value in ((OPERATION_CODE_KEY, code), (OPERATION_NAME_KEY, name)):
+        if key in columns:
+            fields[columns[key]] = value
+    return _create_in(TechOperationTab.OPERATION, _clean_new_fields(TechOperationTab.OPERATION, fields), uow)
+
+
 def _clean_new_fields(tab: TechOperationTab, values: dict[str, str]) -> dict[str, str]:
     if tab not in EDITABLE_TABS:
         raise ReferenceValidationError("База только для просмотра")
@@ -364,6 +423,8 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork) -
         raise ReferenceValidationError("Заполни хотя бы одно поле")
     fields = sync_schema_fields(tab.value, fields)
     _check_terminal_card(tab, fields)
+    if tab == TechOperationTab.OPERATION:
+        _check_operation_code(None, fields, uow)
     display = schema_display_text(tab.value, fields) or filled[0]
     record = TechOperationRecord.create(
         tab=tab, display_text=display, search_text="", source_sheet="",
