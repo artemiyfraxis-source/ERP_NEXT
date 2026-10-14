@@ -30,7 +30,7 @@ const plan: ProductionPlanResult = {
   review_values: ["не проверена", "проверена", "с погрешностями"],
   rows: [{
     project: "708К.4", customer: "Заказчик", opened_on: "2026-09-01",
-    deadline: "2026-09-30", days_left: 8, stage: "В работе", terminal: false, stage_manual: false,
+    deadline: "2026-09-30", days_left: 8, work_days_left: 6, stage: "В работе", terminal: false, stage_manual: false,
     kits: [{ item_index: "КБ1", status: "В работе", manual: false, tc: true, kit: false, review: { value: "не проверена", text: "", who: "генератор", occurred_at: "2026-09-22T08:00:00+03:00" } }],
     supply: { total: 5, stock: 2, transit: 1, buying: 1, request: 1, customer_supplied: 1, customer_supplied_stock: 1, eta: "28.09.2026" },
     plan: { tasks: 1, assigned: 2, total: 3, start: "2026-09-22T09:00:00+03:00", finish: "2026-09-23T12:00:00+03:00" },
@@ -73,7 +73,7 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   await screen.findByRole("button", { name: "708К.4" });
   const heads = Array.from(document.querySelectorAll(".zg-table thead th.zg-col-head")).map((item) => item.textContent);
   expect(heads).toEqual([
-    "Проект", "Заказчик", "Статус", "Готовность, %", "В плане", "Давальческое", "Закуплено", "Приход комплектующих", "Комплект на складе", "Комплект проверен", "Техкарта выдана", "Комплект набран", "Тестовая сборка", "Дедлайн", "Дней до дедлайна", "Комментарий",
+    "Проект", "Заказчик", "Статус", "Готовность, %", "В плане", "Давальческое", "Закуплено", "Приход комплектующих", "Комплект на складе", "Комплект проверен", "Техкарта выдана", "Комплект набран", "Тестовая сборка", "Дедлайн", "Рабочих дней до дедлайна", "Комментарий",
   ]);
   // Календарь: сегодня −7 … +60 дней; над днями — строка месяцев, в шапке дня — число и день недели.
   const days = Array.from(document.querySelectorAll(".zg-table thead th.zg-day-head")).map((item) => item.textContent);
@@ -91,8 +91,9 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order and the pro
   expect(row.querySelector<HTMLElement>(".zg-ready i")?.style.getPropertyValue("--zg-ready")).toBe("40%");
   expect(row.querySelector(".zg-col-kit_arrival")?.textContent).toBe("28.09");
   expect(row.querySelector(".zg-col-days_left")?.className).toContain("ok");
+  expect(row.querySelector(".zg-col-days_left")?.textContent).toBe("6");
   expect(row.querySelector(".zg-col-deadline")?.textContent).toBe("30.09");
-  expect(row.querySelector(".zg-col-deadline")?.getAttribute("title")).toBe("Дедлайн 30.09.2026 · дней до дедлайна: 8");
+  expect(row.querySelector(".zg-col-deadline")?.getAttribute("title")).toBe("Дедлайн 30.09.2026 · рабочих дней до дедлайна: 6");
   expect(row.querySelector(".zg-col-test_sb")?.className).toContain("zg-manual");
   expect(screen.getByText("В работе · 1")).toBeInTheDocument();
   await openProject("708К.4");
@@ -115,7 +116,7 @@ it("writes the sheet header in full words (no abbreviations) and keeps the meani
   expect(heads.filter((head) => head.classList.contains("zg-edge")).map((head) => head.textContent)).toEqual(["Комментарий"]);
   // Полные названия — словами ERP, а не сокращениями листа (ПП-11).
   expect(heads.map((head) => head.getAttribute("title")?.split(" — ")[0])).toEqual([
-    "Проект", "Заказчик", "Статус", "Готовность, %", "В плане", "Давальческое", "Закуплено", "Приход комплектующих", "Комплект на складе", "Комплект проверен", "Техкарта выдана", "Комплект набран", "Тестовая сборка", "Дедлайн", "Дней до дедлайна", "Комментарий",
+    "Проект", "Заказчик", "Статус", "Готовность, %", "В плане", "Давальческое", "Закуплено", "Приход комплектующих", "Комплект на складе", "Комплект проверен", "Техкарта выдана", "Комплект набран", "Тестовая сборка", "Дедлайн", "Рабочих дней до дедлайна", "Комментарий",
   ]);
   expect(heads[4].getAttribute("title")).toBe("В плане — на проект назначены операции");
   expect(heads[9].getAttribute("title")).toBe("Комплект проверен");
@@ -180,7 +181,7 @@ it("lets the viewer choose the sheet columns, keeps the sheet order and returns 
   fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
   const chooser = screen.getByRole("group", { name: "Показывать колонки" });
   expect(chooser.querySelector<HTMLInputElement>("input[disabled]")?.parentElement?.textContent).toBe("Проект");
-  fireEvent.click(screen.getByLabelText("Дней до дедлайна"));
+  fireEvent.click(screen.getByLabelText("Рабочих дней до дедлайна"));
   fireEvent.click(screen.getByLabelText("Закуплено"));
   expect(labels()).toEqual(["Проект", "Заказчик", "Статус", "Готовность, %", "В плане", "Давальческое", "Приход комплектующих", "Комплект на складе", "Комплект проверен", "Техкарта выдана", "Комплект набран", "Тестовая сборка", "Дедлайн", "Комментарий"]);
   expect(screen.getByRole("button", { name: "Колонки · 14 из 16" })).toBeInTheDocument();

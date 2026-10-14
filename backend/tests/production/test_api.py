@@ -367,6 +367,7 @@ def test_native_production_plan_combines_project_snapshot_techcard_task_and_jour
     }]
     assert row["deadline"] == "2026-09-30"
     assert row["days_left"] == 8
+    assert row["work_days_left"] == 6
     assert row["blocker"]["type"] == "СТОП"
     assert row["plan"] == {"tasks": 1, "assigned": 0, "total": 1, "start": None, "finish": None}
     assert [event["kind"] for event in row["events"]] == ["Дедлайн", "Блокер"]

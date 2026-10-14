@@ -859,6 +859,8 @@ export interface ProductionPlanRow {
   opened_on: string | null;
   deadline: string | null;
   days_left: number | null;
+  /** Рабочих дней до дедлайна: график смены и праздники календаря цеха. */
+  work_days_left?: number | null;
   stage: string;
   /** Registry status is terminal (closed/cancelled): the row is dimmed and out of «В работе». */
   terminal: boolean;

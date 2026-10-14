@@ -211,10 +211,15 @@ export function startLabels(days: SheetDay[], work: Set<string>, starts: Record<
   return labels;
 }
 
+/** Рабочих дней до дедлайна (владелец 14.10) — по графику смены и праздникам календаря цеха; без них — календарные. */
+function workDays(row: ProductionPlanRow): number | null {
+  return row.work_days_left ?? row.days_left;
+}
+
 function daysTone(days: number | null) {
   if (days === null) return "";
   if (days < 0) return "late";
-  if (days <= 7) return "soon";
+  if (days <= 5) return "soon";
   return "ok";
 }
 
@@ -244,7 +249,7 @@ const COLUMNS: Column[] = [
   { key: "kit_picked", label: "Комплект набран", name: "Комплект набран", width: 60, flag: true, hint: "каждая КБ набрана" },
   { key: "test_sb", label: "Тестовая сборка", name: "Тестовая сборка", width: 60, flag: true, fold: 6 },
   { key: "deadline", label: "Дедлайн", name: "Дедлайн", width: 58 },
-  { key: "days_left", label: "Дней до дедлайна", name: "Дней до дедлайна", width: 60, fold: 2 },
+  { key: "days_left", label: "Рабочих дней до дедлайна", name: "Рабочих дней до дедлайна", width: 72, fold: 2 },
   { key: "comment", label: "Комментарий", name: "Комментарий", width: 160, left: true, fold: 1 },
 ];
 const FOLD_ORDER = COLUMNS.filter((column) => column.fold).sort((a, b) => a.fold! - b.fold!);
@@ -646,13 +651,14 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
     return td(<button className="zg-link" title={row.customer ? `${row.customer} — журнал проекта` : "Журнал проекта"} onClick={() => onOpenJournal(row)}>{row.customer || "—"}</button>);
   }
   if (key === "days_left") {
-    return td(row.days_left ?? "", `zg-days ${daysTone(row.days_left)}`, { title: row.days_left === null ? "Без дедлайна" : `Дней до дедлайна: ${row.days_left}` });
+    const days = workDays(row);
+    return td(days ?? "", `zg-days ${daysTone(days)}`, { title: days === null ? "Без дедлайна" : `Рабочих дней до дедлайна: ${days}${row.days_left !== null ? ` (календарных ${row.days_left})` : ""}` });
   }
   if (key === "deadline") {
     // Колонка «Дн.» скрыта — светофор дедлайна переезжает в «Дедлайн».
-    const tone = layout.hidden.has("days_left") ? `zg-days ${daysTone(row.days_left)}` : "";
+    const tone = layout.hidden.has("days_left") ? `zg-days ${daysTone(workDays(row))}` : "";
     return td(row.deadline ? formatDayMonth(row.deadline) : dash, `zg-center ${tone} ${editable}`,
-      { title: row.deadline ? `Дедлайн ${formatDate(row.deadline)}${row.days_left !== null ? ` · дней до дедлайна: ${row.days_left}` : ""}` : "Без дедлайна", onClick: (event: MouseEvent<HTMLElement>) => open(event, row.project, "deadline") });
+      { title: row.deadline ? `Дедлайн ${formatDate(row.deadline)}${workDays(row) !== null ? ` · рабочих дней до дедлайна: ${workDays(row)}` : ""}` : "Без дедлайна", onClick: (event: MouseEvent<HTMLElement>) => open(event, row.project, "deadline") });
   }
   const value = cell?.value ?? "";
   if (column.flag) {
