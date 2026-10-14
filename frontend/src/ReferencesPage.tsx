@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { DataTable, type DataColumn } from "./DataTable";
+import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import { hasAccess } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
 import { EquipmentForm } from "./EquipmentForm";
@@ -8,7 +8,7 @@ import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
 import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
-import { AddColumnButton } from "./CustomColumn";
+import { AddColumnButton, fieldCellEdit, filledIn, ownCellEdit, useColumnRemoval } from "./CustomColumn";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
 import { PageWindow } from "./PageWindow";
@@ -144,6 +144,20 @@ const TER_RARE = new Set(["пневма автомат", "отр", "диамет
 const CABLE_DIAMETERS = ["D1", "D2", "D3"];
 const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
 type CableDia = Record<string, Record<string, string>>;
+// Таблицы записей с правкой прямо в ячейках (владелец 14.10: «как у коаксиальных кабелей, по всей базе»). Ячейка не
+// правится, когда это ключ записи (по нему строка называется и ищется), выбор из списка или то, что пишет сама ERP:
+// такие поля — в окне записи / карточке контакта.
+const NOT_IN_CELL: Partial<Record<TechOperationTab, Set<string>>> = {
+  ter: new Set(["тип разъема", "производитель", "series", "серия", "артикул контакта (reel)", "тип контакта",
+    "termanufacturer", "terseries", "terarticle", "tertype", "tergender"]),
+  mat: new Set(["наименование", "группа", "закупок", "цена посл., ₽ без ндс"]),
+};
+// Таблицы, куда владелец добавляет свои столбцы («+ Столбец»; бэкенд CUSTOM_COLUMN_TABS): «Коаксиальные разъёмы» — своим экраном.
+const OWN_COLUMN_TABS: TechOperationTab[] = ["ter", "mat"];
+const BOOLEAN = /^(true|false)$/i;
+const natural = (a: string, b: string) => a.localeCompare(b, "ru", { numeric: true, sensitivity: "base" });
+const NO_GROUP = "Без группы";
+const NO_MAKER = "Производитель не указан";
 
 function isMapTab(tab: DbTab): tab is MapTab {
   return tab in MAP_TABS;
@@ -323,6 +337,14 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   }
 
   const fieldColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
+  const ownColumns = tech.custom_columns ?? [];
+  // «Удалить столбец» своих столбцов: окно подтверждения, после удаления таблица перечитывается.
+  const techRemoval = useColumnRemoval(techTab ?? "mat", canEdit, (name) => filledIn(tech.records, name), async (name) => {
+    if (techTab) await loadTech(techTab);
+    setError(""); setNotice(`Столбец «${name}» удалён`);
+  });
+  const cableRemoval = useColumnRemoval("prov", principal.permissions.erpref === "edit",
+    (name) => filledIn((cables?.rows ?? []).map((row) => row.record), name), (name) => cablesSaved(`Столбец «${name}» удалён`));
   // «+ Столбец» на таблицах кабелей: колонка БД.ПРОВ общая для всех четырёх списков.
   const columnButton = principal.permissions.erpref === "edit"
     ? <AddColumnButton tab="prov" onAdded={(name) => cablesSaved(`Столбец «${name}» добавлен`)} /> : undefined;
@@ -335,7 +357,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     .map((key) => [key, record.fields[key]]));
   const sheetColumns: DataColumn<TechOperationRecord>[] = [
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
-    ...fieldColumns.map((field): DataColumn<TechOperationRecord> => {
+    ...fieldColumns.map((field, index): DataColumn<TechOperationRecord> => {
       if (coaxTab && CABLE_DIAMETERS.includes(field)) return {
         key: field, title: `${field} кабеля`, numeric: true,
         value: (record) => cableOf(record)?.[field] ?? "",
@@ -347,6 +369,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       };
       if (techTab === "ter" && headerKey(fieldTitle(field)) === "аппликатор") return {
         key: field, title: fieldTitle(field), value: (record) => record.fields[field] ?? "",
+        edit: canEdit ? fieldCellEdit<TechOperationRecord>(field, (record) => record) : undefined,
         // A tool code with a БД.ОБ record is a link to its card («что обжимает» lives there).
         render: (record) => {
           const text = record.fields[field] ?? "";
@@ -362,11 +385,20 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       const shown = (record: TechOperationRecord) => valueLabel(field, record.fields[field] ?? "");
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
       const long = values.some((value) => value.length > 40);
+      const own = ownColumns.includes(field);
+      // Да/нет листа (TRUE/FALSE) — выбор, а не текст: правится в окне записи. Первая колонка — ручка строки: щелчок по ней
+      // открывает запись (карточку контакта), поэтому она не правится в ячейке.
+      const fixed = techTab ? NOT_IN_CELL[techTab] : undefined;
+      const inCell = own || (Boolean(fixed) && index > 0 && !fixed?.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))
+        && !(values.length > 0 && values.every((value) => BOOLEAN.test(value.trim()))));
       return {
         key: field, title: fieldTitle(field), value: shown,
         // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
         render: long ? (record) => <span className="db-clip" title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
-        hidden: techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU")),
+        edit: canEdit && inCell ? (own ? ownCellEdit<TechOperationRecord>(field, (record) => record) : fieldCellEdit<TechOperationRecord>(field, (record) => record)) : undefined,
+        remove: own ? techRemoval.removeOf(field) : undefined,
+        // «Группа» материалов — заголовок группы строк, колонкой не повторяется (она в «Колонках»).
+        hidden: !own && ((techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))) || (techTab === "mat" && field === "Группа")),
         // An article of digits (Molex 39000038) is a code, not a number: no «39 000 038», as the warehouse writes it.
         numeric: !/артикул/i.test(fieldTitle(field)) && values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };
@@ -376,6 +408,26 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   // БД.ТЕР: обжим одной колонкой «по сечениям» и «От AWG / До AWG» одной колонкой «AWG» (владелец 12.10); исходные
   // колонки остаются в «Колонках» и в выгрузке, но скрыты.
   const techColumns = techTab === "ter" ? mergeTerminalColumns(sheetColumns, fieldColumns) : sheetColumns;
+  // Быстрые отборы «Без …» — по полям, без которых запись не годится генератору или закупке (как «Без D1–D3» у кабелей).
+  const fieldOf = (...keys: string[]) => fieldColumns.find((field) => keys.some((key) => headerKey(field).startsWith(key)));
+  const emptyIn = (field: string) => (record: TechOperationRecord) => !String(record.fields[field] ?? "").trim();
+  const presetFields: Array<[string, string | undefined]> = techTab === "ter"
+    ? [["Без высоты обжима", fieldOf("высота обжима проводника", "tercrimpheight")], ["Без аппликатора", fieldOf("аппликатор", "terapplicator")]]
+    : techTab === "mat" ? [["Без производителя", fieldOf("производитель")], ["Без поставщика", fieldOf("поставщик")]] : [];
+  const techPresets: DataPreset<TechOperationRecord>[] = presetFields
+    .filter((item): item is [string, string] => Boolean(item[1]))
+    .map(([label, field]) => ({ label, test: emptyIn(field) }))
+    .filter((preset) => tech.records.some(preset.test)); // пустой отбор — шум
+  // Порядок по умолчанию: материалы — по группам листа (ТУТ, лента, стяжка…), внутри — по названию с числами как числа;
+  // терминалы — по производителю (сервер уже ставит их по производителю и серии), группа — производитель.
+  const makerField = techTab === "ter" ? fieldOf("производитель", "termanufacturer") : undefined;
+  const techGroup = techTab === "mat" ? (record: TechOperationRecord) => String(record.fields["Группа"] ?? "").trim() || NO_GROUP
+    : makerField ? (record: TechOperationRecord) => String(record.fields[makerField] ?? "").trim() || NO_MAKER : undefined;
+  const techRows = useMemo(() => techTab !== "mat" ? tech.records : [...tech.records].sort((a, b) => {
+    const ga = String(a.fields["Группа"] ?? "").trim();
+    const gb = String(b.fields["Группа"] ?? "").trim();
+    return Number(!ga) - Number(!gb) || natural(ga, gb) || natural(String(a.fields["Наименование"] ?? a.display_text), String(b.fields["Наименование"] ?? b.display_text));
+  }), [tech.records, techTab]);
   function openTerminal(id: string) {
     setTerminalId(id);
     try {
@@ -433,9 +485,10 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         tab={tab}
         rows={maps[tab]}
         disabled={disabled}
-        onChange={(rows) => setMaps({ ...maps, [tab]: rows })}
+        // Функциональное обновление: вставка столбца и Ctrl+D пишут ячейки одну за другой — каждая видит предыдущую.
+        onChange={(update) => setMaps((current) => ({ ...current, [tab]: update(current[tab]) }))}
         toolbar={<>
-          {!disabled && <button type="button" className="secondary small" onClick={() => setMaps({ ...maps, [tab]: [...maps[tab], { key: "", value: "" }] })}>+ Строка</button>}
+          {!disabled && <button type="button" className="secondary small" onClick={() => setMaps((current) => ({ ...current, [tab]: [...current[tab], { key: "", value: "" }] }))}>+ Строка</button>}
           {canSaveMaps && <button type="button" className="primary small" disabled={busy || !mapsDirty} onClick={() => void saveMaps()}>Сохранить справочники</button>}
           {mapsDirty && <span className="db-dirty">Есть несохранённые изменения</span>}
         </>}
@@ -476,6 +529,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         canEdit={canEdit}
         onEdit={startEdit}
         ownColumns={tech.custom_columns}
+        removeColumn={techRemoval.removeOf}
         onEdited={() => loadTech("coax")}
         toolbar={canEdit && !editing ? <>
           <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Запись</button>
@@ -484,8 +538,11 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       /> : <div className="eq-split"><div className="eq-list"><DataTable
         key={techTab}
         label={current?.label ?? "База"}
-        rows={tech.records}
+        rows={techRows}
         columns={techColumns}
+        presets={techPresets}
+        groupBy={techGroup}
+        onEdited={() => loadTech(techTab)}
         rowKey={(record) => record.id}
         storageKey={`db:${techTab}`}
         exportName={current?.label}
@@ -495,8 +552,12 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         onRowClick={techTab === "ter" ? (record) => openTerminal(record.id) : canEdit ? startEdit : undefined}
         rowTitle={techTab === "ter" ? (record) => `Открыть карточку: ${record.display_text}` : canEdit ? (record) => `Править: ${record.display_text}` : undefined}
         rowClassName={techTab === "ter" ? (record) => (record.id === terminal?.id ? "eq-selected" : "") : undefined}
-        toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button> : undefined}
+        toolbar={canEdit && !editing ? <>
+          <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => setEditing({ id: null, values: Object.fromEntries(fieldColumns.map((key) => [key, ""])) })}>+ Запись</button>
+          {OWN_COLUMN_TABS.includes(techTab) && <AddColumnButton tab={techTab} onAdded={async (name) => { await loadTech(techTab); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}
+        </> : undefined}
       /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
+      {techRemoval.dialog}
       {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}
     </>}
 
@@ -514,6 +575,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       onError={(message) => { setNotice(""); setError(message); }}
       kindSelect={kindSelect}
       toolbar={columnButton}
+      removeColumn={cableRemoval.removeOf}
     />}
     {cableKind && cableKind !== "wire" && cables !== null && <CableTable
       kind={cableKind}
@@ -522,34 +584,37 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       onSaved={cablesSaved}
       onError={(message) => { setNotice(""); setError(message); }}
       toolbar={columnButton}
+      removeColumn={cableRemoval.removeOf}
     />}
+    {cableRemoval.dialog}
     </div>
   </section>;
 }
 
 type MapRow = ReferencePair & { index: number };
 
+/** Карта соответствий как лист: ячейки правятся по месту (Enter, Tab, Ctrl+V столбцом, Ctrl+D), правки копятся на экране и
+    уходят разом кнопкой «Сохранить справочники» — путь сохранения карт прежний (замена целиком). Порядок — по ключу (домен,
+    изготовитель), новые пустые строки внизу. */
 function MapTable({ tab, rows, disabled, onChange, toolbar }: {
   tab: MapTab;
   rows: ReferencePair[];
   disabled: boolean;
-  onChange: (rows: ReferencePair[]) => void;
+  onChange: (update: (rows: ReferencePair[]) => ReferencePair[]) => void;
   toolbar: ReactNode;
 }) {
   const { keyLabel, valueLabel } = MAP_TABS[tab];
-  const indexed = rows.map((row, index): MapRow => ({ ...row, index }));
-  function update(index: number, field: keyof ReferencePair, value: string) {
-    onChange(rows.map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row));
-  }
-  const cell = (field: keyof ReferencePair, label: string) => (row: MapRow) => disabled
-    ? row[field]
-    : <input className="db-cell-input" aria-label={`${label} ${row.index + 1}`} value={row[field]} onChange={(event) => update(row.index, field, event.target.value)} />;
+  const indexed = useMemo(() => rows.map((row, index): MapRow => ({ ...row, index }))
+    .sort((a, b) => Number(!a.key.trim()) - Number(!b.key.trim()) || natural(a.key, b.key) || a.index - b.index), [rows]);
+  const cell = (field: keyof ReferencePair) => disabled ? undefined : {
+    save: async (row: MapRow, value: string) => onChange((current) => current.map((item, index) => index === row.index ? { ...item, [field]: value } : item)),
+  };
   const columns: DataColumn<MapRow>[] = [
-    { key: "key", title: keyLabel, value: (row) => row.key, render: cell("key", keyLabel) },
-    { key: "value", title: valueLabel, value: (row) => row.value, render: cell("value", valueLabel) },
+    { key: "key", title: keyLabel, value: (row) => row.key, edit: cell("key") },
+    { key: "value", title: valueLabel, value: (row) => row.value, edit: cell("value") },
     ...(disabled ? [] : [{
       key: "__delete", title: "", value: () => "",
-      render: (row: MapRow) => <button className="link-button danger-link" aria-label={`Удалить строку ${row.index + 1}`} onClick={() => onChange(rows.filter((_, rowIndex) => rowIndex !== row.index))}>Удалить</button>,
+      render: (row: MapRow) => <button className="link-button danger-link" aria-label={`Удалить строку ${row.index + 1}`} onClick={() => onChange((current) => current.filter((_, index) => index !== row.index))}>Удалить</button>,
     }]),
   ];
   return <>
@@ -558,6 +623,8 @@ function MapTable({ tab, rows, disabled, onChange, toolbar }: {
       rows={indexed}
       columns={columns}
       rowKey={(row) => String(row.index)}
+      rowLabel={(row) => `строка ${row.index + 1}`}
+      phoneCards={disabled}
       storageKey={`db:${tab}`}
       exportName={`${keyLabel} - ${valueLabel}`}
       emptyText="Нет записей"

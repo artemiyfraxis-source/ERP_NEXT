@@ -3287,6 +3287,9 @@ export const referencesApi = {
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   addColumn: (tab: TechOperationTab, name: string) =>
     api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", { method: "POST", body: JSON.stringify({ tab, name }) }),
+  /** Удалить свой столбец: сервер откажет, пока в нём есть данные. */
+  removeColumn: (tab: TechOperationTab, name: string) =>
+    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns/remove", { method: "POST", body: JSON.stringify({ tab, name }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
   equipmentNumber: (type: string) =>

@@ -18,6 +18,7 @@ import {
   type TechOperationRecord,
 } from "./api";
 import { TcTemplateSheets } from "./TcTemplateSheets";
+import { AddColumnButton, filledIn, ownCellEdit, useColumnRemoval } from "./CustomColumn";
 
 const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name), "Прочее"])];
 // Где стороны (A)/(B) расходятся, чья сторона — запись (backend operation_cards.RECORD_SIDE_PICK).
@@ -35,16 +36,25 @@ export function operationCardCount(templates: Array<{ code: string }>, opRows: A
   return codes.size;
 }
 
-type OperationEntry = { key: string; code: string; name: string; template?: OperationCardSummary; op?: Record<string, string> };
+type OperationEntry = { key: string; code: string; name: string; template?: OperationCardSummary; op?: Record<string, string>; record?: TechOperationRecord };
+
+/** Свои столбцы БД.ОП («+ Столбец», владелец 14.10): видны в таблице операций сразу за кодом и правятся в ячейках у строк
+    с записью БД.ОП (у шаблона без строки БД.ОП ячейка не правится). */
+type OwnColumns = { names: string[]; canEdit: boolean; onEdited: () => Promise<unknown> | void; removeOf: (name: string) => (() => void) | undefined };
 
 /** Операции таблицей (аудит БД-2: 139 карточек — это 6 500 px прокрутки, справочник читается строками): шаблоны ТК +
     операции БД.ОП без шаблона; категории — чипы с числом, строка целиком открывает карточку операции. */
-function OperationsTable({ entries, onOpen, toolbar }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode }) {
+function OperationsTable({ entries, onOpen, toolbar, own }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode; own?: OwnColumns }) {
   const seconds = (entry: OperationEntry) => entry.template?.norms?.operation_seconds || entry.op?.tOp || "";
   const columns: DataColumn<OperationEntry>[] = [
     { key: "name", title: "Операция", value: (entry) => entry.name || recordCategory(entry.code) },
     { key: "code", title: "Код", value: (entry) => entry.code, render: (entry) => <span className="tr-code">{entry.code}</span> },
     { key: "category", title: "Категория", value: (entry) => recordCategory(entry.code), filter: true },
+    ...(own?.names ?? []).map((name): DataColumn<OperationEntry> => ({
+      key: `own:${name}`, title: name, value: (entry) => entry.op?.[name] ?? "", wrap: true, maxWidth: 160,
+      edit: own?.canEdit ? ownCellEdit<OperationEntry>(name, (entry) => entry.record) : undefined,
+      remove: own?.removeOf(name),
+    })),
     { key: "steps", title: "Шагов", numeric: true, value: (entry) => entry.template?.steps ?? "" },
     { key: "controls", title: "Контролей", numeric: true, value: (entry) => entry.template ? entry.template.controls ?? 0 : "" },
     { key: "tooling", title: "Оснастки", numeric: true, value: (entry) => entry.template?.tooling ?? "" },
@@ -76,6 +86,8 @@ function OperationsTable({ entries, onOpen, toolbar }: { entries: OperationEntry
     presetCountsFollowSearch
     onRowClick={onOpen}
     rowTitle={(entry) => `Открыть: ${entry.name || entry.code}`}
+    rowLabel={(entry) => entry.code}
+    onEdited={own?.onEdited}
     toolbar={toolbar}
     emptyText="Ничего не найдено."
   />;
@@ -152,16 +164,26 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   }, [opRows]);
   // Operations and templates are one entity keyed by code: 107 templates ⊂ 139 БД.ОП rows (owner 29.09.2026 «лучше на карточки»).
   const operationEntries = useMemo<OperationEntry[]>(() => {
-    const entries: OperationEntry[] = records.map((item) => ({ key: item.id, code: item.code, name: item.name, template: item, op: opByCode.get(item.code)?.fields }));
+    const entries: OperationEntry[] = records.map((item) => ({ key: item.id, code: item.code, name: item.name, template: item, op: opByCode.get(item.code)?.fields, record: opByCode.get(item.code) }));
     const known = new Set(records.map((item) => item.code));
-    opByCode.forEach(({ fields }, code) => {
-      if (!known.has(code)) entries.push({ key: `op:${code}`, code, name: fields.opName || fields["Название"] || "", op: fields });
+    opByCode.forEach((record, code) => {
+      if (!known.has(code)) entries.push({ key: `op:${code}`, code, name: record.fields.opName || record.fields["Название"] || "", op: record.fields, record });
     });
     return entries;
   }, [records, opByCode]);
   const selectedOp = selectedOpCode ? opByCode.get(selectedOpCode) : undefined;
   const canEditOps = principal.permissions.erpref === "edit";
   const canCreateOp = canEditTemplates && canEditOps;
+  const [opOwn, setOpOwn] = useState<string[]>([]);
+  async function loadOps() {
+    const result = await referencesApi.techOperations("op", "", 5000);
+    setOpRows(result.records);
+    setOpOwn(result.custom_columns ?? []);
+  }
+  const opRemoval = useColumnRemoval("op", canEditOps, (name) => filledIn(opRows, name), async (name) => {
+    await loadOps().catch(() => undefined);
+    setError(""); setNotice(`Столбец «${name}» удалён`);
+  });
   async function opCreated(result: NewOperationResult) {
     setNewOpOpen(false);
     setOpRows((rows) => [...rows.filter((row) => row.id !== result.record.id), result.record]);
@@ -195,7 +217,7 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   useEffect(() => { void load(); }, []);
   useEffect(() => {
     if (!showLibrary || !principal.permissions.erpref) return;
-    void referencesApi.techOperations("op", "", 5000).then((result) => setOpRows(result.records)).catch(() => undefined);
+    void loadOps().catch(() => undefined);
   }, [showLibrary, principal.permissions.erpref]);
   useEffect(() => {
     if (!selectedTemplateId) { setTemplateDetail(null); return; }
@@ -266,10 +288,14 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     /> : templateDetail && selectedTemplateId ? <OperationCard code={templateDetail.code} name={templateDetail.name} template={templateDetail} op={opByCode.get(templateDetail.code)}
       canEditTemplate={canEditTemplates} canEditOp={canEditOps} initialEdit={freshCode === templateDetail.code} onBack={() => { setSelectedTemplateId(""); setFreshCode(""); }} onSaveTemplate={saveTemplate} onOpSaved={replaceOp}
     /> : <>
-    <OperationsTable entries={operationEntries} toolbar={<>{canCreateOp && <button type="button" className="primary small" onClick={() => setNewOpOpen(true)}>Новая операция</button>}<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button></>} onOpen={(entry) => {
+    <OperationsTable entries={operationEntries}
+      own={{ names: opOwn, canEdit: canEditOps, onEdited: () => loadOps().catch(() => undefined), removeOf: opRemoval.removeOf }}
+      toolbar={<>{canCreateOp && <button type="button" className="primary small" onClick={() => setNewOpOpen(true)}>Новая операция</button>}<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>
+        {canEditOps && opRows.length > 0 && <AddColumnButton tab="op" onAdded={async (name) => { await loadOps().catch(() => undefined); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}</>} onOpen={(entry) => {
       if (entry.template) { setSelectedOpCode(""); setSelectedTemplateId(entry.template.id); } else setSelectedOpCode(entry.code);
     }} />
     </>}
+    {opRemoval.dialog}
     {newOpOpen && <NewOperationDialog operations={operationEntries.map((entry) => ({ code: entry.code, name: entry.name }))} onClose={() => setNewOpOpen(false)} onCreated={(result) => void opCreated(result)} />}
     </>}
   </section>;

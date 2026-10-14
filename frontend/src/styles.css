@@ -566,7 +566,6 @@ table.ship-lines td:first-child { width: 1%; }
 .db-tab.active .db-tab-count { color: var(--primary); }
 .db-clamp { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
 .db-clip { display: block; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.db-cell-input { width: 100%; min-width: 160px; }
 .db-dirty { color: var(--muted-foreground); font-size: 12px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
 .db-form label { display: grid; gap: 3px; min-width: 180px; }
@@ -1245,6 +1244,9 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .column-tools .small:disabled, .column-item:hover .column-tools .small:disabled { border-color: transparent; background: transparent; opacity: .35; }
 .column-tools .column-width { min-width: 52px; padding: 0; color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
 .column-tools .column-width:disabled { color: var(--muted-foreground); text-decoration: none; cursor: default; }
+/* «Удалить» своего столбца — рядом с названием, чтобы подписи и кнопки строк «Колонок» стояли в один столбик. */
+.column-item .column-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.column-item .column-remove { flex: none; min-height: 28px; padding: 0 4px; font-size: 12px; }
 /* Заголовок: тянуть — переставить колонку, правый край — ширина; перетянутая колонка режет длинный текст многоточием. */
 .data-table thead th[draggable="true"] { cursor: grab; }
 .data-table thead th .dt-resize { position: absolute; top: 0; right: 0; bottom: 0; z-index: 1; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
@@ -1275,7 +1277,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .data-table thead th .dt-resize { width: 20px; }
   .column-item { grid-template-columns: minmax(0, 1fr) 132px auto; }
   .column-item .column-caption { height: 40px; border-color: var(--border); background: var(--card); }
-  .column-tools .small, .column-tools .column-width { min-width: 40px; min-height: 40px; }
+  .column-tools .small, .column-tools .column-width, .column-item .column-remove { min-width: 40px; min-height: 40px; }
   .column-tools .small:not(:disabled) { border-color: var(--border); color: var(--foreground); }
   .data-table .dt-cell-input { height: 40px; }
 }

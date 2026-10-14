@@ -44,9 +44,11 @@ it("groups the connectors by series in the shop's order with the cable's D1–D3
   expect(groups).toEqual(["SMA · 1", "N · 2", "Без серии · 1"]);
   const n316 = screen.getAllByRole("row").find((row) => row.textContent?.includes("RG-316"))!;
   expect(within(n316).getByText("0,5 · 1,48 · 1,95")).toBeInTheDocument();
-  expect(within(n316).getByText("4 · 2 · 6")).toBeInTheDocument();
+  // Разделка — тремя колонками L1 · L2 · L3, как D1–D3 у кабелей (правятся по одной).
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  const cells = within(n316).getAllByRole("cell").map((cell) => cell.textContent);
+  expect(["L1", "L2", "L3"].map((name) => cells[heads.indexOf(name)])).toEqual(["4", "2", "6"]);
   expect(screen.getAllByText("нет у кабеля")).toHaveLength(3);
-  expect(screen.getByRole("columnheader", { name: "Разделка L1 · L2 · L3" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: /Угловые/ }));
   expect(screen.getByText("SMA-C174P")).toBeInTheDocument();
   expect(screen.queryByText("N-111L")).toBeNull();
@@ -125,4 +127,46 @@ it("shows the owner's own columns at once and edits their cells with the old val
   expect(path).toBe("/api/references/tech-operations/n1");
   expect(JSON.parse(String(init?.body))).toEqual({ edits: [{ field: "Полка", old: "А-1", value: "Б-2" }] });
   fetchMock.mockRestore();
+});
+
+it("edits the plain cells right in the table with the sheet column's old value; the article, cable and supplier stay in the window", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(RECORDS[0]), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const edited = vi.fn();
+  render(<CoaxConnectors records={RECORDS} cableOf={cableOf} canEdit onEdit={() => undefined} onEdited={edited} />);
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  const n316 = screen.getAllByRole("row").find((row) => row.textContent?.includes("N-111L") && row.textContent.includes("RG-316"))!;
+  const cellOf = (name: string) => within(n316).getAllByRole("cell")[heads.indexOf(name)] as HTMLElement;
+  expect(cellOf("Артикул")).not.toHaveClass("dt-editable");
+  expect(cellOf("Кабель")).not.toHaveClass("dt-editable");
+  expect(cellOf("Поставщик")).not.toHaveClass("dt-editable");
+  expect(cellOf("Исполнение")).not.toHaveClass("dt-editable");
+  const l2 = cellOf("L2");
+  expect(l2).toHaveClass("dt-editable");
+  fireEvent.click(l2);
+  fireEvent.keyDown(l2, { key: "Enter" });
+  const input = within(l2).getByRole("textbox");
+  fireEvent.change(input, { target: { value: "2,5" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(edited).toHaveBeenCalled());
+  const [path, init] = fetchMock.mock.calls[0];
+  expect(path).toBe("/api/references/tech-operations/n1");
+  expect(JSON.parse(String(init?.body))).toEqual({ edits: [{ field: "L2", old: "2", value: "2,5" }] });
+  fetchMock.mockRestore();
+});
+
+it("has no editable cells for a viewer and a «Без L1–L3» chip like «Без D1–D3» of the cables", () => {
+  render(<CoaxConnectors records={RECORDS} cableOf={cableOf} canEdit={false} onEdit={() => undefined} />);
+  expect(document.querySelector("td.dt-editable")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: /^Без L1–L3/ }));
+  expect(screen.queryByText("RG-316")).toBeNull();
+  expect(screen.getByText("SMA-C174P")).toBeInTheDocument();
+});
+
+it("offers «Удалить» for an own column in «Колонки»", () => {
+  const remove = vi.fn();
+  render(<CoaxConnectors records={RECORDS} cableOf={cableOf} canEdit onEdit={() => undefined} ownColumns={["Полка"]} removeColumn={() => remove} />);
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  expect(screen.getAllByRole("button", { name: /^Удалить столбец/ })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
+  expect(remove).toHaveBeenCalled();
 });

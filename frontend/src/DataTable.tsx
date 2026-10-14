@@ -41,6 +41,8 @@ export interface DataColumn<T> {
   hint?: string;
   /** Правка ячейки прямо в таблице, как в Google Таблицах (по выбору колонки; без неё ячейка только для чтения). */
   edit?: DataCellEdit<T>;
+  /** Свой столбец пользователя («+ Столбец»): в «Колонках» у него кнопка «Удалить» — экран спрашивает подтверждение. */
+  remove?: () => void;
 }
 
 export interface DataCellEdit<T> {
@@ -894,10 +896,13 @@ export function DataTable<T>({
               const width = widths[column.key];
               return (
                 <li key={column.key} className="column-item">
-                  <label className="check-inline">
-                    <input type="checkbox" checked={!hidden.includes(column.key)} onChange={(event) => setHidden((current) => event.target.checked ? current.filter((key) => key !== column.key) : [...current, column.key])} />
-                    {column.title}
-                  </label>
+                  <span className="column-name">
+                    <label className="check-inline">
+                      <input type="checkbox" checked={!hidden.includes(column.key)} onChange={(event) => setHidden((current) => event.target.checked ? current.filter((key) => key !== column.key) : [...current, column.key])} />
+                      {column.title}
+                    </label>
+                    {column.remove && <button type="button" className="link-button danger-link column-remove" aria-label={`Удалить столбец: ${column.title}`} title="Удалить свой столбец" onClick={column.remove}>Удалить</button>}
+                  </span>
                   <input
                     className="column-caption" aria-label={`Своя подпись: ${column.title}`} placeholder="своя подпись…" maxLength={60} autoComplete="off"
                     value={titles[column.key] ?? ""}

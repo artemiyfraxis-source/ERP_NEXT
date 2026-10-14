@@ -2,13 +2,15 @@ import { useMemo, useState, type ReactNode } from "react";
 import { PageWindow } from "./PageWindow";
 import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import type { TechOperationRecord } from "./api";
-import { ownCellEdit } from "./CustomColumn";
+import { fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import "./coaxConnectors.css";
 
 /* «База данных → Коаксиальные разъёмы» (owner 13.10.2026): БД.КОАКС — разъёмы базы и 311 разъёмов gsm-repiteri.ru —
    одной плотной таблицей по сериям (SMA, N, TNC…), строка = разъём × кабель, как в листе. Клик по строке — карточка
    разъёма окном поверх таблицы (владелец 14.10: правка и карточки — окнами, не панелью сбоку): тип, кабель с его D1–D3, разделка, пин и экран, параметры сайта, ссылка, другие кабели того же
-   артикула; правка — кнопкой в карточке. D1–D3 — у кабеля (вкладка «Коаксиальные кабели»), не у разъёма. */
+   артикула; правка — кнопкой в карточке. D1–D3 — у кабеля (вкладка «Коаксиальные кабели»), не у разъёма.
+   Ячейки с простым текстом и числами (тип, монтаж, пин, экран, L1–L3, производитель…) правятся прямо в таблице тем же
+   путём, что окно записи; артикул и кабель (ключ строки), пол, исполнение и поставщик (выводятся) — только в окне. */
 
 type Fields = Record<string, string>;
 type CableDia = (record: TechOperationRecord) => Fields | undefined;
@@ -97,10 +99,10 @@ const PRESETS: DataPreset<TechOperationRecord>[] = [
   { label: "Штекеры", test: (record) => coaxGender(record.fields) === "штекер" },
   { label: "Гнёзда", test: (record) => coaxGender(record.fields) === "гнездо" },
   { label: "Угловые", test: (record) => coaxAngle(record.fields) === "угловой" },
-  { label: "Без разделки", test: (record) => !stripping(record.fields) },
+  { label: "Без L1–L3", test: (record) => !stripping(record.fields) },
 ];
 
-export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar, ownColumns = [], onEdited }: {
+export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn }: {
   records: TechOperationRecord[];
   cableOf: CableDia;
   canEdit: boolean;
@@ -109,38 +111,48 @@ export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar, own
   /** Столбцы, добавленные владельцем («+ Столбец»): видны сразу, правятся в ячейках. */
   ownColumns?: string[];
   onEdited?: () => Promise<unknown> | void;
+  /** «Удалить столбец» своего столбца (окно подтверждения — у страницы). */
+  removeColumn?: (name: string) => (() => void) | undefined;
 }) {
   const rows = useMemo(() => sortRows(records), [records]);
   const [selectedId, setSelectedId] = useState("");
   const selected = rows.find((record) => record.id === selectedId) ?? null;
 
   const text = (name: string, ...more: string[]) => (record: TechOperationRecord) => pick(record.fields, name, ...more);
+  // Ячейка пишет колонку листа (сервер переносит её в ключ схемы, который читает генератор); нет колонки у записи — нет правки.
+  const cell = (name: string) => canEdit ? fieldCellEdit<TechOperationRecord>(name, (record) => record) : undefined;
+  const length = (name: "L1" | "L2" | "L3"): DataColumn<TechOperationRecord> => ({
+    key: name, title: name, hint: `Разделка ${name}, мм`, numeric: true, value: text(name, name.toLowerCase()), edit: cell(name),
+  });
   const columns: DataColumn<TechOperationRecord>[] = [
     // Длинные артикулы, типы и кабели («1/2″ SuperFlex (⌀13,5 мм)») переносятся, а не раздвигают таблицу за край ноутбука.
     { key: "article", title: "Артикул", value: (record) => coaxArticle(record.fields), render: (record) => <strong>{coaxArticle(record.fields) || "—"}</strong>, wrap: true, maxWidth: 170 },
-    { key: "type", title: "Тип", value: (record) => coaxType(record.fields), wrap: true, maxWidth: 130 },
+    { key: "type", title: "Тип", value: (record) => coaxType(record.fields), wrap: true, maxWidth: 130, edit: cell("Тип/Серия") },
     { key: "wire", title: "Кабель", value: (record) => coaxWire(record.fields), wrap: true, maxWidth: 100 },
     { key: "gender", title: "Пол", value: (record) => coaxGender(record.fields), hidden: true },
     { key: "angle", title: "Исполнение", value: (record) => coaxAngle(record.fields) },
     // Монтаж — в карточке и в «Колонках»; карточка открывается окном, таблица занимает всю ширину.
-    { key: "mount", title: "Монтаж", value: text("Монтаж"), hidden: true },
-    { key: "pin", title: "Тип пина", value: text("Тип пина", "pinType"), wrap: true, maxWidth: 80 },
-    { key: "shield", title: "Тип экрана", value: text("Тип экрана", "shieldType") },
+    { key: "mount", title: "Монтаж", value: text("Монтаж"), hidden: true, edit: cell("Монтаж") },
+    { key: "pin", title: "Тип пина", value: text("Тип пина", "pinType"), wrap: true, maxWidth: 80, edit: cell("Тип пина") },
+    { key: "shield", title: "Тип экрана", value: text("Тип экрана", "shieldType"), edit: cell("Тип экрана") },
     {
       key: "dia", title: "D1 · D2 · D3 кабеля", value: (record) => cableDia(cableOf(record)),
       render: (record) => cableDia(cableOf(record))
         || <span className="muted" title={`У кабеля «${coaxWire(record.fields)}» нет D1–D3 — задайте их во вкладке «Коаксиальные кабели»`}>нет у кабеля</span>,
     },
-    { key: "strip", title: "Разделка L1 · L2 · L3", value: (record) => stripping(record.fields) },
-    { key: "mfr", title: "Производитель", value: (record) => coaxMaker(record.fields), render: (record) => coaxMaker(record.fields) || "—", wrap: true, maxWidth: 120 },
+    // Разделка — тремя колонками, как D1–D3 у кабелей: каждую длину можно вписать прямо в таблицу.
+    length("L1"), length("L2"), length("L3"),
+    { key: "mfr", title: "Производитель", value: (record) => coaxMaker(record.fields), render: (record) => coaxMaker(record.fields) || "—", wrap: true, maxWidth: 120, edit: cell("Производитель") },
     { key: "supplier", title: "Поставщик", value: (record) => coaxSupplier(record.fields), render: (record) => coaxSupplier(record.fields) || "—", wrap: true, maxWidth: 130 },
-    { key: "ohm", title: "Ом", value: text("Волновое сопротивление, Ом"), numeric: true, hidden: true },
-    { key: "ghz", title: "До, ГГц", value: text("Частота до, ГГц"), numeric: true, hidden: true },
-    { key: "name", title: "Наименование", value: text("Наименование"), hidden: true },
-    { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true },
+    { key: "vendorArticle", title: "Артикул поставщика", value: text("Артикул поставщика"), hidden: true, edit: cell("Артикул поставщика") },
+    { key: "ohm", title: "Ом", value: text("Волновое сопротивление, Ом"), numeric: true, hidden: true, edit: cell("Волновое сопротивление, Ом") },
+    { key: "ghz", title: "До, ГГц", value: text("Частота до, ГГц"), numeric: true, hidden: true, edit: cell("Частота до, ГГц") },
+    { key: "name", title: "Наименование", value: text("Наименование"), hidden: true, edit: cell("Наименование") },
+    { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true, edit: cell("Источник данных") },
     ...ownColumns.map((name): DataColumn<TechOperationRecord> => ({
       key: `own:${name}`, title: name, value: text(name), wrap: true, maxWidth: 140,
       edit: canEdit ? ownCellEdit<TechOperationRecord>(name, (record) => record) : undefined,
+      remove: removeColumn?.(name),
     })),
   ];
 

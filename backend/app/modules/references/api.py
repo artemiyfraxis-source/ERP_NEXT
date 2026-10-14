@@ -684,7 +684,7 @@ def add_tech_column(
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
-    """«+ Столбец»: an empty column of the owner's own in every record of the table (БД.ПРОВ, БД.МАТ, БД.КОАКС)."""
+    """«+ Столбец»: an empty column of the owner's own in every record of the table (БД.ПРОВ, БД.МАТ, БД.КОАКС, БД.ТЕР, БД.ОП)."""
     records = _run_edit(lambda: add_column(ColumnCommand(
         tab=payload.tab, name=payload.name, actor=principal.actor, now=now), uow_factory()))
     return {"tab": payload.tab.value, "name": " ".join(payload.name.split()), "records": records}

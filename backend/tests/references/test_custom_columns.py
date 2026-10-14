@@ -81,14 +81,14 @@ def test_a_bad_name_is_refused_and_nothing_is_written(references_api):
 
 def test_a_schema_key_and_a_tab_without_own_columns_are_refused(references_api):
     _seed(references_api, tab="coax", fields=[{"coaxArticle": "SMA-1", "Артикул": "SMA-1"}])
-    _seed(references_api, tab="op", fields=[{"opNumber": "CUT", "Номер": "CUT"}])
+    _seed(references_api, tab="ob", fields=[{"Тип": "Инструмент", "Инв. номер": "ОБ.001", "Наменование": "Кримпер"}])
 
     schema_key = references_api.post(COLUMNS, json={"tab": "coax", "name": "coaxArticle"})
-    operations = references_api.post(COLUMNS, json={"tab": "op", "name": "Полка"})
+    equipment = references_api.post(COLUMNS, json={"tab": "ob", "name": "Полка"})
     unknown_tab = references_api.post(COLUMNS, json={"tab": "zzz", "name": "Полка"})
 
     assert schema_key.status_code == 422 and "уже есть" in schema_key.json()["detail"]
-    assert operations.status_code == 422 and "не добавляются" in operations.json()["detail"]
+    assert equipment.status_code == 422 and "не добавляются" in equipment.json()["detail"]
     assert unknown_tab.status_code == 422
 
 
@@ -164,3 +164,57 @@ def test_adding_a_column_needs_erpref_edit(references_api):
 
     assert add.status_code == 403 and remove.status_code == 403
     assert "Полка" not in _columns(references_api)
+
+
+# --- БД.ТЕР and БД.ОП (14.10.2026: «+ Столбец» on every records table of «База данных») ---
+
+def _mirror_api(tmp_path, sessions):
+    from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
+    from tests.references.test_load_mirror import mirror
+
+    load_mirror(mirror(tmp_path), SqlAlchemyReferencesUnitOfWork(sessions), dry_run=False, now=NOW)
+    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=ACTOR, email="admin@example.test", roles=frozenset({"admin"}), permissions={"erpref": "edit", "procurement": "edit"})
+    return TestClient(app)
+
+
+def _drop_api():
+    app.dependency_overrides.pop(authenticated_principal, None)
+    del app.state.references_uow_factory
+
+
+def test_terminals_and_operations_take_an_own_column_edit_it_and_drop_it_when_empty(tmp_path, sessions):
+    client = _mirror_api(tmp_path, sessions)
+    try:
+        added = {tab: client.post(COLUMNS, json={"tab": tab, "name": "Полка"}) for tab in ("ter", "op")}
+        listed = {tab: client.get("/api/references/tech-operations", params={"tab": tab}).json() for tab in ("ter", "op")}
+        ter = listed["ter"]["records"][0]
+        edit = client.patch(f"/api/references/tech-operations/{ter['id']}", json={"edits": [{"field": "Полка", "old": "", "value": "Б-7"}]})
+        refused = client.post(f"{COLUMNS}/remove", json={"tab": "ter", "name": "Полка"})
+        client.patch(f"/api/references/tech-operations/{ter['id']}", json={"edits": [{"field": "Полка", "old": "Б-7", "value": ""}]})
+        removed = client.post(f"{COLUMNS}/remove", json={"tab": "ter", "name": "Полка"})
+        resolved = client.post("/api/references/technology/resolve-terminal", json={"article": "Molex 430310001", "wires": ["UL1007 22 AWG"]})
+        after = client.get("/api/references/tech-operations", params={"tab": "ter"}).json()
+    finally:
+        _drop_api()
+
+    assert added["ter"].status_code == 201 and added["op"].status_code == 201
+    assert all(listed[tab]["columns"][-1] == "Полка" and listed[tab]["custom_columns"] == ["Полка"] for tab in ("ter", "op"))
+    assert all(record["fields"]["Полка"] == "" for tab in ("ter", "op") for record in listed[tab]["records"])
+    assert edit.status_code == 200 and edit.json()["fields"]["Полка"] == "Б-7"
+    assert refused.status_code == 422 and "есть данные (1)" in refused.json()["detail"]
+    assert removed.status_code == 200 and "Полка" not in after["columns"] and after["custom_columns"] == []
+    assert resolved.status_code == 200 and resolved.json()["applicator"] == "S8/M8"  # the generator reads the row as before
+
+
+def test_a_terminal_column_survives_a_mirror_reload(tmp_path, uow):
+    load_mirror(_mirror(tmp_path / "a"), uow, dry_run=False, now=NOW)
+    add_column(ColumnCommand(TechOperationTab.TERMINAL, "Ячейка", ACTOR, NOW), uow)
+
+    load_mirror(_mirror(tmp_path / "b"), uow, dry_run=False, now=NOW)
+
+    with uow:
+        records = uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=100)
+        assert records and all(record.fields.get("Ячейка") == "" and record.edited_in_erp for record in records)
+        assert custom_columns(TechOperationTab.TERMINAL, uow) == ["Ячейка"]

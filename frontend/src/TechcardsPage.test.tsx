@@ -649,3 +649,48 @@ it("one «Править» edits the template and the parameters; an unchanged t
   await waitFor(() => expect(screen.queryByRole("button", { name: "Сохранить" })).toBeNull());
   expect(calls.some((call) => call.startsWith("PUT"))).toBe(false);
 });
+
+it("«Операции»: «+ Столбец» of БД.ОП — the own column stands after the code, is edited in the cell of a БД.ОП row and offers «Удалить»", async () => {
+  const patches: Array<{ path: string; body: unknown }> = [];
+  const own = opRows.map((row) => ({ ...row, fields: { ...row.fields, Полка: row.id === "o2" ? "Б-1" : "" } }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, columns: ["Номер", "Полка"], custom_columns: ["Полка"], records: own });
+    if (path.startsWith("/api/references/tech-operations/") && init?.method === "PATCH") {
+      patches.push({ path, body: JSON.parse(String(init.body)) });
+      return json(own[1]);
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  await screen.findByText("LASER_MARK");
+  expect(screen.getByRole("button", { name: "+ Столбец" })).toBeInTheDocument();
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  expect(heads.indexOf("Полка")).toBe(heads.indexOf("Категория") + 1);
+  const cell = within(screen.getByText("LASER_MARK").closest("tr") as HTMLElement).getAllByRole("cell")[heads.indexOf("Полка")] as HTMLElement;
+  expect(cell).toHaveTextContent("Б-1");
+  fireEvent.click(cell);
+  fireEvent.keyDown(cell, { key: "Enter" });
+  const input = within(cell).getByRole("textbox");
+  fireEvent.change(input, { target: { value: "Б-2" } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await waitFor(() => expect(patches).toEqual([{ path: "/api/references/tech-operations/o2", body: { edits: [{ field: "Полка", old: "Б-1", value: "Б-2" }] } }]));
+
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
+  expect(screen.getByRole("dialog", { name: "Удалить столбец" })).toHaveTextContent("записей — 1");
+});
+
+it("«Операции»: no own-column tools without the reference edit right", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, custom_columns: ["Полка"], records: opRows });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "view" } }} view="templates" />);
+  await screen.findByText("LASER_MARK");
+  expect(screen.queryByRole("button", { name: "+ Столбец" })).toBeNull();
+  expect(document.querySelector("td.dt-editable")).toBeNull();
+});

@@ -443,8 +443,10 @@ BASE_COLUMNS = {
 }
 # The v14 GAS snapshot never carries these; a snapshot without them must not wipe portal-edited rows.
 # Same for СПР.КАБ (REF-SPRKAB): only the mirror carries it.
-# Tabs whose table accepts the owner's own columns («+ Столбец»): БД.ПРОВ (all four cable lists), БД.МАТ, БД.КОАКС.
-CUSTOM_COLUMN_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.COAX)
+# Tabs whose table accepts the owner's own columns («+ Столбец»): БД.ПРОВ (all four cable lists), БД.МАТ, БД.КОАКС,
+# БД.ТЕР and БД.ОП (14.10.2026, «Операции» shows them beside the code). БД.ОБ has none: its list is one row per model.
+CUSTOM_COLUMN_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.COAX, TechOperationTab.TERMINAL,
+                      TechOperationTab.OPERATION)
 MAX_COLUMN_NAME = 60
 SHEET_TABLE_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
 
