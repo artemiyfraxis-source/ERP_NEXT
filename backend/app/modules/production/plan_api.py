@@ -36,6 +36,7 @@ from .plan import (
     PlanEvent,
     PlanProjectSnapshot,
     normalize_project_number,
+    work_days_left,
 )
 from .plan_sheet import calendar_span
 from .plan_application import (
@@ -189,6 +190,10 @@ def production_plan(
         boxes=boxes, inspected=inspected, worked=worked,
     )
     first_day, last_day = calendar_span(today)
+    holidays, weekdays = _safe_read(
+        "calendar", production_uow_factory, lambda uow: (uow.calendar.holidays(), uow.calendar.shift().weekdays),
+        (frozenset(), (0, 1, 2, 3, 4)),
+    )
     return {
         "blockers": list(PLAN_BLOCKERS), "stages": list(KIT_STAGES), "terminals": list(PROJECT_TERMINALS),
         "review_values": list(TC_REVIEW_VALUES),
@@ -199,7 +204,8 @@ def production_plan(
             "project": row.project, "customer": row.customer,
             "opened_on": row.opened_on.isoformat() if row.opened_on else None,
             "deadline": row.deadline.isoformat() if row.deadline else None,
-            "days_left": row.days_left, "stage": row.stage.status, "terminal": row.terminal,
+            "days_left": row.days_left,
+            "work_days_left": work_days_left(row.deadline, today, holidays, weekdays), "stage": row.stage.status, "terminal": row.terminal,
             "stage_manual": row.stage.manual,
             "kits": [{
                 "item_index": item.item_index, "status": item.status, "manual": item.manual,

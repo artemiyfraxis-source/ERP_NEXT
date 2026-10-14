@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import re
 from typing import Collection, Iterable, Mapping
 from uuid import UUID, uuid4
@@ -417,6 +417,24 @@ def days_left(deadline: object, today: date | datetime) -> int | None:
         return None
     current = today.date() if isinstance(today, datetime) else today
     return (parsed - current).days
+
+
+def work_days_left(
+    deadline: object, today: date | datetime, holidays: Collection[date] = (), weekdays: Collection[int] = (0, 1, 2, 3, 4),
+) -> int | None:
+    """Рабочих дней до дедлайна (владелец 14.10): рабочие дни после сегодня по день дедлайна включительно — по графику
+    смены (`weekdays`) без праздников календаря цеха; просрочка — минус рабочие дни после дедлайна по сегодня."""
+    parsed = _date(deadline)
+    if parsed is None:
+        return None
+    current = today.date() if isinstance(today, datetime) else today
+    start, end, sign = (current, parsed, 1) if parsed >= current else (parsed, current, -1)
+    count, day = 0, start + timedelta(days=1)
+    while day <= end:
+        if day.weekday() in weekdays and day not in holidays:
+            count += 1
+        day += timedelta(days=1)
+    return sign * count
 
 
 @dataclass(frozen=True)
