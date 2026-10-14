@@ -307,7 +307,7 @@ function LinesTable({ lines, label }: { lines: UpdLine[]; label: string }) {
       <table className="grid wide" aria-label={label}>
         <thead>
           <tr>
-            <th className="num">№</th><th>Наименование</th><th>Артикул</th><th>Ед.</th><th className="num">Кол-во</th>
+            <th className="num">№</th><th className="grow">Наименование</th><th>Артикул</th><th>Ед.</th><th className="num">Кол-во</th>
             <th className="num">Цена без НДС</th><th className="num">Без НДС</th><th>Ставка</th><th className="num">НДС</th>
             <th className="num">С НДС</th><th>Замечания</th>
           </tr>

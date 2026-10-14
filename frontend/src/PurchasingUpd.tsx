@@ -125,7 +125,7 @@ export function PurchasingUpd({ readOnly = false, focusId, extraBlocks }: {
           <table className="grid wide upd-table" aria-label="Реестр УПД">
             <thead>
               <tr>
-                <th>Дата</th><th>№</th><th>Вид</th><th>Продавец</th><th className="num">Сумма с НДС</th><th>Статус</th>
+                <th>Дата</th><th>№</th><th>Вид</th><th className="grow">Продавец</th><th className="num">Сумма с НДС</th><th>Статус</th>
                 <th className="num">Позиций</th><th>Отметки</th>
               </tr>
             </thead>

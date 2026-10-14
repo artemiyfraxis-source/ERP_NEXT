@@ -4393,5 +4393,3 @@ tr.upd-row-bad td { background: var(--chip-danger-bg); }
 /* Документ без продавца показывает имя XML-файла (≈170 знаков без пробелов) — оно переносится, а не растягивает колонку. */
 .upd-table td.text, .upd-table .table-link { overflow-wrap: anywhere; white-space: normal; text-align: left; }
 .upd-table .upd-chips { max-width: 220px; }
-/* .data-table — сетка: без явной колонки таблица растягивается до ширины содержимого; здесь она равна ширине панели. */
-.upd-registry .data-table, .upd-card-view .data-table { grid-template-columns: minmax(0, 1fr); }
