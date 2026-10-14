@@ -4,6 +4,7 @@
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
 import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, wireColor, type HousingBody } from "./connectorArt";
 import { wireEndArt } from "./etkDefectArt";
+import { solderMode } from "./etkOperation";
 
 type Row = Record<string, unknown>;
 
@@ -491,14 +492,10 @@ const pullText = (value: string | undefined) => !value?.trim() ? ETK_NOT_SET
   : /[–;:]/.test(crimpText(value)) ? `${crimpText(value)} Н` : `≥ ${crimpText(value)} Н`;
 const endsText = (ends: string[]) => ends.length > 1 ? `Концы ${ends.join(" и ")}` : `Конец ${ends[0] || "A"}`;
 
-/** Серая строка контакта в «Комплектующих»: конец, провод и сечение, аппликатор, высота обжима, отрыв, зачистка. */
+/** Серая строка контакта в «Комплектующих»: конец, провод и сечение. Аппликатор, обжим, отрыв, зачистка — в шапке операции. */
 export function etkCrimpSpec(entry: EtkCrimpEnd): string {
   const wire = [entry.wire, entry.section && entry.section !== entry.wire ? `(${entry.section})` : ""].filter(Boolean).join(" ");
-  return [
-    endsText(entry.ends), wire, `аппликатор ${entry.applicator?.trim() || ETK_NOT_SET}`,
-    `обжим проводника ${withUnit(entry.crimpHeight, "мм")}`, `отрыв ${pullText(entry.pullForce)}`,
-    `зачистка ${withUnit(entry.strip, "мм")}`,
-  ].filter(Boolean).join(" · ");
+  return [endsText(entry.ends), wire].filter(Boolean).join(" · ");
 }
 
 /** Строки спецификации обжима для строки комплектующих по артикулу контакта; у выданных до 12.10 ЭТК — пусто. */
@@ -507,65 +504,85 @@ export function etkContactSpecs(fields: Row, art: unknown): string[] {
   return key ? etkCrimpEnds(fields).filter((entry) => entry.art.trim() === key).map(etkCrimpSpec) : [];
 }
 
-/** Короткое имя контакта для чипа: первое слово артикула от 3 знаков («T-DS1071-SC600» → «DS1071», «SXH-001T» → «SXH»). */
-function contactShort(art: string): string {
-  return art.split(/[-\s]+/).find((part) => part.length >= 3) || art;
+const DASH = "—";
+export type EtkParam = [label: string, value: string];
+export type EtkSideParams = { end: "A" | "B"; title: string; items: EtkParam[] };
+/** Параметры операции в шапке ЭТК (владелец 14.10): «Сторона А» | «Общие» | «Сторона В». Сторона В — как везде в ERP
+ *  (В1, «Сторона В»). Колонка стороны есть, только если операция что-то делает с этим концом. */
+export type EtkParams = { sides: EtkSideParams[]; common: EtkParam[] };
+
+/** Значение параметра по записям обжима одного конца: одинаковое у всех сечений — одно, разное — «сечение: значение». */
+function sideValue(entries: EtkCrimpEnd[], pick: (entry: EtkCrimpEnd) => string): string {
+  const values = [...new Set(entries.map(pick))];
+  return values.length > 1 ? entries.map((entry) => `${entry.section || entry.wire}: ${pick(entry)}`).join("; ") : values[0];
 }
 
-/** Чипы шапки «Аппликатор / Высота обжима / Отрыв». Два разных контакта — по концам с именем контакта
- *  («A (SXH) 0,60–0,75 мм · B (DS1071) не задано»); один — одно значение. ЭТК без `crimpEnds` — по старым полям. */
-export function etkCrimpChips(fields: Row): Array<[string, string]> {
-  const ends = etkCrimpEnds(fields);
-  if (!ends.length) {
-    const out: Array<[string, string]> = [];
-    if (fields.applicator) out.push(["Аппликатор", crimpText(fields.applicator)]);
-    if ("crimpHeight" in fields) out.push(["Высота обжима", fields.crimpHeight ? `${crimpText(fields.crimpHeight)} мм` : ETK_NOT_SET]);
-    if (fields.pullForce) out.push(["Отрыв", `${crimpText(fields.pullForce)} Н`]);
-    return out;
+function firstText(source: Row[], keys: string[]): string {
+  for (const item of source) for (const key of keys) if (str(item[key]).trim()) return str(item[key]).trim();
+  return "";
+}
+
+function sideItems(operation: Row, end: "A" | "B"): EtkParam[] {
+  const f = obj(operation.fields), key = end === "A" ? "a" : "b";
+  const entries = etkCrimpEnds(f).filter((entry) => entry.ends.includes(end));
+  const out: EtkParam[] = [];
+  if (entries.length) {
+    out.push(["Терминал", [...new Set(entries.map((entry) => entry.art).filter(Boolean))].join(", ") || ETK_NOT_SET],
+      ["Аппликатор", sideValue(entries, (entry) => entry.applicator?.trim() || ETK_NOT_SET)],
+      ["Высота обжима", sideValue(entries, (entry) => withUnit(entry.crimpHeight, "мм"))],
+      ["Отрыв", sideValue(entries, (entry) => pullText(entry.pullForce))]);
   }
-  const arts = [...new Set(ends.map((entry) => entry.art))];
-  const value = (entries: EtkCrimpEnd[], pick: (entry: EtkCrimpEnd) => string) => {
-    const values = [...new Set(entries.map(pick))];
-    return values.length > 1 ? entries.map((entry) => `${entry.section || entry.wire}: ${pick(entry)}`).join("; ") : values[0];
-  };
-  const chip = (pick: (entry: EtkCrimpEnd) => string): string => arts.length === 1 ? value(ends, pick)
-    : ["A", "B"].map((end) => {
-      const own = ends.filter((entry) => entry.ends.includes(end));
-      return own.length ? `${end} (${contactShort(own[0].art)}) ${value(own, pick)}` : "";
-    }).filter(Boolean).join(" · ");
-  return [
-    ["Аппликатор", chip((entry) => entry.applicator?.trim() || ETK_NOT_SET)],
-    ["Высота обжима", chip((entry) => withUnit(entry.crimpHeight, "мм"))],
-    ["Отрыв", chip((entry) => pullText(entry.pullForce))],
-  ];
-}
-
-/** Чипы полей операции над ходом операции (renderEtk_ chips): аппликатор, высота обжима, отрыв, длина, допуск,
- * зачистка, свивка и время из БД.ОП (на штуку — с, подготовка — мин). */
-export function etkChips(operation: Row): Array<[string, string]> {
-  const f = obj(operation.fields), out: Array<[string, string]> = [...etkCrimpChips(f)];
-  if (f.lengthKd) out.push(["Длина по КД", str(f.lengthKd)]);
-  if (f.cutTolerance) out.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
-  // Ручная сборка: сколько раз операция на одно изделие, параметры и примечание технолога.
-  if (f.perItem) out.push(["На изделие", `${str(f.perItem)} шт.`]);
-  if (f.params) out.push(["Параметры", str(f.params)]);
-  if (f.note) out.push(["Примечание", str(f.note)]);
+  // Зачистка: резка считает концы по коду операции (лужёный конец зачищен всегда); прочие — по полю зачистки.
+  const entryStrip = entries.map((entry) => entry.strip?.trim()).find(Boolean) || "";
   const strip = obj(f.strip);
-  // У резки концы — по операции (лужёный конец зачищен всегда); у прочих — как в поле зачистки.
-  const ends = /^cutWire/.test(str(operation.type)) ? etkCutEnds(operation) : null;
-  const shown = (key: "a" | "b") => ends ? ends[key].kind !== "none" : !!strip[key];
-  if (shown("a") || shown("b")) {
-    const end = (key: "a" | "b"): CutEnd => ends ? ends[key] : { kind: "strip", len: str(key === "a" ? strip.lenA : strip.lenB).trim(), terminal: "" };
-    out.push(["Зачистка", [shown("a") ? endStrip("A", end("a"), true) : "", shown("b") ? endStrip("B", end("b"), true) : ""].filter(Boolean).join(" · ")]);
+  if (/^cutWire/.test(str(operation.type))) {
+    const cut = etkCutEnds(operation)[key];
+    if (cut.kind !== "none") out.push(["Зачистка", `${withUnit(entryStrip || cut.len, "мм")}${cut.kind === "tin" ? " (лужение)" : ""}`]);
+  } else if (entryStrip || strip[key]) {
+    out.push(["Зачистка", withUnit(entryStrip || str(key === "a" ? strip.lenA : strip.lenB), "мм")]);
   }
+  // Пайка: жало и температура — на стороне операции (по умолчанию ERP — помечено, технологу уточнить).
+  const solder = solderMode(operation);
+  if (solder && (operation.side === "B" ? "B" : "A") === end) {
+    out.push([solder.method === "bath" ? "Ванна" : "Жало", `${solder.tip}${solder.tipAssumed ? " (по умолчанию)" : ""}`],
+      ["Температура", `${solder.temperature}${solder.tolerance ? ` (${solder.tolerance})` : ""}${solder.temperatureAssumed ? " (по умолчанию)" : ""}`]);
+  }
+  return out;
+}
+
+export function etkParams(operation: Row): EtkParams {
+  const f = obj(operation.fields), common: EtkParam[] = [];
+  const sides = (["A", "B"] as const).map((end) => ({ end, title: `Сторона ${end === "A" ? "А" : "В"}`, items: sideItems(operation, end) }))
+    .filter((side) => side.items.length);
+  // ЭТК, выданные до норм по концам (`crimpEnds`): аппликатор, высота обжима, отрыв — как были, в «Общих».
+  if (!etkCrimpEnds(f).length) {
+    if (f.applicator) common.push(["Аппликатор", crimpText(f.applicator)]);
+    if ("crimpHeight" in f) common.push(["Высота обжима", f.crimpHeight ? `${crimpText(f.crimpHeight)} мм` : ETK_NOT_SET]);
+    if (f.pullForce) common.push(["Отрыв", `${crimpText(f.pullForce)} Н`]);
+  }
+  if (f.lengthKd) common.push(["Длина по КД", str(f.lengthKd)]);
+  if (f.cutTolerance) common.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
+  // Диаметры провода в ЭТК пока не приходят из БД.ПРОВ — читаем, если появятся; нет — «—», не выдумываем.
+  const wires = list(f.wires), isWire = wires.length > 0 || /^cutWire/.test(str(operation.type)) || etkCrimpEnds(f).length > 0;
+  if (isWire) {
+    const outer = firstText(wires, ["outerDiameter", "outerDiameterMm", "outer"]) || str(f.outerDiameter).trim();
+    const core = firstText(wires, ["coreDiameter", "conductorDiameter", "conductorDiameterMm"]) || str(f.coreDiameter).trim();
+    const section = etkCrimpEnds(f).map((entry) => entry.section?.trim()).find(Boolean) || firstText(wires, ["section"]);
+    common.push(["Внешний диаметр", outer ? `${crimpText(outer)} мм` : DASH],
+      core || !section ? ["Диаметр жилы", core ? `${crimpText(core)} мм` : DASH] : ["Сечение жилы", section]);
+  }
+  // Ручная сборка: сколько раз операция на одно изделие, параметры и примечание технолога.
+  if (f.perItem) common.push(["На изделие", `${str(f.perItem)} шт.`]);
+  if (f.params) common.push(["Параметры", str(f.params)]);
+  if (f.note) common.push(["Примечание", str(f.note)]);
   if (f.twist) {
     const twist = obj(f.twist);
-    out.push(["Шаг свивки", twist.pitch ? `${str(twist.pitch)} мм` : "по КД"], ["Пар", str(twist.count)]);
+    common.push(["Шаг свивки", twist.pitch ? `${str(twist.pitch)} мм` : "по КД"], ["Пар", str(twist.count)]);
   }
   const times = obj(operation.times);
   const sec = (v: unknown) => Number(str(v).replace(",", ".")) || 0;
   const fmt = (x: number) => String(Math.round(x * 100) / 100).replace(".", ",");
   const op = sec(times.operation_seconds), prep = sec(times.setup_seconds);
-  out.push(["Время", `${op ? `${fmt(op)} с на шт.` : "—"} · подгот. ${prep ? `${fmt(prep / 60)} мин` : "—"}`]);
-  return out;
+  common.push(["Время", `${op ? `${fmt(op)} с на шт.` : DASH} · подгот. ${prep ? `${fmt(prep / 60)} мин` : DASH}`]);
+  return { sides, common };
 }

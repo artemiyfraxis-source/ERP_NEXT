@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  etkChips, etkConnectionRows, etkCutEnds, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTwist, etkDrawWires, etkFigure,
+  etkParams, etkConnectionRows, etkCutEnds, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTwist, etkDrawWires, etkFigure,
   etkTolerance, etkWireColor,
 } from "./etkDraw";
 import { buildPrintDocumentHtml } from "./print";
@@ -10,29 +10,57 @@ import type { ProjectTechcard } from "./api";
 const housing = { title: "JST XH", art: "XHP-2", rows: 1, cols: 2, n: 2, kind: "grid", color: "#efe6cf", latch: "ramp",
   cavity: "square", labels: null, grid: [[1, 2]], round: null, conf: "medium", note: "", pitch: 2.5 };
 
-describe("etkChips (renderEtk_ chips)", () => {
-  it("lists crimp fields, strip, twist and БД.ОП time like SUPPLYMAP", () => {
-    expect(etkChips({
-      fields: { applicator: "AP-1", crimpHeight: "0,85", pullForce: "40", strip: { a: true, b: true, lenA: "5", lenB: "" } },
-      times: { operation_seconds: "3.5", setup_seconds: "180" },
-    })).toEqual([
-      ["Аппликатор", "AP-1"], ["Высота обжима", "0,85 мм"], ["Отрыв", "40 Н"], ["Зачистка", "A 5 мм · B ?"],
-      ["Время", "3,5 с на шт. · подгот. 3 мин"],
-    ]);
-    expect(etkChips({ fields: { crimpHeight: "", twist: { pitch: "", count: 2 }, lengthKd: "300мм", cutTolerance: "±5" } })).toEqual([
-      ["Высота обжима", "не задано"], ["Длина по КД", "300мм"], ["Допуск реза", "±5 мм"], ["Шаг свивки", "по КД"], ["Пар", "2"],
-      ["Время", "— · подгот. —"],
-    ]);
+describe("etkParams (шапка: Сторона А | Общие | Сторона В)", () => {
+  const find = (items: Array<[string, string]>) => Object.fromEntries(items);
+
+  it("fills both side columns of the crimp-both operation", () => {
+    const params = etkParams({
+      type: "cutWireCrimp", code: "CUT_WIRE+2crimp", fields: {
+        lengthKd: "300мм", cutTolerance: "±5", strip: { a: true, b: true, lenA: "1,7", lenB: "2,5" },
+        crimpEnds: [
+          { ends: ["A"], art: "SSHL-002T-P0.2", wire: "UL1061", section: "30 AWG", applicator: "A4", crimpHeight: "0,44 - 0,48", pullForce: "5", strip: "1,7" },
+          { ends: ["B"], art: "SXH-001T", wire: "UL1061", section: "30 AWG", applicator: "A2", crimpHeight: "0,60 - 0,75", pullForce: "9.8 - 39.2", strip: "2,5" },
+        ],
+      }, times: { operation_seconds: "4", setup_seconds: "3600" },
+    });
+    expect(params.sides.map((side) => side.title)).toEqual(["Сторона А", "Сторона В"]);
+    expect(find(params.sides[0].items)).toEqual({
+      "Терминал": "SSHL-002T-P0.2", "Аппликатор": "A4", "Высота обжима": "0,44–0,48 мм", "Отрыв": "≥ 5 Н", "Зачистка": "1,7 мм" });
+    expect(find(params.sides[1].items)).toMatchObject({ "Терминал": "SXH-001T", "Аппликатор": "A2", "Отрыв": "9,8–39,2 Н", "Зачистка": "2,5 мм" });
+    expect(find(params.common)).toEqual({
+      "Длина по КД": "300мм", "Допуск реза": "±5 мм", "Внешний диаметр": "—", "Сечение жилы": "30 AWG", "Время": "4 с на шт. · подгот. 60 мин" });
   });
 
-  it("shows the crimp height range and the tinned end of the cut-crimp-tin operation", () => {
-    const chips = Object.fromEntries(etkChips(crimpTin()));
-    expect(chips["Высота обжима"]).toBe("0,43–0,47 мм");
-    expect(chips["Допуск реза"]).toBe("±3 мм");
-    expect(chips["Зачистка"]).toBe("A 1,2 мм · B 3 мм (лужение)");
-    // Выданная ЭТК: длины под лужение нет, конец В всё равно лужёный и зачищен.
+  it("one-side crimp: side В has only the strip length, a free end without strip has no column", () => {
+    const fields = { applicator: "A19", strip: { a: true, b: true, lenA: "1,2", lenB: "3" },
+      crimpEnds: [{ ends: ["A"], art: "SSH-003T-P0.2-H", wire: "W", section: "28 AWG", applicator: "A19", crimpHeight: "0,43 – 0,47", pullForce: "", strip: "1,2" }] };
+    const params = etkParams({ type: "cutWireCrimp", code: "CUT_WIRE+1crimp", side: "A", fields });
+    expect(params.sides.map((side) => side.title)).toEqual(["Сторона А", "Сторона В"]);
+    expect(params.sides[1].items).toEqual([["Зачистка", "3 мм"]]);
+    expect(find(params.sides[0].items)).toMatchObject({ "Высота обжима": "0,43–0,47 мм", "Отрыв": "не задано" });
+    const bare = etkParams({ type: "cutWireCrimp", code: "CUT_WIRE+1crimp", side: "A", fields: { ...fields, strip: { a: true, b: false, lenA: "1,2", lenB: "" } } });
+    expect(bare.sides.map((side) => side.title)).toEqual(["Сторона А"]);
+  });
+
+  it("marks the tinned end and keeps side В of an issued ETK without lengths as «не задано»", () => {
     const issued = crimpTin({ strip: { a: true, b: false, lenA: "1,2", lenB: "" }, cutTolerance: "(+/-)1мм" });
-    expect(Object.fromEntries(etkChips(issued))).toMatchObject({ "Зачистка": "A 1,2 мм · B ? (лужение)", "Допуск реза": "±1 мм" });
+    const params = etkParams(issued);
+    expect(find(params.sides[1].items)).toEqual({ "Зачистка": "не задано (лужение)" });
+    expect(find(params.common)["Допуск реза"]).toBe("±1 мм");
+    expect(find(etkParams(crimpTin()).common)["Допуск реза"]).toBe("±3 мм");
+  });
+
+  it("reads wire diameters when the data has them", () => {
+    const params = etkParams({ type: "cutWire", fields: { wires: [{ art: "МГТФ", outerDiameter: "1.2", conductorDiameter: "0.5" }] } });
+    expect(find(params.common)).toMatchObject({ "Внешний диаметр": "1,2 мм", "Диаметр жилы": "0,5 мм" });
+  });
+
+  it("an operation without sides shows only «Общие»; legacy crimp fields stay there", () => {
+    const params = etkParams({ type: "insMark", fields: { perItem: "2", params: "L = 300 мм", note: "из бухты" }, times: { operation_seconds: "6", setup_seconds: "120" } });
+    expect(params.sides).toEqual([]);
+    expect(params.common).toEqual([["На изделие", "2 шт."], ["Параметры", "L = 300 мм"], ["Примечание", "из бухты"], ["Время", "6 с на шт. · подгот. 2 мин"]]);
+    expect(etkParams({ type: "prsTerm", fields: { applicator: "AP-1", crimpHeight: "" } }).common.slice(0, 2))
+      .toEqual([["Аппликатор", "AP-1"], ["Высота обжима", "не задано"]]);
   });
 });
 
@@ -108,16 +136,6 @@ describe("etkDrawWires — ends of the cut wire per automat combination", () => 
     expect(svg).not.toContain("лужение");
     expect(svg).not.toContain("обжат");
     expect(kinds({ type: "cutWire", code: "CUT_WIRE_auto", fields: { wires: [{ art: "ПВ3" }] } })).toEqual(["none", "none"]);
-  });
-
-  it("shows the manual-assembly quantity per item, parameters and note in the header", () => {
-    expect(etkChips({
-      fields: { perItem: "2", params: "L = 300 мм", note: "провод из бухты" },
-      times: { operation_seconds: "6", setup_seconds: "120" },
-    })).toEqual([
-      ["На изделие", "2 шт."], ["Параметры", "L = 300 мм"], ["Примечание", "провод из бухты"],
-      ["Время", "6 с на шт. · подгот. 2 мин"],
-    ]);
   });
 });
 
