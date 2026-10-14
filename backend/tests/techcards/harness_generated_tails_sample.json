@@ -1488,7 +1488,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s2",
@@ -1497,7 +1498,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s3",
@@ -1506,7 +1508,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s4",
@@ -1515,7 +1518,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s5",
@@ -1524,7 +1528,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s6",
@@ -1533,7 +1538,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s7",
@@ -1542,7 +1548,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s8",
@@ -1551,7 +1558,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s9",
@@ -1560,7 +1568,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s10",
@@ -1569,7 +1578,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s11",
@@ -1578,7 +1588,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s12",
@@ -1587,7 +1598,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s13",
@@ -1596,7 +1608,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s14",
@@ -1605,7 +1618,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s15",
@@ -1614,7 +1628,8 @@
     "path": {
      "kind": "polyline",
      "points": []
-    }
+    },
+    "opacity": 0
    }
   ],
   "routes": [

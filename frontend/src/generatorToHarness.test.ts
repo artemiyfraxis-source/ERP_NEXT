@@ -292,3 +292,27 @@ it("double crimp in one contact: both wires into В·1 on the drawing, one termi
   expect(back.endpoints.find((e) => e.id === "b1")!.doublePins).toBeUndefined();
   expect(makeGen(D, back).getActiveOps().find((op) => op.type === "prsTerm" && op.side === "B")!.label).not.toMatch(/двойной/);
 });
+
+it("draws no sheath without a jacketed cable or a wrap: the channels are invisible, twisted pairs are the bare coloured wires", () => {
+  const S = twoEnded();
+  const twisted = { ...S, twist: { ...S.twist, enabled: true, mode: "pairs" as const, pairs: [{ a: "0", b: "1" }, { a: "2", b: "3" }] } };
+  const plan = planFromGenerator(D, twisted);
+  expect(plan.pairs).toHaveLength(2);
+  const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  const topology = document.physicalTopology!;
+  expect(topology.segments.length).toBeGreaterThan(0);
+  expect(topology.segments.every((s) => s.opacity === 0 && s.color === undefined && s.specificationItemId === undefined)).toBe(true);
+  expect(topology.coverings ?? []).toEqual([]);
+  expect(document.diffPairs).toHaveLength(2);
+});
+
+it("a wrap on the harness is a drawn sheath: the braid covers the trunk", () => {
+  const S = twoEnded();
+  const wrapped = { ...S, wrap: { enabled: true, slots: [{ mat: "w", kind: "braid" as const, len: "" }, ...S.wrap.slots.slice(1)] } };
+  const plan = planFromGenerator(D, wrapped);
+  const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  const coverings = document.physicalTopology!.coverings ?? [];
+  expect(coverings).toHaveLength(1);
+  expect(coverings[0]).toMatchObject({ kind: "braid" });
+  expect(coverings[0].spans.length).toBeGreaterThan(0);
+});

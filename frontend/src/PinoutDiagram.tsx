@@ -142,7 +142,7 @@ type Cell = { pin: number; units: PinUnit[]; dup: boolean };
  *  защёлкой, у круглых — кольцо контактов). Гнёзда — кнопки: щелчок, Enter или пробел ставит провод из руки; занятое
  *  гнездо залито цветом жилы, на нём номер провода. Разъёма нет в базе — пронумерованные квадраты по порядку.
  *  Разъём с одной стороны — под торцем список свободных концов с обработкой (лужение, зачистка или без неё). */
-export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, scheme, drawing, onCell, onGrab, onBranchMode, onRemoveBranch }: {
+export function PinoutDiagram({ ends, links, units, housings, free = null, hand = null, branches = [], joins = {}, scheme, drawing, onCell, onGrab, onBranchMode, onRemoveBranch, onCoreNet }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -159,6 +159,8 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
   onGrab?: (epId: string, pin: number, event: ReactPointerEvent) => void;
   onBranchMode?: (extra: number, mode: Branch["mode"]) => void;
   onRemoveBranch?: (extra: number) => void;
+  /** Цепь жилы правится в ячейке таблицы схемы связей. */
+  onCoreNet?: (idx: number, unit: number, net: string) => void;
 }) {
   if (!ends.length) return null;
   const handUnit = hand ? units.find((u) => u.key === hand.key) ?? null : null;
@@ -254,7 +256,8 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
     <div className={free ? "pin-sides is-one" : "pin-sides"}>
       {(["A", "B"] as const).map((side) => sideOf(side).length > 0 && <div className="pin-side" key={side} data-side={side}>{sideOf(side).map(endView)}</div>)}
     </div>
-    {!free && <PinoutLinks ends={ends} units={units} housings={housings} joins={joins} info={scheme} drawing={drawing} />}
+    {!free && <PinoutLinks ends={ends} units={units} housings={housings} joins={joins} info={scheme} drawing={drawing}
+      onNet={onCoreNet ? (key, net) => { const u = units.find((x) => x.key === key); if (u) onCoreNet(u.idx, u.unit, net); } : undefined} />}
     {free && <div className="pin-free-block">
       <div className="pin-free-head">{`Сторона ${free.side === "B" ? "В" : "А"} — свободные концы`}</div>
       <ul className="pin-free-list">{units.filter((u) => Object.values(u.at).some((p) => p != null)).map((u) => {
@@ -268,12 +271,10 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
         </li>;
       })}</ul>
     </div>}
-    {!free && routes.length > 0 && <ul className="pin-routes" aria-label="Соединения">{routes.map((r) => <li className="pin-route" key={r.unit.key} data-wire={r.unit.num} data-from={r.source}>
-      <Swatch color={r.unit.color} stripe={r.unit.stripe} />
+    {/* Список «провод → контакты» убран (владелец 14.10: схема связей выше показывает то же); остаются только переключатели ответвлений. */}
+    {!free && routes.some((r) => r.branches.length > 0) && <ul className="pin-routes" aria-label="Ответвления">{routes.filter((r) => r.branches.length > 0).map((r) => <li className="pin-route" key={r.unit.key} data-wire={r.unit.num} data-from={r.source}>
       <span className="pin-route-name">{unitText(r.unit)}</span>
       <span className="pin-route-from">{r.source}</span>
-      <RouteGlyph color={r.unit.color} stripe={r.unit.stripe} count={r.targets.length} />
-      <span className="pin-route-targets">{r.targets.map((t) => <span className="pin-route-to" key={t} data-to={t}>{t}</span>)}</span>
       {r.branches.map((b) => <span className="pin-route-mode" key={b.extra}>
         <span className="muted">ответвление:</span>
         {(["splice", "double"] as const).map((mode) => <button type="button" key={mode} className={b.mode === mode ? "pin-mode is-on" : "pin-mode"} aria-pressed={b.mode === mode}
@@ -283,19 +284,6 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
     </li>)}</ul>}
     {!free && !links.length && !routes.length && !(joins.splices || []).length && <figcaption className="muted">Соединения появятся, когда у проводов будут контакты на обеих сторонах.</figcaption>}
   </figure>;
-}
-
-/** Линия провода от источника к одному или нескольким выводам: прямая или «Y». */
-function RouteGlyph({ color, stripe, count }: { color: string | null; stripe: string | null; count: number }) {
-  const H = 20, h = Math.max(1, count) * H, mid = h / 2, c = color ?? NEUTRAL;
-  const paths = Array.from({ length: Math.max(1, count) }, (_, i) => `M0,${mid} C20,${mid} 20,${H * i + H / 2} 40,${H * i + H / 2}`);
-  return <svg className="pin-glyph" width={40} height={h} viewBox={`0 0 40 ${h}`} aria-hidden="true">
-    {paths.map((d, i) => <g key={i}>
-      {(c === NEUTRAL || !isDark(c)) && <path d={d} fill="none" stroke={OUTLINE} strokeWidth={4.5} strokeLinecap="round" opacity={0.75} />}
-      <path className="pin-line" d={d} fill="none" stroke={c} strokeWidth={2.5} strokeLinecap="round" strokeDasharray={c === NEUTRAL ? "5 3" : undefined} />
-      {stripe && <path className="pin-stripe" d={d} fill="none" stroke={stripe} strokeWidth={2.5} strokeDasharray="4 4" />}
-    </g>)}
-  </svg>;
 }
 
 // ── Редактор распиновки над схемой ─────────────────────────────────────────────────────────────────────────────
@@ -584,7 +572,7 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
       }}>Добавить ответвление</button>
       <button type="button" className="btn-link" onClick={() => setBranch(null)}>Отмена</button>
     </div>}
-    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand} branches={branches} joins={joins} scheme={scheme} drawing={drawing}
+    <PinoutDiagram ends={ends} links={links} units={units} housings={housings} free={free} hand={hand} branches={branches} joins={joins} scheme={scheme} drawing={drawing} onCoreNet={onCoreNet}
       onBranchMode={onBranchMode} onRemoveBranch={onRemoveBranch}
       onCell={clickCell} onGrab={(epId, pin, event) => {
         const occupant = units.find((u) => u.at[epId] === pin);

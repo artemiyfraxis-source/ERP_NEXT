@@ -35,3 +35,9 @@
 .pin-diagram .gen-drawing-state details { font-size: 12px; }
 .pin-board .pin-join { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; white-space: nowrap; }
 .pin-board .pin-join select { min-height: 28px; font-size: 12.5px; }
+/* Правка цепи в ячейке таблицы схемы (только генератор): щелчок по ячейке — поле с подсказкой занятых цепей. */
+.pin-links .pin-links-net-hit { fill: transparent; cursor: text; outline: none; }
+.pin-links .pin-links-net-hit:hover { fill: var(--accent); opacity: .6; }
+.pin-links .pin-links-net-hit:focus-visible { stroke: var(--primary); stroke-width: 1.5; }
+.pin-links .pin-links-net text, .pin-links .pin-links-net .pin-links-cell { pointer-events: none; }
+.pin-links .pin-links-net-input { box-sizing: border-box; width: 100%; height: 100%; margin: 0; padding: 0 3px; border: 1px solid var(--primary); border-radius: 3px; background: var(--card); color: var(--foreground); font: inherit; font-size: 11px; }

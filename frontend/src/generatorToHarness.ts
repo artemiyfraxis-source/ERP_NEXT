@@ -777,13 +777,16 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   topology = routePhysicalWires({ ...doc, physicalTopology: topology }, topology);
   // Участок, по которому идут все жилы кабеля и только они, — кабель в оболочке (ствол до разделки); ветки к разным
   // разъёмам после узла — жилы россыпью (кабель разделан, жилы разведены по разъёмам).
-  if (cableMembers.size) {
+  // Канал участка (серый «пайп» редактора) — это оболочка: рисуем её только у кабеля в оболочке. Без кабеля жилы идут
+  // голыми проводами своих цветов (свитые — свитыми), оплётка, лента и термоусадка рисуются своими отрезками ниже
+  // (владелец 14.10: «тут же нет оплётки, почему на чертеже она есть»).
+  {
     const through = (segmentId: string) => new Set(topology.routes.filter((route) => route.steps.some((step) => step.segmentId === segmentId)).map((route) => route.wireId));
     topology = { ...topology, segments: topology.segments.map((segment) => {
-      if (stubIds.has(segment.id)) return segment;
+      if (stubIds.has(segment.id)) return { ...segment, opacity: 0 };
       const inside = through(segment.id);
       const cable = [...cableMembers].find(([, members]) => members.length === inside.size && members.every((id) => inside.has(id)));
-      return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : segment;
+      return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : { ...segment, opacity: 0 };
     }) };
   }
   doc = run(doc, { type: "set-physical-topology", topology });

@@ -73,6 +73,9 @@ it("builds XS1/XS2 tables from the ETK pinout: rows per contact, terminal, net, 
   expect(svg.querySelectorAll('[data-twisted="true"]')).toHaveLength(2);
   expect(screen.queryByText("Схема связей")).toBeNull();
   expect(screen.getByText("4 пр. · свивок 1")).toBeInTheDocument();
+  // В ЭТК схема только для чтения: «Цепь» не правится (правка — в генераторе).
+  expect(svg.querySelector("[data-net-cell]")).toBeNull();
+  expect(svg.querySelector("foreignObject")).toBeNull();
 });
 
 it("«Сложная сборка»: the ETK scheme draws the same tables, splices and tails as the generator", () => {

@@ -690,7 +690,8 @@
     "path": {
      "kind": "routed",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s2",
@@ -699,7 +700,8 @@
     "path": {
      "kind": "routed",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s3",
@@ -708,7 +710,8 @@
     "path": {
      "kind": "routed",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s4",
@@ -717,7 +720,8 @@
     "path": {
      "kind": "routed",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s5",
@@ -726,7 +730,8 @@
     "path": {
      "kind": "routed",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s6",
@@ -735,7 +740,8 @@
     "path": {
      "kind": "routed",
      "points": []
-    }
+    },
+    "opacity": 0
    },
    {
     "id": "gen-s7",
@@ -744,7 +750,8 @@
     "path": {
      "kind": "routed",
      "points": []
-    }
+    },
+    "opacity": 0
    }
   ],
   "routes": [

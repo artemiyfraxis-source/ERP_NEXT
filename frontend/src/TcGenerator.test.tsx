@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { TcGenerator } from "./TcGenerator";
 import type { KitsetBom, ProjectTechcard } from "./api";
@@ -73,13 +73,16 @@ it("pairs the pin lists of both ends in order and shows the crossover under the 
   mockApi();
   render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Жгут XHP 150мм", XH)} />);
   const [pinsA, pinsB] = await screen.findAllByPlaceholderText("1, 3 или 1-2");
-  expect(screen.getAllByText(/Контакты стыкуются по жилам: k-я жила здесь ↔ k-я на другой стороне/)).toHaveLength(1);
-  expect(screen.getByLabelText("Соединения по распиновке")).not.toHaveTextContent("А1 → В1");
+  // Подсказка про стыковку по жилам и текстовая сводка «провод · А1 → В1: 1→2» убраны (владелец 14.10): схема связей показывает то же.
+  expect(screen.queryByText(/Контакты стыкуются по жилам/)).toBeNull();
   fireEvent.change(pinsA, { target: { value: "1-2" } });
   fireEvent.change(pinsB, { target: { value: "2, 1" } });
   const links = await screen.findByLabelText("Соединения по распиновке");
-  expect(links).toHaveTextContent("МГТФ 0,12 · А1 → В1: 1→2, 2→1");
-  expect(links.querySelectorAll("b")).toHaveLength(2);
+  expect(links).not.toHaveTextContent("А1 → В1");
+  expect(links.querySelectorAll("b")).toHaveLength(0);
+  expect(links.querySelector(".pin-routes")).toBeNull();
+  const svg = within(links).getByRole("img", { name: "Провода с контакта на контакт, сростки и хвосты" });
+  expect([...svg.querySelectorAll(".pin-links-line")].map((l) => `${l.getAttribute("data-a")}→${l.getAttribute("data-b")}`)).toEqual(["А1·1→В1·2", "А1·2→В1·1"]);
 });
 
 it("adds a missing coax connector to БД.КОАКС through the references record", async () => {

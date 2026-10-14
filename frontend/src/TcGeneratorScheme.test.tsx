@@ -221,3 +221,34 @@ it("double crimp: a second wire into an occupied contact — one terminal less, 
   expect(row("В1", 1)).toHaveAttribute("data-wires", "1");
   expect(document.querySelector('[data-end="В1"] .pin-badge.is-double')).toBeNull();
 });
+
+it("«Цепь» in the scheme tables is edited in place (generator only): click, type, Enter — the wire's net shows on both connectors; Esc cancels; no legend under the scheme", async () => {
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={USB} />);
+  await form("Межплатная", ["НВ4 0,2 красный", "НВ4 0,2 черный", "НВ4 0,2 белый", "НВ4 0,2 зеленый"]);
+  await waitFor(() => expect(lines()).toHaveLength(4));
+  // Список «провод → контакты» и текстовая сводка под схемой убраны.
+  expect(document.querySelector(".pin-routes")).toBeNull();
+  expect(screen.getByLabelText("Соединения по распиновке")).not.toHaveTextContent(/→ В1:/);
+  // Цепей нет ни у одного провода — колонка «Цепь» всё равно есть (узкая раскладка), чтобы её можно было заполнить.
+  expect(table("А1")).toHaveTextContent("Цепь");
+  const open = (end: string, pin: number) => fireEvent.click(scheme().querySelector(`[data-net-cell="${end}:${pin}"]`)!);
+  const input = () => screen.getByRole("combobox", { name: "Цепь 1" }) as HTMLInputElement;
+  const A1 = table("А1").querySelector("[data-net-cell]")!.getAttribute("data-net-cell")!.split(":")[0];
+  open(A1, 1);
+  fireEvent.change(input(), { target: { value: "GND" } });
+  fireEvent.keyDown(input(), { key: "Escape" });
+  expect(screen.queryByRole("combobox", { name: "Цепь 1" })).toBeNull();
+  expect(row("А1", 1)).not.toHaveTextContent("GND");
+  open(A1, 1);
+  fireEvent.change(input(), { target: { value: "GND" } });
+  fireEvent.keyDown(input(), { key: "Enter" });
+  expect(screen.queryByRole("combobox", { name: "Цепь 1" })).toBeNull();
+  expect(row("А1", 1)).toHaveTextContent("GND");
+  expect(row("В1", 1)).toHaveTextContent("GND");
+  // Уход из поля сохраняет тоже; цепь уже занятая — в подсказке поля.
+  open(A1, 2);
+  expect(document.querySelector("#pin-links-nets option")).toHaveAttribute("value", "GND");
+  fireEvent.change(screen.getByRole("combobox", { name: "Цепь 2" }), { target: { value: "VCC" } });
+  fireEvent.blur(screen.getByRole("combobox", { name: "Цепь 2" }));
+  expect(row("В1", 2)).toHaveTextContent("VCC");
+});
