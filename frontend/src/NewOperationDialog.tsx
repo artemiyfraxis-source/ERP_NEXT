@@ -62,11 +62,11 @@ export function NewOperationDialog({ operations, onClose, onCreated }: {
       <h2>Новая операция</h2>
       <form className="dialog-form" aria-label="Новая операция" onSubmit={submit}>
         <div className="move-grid two">
-          <label>Номер<input aria-label="Номер" autoFocus value={code} aria-invalid={where === "code"} onChange={(event) => setCode(event.target.value)} />
+          <label>Номер<input aria-label="Номер" autoFocus value={code} aria-invalid={where === "code"} onChange={(event) => { setCode(event.target.value); if (where === "code") setError(""); }} />
             {where === "code" && <span className="field-error" role="alert">{error}</span>}</label>
           <label>Раздел<input aria-label="Раздел" value={category} placeholder="необязательно" onChange={(event) => setCategory(event.target.value)} /></label>
         </div>
-        <label>Название<input aria-label="Название" value={name} aria-invalid={where === "name"} onChange={(event) => setName(event.target.value)} />
+        <label>Название<input aria-label="Название" value={name} aria-invalid={where === "name"} onChange={(event) => { setName(event.target.value); if (where === "name") setError(""); }} />
           {where === "name" && <span className="field-error" role="alert">{error}</span>}</label>
         <div className="seg-tabs" role="tablist" aria-label="Основа">
           <button type="button" role="tab" aria-selected={mode === "blank"} className={mode === "blank" ? "on" : undefined} onClick={() => setMode("blank")}>Пустая</button>
