@@ -1288,6 +1288,9 @@ export interface ProjectAddressee {
   /** Плановая дата отгрузки проекта (ISO) и комментарий — новые отправки берут их, пока свои пусты. */
   plan_date?: string | null;
   note?: string;
+  /** Бумажная УПД, приложенная к данным отправки заранее: ссылка и имя файла («УПД: имя»). */
+  upd_url?: string;
+  upd_file_name?: string;
 }
 
 export interface ReferencePair {
@@ -3202,6 +3205,10 @@ export const shippingApi = {
   /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
     method: "POST", body: JSON.stringify({ shipment_id: shipmentId, version, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
+  }),
+  /** Файл бумажной УПД к данным отправки проекта (то же хранилище); ссылку в карточку ставит `saveAddressee` с `upd_url`. */
+  uploadCardUpd: (project: string, file: { name: string; type: string; base64: string }) => api<{ file: { id: string; url: string; name: string } }>("/api/shipping/upd-files", {
+    method: "POST", body: JSON.stringify({ project, file_name: file.name, content_type: file.type, content_base64: file.base64 }),
   }),
   saveAddressee: (payload: Record<string, unknown>) => api<{ addressee: ProjectAddressee }>("/api/shipping/project-addressee", {
     method: "PUT", body: JSON.stringify(payload),
