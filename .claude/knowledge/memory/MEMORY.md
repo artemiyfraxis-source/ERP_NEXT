@@ -5,6 +5,7 @@
 - [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; hold migration PRs until the pipeline exists
 - [Vasily code permission](vasily-code-permission.md) — TECHMAP-GRAPHER code may be ported/copied with attribution (author OK via owner, 06.10)
 - [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
+- [Edit in windows](edit-in-windows.md) — every record card / edit form opens as a modal PageWindow, never a side panel
 - [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
 - [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
 - [SUPPLYMAP legacy diffs](supplymap-parity.md) — SUPPLYMAP retired 05.10; deliberate ERP differences, box numbers, out of scope
