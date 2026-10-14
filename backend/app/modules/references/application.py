@@ -622,24 +622,30 @@ def _sync_gost_awg(uow: UnitOfWork, before: WireGauge | None, after: WireGauge |
         uow.references.replace(tuple(kept))
 
 
+def save_gauge_in(command: SaveGaugeCommand, uow: UnitOfWork, details: Mapping[str, str] | None = None) -> WireGauge:
+    """The size row save inside an open unit of work (nothing committed), audited; `details` go into the audit."""
+    gauges = uow.cable_structure.gauges()
+    before = next((gauge for gauge in gauges if gauge.id == command.gauge_id), None)
+    if command.gauge_id is not None and before is None:
+        raise LookupError("Сечение не найдено — откройте таблицу заново")
+    gauge = WireGauge.create(
+        id=command.gauge_id, awg=command.awg, section_mm2=command.section_mm2,
+        conductor_d_mm=command.conductor_d_mm,
+        position=before.position if before else max((item.position for item in gauges), default=-1) + 1,
+    )
+    validate_gauges([item for item in gauges if item.id != gauge.id] + [gauge])
+    uow.cable_structure.save_gauge(gauge)
+    _sync_gost_awg(uow, before, gauge)
+    _audit("references.wire_gauge_saved", command.actor, command.now, {
+        "gauge_id": str(gauge.id), "awg": gauge.awg, "section_mm2": section_key(gauge.section_mm2),
+        "created": before is None, **(details or {}),
+    }, uow)
+    return gauge
+
+
 def save_gauge(command: SaveGaugeCommand, uow: UnitOfWork) -> WireGauge:
     with uow:
-        gauges = uow.cable_structure.gauges()
-        before = next((gauge for gauge in gauges if gauge.id == command.gauge_id), None)
-        if command.gauge_id is not None and before is None:
-            raise LookupError("Сечение не найдено — откройте таблицу заново")
-        gauge = WireGauge.create(
-            id=command.gauge_id, awg=command.awg, section_mm2=command.section_mm2,
-            conductor_d_mm=command.conductor_d_mm,
-            position=before.position if before else max((item.position for item in gauges), default=-1) + 1,
-        )
-        validate_gauges([item for item in gauges if item.id != gauge.id] + [gauge])
-        uow.cable_structure.save_gauge(gauge)
-        _sync_gost_awg(uow, before, gauge)
-        _audit("references.wire_gauge_saved", command.actor, command.now, {
-            "gauge_id": str(gauge.id), "awg": gauge.awg, "section_mm2": section_key(gauge.section_mm2),
-            "created": before is None,
-        }, uow)
+        gauge = save_gauge_in(command, uow)
         uow.commit()
     return gauge
 
