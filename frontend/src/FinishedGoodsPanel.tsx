@@ -15,20 +15,22 @@ const num = (value: string | null | undefined) => {
 };
 const keyOf = (project: string, index: string) => `${project.trim().toUpperCase()}\u0000${index.trim().toUpperCase()}`;
 
-function openShipping(tab: string) {
+function openShipping(section: string, tab: string) {
   const url = new URL(window.location.href);
-  url.searchParams.set("section", "shipping");
+  url.searchParams.set("section", section);
   url.searchParams.delete("block");
-  url.searchParams.set("tab", tab);
+  if (section === "shipping") url.searchParams.set("tab", tab); else url.searchParams.delete("tab");
   window.history.pushState({}, "", url);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
 function ShippingLink({ tab, children }: { tab: string; children: string }) {
-  return <a className="link-button" href={`?section=shipping&tab=${tab}`} onClick={(event) => {
+  // «Из производства» теперь отдельный раздел «Приёмка с производства».
+  const section = tab === "production" ? "intake" : "shipping";
+  return <a className="link-button" href={tab === "production" ? "?section=intake" : `?section=shipping&tab=${tab}`} onClick={(event) => {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.button !== 0) return;
     event.preventDefault();
-    openShipping(tab);
+    openShipping(section, tab);
   }}>{children}</a>;
 }
 

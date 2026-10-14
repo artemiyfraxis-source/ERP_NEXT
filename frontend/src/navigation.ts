@@ -8,7 +8,7 @@ export type Section =
   | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement"
-  | "receiving" | "stock" | "issues" | "handout" | "shipping"
+  | "receiving" | "stock" | "issues" | "handout" | "intake" | "shipping"
   | "prodplan" | "staff" | "access" | "notifications" | "operations";
 
 export type BlockId = "prod" | "supply" | "stock" | "mgmt" | "refs";
@@ -82,6 +82,8 @@ export const NAV: NavItem[] = [
   // its own access key (NAV-SECTIONS) so picking and writing off can go to different people.
   { id: "issues", label: "Запросы на комплектацию", sub: "заявки под КБ · набрать комплект", permission: "fulfillment", block: "stock" },
   { id: "handout", label: "Выдача со списанием", sub: "передать в цех · списать со склада", permission: "handout", block: "stock" },
+  // «Приёмка с производства» (владелец 14.10): всё, что в работе; склад принимает кусками, принятое встаёт в «Отгрузку».
+  { id: "intake", label: "Приёмка с производства", sub: "что в работе · принять кусками · данные отправки", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
   // «Отгрузка» (менеджер) и «Отгрузка — склад» (кладовщик) — два ключа матрицы, одна карточка: список читает любой из них.
   { id: "shipping", label: "Отгрузка", sub: "готовая продукция · отправки", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
   // Менеджмент
