@@ -69,6 +69,26 @@ def test_clearing_the_mark_folds_the_line_back_with_free_rows_but_never_folds_a_
     assert cleared.status.value == "Недоукомплектован"
 
 
+def test_off_book_part_splits_the_line_like_a_short_lot_and_the_rest_keeps_waiting():
+    kit = request("2.5", "3")
+    marked = kit.mark_off_book(kit.lines[0].id, Decimal("1.75"))
+
+    assert [(line.requirement, line.off_book, line.waiting) for line in marked.lines] == [
+        (Decimal("1.75"), True, False), (Decimal("0.75"), False, True), (Decimal("3"), False, True),
+    ]
+    assert marked.lines[1].requirement_id == kit.lines[0].requirement_id and marked.lines[1].id != kit.lines[0].id
+    assert marked.status.value == "Недоукомплектован"
+    assert "Разъём (ГРН не выбран): −0.75" in marked.shortfall
+    whole = kit.mark_off_book(kit.lines[0].id, Decimal("2.5"))
+    assert [(line.requirement, line.off_book) for line in whole.lines][0] == (Decimal("2.5"), True)
+    assert len(whole.lines) == 2  # the whole need: no split
+    for wrong in ("0", "-1", "2.6"):
+        with pytest.raises(FulfillmentValidationError):
+            kit.mark_off_book(kit.lines[0].id, Decimal(wrong))
+    cleared = marked.clear_off_book(marked.lines[0].id)
+    assert [(line.requirement, line.off_book) for line in cleared.lines] == [(Decimal("5.5"), False)]
+
+
 def test_off_book_return_refuses_good_back_but_takes_defects():
     kit = request("4")
     issued = kit.mark_off_book(kit.lines[0].id).lines[0].mark_issued()

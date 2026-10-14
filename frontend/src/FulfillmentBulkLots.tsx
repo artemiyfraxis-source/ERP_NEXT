@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, failureText, type FulfillmentCandidate, type FulfillmentLine, type FulfillmentLot, type FulfillmentRequest } from "./api";
 import { matchesWords } from "./DataTable";
 import { fifoOrder, fifoPick } from "./FulfillmentPage";
@@ -15,11 +15,12 @@ export type BulkResult = { bound: BulkBound[]; short: string | number; message?:
 export const bulkApi = {
   /** available = free for this project + its own reserve, so a re-pick sees what the project already holds. */
   lots: (project: string) => api<{ lots: FulfillmentLot[] }>(`/api/issues/lots?project=${encodeURIComponent(project)}`),
-  bind: (project: string, body: { article: string; name: string; lot_ids: string[]; off_book: boolean; versions: Record<string, number> }) =>
+  bind: (project: string, body: { article: string; name: string; lot_ids: string[]; off_book: boolean; off_book_quantity?: string | null; versions: Record<string, number> }) =>
     api<BulkResult>(`/api/issues/projects/${encodeURIComponent(project)}/bind-lots`, { method: "POST", body: JSON.stringify(body) }),
-  offBook: (requestId: string, lineId: string, version: number, on: boolean) =>
+  /** quantity — «сколько есть» below the line's need (the server splits the line); null — the whole need. */
+  offBook: (requestId: string, lineId: string, version: number, on: boolean, quantity: string | null = null) =>
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/off-book`, {
-      method: on ? "POST" : "DELETE", body: JSON.stringify({ version }),
+      method: on ? "POST" : "DELETE", body: JSON.stringify(on && quantity !== null ? { version, quantity } : { version }),
     }),
   /** «Нет на складе» (owner 12.10.2026): the line stays open as a shortage; a repeat on a marked line changes nothing. */
   absent: (requestId: string, lineId: string, version: number, on: boolean) =>
@@ -77,10 +78,13 @@ export function bulkBanner(result: BulkResult, unit: string, offBook: boolean) {
 }
 
 /** One call of (a) for a position; a 409 says the requests moved on. Result is shaped for the page's mutate. */
-export async function bindPosition(project: string, position: BulkPosition, lotIds: string[], offBook: boolean) {
+export async function bindPosition(project: string, position: BulkPosition, lotIds: string[], offBook: boolean, offBookQuantity: string | null = null) {
   const versions = Object.fromEntries(position.kbs.map((kb) => [kb.request.id, kb.request.version]));
   try {
-    const result = await bulkApi.bind(project, { article: position.article, name: position.name, lot_ids: offBook ? [] : lotIds, off_book: offBook, versions });
+    const body = offBook
+      ? { article: position.article, name: position.name, lot_ids: [], off_book: true, off_book_quantity: offBookQuantity, versions }
+      : { article: position.article, name: position.name, lot_ids: lotIds, off_book: false, versions };
+    const result = await bulkApi.bind(project, body);
     return { message: bulkBanner(result, position.unit, offBook) };
   } catch (reason) {
     if (reason instanceof ApiError && reason.status === 409) throw new ApiError(STALE_TEXT, 409, reason.detail);
@@ -153,4 +157,96 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
       <button type="button" className="secondary" onClick={onClose}>Закрыть</button>
     </div>
   </div>;
+}
+
+/** A quantity as the input shows it: up to 6 decimals, no trailing zeros. */
+export const qtyText = (value: number) => String(Math.round(value * 1e6) / 1e6);
+
+/** «Сколько есть?»: the error for what was typed, "" — fine. A comma is a decimal point; шт of a whole need — whole. */
+export function offBookQtyError(text: string, max: number, unit: string) {
+  const raw = text.trim().replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(raw) || Number(raw) <= 0) return "Укажи число больше нуля";
+  const value = Number(raw);
+  if (value > Math.round(max * 1e6) / 1e6) return `Больше, чем ждут: не больше ${qtyText(max)} ${unit}`.trimEnd();
+  if (/^шт/i.test(unit.trim()) && Number.isInteger(max) && !Number.isInteger(value)) return "В штуках — целое число";
+  return "";
+}
+
+/* «Есть, не заведено» → «Сколько есть?» (owner 14.10.2026). A small popover under the button: the default is everything
+   that still waits, Enter or «Отметить» confirms, Esc, «Отмена» or a click outside closes. Less than waits — the server
+   marks that much (КБ in order) and splits the line where it runs out; the rest keeps waiting. The default untouched
+   sends null (the whole wait), so a need with more decimals than the screen shows is never left a crumb short. */
+export function OffBookQtyPopover({ anchor, name, unit, max, scope, busy, onConfirm, onCancel }: {
+  anchor: HTMLElement | null;
+  name: string;
+  unit: string;
+  /** Everything that still waits: the default and the most that can be marked. */
+  max: number;
+  /** Where it waits, e.g. «по 3 КБ»; empty for one line. */
+  scope?: string;
+  busy: boolean;
+  /** null — the whole wait; otherwise the quantity as the server takes it ("2.5"). */
+  onConfirm: (quantity: string | null) => void;
+  onCancel: () => void;
+}) {
+  const initial = qtyText(max);
+  const [text, setText] = useState(initial);
+  const box = useRef<HTMLFormElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  const error = offBookQtyError(text, max, unit);
+  const hintId = useId();
+
+  useLayoutEffect(() => {
+    const locate = () => {
+      if (!anchor || !box.current) return;
+      const at = anchor.getBoundingClientRect();
+      const width = box.current.offsetWidth || 300;
+      const height = box.current.offsetHeight || 160;
+      const left = Math.max(8, Math.min(at.right - width, window.innerWidth - width - 8));
+      const below = at.bottom + 4;
+      setPlace({ left, top: below + height > window.innerHeight - 8 && at.top - height - 4 > 8 ? at.top - height - 4 : below });
+    };
+    locate();
+    window.addEventListener("resize", locate);
+    window.addEventListener("scroll", locate, true);
+    return () => { window.removeEventListener("resize", locate); window.removeEventListener("scroll", locate, true); };
+  }, [anchor]);
+
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+    const outside = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (box.current?.contains(target) || anchor?.contains(target)) return;
+      onCancel();
+    };
+    document.addEventListener("mousedown", outside);
+    return () => document.removeEventListener("mousedown", outside);
+  }, [anchor, onCancel]);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (busy || error) return;
+    const raw = text.trim().replace(",", ".");
+    onConfirm(raw === initial ? null : String(Number(raw)));
+  };
+
+  return <form ref={box} className="offbook-pop" role="dialog" aria-label={`Сколько есть: ${name}`} noValidate
+    style={place ? { top: place.top, left: place.left } : { visibility: "hidden" }}
+    onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onCancel(); } }}>
+    <div className="offbook-pop-head"><strong>Сколько есть?</strong><span>{name}</span></div>
+    <label className="offbook-pop-qty">
+      <input ref={input} type="text" inputMode="decimal" autoComplete="off" aria-label="Сколько есть" aria-invalid={Boolean(error)}
+        aria-describedby={hintId} value={text} onChange={(event) => setText(event.target.value)} />
+      <span>{unit}</span>
+    </label>
+    <small id={hintId} className={error ? "offbook-pop-error" : undefined} role={error ? "alert" : undefined}>
+      {error || `Ждут ${initial} ${unit}${scope ? ` ${scope}` : ""}. Меньше — остальное останется в ожидании поставки.`}
+    </small>
+    <div className="offbook-pop-acts">
+      <button type="submit" className="primary small" disabled={busy || Boolean(error)}>Отметить</button>
+      <button type="button" className="secondary small" onClick={onCancel}>Отмена</button>
+    </div>
+  </form>;
 }

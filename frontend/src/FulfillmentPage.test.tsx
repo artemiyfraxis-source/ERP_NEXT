@@ -874,19 +874,62 @@ it("shows a failed lot load honestly and retries it", async () => {
   expect(await screen.findByRole("checkbox", { name: "ГРН FRX.26.0000001" })).toBeInTheDocument();
 });
 
-it("marks a whole position «есть, не заведено» for every КБ", async () => {
-  let payload: any;
+function mockOffBookBulk(sent: unknown[]) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (path === "/api/issues") return json({ requests: [kb1, kb2], next_cursor: null });
     if (path === "/api/issues/lots") return json({ lots: [] });
-    if (path.endsWith("/bind-lots")) { payload = JSON.parse(String(init?.body)); return json({ bound: [], short: 0, message: "Отмечено: КБ1, КБ2" }); }
+    if (path.endsWith("/bind-lots")) { sent.push(JSON.parse(String(init?.body))); return json({ bound: [], short: 0, message: "Отмечено: КБ1, КБ2" }); }
     throw new Error(`Unexpected request: ${path}`);
   });
+}
+
+it("marks a whole position «есть, не заведено» for every КБ: «Сколько есть?» offers everything that waits", async () => {
+  const sent: unknown[] = [];
+  mockOffBookBulk(sent);
   await openWholeOrder();
   fireEvent.click(await screen.findByRole("button", { name: "Есть, не заведено: Разъём" }));
+  const dialog = screen.getByRole("dialog", { name: "Сколько есть: Разъём" });
+  const qty = within(dialog).getByRole("textbox", { name: "Сколько есть" });
+  expect(qty).toHaveValue("8");
+  expect(qty).toHaveFocus();
+  expect(dialog).toHaveTextContent("Ждут 8 шт по 2 КБ");
+  expect(sent).toEqual([]);  // nothing is marked before the quantity is confirmed
+  fireEvent.submit(qty);  // Enter
   expect(await screen.findByText("Отмечено: КБ1, КБ2")).toBeInTheDocument();
-  expect(payload).toEqual({ article: "CON-001", name: "Разъём", lot_ids: [], off_book: true, versions: { k1: 3, k2: 5 } });
+  expect(sent).toEqual([{ article: "CON-001", name: "Разъём", lot_ids: [], off_book: true, off_book_quantity: null, versions: { k1: 3, k2: 5 } }]);
+  expect(screen.queryByRole("dialog", { name: "Сколько есть: Разъём" })).not.toBeInTheDocument();
+});
+
+it("«Сколько есть?» sends the typed quantity (a comma is a point), refuses more than waits and closes on «Отмена»", async () => {
+  const sent: unknown[] = [];
+  mockOffBookBulk(sent);
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "Есть, не заведено: Разъём" }));
+  let dialog = screen.getByRole("dialog", { name: "Сколько есть: Разъём" });
+  const qty = within(dialog).getByRole("textbox", { name: "Сколько есть" });
+  const mark = within(dialog).getByRole("button", { name: "Отметить" });
+
+  fireEvent.change(qty, { target: { value: "9" } });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent("Больше, чем ждут: не больше 8 шт");
+  expect(mark).toBeDisabled();
+  fireEvent.submit(qty);
+  fireEvent.change(qty, { target: { value: "0" } });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent("Укажи число больше нуля");
+  fireEvent.change(qty, { target: { value: "2,5" } });
+  expect(within(dialog).getByRole("alert")).toHaveTextContent("В штуках — целое число");
+  expect(sent).toEqual([]);
+
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(sent).toEqual([]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Есть, не заведено: Разъём" }));
+  dialog = screen.getByRole("dialog", { name: "Сколько есть: Разъём" });
+  fireEvent.change(within(dialog).getByRole("textbox", { name: "Сколько есть" }), { target: { value: "5" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отметить" }));
+  expect(await screen.findByText("Отмечено: КБ1, КБ2")).toBeInTheDocument();
+  expect(sent).toEqual([{ article: "CON-001", name: "Разъём", lot_ids: [], off_book: true, off_book_quantity: "5", versions: { k1: 3, k2: 5 } }]);
 });
 
 it("marks one line «есть, не заведено», counts it as closed and takes the mark off", async () => {
@@ -908,11 +951,40 @@ it("marks one line «есть, не заведено», counts it as closed and 
   await expand(request.number);
   expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Есть, не заведено" }));
+  const dialog = screen.getByRole("dialog", { name: "Сколько есть: Разъём" });
+  expect(within(dialog).getByRole("textbox", { name: "Сколько есть" })).toHaveValue("4");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отметить" }));
   expect(await screen.findByText("Набрано 1 из 1 поз.")).toBeInTheDocument();
   expect(screen.getByText("есть, не заведено")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Снять отметку" }));
   expect(await screen.findByText("Набрано 0 из 1 поз. · ждут ГРН: 1")).toBeInTheDocument();
   expect(calls).toEqual([["POST", url, { version: 3 }], ["DELETE", url, { version: 4 }]]);
+});
+
+it("marks only part of one line «есть, не заведено»: the quantity goes to the server, which splits the line", async () => {
+  const calls: unknown[] = [];
+  const url = `/api/issues/${request.id}/lines/${request.lines[0].id}/off-book`;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [request], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path === url) { calls.push(JSON.parse(String(init?.body))); return json({ request }); }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  await expand(request.number);
+  fireEvent.click(await screen.findByRole("button", { name: "Есть, не заведено" }));
+  const dialog = screen.getByRole("dialog", { name: "Сколько есть: Разъём" });
+  const qty = within(dialog).getByRole("textbox", { name: "Сколько есть" });
+  fireEvent.change(qty, { target: { value: "5" } });
+  expect(within(dialog).getByRole("button", { name: "Отметить" })).toBeDisabled();
+  fireEvent.change(qty, { target: { value: "3" } });
+  fireEvent.keyDown(qty, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Есть, не заведено" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Сколько есть" }), { target: { value: "3" } });
+  fireEvent.submit(screen.getByRole("textbox", { name: "Сколько есть" }));
+  await waitFor(() => expect(calls).toEqual([{ version: 3, quantity: "3" }]));
 });
 
 it("marks one line «нет на складе»: it stays open, shows who and when, and the mark comes off", async () => {

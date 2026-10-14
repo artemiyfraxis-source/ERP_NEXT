@@ -315,6 +315,20 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .fulfillment-project .table-wrap .grid tbody tr.cand-maybe:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-warn) 14%, transparent); }
 .fulfillment-project .table-wrap .grid tbody tr.cand-none:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-danger) 10%, transparent); }
 .fulfillment-project .table-wrap .grid tbody tr.cand-done:not(.detail):not(.group-row) > td { color: var(--muted-foreground); }
+/* «Есть, не заведено» → «Сколько есть?» (owner 14.10.2026): a popover under the button, fixed so the table's scroll
+   box does not clip it. */
+.offbook-pop { position: fixed; z-index: 41; display: grid; gap: 8px; width: 300px; padding: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 26, 24, .18); font-size: 13px; text-align: left; white-space: normal; }
+.offbook-pop-head { display: grid; gap: 2px; }
+.offbook-pop-head strong { font-size: 14px; }
+.offbook-pop-head span { color: var(--muted-foreground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offbook-pop-qty { display: flex; align-items: center; gap: 8px; }
+.offbook-pop-qty input { flex: 1; min-width: 0; height: 32px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+.offbook-pop-qty input[aria-invalid="true"] { border-color: var(--tone-danger); }
+.offbook-pop-qty span { min-width: 24px; color: var(--muted-foreground); }
+.offbook-pop small { color: var(--muted-foreground); font-size: 12px; line-height: 1.35; }
+.offbook-pop small.offbook-pop-error { color: var(--tone-danger); }
+.offbook-pop-acts { display: flex; justify-content: flex-end; gap: 6px; }
+@media (pointer: coarse) { .offbook-pop-qty input, .offbook-pop-acts button { min-height: 40px; } }
 /* The project's «Снабжение» (DataTable): the same tints on the rows short of stock, over the zebra. */
 .kit-pane .data-table .grid tbody tr.cand-ok:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-ok) 12%, var(--card)); }
 .kit-pane .data-table .grid tbody tr.cand-maybe:not(.detail):not(.group-row) > td { background: color-mix(in srgb, var(--tone-warn) 14%, var(--card)); }
