@@ -175,4 +175,8 @@
 .cable-colors-row .swatch-row { gap: 4px; }
 .cable-colors-pop .swatch { width: 20px; height: 20px; }
 .cable-colors-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-@media (pointer: coarse) { .pin-color-pop .swatch, .tcgen .pin-color-dot { width: 40px; height: 40px; } .cable-colors-btn { min-height: 40px; } }
+@media (pointer: coarse) { .pin-color-pop .swatch, .tcgen .pin-color-dot { width: 40px; height: 40px; } .cable-colors-btn { min-height: 40px; }
+  /* Планшет: палитра жилы в одну строку, «×» — под палец. */
+  .pin-color-pop.cable-colors-pop { width: 980px; }
+  .cable-colors-row { grid-template-columns: 20px 14px 112px minmax(0, 1fr) 40px; }
+  .cable-colors-row .btn-link { min-width: 40px; min-height: 40px; } }
