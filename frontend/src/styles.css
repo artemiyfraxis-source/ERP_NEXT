@@ -4385,3 +4385,8 @@ tr.upd-row-bad td { background: var(--chip-danger-bg); }
 .data-table td a:not(.secondary):hover { text-decoration: underline; }
 .hint { margin: 4px 0 8px; color: var(--muted-foreground); font-size: 13px; }
 .table-panel > .hint, .table-panel > .page-sub { margin-left: 20px; margin-right: 20px; }
+/* Реестр и карточка УПД помещаются в ширину экрана 1440: статусы и отметки переносятся, суммы — нет. */
+.upd-table td, .upd-lines td { white-space: normal; }
+.upd-table td.num, .upd-lines td.num { white-space: nowrap; }
+.upd-table td.text { max-width: 300px; }
+.upd-table .upd-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
