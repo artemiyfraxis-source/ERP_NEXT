@@ -3897,3 +3897,65 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .purchasing-setting.purchasing-setting-list .purpose-add { display: flex; gap: 8px; align-items: center; max-width: 520px; }
 .purchasing-setting.purchasing-setting-list .purpose-add input { flex: 1 1 auto; }
 .purchasing-setting.purchasing-setting-list .purchasing-setting-default { white-space: normal; }
+
+/* ---- Реестр УПД ---- */
+/* «Реестр УПД» (option documents.upd): filters in one wrapping row, the card with the header beside the parser's,
+   the lines table and the edit form. Colours only through the theme variables. */
+.upd-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 20px 0; }
+.upd-filters label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
+.upd-filters select { width: auto; max-width: 280px; }
+.upd-filters input[type="date"] { width: 150px; }
+.upd-filters .seg-tabs { margin: 0; }
+.upd-registry > .calendar-chips { padding: 12px 20px 0; margin-bottom: 12px; }
+.upd-registry > .page-sub, .upd-registry > .error-banner, .upd-registry > .empty { margin-left: 20px; margin-right: 20px; }
+.upd-registry > .table-wrap { margin: 0 20px; }
+.upd-summary { padding: 0 20px 16px; font-size: 13px; color: var(--muted-foreground); }
+.upd-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.upd-note { display: block; margin-top: 2px; color: var(--muted-foreground); font-size: 11.5px; font-weight: 400; }
+.upd-issues { display: block; margin-top: 2px; color: var(--tone-danger); font-size: 11.5px; }
+.upd-marks { color: var(--muted-foreground); font-size: 12px; }
+.upd-card-view { display: grid; gap: 12px; padding: 16px 20px 20px; }
+.upd-card-view > .warning-banner, .upd-card-view > .success-banner, .upd-card-view > .error-banner { margin-bottom: 0; }
+.upd-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.upd-card-head h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.upd-back { padding: 0; }
+.upd-spacer { flex: 1 1 auto; }
+.upd-file-link { display: inline-flex; align-items: center; text-decoration: none; }
+.upd-card-body { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.upd-header-table table { width: 100%; }
+.upd-header-table th[scope="row"] { color: var(--muted-foreground); font-weight: 500; text-align: left; white-space: nowrap; }
+.upd-header-table tr.upd-differs td { background: var(--warn-soft); }
+.upd-side { display: grid; gap: 12px; }
+.upd-facts { display: grid; gap: 6px; margin: 0; font-size: 13px; }
+.upd-facts > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; }
+.upd-facts dt { color: var(--muted-foreground); }
+.upd-facts dd { margin: 0; overflow-wrap: anywhere; }
+.upd-field { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-soft); font-size: 13px; }
+.upd-field-label { color: var(--muted-foreground); font-size: 12px; }
+.upd-field-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.upd-field-actions input { flex: 1 1 160px; min-width: 0; }
+.upd-picker { display: grid; gap: 6px; }
+.upd-picker-list { display: grid; gap: 2px; max-height: 240px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.upd-picker-list li { display: flex; align-items: baseline; gap: 8px; }
+.upd-picker-list .link-button { padding: 2px 0; }
+.upd-inline-link { display: inline; padding: 0; }
+.upd-issues-banner ul { margin: 4px 0 0; padding-left: 18px; }
+.upd-lines table td small, .upd-table td small { white-space: normal; }
+tr.upd-row-bad td { background: var(--chip-danger-bg); }
+.upd-editor { display: grid; gap: 12px; }
+.upd-header-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; }
+.upd-header-form label { display: grid; gap: 3px; font-size: 12px; color: var(--muted-foreground); }
+.upd-header-form input.num { text-align: right; }
+.upd-editor-tools { flex-wrap: wrap; margin-top: 0; }
+.upd-edit-table td { padding: 2px 4px; }
+.upd-edit-table input { min-width: 0; padding: 3px 6px; font-size: 12.5px; }
+.upd-edit-table .upd-seq { width: 48px; }
+.upd-edit-table .upd-short { width: 96px; }
+.upd-edit-table .upd-name { width: 260px; }
+.upd-edit-table td.upd-cell.focused input { outline: 2px solid var(--primary); outline-offset: -1px; }
+.upd-edit-table input[type="checkbox"] { width: auto; }
+.upd-file-pick { display: grid; gap: 4px; font-size: 12px; color: var(--muted-foreground); }
+@media (max-width: 900px) {
+  .upd-card-body { grid-template-columns: minmax(0, 1fr); }
+  .upd-header-form { grid-template-columns: minmax(0, 1fr); }
+}

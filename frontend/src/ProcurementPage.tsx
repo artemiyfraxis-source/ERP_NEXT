@@ -27,6 +27,7 @@ import { PurchasingItems } from "./PurchasingItems";
 import { PurchasingRfq } from "./PurchasingRfq";
 import { PurchasingSettings } from "./PurchasingSettings";
 import { PurchasingSuppliers } from "./PurchasingSuppliers";
+import { PurchasingUpd } from "./PurchasingUpd";
 import { ProcurementStockPicker, waitsForGrn } from "./ProcurementStockPicker";
 import {
   BackorderStage, COMPACT_BELOW, OrderStageBlock, OtherStage, StageHeading, orderGroups, orderStage,
@@ -41,7 +42,7 @@ import { LineDocumentsForm, readBase64 } from "./ProcurementLineDocuments";
 // ЕД.ИЗМ (факт) — выпадающий список, как в SUPPLYMAP (фолбэк REQUEST_FORM_FIELDS['ЕД.ИЗМ']); сервер отдаёт его в /meta.
 const DEFAULT_UNITS = ["шт", "кг", "м", "л", "уп", "компл"];
 
-type ProcurementTab = "today" | "queues" | "sheet" | "suppliers" | "kpi" | "rfq" | "directory" | "items" | "settings";
+type ProcurementTab = "today" | "queues" | "sheet" | "suppliers" | "kpi" | "rfq" | "directory" | "items" | "settings" | "upd";
 
 // «Мои позиции» (владелец, 05.10) — один блок «В работе»: строки к запросу (с «Готов к запросу») по поставщикам,
 // под ними лента заказов — заказ не переезжает между блоками, его статус (Жду счёт → Ждёт оплаты → В пути →
@@ -133,7 +134,7 @@ const inWorkColumns: DataColumn<ProcurementLine>[] = [
   { key: "eta", title: "Ожидается", value: (line) => line.expected_arrival },
 ];
 
-const TABS: readonly ProcurementTab[] = ["today", "queues", "sheet", "suppliers", "kpi", "rfq", "directory", "items", "settings"];
+const TABS: readonly ProcurementTab[] = ["today", "queues", "sheet", "suppliers", "kpi", "rfq", "directory", "items", "settings", "upd"];
 /** `?tab=` (the global search lands on a tab); an unknown or switched-off tab falls back to the default below. */
 function initialTab(): ProcurementTab | null {
   const value = urlParam("tab");
@@ -151,8 +152,9 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
   const rfqOn = useStageOption("procurement.rfq");
   const directoryOn = useStageOption("references.suppliers");
   const itemsOn = useStageOption("references.items");
+  const updOn = useStageOption("documents.upd");
   const settingsOn = rfqOn || directoryOn || itemsOn;
-  const shown: Record<string, boolean> = { today: todayOn, kpi: kpiOn, rfq: rfqOn, directory: directoryOn, items: itemsOn, settings: settingsOn };
+  const shown: Record<string, boolean> = { today: todayOn, kpi: kpiOn, rfq: rfqOn, directory: directoryOn, items: itemsOn, settings: settingsOn, upd: updOn };
   const [picked, setPicked] = useState<ProcurementTab | null>(initialTab);
   const [rfqFocus, setRfqFocus] = useState<string | undefined>(undefined); // «Сегодня» → the request to open in «Запросы КП»
   // Своих и свободных позиций нет — очереди пусты: первым открывается «Весь лист», а не пустой экран (аудит 10.10, СН-1).
@@ -171,6 +173,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
     [["today", "Сегодня", todayOn], ["queues", "Очереди", true], ["sheet", "Весь лист", true], ["suppliers", "По поставщикам", true], ["kpi", "Показатели", kpiOn]],
     [["rfq", "Запросы КП", rfqOn]],
     [["directory", "Поставщики", directoryOn], ["items", "Номенклатура", itemsOn], ["settings", "Настройки", settingsOn]],
+    [["upd", "УПД", updOn]],
   ];
   const visibleGroups = groups.map((group) => group.filter(([, , on]) => on)).filter((group) => group.length);
   return (
@@ -194,6 +197,7 @@ export function ProcurementPage({ readOnly = false, buyerName = "" }: { readOnly
       {tab === "directory" && <PurchasingSuppliers readOnly={readOnly} />}
       {tab === "items" && <PurchasingItems readOnly={readOnly} />}
       {tab === "settings" && <PurchasingSettings readOnly={readOnly} />}
+      {tab === "upd" && <PurchasingUpd readOnly={readOnly} />}
       {tab === "queues" && <ProcurementQueues readOnly={readOnly} buyerName={buyerName} onIdle={openSheetWhenIdle} onOpenSheet={() => pick("sheet")} />}
       {tab === "sheet" && <section className="page"><ProcurementSheetView buyerName={readOnly ? "" : buyerName} /></section>}
       {tab === "suppliers" && <section className="page"><ProcurementBySupplier /></section>}

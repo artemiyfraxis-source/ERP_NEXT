@@ -47,6 +47,7 @@ from .modules.purchasing import api_items as purchasing_items_api
 from .modules.purchasing import api_rfq as purchasing_rfq_api
 from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
+from .modules.purchasing import api_upd as purchasing_upd_api
 
 app = FastAPI(
     title="Fraxis ERP Next",
@@ -66,7 +67,7 @@ app.add_middleware(
     max_bytes=1_048_576,
     path_limits={"/api/techcards/kitsets": 30 * 1_048_576, "/api/shipping/upd-files": 30 * 1_048_576,
                  "/api/procurement/invoice-files": 30 * 1_048_576, "/api/receiving/files": 30 * 1_048_576,
-                 "/api/techcards/assembly/drawings": 30 * 1_048_576,
+                 "/api/techcards/assembly/drawings": 30 * 1_048_576, "/api/purchasing/upd/import-edo": 30 * 1_048_576,
                  "/api/references/import": MAX_IMPORT_BODY_BYTES},
 )
 app.add_middleware(IdentitySessionMiddleware)
@@ -99,7 +100,7 @@ app.include_router(documents_api.router)
 app.include_router(stage_options_api.router)
 app.include_router(search_api.router)
 for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasing_items_api, purchasing_rfq_api,
-               purchasing_internal_projects_api):
+               purchasing_internal_projects_api, purchasing_upd_api):
     app.include_router(_purchasing.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
