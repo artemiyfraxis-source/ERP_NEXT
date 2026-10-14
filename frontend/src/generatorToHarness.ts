@@ -386,6 +386,8 @@ const DRAWING_B_X = 700, DRAWING_GAP_Y = 90, EXIT = 60, DRAWING_TOP = 40;
 const TUT_STUB = 60;
 /** Хвост на схеме Э4: свободный конец от узла по горизонтали, следующий хвост того же узла — ступенькой ниже. */
 const TAIL_E4 = 64, TAIL_E4_STEP = 22;
+/** Узел двойного обжима на схеме Э4 — на столько от контакта по первому проводу. */
+const DOUBLE_E4 = 18;
 const COVER_COLOR: Record<CoveringKind, string> = {
   "heat-shrink": "#424c53", nylon: "#b19c77", braid: "#b19c77", "metal-braid": "#73838d", tape: "#b19c77", band: "#b19c77",
 };
@@ -453,7 +455,11 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
 
   // 2. Таблица контактов: марка, сечение, цвет, терминал и цепь — на обоих концах провода.
   const terminalWarned = new Set<string>();
+  // Двойной обжим: второй провод в том же контакте строку таблицы не переписывает — в ней провод, что пришёл первым.
+  const filled = new Set<string>();
   for (const { end, wire } of contactEnds) {
+    if (filled.has(`${end.connector}:${end.pin}`)) continue;
+    filled.add(`${end.connector}:${end.pin}`);
     {
       const c = used.find((item) => item.key === end.connector)!;
       const connector = connectorOf(end.connector);
@@ -519,6 +525,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     let next = placed;
     const failed: string[] = [];
     const done = new Map<string, string>();
+    /** Узлы двойного обжима → разъём плана, у которого они стоят. */
+    const doubled = new Map<string, string>();
     const e4Width = Math.max(0, ...columns[0].map((c) => connectorE4TableGeometry(connectorOf(c.key)).width));
     const heightsOf = (column: PlanConnector[]) => column.map((c) => connectorE4TableGeometry(connectorOf(c.key)).height);
     const total = (column: PlanConnector[]) => heightsOf(column).reduce((sum, h) => sum + h, 0) + E4_GAP_Y * Math.max(0, column.length - 1);
@@ -532,18 +540,48 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
         y += heights[i] + E4_GAP_Y;
       });
     });
+    // Двойной обжим (два провода в одном контакте): у контакта редактора один вывод — второй провод приходит в узел на
+    // первом проводе у самого контакта (как «подключение к проводу» в редакторе); на чертеже узел — у выхода разъёма.
+    const taken = new Map<string, string>();
     plan.wires.forEach((wire, index) => {
       const id = `gen-w${index + 1}`;
       const from = { connectorId: ids.get(wire.from.connector)!, contactId: contactOf(wire.from.connector, wire.from.pin).id };
       const to = { connectorId: ids.get(wire.to.connector)!, contactId: contactOf(wire.to.connector, wire.to.pin).id };
+      const keyOf = (end: PlanWire["from"]) => `${end.connector}:${end.pin}`;
+      const shared = [wire.to, wire.from].find((end) => taken.has(keyOf(end)));
+      if (shared) {
+        try {
+          const firstId = taken.get(keyOf(shared))!;
+          const first = next.wires.find((w) => w.id === firstId)!;
+          const contact = { connectorId: ids.get(shared.connector)!, contactId: contactOf(shared.connector, shared.pin).id };
+          const pts = [wireEndpointE4Anchor(next, first.from)!.position, ...first.e4Route, wireEndpointE4Anchor(next, first.to)!.position];
+          const atEnd = first.to.connectorId === contact.connectorId && (first.to as typeof contact).contactId === contact.contactId;
+          const [tip, toward] = atEnd ? [pts[pts.length - 1], pts[pts.length - 2]] : [pts[0], pts[1]];
+          const span = Math.hypot(toward.x - tip.x, toward.y - tip.y) || 1;
+          const step = Math.min(DOUBLE_E4, span / 2);
+          const position = { x: tip.x + ((toward.x - tip.x) / span) * step, y: tip.y + ((toward.y - tip.y) / span) * step };
+          const tag = `gen-dc${index + 1}`;
+          const other = shared === wire.to ? from : to;
+          const node = createJunctionEndpoint(tag);
+          next = run(next, { type: "create-junction", junction: { id: tag, position, wireIds: [firstId, id] },
+            branchWire: createWire(id, shared === wire.to ? other : node, shared === wire.to ? node : other, wire.lengthMm, wire.circuit, wire.color || "#334155", 0, 0, 1, wire.color ? other : undefined) });
+          done.set(wire.key, id);
+          doubled.set(tag, shared.connector);
+        } catch (reason) {
+          failed.push(`${wire.mark || "Провод"} ${wire.from.pin}→${wire.to.pin}: двойной обжим не лёг на схему (${reason instanceof Error ? reason.message : "ошибка"}).`);
+        }
+        return;
+      }
       try {
         next = run(next, { type: "add-wire", wire: createWire(id, from, to, wire.lengthMm, wire.circuit, wire.color || "#334155", 0, 0, 1, wire.color ? from : undefined) });
         done.set(wire.key, id);
+        taken.set(keyOf(wire.from), id);
+        taken.set(keyOf(wire.to), id);
       } catch (reason) {
         failed.push(`${wire.mark || "Провод"} ${wire.from.pin}→${wire.to.pin}: не лёг на схему (${reason instanceof Error ? reason.message : "ошибка"}).`);
       }
     });
-    return { next, failed, done };
+    return { next, failed, done, doubled };
   };
   let wired = wireUp(false);
   if (wired.failed.length) {
@@ -552,6 +590,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   }
   doc = wired.next;
   const wireIds = wired.done;
+  const crimpNodes = wired.doubled;
+  const crimpAt = new Set(crimpNodes.values());
   warnings.push(...wired.failed);
 
   // 4а. Сростки — узлы соединения схемы: провода с контактов и хвосты сходятся в узле. Узел редактора держится не меньше
@@ -661,7 +701,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     const x = c.side === "A"
       ? (free ? connector.positions.drawing.x + FREE_WIDTH : Math.max(...points.map((p) => p.x))) + EXIT
       : (free ? connector.positions.drawing.x : Math.min(...points.map((p) => p.x))) - EXIT;
-    const stub = c.tutLengthMm !== undefined && touched.length ? (c.side === "A" ? TUT_STUB : -TUT_STUB) : 0;
+    const stub = (c.tutLengthMm !== undefined || crimpAt.has(c.key)) && touched.length ? (c.side === "A" ? TUT_STUB : -TUT_STUB) : 0;
     return { connector, wiresAt, touched, centre, free, x, common: { x: x + stub, y: centre } };
   };
   // Жгут с несколькими разъёмами А, сростками или хвостами — один ствол (drawingLayout.ts): колонка В встаёт за концом
@@ -670,7 +710,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const trunked = aSide.length > 1 || doc.junctions.length > 0 || doc.wires.some((wire) => isFreeEndpoint(wire.from) || isFreeEndpoint(wire.to));
   let geometry: TrunkGeometry | null = null;
   if (trunked) {
-    const trunk = trunkGeometry(columns[0].map((c) => exitOf(c).common), doc.junctions.length);
+    const trunk = trunkGeometry(columns[0].map((c) => exitOf(c).common), doc.junctions.filter((j) => !crimpNodes.has(j.id)).length);
     geometry = trunk;
     const column = columns[1], boxes = column.map(extent);
     let y = Math.max(DRAWING_TOP, trunk.trunkY - drawingTotal(column) / 2);
@@ -694,7 +734,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       return { ...draft, position: physicalNodeLocalPoint(doc, draft, world), ...(free ? { direction: c.side === "A" ? "right" as const : "left" as const } : {}) };
     };
     nodeOf.set(c.key, id);
-    if (c.tutLengthMm === undefined || !touched.length) {
+    // Разъём с двойным обжимом — как с ТУТ: у каждого контакта свой выход до общего узла; второй провод приходит в общий.
+    if ((c.tutLengthMm === undefined && !crimpAt.has(c.key)) || !touched.length) {
       nodes.push(exit(id, { x, y: centre }));
       return;
     }
@@ -715,6 +756,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   let spliceRoutes: PhysicalRoute[] = [];
   if (geometry) {
     spliceRoutes = trunkTopology({ doc, nodes, segments, geometry, sideOf: sideOfId,
+      atConnector: new Map([...crimpNodes].map(([junction, key]) => [junction, nodeOf.get(key)!])),
       aExits: columns[0].map((c) => nodeOf.get(c.key)!), bExits: columns[1].map((c) => nodeOf.get(c.key)!) });
   } else if (aSide.length === 1 && bSide.length === 1) {
     segments.push(routed(nodeOf.get(aSide[0].key)!, nodeOf.get(bSide[0].key)!));

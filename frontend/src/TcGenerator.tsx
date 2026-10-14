@@ -83,7 +83,7 @@ import { GenDrawingPreview } from "./GenDrawingPreview";
 import { planTwist } from "./twistGroups";
 import {
   addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
-  setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin,
+  setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
 } from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
@@ -831,7 +831,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const routedSet = new Set(routedList);
     // Экран, заведённый на контакт, — ещё один терминал.
     const coresHere = gen.activeWires_().filter((w) => routedSet.has(w.idx)).reduce((s, w) => s + gen.endUnits_(ep, w) + gen.shieldPinsAt_(ep, w).length, 0);
-    const termCount = ep.double ? Math.ceil(coresHere / gen.epPer_(ep)) : coresHere;
+    // Двойной обжим в отдельных контактах: два провода — один терминал.
+    const termCount = ep.double ? Math.ceil(coresHere / gen.epPer_(ep)) : Math.max(0, coresHere - gen.epDoublePins_(ep).length);
     // Концы кабелей в оболочке у этого разъёма: сколько жил здесь, куда остальные, экран и незадействованные жилы.
     const cableLines = gen.cableEnds_(ep.side).filter((x) => x.eps.includes(ep)).map((x) => {
       const total = gen.unitCount_(x.w);
@@ -1218,6 +1219,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onAssign={(epId, idx, unit, pin) => update((current) => assignPinJoined(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
+        onDouble={(epId, idx, unit, pin) => update((current) => doublePin(D, current, epId, idx, unit, pin))}
+        onUndouble={(epId, pin, keep) => update((current) => undoublePin(D, current, epId, pin, keep))}
         onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}
         onAutoFill={() => { const plan = autoFillPinout(D, S, pinCounts, true); update(() => plan.state); return plan; }} />
       {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>

@@ -67,6 +67,7 @@ const table = (end: string) => scheme().querySelector(`.pin-links-table[data-end
 const row = (end: string, pin: number) => table(end).querySelector(`[data-pin="${pin}"]`)!;
 const lines = () => [...scheme().querySelectorAll(".pin-links-line")].map((l) => `${l.getAttribute("data-a")}→${l.getAttribute("data-b")}`);
 const chip = (wire: RegExp) => within(screen.getByRole("group", { name: "Провода" })).getAllByRole("button", { name: wire })[0];
+const pins = (end: string, wire: string) => (screen.getByLabelText(`Контакты ${end}: ${wire}`) as HTMLInputElement).value;
 const cell = (end: string, pin: number) => screen.getByRole("button", { name: new RegExp(`^${end}, контакт ${pin}:`) });
 /** Вкладка и кабели формы: новая карта «Сложной сборки» открывается без кабелей (владелец 13.10) — набираем их из состава. */
 async function form(tab: string, wires: string[]) {
@@ -181,4 +182,42 @@ it("«Сложная сборка»: three connectors on A, two on B — every t
   fireEvent.click(within(screen.getByRole("group", { name: "Ответвление" })).getByRole("button", { name: "Добавить ответвление" }));
   await waitFor(() => expect(lines()).toContain("А1·1→В2·2"));
   expect(row("В2", 2)).toHaveAttribute("data-wires");
+});
+
+it("double crimp: a second wire into an occupied contact — one terminal less, the double-crimp operation, both wires in the E4 row; «Убрать второй провод» restores", async () => {
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={USB} />);
+  await form("Межплатная", ["НВ4 0,2 красный", "НВ4 0,2 черный", "НВ4 0,2 белый", "НВ4 0,2 зеленый"]);
+  await waitFor(() => expect(lines()).toHaveLength(4));
+  expect(screen.getAllByText(/^4 шт/)).toHaveLength(2);
+  // Чёрный с палитры — на занятый красным В1·1: выбор «вместо» или «вторым проводом».
+  fireEvent.click(chip(/^2\s*НВ4 0,2 черный/));
+  fireEvent.click(cell("В1", 1));
+  const offer = screen.getByRole("group", { name: "Контакт занят" });
+  expect(offer).toHaveTextContent("В1, конт. 1 занят: 1 НВ4 0,2 красный");
+  fireEvent.click(within(offer).getByRole("button", { name: "Второй провод в этот контакт (двойной обжим)" }));
+  expect(screen.queryByRole("group", { name: "Контакт занят" })).not.toBeInTheDocument();
+  expect(pins("В1", "НВ4 0,2 черный")).toBe("1");
+  expect(pins("В1", "НВ4 0,2 красный")).toBe("1");
+  // Торец: на контакте оба номера; не «занят дважды».
+  expect(cell("В1", 1)).toHaveAccessibleName(/двойной обжим$/);
+  expect(document.querySelector('[data-end="В1"] [data-pin="1"] .pin-badge.is-double')).toHaveTextContent("1+2");
+  expect(screen.queryByText(/занят двумя проводами/)).not.toBeInTheDocument();
+  // Терминалов на В1 на один меньше, опрессовка В1 — двойной обжим.
+  expect(screen.getAllByText(/^3 шт/)).toHaveLength(1);
+  expect(screen.getAllByText(/^4 шт/)).toHaveLength(1);
+  expect(screen.getAllByText("Опрессовка терминалов В1 (двойной обжим: конт. 1)").length).toBeGreaterThan(0);
+  // Схема связей: оба провода в строке контакта и две линии в него.
+  expect(row("В1", 1)).toHaveAttribute("data-wires", "1 2");
+  expect(row("В1", 1)).toHaveTextContent("НВ4 0,2 красный + НВ4 0,2 черный");
+  expect(lines()).toEqual(["А1·1→В1·1", "А1·2→В1·1", "А1·3→В1·3", "А1·4→В1·4"]);
+
+  // Щелчок по контакту с двойным обжимом — «Убрать второй провод»: чёрный снят с В1, всё как было.
+  fireEvent.click(cell("В1", 1));
+  fireEvent.click(screen.getByRole("button", { name: "Убрать второй провод" }));
+  expect(pins("В1", "НВ4 0,2 красный")).toBe("1");
+  expect(pins("В1", "НВ4 0,2 черный")).toBe("");
+  expect(screen.getAllByText(/^4 шт/)).toHaveLength(2);
+  expect(screen.queryByText(/двойной обжим: конт/)).not.toBeInTheDocument();
+  expect(row("В1", 1)).toHaveAttribute("data-wires", "1");
+  expect(document.querySelector('[data-end="В1"] .pin-badge.is-double')).toBeNull();
 });
