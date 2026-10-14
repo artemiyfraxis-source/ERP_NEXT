@@ -691,44 +691,51 @@ def _same_hookup(left: HookupWire | None, right: HookupWire | None) -> bool:
     return all(getattr(left, name) == getattr(right, name) for name in fields)
 
 
-def save_hookup(command: SaveHookupCommand, uow: UnitOfWork) -> tuple[HookupWire, TechOperationRecord]:
+def save_hookup_in(command: SaveHookupCommand, uow: UnitOfWork,
+                   details: Mapping[str, str] | None = None) -> tuple[HookupWire, TechOperationRecord]:
     """The structure of a hook-up wire: series, its conductor (a size row), insulation, outer Ø, voltage and
     temperature. The БД.ПРОВ row is written in step (only the cells whose meaning changed), so the warehouse, the
-    harness catalogue and the ETK generator read the same values."""
-    with uow:
-        record = uow.tech_operations.get(command.record_id)
-        if record is None or record.tab != TechOperationTab.WIRE:
-            raise LookupError("Провод не найден в БД.ПРОВ")
-        mark = cable_mark(record)
-        current = uow.cable_structure.hookup(normalized_cable_key(mark))
-        if not _same_hookup(current, command.old):
-            raise StaleRecordError("Провод уже поменяли — откройте его заново")
-        gauges = uow.cable_structure.gauges()
-        gauge = next((item for item in gauges if item.id == command.gauge_id), None)
-        if gauge is None:
-            raise ReferenceValidationError("Выберите сечение из таблицы сечений")
-        wire = HookupWire.create(
-            id=current.id if current else None, mark=mark, series=command.series, gauge_id=gauge.id,
-            insulation=command.insulation, outer_d_mm=command.outer_d_mm, voltage_v=command.voltage_v,
-            temp_min_c=command.temp_min_c, temp_max_c=command.temp_max_c,
-            conductor_material=(current.conductor_material if current else "") if command.conductor_material is None
-            else command.conductor_material,
-            insulation_thickness_mm=(current.insulation_thickness_mm if current else None)
-            if command.insulation_thickness_mm is None else command.insulation_thickness_mm,
-        )
-        uow.cable_structure.save_hookup(wire, command.now)
-        changes = written_back_fields(record.fields, wire, gauge, gauges)
-        if changes:
-            fields = {**record.fields, **changes}
-            record = replace(record, fields=fields, edited_in_erp=True)
-            record = replace(record, normalized_search=_search_text(record))
-            uow.tech_operations.save(record)
-        _audit("references.hookup_wire_saved", command.actor, command.now, {
-            "record_id": str(record.id), "mark": mark, "gauge_id": str(gauge.id), "created": current is None,
-            "fields_written": sorted(changes),
-        }, uow)
-        uow.commit()
+    harness catalogue and the ETK generator read the same values. Inside an open unit of work, nothing committed;
+    `details` go into the audit."""
+    record = uow.tech_operations.get(command.record_id)
+    if record is None or record.tab != TechOperationTab.WIRE:
+        raise LookupError("Провод не найден в БД.ПРОВ")
+    mark = cable_mark(record)
+    current = uow.cable_structure.hookup(normalized_cable_key(mark))
+    if not _same_hookup(current, command.old):
+        raise StaleRecordError("Провод уже поменяли — откройте его заново")
+    gauges = uow.cable_structure.gauges()
+    gauge = next((item for item in gauges if item.id == command.gauge_id), None)
+    if gauge is None:
+        raise ReferenceValidationError("Выберите сечение из таблицы сечений")
+    wire = HookupWire.create(
+        id=current.id if current else None, mark=mark, series=command.series, gauge_id=gauge.id,
+        insulation=command.insulation, outer_d_mm=command.outer_d_mm, voltage_v=command.voltage_v,
+        temp_min_c=command.temp_min_c, temp_max_c=command.temp_max_c,
+        conductor_material=(current.conductor_material if current else "") if command.conductor_material is None
+        else command.conductor_material,
+        insulation_thickness_mm=(current.insulation_thickness_mm if current else None)
+        if command.insulation_thickness_mm is None else command.insulation_thickness_mm,
+    )
+    uow.cable_structure.save_hookup(wire, command.now)
+    changes = written_back_fields(record.fields, wire, gauge, gauges)
+    if changes:
+        fields = {**record.fields, **changes}
+        record = replace(record, fields=fields, edited_in_erp=True)
+        record = replace(record, normalized_search=_search_text(record))
+        uow.tech_operations.save(record)
+    _audit("references.hookup_wire_saved", command.actor, command.now, {
+        "record_id": str(record.id), "mark": mark, "gauge_id": str(gauge.id), "created": current is None,
+        "fields_written": sorted(changes), **(details or {}),
+    }, uow)
     return wire, record
+
+
+def save_hookup(command: SaveHookupCommand, uow: UnitOfWork) -> tuple[HookupWire, TechOperationRecord]:
+    with uow:
+        result = save_hookup_in(command, uow)
+        uow.commit()
+    return result
 
 
 def _follow_wire_edit(uow: UnitOfWork, before: TechOperationRecord, after: TechOperationRecord, edited: set[str],
@@ -887,39 +894,45 @@ class SetCoaxDiametersCommand:
     now: datetime
 
 
-def set_coax_diameters(command: SetCoaxDiametersCommand, uow: UnitOfWork) -> TechOperationRecord:
+def set_coax_diameters_in(command: SetCoaxDiametersCommand, uow: UnitOfWork,
+                          details: Mapping[str, str] | None = None) -> TechOperationRecord:
     """D1·D2·D3 of a coax cable from «Коаксиальные кабели» (owner 04.10.2026; the SUPPLYMAP portal keeps СПР.КАБ
     view-only, ERP edits it here). The row edited is the one the generator uses for the name (the last of its key); a
     cable without one gets a new D-table row named as the cable, so the generator finds it by that name. Values are
     numbers in mm or empty; the old values must match (stale otherwise). The row is marked edited in ERP, so a mirror
-    reload keeps it."""
+    reload keeps it. Inside an open unit of work, nothing committed; `details` go into the audit."""
     key = normalized_cable_key(command.cable)
     values = {name: clean_diameter(name, command.value.get(name, "")) for name in DIAMETERS}
+    current = diameter_index(uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)).get(key)
+    if (current.id if current else None) != command.dia_id:
+        raise StaleRecordError("Диаметры этого кабеля уже поменяли — откройте его заново")
+    if current is None:
+        if not any(values.values()):
+            raise ReferenceValidationError("Заполните хотя бы один диаметр")
+        cable = str(command.cable).strip()
+        # After every sheet row («00001»…): the list order is the generator's, a new name must not reorder twins.
+        record = TechOperationRecord.create(
+            tab=TechOperationTab.KAB_COAX, display_text=cable, search_text="", source_sheet="",
+            sort_key=f"99999 {cable}", fields={"Кабель": cable, **values}, edited_in_erp=True,
+        )
+        event = "references.tech_record_created"
+    else:
+        stale = [name for name in DIAMETERS
+                 if str(current.fields.get(name, "")).strip() != str(command.old.get(name, "")).strip()]
+        if stale:
+            raise StaleRecordError(f"{', '.join(stale)}: уже поменяли — откройте кабель заново")
+        record = replace(current, fields={**current.fields, **values}, edited_in_erp=True)
+        record = replace(record, normalized_search=_search_text(record))
+        event = "references.tech_record_edited"
+    uow.tech_operations.save(record)
+    _audit(event, command.actor, command.now, {
+        "record_id": str(record.id), "tab": record.tab.value, "fields": list(DIAMETERS), **(details or {}),
+    }, uow)
+    return record
+
+
+def set_coax_diameters(command: SetCoaxDiametersCommand, uow: UnitOfWork) -> TechOperationRecord:
     with uow:
-        current = diameter_index(uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=10_000)).get(key)
-        if (current.id if current else None) != command.dia_id:
-            raise StaleRecordError("Диаметры этого кабеля уже поменяли — откройте его заново")
-        if current is None:
-            if not any(values.values()):
-                raise ReferenceValidationError("Заполните хотя бы один диаметр")
-            cable = str(command.cable).strip()
-            # After every sheet row («00001»…): the list order is the generator's, a new name must not reorder twins.
-            record = TechOperationRecord.create(
-                tab=TechOperationTab.KAB_COAX, display_text=cable, search_text="", source_sheet="",
-                sort_key=f"99999 {cable}", fields={"Кабель": cable, **values}, edited_in_erp=True,
-            )
-            event = "references.tech_record_created"
-        else:
-            stale = [name for name in DIAMETERS
-                     if str(current.fields.get(name, "")).strip() != str(command.old.get(name, "")).strip()]
-            if stale:
-                raise StaleRecordError(f"{', '.join(stale)}: уже поменяли — откройте кабель заново")
-            record = replace(current, fields={**current.fields, **values}, edited_in_erp=True)
-            record = replace(record, normalized_search=_search_text(record))
-            event = "references.tech_record_edited"
-        uow.tech_operations.save(record)
-        _audit(event, command.actor, command.now, {
-            "record_id": str(record.id), "tab": record.tab.value, "fields": list(DIAMETERS),
-        }, uow)
+        record = set_coax_diameters_in(command, uow)
         uow.commit()
     return record
