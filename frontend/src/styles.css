@@ -2939,6 +2939,8 @@ select.zg-overlay { position: absolute; inset: 0; width: 100%; height: 100%; min
 .ec-page > .panel, .ec-grid > .panel { margin-top: 0; }
 .profile-panel { display: grid; justify-items: start; }
 .profile-panel .profile-card { justify-self: stretch; }
+.change-password { display: grid; gap: 8px; }
+.change-password form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; align-items: center; }
 .ec-head { display: flex; align-items: center; gap: 16px; padding: 16px 20px; }
 .ec-avatar { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--primary) 14%, white); color: var(--primary); font-size: 20px; font-weight: 600; }
 .ec-id { flex: 1; min-width: 0; }
