@@ -7,6 +7,7 @@ import {
   rfqApi,
   unasked,
   type DecisionField,
+  type ImportedQuoteLine,
   type PastedRow,
   type QuoteLineInput,
   type RfqCell,
@@ -17,6 +18,7 @@ import {
   type SuggestResult,
   type SupplierBrief,
 } from "./purchasingRfqApi";
+import { useStageOption } from "./StageOptions";
 import { picksOf, RfqPool, suggestionKey, SuggestionList } from "./RfqPool";
 
 /** «Запросы КП» (stage option procurement.rfq, as Roller_Buyer RfqPage): the buyer's lines → a request to several
@@ -314,7 +316,7 @@ function RfqMatrixView({ id, readOnly, onChanged }: { id: string; readOnly: bool
           {matrix.quotes.map((quote) => (
             <span key={quote.id}>
               {supplierName(quote.supplier_id)}{quote.supplier_is_key ? " ★" : ""} от {formatDay(quote.received_on)}
-              {quote.valid_until ? `, до ${formatDay(quote.valid_until)}` : ""}{quote.source === "paste" ? ", из Excel" : ""}
+              {quote.valid_until ? `, до ${formatDay(quote.valid_until)}` : ""}{quote.source === "paste" ? ", из Excel" : quote.source === "file" ? ", из PDF" : ""}
               {editable && !quote.used && (
                 <button
                   type="button" className="link-button" style={{ padding: "0 0 0 6px" }}
@@ -645,7 +647,16 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [unmatched, setUnmatched] = useState<PastedRow[]>([]);
-  const [source, setSource] = useState<"manual" | "paste">("manual");
+  const importEnabled = useStageOption("procurement.quote_import");
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importNotes, setImportNotes] = useState<string[]>([]);
+  const [importUnmatched, setImportUnmatched] = useState<ImportedQuoteLine[]>([]);
+  const [importUnread, setImportUnread] = useState<string[]>([]);
+  // The supplier's wording per request line, remembered as an alias when the quote is saved.
+  const [wording, setWording] = useState<Record<string, string>>({});
+  const [source, setSource] = useState<"manual" | "paste" | "file">("manual");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -674,6 +685,74 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
     }
   }
 
+  /** One proposed line into the form row of its request line; the buyer still reviews and saves. */
+  function fillFrom(next: Record<string, QuoteRowState>, row: ImportedQuoteLine, lineId: string) {
+    const current = next[lineId];
+    if (!current) return;
+    next[lineId] = {
+      ...current, price: row.declined ? "" : row.price ?? "", vat_rate: row.vat_rate ?? current.vat_rate,
+      lead: row.in_stock || row.lead_days === null ? "" : String(row.lead_days), in_stock: row.in_stock,
+      declined: row.declined, analog: row.analog, analog_note: row.analog_note, moq: row.moq ?? current.moq,
+      pack: row.pack ?? current.pack,
+    };
+  }
+
+  const wordingOf = (row: ImportedQuoteLine) => `${row.source_article} ${row.source_name}`.trim();
+
+  async function runImport(input: { text: string } | { file_name: string; content_base64: string }) {
+    setError("");
+    setImportBusy(true);
+    try {
+      const result = await rfqApi.importQuote(matrix.rfq.id, supplier.supplier_id, input);
+      const next = { ...rows };
+      const words: Record<string, string> = {};
+      for (const row of result.lines) {
+        if (!row.rfq_line_id || !next[row.rfq_line_id]) continue;
+        fillFrom(next, row, row.rfq_line_id);
+        next[row.rfq_line_id].vat_included = result.vat_included;
+        if (row.matched_by !== "alias") words[row.rfq_line_id] = wordingOf(row);
+      }
+      setRows(next);
+      setWording((current) => ({ ...current, ...words }));
+      setImportNotes(result.lines.filter((row) => row.pack_note).map((row) => `«${row.source_name}»: ${row.pack_note}`));
+      setImportUnmatched(result.unmatched);
+      setImportUnread(result.unread);
+      setSource(result.source);
+      setImportOpen(false);
+    } catch (reason) {
+      setError(failureText(reason, "КП не разобрано"));
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  function importFile(file: File | undefined) {
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      setError("PDF больше 20 МБ — сожмите файл или вставьте текст");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => setError("Файл не прочитан");
+    reader.onload = () => {
+      const data = String(reader.result ?? "");
+      void runImport({ file_name: file.name, content_base64: data.slice(data.indexOf(",") + 1) });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  /** The buyer puts an unmatched quote line onto a request line by hand. */
+  function assignUnmatched(index: number, lineId: string) {
+    const row = importUnmatched[index];
+    if (!row || !lineId) return;
+    const next = { ...rows };
+    fillFrom(next, row, lineId);
+    setRows(next);
+    setWording((current) => ({ ...current, [lineId]: wordingOf(row) }));
+    if (row.pack_note) setImportNotes((current) => [...current, `«${row.source_name}»: ${row.pack_note}`]);
+    setImportUnmatched((current) => current.filter((_, at) => at !== index));
+  }
+
   async function save() {
     const lines: QuoteLineInput[] = asked.flatMap((line) => {
       const row = rows[line.id];
@@ -695,6 +774,7 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
       await rfqApi.addQuote(matrix.rfq.id, {
         supplier_id: supplier.supplier_id, received_on: receivedOn || null, valid_until: validUntil || null,
         delivery_cost: decimalInput(delivery) || null, min_order_sum: decimalInput(minOrder) || null, source, lines,
+        ...(importEnabled ? { aliases: lines.filter((line) => wording[line.rfq_line_id]).map((line) => ({ rfq_line_id: line.rfq_line_id, text: wording[line.rfq_line_id] })) } : {}),
       });
       onSaved();
     } catch (reason) {
@@ -713,7 +793,46 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
         <label>Доставка, ₽<input inputMode="decimal" value={delivery} onChange={(event) => setDelivery(event.target.value)} style={{ width: 110 }} /></label>
         <label>Мин. заказ, ₽<input inputMode="decimal" value={minOrder} onChange={(event) => setMinOrder(event.target.value)} style={{ width: 110 }} /></label>
         <button type="button" className="secondary small" onClick={() => setPasteOpen(!pasteOpen)} aria-expanded={pasteOpen}>Вставить из Excel</button>
+        {importEnabled && (
+          <button type="button" className="secondary small" onClick={() => setImportOpen(!importOpen)} aria-expanded={importOpen}>Вставить из PDF / текста</button>
+        )}
       </div>
+      {importEnabled && importOpen && (
+        <div className="quote-import-panel">
+          <textarea
+            aria-label="Текст КП" rows={6} value={importText} onChange={(event) => setImportText(event.target.value)}
+            placeholder="Вставьте текст письма или КП: в каждой строке наименование, количество, единица, цена (сумма и срок — по желанию)"
+          />
+          <div className="quote-import-actions">
+            <button type="button" className="secondary small" disabled={!importText.trim() || importBusy} onClick={() => void runImport({ text: importText })}>Разобрать текст</button>
+            <label className="quote-import-file">или PDF с текстовым слоем (до 20 МБ)
+              <input type="file" accept="application/pdf,.pdf" aria-label="PDF с КП" disabled={importBusy} onChange={(event) => { importFile(event.target.files?.[0]); event.target.value = ""; }} />
+            </label>
+          </div>
+        </div>
+      )}
+      {importNotes.length > 0 && (
+        <ul className="quote-import-notes" aria-label="Что сделано при разборе">
+          {importNotes.map((note) => <li key={note}>{note}</li>)}
+        </ul>
+      )}
+      {importUnmatched.length > 0 && (
+        <div className="warning-inline quote-import-unmatched">
+          Не сопоставлено со строками запроса — отнесите к позиции или пропустите:
+          {importUnmatched.map((row, index) => (
+            <div key={`${row.source_name}-${index}`} className="quote-import-unmatched-row">
+              <span>{row.source_name || row.source_article}{row.price ? `, ${row.price} ₽` : ""}</span>
+              <select aria-label={`Отнести «${row.source_name}»`} value="" onChange={(event) => assignUnmatched(index, event.target.value)}>
+                <option value="">— к позиции —</option>
+                {asked.map((line) => <option key={line.id} value={line.id}>{line.name}</option>)}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+      {importUnread.length > 0 && (
+        <div className="warning-inline">Строки с ценой, которые не удалось прочитать: {importUnread.join("; ")}</div>
+      )}
       {pasteOpen && (
         <div style={{ display: "grid", gap: 6 }}>
           <textarea

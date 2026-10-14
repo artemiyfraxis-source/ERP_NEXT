@@ -116,7 +116,8 @@ export type QuoteLineInput = {
 };
 export type QuoteInput = {
   supplier_id: string; received_on: string | null; valid_until: string | null; delivery_cost: string | null;
-  min_order_sum: string | null; source: "manual" | "paste"; lines: QuoteLineInput[];
+  min_order_sum: string | null; source: "manual" | "paste" | "file"; lines: QuoteLineInput[];
+  aliases?: { rfq_line_id: string; text: string }[];
 };
 
 export type PastedRow = {
@@ -126,6 +127,18 @@ export type PastedRow = {
 };
 export type PastePreview = {
   header: string[] | null; columns: Record<string, number>; vat_included: boolean; default_vat_rate: string; rows: PastedRow[];
+};
+
+/** «КП из PDF и текста»: a proposed line; `price` is per unit asked (a pack quote is already converted, see `pack_note`). */
+export type ImportedQuoteLine = {
+  source_name: string; source_article: string; qty: string | null; unit: string; price: string | null;
+  vat_rate: string | null; lead_days: number | null; in_stock: boolean; declined: boolean; analog: boolean;
+  analog_note: string; rfq_line_id: string | null; matched_by: "alias" | "article" | "name" | null;
+  pack: string | null; moq: string | null; pack_note: string;
+};
+export type QuoteImport = {
+  source: "paste" | "file"; vat_included: boolean; default_vat_rate: string; lines: ImportedQuoteLine[];
+  unmatched: ImportedQuoteLine[]; unread: string[];
 };
 
 export type DecisionInput = {
@@ -168,6 +181,8 @@ export const rfqApi = {
   addQuote: (id: string, quote: QuoteInput) => post<{ id: string }>(`${BASE}/${id}/quotes`, quote),
   paste: (id: string, text: string, supplierId?: string) =>
     post<PastePreview>(`${BASE}/${id}/quotes/paste`, supplierId ? { text, supplier_id: supplierId } : { text }),
+  importQuote: (id: string, supplierId: string, input: { text: string } | { file_name: string; content_base64: string }) =>
+    post<QuoteImport>(`${BASE}/${id}/quotes/import`, { supplier_id: supplierId, ...input }),
   deleteQuote: (quoteId: string) => remove(`${BASE}/quotes/${quoteId}`),
   decide: (id: string, decision: DecisionInput) => post<RfqDecision>(`${BASE}/${id}/decisions`, decision),
   undoDecision: (id: string, decisionId: string) => remove(`${BASE}/${id}/decisions/${decisionId}`),

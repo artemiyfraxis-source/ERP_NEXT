@@ -13,11 +13,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.shared import stage_options
 from app.shared.clock import moscow_now
+from app.shared.stored_files import decode_upload
 from app.shared.http_auth import Principal, procurement_edit_principal, procurement_view_principal, section_allowed
 from app.workflows.purchasing_procurement_bridge import ProcurementLinesBridge
 from app.workflows.purchasing_rfq_stats import PurchaseStatsBridge
 
+from . import quote_import
 from . import rfq as service
 from . import rfq_pool
 from .deps import procurement_uow_factory, purchasing_uow_factory, require_option
@@ -128,15 +131,22 @@ class QuoteLineModel(BaseModel):
     analog_note: str | None = Field(default=None, max_length=512)
 
 
+class AliasModel(BaseModel):
+    rfq_line_id: UUID
+    text: str = Field(min_length=1, max_length=512)
+
+
 class QuoteModel(BaseModel):
     supplier_id: UUID
     received_on: date | None = None
     valid_until: date | None = None
     delivery_cost: Money | None = None
     min_order_sum: Money | None = None
-    source: Literal["manual", "paste"] = "manual"
+    source: Literal["manual", "paste", "file"] = "manual"
     note: Text | None = None
     lines: list[QuoteLineModel] = Field(min_length=1, max_length=500)
+    # Supplier wordings the buyer confirmed in «КП из PDF и текста»; stored only while that option is on.
+    aliases: list[AliasModel] = Field(default_factory=list, max_length=500)
 
     def to_input(self) -> service.QuoteInput:
         return service.QuoteInput(
@@ -157,6 +167,13 @@ class QuoteModel(BaseModel):
 class PasteInput(BaseModel):
     supplier_id: UUID | None = None
     text: str = Field(min_length=1, max_length=500_000)
+
+
+class ImportInput(BaseModel):
+    supplier_id: UUID | None = None
+    text: str | None = Field(default=None, max_length=500_000)
+    file_name: str | None = Field(default=None, max_length=300)
+    content_base64: str | None = Field(default=None, max_length=28_000_000)  # a 20 MB PDF in base64
 
 
 class DecisionModel(BaseModel):
@@ -274,12 +291,31 @@ def rfq_mark_declined(
 
 @router.post("/{rfq_id}/quotes", status_code=201)
 def rfq_add_quote(rfq_id: UUID, payload: QuoteModel, principal: Edit, now: Now, uow: Uow) -> dict:
-    return _run(lambda: service.add_quote(uow(), principal.actor, now, rfq_id, payload.to_input()))
+    saved = _run(lambda: service.add_quote(uow(), principal.actor, now, rfq_id, payload.to_input()))
+    if payload.aliases and stage_options.enabled("procurement.quote_import"):
+        quote_import.remember_aliases(
+            uow, principal.actor, now, rfq_id, payload.supplier_id, [(item.rfq_line_id, item.text) for item in payload.aliases])
+    return saved
 
 
 @router.post("/{rfq_id}/quotes/paste")
 def rfq_paste_quote(rfq_id: UUID, payload: PasteInput, principal: Edit, uow: Uow) -> dict:
     return _run(lambda: service.paste_preview(uow(), principal.actor, rfq_id, payload.text, payload.supplier_id))
+
+
+@router.post("/{rfq_id}/quotes/import")
+def rfq_import_quote(rfq_id: UUID, payload: ImportInput, principal: Edit, uow: Uow) -> dict:
+    """«КП из PDF и текста»: proposed quote lines for the form; nothing is saved."""
+    require_option("procurement.quote_import")
+    require_option("procurement.rfq")
+    if bool(payload.text) == bool(payload.content_base64):
+        raise HTTPException(status_code=422, detail="Вставьте текст КП или приложите PDF")
+    if payload.content_base64:
+        text = _run(lambda: quote_import.text_of_pdf(decode_upload(payload.content_base64 or "", "Файл повреждён")))
+    else:
+        text = payload.text or ""
+    return _run(lambda: quote_import.parse_quote(
+        uow(), principal.actor, rfq_id, text, payload.supplier_id, "file" if payload.content_base64 else "paste"))
 
 
 @router.post("/{rfq_id}/decisions", status_code=201)

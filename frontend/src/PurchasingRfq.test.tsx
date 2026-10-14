@@ -153,3 +153,70 @@ it("a line not asked of a supplier is «не запрашивали», the heade
   await waitFor(() => expect(puts).toHaveLength(1));
   expect(puts[0]).toEqual({ path: "/api/purchasing/rfqs/r1/suppliers/s2/lines", body: { line_ids: ["l1", "l2"] } });
 });
+
+function mockImportServer(optionOn: boolean, posts: { path: string; body: any }[]) {
+  const proposal = {
+    source: "paste", vat_included: true, default_vat_rate: "22",
+    lines: [{
+      source_name: "Разъём SHR-02 (100 шт)", source_article: "", qty: "1", unit: "уп", price: "5", vat_rate: null, lead_days: 7,
+      in_stock: false, declined: false, analog: false, analog_note: "", rfq_line_id: "l1", matched_by: "article",
+      pack: "100", moq: "100", pack_note: "КП за упаковку 100 шт: цена пересчитана за шт, упаковка и мин. партия — 100",
+    }],
+    unmatched: [{
+      source_name: "Что-то ещё", source_article: "", qty: "3", unit: "шт", price: "10", vat_rate: null, lead_days: null,
+      in_stock: false, declined: false, analog: false, analog_note: "", rfq_line_id: null, matched_by: null, pack: null, moq: null, pack_note: "",
+    }],
+    unread: ["мусор 12,50"],
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (init?.method === "POST") {
+      posts.push({ path, body: JSON.parse(String(init.body)) });
+      return json(path.endsWith("/quotes/import") ? proposal : { id: "q9" }, path.endsWith("/quotes/import") ? 200 : 201);
+    }
+    if (path === "/api/stage-options") {
+      return json({ available: true, options: [{ key: "procurement.quote_import", block: "b", title: "t", before: "", after: "", enabled: optionOn }] });
+    }
+    if (path === "/api/purchasing/rfqs?scope=mine") {
+      return json({ rfqs: [{ id: "r1", number: "КП-2610-001", title: "Разъёмы", created_at: "2026-10-01T10:00:00", closed_at: null, mine: true, lines: 1, suppliers: 2, sent: 2, quotes: 2, decided: 0 }] });
+    }
+    if (path === "/api/purchasing/rfqs/directory") return json({ suppliers: [] });
+    if (path === "/api/purchasing/rfqs/r1") return json(matrix);
+    return json({}, 404);
+  });
+}
+
+it("without the option the quote form has no PDF / text import", async () => {
+  mockImportServer(false, []);
+  render(<PurchasingRfq />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ КП ООО Бета" }));
+  const quote = await screen.findByRole("dialog", { name: "КП от «ООО Бета»" });
+  expect(within(quote).getByRole("button", { name: "Вставить из Excel" })).toBeInTheDocument();
+  expect(within(quote).queryByRole("button", { name: "Вставить из PDF / текста" })).not.toBeInTheDocument();
+});
+
+it("the pasted text fills the form with the pack recalculated, lists the rest and sends the wording as an alias", async () => {
+  const posts: { path: string; body: any }[] = [];
+  mockImportServer(true, posts);
+  render(<PurchasingRfq />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ КП ООО Бета" }));
+  const quote = await screen.findByRole("dialog", { name: "КП от «ООО Бета»" });
+  fireEvent.click(await within(quote).findByRole("button", { name: "Вставить из PDF / текста" }));
+  fireEvent.change(within(quote).getByLabelText("Текст КП"), { target: { value: "Разъём SHR-02 (100 шт) 1 уп 500,00 7 дн" } });
+  fireEvent.click(within(quote).getByRole("button", { name: "Разобрать текст" }));
+  await waitFor(() => expect(within(quote).getByLabelText("Цена Разъём")).toHaveValue("5"));
+  expect(within(quote).getByLabelText("Упаковка Разъём")).toHaveValue("100");
+  expect(within(quote).getByLabelText("Мин. партия Разъём")).toHaveValue("100");
+  expect(within(quote).getByLabelText("Срок Разъём")).toHaveValue("7");
+  expect(within(quote).getByText(/цена пересчитана за шт/)).toBeInTheDocument();
+  expect(within(quote).getByText(/Что-то ещё/)).toBeInTheDocument();
+  expect(within(quote).getByText(/мусор 12,50/)).toBeInTheDocument();
+  expect(posts[0].path).toBe("/api/purchasing/rfqs/r1/quotes/import");
+  expect(posts[0].body).toEqual({ supplier_id: "s2", text: "Разъём SHR-02 (100 шт) 1 уп 500,00 7 дн" });
+
+  fireEvent.click(within(quote).getByRole("button", { name: "Сохранить КП" }));
+  await waitFor(() => expect(posts).toHaveLength(2));
+  expect(posts[1].body.source).toBe("paste");
+  expect(posts[1].body.aliases).toEqual([{ rfq_line_id: "l1", text: "Разъём SHR-02 (100 шт)" }]);
+  expect(posts[1].body.lines[0]).toMatchObject({ unit_price: "5", pack: "100", moq: "100", lead_days: 7 });
+});
