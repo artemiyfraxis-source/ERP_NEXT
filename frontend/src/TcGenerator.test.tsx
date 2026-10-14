@@ -110,6 +110,37 @@ it("adds a missing coax connector to БД.КОАКС through the references reco
   } }));
 });
 
+it("chooses coax stripping on the rotary machine or separately and keeps the choice in the saved form (owner 14.10)", async () => {
+  mockApi();
+  const onBuild = vi.fn();
+  render(<TcGenerator card={{ ...card, product_name: "Сборка RG316 150mm" }} busy={false} onBuild={onBuild} onDiscard={vi.fn()} kit={kitOf("Сборка RG316 150mm", [
+    { type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+    { type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
+  ])} />);
+
+  const mode = await screen.findByRole("radiogroup", { name: "Разделка" });
+  expect(within(mode).getByRole("radio", { name: "Резка с разделкой на станке" })).toHaveAttribute("aria-checked", "true");
+  // Ø кабеля неизвестен — большой станок; выбор технолога сохраняется.
+  const machine = screen.getByRole("radiogroup", { name: "Станок" });
+  expect(within(machine).getByRole("radio", { name: /BZW-50X \(большой\)/ })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(within(machine).getByRole("radio", { name: /BZW-886\+Q2 \(малый\)/ }));
+  expect(screen.getAllByText("Резка с разделкой (А и В)")[0]).toBeInTheDocument();
+  expect(screen.queryByText("Разделка коаксиала (А)")).toBeNull();
+
+  fireEvent.click(within(mode).getByRole("radio", { name: "Резка, затем разделка А и В" }));
+  expect(screen.queryByRole("radiogroup", { name: "Станок" })).toBeNull();
+  expect(screen.getAllByText("Разделка коаксиала (А)")[0]).toBeInTheDocument();
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  pressBuild();
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  const config = onBuild.mock.calls[0][0];
+  // В моке только карта CUT_WIRE_auto — операции без карты в сборку не идут.
+  expect(config.ops.map((op: { opKey: string }) => op.opKey)).toEqual(["coaxCut"]);
+  expect(config.ops[0]).not.toHaveProperty("machine");
+  expect(config.gen_state.S.coax).toMatchObject({ stripMode: "separate", machine: "small" });
+});
+
 it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCalcOps_)", async () => {
   mockApi();
   const onBuild = vi.fn();

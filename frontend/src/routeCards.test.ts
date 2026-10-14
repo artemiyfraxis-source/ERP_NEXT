@@ -94,12 +94,28 @@ describe("карточки «Схемы полуфабрикатов» гене�
   });
 
   it("makes the last side the finished cable when nothing follows it and drops back links of interleaved sides", () => {
-    // Коаксиал: разделка А, разделка В, пайка А, пайка В — стрелки блоков ходят А → В → А.
-    const coax = [op(1, "coaxCut", "Резка кабеля"), op(2, "coaxStrip", "Разделка А", { side: "A" }), op(3, "coaxStrip", "Разделка В", { side: "B" }),
-      op(4, "coaxPin", "Пайка А", { side: "A" }), op(5, "coaxPin", "Пайка В", { side: "B" })];
+    // Коаксиал: пайка А, пайка В, корпус А, корпус В — стрелки блоков ходят А → В → А.
+    const coax = [op(1, "coaxCut", "Резка кабеля"), op(2, "coaxPin", "Пайка А", { side: "A" }), op(3, "coaxPin", "Пайка В", { side: "B" }),
+      op(4, "coaxHousing", "Корпус А", { side: "A" }), op(5, "coaxHousing", "Корпус В", { side: "B" })];
     const { cards, links } = genCards(deriveRoute(coax), coax);
     expect(cards.map((card) => [card.title, card.final])).toEqual([["Нарезанный кабель", false], ["Сторона А собрана", false], ["Готовый кабель", true]]);
     expect(links.map((link) => `${link.from}>${link.to}`)).toEqual(["wires>A", "A>B"]);
+  });
+
+  it("keeps coax stripping with the cut cable, never in a side card (owner 14.10)", () => {
+    // Резка, разделка А, разделка В, резка ТУТ, пайки — разделка в первой карточке.
+    const separate = [op(1, "coaxCut", "Резка кабеля"), op(2, "coaxStrip", "Разделка А", { side: "A", code: "STRIP_COAX_auto" }),
+      op(3, "coaxStrip", "Разделка В", { side: "B", code: "STRIP_COAX_auto" }), op(4, "coaxCutTut", "Резка ТУТ", { code: "CUT_TUT_short" }),
+      op(5, "coaxPin", "Пайка А", { side: "A" }), op(6, "coaxPin", "Пайка В", { side: "B" })];
+    expect([...opStages(separate).entries()]).toEqual([[1, "wires"], [2, "wires"], [3, "wires"], [4, "tubes"], [5, "A"], [6, "B"]]);
+    const split = genCards(deriveRoute(separate), separate);
+    expect(split.cards.map((card) => [card.title, card.ops.map((item) => item.position)])).toEqual([
+      ["Нарезанный и разделанный кабель", [1, 2, 3]], ["Нарезанные трубки", [4]], ["Сторона А собрана", [5]], ["Готовый кабель", [6]],
+    ]);
+    expect(split.links.map((link) => `${link.from}>${link.to}`)).toEqual(["wires>A", "tubes>A", "A>B"]);
+    // Резка с разделкой на станке — одна операция CUT_COAX+2strip.
+    const machine = [op(1, "coaxCut", "Резка с разделкой (А и В)", { code: "CUT_COAX+2strip" }), op(2, "coaxPin", "Пайка А", { side: "A" })];
+    expect(genCards(deriveRoute(machine), machine).cards[0].title).toBe("Нарезанный и разделанный кабель");
   });
 
   it("puts the number on a link from its single arrow and nothing when the arrows differ", () => {

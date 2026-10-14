@@ -430,6 +430,62 @@ def test_coax_strip_carries_side_dimensions_for_the_sketch():
     assert operations[1]["fields"]["coax"]["connector"] == "BNC-F"
 
 
+def _coax_cut_strip(machine: dict | None, strip_sides: list[str], code: str = "CUT_COAX+2strip") -> dict:
+    card = next(card for card in CARDS if card.code == code)
+    op = {"type": "coaxCut", "opKey": "coaxCutStrip", "templateId": card.source_id, "stripSides": strip_sides}
+    if machine:
+        op["machine"] = machine
+    config = {"mode": "coax", "partQty": 1, "coax": {
+        "cableArt": "RG-316", "sideA": {"article": "MMCX-male", "l1": "1,8", "l2": "4,5", "l3": "10"},
+        "sideB": {"article": "N-male", "l1": "3", "l2": "6", "l3": "9"},
+    }, "ops": [op]}
+    return build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])["operations"][0]
+
+
+def _equipment(operation: dict) -> list[tuple[str, str, str]]:
+    return [(tool["number"], tool["name"].split(" | ")[0], tool["inventory_number"])
+            for tool in operation["card"]["tooling"] if tool["section"] == "Оборудование"]
+
+
+SMALL = {"model": "BZW-886+Q2", "inventory": "ОБ.094", "name": "Станок резки провода с роторной зачисткой мал."}
+BIG = {"model": "BZW-50X", "inventory": "ОБ.095", "name": "Станок резки провода с роторной зачисткой больш."}
+
+
+def test_coax_cut_with_stripping_keeps_only_the_chosen_rotary_machine():
+    # Owner 14.10: the card lists both rotary machines; the ETK names the one the technologist chose.
+    assert [model for _, model, _ in _equipment(_coax_cut_strip(None, ["A", "B"]))] == ["BZW-886+Q2", "BZW-50X"]
+    assert _equipment(_coax_cut_strip(SMALL, ["A", "B"])) == [("1", "BZW-886+Q2", "ОБ.094")]
+    assert _equipment(_coax_cut_strip(BIG, ["A"], "CUT_COAX+1strip")) == [("1", "BZW-50X", "ОБ.095")]
+
+
+def test_coax_cut_with_stripping_carries_both_ends_for_the_sketch():
+    both = _coax_cut_strip(SMALL, ["A", "B"])
+    assert both["fields"]["coax"]["connector"] == "MMCX-male" and both["fields"]["coax"]["l3"] == "10"
+    assert both["fields"]["coaxB"]["connector"] == "N-male" and both["fields"]["coaxB"]["l3"] == "9"
+    assert both["semis"] == []
+    one = _coax_cut_strip(SMALL, ["A"], "CUT_COAX+1strip")
+    assert "coaxB" not in one["fields"]
+
+
+def test_machine_tooling_puts_the_chosen_machine_in_place_of_a_card_that_lacks_it():
+    from app.modules.techcards.etk_builder import _machine_tooling
+
+    def row(section: str, number: str, name: str, inventory: str = "") -> dict:
+        return {"section": section, "number": number, "name": name, "inventory_number": inventory, "program": "-",
+                "parameters": "", "norm": "", "unit": ""}
+
+    tooling = [row("Инструмент", "1", "Линейка"), row("Оборудование", "1", "BZW-50X | Станок резки провода с роторной зачисткой больш.", "ОБ.095"),
+               row("Оборудование", "2", "Термофен")]
+    result = _machine_tooling(tooling, SMALL)
+    assert [(tool["section"], tool["number"], tool["name"], tool["inventory_number"]) for tool in result] == [
+        ("Инструмент", "1", "Линейка", ""),
+        ("Оборудование", "1", "BZW-886+Q2 | Станок резки провода с роторной зачисткой мал.", "ОБ.094"),
+        ("Оборудование", "2", "Термофен", ""),
+    ]
+    no_rotary = _machine_tooling([row("Инструмент", "1", "Линейка")], BIG)
+    assert [tool["name"] for tool in no_rotary] == ["Линейка", "BZW-50X | Станок резки провода с роторной зачисткой больш."]
+
+
 def test_720_result_and_input_carry_quantities_like_supplymap_etk_result():
     """SUPPLYMAP etkResult_/etkSemis_: сторона B опрессовки отдаёт одну заготовку на изделие, её норма = партия."""
     config = kit("720К.-КБ1")["config"]

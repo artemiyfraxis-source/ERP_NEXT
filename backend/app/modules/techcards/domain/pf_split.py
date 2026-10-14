@@ -13,6 +13,7 @@ Pure: operations (`RouteOp` with type, code, side and the generator's opKey) and
 from __future__ import annotations
 
 from decimal import Decimal
+import re
 from typing import Sequence
 
 from .route import Block, Edge, Route, RouteError, RouteOp, _ordered, derive_route, validate_route
@@ -25,6 +26,11 @@ STAGES = (WIRES, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
 CRIMP_STAGES = frozenset({CRIMPED, CRIMPED_A, CRIMPED_B})
 WIRE_CUTS = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"})
 TUBE_CUTS = frozenset({"cutTut", "coaxCutTut"})
+# Coax stripping as its own operation prepares the cut cable, not a side (owner 14.10: «зачистка идёт до всего
+# остального»): cut, strip A, strip B are one semi-finished product with the cut.
+COAX_STRIPS = frozenset({"coaxStrip"})
+# Cutting coax with stripping on the rotary machine (CUT_COAX+1strip / +2strip).
+_COAX_CUT_STRIP = re.compile(r"^CUT_COAX\+\d*STRIP")
 # Crimping the ends by hand: terminals and lugs (a double crimp is the same operation), splices.
 END_CRIMPS = frozenset({"prsTerm", "splice"})
 _SIDES = {"A": SIDE_A, "А": SIDE_A, "B": SIDE_B, "В": SIDE_B}
@@ -38,7 +44,7 @@ def _cut_stage(op: RouteOp) -> str:
     code = op.code.upper()
     if op.type in TUBE_CUTS or code.startswith("CUT_TUT"):
         return TUBES
-    if op.type in WIRE_CUTS or code.startswith("CUT_"):
+    if op.type in WIRE_CUTS or op.type in COAX_STRIPS or code.startswith("CUT_"):
         return WIRES
     return ""
 
@@ -55,7 +61,7 @@ def _wire_end_prep(op: RouteOp) -> bool:
 
 
 def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
-    """The stage of every operation (by its ETK position): wire and cable cuts — cut wires, TUT and heat-shrink cuts —
+    """The stage of every operation (by its ETK position): wire and cable cuts and coax stripping — cut wires, TUT and heat-shrink cuts —
     cut tubes; the end preparation of a side before the last side operation — the crimp of that side (`crimpedA` /
     `crimpedB`, placed right before the side: cut, crimp A, side A, crimp B, side B — owner 14.10) when some of it is
     a hand crimp (all crimped on the cutting machine — no card of its own, stripping and tinning stay with the side);
@@ -91,8 +97,9 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
 
 def _title(stage: str, ops: Sequence[RouteOp]) -> str:
     if stage == WIRES:
-        if ops and all(op.type == "coaxCut" for op in ops):
-            return "Нарезанный кабель"
+        if ops and all(op.type == "coaxCut" or op.type in COAX_STRIPS for op in ops):
+            stripped = any(op.type in COAX_STRIPS or _COAX_CUT_STRIP.match(op.code.upper()) for op in ops)
+            return "Нарезанный и разделанный кабель" if stripped else "Нарезанный кабель"
         return "Нарезанные и обжатые провода" if any(op.type == "cutWireCrimp" for op in ops) else "Нарезанные провода"
     if stage == TUBES:
         return "Нарезанные трубки"

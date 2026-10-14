@@ -204,6 +204,7 @@ def test_unsided_splices_stay_in_the_shared_crimp_before_the_first_side():
 
 
 def test_coax_has_no_crimp_pf_and_side_b_crimp_after_a_finished_lug_is_the_product():
+    # Coax stripping goes with the cut cable, never into a side (owner 14.10: «зачистка идёт до всего остального»).
     coax = [
         RouteOp(1, "coaxCut", "CUT_COAX", "Кабель"),
         RouteOp(2, "coaxStrip", "STRIP_COAX", "Разделка А", side="A"),
@@ -211,12 +212,18 @@ def test_coax_has_no_crimp_pf_and_side_b_crimp_after_a_finished_lug_is_the_produ
         RouteOp(4, "coaxPin", "SOLDER_PIN", "Пайка А", side="A"),
         RouteOp(5, "coaxPin", "SOLDER_PIN", "Пайка В", side="B"),
     ]
-    assert op_stages(coax) == {1: "wires", 2: "A", 3: "B", 4: "A", 5: "B"}
+    assert op_stages(coax) == {1: "wires", 2: "wires", 3: "wires", 4: "A", 5: "B"}
     route = generator_split(coax, "Кабель коаксиальный")
     assert [(block.key, block.ops, block.final) for block in route.blocks] == [
-        ("wires", (1,), False), ("A", (2, 4), False), ("B", (3, 5), True),
+        ("wires", (1, 2, 3), False), ("A", (4,), False), ("B", (5,), True),
     ]
-    assert [block.name for block in route.blocks][0] == "Нарезанный кабель"
+    assert [block.name for block in route.blocks][0] == "Нарезанный и разделанный кабель"
+    cut_only = [RouteOp(1, "coaxCut", "CUT_WIRE_auto", "Кабель"), RouteOp(2, "coaxPin", "SOLDER_PIN", "Пайка А", side="A"),
+                RouteOp(3, "coaxPin", "SOLDER_PIN", "Пайка В", side="B")]
+    assert generator_split(cut_only, "Кабель коаксиальный").blocks[0].name == "Нарезанный кабель"
+    machine = [RouteOp(1, "coaxCut", "CUT_COAX+2strip", "Резка с разделкой (А и В)"), *cut_only[1:]]
+    assert op_stages(machine) == {1: "wires", 2: "A", 3: "B"}
+    assert generator_split(machine, "Кабель коаксиальный").blocks[0].name == "Нарезанный и разделанный кабель"
     # A crimp after the last side op is the product's, not a ПФ of its own.
     lug = [OWNER_CABLE[0], OWNER_CABLE[1], OWNER_CABLE[2], OWNER_CABLE[3]]
     assert op_stages(lug) == {1: "wires", 2: "crimpedA", 3: "A", 4: "B"}

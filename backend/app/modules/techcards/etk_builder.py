@@ -589,6 +589,60 @@ def _is_mm(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
 
 
+def _coax_strip_sizes(config: Mapping[str, Any], side_name: str) -> dict[str, Any]:
+    """Strip sizes of one coax end (L1–L3, D1–D3 of БД.КОАКС) for the sketch etkDrawCoax."""
+    coax = config.get("coax") if isinstance(config.get("coax"), Mapping) else {}
+    side = coax.get("sideB" if side_name == "B" else "sideA")
+    side = side if isinstance(side, Mapping) else {}
+    return {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "", **{
+        key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
+
+
+def _coax_machine(op: Mapping[str, Any]) -> dict[str, str]:
+    """The rotary machine the technologist chose for cutting coax with stripping (generator, owner 14.10): model,
+    inventory number and name from БД.ОБ; {} — no choice (the card's equipment stays as it is)."""
+    machine = op.get("machine")
+    if op.get("type") != "coaxCut" or not isinstance(machine, Mapping) or not str(machine.get("model") or "").strip():
+        return {}
+    return {key: str(machine.get(key) or "").strip() for key in ("model", "inventory", "name")}
+
+
+# A rotary cut-and-strip machine in a card's equipment («BZW-886+Q2 | Станок резки провода с роторной зачисткой мал.»).
+_ROTARY_MACHINE = re.compile(r"роторн", re.IGNORECASE)
+
+
+def _machine_tooling(tooling: list[dict[str, Any]], machine: Mapping[str, str]) -> list[dict[str, Any]]:
+    """The chosen machine wins over the card's list: of the rotary machines in «Оборудование» only the chosen one stays
+    (the card CUT_COAX+…strip lists both, «мал.» and «больш.»); a card without it gets it in place of its rotary machine
+    (or at the end of «Оборудование»). The equipment rows are renumbered."""
+    model = machine["model"].casefold()
+    own = lambda tool: tool["section"] == "Оборудование" and (
+        model in tool["name"].casefold() or (machine["inventory"] and tool["inventory_number"] == machine["inventory"]))
+    rotary = lambda tool: tool["section"] == "Оборудование" and bool(_ROTARY_MACHINE.search(tool["name"]))
+    chosen = {
+        "section": "Оборудование", "number": "", "name": " | ".join(part for part in (machine["model"], machine["name"]) if part),
+        "inventory_number": machine["inventory"], "program": "", "parameters": "", "norm": "", "unit": "",
+    }
+    has_own = any(own(tool) for tool in tooling)
+    result: list[dict[str, Any]] = []
+    placed = has_own
+    for tool in tooling:
+        if own(tool) or not rotary(tool):
+            result.append(tool)
+        elif not placed:
+            result.append({**chosen, "program": tool["program"], "parameters": tool["parameters"]})
+            placed = True
+    if not placed:
+        last = max((index for index, tool in enumerate(result) if tool["section"] == "Оборудование"), default=len(result) - 1)
+        result.insert(last + 1, chosen)
+    number = 0
+    for index, tool in enumerate(result):
+        if tool["section"] == "Оборудование":
+            number += 1
+            result[index] = {**tool, "number": str(number)}
+    return result
+
+
 def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping[str, Any]) -> dict[str, Any]:
     operation_type = str(op.get("type") or "")
     fields: dict[str, Any] = {}
@@ -615,11 +669,18 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         fields["twist"] = {"pitch": twist.get("pitch") or "", "pairs": "\n".join(pairs), "count": len(pairs) or 1}
     if operation_type == "coaxStrip":
         # SUPPLYMAP TcBuild.gs etkFields_: размеры разделки стороны (L1–L3, D1–D3 из БД.КОАКС) для эскиза etkDrawCoax_.
-        coax = config.get("coax") if isinstance(config.get("coax"), Mapping) else {}
-        side = coax.get("sideB" if op.get("side") == "B" else "sideA")
-        side = side if isinstance(side, Mapping) else {}
-        fields["coax"] = {"cable": coax.get("cableArt") or "", "connector": side.get("article") or "", **{
-            key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
+        fields["coax"] = _coax_strip_sizes(config, "B" if op.get("side") == "B" else "A")
+    if operation_type == "coaxCut" and isinstance(op.get("stripSides"), list):
+        # Резка с разделкой на роторном станке (владелец 14.10): размеры разделки обоих концов — в эскиз операции;
+        # голый конец без разъёма размеров не имеет.
+        fields["coax"] = _coax_strip_sizes(config, "A")
+        if "B" in op["stripSides"]:
+            side_b = _coax_strip_sizes(config, "B")
+            if side_b["connector"]:
+                fields["coaxB"] = side_b
+    machine = _coax_machine(op)
+    if machine:
+        fields["machine"] = machine
     if operation_type == "insMark" and _kd_marks(_mark_items(op)):
         fields["marks"] = _mark_rows(op, config)
     wires = _wires(op, config)
@@ -862,7 +923,9 @@ def _resolve_card(
             "inventory_number": tool.inventory_number, "program": program,
             "parameters": substitute(tool.parameters), "norm": tool.norm, "unit": tool.unit,
         })
-    step_text = " ".join(step["text"] for step in steps)
+    if isinstance(fields.get("machine"), Mapping):
+        tooling = _machine_tooling(tooling, fields["machine"])
+    step_text =" ".join(step["text"] for step in steps)
     for pattern, name, inventory in STEP_TOOLS:
         if pattern.search(step_text) and not any(pattern.search(tool["name"]) for tool in tooling):
             number = sum(1 for tool in tooling if tool["section"] == "Инструмент") + 1

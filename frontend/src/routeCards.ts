@@ -150,6 +150,11 @@ const STAGES: GenStage[] = ["wires", "tubes", "crimped", "crimpedA", "A", "crimp
 export const CRIMP_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["crimped", "crimpedA", "crimpedB"]);
 const WIRE_CUTS = new Set(["cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"]);
 const TUBE_CUTS = new Set(["cutTut", "coaxCutTut"]);
+/** Разделка коаксиала отдельной операцией готовит нарезанный кабель (владелец 14.10: «зачистка идёт до всего остального»),
+    а не сторону: резка, разделка А, разделка В — один полуфабрикат с резкой. */
+const COAX_STRIPS = new Set(["coaxStrip"]);
+/** Резка коаксиала с разделкой на роторном станке (CUT_COAX+1strip / +2strip). */
+const COAX_CUT_STRIP = /^CUT_COAX\+\d*STRIP/;
 /** Обжим концов руками: терминалы и наконечники (и двойной обжим — та же операция), сростки. */
 const END_CRIMPS = new Set(["prsTerm", "splice"]);
 
@@ -164,10 +169,12 @@ function wireEndPrep(op: RouteOp): boolean {
 
 function cutStage(op: RouteOp): GenStage | null {
   const code = op.code.toUpperCase();
-  return TUBE_CUTS.has(op.type) || code.startsWith("CUT_TUT") ? "tubes" : WIRE_CUTS.has(op.type) || code.startsWith("CUT_") ? "wires" : null;
+  if (TUBE_CUTS.has(op.type) || code.startsWith("CUT_TUT")) return "tubes";
+  return WIRE_CUTS.has(op.type) || COAX_STRIPS.has(op.type) || code.startsWith("CUT_") ? "wires" : null;
 }
 
-/** Полуфабрикат каждой операции (по номеру в ЭТК): резка проводов и кабеля — «Нарезанные провода», резка ТУТ и
+/** Полуфабрикат каждой операции (по номеру в ЭТК): резка проводов и кабеля и разделка коаксиала — «Нарезанные провода»
+    («Нарезанный и разделанный кабель»), резка ТУТ и
     термоусадки — «Нарезанные трубки»; подготовка концов стороны до последней операции сторон — обжим этой стороны
     (`crimpedA` / `crimpedB`, прямо перед стороной: резка, обжим А, сторона А, обжим В, сторона В — владелец 14.10),
     если среди неё есть обжим руками (обжато всё на станке резки — отдельной карточки нет, зачистка и лужение остаются
@@ -210,7 +217,10 @@ export type GenLink = { id: string; from: GenStage; to: GenStage; qty: number | 
 
 function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
   if (stage === "wires") {
-    if (ops.length && ops.every((op) => op.type === "coaxCut")) return "Нарезанный кабель";
+    if (ops.length && ops.every((op) => op.type === "coaxCut" || COAX_STRIPS.has(op.type))) {
+      const stripped = ops.some((op) => COAX_STRIPS.has(op.type) || COAX_CUT_STRIP.test(op.code.toUpperCase()));
+      return stripped ? "Нарезанный и разделанный кабель" : "Нарезанный кабель";
+    }
     return ops.some((op) => op.type === "cutWireCrimp") ? "Нарезанные и обжатые провода" : "Нарезанные провода";
   }
   if (stage === "tubes") return "Нарезанные трубки";

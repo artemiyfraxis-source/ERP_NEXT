@@ -138,9 +138,77 @@ it("coax kit opens the КОАКС tab and orders angled side B before the second
   const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
   expect(cfg.mode).toBe("coax");
   expect(cfg.ops.map((op: any) => op.type)).toEqual([
-    "coaxCut", "coaxStrip", "coaxStrip", "coaxPin", "coaxInsSleeve", "coaxPin", "coaxHousing", "coaxShield",
+    "coaxCut", "coaxPin", "coaxInsSleeve", "coaxPin", "coaxHousing", "coaxShield",
   ]);
   expect(cfg.coax.sideB).toMatchObject({ article: "MCX-JW R/A", pinType: "внутри корпуса", type: "" });
+  const separate = { ...S, coax: { ...S.coax, stripMode: "separate" as const } };
+  expect((makeGen(D, separate).buildConfig() as Record<string, any>).ops.map((op: any) => op.type)).toEqual([
+    "coaxCut", "coaxStrip", "coaxStrip", "coaxPin", "coaxInsSleeve", "coaxPin", "coaxHousing", "coaxShield",
+  ]);
+});
+
+describe("коакс: резка с разделкой на роторном станке или резка, затем разделка А и В (владелец 14.10)", () => {
+  const coaxTemplates = [...templates,
+    { id: "cc1", title: "CUT_COAX+1strip | Резка с разделкой", category: "Резка с разделкой" },
+    { id: "cc2", title: "CUT_COAX+2strip | Резка с разделкой", category: "Резка с разделкой" },
+    { id: "strip", title: "STRIP_COAX_auto | Разделка коаксиала", category: "Разделка" },
+  ];
+  const kit = (withB = true) => [
+    { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 1.02 },
+    { id: "a", type: "Соед", name: "MMCX-Male RG316", art: "MMCX-Male RG316", qty: 1 },
+    ...(withB ? [{ id: "b", type: "Соед", name: "N-Male RG316", art: "N-Male RG316", qty: 1 }] : []),
+    { id: "t", type: "ТУТ", name: "ТУТ 3/1,5", art: "ТУТ 3/1,5", qty: 0.04 },
+  ];
+  const coaxData = (withB = true, d3 = "2,5"): GenData => ({
+    ...data(kit(withB), "Кабельная сборка MMCX-Male to N-Male RG316 1m"), templates: coaxTemplates,
+    coaxCableDia: d3 ? { byCable: { rg316: { d1: "0,51", d2: "1,52", d3 } } } : null,
+  });
+  const opsOf = (D: GenData, S: GenState) => makeGen(D, S).getActiveOps();
+
+  it("by default cuts and strips both ends in one operation first, ТУТ cut after it", () => {
+    const D = coaxData();
+    const S = initState(D);
+    expect(S.coax).toMatchObject({ stripMode: "machine", machine: "" });
+    const ops = opsOf(D, S);
+    expect(ops.slice(0, 2).map((op) => [op.type, op.label, op.tmplHint])).toEqual([
+      ["coaxCut", "Резка с разделкой (А и В)", "CUT_COAX+2strip"], ["coaxCutTut", "Резка ТУТ ×2", "CUT_TUT_short"],
+    ]);
+    expect(ops.some((op) => op.type === "coaxStrip")).toBe(false);
+    const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
+    expect(cfg.ops[0]).toMatchObject({ type: "coaxCut", opKey: "coaxCutStrip", templateId: "cc2", stripSides: ["A", "B"],
+      machine: { model: "BZW-886+Q2", inventory: "ОБ.094" } });
+  });
+
+  it("picks the small machine for a cable up to Ø 5,5 mm, the big one for a thicker or unknown cable, the technologist's choice wins", () => {
+    const thin = coaxData();
+    expect(makeGen(thin, initState(thin)).coaxMachine_()).toBe("small");
+    const thick = coaxData(true, "7,2");
+    expect(makeGen(thick, initState(thick)).coaxMachine_()).toBe("big");
+    expect(opsOf(thick, initState(thick))[0].machine).toBe("BZW-50X");
+    const unknown = coaxData(true, "");
+    expect(makeGen(unknown, initState(unknown)).coaxMachine_()).toBe("big");
+    const S = initState(thin);
+    const chosen = { ...S, coax: { ...S.coax, machine: "big" as const } };
+    expect(makeGen(thin, chosen).coaxMachine_()).toBe("big");
+    expect((makeGen(thin, chosen).buildConfig() as Record<string, any>).ops[0].machine).toMatchObject({ model: "BZW-50X", inventory: "ОБ.095" });
+  });
+
+  it("one end only takes CUT_COAX+1strip; a stripped bare end B — +2strip", () => {
+    const D = coaxData(false);
+    const S = initState(D);
+    expect(opsOf(D, S)[0]).toMatchObject({ label: "Резка с разделкой (А)", tmplHint: "CUT_COAX+1strip", stripSides: ["A"] });
+    const bare = { ...S, coax: { ...S.coax, stripB: true } };
+    expect(opsOf(D, bare)[0]).toMatchObject({ label: "Резка с разделкой (А) и зачисткой (В)", tmplHint: "CUT_COAX+2strip", stripSides: ["A", "B"] });
+  });
+
+  it("separately: cut, strip A, strip B, then the ТУТ cut and everything else", () => {
+    const D = coaxData();
+    const S = initState(D);
+    const ops = opsOf(D, { ...S, coax: { ...S.coax, stripMode: "separate" } });
+    expect(ops.slice(0, 4).map((op) => op.label)).toEqual(["Резка кабеля", "Разделка коаксиала (А)", "Разделка коаксиала (B)", "Резка ТУТ ×2"]);
+    expect(ops.slice(0, 3).map((op) => op.tmplHint)).toEqual(["CUT_WIRE_auto", "STRIP_COAX_auto", "STRIP_COAX_auto"]);
+    expect(ops.some((op) => op.machine)).toBe(false);
+  });
 });
 
 it("takes coax diameters from СПР.КАБ by the BOM cable, lengths from the connector record", () => {

@@ -82,6 +82,16 @@ export type WireEntry = { idx: number; compId: string; length: number; qty: numb
 export type WrapKind = "tape" | "braid" | "under";
 export type WrapSlot = { mat: string; kind: WrapKind; len: string };
 export type CoaxSide = { art: string; name: string } | null;
+export type CoaxStripMode = "machine" | "separate";
+export type CoaxMachineKey = "small" | "big";
+/** Роторные станки резки с разделкой коаксиала (БД.ОБ, категория «Резка с разделкой»). Карточки CUT_COAX+1strip /
+ *  +2strip перечисляют оба, малый — «кабель Ø до 5,5 мм»; в ЭТК остаётся выбранный (etk_builder `_machine_tooling`). */
+export const COAX_MACHINES: Record<CoaxMachineKey, { model: string; inventory: string; name: string; label: string; hint: string }> = {
+  small: { model: "BZW-886+Q2", inventory: "ОБ.094", name: "Станок резки провода с роторной зачисткой мал.", label: "BZW-886+Q2 (малый)", hint: "кабель Ø до 5,5 мм" },
+  big: { model: "BZW-50X", inventory: "ОБ.095", name: "Станок резки провода с роторной зачисткой больш.", label: "BZW-50X (большой)", hint: "кабель Ø свыше 5,5 мм" },
+};
+/** Наибольший Ø оболочки кабеля для малого станка, мм — из карточки CUT_COAX+2strip («кабель Ø до 5,5 мм»). */
+export const COAX_SMALL_MACHINE_MAX_MM = 5.5;
 export type OpTimes = { tmpl: string; tPrep: string; tOp: string; tMachine: string };
 
 /** Ответвление провода (владелец 12.10: «с одного контакта в два вывести»): на контакт `pin` разъёма `from` пришёл провод `main`,
@@ -137,6 +147,9 @@ export type GenState = {
   coax: {
     len: string; tutEnabled: boolean; tutLen: string; pinA: string; pinB: string; coverA: string; coverB: string;
     stripB: boolean; shield: string; sideA: CoaxSide; sideB: CoaxSide;
+    /** Разделка (владелец 14.10): «machine» — резка с разделкой на роторном станке одной операцией, «separate» — резка,
+     *  затем разделка А и В. Станок: "" — по Ø кабеля (coaxMachineAuto_), иначе выбор технолога. */
+    stripMode: CoaxStripMode; machine: "" | CoaxMachineKey;
   };
   selectedTemplates: Record<string, string>;
   manualTemplates: string[];
@@ -157,6 +170,8 @@ export type OpSpec = {
   harness?: boolean; units?: number; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
   wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
   sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
+  /** Коакс, резка с разделкой на станке: модель станка (COAX_MACHINES) и разделываемые концы. */
+  machine?: string; stripSides?: Side[];
 };
 
 // ── Константы TcGenInline ─────────────────────────────────────────────────
@@ -438,7 +453,7 @@ export function emptyState(): GenState {
     tin: { enabled: false, wires: null, stripLen: "5" },  // зачистка под лужение по умолчанию 5 мм (владелец 12.10.2026)
     coax: {
       len: "", tutEnabled: true, tutLen: "", pinA: "пайка", pinB: "пайка", coverA: "", coverB: "",
-      stripB: false, shield: "обжим", sideA: null, sideB: null,
+      stripB: false, shield: "обжим", sideA: null, sideB: null, stripMode: "machine", machine: "",
     },
     selectedTemplates: {}, manualTemplates: [], times: {}, materialsSheet: false, opOrder: [],
   };
@@ -1248,6 +1263,17 @@ export function makeGen(D: GenData, S: GenState) {
     }
     return { text: `⚠ «${s.art}» нет в БД.КОАКС — добавьте ниже`, rec, missing: true };
   }
+  /** Ø оболочки коакс-кабеля, мм: D3 из СПР.КАБ по кабелю (запасной — запись разъёма), иначе Ø из таблицы проводов; 0 — неизвестен. */
+  function coaxCableOuterMm_() {
+    const d3 = parseDecimal_(String(coaxDia_(S.coax.sideA ? coaxRecForSide_("A") : null).d3 || "")) || 0;
+    return d3 > 0 ? d3 : Number(lookupWireDia_(coaxBomCable_())) || 0;
+  }
+  /** Станок по Ø кабеля: тонкий (до 5,5 мм, как в карточке CUT_COAX+2strip) — малый, толще или Ø неизвестен — большой. */
+  function coaxMachineAuto_(): CoaxMachineKey {
+    const dia = coaxCableOuterMm_();
+    return dia > 0 && dia <= COAX_SMALL_MACHINE_MAX_MM ? "small" : "big";
+  }
+  const coaxMachine_ = (): CoaxMachineKey => S.coax.machine || coaxMachineAuto_();
   function getActiveOpsCoax_(): OpSpec[] {
     if (!S.coax.sideA) return [];
     const sideB = !!S.coax.sideB;
@@ -1259,11 +1285,21 @@ export function makeGen(D: GenData, S: GenState) {
     const nSides = sideB ? 2 : 1;
     const x = (n: number) => (n > 1 ? ` ×${n}` : "");
     const tutOn = S.coax.tutEnabled;
-    ops.push({ type: "coaxCut", opKey: "coaxCut", label: "Резка кабеля", tmplHint: "CUT_WIRE_auto" });
+    // Резка и разделка — до всего остального (владелец 14.10): либо резка с разделкой на роторном станке одной
+    // операцией, либо резка, разделка А, разделка В; резка ТУТ — после них.
+    const stripB = sideB || S.coax.stripB;
+    if (S.coax.stripMode !== "separate") {
+      const machine = COAX_MACHINES[coaxMachine_()];
+      ops.push({ type: "coaxCut", opKey: "coaxCutStrip", cat: "Резка с разделкой",
+        label: sideB ? "Резка с разделкой (А и В)" : stripB ? "Резка с разделкой (А) и зачисткой (В)" : "Резка с разделкой (А)",
+        tmplHint: stripB ? "CUT_COAX+2strip" : "CUT_COAX+1strip", machine: machine.model, stripSides: stripB ? ["A", "B"] : ["A"] });
+    } else {
+      ops.push({ type: "coaxCut", opKey: "coaxCut", label: "Резка кабеля", tmplHint: "CUT_WIRE_auto" });
+      ops.push({ type: "coaxStrip", side: "A", opKey: "coaxStripA", label: "Разделка коаксиала (А)", tmplHint: "STRIP_COAX_auto" });
+      if (sideB) ops.push({ type: "coaxStrip", side: "B", opKey: "coaxStripB", label: "Разделка коаксиала (B)", tmplHint: "STRIP_COAX_auto" });
+      else if (S.coax.stripB) ops.push({ type: "coaxStrip", side: "B", opKey: "coaxStripB", label: "Зачистка стороны B (голый конец)", tmplHint: "STRIP_COAX_auto" });
+    }
     if (tutOn) ops.push({ type: "coaxCutTut", opKey: "coaxCutTut", label: `Резка ТУТ${x(nSides)}`, units: nSides, tmplHint: "CUT_TUT_short" });
-    ops.push({ type: "coaxStrip", side: "A", opKey: "coaxStripA", label: "Разделка коаксиала (А)", tmplHint: "STRIP_COAX_auto" });
-    if (sideB) ops.push({ type: "coaxStrip", side: "B", opKey: "coaxStripB", label: "Разделка коаксиала (B)", tmplHint: "STRIP_COAX_auto" });
-    else if (S.coax.stripB) ops.push({ type: "coaxStrip", side: "B", opKey: "coaxStripB", label: "Зачистка стороны B (голый конец)", tmplHint: "STRIP_COAX_auto" });
     const pinOp = (sd: Side, pin: string): OpSpec => ({ type: "coaxPin", side: sd, opKey: "coaxPin" + sd, label: `Пайка центрального контакта (${sd === "B" ? "B" : "А"})`, tmplHint: pinHint(pin) });
     const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ${x(nSides)}`, units: nSides, tmplHint: "INS_TUT" } : null);
     const sleeveOp = (): OpSpec => ({ type: "coaxInsSleeve", opKey: "coaxInsSleeve", label: `Монтаж втулки экрана${x(nSides)}`, units: nSides, tmplHint: "INS_SLEEVE_coax" });
@@ -1741,8 +1777,11 @@ export function makeGen(D: GenData, S: GenState) {
     } : null);
     const ops = getActiveOps().map((spec) => {
       const row = opRow(spec);
+      const machine = spec.machine ? Object.values(COAX_MACHINES).find((m) => m.model === spec.machine) : null;
       return { type: spec.type, opKey: spec.opKey, side: spec.side || "", units: spec.units || 1, templateId: row.templateId,
-        opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine };
+        opNum: row.matched ? (row.matched.opNumber || "") : "", tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
+        ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
+        ...(spec.stripSides ? { stripSides: spec.stripSides } : {}) };
     });
     const tut = coaxBomTut_(), cable = coaxBomCableComp_();
     return {
@@ -1948,7 +1987,7 @@ export function makeGen(D: GenData, S: GenState) {
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
-    coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
+    coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
     markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
