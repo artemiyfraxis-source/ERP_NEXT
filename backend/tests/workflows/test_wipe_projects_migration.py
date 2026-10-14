@@ -76,6 +76,8 @@ def database(tmp_path, monkeypatch):
         connection.execute(text("ALTER TABLE production_boxes ADD COLUMN code VARCHAR(64)"))
         # 0120: операции ЭТК полуфабриката.
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN etk_ops JSON"))
+        # 0121: ссылка на папку проекта.
+        connection.execute(text("ALTER TABLE techcard_kitsets ADD COLUMN folder_url VARCHAR(1024)"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
         # 0106: «нет на складе» on a kit line.

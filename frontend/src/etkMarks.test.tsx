@@ -85,3 +85,69 @@ it("the marks table gets «Длина, мм» only when a tube row has it, on sc
   expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks: withLength }), []))).toMatch(/Где[\s\S]*Длина, мм[\s\S]*На изделие/);
   expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks }), []))).not.toContain("Длина, мм");
 });
+
+it("marks without the «№ изделия» token render and print byte-identical to the ETK before numbering (snapshot taken on the old code)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const old = [...marks, { target: "Изделие КБ1", text: "КБ1-№ 1 {N}", material: "Хлястик", place: "на изделии", qty: "1", batch: "10" }];
+  const { unmount } = render(<EtkSheet card={techcard({ marks: old })} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  const html = table.outerHTML;
+  expect(html).toMatchSnapshot("screen");
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  unmount();
+  // В задании старые метки — те же байты, что в техкарте.
+  render(<EtkSheet card={techcard({ marks: old })} principal={principal} onChange={() => undefined} task />);
+  expect((await screen.findByRole("table", { name: "Метки по КД" })).outerHTML).toBe(html);
+  expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks: old }), []))).toMatchSnapshot("print");
+  // Задание без меток с «№ изделия»: ни кнопки печати надписей, ни лишнего листа.
+  expect(screen.queryByRole("button", { name: /Печать надписей/ })).toBeNull();
+  expect(etkPrintPages(techcard({ marks: old }), [], {}, { first: 1, last: 10, task: "ПЗ-7" }))
+    .toEqual(etkPrintPages(techcard({ marks: old }), []));
+});
+
+const numbered = [
+  { target: "Изделие КБ1", text: "КБ1-{№:3}", material: "Хлястик", place: "на изделии", qty: "1", batch: "10" },
+  marks[0],
+  { target: "Провод W1", text: "W1/{№}", material: "Термотрубка", place: "на обоих концах", qty: "2", batch: "20" },
+];
+
+it("outside a task the «№ изделия» inscription shows its template and «№ по партии», with no label print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  render(<EtkSheet card={techcard({ marks: numbered })} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  expect(within(table).getAllByRole("row").slice(1).map((row) => (row as HTMLTableRowElement).cells[2].textContent)).toEqual([
+    "КБ1-{№} → № по партии", "X1", "W1/{№} → № по партии",
+  ]);
+  expect(screen.queryByRole("button", { name: /Печать надписей/ })).toBeNull();
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks: numbered }), []));
+  expect(html).toContain("КБ1-{№} → № по партии");
+  expect(html).not.toContain("Надписи меток по КД");
+});
+
+it("in a task the inscription shows the task's numbers and «Печать надписей» prints one row per item", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const serial = { first: 11, last: 15, task: "ПЗ-0042" };
+  const card = techcard({ marks: numbered });
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} task serial={serial} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  expect(within(table).getAllByRole("row").slice(1).map((row) => (row as HTMLTableRowElement).cells[2].textContent)).toEqual([
+    "КБ1-{№} → КБ1-011 … КБ1-015", "X1", "W1/{№} → W1/11 … W1/15",
+  ]);
+  expect(screen.getByRole("button", { name: "Печать надписей № 11–15" })).toBeInTheDocument();
+  expect(screen.getByText("5 изделий задания")).toBeInTheDocument();
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+
+  const pages = etkPrintPages(card, [], {}, serial);
+  const labels = pages[pages.length - 1];
+  expect(labels.title).toBe("Надписи меток по КД");
+  expect(labels.subtitle).toBe("Жгут · P-1 КБ1 · задание ПЗ-0042 · изделия № 11–15");
+  expect(labels.blocks).toEqual([{ table: {
+    columns: ["№ изделия", "Изделие КБ1 · Хлястик", "Провод W1 · Термотрубка · 2 шт на изделие"],
+    rows: [["11", "КБ1-011", "W1/11"], ["12", "КБ1-012", "W1/12"], ["13", "КБ1-013", "W1/13"], ["14", "КБ1-014", "W1/14"], ["15", "КБ1-015", "W1/15"]],
+  } }]);
+  expect(buildPrintDocumentHtml("ТК", pages)).toContain("КБ1-{№} → КБ1-011 … КБ1-015");
+});

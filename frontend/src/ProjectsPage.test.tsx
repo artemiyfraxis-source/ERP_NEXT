@@ -360,6 +360,35 @@ describe("ProjectsPage", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ url: linked.calc_source, number: "708К.4" });
   });
 
+  it("shows the project folder link and sets it from the «Ещё» menu with a Russian error for a bad address", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    const folder = "https://drive.google.com/drive/folders/abc";
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/folder" && init?.method === "PUT") return json({ card: { ...card, folder_url: JSON.parse(String(init.body)).url || null } });
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    await screen.findByRole("button", { name: "Ещё действия с проектом 708К.4" });
+    expect(screen.queryByRole("link", { name: "папка" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ещё действия с проектом 708К.4" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Папка проекта/ }));
+    const input = await screen.findByLabelText("Ссылка на папку");
+    fireEvent.change(input, { target: { value: "drive.google.com/x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("http://");
+    fireEvent.change(input, { target: { value: folder } });
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+    const link = await screen.findByRole("link", { name: "папка" });
+    expect(link.getAttribute("href")).toBe(folder);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toBe("noopener");
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/folder"))!;
+    expect(JSON.parse(String(init?.body))).toEqual({ url: folder });
+  });
+
   it("opens the assembly techcard right inside the project card, as SUPPLYMAP does", async () => {
     const fetchMock = vi.mocked(fetch);
     const base = fetchMock.getMockImplementation()!;

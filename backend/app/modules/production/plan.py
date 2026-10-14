@@ -436,6 +436,8 @@ class SupplySummary:
     request: int = 0
     customer_supplied: int = 0
     customer_supplied_stock: int = 0
+    # Bought positions (paid: «В пути», «Карантин», or already «Готово»), customer-supplied ones aside — the ЗКП column.
+    purchased: int = 0
     eta: str = ""
 
 
@@ -447,7 +449,7 @@ def summarize_supply(positions: Iterable[SupplyPosition]) -> dict[str, SupplySum
         project = normalize_project_number(position.project)
         row = counters.setdefault(project, {
             "total": 0, "stock": 0, "transit": 0, "buying": 0, "request": 0,
-            "customer_supplied": 0, "customer_supplied_stock": 0, "eta": "",
+            "customer_supplied": 0, "customer_supplied_stock": 0, "purchased": 0, "eta": "",
         })
         row["total"] += 1
         row[position.bucket] += 1
@@ -455,6 +457,8 @@ def summarize_supply(positions: Iterable[SupplyPosition]) -> dict[str, SupplySum
             row["customer_supplied"] += 1
             if position.bucket == "stock":
                 row["customer_supplied_stock"] += 1
+        elif position.bucket in {"transit", "stock"}:
+            row["purchased"] += 1
         current_eta = str(row["eta"])
         if position.bucket != "stock" and (_date(position.eta) or date.min) > (_date(current_eta) or date.min):
             row["eta"] = position.eta

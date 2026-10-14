@@ -44,3 +44,31 @@ it("«Длина, мм» есть только у строк-трубок; за�
   fireEvent.change(screen.getByLabelText("Длина трубки 1"), { target: { value: "25,5" } });
   expect(rows[0].len).toBe("25,5");
 });
+
+it("«№ изделия» встаёт в надпись у курсора, «Цифр» меняет разрядность, под полем — пример номеров", () => {
+  let rows = [newMarkRow({ text: "КБ1- изм.2", material: "Хлястик" }), newMarkRow({ text: "X1", material: "Термотрубка" })];
+  const props = { enabled: true, onEnabled: () => undefined, hint: "", targets: [], kitMarks: [], comps: [], mats: [] };
+  const { rerender } = render(<MarkTable {...props} rows={rows} onChange={(next) => { rows = next; }} />);
+  expect(screen.queryByLabelText("Цифр в номере 1")).toBeNull();
+
+  const box = screen.getByLabelText("Надпись 1") as HTMLTextAreaElement;
+  box.setSelectionRange(4, 4);
+  fireEvent.select(box);
+  fireEvent.click(screen.getByRole("button", { name: "Вставить № изделия в надпись 1" }));
+  expect(rows[0].text).toBe("КБ1-{№} изм.2");
+  expect(rows[1].text).toBe("X1");
+
+  rerender(<MarkTable {...props} rows={rows} onChange={(next) => { rows = next; }} />);
+  const width = screen.getByLabelText("Цифр в номере 1") as HTMLSelectElement;
+  expect(within(width).getAllByRole("option").map((option) => option.textContent)).toEqual(["без нулей, 1", "2 цифры, 01", "3 цифры, 001", "4 цифры, 0001"]);
+  expect(screen.getByText("КБ1-1 изм.2, КБ1-2 изм.2 …")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Вставить № изделия в надпись 1" })).toBeNull();
+  fireEvent.change(width, { target: { value: "3" } });
+  expect(rows[0].text).toBe("КБ1-{№:3} изм.2");
+
+  rerender(<MarkTable {...props} rows={rows} onChange={(next) => { rows = next; }} />);
+  expect(screen.getByText("КБ1-001 изм.2, КБ1-002 изм.2 …")).toBeInTheDocument();
+  // Строка без курсора в поле — номер в конец надписи.
+  fireEvent.click(screen.getByRole("button", { name: "Вставить № изделия в надпись 2" }));
+  expect(rows[1].text).toBe("X1{№}");
+});

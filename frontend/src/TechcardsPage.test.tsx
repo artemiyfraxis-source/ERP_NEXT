@@ -434,7 +434,9 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   expect(screen.getByText("прогр. 5")).toBeInTheDocument();
   expect(screen.getByText("3,50 с")).toBeInTheDocument();
   expect(screen.getByText("180 с")).toBeInTheDocument();
-  expect(screen.getByText("Перенесено из шаблона БД.ТК, в ERP не правилась")).toBeInTheDocument();
+  expect(screen.queryByText(/Перенесено из шаблона/)).toBeNull();
+  expect(screen.queryByText("Вход и результат")).toBeNull();
+  expect(screen.getByText("Контроль", { selector: ".op-ctl-chip" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /Править/ }));
   expect(screen.getByText("Работать в очках")).toHaveClass("tc-preview");
@@ -552,8 +554,9 @@ it("merges БД.ОП into the operation cards: op-only codes get a card and ever
   expect(screen.queryByText("CUT_WIRE_auto")).not.toBeInTheDocument();
   fireEvent.click(screen.getByText("LASER_MARK"));
   expect(await screen.findByText(/Шаблона листа \(БД\.ТК\) у этой операции нет/)).toBeInTheDocument();
-  expect(screen.getByText("Программа")).toBeInTheDocument();
-  expect(screen.getByText("60 с")).toBeInTheDocument();
+  expect(screen.queryByText("Программа")).toBeNull();
+  expect(screen.getByText("Параметры операции")).toBeInTheDocument();
+  expect(screen.getAllByText("60 с").length).toBeGreaterThan(0);
   expect(paths.some((path) => path.includes("tab=op"))).toBe(true);
 });
 
@@ -580,4 +583,69 @@ it("ЭТК-3/ЭТК-6: an issued techcard shows a status chip and keeps the gene
   expect(await screen.findByText("Свернуть генератор")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Свернуть генератор" }));
   expect(screen.queryByText("Свернуть генератор")).toBeNull();
+});
+
+const opRows = [
+  { id: "o1", tab: "op", display_text: "Резка", source_sheet: "БД.ОП", fields: { opNumber: "CUT_WIRE_auto", opName: "Резка", tOp: "3,50", "Номер": "CUT_WIRE_auto", "Название": "Резка", "Машина": "EW-05F", "Тип операции": "Погонный", "Время Операции": "3,50", "Уд.Цена МШ, сек": "0,1", "Цвет": "красный" } },
+  { id: "o2", tab: "op", display_text: "Лазерная маркировка", source_sheet: "БД.ОП", fields: { opNumber: "LASER_MARK", opName: "Лазерная маркировка", tOp: "12", "Номер": "LASER_MARK", "Название": "Лазерная маркировка", "Машина": "Лазер", "Время Операции": "12" } },
+];
+
+it("an operation without a template opens, edits its parameters and sends only the changed fields", async () => {
+  const patches: Array<{ edits: Array<Record<string, string>> }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: opRows });
+    if (path === "/api/references/tech-operations/o2" && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body));
+      patches.push(body);
+      return json({ ...opRows[1], fields: { ...opRows[1].fields, "Машина": "Лазер-2" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  fireEvent.click(await screen.findByText("LASER_MARK"));
+  expect(await screen.findByText(/Шаблона листа \(БД\.ТК\) у этой операции нет/)).toBeInTheDocument();
+  expect(screen.queryByText(/Строка БД\.ОП/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Править" }));
+  fireEvent.change(screen.getByLabelText("Машина"), { target: { value: "Лазер-2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].edits).toEqual([{ field: "Машина", old: "Лазер", value: "Лазер-2" }]);
+  expect(await screen.findByText("Лазер-2")).toBeInTheDocument();
+});
+
+it("one «Править» edits the template and the parameters; an unchanged template is not re-saved, changed fields only", async () => {
+  const calls: string[] = [];
+  const patches: Array<{ edits: Array<Record<string, string>> }> = [];
+  const detail = {
+    ...libraryItems[0], changed_at: null, changed_by: "",
+    document: { safety: "", defects: "", revision: "", steps: [{ number: "1", kind: "Операция", text: "Отрезать провод", tolerance: "-" }], tooling: [] },
+    raw_rows: [],
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    calls.push(`${init?.method ?? "GET"} ${path}`);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: opRows });
+    if (path === "/api/techcards/templates/cut") return json(detail);
+    if (path === "/api/references/tech-operations/o1" && init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body)));
+      return json({ ...opRows[0], fields: { ...opRows[0].fields, "Тип операции": "Статичный" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  fireEvent.click(await screen.findByText("CUT_WIRE_auto"));
+  expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
+  expect(screen.getByText("Исходные данные расчёта (ERP не использует)")).toBeInTheDocument();
+  expect(screen.getByText("Цвет")).toBeInTheDocument();
+  expect(screen.getByText("на метр")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Править" }));
+  fireEvent.change(screen.getByLabelText("Норма на"), { target: { value: "operation" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0].edits).toEqual([{ field: "Тип операции", old: "Погонный", value: "Статичный" }]);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Сохранить" })).toBeNull());
+  expect(calls.some((call) => call.startsWith("PUT"))).toBe(false);
 });

@@ -54,6 +54,8 @@ def test_supply_buckets_and_summary_match_current_supplymap():
     ))["708К.4"]
     assert (summary.total, summary.stock, summary.transit, summary.buying) == (3, 1, 1, 1)
     assert summary.customer_supplied_stock == 1
+    # Куплено — оплаченные позиции (в пути и на складе), давальческие не в счёт.
+    assert summary.purchased == 1
     assert summary.eta == "05.10.2026"
 
 

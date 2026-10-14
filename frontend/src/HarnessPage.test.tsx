@@ -208,17 +208,37 @@ describe("HarnessPage", () => {
     expect(editor.getAttribute("data-placements")).toBe("true");
   });
 
-  it("на телефоне — только просмотр: в шапке «История версий» и «Выгрузить», правки и обмена .zip нет", async () => {
+  it("на телефоне — только просмотр: в шапке «←», название и «Ещё», в меню «История версий» и «Выгрузить», правки и обмена .zip нет", async () => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
     try {
       render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
       expect(await screen.findByTestId("editor")).toBeTruthy();
-      expect(screen.getByRole("status").textContent).toBe("Только просмотр");
-      expect(screen.getByRole("button", { name: "История версий" })).toBeTruthy();
-      expect(screen.getByRole("button", { name: /Выгрузить/ })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Назад" })).toBeTruthy();
+      // Шапка в одну строку: второстепенное спрятано в «Ещё», пока меню закрыто — его пунктов нет.
+      expect(screen.queryByRole("button", { name: "История версий" })).toBeNull();
+      expect(screen.queryByRole("button", { name: /Выгрузить/ })).toBeNull();
+      const more = screen.getByRole("button", { name: "Ещё" });
+      expect(more.getAttribute("aria-expanded")).toBe("false");
+      fireEvent.click(more);
+      expect(more.getAttribute("aria-expanded")).toBe("true");
+      const menu = screen.getByRole("menu", { name: "Ещё" });
+      expect(menu.textContent).toContain("Только просмотр");
+      expect(screen.getByRole("menuitem", { name: "История версий" })).toBeTruthy();
+      expect(screen.getByRole("menuitem", { name: /Выгрузить/ })).toBeTruthy();
       for (const name of ["Сохранить версию", "Загрузить .zip", "Библиотека компонентов"]) expect(screen.queryByRole("button", { name })).toBeNull();
       expect(screen.queryByRole("link", { name: "Скачать .zip" })).toBeNull();
       expect(screen.getByRole("region", { name: /Чертёж жгута/ }).className).toContain("harness-page-phone");
+      // «Выгрузить…» закрывает меню и открывает окно выгрузки; Escape закрывает меню.
+      fireEvent.click(screen.getByRole("menuitem", { name: /Выгрузить/ }));
+      expect(screen.queryByRole("menu", { name: "Ещё" })).toBeNull();
+      expect(screen.getByRole("dialog", { name: "Выгрузка чертежа" })).toBeTruthy();
+      fireEvent.click(more);
+      fireEvent.keyDown(document, { key: "Escape" });
+      expect(screen.queryByRole("menu", { name: "Ещё" })).toBeNull();
+      // «История версий» из меню открывает список версий.
+      fireEvent.click(more);
+      fireEvent.click(screen.getByRole("menuitem", { name: "История версий" }));
+      expect(await screen.findByRole("dialog", { name: "История версий" })).toBeTruthy();
     } finally { vi.unstubAllGlobals(); }
   });
 });

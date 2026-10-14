@@ -1155,9 +1155,11 @@ def propose_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if route is None:
         rule = "generator"
         route = _generated_split(ops, final_name, current) or derive_route(ops, final_name)
+    # A scheme still «one ПФ per operation» (`derived`) is not cut into ПФ even when the split comes out the same
+    # (cut, crimp A, side A, crimp B, side B — a ПФ per operation): the proposal names the ПФ and launches by them.
     return {
         "route": route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity)),
-        "same": same_split(route, current),
+        "same": same_split(route, current) and (current_json or {}).get("source") != "derived",
         "rule": rule,
     }
 

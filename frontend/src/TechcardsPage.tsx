@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatDayMonth } from "./format";
-import { EtkSheet, GeneratorPane, ToolingBySection, editDraft } from "./ProjectEtk";
+import { EtkSheet, GeneratorPane } from "./ProjectEtk";
+import { OperationCard } from "./OperationCard";
+import { NewOperationDialog, type NewOperationResult } from "./NewOperationDialog";
 import { StatusChip } from "./StatusChip";
 import { pfPending } from "./pfPropose";
-import { headerLabel } from "./referenceLabels";
 import { RECORD_CATEGORIES, recordCategory } from "./etkOperation";
 import {
   referencesApi,
@@ -16,7 +17,6 @@ import {
   type ProjectTechcard,
   type TechOperationRecord,
 } from "./api";
-import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 import { TcTemplateSheets } from "./TcTemplateSheets";
 
 const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name), "Прочее"])];
@@ -24,8 +24,6 @@ const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name)
 const RECORD_SIDE_PICK: Record<string, string> = { SDR_COAX_housing: "B", SDR_COAX_pin: "A" };
 
 
-// БД.ОП columns the DB_SCHEMA duplicates under its own keys (opNumber = «Номер» …) — shown once, by the sheet name.
-const OP_SCHEMA_KEYS = new Set(["opNumber", "opName", "tOp", "tPrep", "tMachine"]);
 
 function opCode(fields: Record<string, string>) { return (fields.opNumber || fields["Номер"] || "").trim(); }
 
@@ -35,55 +33,6 @@ export function operationCardCount(templates: Array<{ code: string }>, opRows: A
   const codes = new Set(templates.map((item) => item.code));
   opRows.forEach((row) => { const code = opCode(row.fields); if (code) codes.add(code); });
   return codes.size;
-}
-
-function opColumns(fields: Record<string, string>): Array<[string, string]> {
-  return Object.entries(fields).filter(([key, value]) => !OP_SCHEMA_KEYS.has(key) && String(value ?? "").trim() && String(value).trim().toUpperCase() !== "FALSE");
-}
-
-/** Every filled БД.ОП column of the operation: machine, program, semi-product, wire, connector, tool, times, prices, type.
-    With «Справочник» edit the row is corrected here, as on the old БД.ОП tab (PortalRef.gs whitelist edit). */
-function OpFields({ record, canEdit, onSaved }: { record: TechOperationRecord; canEdit?: boolean; onSaved?: (record: TechOperationRecord) => void }) {
-  const [draft, setDraft] = useState<Record<string, string> | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const rows = opColumns(record.fields);
-  async function save() {
-    if (!draft) return;
-    const edits = Object.entries(draft).filter(([key, value]) => (record.fields[key] ?? "") !== value)
-      .map(([field, value]) => ({ field, old: record.fields[field] ?? "", value }));
-    if (!edits.length) { setDraft(null); return; }
-    setBusy(true); setError("");
-    try { onSaved?.(await referencesApi.editRecord(record.id, edits)); setDraft(null); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Строка БД.ОП не сохранена"); }
-    finally { setBusy(false); }
-  }
-  return <div className="tr-block"><h4>Строка БД.ОП <span>{rows.length} полей</span>
-    {canEdit && !draft && <> <button type="button" className="secondary small" onClick={() => setDraft(Object.fromEntries(Object.entries(record.fields).filter(([key]) => !OP_SCHEMA_KEYS.has(key))))}>Править строку</button></>}</h4>
-    {error && <div className="error-banner" role="alert">{error}</div>}
-    {draft ? <>
-      <div className="reference-fields db-form">{Object.entries(draft).map(([key, value]) => <label key={key}><small>{headerLabel(key)}</small>
-        <input aria-label={`БД.ОП: ${key}`} value={value} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} /></label>)}</div>
-      <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void save()}>Сохранить строку</button> <button className="secondary" onClick={() => setDraft(null)}>Отмена</button></div>
-    </> : rows.length ? <dl className="op-fields">{rows.map(([key, value]) => <div key={key}><dt>{headerLabel(key)}</dt><dd className="pre-line">{value}</dd></div>)}</dl>
-      : <div className="empty">В БД.ОП строка пустая.</div>}
-  </div>;
-}
-
-/** An operation that exists only in БД.ОП: no БД.ТК sheet, so the generator has nothing to put on a techcard page. */
-function OpOnlyDetail({ record, canEdit, onSaved, onBack }: { record: TechOperationRecord; canEdit: boolean; onSaved: (record: TechOperationRecord) => void; onBack: () => void }) {
-  const fields = record.fields;
-  return <article className="panel template-detail tr-paper">
-    <div className="form-actions"><button className="secondary" onClick={onBack}>← Все операции</button></div>
-    <div className="tr-head">
-      <div><small>Операция</small><b>{opCode(fields)}</b></div>
-      <div className="tr-head-name"><small>Наименование</small><b>{fields.opName || fields["Название"] || "—"}</b></div>
-      <div><small>Время операции</small><b>{fields.tOp ? `${fields.tOp} с` : "—"}</b></div>
-      <div><small>Подготовка</small><b>{fields.tPrep ? `${fields.tPrep} с` : "—"}</b></div>
-    </div>
-    <div className="warning-inline">Шаблона листа (БД.ТК) у этой операции нет: шагов, оснастки и контроля нет, генератор не выводит её отдельным листом техкарты. Нормы времени из БД.ОП в расчёт идут.</div>
-    <OpFields record={record} canEdit={canEdit} onSaved={onSaved} />
-  </article>;
 }
 
 type OperationEntry = { key: string; code: string; name: string; template?: OperationCardSummary; op?: Record<string, string> };
@@ -132,38 +81,6 @@ function OperationsTable({ entries, onOpen, toolbar }: { entries: OperationEntry
   />;
 }
 
-/** Просмотр: карточка в форме листа техкарты (SUPPLYMAP openTcRecords → renderCard). */
-function TemplateDetail({ template, op, canEdit, canEditOp, onOpSaved, onBack, onEdit }: {
-  template: OperationCardDetail; op?: TechOperationRecord; canEdit: boolean; canEditOp: boolean; onOpSaved: (record: TechOperationRecord) => void;
-  onBack: () => void; onEdit: () => void;
-}) {
-  const norms = template.norms;
-  const known = template.norms_known;
-  return <article className="panel template-detail tr-paper">
-    <div className="form-actions"><button className="secondary" onClick={onBack}>← Все операции</button>{canEdit && <button className="primary" onClick={onEdit}>Править</button>}</div>
-    <div className="tr-head">
-      <div><small>Операция</small><b>{template.code}</b></div>
-      <div className="tr-head-name"><small>Наименование</small><b>{template.name}</b></div>
-      <div><small>Время операции</small><b>{known ? (norms ? `${norms.operation_seconds || "—"} с` : <span className="danger-text">нет в БД.ОП</span>) : "справочник не загружен"}</b></div>
-      <div><small>Подготовка</small><b>{norms ? `${norms.setup_seconds || "—"} с` : "—"}</b></div>
-    </div>
-    {template.document.safety && <div className="warning-inline"><strong>Требование безопасности</strong><br />{template.document.safety.replace(SAFETY_HEAD, "")}</div>}
-    <div className="tr-block"><h4>Оснастка и расходники</h4><ToolingBySection tooling={template.document.tooling} /></div>
-    <div className="tr-block"><h4>Вход и результат</h4><div className="empty">Комплектующие, полуфабрикат на входе, результат и расчётное время подставляет генератор при сборке техкарты по проекту.</div></div>
-    <div className="tr-block"><h4>Ход операции <span>{template.document.steps.length}</span></h4>
-      <table className="tr-steps"><thead><tr><th>№</th><th>Содержание</th><th>Допуск</th></tr></thead><tbody>
-        {template.document.steps.map((step, index) => <tr key={`${step.number}:${index}`} className={step.kind === "Контроль" ? "ctl" : ""}>
-          <td>{step.number}</td><td><small>{step.kind}</small><div className="pre-line">{step.text}</div></td>
-          <td>{step.tolerance && step.tolerance !== "-" ? step.tolerance : "—"}</td>
-        </tr>)}
-      </tbody></table>
-    </div>
-    {template.document.defects && <div className="tr-block"><h4>Типовые дефекты</h4><p>{template.document.defects}</p></div>}
-    {op && <OpFields record={op} canEdit={canEditOp} onSaved={onOpSaved} />}
-    <div className="tr-foot">{template.changed_at ? `Изменено ${new Date(template.changed_at).toLocaleString("ru-RU")}${template.changed_by ? ` · ${template.changed_by}` : ""}` : "Перенесено из шаблона БД.ТК, в ERP не правилась"}</div>
-  </article>;
-}
-
 /** «← проект»: назад в карточку проекта, откуда открыли ЭТК. */
 function backToProject(project: string) {
   const url = new URL(window.location.href);
@@ -186,8 +103,10 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const [opRows, setOpRows] = useState<TechOperationRecord[]>([]);
   const [selectedOpCode, setSelectedOpCode] = useState("");
   const [templateDetail, setTemplateDetail] = useState<OperationCardDetail | null>(null);
-  const [editingTemplate, setEditingTemplate] = useState(false);
   const [sheetsOpen, setSheetsOpen] = useState(false);
+  const [newOpOpen, setNewOpOpen] = useState(false);
+  // Код только что созданной операции: её карточка открывается сразу в «Править».
+  const [freshCode, setFreshCode] = useState("");
   // ЭТК-3: под выданной ЭТК генератор свёрнут, пока не нажали «Пересобрать».
   const [rebuilding, setRebuilding] = useState(false);
   const [selectedId, setSelectedId] = useState("");
@@ -242,6 +161,17 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   }, [records, opByCode]);
   const selectedOp = selectedOpCode ? opByCode.get(selectedOpCode) : undefined;
   const canEditOps = principal.permissions.erpref === "edit";
+  const canCreateOp = canEditTemplates && canEditOps;
+  async function opCreated(result: NewOperationResult) {
+    setNewOpOpen(false);
+    setOpRows((rows) => [...rows.filter((row) => row.id !== result.record.id), result.record]);
+    const library = await techcardsApi.templates().then((value) => value.items, () => templates);
+    setTemplates(library);
+    const made = result.templates[0];
+    setFreshCode(result.code);
+    setNotice(`Операция ${result.code} создана`);
+    if (made) { setSelectedOpCode(""); setSelectedTemplateId(made.id); } else setSelectedOpCode(result.code);
+  }
   const replaceOp = (record: TechOperationRecord) => setOpRows((rows) => rows.map((row) => (row.id === record.id ? record : row)));
 
   async function load() {
@@ -268,7 +198,6 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     void referencesApi.techOperations("op", "", 5000).then((result) => setOpRows(result.records)).catch(() => undefined);
   }, [showLibrary, principal.permissions.erpref]);
   useEffect(() => {
-    setEditingTemplate(false);
     if (!selectedTemplateId) { setTemplateDetail(null); return; }
     void techcardsApi.template(selectedTemplateId).then(setTemplateDetail).catch(() => setTemplateDetail(null));
   }, [selectedTemplateId]);
@@ -277,7 +206,6 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     if (!templateDetail) return;
     const saved = await techcardsApi.saveTemplate(templateDetail.id, draft);
     setTemplateDetail(saved);
-    setEditingTemplate(false);
     setNotice(`Карточка ${saved.code} сохранена`);
     const library = await techcardsApi.templates();
     setTemplates(library.items);
@@ -333,17 +261,16 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     {!embedded && <header className="page-head library-head"><h2>Библиотека операций</h2><span className="page-count">{records.length}</span></header>}
     {sheetsOpen ? <TcTemplateSheets canEdit={canEditTemplates} onBack={() => setSheetsOpen(false)} onChanged={() => {
       void techcardsApi.templates().then((library) => setTemplates(library.items)).catch(() => undefined);
-    }} /> : selectedOp ? <OpOnlyDetail record={selectedOp} canEdit={canEditOps} onSaved={replaceOp} onBack={() => setSelectedOpCode("")} /> : templateDetail && selectedTemplateId ? (editingTemplate ? <TcCardEditForm
-      code={templateDetail.code}
-      initial={editDraft(templateDetail.name, templateDetail.document)}
-      saveNote="Сохранение — в библиотеку, в ТК проектов при следующей сборке"
-      onCancel={() => setEditingTemplate(false)}
-      onSave={saveTemplate}
-    /> : <TemplateDetail template={templateDetail} op={opByCode.get(templateDetail.code)} canEditOp={canEditOps} onOpSaved={replaceOp} canEdit={canEditTemplates} onBack={() => setSelectedTemplateId("")} onEdit={() => setEditingTemplate(true)} />) : <>
-    <OperationsTable entries={operationEntries} toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>} onOpen={(entry) => {
+    }} /> : selectedOp ? <OperationCard code={opCode(selectedOp.fields)} name={selectedOp.fields.opName || selectedOp.fields["Название"] || ""} op={selectedOp}
+      canEditTemplate={false} canEditOp={canEditOps} initialEdit={freshCode === selectedOpCode} onBack={() => { setSelectedOpCode(""); setFreshCode(""); }} onSaveTemplate={async () => undefined} onOpSaved={replaceOp}
+    /> : templateDetail && selectedTemplateId ? <OperationCard code={templateDetail.code} name={templateDetail.name} template={templateDetail} op={opByCode.get(templateDetail.code)}
+      canEditTemplate={canEditTemplates} canEditOp={canEditOps} initialEdit={freshCode === templateDetail.code} onBack={() => { setSelectedTemplateId(""); setFreshCode(""); }} onSaveTemplate={saveTemplate} onOpSaved={replaceOp}
+    /> : <>
+    <OperationsTable entries={operationEntries} toolbar={<>{canCreateOp && <button type="button" className="primary small" onClick={() => setNewOpOpen(true)}>Новая операция</button>}<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button></>} onOpen={(entry) => {
       if (entry.template) { setSelectedOpCode(""); setSelectedTemplateId(entry.template.id); } else setSelectedOpCode(entry.code);
     }} />
     </>}
+    {newOpOpen && <NewOperationDialog operations={operationEntries.map((entry) => ({ code: entry.code, name: entry.name }))} onClose={() => setNewOpOpen(false)} onCreated={(result) => void opCreated(result)} />}
     </>}
   </section>;
 }

@@ -167,6 +167,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),
     _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED),
     _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED),
+    # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing, front view of the housing: 6 … 1 moulded at the wire end, but
+    # the drawing does not say which end that view shows, so the numbering stays unchecked.
+    _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", note=UNCHECKED),
+    # Molex Pico-EZmate 78172 — part numbers from the distributors' listings of the Molex part sheets (Farnell, RS, Heilind);
+    # the sales drawing SD-78172-007-001 did not open, so there is no numbering and no housing length.
+    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?000(\d)$", 1.2, color=BLACK, note=NO_DRAWING),
     # Samtec ISD2 — «positions per row», two rows: ISD2-05-D = 10 contacts.
     _family("samtec-isd2", "Samtec ISD2 (2 ряда)", r"^ISD2-(\d{2})-D-[MS]", 2.0, rows=2, order="col", count_mul=2,
             latch="lever", color=BLACK, note="на листе Samtec метка ▽ контакта 1 есть, со стороны проводов не сверена"),
@@ -320,6 +326,7 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "hirose-df1b-des": "DF1B-10DES-2.5RC", "hirose-df1b-p": "DF1B-5EP-2.5RC",
     "hirose-df1b-p2r": "DF1B-10DEP-2.5RC", "hirose-df1ba-p": "DF1BA-5EP-2.5RC", "hirose-df1ba-p2r": "DF1BA-10DEP-2.5RC",
     "jae-fis": "FI-S10S", "jae-fir": "FI-RE31HL",
+    "kls-2-50": "L-KLS1-2.50-04-H", "molex-picoezmate": "78172-0004",
     "connfly-ds1070": "I-DS1070-SCV04", "connfly-ds1072": "I-DS1072-SCT004", "connfly-ds1073": "I-DS1073-SCW004",
     "connfly-ds1074": "I-DS1074-SCT004", "samtec-isd2": "ISD2-05-D-M", "te-minict": "353908-4", "te-sl156": "770849-4",
     "molex-minifit-jr-bk": "39-03-9082", "molex-nanofit-1r": "105307-1204", "molex-nanofit": "105308-1208",
@@ -711,5 +718,25 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
             range_src="TE C-770849"),
 )
 
+# Series the owner's reference-data gaps asked for (14.10.2026): only the housings a document or a distributor listing
+# confirms; Hsuan Mao PHU / MHU / MX / HC, the JR / Futaba servo plug and the Molex CTX50 (Mini50 34967) have no part-number
+# table here (see `connector_series._LOOSE`).
+GAP_SERIES: tuple[dict[str, Any], ...] = (
+    _series("kls", "KLS KLS1-2.50", "KLS", WTB, ("KLS1-2.50", "KLS1-2.54", "KLS1-XL4-1.25 (HRS DF13 type)"),
+            (("Корпус L-KLS1-2.50-XX-H", "kls-2-50", "L-KLS1-2.50-{:02d}-H", _counts(2, 20)),),
+            (("KLS L-KLS1-2.50-XX-H / -T / -S, чертёж", CHIPDIP.format("526/DOC059526514")),),
+            contacts=(("L-KLS1-2.50-T", "AWG 30–22"),),
+            headers=((TOP, "L-KLS1-2.50-{:02d}-S", _counts(2, 20)),),
+            note="2,5 мм, тип JST ZH; KLS1-2.54 и KLS1-XL4-1.25 — корпусов с номерами нет"),
+    _series("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, ("Pico-EZmate", "Pico-EZmate Plus"),
+            (("Корпус 78172, 1 ряд, чёрный", "molex-picoezmate", "78172-000{}", (2, 3, 4, 5)),),
+            (("Molex 78172-0410 (контакт), лист детали", _cd("027493913")),
+             ("Molex 78172-0005 (корпус), лист детали, Mouser", "https://www.mouser.com/datasheet/2/276/1/0781720005_CRIMP_HOUSINGS-175763.pdf")),
+            contacts=(("78172-0410", "AWG 30–28"),),
+            note="корпуса 2–5 конт. по листам Farnell / RS / Heilind; есть и 78172-5006 (6 конт.) и 7 конт., номера не сверены; "
+                 "Pico-EZmate Plus (212132) — корпус не найден",
+            range_checked=False),
+)
+
 # Molex after the rest of the catalogue: the gallery order comes from `connector_series._order`, not from here.
-CATALOG_SERIES = CATALOG_SERIES + MOLEX_SERIES
+CATALOG_SERIES = CATALOG_SERIES + MOLEX_SERIES + GAP_SERIES
