@@ -328,12 +328,12 @@ function EtkSection({ label, number, children }: { label: string; number: number
 
 /** Типовые дефекты карточками: на каждый дефект рисунок «Норма | Брак» из общей библиотеки (в Google — сплошной
  *  текст). Рисунок выбирается при показе по названию дефекта и коду операции. */
-function DefectsView({ text, code, number }: { text: string; code: string; number: number }) {
+export function DefectsView({ text, code, number, alwaysOpen = false }: { text: string; code: string; number?: number; alwaysOpen?: boolean }) {
   const parsed = parseDefects(text);
   const count = parsed.groups.reduce((sum, group) => sum + group.items.length, 0);
   const fold = useEtkFold("sec:Типовые дефекты");
-  return <details className="etk-sec etk-defects etk-fold" open={fold.open} onToggle={fold.onToggle} aria-label="Типовые дефекты">
-    <summary><h4><span className="etk-sec-n">{number}</span>Типовые дефекты{count ? ` · ${count}` : ""}</h4></summary>
+  return <details className="etk-sec etk-defects etk-fold" open={alwaysOpen || fold.open} onToggle={fold.onToggle} aria-label="Типовые дефекты">
+    <summary><h4>{number !== undefined && <span className="etk-sec-n">{number}</span>}Типовые дефекты{count ? ` · ${count}` : ""}</h4></summary>
     {count ? <>
       {parsed.intro.length > 0 && <small className="etk-def-intro">{parsed.intro.join(" · ")}</small>}
       {parsed.groups.map((group, index) => <div className="etk-def-group" key={`${group.title}:${index}`}>
