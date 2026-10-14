@@ -51,7 +51,7 @@ def shop():
         actor=Actor(id=UUID("30000000-0000-0000-0000-000000000001"), name="Технолог", department="Производство"),
         email="tech@example.test", roles=frozenset({"engineer"}), permissions={"techcards": "edit"},
     )
-    yield SimpleNamespace(api=TestClient(app), factory=factory)
+    yield SimpleNamespace(api=TestClient(app), factory=factory, sessions=sessions)
     app.dependency_overrides.pop(authenticated_principal, None)
     app.dependency_overrides.pop(moscow_now, None)
     del app.state.techcards_uow_factory
@@ -158,3 +158,133 @@ def test_main_needs_the_database_url_and_a_mode(monkeypatch):
     assert cli.main(["--dry-run"]) == 2
     with pytest.raises(SystemExit):
         cli.main([])
+    # --regenerate is a dry run by default; --project only goes with it.
+    assert cli.main(["--regenerate"]) == 2
+    with pytest.raises(SystemExit):
+        cli.main(["--dry-run", "--project", "720К."])
+
+
+# ── --regenerate (owner 14.10): issued generator ETKs onto the current ПФ rule and texts ──
+
+OLD_SIDE_A = "Разъём Molex 39012140 смонтирован (ст. А, 2 провода)"
+# The rule before PR #377: both sides' hand crimps in one ПФ «Опрессовка терминалов» (ops 02 and 04).
+OLD_ROUTE = {
+    "blocks": [
+        {"key": "wires", "name": "Нарезанные провода", "ops": [1]},
+        {"key": "crimped", "name": "Опрессовка терминалов", "ops": [2, 4]},
+        {"key": "A", "name": "Сторона А собрана", "ops": [3]},
+        {"key": "B", "name": "Кабельная сборка 39012140 to 39012141 16AWG 250mm", "ops": [5], "final": True},
+    ],
+    "edges": [{"from": "wires", "to": "crimped", "per_unit": 1}, {"from": "crimped", "to": "A", "per_unit": 1},
+              {"from": "crimped", "to": "B", "per_unit": 1}, {"from": "A", "to": "B", "per_unit": 1}],
+}
+OLD_SPLIT = ("ПФ-1 · Нарезанные провода (01) · ПФ-2 · Опрессовка терминалов (02,04) · ПФ-3 · Сторона А собрана (03) · "
+             "ПФ-4 · Кабельная сборка 39012140 to 39012141 16AWG 250mm (05)")
+
+
+@pytest.fixture()
+def library(shop):
+    from app.modules.techcards.application import ReplaceOperationLibraryCommand, replace_operation_library
+
+    replace_operation_library(ReplaceOperationLibraryCommand(
+        source_commit=LIBRARY["sourceCommit"], templates=tuple(LIBRARY["templates"]), actor=ACTOR, now=NOW,
+    ), shop.factory())
+    return shop
+
+
+def old_generated(name: str = "kit-720К.-КБ1.json", **config) -> dict:
+    """An ETK the typical tab issued before 14.10 13:00: both crimps in one ПФ, the old wording of side A."""
+    from app.modules.techcards.application import _hand_route
+
+    payload = {**deepcopy(FIXTURES["files"][name]["payload"]["config"]), "tab": "inter", **config}
+    etk = build_etk(payload, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    etk["route"] = _hand_route(etk, OLD_ROUTE, generated=True)
+    etk["operations"][2]["result"][0]["name"] = OLD_SIDE_A
+    etk["operations"][3]["semis"][0]["name"] = OLD_SIDE_A
+    return etk
+
+
+def regenerate(shop, apply: bool, tasks=(), **options) -> tuple[str, int]:
+    return cli.run_regenerate(shop.factory, lambda: list(tasks), ACTOR, NOW, apply=apply, **options)
+
+
+def test_regenerate_moves_an_old_two_crimps_pf_onto_a_crimp_per_side_with_new_names(library):
+    old = issued(library.api, "КБ3", old_generated())
+    text, code = regenerate(library, apply=False)
+
+    assert code == 0
+    assert "720К. · КБ3 · Выдана ред. 1 · 5 оп. → перестроить" in text
+    assert f"было:   {OLD_SPLIT}" in text and f"станет: {SPLIT}" in text
+    assert "тексты меняются у 2 из 5 оп." in text
+    assert "Перестроить: 1 · без изменений: 0 · пропущено: 0" in text and "Проверка без записи" in text
+    unchanged = card(library, old["id"])
+    assert (unchanged["version"], unchanged["revision"]) == (old["version"], 1)
+    assert [block["ops"] for block in unchanged["document"]["route"]["blocks"]] == [[1], [2, 4], [3], [5]]
+
+    text, code = regenerate(library, apply=True)
+    assert code == 0 and "перестроено" in text and "новая ревизия 2" in text and "Перестроено: 1" in text
+    after = card(library, old["id"])
+    route = after["document"]["route"]
+    assert after["revision"] == 2 and route["source"] == "generated"
+    assert [block["ops"] for block in route["blocks"]] == [[1], [2], [3], [4], [5]]
+    assert [block["name"] for block in route["blocks"]][1:4] == [
+        "Обжатые провода, сторона А", "Сторона А собрана", "Обжатые провода, сторона В"]
+    assert after["document"]["operations"][2]["result"][0]["name"] == "Сторона А собрана: провода вставлены в разъём Molex 39012140"
+    assert "route" not in after["document"]["build_config"] and after["document"]["build_config"]["tab"] == "inter"
+    revisions = library.api.get(f"/api/techcards/projects/{old['id']}/revisions").json()["items"]
+    rebuilt = next(item for item in revisions if item["revision"] == 2)
+    assert (rebuilt["reason"], rebuilt["actor_name"]) == (cli.REGEN_REASON, ACTOR.name)
+    from sqlalchemy import select
+
+    from app.shared.persistence import AuditEventRow
+
+    with library.sessions() as session:
+        events = session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "techcards.project_auto_built",
+            AuditEventRow.aggregate_id == UUID(old["id"]))).all()
+    assert [(event.actor_name, event.details["reason"]) for event in events] == [(ACTOR.name, cli.REGEN_REASON)]
+
+    again, code = regenerate(library, apply=True)
+    assert code == 0 and "720К. · КБ3 · Выдана ред. 2 · 5 оп. — без изменений" in again
+    assert "Перестроено: 0 · без изменений: 1 · пропущено: 0" in again
+    assert card(library, old["id"])["version"] == after["version"]
+
+
+def test_regenerate_leaves_hand_edited_schemes_and_other_tabs_alone(library):
+    by_hand = old_generated()
+    by_hand["route"]["source"] = "manual"
+    hand = issued(library.api, "КБ1", by_hand)
+    ordered = issued(library.api, "КБ2", old_generated(opOrder=["a", "b"]))
+    complex_card = issued(library.api, "КБ4", document("kit-708К.2-КБ1.json"))
+    text, _ = regenerate(library, apply=True)
+
+    assert "720К. · КБ1 · Выдана ред. 1 · 5 оп. — схема ПФ правлена вручную — не трогаю" in text
+    assert "720К. · КБ2 · Выдана ред. 1 · 5 оп. — свой порядок операций — не трогаю" in text
+    assert "720К. · КБ4 · Выдана ред. 1 · 15 оп. — Сложная сборка — ПФ настраивает владелец" in text
+    assert "Перестроено: 0 · без изменений: 0 · пропущено: 3" in text
+    assert [card(library, item["id"])["revision"] for item in (hand, ordered, complex_card)] == [1, 1, 1]
+
+
+def test_regenerate_skips_an_etk_with_a_running_pf_task_and_keeps_a_task_by_operations(library):
+    old = issued(library.api, "КБ3", old_generated())
+
+    def task(number: str, *compositions, revision: int = 1):
+        operations = [SimpleNamespace(etk_ops=tuple(SimpleNamespace(position=p) for p in ops)) for ops in compositions]
+        return SimpleNamespace(number=number, techcard_id=UUID(old["id"]), techcard_revision=revision,
+                               project="720К.", item="КБ3", operations=operations)
+
+    text, _ = regenerate(library, apply=True, tasks=[task("ПЗ-7", (1,), (2, 4), (3,), (5,))])
+    assert "720К. · КБ3 · Выдана ред. 1 · 5 оп. — идёт задание ПЗ-7 по ПФ — перестроить после его закрытия" in text
+    assert card(library, old["id"])["revision"] == 1
+
+    text, _ = regenerate(library, apply=True, tasks=[task("ПЗ-8", (), (), (), (), ())])
+    assert "идут задания ПЗ-8 по операциям ЭТК — остаются по своему снимку" in text
+    assert card(library, old["id"])["revision"] == 2
+
+
+def test_regenerate_project_filter(library):
+    issued(library.api, "КБ3", old_generated())
+    text, code = regenerate(library, apply=False, project="999К.")
+    assert code == 0 and "КБ3" not in text and "Перестроить: 0" in text
+    text, _ = regenerate(library, apply=False, project="720к")
+    assert "720К. · КБ3" in text
