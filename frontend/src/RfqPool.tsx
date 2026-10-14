@@ -51,8 +51,8 @@ function NomenclatureCell({ line }: { line: PoolLine }) {
     <div className="rfq-nomen">
       <StatusChip tone="info" title={`${line.item.name} · ${MATCHED_BY[line.item.matched_by] ?? ""}`}>в номенклатуре</StatusChip>
       {line.cheaper_before_pct !== null && (
-        <StatusChip tone="warning" title="Самая низкая прошлая цена в той же единице ниже бюджета">
-          раньше дешевле на {formatNumber(line.cheaper_before_pct, { digits: 1 })}%
+        <StatusChip tone="warning" title={`Самая низкая прошлая цена в той же единице ниже бюджета${line.cheaper_source_label ? `: ${line.cheaper_source_label}` : ""}`}>
+          раньше дешевле на {formatNumber(line.cheaper_before_pct, { digits: 1 })}%{line.cheaper_source_label ? ` (${line.cheaper_source_label})` : ""}
         </StatusChip>
       )}
       {line.history?.last && (

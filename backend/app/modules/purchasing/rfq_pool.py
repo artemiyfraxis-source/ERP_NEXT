@@ -21,7 +21,10 @@ from sqlalchemy.orm import Session
 
 from app.shared.identity import Actor
 
+from app.shared import stage_options
+
 from . import settings as purchasing_settings
+from . import upd_prices
 from .infrastructure import RfqSupplierRow, SupplierNameRow, SupplierRow
 from .items import guess_category, normalize_unit
 from .suppliers import is_stock_source
@@ -147,6 +150,37 @@ def cheaper_before_pct(budget: Decimal | None, cheapest_same_unit: Decimal | Non
     return ((budget - cheapest_same_unit) / budget * 100).quantize(Decimal("0.1"))
 
 
+def _extra_prices(session: Session, views: Sequence[LineView], analysis: Analysis) -> dict | None:
+    """With references.price_book on: the lowest known UPD / reference price of each line's item in the line's unit."""
+    if not stage_options.enabled("references.price_book"):
+        return None
+    wanted = []
+    for view in views:
+        item = analysis.lines[view.id].item if view.id in analysis.lines else None
+        if item is not None and view.budget_unit_gross is not None:
+            wanted.append((item.id, normalize_unit(view.unit)))
+    vat = Decimal(purchasing_settings.load(session)["default_vat_rate"])
+    return upd_prices.cheapest_known(session, wanted, vat)
+
+
+def _cheaper(view: LineView, insight: LineInsight, extra: dict | None) -> dict:
+    """«Раньше дешевле»: from procurement history; with references.price_book also from UPDs and reference prices
+    (the lowest wins, its source is named)."""
+    if extra is None:
+        return {"cheaper_before_pct": num(cheaper_before_pct(view.budget_unit_gross, insight.cheapest_same_unit))}
+    best, source = insight.cheapest_same_unit, "procurement" if insight.cheapest_same_unit is not None else None
+    found = extra.get((insight.item.id, normalize_unit(view.unit))) if insight.item is not None else None
+    if found is not None and (best is None or found["price"] < best):
+        best, source = found["price"], found["source"]
+    pct = cheaper_before_pct(view.budget_unit_gross, best)
+    return {
+        "cheaper_before_pct": num(pct),
+        "cheaper_source": source if pct is not None else None,
+        "cheaper_source_label": ({"procurement": "по закупкам", **upd_prices.SOURCE_LABELS}[source]
+                                 if pct is not None and source else None),
+    }
+
+
 def _insight(analysis: Analysis, view: LineView) -> LineInsight:
     return analysis.lines.get(view.id) or LineInsight(category=guess_category(view.name, view.item_type))
 
@@ -159,6 +193,7 @@ def pool(uow: UnitOfWork, lines: ProcurementLines, stats: PurchaseStats, actor: 
         views = candidate_views(session, lines, actor)
         analysis = stats.analyse(session, views, suppliers=False)
         directory = Directory(session)
+        extra = _extra_prices(session, views, analysis)
         groups: dict[str, dict] = {}
         for view in sorted(views, key=lambda v: (v.name.casefold(), v.legacy_id)):
             insight = _insight(analysis, view)
@@ -187,7 +222,7 @@ def pool(uow: UnitOfWork, lines: ProcurementLines, stats: PurchaseStats, actor: 
                 "history": {
                     "purchases": insight.purchases, "last": _price(insight.last), "min": _price(insight.cheapest),
                 } if insight.purchases else None,
-                "cheaper_before_pct": num(cheaper_before_pct(view.budget_unit_gross, insight.cheapest_same_unit)),
+                **_cheaper(view, insight, extra),
             })
         return {
             "total": len(views),

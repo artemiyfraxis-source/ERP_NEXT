@@ -49,6 +49,7 @@ from .workflows import employee_card_api, leave_api, search_api, stage_options_a
 from .workflows import documents_api
 from .modules.purchasing import api_internal_projects as purchasing_internal_projects_api
 from .modules.purchasing import api_items as purchasing_items_api
+from .modules.purchasing import api_prices as purchasing_prices_api
 from .modules.purchasing import api_rfq as purchasing_rfq_api
 from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
@@ -110,7 +111,7 @@ app.include_router(documents_api.router)
 app.include_router(stage_options_api.router)
 app.include_router(search_api.router)
 for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasing_items_api, purchasing_rfq_api,
-               purchasing_internal_projects_api):
+               purchasing_internal_projects_api, purchasing_prices_api):
     app.include_router(_purchasing.router)
 app.include_router(finished_goods_api.router)
 

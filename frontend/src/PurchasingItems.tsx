@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { urlParam } from "./navigation";
 import { api, failureText } from "./api";
+import { ItemPricesSections } from "./PricesSections";
+import { useStageOption } from "./StageOptions";
 import {
   ITEM_CATEGORIES, categoryLabel, purchasingItemsApi as itemsApi,
   VIA_LABELS, type ImportResult, type StockImportResult, type ItemCard, type ItemCategory, type ItemInput, type ItemList, type ItemRow,
@@ -15,7 +17,7 @@ const emptyForm: ItemInput = { name: "", part_number: "", manufacturer: "", cate
 
 type Supplier = { id: string; name: string };
 
-export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {}) {
+export function PurchasingItems({ readOnly = false, onOpenUpd }: { readOnly?: boolean; onOpenUpd?: (id: string) => void } = {}) {
   const [q, setQ] = useState(() => urlParam("q"));
   const [category, setCategory] = useState<ItemCategory | "">("");
   const [hasPrice, setHasPrice] = useState(false);
@@ -84,7 +86,7 @@ export function PurchasingItems({ readOnly = false }: { readOnly?: boolean } = {
           <button type="button" className="secondary small" disabled={page >= pages} onClick={() => setPage(page + 1)}>Вперёд</button>
         </div>
       )}
-      {openId && <ItemCardDialog id={openId} readOnly={readOnly} onClose={() => setOpenId(null)} onChanged={refresh} />}
+      {openId && <ItemCardDialog id={openId} readOnly={readOnly} onOpenUpd={onOpenUpd} onClose={() => setOpenId(null)} onChanged={refresh} />}
       {creating && <CreateDialog onClose={() => setCreating(false)} onCreated={(id) => { setCreating(false); refresh(); setOpenId(id); }} />}
       {importingStock && <StockImportDialog onClose={() => setImportingStock(false)} onApplied={refresh} />}
       {importing && <ImportDialog onClose={() => setImporting(false)} onApplied={refresh} />}
@@ -325,7 +327,8 @@ function suppliersFrom(payload: unknown): Supplier[] {
   return Array.isArray(rows) ? rows.filter((r): r is Supplier => typeof r?.id === "string" && typeof r?.name === "string") : [];
 }
 
-function ItemCardDialog({ id, readOnly, onClose, onChanged }: { id: string; readOnly: boolean; onClose: () => void; onChanged: () => void }) {
+function ItemCardDialog({ id, readOnly, onOpenUpd, onClose, onChanged }: { id: string; readOnly: boolean; onOpenUpd?: (id: string) => void; onClose: () => void; onChanged: () => void }) {
+  const priceBookOn = useStageOption("references.price_book");
   const [card, setCard] = useState<ItemCard | null>(null);
   const [form, setForm] = useState<ItemInput>(emptyForm);
   const [error, setError] = useState("");
@@ -459,6 +462,8 @@ function ItemCardDialog({ id, readOnly, onClose, onChanged }: { id: string; read
                 </div>
               </>
             )}
+
+            {priceBookOn && <ItemPricesSections itemId={card.id} onOpenUpd={onOpenUpd} />}
 
             {card.stock && (
               <>

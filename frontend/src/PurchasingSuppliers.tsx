@@ -3,6 +3,8 @@ import { urlParam } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { failureText } from "./api";
 import { formatDay } from "./format";
+import { SupplierPricesSections } from "./PricesSections";
+import { useStageOption } from "./StageOptions";
 import {
   SUPPLIER_CATEGORIES, purchasingDirectoryApi, supplierFormError,
   type ImportPlan, type Supplier, type SupplierCard, type SupplierFilters, type SupplierInput,
@@ -139,10 +141,11 @@ function ImportDialog({ plan, busy, error, onApply, onClose }: { plan: ImportPla
   );
 }
 
-function CardPanel({ card, readOnly, busy, onSave, onArchive, onClose }: {
-  card: SupplierCard; readOnly: boolean; busy: boolean;
+function CardPanel({ card, readOnly, busy, onSave, onArchive, onClose, onOpenUpd }: {
+  card: SupplierCard; readOnly: boolean; busy: boolean; onOpenUpd?: (id: string) => void;
   onSave: (input: SupplierInput) => void; onArchive: () => void; onClose: () => void;
 }) {
+  const priceBookOn = useStageOption("references.price_book");
   const stats = card.procurement;
   const stages = Object.entries(stats.open_by_stage);
   return (
@@ -188,6 +191,7 @@ function CardPanel({ card, readOnly, busy, onSave, onArchive, onClose }: {
             </table>
           </div>
         )}
+        {priceBookOn && <SupplierPricesSections supplierId={card.id} onOpenUpd={onOpenUpd} />}
         {!readOnly && (
           <div className="move-actions">
             <button className="secondary" disabled={busy} onClick={onArchive}>{card.archived ? "Вернуть из архива" : "В архив"}</button>
@@ -199,7 +203,7 @@ function CardPanel({ card, readOnly, busy, onSave, onArchive, onClose }: {
 }
 
 /** «Справочник поставщиков» — карточки поставщиков с ИНН, категориями, доменами и статистикой по закупкам. */
-export function PurchasingSuppliers({ readOnly = false }: { readOnly?: boolean } = {}) {
+export function PurchasingSuppliers({ readOnly = false, onOpenUpd }: { readOnly?: boolean; onOpenUpd?: (id: string) => void } = {}) {
   const [filters, setFilters] = useState<SupplierFilters>({ q: urlParam("q"), category: "", key: false, archived: false });
   const [rows, setRows] = useState<Supplier[] | null>(null);
   const [error, setError] = useState("");
@@ -311,6 +315,7 @@ export function PurchasingSuppliers({ readOnly = false }: { readOnly?: boolean }
         {card && (
           <CardPanel
             card={card}
+            onOpenUpd={onOpenUpd}
             readOnly={readOnly}
             busy={busy}
             onClose={() => setCard(null)}

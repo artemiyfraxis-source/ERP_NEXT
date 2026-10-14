@@ -4271,3 +4271,8 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .quote-import-file { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted-foreground); }
 .quote-import-notes { margin: 0; padding: 8px 12px 8px 28px; border-radius: 6px; font-size: 13px; background: var(--panel-soft); border: 1px solid var(--border); }
 .quote-import-unmatched-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
+/* ---- Цены и карточки ---- */
+.prices-sections h3 { margin-top: 16px; }
+.prices-sections small, .prices-points small { color: var(--muted-foreground); margin-left: 4px; }
+.prices-points { width: 100%; background: var(--panel-soft); }
+.prices-plan { max-height: 340px; overflow: auto; }
