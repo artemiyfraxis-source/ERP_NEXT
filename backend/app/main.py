@@ -47,6 +47,7 @@ from .shared.bulk_import import MAX_IMPORT_BODY_BYTES
 from .shared.http_auth import techcards_router_principal
 from .workflows import employee_card_api, leave_api, search_api, stage_options_api
 from .workflows import documents_api
+from .modules.purchasing import api_documents as purchasing_documents_api
 from .modules.purchasing import api_internal_projects as purchasing_internal_projects_api
 from .modules.purchasing import api_items as purchasing_items_api
 from .modules.purchasing import api_prices as purchasing_prices_api
@@ -112,7 +113,7 @@ app.include_router(documents_api.router)
 app.include_router(stage_options_api.router)
 app.include_router(search_api.router)
 for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasing_items_api, purchasing_rfq_api,
-               purchasing_internal_projects_api, purchasing_prices_api, purchasing_upd_api):
+               purchasing_internal_projects_api, purchasing_prices_api, purchasing_upd_api, purchasing_documents_api):
     app.include_router(_purchasing.router)
 app.include_router(finished_goods_api.router)
 

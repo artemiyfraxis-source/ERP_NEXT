@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .suppliers import inn_valid
@@ -63,8 +64,9 @@ def seller_name_key(name: str | None) -> str:
     return key if len(key) >= 5 else ""
 
 
+@lru_cache(maxsize=65536)
 def inn_distance(a: str, b: str) -> int:
-    """Edit distance of two short strings (INNs)."""
+    """Edit distance of two short strings (INNs); the registry asks for the same pairs again and again."""
     previous = list(range(len(b) + 1))
     for i in range(1, len(a) + 1):
         current = [i]

@@ -4337,3 +4337,40 @@ tr.upd-row-bad td { background: var(--chip-danger-bg); }
   .upd-card-body { grid-template-columns: minmax(0, 1fr); }
   .upd-header-form { grid-template-columns: minmax(0, 1fr); }
 }
+/* ---- Счета и цепочка документов ---- */
+.doc-summary { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 10px; }
+.doc-filter { align-items: center; margin-bottom: 0; }
+.doc-inline-label { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; }
+.doc-inline-label input, .doc-inline-label select { width: auto; }
+.doc-table td { vertical-align: top; }
+.doc-table tr.doc-row-open td { background: var(--panel-soft); }
+.doc-detail-row > td { background: var(--panel-soft); }
+.doc-detail { display: grid; gap: 8px; padding: 4px 2px; font-size: 13px; }
+.doc-list { display: grid; gap: 6px; margin: 4px 0 0; padding-left: 18px; }
+.doc-list li .secondary.small { margin-left: 6px; }
+.doc-checks { display: grid; gap: 2px; margin: 0; padding-left: 18px; }
+.doc-check { font-size: 12.5px; }
+.doc-check.error { color: var(--danger); }
+.doc-check.warning { color: var(--chip-warning-fg); }
+.doc-check.muted { color: var(--muted-foreground); }
+.doc-origins { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.doc-number { font-variant-numeric: tabular-nums; font-weight: 600; }
+.doc-receiving { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 2px; }
+.doc-receiving-lines { margin-top: 6px; }
+.doc-link { padding: 0; }
+.doc-files a, .doc-files span { margin-right: 8px; white-space: nowrap; }
+.doc-issues-count { align-self: center; font-size: 12.5px; }
+.doc-header { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; font-size: 13px; }
+.doc-header dt { color: var(--muted-foreground); }
+.doc-header dd { margin: 0; }
+.doc-positions { max-height: 50vh; overflow: auto; }
+.doc-open { display: inline-block; text-decoration: none; }
+.doc-hits { display: grid; gap: 10px; padding: 0 20px 20px; }
+.doc-hit { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card); }
+.doc-hit-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.doc-hit-sum { margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.doc-hit-snippet { margin: 0; color: var(--muted-foreground); font-size: 12.5px; }
+.doc-upd-invoices { display: grid; gap: 6px; }
+.doc-upd-invoices > h3 { margin: 4px 0 0; font-size: 13px; font-weight: 600; }
+.doc-upd-invoices p { margin: 0; }
+.doc-rejected { margin-right: 10px; white-space: nowrap; }

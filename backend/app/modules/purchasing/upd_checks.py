@@ -153,18 +153,26 @@ def classify_buyers(docs: Iterable[tuple[str, str]], own: frozenset[str] = OWN_I
     miss of an INN the registry really carries counts as that INN; a scan whose «seller» is our company has the two
     parties swapped."""
     facts = [(clean_inn(buyer), clean_inn(seller)) for buyer, seller in docs]
+    # The same few dozen INNs repeat on every document: each is compared with ours once.
+    seen: dict[str, str | None] = {}
+
+    def ours_of(inn: str) -> str | None:
+        if inn not in seen:
+            seen[inn] = near_inn(inn, own)
+        return seen[inn]
+
     # INNs that stand for an organisation: valid checksum, the most frequent first — a misread copy joins the
     # organisation the registry really has.
     freq: Counter[str] = Counter(
-        inn for inn, seller in facts if inn and inn_valid(inn) and not near_inn(inn, own) and not near_inn(seller, own)
+        inn for inn, seller in facts if inn and inn_valid(inn) and not ours_of(inn) and not ours_of(seller)
     )
     heads = [inn for inn, _ in sorted(freq.items(), key=lambda item: -item[1])]
     verdicts: list[BuyerVerdict] = []
     for inn, seller in facts:
-        ours = near_inn(inn, own)
+        ours = ours_of(inn)
         if ours:
             verdicts.append(BuyerVerdict("ours", ours, "" if inn == ours else f"ИНН покупателя прочитан с ошибкой: {inn}"))
-        elif near_inn(seller, own):
+        elif ours_of(seller):
             verdicts.append(BuyerVerdict(
                 "ours", sorted(own)[0], "в документе перепутаны продавец и покупатель: продавцом стоит наша организация",
             ))
