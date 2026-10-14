@@ -466,3 +466,40 @@ describe("savedComplex", () => {
     expect(savedComplex(null)).toBe(false);
   });
 });
+
+// Владелец 14.10: «под каждый разъём длину зачистки; если записана — из БД».
+describe("длина зачистки у разъёма", () => {
+  it("from БД.ТЕР by default; the typed value overrides it in the cut strip and the build config; empty falls back", () => {
+    const base = usbGen({ both: true });
+    expect(base.g.epStripLen_(base.S.endpoints[0])).toBe("2");
+    expect(base.g.getActiveOps()[0].strip).toEqual({ a: true, lenA: "2", b: true, lenB: "2" });
+    const over = usbGen({ both: true, patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: " 3,5 " }) });
+    expect(over.g.epStripLen_(over.S.endpoints[1])).toBe("3,5");
+    expect(over.g.getActiveOps()[0].strip).toEqual({ a: true, lenA: "2", b: true, lenB: "3,5" });
+    expect((over.g.buildConfig() as Record<string, any>).ops[0].strip).toMatchObject({ lenA: "2", lenB: "3,5" });
+    const empty = usbGen({ both: true, patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: "  " }) });
+    expect(empty.g.getActiveOps()[0].strip).toEqual({ a: true, lenA: "2", b: true, lenB: "2" });
+  });
+
+  it("one-side machine crimp: the override of the hand-crimped side goes into the cut's strip of that side", () => {
+    const { g } = usbGen({ side: "A", patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: "4" }) });
+    expect(g.getActiveOps()[0].strip).toMatchObject({ a: true, lenA: "2", b: true, lenB: "4" });
+  });
+
+  it("no БД value and no override: «—»; an end without a terminal gives «—» too", () => {
+    const { g, S } = usbGen({ both: true, patch: (st, D) => updateEndpoint(D, st, "a1", { termId: "" }) });
+    expect(g.epStripLen_(S.endpoints[0])).toBe("—");
+    expect(g.epStripLen_(null)).toBe("—");
+  });
+
+  it("solder ends keep solderStrip, not the crimp override", () => {
+    const D = data([
+      { id: "w", type: "Провод", name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 0.3 },
+      { id: "c", type: "Соед", name: "Колодка XH 2", art: "XHP-2", qty: 2 },
+    ]);
+    const S = updateEndpoint(D, initState(D), "a1", { method: "solder", solderStrip: "7", stripLen: "9" });
+    const strips = makeGen(D, S).getActiveOps().map((op) => op.strip).filter(Boolean);
+    expect(JSON.stringify(strips)).toContain('"7"');
+    expect(JSON.stringify(strips)).not.toContain('"9"');
+  });
+});

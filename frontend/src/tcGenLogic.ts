@@ -57,7 +57,7 @@ export type Tab = "inter" | "complex" | "coax" | "manual";
 export type Endpoint = {
   id: string; side: Side; connId: string; method: "crimp" | "solder"; methodAuto: boolean;
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
-  label: string; solderStrip: string; tutLen: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
+  label: string; solderStrip: string; tutLen: string; stripLen?: string; tutOff?: boolean; fold?: boolean; perTerm?: number;
   /** Двойной обжим в отдельных контактах (владелец 14.10: «с одного контакта два провода»): контакты, где два провода в одном
    *  терминале. Весь разъём двойным обжимом — `double`. */
   doublePins?: number[];
@@ -454,6 +454,16 @@ export function makeGen(D: GenData, S: GenState) {
   const epPer_ = (ep: Endpoint | null) => (isComplex_() ? Math.max(2, parseInt(String(ep?.perTerm ?? ""), 10) || 2) : 2);
   /** Контакты разъёма с двойным обжимом, где сейчас действительно два провода (один терминал на двоих). */
   const epDoublePins_ = (ep: Endpoint | null) => doubledPinsOf_(ep);
+
+  /** Длина зачистки обжимного конца (владелец 14.10: «под каждый разъём длину зачистки; если записана — из БД»): введённая у
+   *  разъёма (`stripLen`) главнее длины терминала из БД.ТЕР; нет ни той ни другой — «—». */
+  function epStripLen_(e: Endpoint | null | undefined): string {
+    if (!e) return "—";
+    const own = (e.stripLen || "").trim();
+    if (own) return own;
+    const t = e.termId ? getCompById(e.termId) : null;
+    return ((t ? findTerRecord_(t.art) : null)?.strip || "").trim() || "—";
+  }
 
   function findTerRecord_(art: string | undefined): TerRec | null {
     if (!art) return null;
@@ -1361,19 +1371,17 @@ export function makeGen(D: GenData, S: GenState) {
         S.endpoints.forEach((e) => {
           if (!routedWireIdxs_(e).includes(w.idx)) return;
           let len: string | null = null;
-          if (crimpSides.includes(e.side)) len = (findTerRecord_((getCompById(e.termId) || ({} as Comp)).art) || ({} as TerRec)).strip || "—";
+          if (crimpSides.includes(e.side)) len = epStripLen_(e);
           // Станок обжимает одну сторону — вторую, под ручной обжим, он же зачищает (владелец 14.10: «обжим с одной и
           // зачистка с другой»); кабель в оболочке — по правилу ротора ниже.
-          else if (e.method === "crimp" && crimpSides.length === 1 && !isJacketedCable_(w)) len = (findTerRecord_((getCompById(e.termId) || ({} as Comp)).art) || ({} as TerRec)).strip || "—";
+          else if (e.method === "crimp" && crimpSides.length === 1 && !isJacketedCable_(w)) len = epStripLen_(e);
           else if (e.method === "solder") len = (e.solderStrip || "").trim() || DEFAULT_LEN_MM_;
           else if (e.method === "crimp" && e.fold && isComplex_()) len = FOLD_STRIP_MM_;
           else if (e.method === "crimp" && isRjEndpoint_(e)) len = RJ_STRIP_MM_;
           // Без ротора кабель разделывают у разъёма («Разделка кабеля под обжим»), при резке его конец не трогают.
           else if (e.method === "crimp" && isJacketedCable_(w)) len = S.rotor ? w.jacket || JACKET_STRIP_MM_ : null;
           else if (e.method === "crimp" && (e.double || epDoublePins_(e).length > 0)) {
-            const t = e.termId ? getCompById(e.termId) : null;
-            const r = t ? findTerRecord_(t.art) : null;
-            len = r && r.strip ? r.strip : "—";
+            len = epStripLen_(e);
           }
           if (len === null) return;
           if (e.side === "A") a = len; else b = len;
@@ -1871,10 +1879,11 @@ export function makeGen(D: GenData, S: GenState) {
     const tinOn = !sideB && S.tin.enabled && tinWireIndices_().length > 0;
     const stripSides = { a: !!(termA && otpA), b: !!(termB && otpB) || tinOn };
     const tinStripLen = (S.tin.stripLen || "").trim();
+    const dashless = (v: string) => (v === "—" ? "" : v);
     const strip = {
       a: stripSides.a, b: stripSides.b,
-      lenA: stripSides.a ? ((findTerRecord_(termA?.art) || ({} as TerRec)).strip || "") : "",
-      lenB: !stripSides.b ? "" : (sideB && termB && otpB ? ((findTerRecord_(termB.art) || ({} as TerRec)).strip || "") : tinStripLen),
+      lenA: stripSides.a ? dashless(epStripLen_(epA)) : "",
+      lenB: !stripSides.b ? "" : (sideB && termB && otpB ? dashless(epStripLen_(epB)) : tinStripLen),
     };
     const bigAssembly = S.endpoints.filter((e) => e.connId || e.termId).length > 2;
     return {
@@ -1921,7 +1930,7 @@ export function makeGen(D: GenData, S: GenState) {
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
     cableRecOf_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
-    endpointOrdinal_, epPer_, epDoublePins_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
+    endpointOrdinal_, epPer_, epDoublePins_, epStripLen_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,

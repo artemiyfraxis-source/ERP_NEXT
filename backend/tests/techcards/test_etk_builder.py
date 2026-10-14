@@ -644,3 +644,13 @@ def test_terminal_norm_counts_one_terminal_per_double_crimped_contact():
     assert _term_count({**op, "ep": {"double": False, "doublePins": [1, 3]}}, {}) == 2
     assert _term_count({**op, "ep": {"double": False, "doublePins": [3, 3, "x", True, 0]}}, {}) == 3
     assert _term_count({**op, "ep": {"double": True, "perTerm": 2, "doublePins": [3]}}, {}) == 2
+
+
+def test_generator_form_snapshot_in_build_config_does_not_change_the_etk():
+    # `gen_state` (снимок формы генератора, 14.10) читает только форма; ЭТК от него не меняется.
+    config = next(item["payload"]["config"] for key, item in FIXTURES["files"].items() if key.startswith("kit-"))
+    plain = build_etk(config, CARDS, operation_library_commit=LIBRARY["sourceCommit"])
+    snapped = build_etk({**config, "gen_state": {"v": 1, "kit": [], "S": {"wires": [], "endpoints": []}}}, CARDS,
+                        operation_library_commit=LIBRARY["sourceCommit"])
+    assert {k: v for k, v in snapped.items() if k != "build_config"} == {k: v for k, v in plain.items() if k != "build_config"}
+    assert snapped["build_config"]["gen_state"]["v"] == 1

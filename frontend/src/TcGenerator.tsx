@@ -85,6 +85,7 @@ import {
   addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
   setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
 } from "./pinoutCheck";
+import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
 import { useTerminalPairs } from "./useTerminalPairs";
@@ -304,11 +305,14 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const onTab = !restored && savedComplex(card.document?.build_config) ? switchGenTab(base, "complex") : base;
     const seeded = markRows.length ? { ...onTab, mark: true, markRows } : onTab;
     // Распиновка и её проверка — из прошлой сборки (build_config.pinout), если разъёмы и провода те же.
-    const fromBuild = restored ? switchGenTab(seeded, "manual") : restorePinout(D, seeded, card.document?.build_config);
+    // Карта, собранная после 14.10, несёт снимок формы: открывается с ним, сверенным с нынешним составом набора.
+    const snap = restored ? null : snapshotFromConfig(card.document?.build_config);
+    const back = snap ? restoreFromSnapshot(components, init, snap) : null;
+    const fromBuild = restored ? switchGenTab(seeded, "manual") : back ? back.S : restorePinout(D, seeded, card.document?.build_config);
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
-    const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: {}, coaxAdd: {} });
+    const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {} });
     setManual(form.manual); setS(ensureSeparateLengths(form.S)); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
-    setStatus({ text: "", error: false });
+    setStatus({ text: back?.note || "", error: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
 
@@ -650,7 +654,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     if (!term || !refs) return;
     const article = term.art || term.name;
     const rec = gen.findTerRecord_(article);
-    const edits = terEdits[ep.id] || {};
+    const edits: Record<string, string> = { ...(terEdits[ep.id] || {}) };
+    const ownStrip = (ep.stripLen || "").trim();
+    if (ownStrip && ownStrip !== (rec?.strip || "").trim()) edits.strip = ownStrip;
     const note = (text: string, error: boolean, busy = false) => setTerNotes((current) => ({ ...current, [ep.id]: { text, error, busy } }));
     const problem = terEditProblem(edits);
     if (problem) { note(problem, true); return; }
@@ -671,6 +677,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       }
       if (lost.length) { note(`БД.ТЕР не сохранила: ${lost.join(", ")} — значение осталось в форме, запишите ещё раз`, true); return; }
       setTerEdits((current) => { const next = { ...current }; delete next[ep.id]; return next; });
+      if (edits.strip) update((current) => updateEndpoint(D, current, ep.id, { stripLen: "" }));
       note(terSavedText(article, edits, created), false);
     } catch (reason) {
       note(`Не записано в БД.ТЕР: ${failureText(reason, "ошибка сервера")}`, true);
@@ -724,7 +731,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       return null;
     }
     const pinout = pinoutRecord(gen, S);
-    const withPinout = pinout ? { ...cfg, pinout } : cfg;
+    // Снимок формы: пересборка открывает карту с прошлыми настройками (genBuildState.ts); движок ЭТК его не читает.
+    const withPinout = { ...(pinout ? { ...cfg, pinout } : cfg), [GEN_STATE_KEY]: genSnapshot(components, S, terEdits, coaxAdd) };
     return routeOverride ? { ...withPinout, route: routePayload(routeOverride) } : withPinout;
   }
 
@@ -813,7 +821,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const set = (patch: Partial<Endpoint>) => update((current) => updateEndpoint(D, current, ep.id, patch));
     const terValues = { lPlus: ter?.lPlus || "", lMinus: ter?.lMinus || "", step: ter?.step || "", applicator: ter?.applicator || "", ...(terEdits[ep.id] || {}) };
     const edits = terEdits[ep.id];
-    const terDirty = !!edits && (ter ? terChanges(ter, edits).length > 0 : Object.values(edits).some((value) => !!value?.trim()));
+    // Длина зачистки у разъёма (stripLen) — своя для этого разъёма; в БД.ТЕР она попадает только кнопкой «Записать в БД».
+    const stripOwn = (ep.stripLen || "").trim();
+    const stripDb = (ter?.strip || "").trim();
+    const stripDirty = !!stripOwn && stripOwn !== stripDb;
+    const terDirty = stripDirty || (!!edits && (ter ? terChanges(ter, edits).length > 0 : Object.values(edits).some((value) => !!value?.trim())));
+    const stripNeeded = crimp && !ep.otp && !stripOwn && !stripDb;
     const terNote = terNotes[ep.id];
     // «От краёв разъёмов»: без L− конец не вычитается из длины по чертежу — подсказка из той же серии БД.ТЕР, если есть.
     const lMinusEmpty = crimp && !!term && S.measureMode === "outer" && !terValues.lMinus.trim();
@@ -872,6 +885,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       {crimp && term && <div className="ep-ter" aria-label={`Нормы терминала ${name}`}>
         {([["lPlus", "L+", "мм"], ["lMinus", "L−", "мм"], ["step", "Шаг", "мм"]] as const).map(([key, label, unit]) =>
           <Field key={key} label={label}><UnitInput unit={unit} value={terValues[key]} placeholder="—" onChange={(event) => setTer(key, event.target.value)} /></Field>)}
+        <Field label="Зачистка" className="mid" hint={stripOwn ? undefined : stripDb ? "из БД" : stripNeeded ? <span className="tone-danger">нет в БД</span> : undefined}>
+          <UnitInput unit="мм" value={ep.stripLen || ""} placeholder={stripDb || "—"} aria-invalid={stripNeeded || undefined} onChange={(event) => set({ stripLen: event.target.value })} /></Field>
         <Field label="Аппликатор" className="wide"><input value={terValues.applicator} placeholder="—" onChange={(event) => setTer("applicator", event.target.value)} /></Field>
         {terDirty && <button type="button" className="secondary small" disabled={terNote?.busy} onClick={() => void saveTer(ep)}>Записать в БД</button>}
         {terNote && <small className={terNote.error ? "tone-danger" : "tone-ok"} role={terNote.error ? "alert" : "status"}>{terNote.text}</small>}
@@ -900,7 +915,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           ? <>Паяльный разъём · карточка <span className="code">{ep.sdrTmpl}</span></>
           : "Тип не распознан — карточку пайки выберите в операциях"}</div>
         <div className="ep-ter">
-          <Field label="Зачистка под пайку" className="mid"><UnitInput unit="мм" value={ep.solderStrip} placeholder="5" onChange={(event) => set({ solderStrip: event.target.value })} /></Field>
+          <Field label="Зачистка" className="mid"><UnitInput unit="мм" value={ep.solderStrip} placeholder="5" onChange={(event) => set({ solderStrip: event.target.value })} /></Field>
           <Field label="Припуск на пайку" className="mid"><UnitInput unit="мм" value={ep.solderAllow ?? ""} placeholder="0" onChange={(event) => set({ solderAllow: event.target.value })} /></Field>
           {!ep.tutOff && <Field label="Длина ТУТ" className="mid"><UnitInput unit="мм" value={ep.tutLen} placeholder="20" onChange={(event) => set({ tutLen: event.target.value })} /></Field>}
           <Chip checked={!ep.tutOff} onChange={(on) => set({ tutOff: !on })}>ТУТ на каждый провод</Chip>

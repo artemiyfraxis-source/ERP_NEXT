@@ -6,12 +6,12 @@ import { parseLengthVal_, sideRu_, terFromFields, type Gen, type GenState, type 
    по ответу сервера, справочник генератора обновляется этой записью без пересева формы, L− подсказывается только по
    данным БД.ТЕР (та же серия того же производителя), не выдумывается. */
 
-export type TerKey = "lPlus" | "lMinus" | "step" | "applicator";
+export type TerKey = "lPlus" | "lMinus" | "step" | "applicator" | "strip";
 export type TerEdits = Partial<Record<string, string>>;
 
 /** Поле формы → поле записи БД.ТЕР → подпись. */
 export const TER_DB_FIELDS: ReadonlyArray<readonly [TerKey, string, string]> = [
-  ["lPlus", "terLPlus", "L+"], ["lMinus", "terLMinus", "L−"], ["step", "terStep", "Шаг"], ["applicator", "terApplicator", "Аппликатор"],
+  ["lPlus", "terLPlus", "L+"], ["lMinus", "terLMinus", "L−"], ["step", "terStep", "Шаг"], ["applicator", "terApplicator", "Аппликатор"], ["strip", "terStrip", "Зачистка"],
 ];
 const LABEL = Object.fromEntries(TER_DB_FIELDS.map(([key, , label]) => [key, label])) as Record<TerKey, string>;
 const MM_NUMBER = /^\d+([.,]\d+)?$/;
@@ -21,7 +21,7 @@ const typed = (edits: TerEdits, key: TerKey) => String(edits[key] ?? "").trim();
 
 /** L+ и L− — число в мм (запятая или точка) или пусто; шаг бывает «3 / 2» и пишется как есть. */
 export function terEditProblem(edits: TerEdits): string {
-  for (const key of ["lPlus", "lMinus"] as const) {
+  for (const key of ["lPlus", "lMinus", "strip"] as const) {
     const value = typed(edits, key);
     if (value && !MM_NUMBER.test(value)) return `${LABEL[key]}: число в мм, а не «${value}»`;
   }
