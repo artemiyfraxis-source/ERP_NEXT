@@ -779,8 +779,9 @@ it("counts a line «нет на складе» as waiting on its КБ chip and n
   expect(within(tabs).getByRole("tab", { name: "КБ1 ✓" })).toBeInTheDocument();
   expect(within(tabs).getByRole("tab", { name: "КБ2 · ждут 1 (нет 1)" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "КБ2 0 / 4 · нет на складе" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "КБ1 4 / 4 · 4 не заведено" })).toBeInTheDocument();
   expect(screen.getByText("4 нет на складе")).toBeInTheDocument();
-  expect(screen.getByText("4 есть, не заведено")).toBeInTheDocument();
+  expect(screen.getByText("из них 4 есть, не заведено")).toBeInTheDocument();
 });
 
 it("picks several lots for every КБ at once, previews the FIFO split and reports what was assigned", async () => {

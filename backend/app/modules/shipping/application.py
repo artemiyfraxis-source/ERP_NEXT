@@ -78,6 +78,7 @@ class AppendOnlyRepository(Protocol):
 class UpdFileRepository(Protocol):
     def add(self, stored: StoredFile, content: bytes) -> None: ...
     def get(self, file_id: UUID) -> tuple[StoredFile, bytes] | None: ...
+    def names(self, file_ids: Sequence[UUID]) -> dict[UUID, str]: ...
 
 
 class UnitOfWork(Protocol):
@@ -456,7 +457,8 @@ def _create_shipment(
         carrier=address.carrier, upd_type=address.upd_type,
         # Срок и комментарий, не заданные в заявке, — из плана отгрузки карточки проекта (копия на момент заведения).
         deadline=command.deadline or (card.plan_date if card is not None else None),
-        upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
+        upd_number=command.upd_number, upd_date=command.upd_date,
+        upd_url=str(command.upd_url or "").strip() or _card_upd(card, address.upd_type, uow),
         manager=command.actor.name, note=str(command.note or "").strip() or (card.note if card is not None else ""),
         lines=tuple(lines),
         manager_id=command.actor.id, inherited=_unset_fields(command), id=shipment_id,
@@ -474,6 +476,18 @@ def _create_shipment(
     if taken and not command.no_docs:
         shipment = _pack(shipment, command.actor, command.now, uow)
     return shipment
+
+
+def _card_upd(card: ProjectAddressee | None, upd_type: UpdType | None, uow: UnitOfWork) -> str:
+    """Бумажная УПД, приложенная к данным отправки заранее (владелец 14.10.2026), — новой отправке с бумажной УПД.
+    Один файл — одной отправке: ушёл с другой (не отменённой) отправкой проекта — следующей нужен свой."""
+    if card is None or not card.upd_url or upd_type != UpdType.PAPER:
+        return ""
+    taken = any(
+        other.upd_url == card.upd_url and other.status != ShipmentStatus.CANCELLED
+        for other in uow.shipments.for_project(card.project)
+    )
+    return "" if taken else card.upd_url
 
 
 def _unset_fields(command: CreateShipmentCommand) -> frozenset[str]:
@@ -659,6 +673,35 @@ def _notify_upd(shipment: Shipment, now: datetime, uow: UnitOfWork) -> None:
     ))
 
 
+def notify_dispatch_gaps(uow, project: str, items: Sequence[str], key: str, now: datetime) -> bool:
+    """Склад принял КБ проекта, а данных отправки нет (владелец 14.10.2026) — менеджеру проекта, один раз на приёмку.
+
+    Менеджер проекта — менеджер последней не отменённой отправки проекта (как трек уходит менеджеру отправки); отправок
+    нет — все менеджеры проектов (`shipTrackRecipients_`). `uow` — с `addressees`, `shipments` и `outbox` в той же
+    транзакции, что и приёмка."""
+    card = uow.addressees.get(project) or ProjectAddressee.empty(project)
+    gaps = card.dispatch_gaps()
+    if not gaps:
+        return False
+    shipments = [item for item in uow.shipments.for_project(project) if item.status != ShipmentStatus.CANCELLED and item.manager_id]
+    manager_id = max(shipments, key=lambda item: item.created_at).manager_id if shipments else None
+    kbs = ", ".join(dict.fromkeys(str(item).strip() for item in items if str(item).strip()))
+    return publish_notification(uow.outbox, notification_requested(
+        key=f"shipping:dispatch-gaps:{key}:{project}",
+        now=now,
+        title=f"Нет данных отправки: проект {project}",
+        body=(
+            f"Приняли на склад КБ {kbs} проекта {project}, а данных отправки нет: {', '.join(gaps)}. "
+            "Заполните в „Приёмке с производства“ → „Данные отправки“."
+            "\n\nОткрыть: портал → Склад → Приёмка с производства (?section=intake)."
+        ),
+        kind="ship",
+        reference=project,
+        user_ids=(manager_id,),
+        audiences=() if manager_id else (PROJECT_MANAGER_AUDIENCE,),
+    ))
+
+
 @dataclass(frozen=True)
 class AttachUpdCommand(ShipmentCommand):
     file_name: str
@@ -666,8 +709,11 @@ class AttachUpdCommand(ShipmentCommand):
     content: bytes
 
 
+UPD_FILE_URL_PREFIX = "/api/shipping/files/"
+
+
 def upd_file_url(file_id: UUID) -> str:
-    return f"/api/shipping/files/{file_id}"
+    return f"{UPD_FILE_URL_PREFIX}{file_id}"
 
 
 def attach_upd_file(command: AttachUpdCommand, uow: UnitOfWork) -> Shipment:
@@ -678,6 +724,39 @@ def attach_upd_file(command: AttachUpdCommand, uow: UnitOfWork) -> Shipment:
         updated = _attach_upd(shipment, command.file_name, command.content_type, command.content, command.actor, command.now, uow)
         uow.commit()
         return updated
+
+
+@dataclass(frozen=True)
+class AttachCardUpdCommand:
+    """Файл бумажной УПД к данным отправки проекта — отправки ещё нет; ссылку в карточку ставит её правка."""
+
+    project: str
+    file_name: str
+    content_type: str
+    content: bytes
+    actor: Actor
+    now: datetime
+
+
+def store_card_upd_file(command: AttachCardUpdCommand, uow: UnitOfWork) -> StoredFile:
+    """То же хранилище, что у файлов УПД отправок: файл помечен проектом, имя — как его приложили."""
+    _check_upd_file(command.content)
+    project = str(command.project or "").strip()
+    if not project:
+        raise ShippingValidationError("Не указан проект")
+    name = str(command.file_name or "").strip().replace("/", "_").replace("\\", "_")[:512] or "УПД"
+    stored = StoredFile(
+        id=uuid4(), shipment_id=None, project=project, file_name=name,
+        content_type=stored_content_type(command.content), size=len(command.content),
+        uploaded_by=command.actor.name, uploaded_at=command.now,
+    )
+    with uow:
+        uow.files.add(stored, command.content)
+        _audit(_addressee_id(project), "shipping.addressee_upd_stored", command.actor, command.now, {
+            "project": project, "file_id": str(stored.id), "name": name,
+        }, uow)
+        uow.commit()
+    return stored
 
 
 def _check_upd_file(content: bytes) -> None:
