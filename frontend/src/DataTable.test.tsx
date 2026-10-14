@@ -485,3 +485,16 @@ describe("cells edited right in the table, like a sheet", () => {
     expect(screen.queryByText(/Ctrl\+D/)).toBeNull();
   });
 });
+
+it("shows «Удалить» in «Колонки» only for a column that can be removed and calls it", () => {
+  const remove = vi.fn();
+  const columns: DataColumn<Row>[] = [
+    { key: "name", title: "Название", value: (row) => row.name },
+    { key: "shelf", title: "Полка", value: () => "", remove },
+  ];
+  render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} />);
+  fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+  expect(screen.queryByRole("button", { name: "Удалить столбец: Название" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
+  expect(remove).toHaveBeenCalledTimes(1);
+});

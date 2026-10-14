@@ -74,13 +74,15 @@ function draftOf(row: CableRow | null, columns: string[], kind: CableKind): Draf
   };
 }
 
-export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
+export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, removeColumn }: {
   kind: CableKind;
   data: CablesResult;
   canEdit: boolean;
   onSaved: (message: string) => Promise<void> | void;
   onError: (message: string) => void;
   toolbar?: ReactNode;
+  /** «Удалить столбец» своего столбца БД.ПРОВ (окно подтверждения — у страницы). */
+  removeColumn?: (name: string) => (() => void) | undefined;
 }) {
   const [adding, setAdding] = useState(false);
   const grouped = kind === "multi" || kind === "other";
@@ -120,6 +122,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
     return {
       key: name, title: name, value: (row) => field(row, name), hidden,
       edit: canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldEdit(name),
+      remove: own.includes(name) ? removeColumn?.(name) : undefined,
       render: long ? (row) => <span className="cable-clip" title={field(row, name)}>{field(row, name)}</span> : undefined,
       numeric: values.length > 0 && values.every((value) => NUMBER.test(value)),
     };
@@ -175,7 +178,8 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}
       groupBy={grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
-      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }] : undefined}
+      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
+        : rows.some((row) => !field(row, "Наружный диаметр, мм").trim()) ? [{ label: "Без Ø", test: (row) => !field(row, "Наружный диаметр, мм").trim() }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
       toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />

@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { ownCellEdit } from "./CustomColumn";
-import { DataTable, type DataColumn } from "./DataTable";
+import { cellFailure, fieldCellEdit, ownCellEdit } from "./CustomColumn";
+import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
 import {
   failureText,
   referencesApi,
@@ -65,7 +65,14 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
   const columns: DataColumn<WireGauge>[] = [
     { key: "awg", title: "AWG", value: (gauge) => gauge.awg, render: (gauge) => gauge.awg ? <strong>{gauge.awg}</strong> : <span className="muted">только ГОСТ</span> },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (gauge) => gauge.section_mm2, render: (gauge) => num(gauge.section_mm2) },
-    { key: "dia", title: "Ø жилы, мм", numeric: true, value: (gauge) => gauge.conductor_d_mm ?? "", render: (gauge) => num(gauge.conductor_d_mm) || <span className="muted">—</span> },
+    // Ø жилы правится прямо в ячейке тем же сохранением, что форма сечения; AWG и сечение — ключ строки, в форме.
+    { key: "dia", title: "Ø жилы, мм", numeric: true, value: (gauge) => gauge.conductor_d_mm ?? "", render: (gauge) => num(gauge.conductor_d_mm) || <span className="muted">—</span>,
+      edit: canEdit ? {
+        value: (gauge) => num(gauge.conductor_d_mm),
+        save: async (gauge, value) => {
+          try { await referencesApi.saveGauge(gauge.id, { ...gaugeDraft(gauge), conductor_d_mm: value }); } catch (reason) { throw cellFailure(reason); }
+        },
+      } : undefined },
     { key: "wires", title: "Монтажных проводов", numeric: true, value: (gauge) => gauge.wires, render: (gauge) => gauge.wires || <span className="muted">—</span> },
   ];
   return <>
@@ -81,6 +88,9 @@ export function GaugeTable({ gauges, canEdit, onSaved, onError }: {
       storageKey="db:gauges"
       exportName="Сечения AWG - мм2"
       renderDetail={canEdit ? (gauge) => <GaugeEditor key={`${gauge.id}:${gaugeOption(gauge)}`} gauge={gauge} onSaved={onSaved} onError={onError} /> : undefined}
+      rowLabel={(gauge) => gauge.label}
+      presets={gauges.some((gauge) => gauge.conductor_d_mm === null) ? [{ label: "Без Ø жилы", test: (gauge) => gauge.conductor_d_mm === null }] : undefined}
+      onEdited={() => onSaved("")}
       emptyText="Таблица сечений пуста — добавьте сечение."
       toolbar={canEdit && !adding ? <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Сечение</button> : undefined}
     />
@@ -153,7 +163,7 @@ function WireColors({ text }: { text: string }) {
 const UNPARSED = "Не разобраны";
 type Shared = { insulation?: string; voltage?: string; temp?: string };
 
-export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar }: {
+export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
   data: CablesResult;
   canEdit: boolean;
   onSaved: (message: string) => Promise<void> | void;
@@ -161,6 +171,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   /** The «Вкладка» control of a row (moving it to another list), from CableTables. */
   kindSelect: (row: CableRow, value: CableKind, onChange: (kind: CableKind) => void) => ReactNode;
   toolbar?: ReactNode;
+  /** «Удалить столбец» своего столбца БД.ПРОВ (окно подтверждения — у страницы). */
+  removeColumn?: (name: string) => (() => void) | undefined;
 }) {
   const [adding, setAdding] = useState(false);
   const gauges = useMemo(() => data.gauges ?? [], [data.gauges]);
@@ -204,6 +216,18 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   const clip = (text: string) => <span className="cable-clip" title={text}>{text}</span>;
   const own = data.custom_columns ?? [];
+  // Ø, изоляция и напряжение — значения разобранного провода: ячейка пишет их тем же путём, что окно провода (со старыми
+  // значениями — сервер откажет, если провод поменяли). Серия и жила — выбор, температура — пара: в окне провода.
+  const hookupEdit = (key: "outer_d_mm" | "insulation" | "voltage_v"): DataCellEdit<CableRow> | undefined => canEdit ? {
+    enabled: (row) => Boolean(row.hookup && row.record),
+    value: (row) => hookupPayload(row.hookup)[key],
+    save: async (row, value) => {
+      const old = hookupPayload(row.hookup);
+      try {
+        await referencesApi.saveHookup(row.record!.id, { ...old, [key]: value, old });
+      } catch (reason) { throw cellFailure(reason); }
+    },
+  } : undefined;
   const columns: DataColumn<CableRow>[] = [
     { key: "cable", title: "Марка провода", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
     {
@@ -213,15 +237,18 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
     { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
-    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span> },
-    { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm) },
-    { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? "") },
-    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "" },
+    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
+      edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
+    { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
+    { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
+    { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
     { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
     ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: !own.includes(name), render: (row) => clip(field(row, name)),
-      edit: canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : undefined,
+      // «Тип провода» решает, в каком списке провод: меняется в окне провода.
+      edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : name === TYPE ? undefined : fieldCellEdit<CableRow>(name, (row) => row.record),
+      remove: own.includes(name) ? removeColumn?.(name) : undefined,
     })),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
@@ -245,7 +272,11 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       groupLabel={groupLabel}
       exportName="Монтажные провода"
       renderDetail={detail}
-      presets={unparsed ? [{ label: "Не разобраны", test: (row) => !row.hookup }] : undefined}
+      presets={[
+        ...(unparsed ? [{ label: "Не разобраны", test: (row: CableRow) => !row.hookup }] : []),
+        { label: "Без Ø", test: (row: CableRow) => row.hookup?.outer_d_mm === null || row.hookup?.outer_d_mm === undefined },
+        { label: "Без цветов", test: (row: CableRow) => !field(row, "Цвета").trim() },
+      ].filter((preset) => rows.some(preset.test))}
       onEdited={() => onSaved("")}
       emptyText="Монтажных проводов нет — добавьте провод."
       toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Провод</button>}</>}

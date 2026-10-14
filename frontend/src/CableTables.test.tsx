@@ -477,3 +477,68 @@ describe("«+ Столбец» (owner 14.10: «добавить свои сто�
     expect(screen.queryByRole("button", { name: "+ Столбец" })).toBeNull();
   });
 });
+
+describe("«Монтажные провода» and the other cable lists across the base (owner 14.10: «пройдись по базе в целом»)", () => {
+  const headerIndex = (name: string) => screen.getAllByRole("columnheader").findIndex((head) => head.textContent === name);
+  const cellIn = (mark: string, column: string) =>
+    screen.getByText(mark, { selector: "td.key strong" }).closest("tr")!.querySelectorAll("td")[headerIndex(column)] as HTMLElement;
+
+  it("writes the outer Ø of a parsed wire in the cell with the wire's old values; series stays in the window", async () => {
+    const calls = mockApi();
+    render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
+    await screen.findByText("UL1061 22AWG", { selector: "td.key strong" });
+    expect(cellIn("UL1061 22AWG", "Серия")).not.toHaveClass("dt-editable");
+    expect(cellIn("ПВАМ 0,50", "Ø наружный, мм")).not.toHaveClass("dt-editable"); // не разобран — правка в окне провода
+    const cell = cellIn("UL1061 22AWG", "Ø наружный, мм");
+    fireEvent.click(cell);
+    fireEvent.keyDown(cell, { key: "Enter" });
+    const input = within(cell).getByRole("textbox");
+    fireEvent.change(input, { target: { value: "1,4" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const old = { series: "UL1061", gauge_id: "g22", insulation: "ПВХ", outer_d_mm: "1,3", voltage_v: "300", temp_min_c: "-10", temp_max_c: "80" };
+    await waitFor(() => expect(calls.find((call) => call.method === "PUT" && call.path.endsWith("/hookup"))).toEqual({
+      path: "/api/references/cables/w-ul/hookup", method: "PUT", body: { ...old, outer_d_mm: "1,4", old },
+    }));
+  });
+
+  it("has «Без Ø» and «Без цветов» chips on the hook-up wires and «Без Ø» on the multi-core cables", async () => {
+    mockApi();
+    render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
+    await screen.findByText("UL1061 22AWG", { selector: "td.key strong" });
+    fireEvent.click(screen.getByRole("button", { name: /^Без Ø · 2/ }));
+    expect(screen.queryByText("UL1061 22AWG", { selector: "td.key strong" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Без цветов · 2/ }));
+    expect(screen.getByText("ПВАМ 0,50", { selector: "td.key strong" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
+    await screen.findByText("КСПВГ 4x0,20", { selector: "td.key strong" });
+    expect(screen.queryByRole("button", { name: /^Без Ø/ })).toBeNull(); // у всех многожильных Ø есть — чипа нет
+    fireEvent.click(screen.getByRole("button", { name: /^Прочие кабели/ }));
+    expect(await screen.findByRole("button", { name: /^Без Ø · 1/ })).toBeInTheDocument();
+  });
+
+  it("removes an empty own БД.ПРОВ column from «Колонки» after a confirm window", async () => {
+    const calls = mockApi();
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/references/tech-operations/columns/remove") {
+        calls.push({ path, method: "POST", body: JSON.parse(String(init?.body)) });
+        return json({ tab: "prov", name: "Полка", records: 7 });
+      }
+      if (path === "/api/references/cables") {
+        calls.push({ path, method: "GET", body: null });
+        const rows = ROWS.map((row) => row.record ? { ...row, record: { ...row.record, fields: { ...row.record.fields, "Полка": "" } } } : row);
+        return json({ columns: [...COLUMNS, "Цвета", "Полка"], custom_columns: ["Полка"], counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows, gauges: GAUGES });
+      }
+      return answer(input, init);
+    });
+    render(<ReferencesPage principal={admin} initialTab="cab_multi" />);
+    await screen.findByText("КСПВГ 4x0,20", { selector: "td.key strong" });
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    fireEvent.click(screen.getByRole("button", { name: "Удалить столбец: Полка" }));
+    const dialog = screen.getByRole("dialog", { name: "Удалить столбец" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Удалить столбец" }));
+    await waitFor(() => expect(calls.find((call) => call.path.endsWith("/columns/remove"))?.body).toEqual({ tab: "prov", name: "Полка" }));
+    expect(await screen.findByText("Столбец «Полка» удалён")).toBeInTheDocument();
+  });
+});

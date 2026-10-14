@@ -25,6 +25,15 @@ function json(body: unknown) {
 
 afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/"); });
 
+/** Правка ячейки как в листе: щелчок, Enter, ввод, Enter. */
+function typeInCell(cell: HTMLElement, value: string) {
+  fireEvent.click(cell);
+  fireEvent.keyDown(cell, { key: "Enter" });
+  const input = within(cell).getByRole("textbox");
+  fireEvent.change(input, { target: { value } });
+  fireEvent.keyDown(input, { key: "Enter" });
+}
+
 it("edits and atomically saves all reference maps", async () => {
   let payload: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -44,9 +53,12 @@ it("edits and atomically saves all reference maps", async () => {
   });
 
   render(<ReferencesPage principal={admin} initialTab="suppliers" />);
-  fireEvent.change(await screen.findByLabelText("Поставщик 1"), { target: { value: "Новый поставщик" } });
+  typeInCell((await screen.findByText("Поставщик", { selector: "td" })), "Новый поставщик");
+  await screen.findByText("Новый поставщик", { selector: "td" });
+  expect(screen.getByText("Есть несохранённые изменения")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Изготовитель → страна" }));
-  fireEvent.change(screen.getByLabelText("Страна 1"), { target: { value: "Китай" } });
+  typeInCell(await screen.findByText("Россия", { selector: "td" }), "Китай");
+  await screen.findByText("Китай", { selector: "td" });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить справочники" }));
 
   await waitFor(() => expect(payload).toEqual({
@@ -223,7 +235,7 @@ it("lets the buyer edit supplier maps and shows no separate ГОСТ→AWG map (
   });
 
   render(<ReferencesPage principal={{ ...admin, roles: ["tech_lead"], access_level: "tech_lead", permissions: { erpref: "view", procurement: "edit" } }} initialTab="suppliers" />);
-  expect(await screen.findByLabelText("Поставщик 1")).toBeEnabled();
+  expect(await screen.findByText("Склад", { selector: "td" })).toHaveClass("dt-editable");
   expect(screen.queryByRole("button", { name: "ГОСТ → AWG" })).toBeNull();
   expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();
 });

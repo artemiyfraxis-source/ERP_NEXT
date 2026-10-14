@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { DataTable, type DataColumn } from "./DataTable";
-import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult } from "./api";
+import { DataTable, type DataCellEdit, type DataColumn, type DataPreset } from "./DataTable";
+import { fieldCellEdit } from "./CustomColumn";
+import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type TechOperationRecord } from "./api";
 
 /* «База данных» → «Оболочки» (owner 12.10.2026): термоусадка без клея и с клеем, оплётки, гофра — each its own table with
    the fields of its kind, grouped by series, sizes in a series by Ø as a number (the server sorts, `coverings.py`).
    «Прочее» (ленты, кембрик) is collapsed under a toggle. Nothing is deleted: a row moves between groups through
-   the «Раздел» cell, «Авто» returns it to the classifier. */
+   the «Раздел» cell, «Авто» returns it to the classifier. Cells that are a БД.МАТ column of the row (производитель, цвет,
+   материал, Ø до/после, усадка, ссылка) are edited in place through the record's own edit (old value checked); a value the
+   parser took from the name shows in the cell, the editor opens on the column itself (empty — fill it). */
 
 const SHOWN: CoveringGroup[] = ["tut", "ttk", "braid", "corrugated"];
 const CHOICES: Array<{ value: string; label: string }> = [
@@ -24,33 +27,35 @@ const dash = <span className="muted">—</span>;
 const orDash = (text: string): ReactNode => text ? text : dash;
 const clip = (text: string) => text ? <span className="cable-clip" title={text}>{text}</span> : dash;
 
-function columnsFor(group: CoveringGroup, rows: CoveringRow[]): DataColumn<CoveringRow>[] {
+type RawEdit = (field: string) => DataCellEdit<CoveringRow> | undefined;
+
+function columnsFor(group: CoveringGroup, rows: CoveringRow[], raw: RawEdit): DataColumn<CoveringRow>[] {
   const name: DataColumn<CoveringRow> = {
     key: "name", title: "Наименование",
     value: (row) => row.name,
     render: (row) => <><strong>{row.name}</strong>{row.group_source === "вручную" && <small className="muted" title="Раздел задан вручную"> · вручную</small>}</>,
   };
   const material: DataColumn<CoveringRow> = {
-    key: "material", title: "Материал", value: (row) => row.material,
+    key: "material", title: "Материал", value: (row) => row.material, edit: raw("Материал"),
     render: (row) => row.material ? <span className="cable-clip" title={row.material}>{row.material_short && !row.material.toLocaleLowerCase("ru-RU").startsWith(row.material_short.toLocaleLowerCase("ru-RU")) ?`${row.material_short} · ${row.material}` : row.material}</span> : dash,
   };
   const temp: DataColumn<CoveringRow> = {
     key: "temp", title: "Температура, °C", value: (row) => tempText(row.temp_min_c, row.temp_max_c), render: (row) => orDash(tempText(row.temp_min_c, row.temp_max_c)),
   };
-  const colour: DataColumn<CoveringRow> = { key: "color", title: "Цвет", value: (row) => row.color, render: (row) => orDash(row.color) };
-  const maker: DataColumn<CoveringRow> = { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker) };
+  const colour: DataColumn<CoveringRow> = { key: "color", title: "Цвет", value: (row) => row.color, render: (row) => orDash(row.color), edit: raw("Цвет") };
+  const maker: DataColumn<CoveringRow> = { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker), edit: raw("Производитель") };
   const link: DataColumn<CoveringRow> = {
-    key: "datasheet", title: "Ссылка", value: (row) => row.datasheet,
+    key: "datasheet", title: "Ссылка", value: (row) => row.datasheet, edit: raw("Ссылка на datasheet"),
     render: (row) => row.datasheet ? <a href={row.datasheet} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>datasheet</a> : dash,
   };
-  const number = (key: string, title: string, pick: (row: CoveringRow) => number | null): DataColumn<CoveringRow> =>
-    ({ key, title, numeric: true, value: (row) => pick(row), render: (row) => pick(row) === null ? dash : mm(pick(row)) });
+  const number = (key: string, title: string, pick: (row: CoveringRow) => number | null, field?: string): DataColumn<CoveringRow> =>
+    ({ key, title, numeric: true, value: (row) => pick(row), render: (row) => pick(row) === null ? dash : mm(pick(row)), edit: field ? raw(field) : undefined });
   const filled = (pick: (row: CoveringRow) => unknown) => rows.some((row) => pick(row) !== null && pick(row) !== "");
   if (group === "tut" || group === "ttk") return [
     name,
-    number("before", "Ø до усадки, мм", (row) => row.before_mm),
-    number("after", "Ø после, мм", (row) => row.after_mm),
-    { key: "ratio", title: "Усадка", value: (row) => row.ratio, render: (row) => orDash(row.ratio) },
+    number("before", "Ø до усадки, мм", (row) => row.before_mm, BEFORE),
+    number("after", "Ø после, мм", (row) => row.after_mm, AFTER),
+    { key: "ratio", title: "Усадка", value: (row) => row.ratio, render: (row) => orDash(row.ratio), edit: raw("Коэф. усадки") },
     { ...number("wall", "Стенка, мм", (row) => row.wall_mm), hidden: !filled((row) => row.wall_mm) },
     ...(group === "ttk" ? [{ key: "adhesive", title: "Клей", value: (row: CoveringRow) => row.adhesive, render: (row: CoveringRow) => orDash(row.adhesive) }] : []),
     material, temp, colour, maker, link,
@@ -65,13 +70,26 @@ function columnsFor(group: CoveringGroup, rows: CoveringRow[]): DataColumn<Cover
   ];
   if (group === "corrugated") return [
     name,
-    number("inner", "Ø внутр., мм", (row) => row.inner_mm),
-    number("outer", "Ø наружн., мм", (row) => row.outer_mm),
+    number("inner", "Ø внутр., мм", (row) => row.inner_mm, BEFORE),
+    number("outer", "Ø наружн., мм", (row) => row.outer_mm, AFTER),
     { key: "split", title: "Разрезная", value: (row) => row.split === null ? "" : row.split ? "да" : "нет", render: (row) => row.split === null ? dash : row.split ? "да" : "нет" },
     material, temp, colour, maker, link,
   ];
   return [name, maker, material, temp, colour, link];
 }
+
+const BEFORE = "Размер до, мм";
+const AFTER = "Размер после, мм";
+// «Без Ø» — строки, у которых размер не нашёлся ни в колонке, ни в названии (их генератор не подберёт по диаметру).
+const sizeOf: Record<CoveringGroup, (row: CoveringRow) => number | null> = {
+  tut: (row) => row.before_mm, ttk: (row) => row.before_mm, other: (row) => row.before_mm,
+  braid: (row) => row.nominal_mm ?? row.min_mm, corrugated: (row) => row.inner_mm,
+};
+// Чип без строк не показывается: пустой отбор — шум.
+const presetsFor = (group: CoveringGroup, rows: CoveringRow[]): DataPreset<CoveringRow>[] => ([
+  { label: "Без Ø", test: (row) => sizeOf[group](row) === null },
+  { label: "Без производителя", test: (row) => !row.maker.trim() },
+] as DataPreset<CoveringRow>[]).filter((preset) => rows.some(preset.test));
 
 function GroupChooser({ row, busy, onChange }: { row: CoveringRow; busy: boolean; onChange: (group: string) => void }) {
   const manual = row.group_source === "вручную";
@@ -88,6 +106,8 @@ function GroupChooser({ row, busy, onChange }: { row: CoveringRow; busy: boolean
 
 export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount?: (count: number) => void }) {
   const [data, setData] = useState<CoveringsResult | null>(null);
+  // The БД.МАТ rows behind the coverings: a cell edit sends the column's old value as the record has it.
+  const [records, setRecords] = useState<Map<string, TechOperationRecord>>(new Map());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
@@ -95,8 +115,12 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
 
   async function load() {
     try {
-      const result = await referencesApi.coverings();
+      const [result, mat] = await Promise.all([
+        referencesApi.coverings(),
+        canEdit ? referencesApi.techOperations("mat", "", 5000).then((value) => value.records, () => [] as TechOperationRecord[]) : Promise.resolve([] as TechOperationRecord[]),
+      ]);
       setData(result);
+      setRecords(new Map(mat.map((record) => [record.id, record])));
       onCount?.(result.rows.length);
       setError("");
     } catch (reason) {
@@ -127,6 +151,7 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
   if (error && !data) return <div className="error-banner" role="alert">{error}</div>;
   if (!data) return <div className="empty">Загрузка…</div>;
 
+  const raw: RawEdit = (field) => canEdit ? fieldCellEdit<CoveringRow>(field, (row) => records.get(row.id)) : undefined;
   const section = (group: CoveringGroup) => {
     const rows = visible.filter((row) => row.group === group);
     return <section className="cov-group" key={group} aria-label={data.titles[group]}>
@@ -134,8 +159,11 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
       <DataTable
         label={data.titles[group]}
         rows={rows}
-        columns={columnsFor(group, data.rows.filter((row) => row.group === group))}
+        columns={columnsFor(group, data.rows.filter((row) => row.group === group), raw)}
         rowKey={(row) => row.id}
+        rowLabel={(row) => row.name}
+        presets={presetsFor(group, data.rows.filter((row) => row.group === group))}
+        onEdited={load}
         storageKey={`db:coverings:${group}`}
         groupBy={(row) => row.series_family || NO_SERIES}
         hideSearch
