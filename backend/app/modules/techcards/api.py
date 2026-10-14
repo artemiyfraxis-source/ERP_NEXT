@@ -25,11 +25,12 @@ from app.shared.file_types import sniffed_type
 from app.shared.stored_files import decode_upload, file_response
 from app.shared.http_auth import (
     TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, refuse_api_tokens, tcgen_principal, techcards_edit_principal, techcards_view_principal, tctemplates_admin_principal,
-    tctemplates_edit_principal, tctemplates_view_principal,
+    tctemplates_edit_principal, tctemplates_view_principal, section_allowed,
 )
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
 from app.modules.references.domain import TechOperationTab
 from app.workflows.etk_lots import IssuedKitLots
+from app.workflows.new_operation import NewOperationUnitOfWork, create_operation
 from app.workflows.techcard_build import with_technology
 from app.workflows.warehouse_article import infer_article_identity
 
@@ -47,6 +48,7 @@ from .application import (
     create_project_techcard,
     auto_build_project_techcard,
     edit_operation_record,
+    new_operation,
     discard_project_techcard_draft,
     edit_project_operation,
     issue_project_techcard,
@@ -162,6 +164,16 @@ class OperationRecordPayload(BaseModel):
     revision: str = Field(default="", max_length=255)
     steps: list[RecordStepPayload] = Field(default_factory=list, max_length=200)
     tooling: list[RecordToolPayload] = Field(default_factory=list, max_length=200)
+
+
+class NewOperationPayload(BaseModel):
+    """«Новая операция»: `code` — «Номер» (БД.ОП) and the card's code; `copy_of` — the code of an operation to copy
+    (steps, tooling, defects, safety, norms); none — a blank card. Lengths are checked with Russian messages inside."""
+
+    code: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=1_000)
+    copy_of: str | None = Field(default=None, max_length=255)
+    category: str = Field(default="", max_length=255)
 
 
 class OperationLibraryPayload(BaseModel):
@@ -577,6 +589,37 @@ def edit_operation_card_template(
             raise HTTPException(status_code=404, detail="Карточка операции не найдена") from error
         raise
     return _operation_card_result(card, detail=True, norms=_operation_norms(references_factory))
+
+
+@router.post("/techcards/operations", status_code=201)
+def create_operation_endpoint(
+    payload: NewOperationPayload,
+    principal: Annotated[Principal, Depends(tctemplates_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
+    references_factory: Annotated[
+        Callable[[], ReferencesUnitOfWork] | None,
+        Depends(optional_references_uow_factory),
+    ],
+) -> dict:
+    """A new operation: its БД.ОП row and its card template in one transaction (both edit rights needed — the
+    operation row is «Справочник», the card «Шаблоны техкарт»; no API token — the template gate refuses tokens).
+    A taken code — 422."""
+    if not section_allowed(principal, ("erpref",), "edit"):
+        raise HTTPException(status_code=403, detail="Раздел «Справочник» открыт вам только на просмотр.")
+    created = _run(lambda: create_operation(
+        new_operation(payload.code, payload.name, payload.copy_of or "", payload.category),
+        principal.actor, now, NewOperationUnitOfWork(uow_factory()),
+    ))
+    norms = _operation_norms(references_factory)
+    record = created.record
+    return {
+        "code": record.fields.get("opNumber", ""),
+        "name": record.fields.get("opName", ""),
+        "record": {"id": str(record.id), "tab": record.tab.value, "display_text": record.display_text,
+                   "fields": record.fields},
+        "templates": [_operation_card_result(card, detail=True, norms=norms) for card in created.templates],
+    }
 
 
 @router.get("/techcards/projects", dependencies=[Depends(techcards_view_principal)])
