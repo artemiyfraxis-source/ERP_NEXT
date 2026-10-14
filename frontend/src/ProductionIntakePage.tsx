@@ -29,8 +29,10 @@ function tasksText(row: IntakeRow) {
   return row.tasks.map((task) => `${task.number}${task.site ? ` · ${task.site}` : ""} · сдано ${task.delivered} из ${task.quantity}`).join("\n");
 }
 
+/** «В производстве» (владелец 14.10): по этапу КБ — «В работе» или «ОТК», — или запущено больше, чем сдано цехом. */
+const IN_WORK_STAGES = new Set(["В работе", "ОТК"]);
 const inSegment = (row: IntakeRow, segment: Segment) => segment === "all"
-  || (segment === "ready" ? num(row.remaining) > 0 : num(row.launched) > num(row.delivered));
+  || (segment === "ready" ? num(row.remaining) > 0 : IN_WORK_STAGES.has(row.stage) || num(row.launched) > num(row.delivered));
 
 export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // Принимает кладовщик («Отгрузка — склад»); данные отправки вносят и менеджер («Отгрузка»), и кладовщик.
@@ -44,6 +46,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
   const [segment, setSegment] = useState<Segment>("ready");
+  const segmentChosen = useRef(false);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
   const [qty, setQty] = useState<Record<string, string>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
@@ -60,7 +63,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         canWarehouse ? shippingApi.goods() : Promise.resolve({ goods: [] as FinishedGood[] }),
         canWarehouse ? productionApi.finishedGoodsReady() : Promise.resolve({ boxes: [] as FinishedGoodsReadyBox[] }),
       ]);
-      setRows(intake.rows ?? []); setGoods(goodsResult.goods ?? []); setBoxes(boxesResult.boxes ?? []); setError("");
+      const loadedRows = intake.rows ?? [];
+      setRows(loadedRows); setGoods(goodsResult.goods ?? []); setBoxes(boxesResult.boxes ?? []); setError("");
+      // Принимать нечего — сразу то, что в производстве (если и там пусто — всё).
+      if (!segmentChosen.current && !loadedRows.some((row) => inSegment(row, "ready"))) {
+        setSegment(loadedRows.some((row) => inSegment(row, "production")) ? "production" : "all");
+      }
     } catch (reason) {
       setError(failureText(reason, "Не удалось загрузить список КБ в работе"));
     } finally { setLoaded(true); }
@@ -170,8 +178,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {notice && <div className="success-banner" role="status">{notice}</div>}
     {!loaded ? <div className="empty">Загрузка…</div> : <>
       <div className="seg-tabs" role="tablist" aria-label="Что показать">{SEGMENTS.map(([key, label]) =>
-        <button key={key} type="button" role="tab" aria-selected={segment === key} className={segment === key ? "on" : undefined} onClick={() => setSegment(key)}>
-          {label}{key === "ready" && <span className="page-count"> {acceptable.length}</span>}</button>)}</div>
+        <button key={key} type="button" role="tab" aria-selected={segment === key} className={segment === key ? "on" : undefined} onClick={() => { segmentChosen.current = true; setSegment(key); }}>
+          {label}<span className="page-count"> {rows.filter((row) => inSegment(row, key)).length}</span></button>)}</div>
       <DataTable label="Приёмка с производства" storageKey="production-intake" rows={shown} columns={columns} rowKey={keyOf}
         groupBy={(row) => row.project} groupLabel={groupLabel} toolbar={toolbar} exportName="Приёмка с производства"
         searchPlaceholder="Проект, КБ, наименование или задание"

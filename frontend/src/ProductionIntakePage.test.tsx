@@ -26,13 +26,14 @@ const dispatchCard = {
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
+let intakeRows: unknown[] = ROWS;
 
 function stub(acceptStatus = 200, acceptBody: unknown = { goods: [], replayed: false }) {
   calls = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input), method = init?.method ?? "GET";
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    if (url === "/api/shipping/intake") return json({ rows: ROWS });
+    if (url === "/api/shipping/intake") return json({ rows: intakeRows });
     if (url === "/api/shipping/goods") return json({ goods: [] });
     if (url === "/api/production/finished-goods-ready") return json({ boxes: [] });
     if (url === "/api/shipping/finished-goods/accept") return json(acceptBody, acceptStatus);
@@ -42,7 +43,7 @@ function stub(acceptStatus = 200, acceptBody: unknown = { goods: [], replayed: f
   }));
 }
 
-beforeEach(() => stub());
+beforeEach(() => { intakeRows = ROWS; stub(); });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Приёмка с производства", () => {
@@ -81,8 +82,23 @@ describe("Приёмка с производства", () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
     expect(screen.getByText(/591К\.3 · Заказчик · срок 25\.10/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "Все" }));
+    fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
     expect(await screen.findByText("Шлейф")).toBeInTheDocument();
+  });
+
+  it("принимать нечего — открывается «В производстве»: КБ с этапом «В работе» без запущенных заданий, «Новый» — только во «Все»", async () => {
+    intakeRows = [
+      row({ item_index: "КБ1", name: "Жгут в работе", stage: "В работе", launched: "0", delivered: "0", accepted: "0", remaining: "0", tasks: [] }),
+      row({ item_index: "КБ2", name: "Жгут новый", stage: "Новый", launched: "0", delivered: "0", accepted: "0", remaining: "0", tasks: [] }),
+    ];
+    render(<ProductionIntakePage principal={principal} />);
+    expect(await screen.findByText("Жгут в работе")).toBeInTheDocument();
+    expect(screen.queryByText("Жгут новый")).toBeNull();
+    expect(screen.getByRole("tab", { name: /^В производстве/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /^Можно принять/ })).toHaveTextContent("0");
+    expect(screen.getByRole("tab", { name: /^Все/ })).toHaveTextContent("2");
+    fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
+    expect(await screen.findByText("Жгут новый")).toBeInTheDocument();
   });
 
   it("«Данные отправки»: сохраняет с версией, плановой датой, комментарием и УПД", async () => {
