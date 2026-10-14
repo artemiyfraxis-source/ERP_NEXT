@@ -82,6 +82,9 @@ def database(tmp_path, monkeypatch):
         connection.execute(text("ALTER TABLE finished_goods ADD COLUMN location VARCHAR(255) NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE shipping_project_addressees ADD COLUMN plan_date DATE"))
         connection.execute(text("ALTER TABLE shipping_project_addressees ADD COLUMN note TEXT NOT NULL DEFAULT ''"))
+        # 0125: бумажная УПД в данных отправки; файл УПД может принадлежать проекту.
+        connection.execute(text("ALTER TABLE shipping_project_addressees ADD COLUMN upd_url VARCHAR(1024) NOT NULL DEFAULT ''"))
+        connection.execute(text("ALTER TABLE shipping_files ADD COLUMN project VARCHAR(255) NOT NULL DEFAULT ''"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
         # 0106: «нет на складе» on a kit line.

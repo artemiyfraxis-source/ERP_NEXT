@@ -101,19 +101,18 @@ describe("Приёмка с производства", () => {
     expect(await screen.findByText("Жгут новый")).toBeInTheDocument();
   });
 
-  it("«Данные отправки»: сохраняет с версией, плановой датой, комментарием и УПД", async () => {
+  it("«Данные отправки»: сохраняет с версией только изменённое из четырёх полей", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
     fireEvent.click(screen.getAllByRole("button", { name: "Данные отправки" })[0]);
     const receiver = await screen.findByLabelText("Получатель");
     await waitFor(() => expect(receiver).toHaveValue("Получатель"));
     fireEvent.change(screen.getByLabelText("УПД"), { target: { value: "БЕЗ УПД" } });
-    fireEvent.change(screen.getByLabelText("Плановая дата отгрузки"), { target: { value: "2026-10-30" } });
-    fireEvent.change(screen.getByLabelText("Комментарий"), { target: { value: "Звонить за день" } });
+    fireEvent.change(screen.getByLabelText("Телефон"), { target: { value: " +7 900 " } });
     fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
     await screen.findByText("Данные отправки сохранены");
     const put = calls.find((call) => call.method === "PUT")!;
-    expect(put.body).toMatchObject({ project: "591К.3", version: 2, receiver: "Получатель", terms: "САМОВЫВОЗ", upd_type: "БЕЗ УПД", plan_date: "2026-10-30", note: "Звонить за день" });
+    expect(put.body).toEqual({ project: "591К.3", version: 2, phone: "+7 900", upd_type: "БЕЗ УПД" });
   });
 
   it("менеджер с правом только на чтение видит карточку без «Сохранить»", async () => {

@@ -348,8 +348,9 @@ SHIPMENT_HEAD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms
 # Реквизиты отгрузочной ведомости (форма 04.1) в карточке проекта: `SHIP_PROJ_COLS_` «ЗАКАЗ №» … «ВРЕМЯ РАБОТЫ».
 ADDRESSEE_REQUISITE_FIELDS = ("po", "contract", "spec", "invoice", "pays", "customer_address", "hours")
 # План отгрузки в карточке проекта (владелец 14.10.2026): склад и менеджер заносят его заранее, пока КБ в цехе;
-# новая отправка берёт из него срок и комментарий, если свои пусты.
-ADDRESSEE_PLAN_FIELDS = ("plan_date", "note")
+# новая отправка берёт из него срок и комментарий, если свои пусты. `upd_url` (0125) — бумажная УПД, приложенная
+# заранее: новая отправка с бумажной УПД берёт её, если своей нет и файл ещё не ушёл с другой отправкой.
+ADDRESSEE_PLAN_FIELDS = ("plan_date", "note", "upd_url")
 
 
 @dataclass(frozen=True)
@@ -376,6 +377,7 @@ class ProjectAddressee:
     hours: str = ""
     plan_date: date | None = None
     note: str = ""
+    upd_url: str = ""
 
     @classmethod
     def empty(cls, project: str) -> ProjectAddressee:
@@ -413,6 +415,17 @@ class ProjectAddressee:
             getattr(self, key) != getattr(other, key)
             for key in ADDRESSEE_CARD_FIELDS + ADDRESSEE_REQUISITE_FIELDS + ADDRESSEE_PLAN_FIELDS
         )
+
+    def dispatch_gaps(self) -> tuple[str, ...]:
+        """Чего не хватает в «Данных отправки» (владелец 14.10.2026): получатель, адрес, телефон, вариант УПД,
+        у бумажной УПД — её файл."""
+        gaps = [label for key, label in (("receiver", "получатель"), ("shipping_point", "адрес доставки"), ("phone", "телефон"))
+                if not str(getattr(self, key) or "").strip()]
+        if self.upd_type is None:
+            gaps.append("вариант УПД")
+        elif self.upd_type == UpdType.PAPER and not self.upd_url.strip():
+            gaps.append("файл бумажной УПД")
+        return tuple(gaps)
 
 
 def _day(value: object) -> date | None:
@@ -807,15 +820,16 @@ def _plain(value: Decimal) -> str:
 
 @dataclass(frozen=True)
 class StoredFile:
-    """Метаданные файла УПД в хранилище отгрузки."""
+    """Метаданные файла УПД в хранилище отгрузки: у отправки (`shipment_id`) или у данных отправки проекта (`project`)."""
 
     id: UUID
-    shipment_id: UUID
+    shipment_id: UUID | None
     file_name: str
     content_type: str
     size: int
     uploaded_by: str
     uploaded_at: datetime
+    project: str = ""
 
 
 @dataclass(frozen=True)

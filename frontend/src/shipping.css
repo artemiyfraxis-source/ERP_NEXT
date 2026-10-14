@@ -5,3 +5,7 @@
 .ship-note { max-width: 420px; overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .ship-note::before { content: "Комментарий: "; }
 .ship-form select, .ship-docs select, .ship-form input:not([type="checkbox"]):not([type="file"]), .ship-docs input { min-height: 36px; box-sizing: border-box; line-height: 1.3; }
+/* «Данные отправки» проекта на «На складе» — тот же набор, что в окне «Приёмки с производства» (DispatchFields). */
+.ship-dispatch h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
+/* № и дата УПД, срок отправки — короткие значения: три узких поля, не на всю ширину. */
+@media (min-width: 1200px) { .ship-form.ship-pack-docs { grid-template-columns: repeat(3, minmax(0, 240px)); } }
