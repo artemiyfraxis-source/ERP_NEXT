@@ -141,10 +141,13 @@ export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = 
 
 /* ── «Схема полуфабрикатов» генератора: карточки из операций ─────────────────────────────────────────────────── */
 
-/** Полуфабрикат генератора: нарезанные провода, нарезанные трубки, обжатые провода, собранные стороны А и В,
-    готовое изделие. */
-export type GenStage = "wires" | "tubes" | "crimped" | "A" | "B" | "final";
-const STAGES: GenStage[] = ["wires", "tubes", "crimped", "A", "B", "final"];
+/** Полуфабрикат генератора: нарезанные провода, нарезанные трубки, обжатые провода (до первой стороны), обжим
+    стороны после сборки другой (`crimpedA` / `crimpedB`: резка, обжим А, сторона А, обжим В, сторона В — владелец
+    14.10), собранные стороны А и В, готовое изделие. */
+export type GenStage = "wires" | "tubes" | "crimped" | "crimpedA" | "A" | "crimpedB" | "B" | "final";
+const STAGES: GenStage[] = ["wires", "tubes", "crimped", "crimpedA", "A", "crimpedB", "B", "final"];
+/** Карточки обжатых проводов. */
+export const CRIMP_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["crimped", "crimpedA", "crimpedB"]);
 const WIRE_CUTS = new Set(["cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"]);
 const TUBE_CUTS = new Set(["cutTut", "coaxCutTut"]);
 /** Обжим концов руками: терминалы и наконечники (и двойной обжим — та же операция), сростки. */
@@ -165,20 +168,30 @@ function cutStage(op: RouteOp): GenStage | null {
 }
 
 /** Полуфабрикат каждой операции (по номеру в ЭТК): резка проводов и кабеля — «Нарезанные провода», резка ТУТ и
-    термоусадки — «Нарезанные трубки»; подготовка концов до последней операции сторон — «Обжатые провода», если среди
-    неё есть обжим руками (обжато всё на станке резки — отдельной карточки нет, зачистка и лужение остаются у сторон);
-    операция стороны — её сторона; операция без стороны (свивка, маркировка, обмотка) готовит ближайшую следующую
-    сторону, а после последней стороны — готовое изделие (лужение свободных концов в конце — тоже). */
+    термоусадки — «Нарезанные трубки»; подготовка концов стороны до последней операции сторон — обжим этой стороны
+    (`crimpedA` / `crimpedB`, прямо перед стороной: резка, обжим А, сторона А, обжим В, сторона В — владелец 14.10),
+    если среди неё есть обжим руками (обжато всё на станке резки — отдельной карточки нет, зачистка и лужение остаются
+    у стороны); подготовка без стороны до первой стороны — общие «Провода со сростками» (`crimped`), если в ней есть
+    сростки, иначе она готовит следующий обжим или сторону; операция стороны — её сторона; операция без стороны
+    (свивка, маркировка, обмотка) готовит ближайший следующий обжим или сторону, а после последней стороны — готовое
+    изделие (лужение свободных концов в конце — тоже). Зеркало backend `techcards/domain/pf_split.py` `op_stages`. */
 export function opStages(ops: readonly RouteOp[]): Map<number, GenStage> {
   const sorted = [...ops].sort((a, b) => a.position - b.position);
-  const lastSide = Math.max(-Infinity, ...sorted.filter((op) => op.side && !cutStage(op) && !wireEndPrep(op)).map((op) => op.position));
+  const sided = sorted.filter((op) => op.side && !cutStage(op) && !wireEndPrep(op)).map((op) => op.position);
+  const firstSide = Math.min(Infinity, ...sided), lastSide = Math.max(-Infinity, ...sided);
   const prep = sorted.filter((op) => !cutStage(op) && wireEndPrep(op) && op.position < lastSide);
-  const crimped = new Set(prep.some((op) => END_CRIMPS.has(op.type)) ? prep.map((op) => op.position) : []);
+  const crimped = new Map<number, GenStage>();
+  const group = (own: RouteOp[], stage: GenStage) => {
+    if (own.some((op) => END_CRIMPS.has(op.type))) own.forEach((op) => crimped.set(op.position, stage));
+  };
+  group(prep.filter((op) => op.side === "A"), "crimpedA");
+  group(prep.filter((op) => op.side === "B"), "crimpedB");
+  group(prep.filter((op) => !op.side && op.position < firstSide), "crimped");
   const result = new Map<number, GenStage>();
   let waiting: number[] = [];
   for (const op of sorted) {
-    const stage: GenStage | null = cutStage(op) ?? (crimped.has(op.position) ? "crimped" : op.side ?? null);
-    if (stage === "A" || stage === "B") { waiting.forEach((position) => result.set(position, stage)); waiting = []; }
+    const stage: GenStage | null = cutStage(op) ?? crimped.get(op.position) ?? op.side ?? null;
+    if (stage && stage !== "wires" && stage !== "tubes") { waiting.forEach((position) => result.set(position, stage)); waiting = []; }
     if (stage) result.set(op.position, stage); else waiting.push(op.position);
   }
   waiting.forEach((position) => result.set(position, "final"));
@@ -201,7 +214,10 @@ function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
     return ops.some((op) => op.type === "cutWireCrimp") ? "Нарезанные и обжатые провода" : "Нарезанные провода";
   }
   if (stage === "tubes") return "Нарезанные трубки";
-  if (stage === "crimped" && !final) return ops.some((op) => op.type === "prsTerm") ? "Обжатые провода" : "Провода со сростками";
+  if (CRIMP_STAGES.has(stage) && !final) {
+    if (!ops.some((op) => op.type === "prsTerm")) return "Провода со сростками";
+    return stage === "crimpedA" ? "Обжатые провода, сторона А" : stage === "crimpedB" ? "Обжатые провода, сторона В" : "Обжатые провода";
+  }
   if (final) return "Готовый кабель";
   return stage === "A" ? "Сторона А собрана" : stage === "B" ? "Сторона В собрана" : "Отделка";
 }
@@ -209,10 +225,9 @@ function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
 /** Карточки схемы генератора поверх её блоков (схема ЭТК не меняется): блок — в карточке полуфабриката своей последней
     операции; карточка с итоговым блоком — «Готовый кабель» (ФИНАЛ). Карточки — по ходу сборки (первая операция в
     ЭТК), финал последним. Связь карточек — стрелки блоков между ними; стрелка назад по ходу сборки (коаксиал:
-    разделка А, разделка В, пайка А…) карточек не связывает; стрелка из стороны в «Обжатые провода» (обжим разъёма В
-    после сборки стороны А) связывает сторону с той карточкой, куда уходит этот обжим, а обжатые всегда идут из
-    нарезанных. Число штук на
-    связи — когда под ней одна стрелка (или все с одним числом). */
+    разделка А, разделка В, пайка А…) карточек не связывает; сторона А идёт в обжим стороны В после неё (провода
+    проходят через сторону), «Обжатые провода» до первой стороны всегда идут из нарезанных, обжим стороны без
+    входа — тоже. Число штук на связи — когда под ней одна стрелка (или все с одним числом). */
 export function genCards(route: Route, ops: readonly RouteOp[]): { cards: GenCard[]; links: GenLink[]; cardOf: Map<string, GenStage> } {
   const stages = opStages(ops);
   const byPosition = new Map(ops.map((op) => [op.position, op]));
@@ -230,12 +245,16 @@ export function genCards(route: Route, ops: readonly RouteOp[]): { cards: GenCar
       .map((position) => byPosition.get(position)).filter((op): op is RouteOp => !!op);
     const final = stage === finalStage;
     return {
-      id: stage, kind: final ? "final" : stage === "wires" || stage === "tubes" || stage === "crimped" ? "semiFinished" : "assembly",
+      id: stage, kind: final ? "final" : stage === "wires" || stage === "tubes" || CRIMP_STAGES.has(stage) ? "semiFinished" : "assembly",
       title: genTitle(stage, final, cardOps), blocks: blocks.map((block) => block.key), ops: cardOps, final,
     };
   });
   // Ход сборки — по первой операции карточки в ЭТК (технолог мог поставить сторону В раньше А); финал — последний.
   const first = new Map(cards.map((card) => [card.id, card.final ? Infinity : Math.min(...card.ops.map((op) => op.position), Infinity)]));
+  // Обжим стороны — прямо перед ней, даже если операция стороны (скрутка экрана) стоит в ЭТК раньше обжима.
+  for (const [crimp, side] of [["crimpedA", "A"], ["crimpedB", "B"]] as const) {
+    if (first.has(crimp) && first.has(side) && first.get(crimp)! > first.get(side)!) first.set(crimp, first.get(side)! - 0.5);
+  }
   cards.sort((a, b) => first.get(a.id)! - first.get(b.id)! || STAGES.indexOf(a.id) - STAGES.indexOf(b.id));
   const rank = (stage: GenStage) => first.get(stage) ?? Infinity;
   const grouped = new Map<string, GenLink>();
@@ -245,33 +264,17 @@ export function genCards(route: Route, ops: readonly RouteOp[]): { cards: GenCar
     if (!link.edges.includes(edge)) link.edges.push(edge);
     grouped.set(id, link);
   };
-  const outgoing = new Map<string, RouteEdge[]>();
-  route.edges.forEach((edge) => outgoing.set(edge.from, [...(outgoing.get(edge.from) ?? []), edge]));
   for (const edge of route.edges) {
     const from = cardOf.get(edge.from), to = cardOf.get(edge.to);
-    if (!from || !to || from === to) continue;
-    const intoCrimped = to === "crimped" && from !== "wires" && from !== "tubes";
-    if (!intoCrimped) { if (rank(from) <= rank(to)) add(from, to, edge); continue; }
-    // Сторона А собрана, следом в ЭТК обжим разъёма В: обжатые провода делают из нарезанных, а не из стороны — стрелка
-    // идёт через них, сторона связана с карточкой, куда уходит этот обжим (иначе она повисла бы без выхода).
-    const seen = new Set<string>();
-    const stack = [edge.to];
-    while (stack.length) {
-      const key = stack.pop()!;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      for (const next of outgoing.get(key) ?? []) {
-        const card = cardOf.get(next.to);
-        if (card === "crimped") stack.push(next.to);
-        else if (card && card !== from && rank(from) <= rank(card)) add(from, card, edge);
-      }
-    }
+    if (from && to && from !== to && rank(from) <= rank(to)) add(from, to, edge);
   }
-  // Обжим идёт в ЭТК после стороны (резка станком обжала А, руками — В): стрелки из нарезанных в обжатые нет, но
-  // обжатые провода — это нарезанные; связь без стрелки ЭТК — по одной штуке.
-  const crimpedFed = [...grouped.values()].some((link) => link.to === "crimped" && (link.from === "wires" || link.from === "tubes"));
-  const implied: GenLink[] = present.includes("crimped") && present.includes("wires") && !crimpedFed
-    ? [{ id: "wires>crimped", from: "wires", to: "crimped", qty: 1, edges: [] }] : [];
+  // Обжатые провода — это нарезанные: до первой стороны без стрелки из нарезанных или трубок, обжим стороны вовсе без
+  // входа — связь из нарезанных без стрелки ЭТК, по одной штуке.
+  const implied: GenLink[] = present.includes("wires") ? present.filter((stage) => CRIMP_STAGES.has(stage) && stage !== finalStage
+    && rank("wires") <= rank(stage)
+    && !(stage === "crimped" ? [...grouped.values()].some((link) => link.to === stage && (link.from === "wires" || link.from === "tubes"))
+      : [...grouped.values()].some((link) => link.to === stage)))
+    .map((stage) => ({ id: `wires>${stage}`, from: "wires" as const, to: stage, qty: 1, edges: [] })) : [];
   const links = [...implied, ...[...grouped.values()].map((link) => ({ ...link, qty: link.edges.every((edge) => edge.per_unit === link.edges[0].per_unit) ? link.edges[0].per_unit : null }))];
   return { cards, links, cardOf };
 }
@@ -290,9 +293,20 @@ export type WireThumb = { key: string; label: string; title: string; color: stri
 /** Торец разъёма стороны: корпус из базы разъёмов (нет — подпись), цвета проводов по контактам. */
 export type FaceThumb = { key: string; label: string; housing: ConnectorHousing | null; byPin: Record<number, string> | null };
 export type TubeThumb = { key: string; label: string; count: number };
-/** `crimped` — провода с концами после ручного обжима (наконечник у обжатого конца) — у «Обжатых проводов». */
-export type GenArt = { wires: WireThumb[]; tubes: TubeThumb[]; crimped: WireThumb[]; faces: { A: FaceThumb[]; B: FaceThumb[] } };
-export const EMPTY_ART: GenArt = { wires: [], tubes: [], crimped: [], faces: { A: [], B: [] } };
+/** `crimped` — провода с концами после ручного обжима (наконечник у обжатого конца) — у «Обжатых проводов»;
+    `crimpedBy` — то же по стороне обжима (провода, обжатые руками на стороне, наконечник только у её конца) — у
+    карточки обжима одной стороны. */
+export type GenArt = {
+  wires: WireThumb[]; tubes: TubeThumb[]; crimped: WireThumb[]; crimpedBy?: { A: WireThumb[]; B: WireThumb[] };
+  faces: { A: FaceThumb[]; B: FaceThumb[] };
+};
+export const EMPTY_ART: GenArt = { wires: [], tubes: [], crimped: [], crimpedBy: { A: [], B: [] }, faces: { A: [], B: [] } };
+
+/** Провода на рисунке карточки обжатых проводов: обжим стороны — провода этой стороны, иначе все обжатые. */
+export function crimpWires(stage: GenStage, art: GenArt): WireThumb[] {
+  const side = stage === "crimpedA" ? "A" : stage === "crimpedB" ? "B" : null;
+  return side ? art.crimpedBy?.[side] ?? art.crimped : art.crimped;
+}
 
 /** Сколько строк рисунка видно в карточке: остальное — «и ещё N». */
 export const ART_ROWS = 4;
@@ -304,7 +318,7 @@ export const GEN_SPACING: Spacing = { gapX: 16, gapY: 40, margin: 4 };
 export function genArtHeight(stage: GenStage, art: GenArt, final: boolean): number {
   const rows = (count: number, row: number) => (count ? Math.min(count, ART_ROWS) * row + (count > ART_ROWS ? 16 : 0) + 8 : 0);
   if (stage === "wires") return rows(art.wires.length, 22);
-  if (stage === "crimped" && !final) return rows(art.crimped.length, 22);
+  if (CRIMP_STAGES.has(stage) && !final) return rows(crimpWires(stage, art).length, 22);
   if (stage === "tubes") return rows(art.tubes.length, 22);
   if (final) return art.faces.A.length || art.faces.B.length ? 72 : 0;
   return art.faces[stage === "B" ? "B" : "A"].length ? 72 : 0;
@@ -354,11 +368,13 @@ export function schemeArt(specs: readonly OpSpec[], ends: readonly PinoutEnd[], 
   // руками обжат хотя бы один конец (обжатые только станком резки идут к стороне прямо из нарезанных).
   const sideOf = new Map(ends.map((end) => [end.id, end.side]));
   const handCrimped = new Set(specs.filter((spec) => spec.type === "prsTerm" && spec.epId).map((spec) => spec.epId!));
-  const crimped = wires.flatMap((wire, index): WireThumb[] => {
-    const at = (side: "A" | "B") => Object.keys(units[index].at).some((id) => sideOf.get(id) === side && handCrimped.has(id));
+  const crimpedOn = (sides: readonly ("A" | "B")[]) => wires.flatMap((wire, index): WireThumb[] => {
+    const at = (side: "A" | "B") => sides.includes(side)
+      && Object.keys(units[index].at).some((id) => sideOf.get(id) === side && handCrimped.has(id));
     const left: WireBlankEnd = at("A") ? "terminal" : wire.left, right: WireBlankEnd = at("B") ? "terminal" : wire.right;
     return left === wire.left && right === wire.right ? [] : [{ ...wire, left, right }];
   });
+  const crimped = crimpedOn(["A", "B"]);
   const tubes = specs.filter((spec) => spec.type === "cutTut" || spec.type === "coaxCutTut")
     .map((spec): TubeThumb => ({ key: spec.opKey, label: spec.label.replace(/^Резка\s+/i, "") || "Трубка", count: 0 }));
   const face = (side: "A" | "B") => ends.filter((end) => end.side === side).map((end): FaceThumb => {
@@ -367,7 +383,7 @@ export function schemeArt(specs: readonly OpSpec[], ends: readonly PinoutEnd[], 
     units.forEach((unit) => { const pin = unit.at[end.id]; if (pin != null && !byPin[pin]) byPin[pin] = unit.baseName ?? unit.name; });
     return { key: end.key, label: `${end.key} · ${end.conn || "разъём не выбран"}`, housing: housings[end.conn] ?? null, byPin: Object.keys(byPin).length ? byPin : null };
   });
-  return { wires, tubes, crimped, faces: { A: face("A"), B: face("B") } };
+  return { wires, tubes, crimped, crimpedBy: { A: crimpedOn(["A"]), B: crimpedOn(["B"]) }, faces: { A: face("A"), B: face("B") } };
 }
 
 /** «#222» → «#222222»: рисунок провода принимает только полный цвет. */

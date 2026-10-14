@@ -77,8 +77,9 @@ def card(shop, card_id: str) -> dict:
     return shop.api.get(f"/api/techcards/projects/{card_id}").json()
 
 
-SPLIT = ("ПФ-1 · Нарезанные провода (01) · ПФ-2 · Обжатые провода (02,04) · ПФ-3 · Сторона А собрана (03) · "
-         "ПФ-4 · Кабельная сборка 39012140 to 39012141 16AWG 250mm (05)")
+# Cut, crimp A, side A, crimp B, side B (owner 14.10) — a ПФ per operation, as the derived scheme, but named ПФ.
+SPLIT = ("ПФ-1 · Нарезанные провода (01) · ПФ-2 · Обжатые провода, сторона А (02) · ПФ-3 · Сторона А собрана (03) · "
+         "ПФ-4 · Обжатые провода, сторона В (04) · ПФ-5 · Кабельная сборка 39012140 to 39012141 16AWG 250mm (05)")
 
 
 def test_dry_run_prints_the_split_and_writes_nothing(shop):
@@ -100,7 +101,7 @@ def test_apply_writes_a_revision_once_and_a_second_apply_writes_nothing(shop):
     assert code == 0 and f"перенесено {SPLIT}" in text and "Перенесено: 1" in text
     after = card(shop, typical["id"])
     assert after["revision"] == 2 and after["document"]["route"]["source"] == "generated"
-    assert [block["ops"] for block in after["document"]["route"]["blocks"]] == [[1], [2, 4], [3], [5]]
+    assert [block["ops"] for block in after["document"]["route"]["blocks"]] == [[1], [2], [3], [4], [5]]
     revisions = shop.api.get(f"/api/techcards/projects/{typical['id']}/revisions").json()["items"]
     moved = next(item for item in revisions if item["revision"] == 2)
     assert moved["reason"] == "Правка ПФ (перенос на ПФ)" and moved["actor_name"] == "перенос ЭТК на ПФ"

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { formatMinutes } from "./etkRoute";
 import { PerUnit } from "./RouteDiagram";
 import { FacesThumb, FinalThumb, RouteCanvas, TubeThumbs, WireThumbs, type CanvasCard } from "./RouteCanvas";
-import { EMPTY_ART, GEN_CARD, GEN_SPACING, genArtHeight, genCardHeight, genCards, layoutByDepth, opsMinutes, widestRow, type GenArt, type GenCard } from "./routeCards";
+import { CRIMP_STAGES, EMPTY_ART, GEN_CARD, GEN_SPACING, crimpWires, genArtHeight, genCardHeight, genCards, layoutByDepth, opsMinutes, widestRow, type GenArt, type GenCard } from "./routeCards";
 import { pluralRu } from "./tcGenLogic";
 import {
   addEdge,
@@ -138,7 +138,10 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const cardArt = (card: GenCard): ReactNode => {
     if (card.id === "wires") return art.wires.length ? <WireThumbs wires={art.wires} /> : null;
     if (card.id === "tubes") return art.tubes.length ? <TubeThumbs tubes={art.tubes} /> : null;
-    if (card.id === "crimped" && !card.final) return art.crimped.length ? <WireThumbs wires={art.crimped} /> : null;
+    if (CRIMP_STAGES.has(card.id) && !card.final) {
+      const wires = crimpWires(card.id, art);
+      return wires.length ? <WireThumbs wires={wires} /> : null;
+    }
     if (card.final) return art.faces.A.length || art.faces.B.length ? <FinalThumb a={art.faces.A} b={art.faces.B} color={art.wires[0]?.color} /> : null;
     const faces = art.faces[card.id === "B" ? "B" : "A"];
     return faces.length ? <FacesThumb faces={faces} /> : null;

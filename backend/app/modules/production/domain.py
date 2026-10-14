@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -964,3 +965,21 @@ def plan_operation(
                     f"{interval.start:%d.%m.%Y %H:%M}–{interval.finish:%d.%m.%Y %H:%M}"
                 )
     return PlanResult(start, finish, tuple(warnings))
+
+
+def mark_serial_range(task: ProductionTask, project_tasks: Iterable[ProductionTask]) -> tuple[int, int]:
+    """Номера изделий задания для «№ изделия» в надписях меток по КД (ЭТК, «Печать надписей»): первый и последний.
+
+    Нумерация сквозная по позиции проекта (решено агентом — проверить): задания той же позиции (`item`), запущенные
+    раньше этого (по времени запуска, при равном — по номеру ПЗ), занимают номера подряд, следующее задание
+    продолжает — два изделия одной КБ не получат одну надпись. Отменённое задание свои номера не отдаёт: отмену
+    можно снять, а напечатанная надпись не должна сдвинуться."""
+    def order(item: ProductionTask) -> tuple[datetime, int, str]:
+        digits = "".join(char for char in item.number if char.isdigit())
+        return item.created_at, int(digits) if digits else 0, item.number
+
+    key = task.item.strip().casefold()
+    mine = order(task)
+    before = sum(max(other.quantity, 0) for other in project_tasks
+                 if other.id != task.id and other.item.strip().casefold() == key and order(other) < mine)
+    return before + 1, before + max(task.quantity, 0)

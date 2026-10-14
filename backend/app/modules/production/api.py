@@ -54,7 +54,10 @@ from .application import (
     set_task_done,
     update_flow,
 )
-from .domain import FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total
+from .domain import (
+    FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total,
+    mark_serial_range,
+)
 from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
     item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, ready_cards,
@@ -815,9 +818,12 @@ def operation_etk(
     # position — операция ЭТК, на которой открыть карту (у ПФ — его первая); positions — все операции ЭТК этой
     # операции задания по порядку ПФ (без ПФ — одна).
     positions = list(operation.etk_positions)
+    # serial — номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции, mark_serial_range).
+    with uow_factory() as uow:
+        first, last = mark_serial_range(task, uow.production.for_project(task.project))
     return {"card": result, "focus": {
         "position": positions[0], "positions": positions, "code": operation_code(operation.code),
-    }}
+    }, "serial": {"first": first, "last": last, "task": task.number}}
 
 
 @router.get("/my/tasks/{task_id}/harness")
