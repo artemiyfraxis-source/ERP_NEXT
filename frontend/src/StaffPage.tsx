@@ -1,3 +1,4 @@
+import { PageWindow } from "./PageWindow";
 import { useEffect, useMemo, useState } from "react";
 import { identityApi, staffApi, type Employee, type EmployeeCreate, type StaffDirectory } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
@@ -317,7 +318,7 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
   const storedLevel = id === null ? undefined : data.users.find((user) => user.id === id)?.access_level;
   const levelLocked = !actorIsSuperadmin && data.levels.some((level) => level.full && level.key === storedLevel);
   const setManager = (text: string) => onChange({ ...draft, managerText: text, manager_id: managerIdByLabel.get(text.trim()) ?? null });
-  return <div className="panel" id="staff-edit-form">
+  return <PageWindow label={creating ? "Новый сотрудник" : "Правка сотрудника"} width={1100} close={onCancel}><div className="panel" id="staff-edit-form">
     <h2>{creating ? "Новый сотрудник" : `Правка: ${draft.name}`}</h2>
     <section className="staff-form-block" aria-labelledby="staff-form-hr">
       <h3 id="staff-form-hr">Кадры</h3>
@@ -364,5 +365,5 @@ function EmployeeForm({ data, labels, editing, actorIsSuperadmin, busy, onChange
       <button className="primary" disabled={busy} onClick={onSave}>{creating ? "Завести сотрудника" : "Сохранить сотрудника"}</button>{" "}
       <button className="secondary" onClick={onCancel}>Отмена</button>
     </div>
-  </div>;
+  </div></PageWindow>;
 }

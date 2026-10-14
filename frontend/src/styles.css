@@ -3740,11 +3740,9 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
 .cov-other { display: grid; gap: 8px; justify-items: start; }
 .cov-other > .cov-group { justify-self: stretch; }
-/* БД.ОБ master–detail: the list stays on the left, the machine card is a right-hand panel (full-screen on a tablet). */
+/* БД.ОБ master–detail: the list stays on the left, the machine card opens as a PageWindow. */
 .eq-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
-.eq-split.has-card { grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); }
 .eq-list { min-width: 0; }
-.eq-panel { position: sticky; top: 0; max-height: calc(100dvh - 60px); overflow: auto; overscroll-behavior: contain; min-width: 0; }
 .eq-card { display: grid; gap: 12px; padding: 12px 16px; }
 .eq-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .eq-title { display: grid; gap: 2px; min-width: 0; }
@@ -3765,8 +3763,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .eq-calc { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--border); border-radius: 4px; font-size: 11px; font-style: normal; }
 .eq-split .eq-selected td { background: color-mix(in srgb, var(--primary) 14%, var(--card)); }
 @media (max-width: 1100px), (pointer: coarse) {
-  .eq-split.has-card { grid-template-columns: minmax(0, 1fr); }
-  .eq-panel { position: fixed; inset: 0; z-index: 45; max-height: none; padding: 8px; background: var(--background, #f6f8f8); }
   .eq-econ { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 700px) { .eq-econ { grid-template-columns: minmax(0, 1fr); } }

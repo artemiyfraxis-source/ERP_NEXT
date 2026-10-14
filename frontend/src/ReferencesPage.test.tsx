@@ -420,7 +420,7 @@ it("the new record form asks for the essentials first, proposes the inventory nu
   expect((posted[0].fields as Record<string, string>)["Инв. номер"]).toBe("ОБ.105");
 });
 
-it("БД.ОБ: the machine card is a side panel — the list stays, another row switches it, × and Esc close it, a reload reopens it", async () => {
+it("БД.ОБ: the machine card is a window — the list stays, another row switches it, × and Esc close it, a reload reopens it", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
@@ -435,7 +435,7 @@ it("БД.ОБ: the machine card is a side panel — the list stays, another row 
   window.history.replaceState({}, "", "/");
   const { unmount } = render(<ReferencesPage principal={admin} initialTab="ob" />);
   fireEvent.click(await screen.findByText("ОБ.010"));
-  const panel = screen.getByRole("complementary", { name: "Карточка оборудования" });
+  const panel = screen.getByRole("dialog", { name: "Карточка оборудования" });
   expect(within(panel).getByText("Станция паяльная")).toBeInTheDocument();
   expect(within(panel).getByText("8620DX-Pro · SUGON · Оборудование · ЦАР")).toBeInTheDocument();
   expect(within(panel).getByText("расчёт")).toBeInTheDocument(); // окупаемость is derived
@@ -443,26 +443,26 @@ it("БД.ОБ: the machine card is a side panel — the list stays, another row 
   expect(window.location.search).toContain("equipment=a1");
 
   fireEvent.click(screen.getByText("Блок питания"));
-  expect(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByText("APS3010H · Оборудование")).toBeInTheDocument();
+  expect(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByText("APS3010H · Оборудование")).toBeInTheDocument();
   expect(window.location.search).toContain("equipment=b1");
 
-  fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Карточка оборудования" }), { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Карточка оборудования" })).toBeNull();
   expect(window.location.search).not.toContain("equipment");
   expect(screen.getByText("ОБ.010")).toBeInTheDocument();
 
   fireEvent.click(screen.getByText("ОБ.010"));
   fireEvent.click(screen.getByRole("button", { name: "Закрыть карточку" }));
-  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Карточка оборудования" })).toBeNull();
 
   fireEvent.click(screen.getByText("ОБ.010"));
   unmount();
   render(<ReferencesPage principal={admin} initialTab="ob" />);
-  expect(await screen.findByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  expect(await screen.findByRole("dialog", { name: "Карточка оборудования" })).toBeInTheDocument();
   window.history.replaceState({}, "", "/");
 });
 
-it("БД.ОБ: a picked row opens the edit form in the right panel, the list stays, saving patches the record and returns to the card", async () => {
+it("БД.ОБ: a picked row opens the edit form in a window, the list stays, saving patches the record and returns to the card", async () => {
   const patched: Array<Record<string, unknown>> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
@@ -483,16 +483,16 @@ it("БД.ОБ: a picked row opens the edit form in the right panel, the list sta
   window.history.replaceState({}, "", "/");
   render(<ReferencesPage principal={admin} initialTab="ob" />);
   fireEvent.click(await screen.findByText("ОБ.010"));
-  fireEvent.click(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByRole("button", { name: /^Править/ }));
-  const panel = screen.getByRole("complementary", { name: "Правка оборудования" });
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Карточка оборудования" })).getByRole("button", { name: /^Править/ }));
+  const panel = screen.getByRole("dialog", { name: "Правка оборудования" });
   expect(within(panel).getByLabelText("Артикул")).toHaveValue("8620DX-Pro");
   expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list stays on the left
-  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Карточка оборудования" })).toBeNull();
   fireEvent.change(within(panel).getByLabelText("Артикул"), { target: { value: "9999" } });
   fireEvent.click(within(panel).getByRole("button", { name: "Сохранить запись" }));
   await waitFor(() => expect(patched).toHaveLength(1));
   expect((patched[0].edits as Array<{ field: string; value: string }>).some((edit) => edit.field === "Артикул" && edit.value === "9999")).toBe(true);
-  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Правка оборудования" })).toBeNull());
-  expect(screen.getByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Правка оборудования" })).toBeNull());
+  expect(screen.getByRole("dialog", { name: "Карточка оборудования" })).toBeInTheDocument();
   window.history.replaceState({}, "", "/");
 });
