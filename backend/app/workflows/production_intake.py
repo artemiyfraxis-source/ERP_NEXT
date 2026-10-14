@@ -217,6 +217,9 @@ def intake_rows(facts: IntakeFacts) -> list[IntakeRow]:
             # Всё заказанное уехало — КБ ушла из приёмки; КБ без известного тиража остаётся (решено агентом 14.10).
             if needed > 0 and sent >= needed:
                 continue
+            # Этап «Отгружено» (в т. ч. отгружено ещё в Google или отмечено вручную) — принимать нечего (владелец 14.10).
+            if stages.get(item_index, "") == "Отгружено":
+                continue
             rows.append(IntakeRow(
                 project=snapshot.project, customer=customer, deadline=deadline, item_index=item_index,
                 name=(good.name if good else "") or (assembly.name if assembly else "") or (kb.name if kb else "") or item_index,

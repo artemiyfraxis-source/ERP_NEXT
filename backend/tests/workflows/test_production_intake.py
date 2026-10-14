@@ -260,3 +260,13 @@ def test_kb_without_a_known_run_stays_and_natural_order():
         ("КБ1", 1), ("КБ2", 1), ("КБ10", 0),
     ]
     assert natural_key("КБ2") < natural_key("КБ10") < natural_key("КБ10А")
+
+
+def test_kb_marked_shipped_leaves_the_intake_even_without_erp_shipments():
+    """Владелец 14.10: КБ с этапом «Отгружено» (отгружено ещё в Google, отмечено вручную) — принимать нечего."""
+    facts = IntakeFacts(
+        projects=(PlanProjectSnapshot(project="722К.1"),),
+        kitsets=(_kitset("722К.1", ("КБ1", 5), ("КБ2", 5)),),
+        events=(PlanEvent(project="722К.1", item_index="КБ2", occurred_at=NOW, who="Мастер", kind="Этап КБ", value="Отгружено"),),
+    )
+    assert [row.item_index for row in intake_rows(facts)] == ["КБ1"]
