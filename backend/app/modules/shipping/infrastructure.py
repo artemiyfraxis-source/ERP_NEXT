@@ -230,6 +230,8 @@ class ProjectAddresseeRow(Base):
     # План отгрузки (0122): дата и комментарий, их правят и менеджер, и склад.
     plan_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
     note: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
+    # Бумажная УПД, приложенная к данным отправки заранее (0125); новая отправка с бумажной УПД берёт её себе.
+    upd_url: Mapped[str] = mapped_column(String(1024), nullable=False, default="", server_default="")
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -462,7 +464,7 @@ class SqlAlchemyProjectAddresseeRepository:
             upd_type=UpdType(row.upd_type) if row.upd_type else None,
             updated_by=row.updated_by, updated_at=row.updated_at,
             **{key: getattr(row, key) or "" for key in ADDRESSEE_REQUISITE_FIELDS},
-            plan_date=row.plan_date, note=row.note or "",
+            plan_date=row.plan_date, note=row.note or "", upd_url=row.upd_url or "",
         )
     def list(self) -> list[ProjectAddressee]:
         return [self.get(project) for project in self.session.scalars(select(ProjectAddresseeRow.project).order_by(ProjectAddresseeRow.project))]
@@ -477,11 +479,14 @@ class SqlAlchemyProjectAddresseeRepository:
 
 
 class ShippingFileRow(Base):
-    """Файл УПД отправки (`shipUpdAttach_` клал его в папку Drive «Отгрузочные документы/УПД»)."""
+    """Файл УПД отправки (`shipUpdAttach_` клал его в папку Drive «Отгрузочные документы/УПД») или данных отправки
+    проекта (0125: приложен заранее, отправки ещё нет — тогда `project`)."""
 
     __tablename__ = "shipping_files"
+    __table_args__ = (CheckConstraint("shipment_id IS NOT NULL OR project <> ''", name="ck_shipping_files_owner"),)
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
-    shipment_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False, index=True)
+    shipment_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=True, index=True)
+    project: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
     size: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -494,8 +499,9 @@ class SqlAlchemyUpdFileRepository:
     def __init__(self, session: Session): self.session = session
     def add(self, stored: StoredFile, content: bytes) -> None:
         self.session.add(ShippingFileRow(
-            id=stored.id, shipment_id=stored.shipment_id, file_name=stored.file_name, content_type=stored.content_type,
-            size=stored.size, content=content, uploaded_by=stored.uploaded_by, uploaded_at=stored.uploaded_at,
+            id=stored.id, shipment_id=stored.shipment_id, project=stored.project, file_name=stored.file_name,
+            content_type=stored.content_type, size=stored.size, content=content, uploaded_by=stored.uploaded_by,
+            uploaded_at=stored.uploaded_at,
         ))
     def get(self, file_id: UUID) -> tuple[StoredFile, bytes] | None:
         row = self.session.get(ShippingFileRow, file_id)
@@ -503,8 +509,14 @@ class SqlAlchemyUpdFileRepository:
             return None
         return StoredFile(
             id=row.id, shipment_id=row.shipment_id, file_name=row.file_name, content_type=row.content_type,
-            size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at,
+            size=row.size, uploaded_by=row.uploaded_by, uploaded_at=row.uploaded_at, project=row.project or "",
         ), row.content
+    def names(self, file_ids) -> dict[UUID, str]:
+        """Имена файлов без содержимого — подпись ссылки «УПД: имя файла»."""
+        ids = tuple(dict.fromkeys(file_ids))
+        if not ids:
+            return {}
+        return dict(self.session.execute(select(ShippingFileRow.id, ShippingFileRow.file_name).where(ShippingFileRow.id.in_(ids))).all())
 
 
 class SqlAlchemyShippingUnitOfWork:

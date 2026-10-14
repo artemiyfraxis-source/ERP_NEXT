@@ -92,6 +92,9 @@ class AutoBuildProjectTechcardCommand(ChangeProjectTechcardCommand):
     # «Поправить вручную»: the generator config the manual one was converted from — only to rebuild the automatic
     # scheme the correction is logged against (scheme_corrections.py), never used as a scheme.
     generator_origin: dict[str, Any] | None = None
+    # Why the ETK is rebuilt — the revision journal line; a batch rebuild (workflows) names its own reason, and the
+    # audit event carries it.
+    reason: str = "Автопересборка"
 
 
 @dataclass(frozen=True)
@@ -263,7 +266,7 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
         updated = current.rebuild(_keep_hand_route(current.document, document), command.now)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
-            uow.techcards.add_revision(_revision(updated, "Автопересборка", command.actor, command.now))
+            uow.techcards.add_revision(_revision(updated, command.reason, command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.project_auto_built",
             actor=command.actor, occurred_at=command.now,
@@ -272,6 +275,7 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
                 "operations": len(document["operations"]),
                 "warnings": len(document["warnings"]),
                 "operation_library_commit": metadata["source_commit"],
+                **({"reason": command.reason} if command.reason != "Автопересборка" else {}),
             },
         ))
         correction = scheme_correction(document, command.generator_origin, current.document)
