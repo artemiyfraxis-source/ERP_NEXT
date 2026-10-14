@@ -159,6 +159,19 @@ it("takes coax diameters from СПР.КАБ by the BOM cable, lengths from the c
   expect((makeGen(noCable, initState(noCable)).buildConfig() as Record<string, any>).coax.sideA).toMatchObject({ d1: "9", d2: "9", d3: "9" });
 });
 
+it("finds the БД.КОАКС record whatever the hyphens and case: «MMCX-Male RG316» = «MMCX-male RG-316» (owner 14.10)", () => {
+  const rec = { article: "MMCX-male RG-316", connArticle: "", type: "MMCX-male", wire: "RG-316", mfr: "", program: "",
+    d1: "0,5", d2: "1,48", d3: "1,95", l1: "1,8", l2: "4,5", l3: "10", lPlus: "", lMinus: "", pinType: "пайка", shieldType: "обжим" };
+  const D = { ...data([
+    { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
+    { id: "a", type: "Соед", name: "MMCX-Male RG316", art: "MMCX-Male RG316", qty: 1 },
+  ], "Сборка RG316 150mm"), coaxRecords: [rec] };
+  const g = makeGen(D, initState(D));
+  const info = g.coaxInfo("A");
+  expect(info.missing).toBe(false);
+  expect(info.text).toContain("L1:1,8");
+});
+
 it("takes cut lengths from the calc sheet rows when the name has none", () => {
   const D = data(interboard, "Жгут XHP");
   const calcOps = [
