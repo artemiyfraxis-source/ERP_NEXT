@@ -6,7 +6,7 @@
 import type { ProjectTechcard, TechcardRevision } from "./api";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
 import {
-  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkCrimpChips, etkDrawHarness, etkFigure, etkTolerance,
+  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams,
   type EtkTopologyData,
 } from "./etkDraw";
 import { ETK_TOOLING_SECTIONS, solderMode, toolingSections } from "./etkOperation";
@@ -52,15 +52,16 @@ function head(kit: Row, revision: number, code: string): PrintBlock[] {
   ];
 }
 
-function facts(fields: Row): string {
-  const twist = object(fields.twist);
-  return [
-    // Аппликатор, высота обжима, отрыв — как чипы экрана: два разных контакта — по концам с именем контакта.
-    ...etkCrimpChips(fields).map(([label, value]) => `${label}: ${value}`),
-    fields.lengthKd && `L по КД: ${text(fields.lengthKd)}`,
-    fields.cutTolerance && `Допуск реза: ${etkTolerance(fields.cutTolerance)}`,
-    fields.twist && `Шаг свивки: ${twist.pitch ? `${text(twist.pitch)} мм` : "по КД"}`,
-  ].filter(Boolean).join(" · ");
+/** Блок параметров операции — те же три колонки, что в шапке экрана: «Сторона А» | «Общие» | «Сторона В». */
+function paramsTable(operation: Row): PrintBlock[] {
+  const params = etkParams(operation);
+  const left = params.sides.find((side) => side.end === "A"), right = params.sides.find((side) => side.end === "B");
+  const columns = [left && { title: "СТОРОНА А", items: left.items }, { title: "ОБЩИЕ", items: params.common },
+    right && { title: "СТОРОНА В", items: right.items }].filter((column) => column && column.items.length) as Array<{ title: string; items: Array<[string, string]> }>;
+  if (!columns.length) return [];
+  const height = Math.max(...columns.map((column) => column.items.length));
+  return [{ table: { columns: columns.map((column) => column.title), rows: Array.from({ length: height }, (_, row) =>
+    columns.map((column) => column.items[row] ? `${column.items[row][0]}: ${column.items[row][1]}` : "")) } }];
 }
 
 /** Режим пайки строками таблицы оснастки: жало и температура обязательны (значение ERP по умолчанию помечено). */
@@ -195,9 +196,10 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     const time = numbered(rows(operation.time), (item) => [text(item.name), text(item.norm), ""]);
     return {
       title: `Операция ${text(operation.position || index + 1)}. ${etkOperationTitle(operation)}${operation.connector ? ` — ${text(operation.connector)}` : ""}`,
-      subtitle: facts(object(operation.fields)),
+      subtitle: "",
       blocks: [
         ...head(kit, revision, text(operation.code)),
+        ...paramsTable(operation),
         { text: text(opCard.safety) },
         section("Вход"),
         ...table(["№", "Что взять: полуфабрикат", "Сколько", "Факт", "Ед.", "Откуда"], semis),
