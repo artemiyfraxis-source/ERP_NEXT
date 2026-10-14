@@ -584,6 +584,11 @@ def _links(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, A
     return links
 
 
+def _is_mm(value: object) -> bool:
+    """A wire's diameter from the references (mm, a positive number); anything else is left out of the ETK."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
 def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping[str, Any]) -> dict[str, Any]:
     operation_type = str(op.get("type") or "")
     fields: dict[str, Any] = {}
@@ -624,6 +629,7 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
             "name": str(wire.get("name") or ""), "art": str(wire.get("art") or ""),
             "qty": float(_number(wire.get("qty"), Decimal(1))), "length": wire.get("length") or "",
             "pins": _pins(pin_values[index]) if _kind(op) and index < len(pin_values) else [],
+            **{key: float(wire[key]) for key in ("outerDiameter", "conductorDiameter") if _is_mm(wire.get(key))},
         } for index, wire in enumerate(wires)]
         if any(item["pins"] for item in fields["wires"]):
             fields["pinout"] = True

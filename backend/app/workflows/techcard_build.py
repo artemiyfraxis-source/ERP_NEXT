@@ -8,8 +8,8 @@ import re
 from typing import Any, Iterable, Mapping
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
-from app.modules.references.cable_structure import gauge_gost_awg
-from app.modules.references.domain import TechOperationTab, gost_awg_map
+from app.modules.references.cable_structure import HookupWire, WireGauge, decimal_or_none, gauge_gost_awg
+from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map
 from app.modules.references.technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, matching_terminal_records, resolve_terminal,
     terminal_record_for_section, wire_section,
@@ -37,13 +37,60 @@ def with_technology(
         operation_records = [record.fields for record in references_uow.tech_operations.list(
             tab=TechOperationTab.OPERATION, query="", limit=100_000,
         )]
+        gauges = references_uow.cable_structure.gauges()
+        hookups = references_uow.cable_structure.hookups()
+        prov_rows = [record.fields for record in references_uow.tech_operations.list(
+            tab=TechOperationTab.WIRE, query="", limit=10_000,
+        )]
     enriched = enrich_terminal_norms(config, (TerminalRecord.from_fields(record.fields) for record in records), gost_awg)
     enriched = enrich_marking(enriched, equipment, operation_records)
+    enriched = enrich_wire_diameters(enriched, hookups, gauges, prov_rows)
     return enriched, {
         "schema_version": metadata["schema_version"],
         "source_updated_at": metadata["source_updated_at"].isoformat() if metadata["source_updated_at"] else None,
         "imported_at": metadata["imported_at"].isoformat(),
     }
+
+
+def _millimetres(value: object) -> float | None:
+    number = decimal_or_none(value)
+    return float(number) if number is not None and number > 0 else None
+
+
+def enrich_wire_diameters(
+    config: Mapping[str, Any], hookups: Iterable[HookupWire], gauges: Iterable[WireGauge],
+    prov_rows: Iterable[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    """Copy of the config whose wires carry `outerDiameter` / `conductorDiameter` (mm, numbers) of their БД.ПРОВ
+    record: the outer Ø from the монтажный провод (else the БД.ПРОВ cell «Наружный диаметр, мм»), the conductor Ø
+    from the «Сечения AWG ↔ мм²» row of that wire. A wire without a record, or a record without the value, gets no
+    key (the ETK shows «—»). The record is found by the wire's article, then its name, ignoring case, spaces, hyphens."""
+    enriched = deepcopy(dict(config))
+    by_gauge = {gauge.id: gauge for gauge in gauges}
+    by_mark = {wire.mark_key: wire for wire in hookups}
+    prov = {cable_key(row.get("Марка")): row for row in prov_rows if cable_key(row.get("Марка"))}
+
+    def diameters(wire: Mapping[str, Any]) -> dict[str, float]:
+        for label in (wire.get("art"), wire.get("name")):
+            key = cable_key(label)
+            record, row = by_mark.get(key), prov.get(key)
+            if not key or (record is None and row is None):
+                continue
+            outer = _millimetres(record.outer_d_mm) if record is not None else None
+            if outer is None and row is not None:
+                outer = _millimetres(row.get("Наружный диаметр, мм"))
+            gauge = by_gauge.get(record.gauge_id) if record is not None else None
+            conductor = _millimetres(gauge.conductor_d_mm) if gauge is not None else None
+            found = {"outerDiameter": outer, "conductorDiameter": conductor}
+            return {name: value for name, value in found.items() if value is not None}
+        return {}
+
+    lists = [enriched.get("wires")] + [op.get("wires") for op in enriched.get("ops") or [] if isinstance(op, dict)]
+    for wires in lists:
+        for wire in wires if isinstance(wires, list) else []:
+            if isinstance(wire, dict):
+                wire.update(diameters(wire))
+    return enriched
 
 
 # Маркировка по КД (владелец 12.10.2026): оборудование видов меток из «Оборудования» (поле «Для базы») и нормы БД.ОП
