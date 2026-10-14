@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DataTable, columnClass, compareCells, matchesWords, searchHint, tableText, type DataColumn } from "./DataTable";
+import { DataTable, columnClass, compareCells, matchesWords, moveKey, orderColumns, readSaved, searchHint, tableText, type DataColumn } from "./DataTable";
 
 interface Row { id: string; name: string; supplier: string; qty: number; status: string }
 
@@ -295,4 +295,193 @@ it("labels every cell with its column for the phone card layout, unless the scre
   unmount();
   render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} label="Лист" phoneCards={false} />);
   expect(screen.getByRole("region", { name: "Лист" })).not.toHaveClass("dt-cards");
+});
+
+describe("columns the user arranges: order, width, caption", () => {
+  const heads = () => screen.getAllByRole("columnheader").map((head) => head.textContent);
+  const table = (key = "arrange") => <DataTable rows={rows} columns={columns} rowKey={(row) => row.id} storageKey={key} exportName="Поставки" />;
+
+  it("moves, widens and renames columns from «Колонки», remembers them and exports in that order", async () => {
+    const { unmount } = render(table());
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    const chooser = screen.getByRole("group", { name: "Показывать колонки" });
+    fireEvent.click(within(chooser).getByRole("button", { name: "Ниже: Наименование" }));
+    fireEvent.change(within(chooser).getByLabelText("Своя подпись: Кол-во"), { target: { value: "Штук" } });
+    fireEvent.click(within(chooser).getByRole("button", { name: "Шире: Поставщик" })); // not measured in jsdom: 120 + 16
+    expect(heads()).toEqual(["Поставщик", "Наименование", "Штук"]);
+    expect(within(chooser).getByRole("button", { name: /Ширина Поставщик: 136 пикселей/ })).toHaveTextContent(/^136\spx$/);
+    expect(JSON.parse(window.localStorage.getItem("erp-table:arrange")!)).toMatchObject({
+      order: ["supplier", "name", "qty", "status"], widths: { supplier: 136 }, titles: { qty: "Штук" }, hidden: ["status"],
+    });
+    unmount();
+
+    render(table());
+    expect(heads()).toEqual(["Поставщик", "Наименование", "Штук"]);
+    const supplier = screen.getByRole("columnheader", { name: "Поставщик" });
+    expect(supplier).toHaveClass("dt-w");
+    expect(supplier.style.getPropertyValue("--dt-w")).toBe("136px");
+    expect(screen.getByText("Чип и Дип", { selector: "td > div" })).toHaveClass("dt-clip"); // a narrowed column cuts long text
+    expect(screen.getByRole("columnheader", { name: "Штук" })).toHaveAttribute("title", "Кол-во"); // the real name on hover
+    expect(screen.getByLabelText("Поиск: Таблица")).toHaveAttribute("placeholder", "Поиск: поставщик, наименование, штук…");
+
+    // Excel follows the user's order, visibility and captions.
+    let blob: Blob | null = null;
+    vi.spyOn(URL, "createObjectURL").mockImplementation((value) => { blob = value as Blob; return "blob:x"; });
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Excel" }));
+    const text = new TextDecoder("utf-16le").decode(new Uint8Array(await blob!.arrayBuffer()).slice(2));
+    expect(text.split("\r\n")[0]).toBe("Поставщик\tНаименование\tШтук");
+
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    fireEvent.click(screen.getByRole("button", { name: "Сбросить вид" }));
+    expect(heads()).toEqual(["Наименование", "Поставщик", "Кол-во"]);
+    expect(JSON.parse(window.localStorage.getItem("erp-table:arrange")!)).toEqual({ hidden: ["status"], sort: null, preset: "" });
+  });
+
+  it("reads the state saved before columns could move: hidden, sort and the screen's own fields stay", () => {
+    window.localStorage.setItem("erp-table:old", JSON.stringify({ hidden: ["supplier", "status"], sort: { key: "qty", direction: -1 }, preset: "", groups: { a: 1 }, widths: { name: "wide" }, order: "name" }));
+    expect(readSaved("old")).not.toHaveProperty("widths");
+    expect(readSaved("old")).not.toHaveProperty("order");
+    render(table("old"));
+    expect(heads()).toEqual(["Наименование", "Кол-во ▼"]);
+    expect(names().map((line) => line.split("|")[1])).toEqual(["100", "10", "2"]);
+    expect(screen.getByRole("columnheader", { name: "Наименование" })).not.toHaveClass("dt-w"); // a broken width is ignored
+    expect(readSaved("old")).toMatchObject({ groups: { a: 1 }, hidden: ["supplier", "status"] }); // a screen's own field survives the table's writes
+  });
+
+  it("puts a column the saved order does not know after its left neighbour", () => {
+    expect(orderColumns(columns, ["qty", "name"]).map((column) => column.key)).toEqual(["qty", "status", "name", "supplier"]);
+    expect(orderColumns(columns, undefined)).toBe(columns);
+    expect(moveKey(["a", "b", "c"], "a", "c")).toEqual(["b", "c", "a"]);
+    expect(moveKey(["a", "b", "c"], "c", "a")).toEqual(["c", "a", "b"]);
+  });
+
+  it("moves a column by dragging its header and resizes it by dragging the edge", () => {
+    render(table("drag"));
+    const head = (title: string) => screen.getByRole("columnheader", { name: title });
+    fireEvent.dragStart(head("Кол-во"));
+    fireEvent.dragOver(head("Наименование"));
+    expect(head("Наименование")).toHaveClass("dt-drop-before");
+    fireEvent.drop(head("Наименование"));
+    expect(heads()).toEqual(["Кол-во", "Наименование", "Поставщик"]);
+
+    const handle = head("Поставщик").querySelector(".dt-resize")!;
+    fireEvent(handle, new MouseEvent("pointerdown", { clientX: 100, bubbles: true }));
+    act(() => {
+      handle.dispatchEvent(new MouseEvent("pointermove", { clientX: 160 }));
+      handle.dispatchEvent(new MouseEvent("pointerup"));
+      handle.dispatchEvent(new MouseEvent("pointermove", { clientX: 400 })); // released: no longer follows
+    });
+    expect(head("Поставщик").style.getPropertyValue("--dt-w")).toBe("180px");
+    fireEvent.doubleClick(handle);
+    expect(head("Поставщик")).not.toHaveClass("dt-w");
+    expect(JSON.parse(window.localStorage.getItem("erp-table:drag")!).order).toEqual(["qty", "name", "supplier", "status"]);
+  });
+});
+
+describe("cells edited right in the table, like a sheet", () => {
+  function setup(save = vi.fn(async (_row: Row, _value: string) => undefined as unknown)) {
+    const onEdited = vi.fn(async () => undefined);
+    const detail = vi.fn((row: Row) => <p>Карточка {row.name}</p>);
+    const editable: DataColumn<Row>[] = [
+      { key: "name", title: "Наименование", value: (row) => row.name },
+      { key: "supplier", title: "Поставщик", value: (row) => row.supplier, edit: { save } },
+      // «Кол-во» of a delivered row is closed: the column decides per row.
+      { key: "qty", title: "Кол-во", value: (row) => row.qty, numeric: true, edit: { save, enabled: (row) => row.status !== "Принято" } },
+    ];
+    render(<DataTable rows={rows} columns={editable} rowKey={(row) => row.id} rowLabel={(row) => row.name} renderDetail={detail} onEdited={onEdited} />);
+    const cell = (name: string, key: string) => {
+      const line = screen.getByText(name).closest("tr")!;
+      return line.querySelectorAll("td")[["name", "supplier", "qty"].indexOf(key)] as HTMLElement;
+    };
+    return { save, onEdited, detail, cell };
+  }
+
+  it("opens a cell by typing, writes it with Enter through the record's save and moves down", async () => {
+    const { save, onEdited, detail, cell } = setup();
+    const target = cell("Разъём JST XH", "supplier");
+    fireEvent.click(target);
+    expect(target).toHaveClass("dt-active");
+    expect(detail).not.toHaveBeenCalled(); // an editable cell does not open the row
+    fireEvent.keyDown(target, { key: "Э" });
+    const input = screen.getByLabelText("Поставщик: Разъём JST XH");
+    expect(input).toHaveValue("Э");
+    fireEvent.change(input, { target: { value: "Элитан " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await vi.waitFor(() => expect(screen.queryByLabelText("Поставщик: Разъём JST XH")).toBeNull());
+    expect(save).toHaveBeenCalledWith(rows[0], "Элитан");
+    expect(onEdited).toHaveBeenCalledTimes(1);
+    expect(cell("Провод МГТФ 0,12", "supplier")).toHaveClass("dt-active");
+    expect(document.activeElement).toBe(cell("Провод МГТФ 0,12", "supplier"));
+  });
+
+  it("cancels with Esc, moves with Tab past closed cells, and leaves read-only cells to the row", async () => {
+    const { save, detail, cell } = setup();
+    const target = cell("Провод МГТФ 0,12", "supplier");
+    fireEvent.doubleClick(target);
+    const input = screen.getByLabelText("Поставщик: Провод МГТФ 0,12");
+    expect(input).toHaveValue("Кабель-Торг");
+    fireEvent.change(input, { target: { value: "Другой" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByLabelText("Поставщик: Провод МГТФ 0,12")).toBeNull();
+    expect(target).toHaveTextContent("Кабель-Торг");
+    expect(save).not.toHaveBeenCalled();
+
+    // «Кол-во» of the delivered row is closed: Tab goes on to the next row's first editable cell.
+    expect(cell("Провод МГТФ 0,12", "qty")).not.toHaveClass("dt-editable");
+    fireEvent.keyDown(target, { key: "Tab" });
+    expect(cell("Разъём Molex", "supplier")).toHaveClass("dt-active");
+    fireEvent.keyDown(cell("Разъём Molex", "supplier"), { key: "Enter" });
+    fireEvent.keyDown(screen.getByLabelText("Поставщик: Разъём Molex"), { key: "Tab" }); // unchanged: nothing to write
+    await vi.waitFor(() => expect(cell("Разъём Molex", "qty")).toHaveClass("dt-active"));
+    expect(save).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Разъём Molex"));
+    expect(detail).toHaveBeenCalled(); // the key column still opens the record
+  });
+
+  it("keeps the typed value and shows the refusal in the cell, then writes over the fresh value", async () => {
+    const save = vi.fn(async (_row: Row, _value: string) => undefined as unknown).mockRejectedValueOnce(new Error("Ячейку уже поменяли — в таблице свежее значение."));
+    const { onEdited, cell } = setup(save);
+    fireEvent.click(cell("Разъём Molex", "qty"));
+    fireEvent.keyDown(cell("Разъём Molex", "qty"), { key: "5" });
+    const input = screen.getByLabelText("Кол-во: Разъём Molex");
+    expect(input).toHaveAttribute("inputmode", "decimal");
+    fireEvent.change(input, { target: { value: "50" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Ячейку уже поменяли");
+    expect(input).toHaveValue("50");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(onEdited).toHaveBeenCalledTimes(1); // the rows are read again under the open cell
+    fireEvent.keyDown(input, { key: "Enter" });
+    await vi.waitFor(() => expect(screen.queryByLabelText("Кол-во: Разъём Molex")).toBeNull());
+    expect(save).toHaveBeenLastCalledWith(rows[2], "50");
+  });
+
+  it("pastes one value into a selected range, a copied column downwards, and fills down with Ctrl+D", async () => {
+    const { save, cell } = setup();
+    fireEvent.click(cell("Разъём JST XH", "supplier"));
+    fireEvent.click(cell("Разъём Molex", "supplier"), { shiftKey: true });
+    expect(cell("Провод МГТФ 0,12", "supplier")).toHaveClass("dt-in-range");
+    fireEvent.paste(cell("Разъём Molex", "supplier"), { clipboardData: { getData: () => "Элитан" } });
+    await screen.findByText("Поставщик: записано ячеек — 3");
+    expect(save.mock.calls.map(([row, value]) => `${row.id}=${value}`)).toEqual(["1=Элитан", "2=Элитан", "3=Элитан"]);
+
+    save.mockClear();
+    fireEvent.click(cell("Провод МГТФ 0,12", "supplier"));
+    fireEvent.paste(cell("Провод МГТФ 0,12", "supplier"), { clipboardData: { getData: () => "А\tлишнее\r\nБ\r\nВ\r\n" } });
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2)); // two rows from the cell down: «В» has no row
+    expect(save.mock.calls.map(([row, value]) => `${row.id}=${value}`)).toEqual(["2=А", "3=Б"]);
+
+    save.mockClear();
+    fireEvent.keyDown(cell("Провод МГТФ 0,12", "supplier"), { key: "d", code: "KeyD", ctrlKey: true }); // the value from above
+    await vi.waitFor(() => expect(save).toHaveBeenCalledWith(rows[1], "Чип и Дип"));
+  });
+
+  it("has no editable cells without an edit on the column", () => {
+    const { container } = render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} />);
+    expect(container.querySelector("td.dt-editable")).toBeNull();
+    expect(screen.queryByText(/Ctrl\+D/)).toBeNull();
+  });
 });
