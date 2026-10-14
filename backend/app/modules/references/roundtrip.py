@@ -27,14 +27,15 @@ from uuid import UUID
 from app.shared.identity import Actor
 
 from .application import (
-    FieldEdit, SaveGaugeCommand, UnitOfWork, _audit, _clean_new_fields, _create_in, _edit_in, cable_catalog,
-    save_gauge_in,
+    FieldEdit, SaveGaugeCommand, SaveHookupCommand, SetCoaxDiametersCommand, UnitOfWork, _audit, _clean_new_fields,
+    _create_in, _edit_in, cable_catalog, cable_overrides, save_gauge_in, save_hookup_in, set_coax_diameters_in,
 )
-from .cable_structure import shown
-from .cables import CableKind
+from .cable_structure import parse_hookup, shown
+from .cables import DIAMETERS, CableKind, cable_mark, cable_rows, diameter_index
 from .domain import (
     BASE_COLUMNS, COUNTRY_BY_MANUFACTURER, SUPPLIER_BY_LINK, ReferenceKind, ReferenceValidationError, StaleRecordError,
-    TechOperationRecord, TechOperationTab, merge_country_pairs, normalized_manufacturer_key, normalized_supplier_key,
+    TechOperationRecord, TechOperationTab, merge_country_pairs, normalized_cable_key, normalized_manufacturer_key,
+    normalized_supplier_key,
 )
 from .equipment import EXTRA_KEYS, TARGETS_KEY
 from .importers import _MapTarget
@@ -46,7 +47,13 @@ VERSION_TITLE = "Версия"
 FIELDS_SHEET = "Поля"
 VIA = "file"
 MAX_FILE_ROWS = 10_000
-COAX_DIAMETERS = ("D1", "D2", "D3")  # the cable's Ø, edited in «Коаксиальные кабели», not on the connector row
+COAX_DIAMETERS = DIAMETERS  # the cable's Ø: not on the connector row («Коаксиальные разъёмы»), a column of the cable list
+# Columns beyond the БД.ПРОВ cells, by list (owner 14.10): the coax cable's D1–D3 (СПР.КАБ, saved as the cable form saves
+# them) and the structure of a hook-up wire that has no БД.ПРОВ cell (saved as the wire form saves it).
+HOOKUP_SERIES, HOOKUP_MATERIAL, HOOKUP_THICKNESS = "hookup_series", "hookup_material", "hookup_insulation_mm"
+HOOKUP_TITLES = {HOOKUP_SERIES: "Серия провода", HOOKUP_MATERIAL: "Материал жилы",
+                 HOOKUP_THICKNESS: "Толщина изоляции, мм"}
+COAX_TITLES = {name: f"{name}, мм" for name in DIAMETERS}
 
 NOT_FOUND_REASON = "записи с этим ID нет — её удалили или файл скачан из другой вкладки"
 CONFLICT_REASON = "запись изменили после скачивания файла — скачайте таблицу заново"
@@ -92,6 +99,33 @@ class _TechTable:
 
     def __init__(self, tab: TechOperationTab, label: str, kinds: Mapping[str, str] | None = None) -> None:
         self.tab, self.label, self.kinds = tab, label, dict(kinds or {})
+        self.extras: Mapping[str, str] = {}  # extra columns of the chosen list: field → title
+
+    def for_kind(self, kind: str) -> "_TechTable":
+        if self.tab == TechOperationTab.WIRE:
+            self.extras = COAX_TITLES if kind == "coax" else HOOKUP_TITLES if kind == "wire" else {}
+            self.titles = self.extras
+        return self
+
+    def _extra_values(self, uow: UnitOfWork, records: Sequence[TechOperationRecord]) -> dict[str, dict[str, str]]:
+        """The extra columns of every БД.ПРОВ row, read in the open `uow` (the cable catalogue's own join)."""
+        rows = cable_rows(records, uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=100_000),
+                          cable_overrides(uow.references.list()))
+        hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
+        result: dict[str, dict[str, str]] = {}
+        for row in rows:
+            if row.record is None:
+                continue
+            if COAX_TITLES.keys() == self.extras.keys():
+                fields = row.dia.fields if row.dia else {}
+                result[str(row.record.id)] = {name: str(fields.get(name, "")).strip() for name in DIAMETERS}
+            else:
+                wire = hookups.get(row.key)
+                result[str(row.record.id)] = {
+                    HOOKUP_SERIES: wire.series if wire else "", HOOKUP_MATERIAL: wire.conductor_material if wire else "",
+                    HOOKUP_THICKNESS: shown(wire.insulation_thickness_mm) if wire else "",
+                }
+        return result
 
     def _records(self, uow: UnitOfWork) -> list[TechOperationRecord]:
         return list(uow.tech_operations.list(tab=self.tab, query="", limit=100_000))
@@ -111,37 +145,89 @@ class _TechTable:
         return {str(row["id"]) for row in build([(str(item.id), item.fields) for item in records])["rows"]}
 
     def items(self, uow: UnitOfWork) -> list[Item]:
+        records = self._records(uow)
+        extra = self._extra_values(uow, records) if self.extras else {}
         return [
             Item(str(record.id), record.display_text.strip(" /") or str(record.id),
-                 fingerprint(record.display_text, record.fields), dict(record.fields))
-            for record in self._records(uow)
+                 fingerprint(record.display_text, record.fields, *([extra.get(str(record.id), {})] if self.extras else [])),
+                 {**record.fields, **extra.get(str(record.id), {})})
+            for record in records
         ]
 
     def fields(self, items: Sequence[Item]) -> list[str]:
         """Every field the tab's edit form edits: the sheet columns (the schema values the generator reads follow them
         on save), ПРОВ / МАТ — the base's columns first; a column only some rows have is still a column."""
-        keys = schema_keys(self.tab.value)
+        keys = schema_keys(self.tab.value) | set(self.extras)
         richest = sorted(items, key=lambda item: -sum(1 for name in item.values if name not in keys))
         ordered: dict[str, None] = dict.fromkeys(BASE_COLUMNS.get(self.tab, ()))
         for item in richest:
             ordered.update(dict.fromkeys(name for name in item.values if name not in keys))
         if not ordered:  # a snapshot without the sheet's columns: the schema keys are the fields
             for item in richest:
-                ordered.update(dict.fromkeys(item.values))
+                ordered.update(dict.fromkeys(name for name in item.values if name not in self.extras))
         if self.tab == TechOperationTab.EQUIPMENT:
             ordered.update(dict.fromkeys(EXTRA_KEYS))
             ordered.pop(TARGETS_KEY, None)  # «что обжимает» is a list kept by the tool's card, not a cell
         if self.tab == TechOperationTab.COAX:
             for name in COAX_DIAMETERS:
                 ordered.pop(name, None)
+        ordered.update(dict.fromkeys(self.extras))
         return list(ordered)
 
     def update(self, uow, item, changes, actor, now):
-        edits = tuple(FieldEdit(name, item.values.get(name, ""), value) for name, value in changes.items())
-        record, _updated = _edit_in(UUID(item.id), edits, now, uow)
-        _audit("references.tech_record_edited", actor, now, {
-            "record_id": str(record.id), "tab": record.tab.value, "fields": list(changes), "via": VIA,
-        }, uow)
+        own = {name: value for name, value in changes.items() if name not in self.extras}
+        extra = {name: value for name, value in changes.items() if name in self.extras}
+        if extra and COAX_TITLES.keys() == self.extras.keys():
+            self._set_diameters(uow, item, extra, actor, now)
+        if own:
+            edits = tuple(FieldEdit(name, item.values.get(name, ""), value) for name, value in own.items())
+            record, _updated = _edit_in(UUID(item.id), edits, now, uow)
+            _audit("references.tech_record_edited", actor, now, {
+                "record_id": str(record.id), "tab": record.tab.value, "fields": list(own), "via": VIA,
+            }, uow)
+        if extra and HOOKUP_TITLES.keys() == self.extras.keys():
+            self._set_hookup(uow, item, extra, actor, now)
+
+    def _record(self, uow: UnitOfWork, item: Item) -> TechOperationRecord:
+        record = uow.tech_operations.get(UUID(item.id))
+        if record is None:
+            raise LookupError("Запись справочника не найдена")
+        return record
+
+    def _set_diameters(self, uow, item, extra, actor, now) -> None:
+        """D1–D3 of the cable through the cable form's own save (a cable without a D row gets one)."""
+        mark = cable_mark(self._record(uow, item))
+        current = diameter_index(uow.tech_operations.list(tab=TechOperationTab.KAB_COAX, query="", limit=100_000)).get(
+            normalized_cable_key(mark))
+        old = {name: item.values.get(name, "") for name in DIAMETERS}
+        set_coax_diameters_in(SetCoaxDiametersCommand(
+            cable=mark, dia_id=current.id if current else None, old=old, value={**old, **extra}, actor=actor, now=now,
+        ), uow, {"via": VIA})
+
+    def _set_hookup(self, uow, item, extra, actor, now) -> None:
+        """Series / conductor material / insulation thickness through the wire form's own save; a wire with no
+        structure yet gets one from what its БД.ПРОВ row says (the size must be in the size table)."""
+        record = self._record(uow, item)
+        mark = cable_mark(record)
+        current = uow.cable_structure.hookup(normalized_cable_key(mark))
+        if current is not None:
+            base = {"series": current.series, "gauge_id": current.gauge_id, "insulation": current.insulation,
+                    "outer_d_mm": shown(current.outer_d_mm), "voltage_v": shown(current.voltage_v),
+                    "temp_min_c": shown(current.temp_min_c), "temp_max_c": shown(current.temp_max_c)}
+        else:
+            parsed = parse_hookup(mark, record.fields, uow.cable_structure.gauges())
+            if parsed.gauge is None:
+                raise ReferenceValidationError("структуру этого провода задать нельзя: "
+                                               + (parsed.problem or "размера нет в таблице сечений"))
+            base = {"series": parsed.series, "gauge_id": parsed.gauge.id, "insulation": parsed.insulation,
+                    "outer_d_mm": shown(parsed.outer_d_mm), "voltage_v": shown(parsed.voltage_v),
+                    "temp_min_c": shown(parsed.temp_min_c), "temp_max_c": shown(parsed.temp_max_c)}
+        save_hookup_in(SaveHookupCommand(
+            record_id=record.id, series=extra.get(HOOKUP_SERIES, base["series"]), gauge_id=base["gauge_id"],
+            insulation=base["insulation"], outer_d_mm=base["outer_d_mm"], voltage_v=base["voltage_v"],
+            temp_min_c=base["temp_min_c"], temp_max_c=base["temp_max_c"], old=current, actor=actor, now=now,
+            conductor_material=extra.get(HOOKUP_MATERIAL), insulation_thickness_mm=extra.get(HOOKUP_THICKNESS),
+        ), uow, {"via": VIA})
 
     def create(self, uow, values, actor, now):
         record = _create_in(self.tab, _clean_new_fields(self.tab, values), uow)
@@ -290,11 +376,12 @@ ROUNDTRIP_TABLES = tuple(_tables())
 MAP_ROUNDTRIP_TABLES = ("suppliers", "countries")
 
 
-def _table(tab: str) -> _Table:
+def _table(tab: str, kind: str = "") -> _Table:
     factory = _tables().get(tab)
     if factory is None:
         raise LookupError(f"Нет таблицы «{tab}» для правки файлом; есть: " + ", ".join(ROUNDTRIP_TABLES))
-    return factory()
+    table = factory()
+    return table.for_kind(kind) if isinstance(table, _TechTable) else table
 
 
 def _label(table: _Table, kind: str) -> str:
@@ -320,7 +407,7 @@ def _listed(table: _Table, uow_factory: Callable[[], UnitOfWork], kind: str) -> 
 
 def table_fields(tab: str, uow_factory: Callable[[], UnitOfWork], kind: str = "") -> dict:
     """What «Скачать для правки» writes: the fields in order and the table's own titles (the screen adds its own)."""
-    table = _table(tab)
+    table = _table(tab, kind)
     items = _listed(table, uow_factory, kind)
     return {"tab": tab, "kind": kind, "label": _label(table, kind), "fields": table.fields(items),
             "titles": dict(table.titles), "rows": len(items)}
@@ -346,7 +433,7 @@ class ExportedFile:
 
 def export_file(tab: str, uow_factory: Callable[[], UnitOfWork], titles: Mapping[str, str], now: datetime,
                 kind: str = "") -> ExportedFile:
-    table = _table(tab)
+    table = _table(tab, kind)
     items = _listed(table, uow_factory, kind)
     fields = table.fields(items)
     headers = _unique_titles(fields, {**titles, **table.titles})
@@ -500,9 +587,10 @@ _ROW_ERRORS = (ReferenceValidationError, StaleRecordError, LookupError, ValueErr
 
 def import_file(tab: str, uow_factory: Callable[[], UnitOfWork], content: bytes, actor: Actor, now: datetime, *,
                 dry_run: bool, kind: str = "") -> Report:
-    table = _table(tab)
+    _table(tab)  # an unknown table is refused before the file is read
     main, service = _sheets(content)
     service_titles, meta = _service_map(service)
+    table = _table(tab, kind or meta.get("Список", ""))
     if meta.get("Таблица") and meta["Таблица"] != tab:
         raise RoundtripError(f"Файл скачан из другой таблицы («{meta.get('Название') or meta['Таблица']}») — "
                              f"загрузите его в ней")

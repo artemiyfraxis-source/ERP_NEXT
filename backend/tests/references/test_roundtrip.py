@@ -376,3 +376,143 @@ def test_a_viewer_downloads_but_does_not_load_and_maps_stay_the_buyers(reference
     countries = _download(references_api, "countries")
     assert _upload(references_api, countries, dry_run=1, table="countries").status_code == 403
     assert _upload(references_api, content, dry_run=1).status_code == 200
+
+
+# ── Coax cable D1–D3 and the structure of hook-up wires (owner 14.10) ───────────────────────────────────────────────
+
+
+def _seed_cables(client: TestClient) -> dict[str, dict]:
+    """A coax cable with a D row, a coax cable without one and a hook-up wire with a size row; marks → records."""
+    assert client.put("/api/references/tech-operations/snapshot", json={"schema_version": 14, "records": [
+        {"tab": "prov", "display_text": mark, "source_sheet": "БД.ПРОВ", "fields": fields} for mark, fields in [
+            ("RG316", {"Марка": "RG316", "Тип провода": "коаксиальный", "Число жил": "1", "Наружный диаметр, мм": "2,5"}),
+            ("RG174", {"Марка": "RG174", "Тип провода": "коаксиальный", "Число жил": "1", "Наружный диаметр, мм": "2,8"}),
+            ("UL1061 28AWG", {"Марка": "UL1061 28AWG", "Тип провода": "монтажный", "Сечение, мм2": "0,08", "AWG": "28",
+                              "Число жил": "1", "Изоляция": "ПВХ", "Наружный диаметр, мм": "0,89"}),
+        ]
+    ] + [{"tab": "kab_coax", "display_text": "RG316", "source_sheet": "СПР.КАБ",
+          "fields": {"Кабель": "RG316", "D1": "0,5", "D2": "1,48", "D3": "1,95"}}]}).status_code == 200
+    gauge = client.post("/api/references/wire-gauges", json={"awg": "28", "section_mm2": "0,08"}).json()
+    records = {record["fields"]["Марка"]: record for record in
+               client.get("/api/references/tech-operations", params={"tab": "prov"}).json()["records"]}
+    response = client.put(f"/api/references/cables/{records['UL1061 28AWG']['id']}/hookup", json={
+        "series": "UL1061", "gauge_id": gauge["id"], "insulation": "ПВХ", "outer_d_mm": "0,89", "voltage_v": "",
+        "temp_min_c": "", "temp_max_c": "", "conductor_material": "медь луженая", "insulation_thickness_mm": "0,2"})
+    assert response.status_code == 200, response.text
+    return records
+
+
+def _cable(client: TestClient, mark: str) -> dict:
+    return next(item for item in client.get("/api/references/cables").json()["rows"] if item["cable"] == mark)
+
+
+def _hookup(client: TestClient, mark: str) -> dict:
+    return _cable(client, mark)["hookup"]
+
+
+def _dia(client: TestClient, mark: str) -> dict:
+    return _cable(client, mark)["dia"]
+
+
+def test_the_coax_cable_list_carries_d1_d3_and_only_that_list(references_api):
+    _seed_cables(references_api)
+    coax = _rows(_download(references_api, kind="coax"))
+    wires = _rows(_download(references_api, kind="wire"))
+    everything = _rows(_download(references_api))
+
+    assert coax[0][-3:] == ["D1, мм", "D2, мм", "D3, мм"]
+    by_mark = {row[coax[0].index("Марка")]: row for row in coax[1:]}
+    assert by_mark["RG316"][-3:] == ["0,5", "1,48", "1,95"] and by_mark["RG174"][-3:] == ["", "", ""]
+    assert "D1, мм" not in wires[0] and "D1, мм" not in everything[0]
+    assert wires[0][-3:] == ["Серия провода", "Материал жилы", "Толщина изоляции, мм"]
+    [wire] = wires[1:]
+    assert wire[-3:] == ["UL1061", "медь луженая", "0,2"]
+
+
+def test_an_untouched_cable_file_is_a_no_op(references_api):
+    _seed_cables(references_api)
+    for kind in ("coax", "wire"):
+        content = _download(references_api, kind=kind)
+        for dry_run in (1, 0):
+            body = _upload(references_api, content, dry_run=dry_run).json()
+            assert not (body["updated"] or body["created"] or body["errors"] or body["conflicts"]), body
+            assert body["unchanged"] >= 1
+    assert _audit("references.tech_record_edited") == []
+    assert _dia(references_api, "RG316")["D2"] == "1,48"
+
+
+def test_an_edited_d_value_is_applied_through_the_cable_save_and_audited(references_api):
+    records = _seed_cables(references_api)
+    content = _download(references_api, kind="coax")
+
+    def edit(rows):
+        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D2, мм")] = "1,5"
+        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D1, мм")] = "0,48"
+
+    edited = _edited(content, edit)
+    preview = _upload(references_api, edited, dry_run=1).json()
+    assert sorted(change["field"] for item in preview["updated"] for change in item["changes"]) == ["D1", "D2"]
+    assert _dia(references_api, "RG316")["D2"] == "1,48"  # the dry run wrote nothing
+
+    body = _upload(references_api, edited, dry_run=0).json()
+
+    assert body["applied"] is True and not body["errors"]
+    assert {k: v for k, v in _dia(references_api, "RG316").items() if k in ("D1", "D2", "D3")} == {"D1": "0,5", "D2": "1,5", "D3": "1,95"}
+    assert _dia(references_api, "RG174")["D1"] == "0,48"  # a cable without a D row gets one
+    events = [event for event in _audit("references.tech_record_edited") + _audit("references.tech_record_created")
+              if event.details["tab"] == "kab_coax"]
+    assert len(events) == 2 and all(event.details["via"] == "file" for event in events)
+    again = _upload(references_api, _download(references_api, kind="coax"), dry_run=0).json()
+    assert not again["updated"] and not again["errors"]
+
+
+def test_a_bad_d_value_is_refused_for_its_row_only(references_api):
+    records = _seed_cables(references_api)
+    content = _download(references_api, kind="coax")
+
+    def edit(rows):
+        next(row for row in rows if row[0] == records["RG316"]["id"])[_column(rows, "D1, мм")] = "много"
+        next(row for row in rows if row[0] == records["RG174"]["id"])[_column(rows, "D3, мм")] = "2,9"
+
+    body = _upload(references_api, _edited(content, edit), dry_run=0).json()
+
+    assert [item["id"] for item in body["errors"]] == [records["RG316"]["id"]] and "число" in body["errors"][0]["reason"]
+    assert [item["id"] for item in body["updated"]] == [records["RG174"]["id"]]
+    assert _dia(references_api, "RG316")["D1"] == "0,5" and _dia(references_api, "RG174")["D3"] == "2,9"
+
+
+def test_edited_wire_structure_is_applied_through_the_wire_save(references_api):
+    records = _seed_cables(references_api)
+    content = _download(references_api, kind="wire")
+
+    def edit(rows):
+        row = rows[1]
+        row[_column(rows, "Серия провода")] = "UL1007"
+        row[_column(rows, "Материал жилы")] = "медь"
+        row[_column(rows, "Толщина изоляции, мм")] = "0,25"
+
+    body = _upload(references_api, _edited(content, edit), dry_run=0).json()
+
+    assert body["applied"] is True and not body["errors"]
+    assert sorted(change["field"] for change in body["updated"][0]["changes"]) == [
+        "hookup_insulation_mm", "hookup_material", "hookup_series"]
+    wire = _hookup(references_api, "UL1061 28AWG")
+    assert (wire["series"], wire["conductor_material"], wire["insulation_thickness_mm"]) == ("UL1007", "медь", 0.25)
+    assert wire["insulation"] == "ПВХ" and wire["outer_d_mm"] == 0.89  # the rest of the structure stays
+    event = _audit("references.hookup_wire_saved")[-1]
+    assert event.details["via"] == "file" and event.details["record_id"] == records["UL1061 28AWG"]["id"]
+
+
+def test_a_bad_structure_value_is_refused_and_nothing_is_left(references_api):
+    _seed_cables(references_api)
+    content = _download(references_api, kind="wire")
+
+    def edit(rows):
+        rows[1][_column(rows, "Серия провода")] = "UL1007"
+        rows[1][_column(rows, "Толщина изоляции, мм")] = "минус"
+
+    body = _upload(references_api, _edited(content, edit), dry_run=0).json()
+
+    assert len(body["errors"]) == 1 and not body["updated"]
+    wire = _hookup(references_api, "UL1061 28AWG")
+    assert wire["series"] == "UL1061" and wire["insulation_thickness_mm"] == 0.2
