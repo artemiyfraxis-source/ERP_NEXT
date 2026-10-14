@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validat
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.project_number import normalize_project_number
 from .domain import (
-    ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
+    ADDRESSEE_PLAN_FIELDS, ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
     MoveKind, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, StoredFile, UpdType,
     balance_moves,
 )
@@ -58,6 +58,8 @@ class FinishedGoodRow(Base):
     # № проекта для сравнения (`normalize_project_number`): трек проекта читает по индексу; ставится при записи
     # `project`, NULL — строка мимо ORM (читается и сверяется в Python).
     project_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    # Место хранения на складе ГП (0122): пусто — не указано.
+    location: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
     @validates("project")
@@ -225,6 +227,9 @@ class ProjectAddresseeRow(Base):
     pays: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     customer_address: Mapped[str] = mapped_column(Text(), nullable=False, default="")
     hours: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # План отгрузки (0122): дата и комментарий, их правят и менеджер, и склад.
+    plan_date: Mapped[date | None] = mapped_column(Date(), nullable=True)
+    note: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
 
@@ -240,6 +245,7 @@ def _good(row: FinishedGoodRow) -> FinishedGood:
         customer=row.customer, article=row.article, name=row.name, ordered=row.ordered,
         unit=row.unit, accepted=row.accepted, shipped=row.shipped,
         received_at=row.received_at, grn=row.grn, note=row.note, sent=row.sent, before_erp=row.before_erp,
+        location=row.location or "",
     )
 
 
@@ -287,7 +293,7 @@ class SqlAlchemyFinishedGoodsRepository:
         moves = balance_moves(before, good, move, normalize_project_number(good.project) or good.project.strip())
         if row is None:
             row = FinishedGoodRow(id=good.id); self.session.add(row)
-        for key in ("version", "project", "item_index", "customer", "article", "name", "ordered", "unit", "accepted", "shipped", "received_at", "grn", "note", "sent", "before_erp"):
+        for key in ("version", "project", "item_index", "customer", "article", "name", "ordered", "unit", "accepted", "shipped", "received_at", "grn", "note", "sent", "before_erp", "location"):
             setattr(row, key, getattr(good, key))
         for item in moves:
             self.session.add(FinishedGoodMoveRow(
@@ -456,6 +462,7 @@ class SqlAlchemyProjectAddresseeRepository:
             upd_type=UpdType(row.upd_type) if row.upd_type else None,
             updated_by=row.updated_by, updated_at=row.updated_at,
             **{key: getattr(row, key) or "" for key in ADDRESSEE_REQUISITE_FIELDS},
+            plan_date=row.plan_date, note=row.note or "",
         )
     def list(self) -> list[ProjectAddressee]:
         return [self.get(project) for project in self.session.scalars(select(ProjectAddresseeRow.project).order_by(ProjectAddresseeRow.project))]
@@ -463,7 +470,7 @@ class SqlAlchemyProjectAddresseeRepository:
         row = self.session.get(ProjectAddresseeRow, addressee.project)
         if row is None:
             row = ProjectAddresseeRow(project=addressee.project); self.session.add(row)
-        for key in ("version", "receiver", "shipping_point", "contact", "phone", "carrier", "updated_by", "updated_at", *ADDRESSEE_REQUISITE_FIELDS):
+        for key in ("version", "receiver", "shipping_point", "contact", "phone", "carrier", "updated_by", "updated_at", *ADDRESSEE_REQUISITE_FIELDS, *ADDRESSEE_PLAN_FIELDS):
             setattr(row, key, getattr(addressee, key))
         row.terms = addressee.terms.value if addressee.terms else None
         row.upd_type = addressee.upd_type.value if addressee.upd_type else None

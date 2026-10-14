@@ -158,6 +158,7 @@ class AcceptGoodCommand:
     limit: Decimal | None = None
     limit_basis: str = "сдано цехом"
     reason: str = ""
+    location: str = ""
 
 
 @dataclass(frozen=True)
@@ -382,7 +383,7 @@ def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
         good = _good(command.good_id, command.expected_version, uow)
         updated = accept_into_stock(
             uow, good, command.quantity, received_at=command.received_at, actor=command.actor, now=command.now,
-            limit=command.limit, limit_basis=command.limit_basis, reason=command.reason,
+            limit=command.limit, limit_basis=command.limit_basis, reason=command.reason, location=command.location,
         )
         uow.commit()
         return updated
@@ -391,9 +392,11 @@ def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
 def accept_into_stock(
     uow, good: FinishedGood, quantity: Decimal, *, received_at: date, actor: Actor, now: datetime,
     limit: Decimal | None = None, limit_basis: str = "сдано цехом", reason: str = "", id_seed: UUID | None = None,
+    location: str = "",
 ) -> FinishedGood:
     """«Принято складом» без фиксации: в производстве → принято, не больше `limit` всего по КБ (сдано цехом).
-    Зовут приёмка одной КБ и пакетная «Из производства» — фиксирует вызывающий."""
+    Зовут приёмка одной КБ и пакетная «Из производства» — фиксирует вызывающий. `location` — место хранения КБ на
+    складе ГП: непустое заменяет прежнее, пустое его оставляет."""
     amount = Decimal(quantity)
     if not amount.is_finite() or amount <= 0:
         raise ShippingValidationError(f"{good.project} {good.item_index}: количество должно быть больше нуля")
@@ -404,10 +407,11 @@ def accept_into_stock(
             f"{_plain(good.accepted)} — принять можно ещё {_plain(left)}"
         )
     grn = good.grn or uow.goods.reserve_grn(now.year)
-    updated = good.accept(amount, received_at, grn)
+    updated = good.accept(amount, received_at, grn, location)
     uow.goods.add(updated, _context(actor, now, reason=reason, id_seed=id_seed))
     _audit(good.id, "shipping.good_accepted", actor, now, {
         "quantity": str(amount), "grn": grn, **({"reason": reason} if reason else {}),
+        **({"location": updated.location} if updated.location != good.location else {}),
     }, uow)
     return updated
 
@@ -436,10 +440,11 @@ def _create_shipment(
     if not lines:
         raise ShippingValidationError("Не выбрано ни одной позиции с количеством")
     # The shipment's project is its first line's (`shipHeadEff_`).
+    card = uow.addressees.get(lines[0].project)
     address = effective_address(
         receiver=command.receiver, shipping_point=command.shipping_point, contact=command.contact,
         phone=command.phone, terms=command.terms, carrier=command.carrier, upd_type=command.upd_type,
-        project=uow.addressees.get(lines[0].project),
+        project=card,
         customer_fallback=command.customer or next((name for name in customers if name), ""),
     )
     if not address.shipping_point:
@@ -448,9 +453,12 @@ def _create_shipment(
         number=uow.shipments.reserve_number(command.now.date()), created_at=command.now,
         customer=command.customer, receiver=address.receiver, shipping_point=address.shipping_point,
         contact=address.contact, phone=address.phone, terms=address.terms,
-        carrier=address.carrier, deadline=command.deadline, upd_type=address.upd_type,
+        carrier=address.carrier, upd_type=address.upd_type,
+        # Срок и комментарий, не заданные в заявке, — из плана отгрузки карточки проекта (копия на момент заведения).
+        deadline=command.deadline or (card.plan_date if card is not None else None),
         upd_number=command.upd_number, upd_date=command.upd_date, upd_url=command.upd_url,
-        manager=command.actor.name, note=command.note, lines=tuple(lines),
+        manager=command.actor.name, note=str(command.note or "").strip() or (card.note if card is not None else ""),
+        lines=tuple(lines),
         manager_id=command.actor.id, inherited=_unset_fields(command), id=shipment_id,
     )
     uow.shipments.add(shipment)

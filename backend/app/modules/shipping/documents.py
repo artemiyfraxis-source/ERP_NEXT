@@ -144,9 +144,11 @@ def build_packing_lists(shipment: Shipment, packer: str = "") -> list[ShippingFo
 
 
 def _upd_number(shipment: Shipment) -> str:
-    """Номера УПД ещё нет, а передаётся она через ЭДО — в образце так и пишут «ЭДО»."""
+    """Номера УПД ещё нет, а передаётся она через ЭДО — в образце так и пишут «ЭДО»; отправка без УПД — «без УПД»."""
     if shipment.upd_number:
         return shipment.upd_number
+    if shipment.upd_type == UpdType.NONE:
+        return "без УПД"
     return "ЭДО" if shipment.upd_type == UpdType.EDO else ""
 
 
