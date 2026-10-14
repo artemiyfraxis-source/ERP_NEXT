@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { indexLabelBoxes, openEndLabelBoxes, orderByPartners, type LabelBox } from "./drawingLayout";
+import { dimensionLabelBoxes, indexLabelBoxes, openEndLabelBoxes, orderByPartners, placeDrawingLabels, type LabelBox } from "./drawingLayout";
 import { buildHarnessDocument, planFromGenerator, type ConnectorSource, type GeneratorDrawingPlan } from "./generatorToHarness";
+import { segmentDimensionKey } from "./harness/editor/drawing-dimensions";
 import { designToScene } from "./harness/editor/HarnessDesignEditor";
 import { physicalNodePoint } from "./harness/editor/physical-ports";
 import { D, harness } from "./tcGenRealHarness.fixture";
@@ -65,4 +66,31 @@ it("layout only: every wire, splice, tail and length stays as the generator buil
   expect(doc.wires.map((w) => w.lengthMm!).sort((a, b) => a - b)).toEqual([60, 60, 60, 60, 150, 150, 150, 150, 150, 150, 160, 160, 160, 180, 330, 330, 330]);
   expect(doc.junctions.map((j) => j.wireIds.length)).toEqual([4, 4, 3, 3]);
   expect(doc.wires.every((w) => doc.physicalTopology!.routes.some((r) => r.wireId === w.id))).toBe(true);
+});
+
+it("a wire label is moved off the dimension text («N мм») it would otherwise cover", () => {
+  const { drawing } = build();
+  const doc = drawing.document;
+  const sideOf = (id: string) => (doc.connectors.find((c) => c.id === id)?.schematic.orientation === "contacts-left" ? "B" : "A") as "A" | "B";
+  const overlaps = (a: Omit<LabelBox, "id">, b: Omit<LabelBox, "id">) =>
+    Math.min(a.x + a.width, b.x + b.width) > Math.max(a.x, b.x) && Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y);
+  const withDimension = (segmentId: string) => {
+    const segment = doc.physicalTopology!.segments.find((s) => s.id === segmentId)!;
+    const dimension = { id: "t-d1", segmentId, from: 0, to: segment.path.points.length + 1, pointCount: segment.path.points.length + 2,
+      routeKey: segmentDimensionKey(doc, segmentId), mode: "aligned" as const, modeOverride: false, offset: 40, lengthMm: 300 };
+    return { ...doc, drawingDocuments: { ...doc.drawingDocuments!, showDimensions: true, dimensions: [dimension] } };
+  };
+  // Берём размер там, где подпись провода без размера встаёт на его текст: размер на каждом участке по очереди.
+  let proven = 0;
+  for (const segment of doc.physicalTopology!.segments) {
+    const base = withDimension(segment.id);
+    const dimBoxes = dimensionLabelBoxes(designToScene(base, "drawing"));
+    if (!dimBoxes.length) continue;
+    // Подписи, посчитанные без знания о размере (как раньше), и с ним.
+    const placed = placeDrawingLabels(base, sideOf);
+    const labels = indexLabelBoxes(designToScene(placed, "drawing"));
+    expect(labels.filter((l) => dimBoxes.some((d) => overlaps(l, d))).map((l) => l.id), segment.id).toEqual([]);
+    proven++;
+  }
+  expect(proven).toBeGreaterThan(0);
 });
