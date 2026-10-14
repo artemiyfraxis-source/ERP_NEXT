@@ -276,7 +276,7 @@ class Importer:
             doc_id = rb["file_id"]
             if rb["origin"] == "edo":
                 file_id = self.stored_file(rb["path"], rb["file_name"]) if rb["path"] else None
-                folder = "ЭДО"
+                folder = "edo"
             else:
                 file_id = self.stored_file(f"upd/{rb['pdf_file']}", rb["file_name"]) if rb["pdf_file"] else None
                 folder = rb["path"] or ""

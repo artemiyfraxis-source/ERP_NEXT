@@ -160,8 +160,9 @@ def test_imports_directories_documents_and_invoices(sessions, snapshot):
 
         docs = {d.id: d for d in session.scalars(select(UpdDocumentRow))}
         assert docs["g1"].twin_of == "edo-1" and docs["g1"].doc_date == date(2026, 9, 1)
-        assert docs["edo-1"].supplier_id is None, "the document of our own «supplier» stays unlinked"
-        assert docs["edo-1"].folder == "ЭДО" and docs["g2"].supplier_id == suppliers[0].id
+        # Roller_Buyer linked it to the «supplier» with our INN: that one is not imported, the relink takes the seller's.
+        assert docs["edo-1"].supplier_id == suppliers[0].id
+        assert docs["edo-1"].folder == "edo" and docs["g2"].supplier_id == suppliers[0].id
         assert docs["bad"].file_id is None, "a path out of DATA_DIR is not read"
         assert docs["g1"].file_id == docs["g2"].file_id, "the same content is stored once"
         assert session.scalar(select(func.count()).select_from(DocumentFileRow)) == 3

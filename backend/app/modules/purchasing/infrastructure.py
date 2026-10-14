@@ -413,6 +413,9 @@ class UpdDocumentRow(Base):
     verified_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     verified_parser_updated: Mapped[str | None] = mapped_column(String(128))
     supplier_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("purchasing_suppliers.id", ondelete="SET NULL"))
+    # Set when the buyer chose the supplier by hand: every relink keeps it; NULL — linked by the seller's INN.
+    supplier_manual_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    supplier_manual_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
     # «591К.3» or «ВП-001», set by hand.
     project_reference: Mapped[str | None] = mapped_column(String(255))
     twin_of: Mapped[str | None] = mapped_column(String(128))

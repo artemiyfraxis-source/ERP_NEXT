@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
-from app.shared.persistence import AuditEventRow
 
 from . import suppliers as directory
 from .edo_xml import EdoDoc, Unsupported, UploadRejected, edo_document_id, parse_edo_xml, unpack_edo_upload
@@ -118,14 +117,13 @@ def buyer_verdicts(docs: list[UpdDocumentRow]) -> dict[str, BuyerVerdict]:
 
 def manual_suppliers(session: Session) -> dict[str, UUID]:
     """document id → the supplier the buyer chose by hand (documents handed back to the INN are absent)."""
-    latest: dict[str, tuple[int, str]] = {}
-    for row in session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == SUPPLIER_EVENT)):
-        details = row.details or {}
-        document_id = str(details.get("document_id") or "")
-        seq = int(str(details.get("seq") or "0"))
-        if document_id and (document_id not in latest or seq > latest[document_id][0]):
-            latest[document_id] = (seq, str(details.get("supplier_id") or ""))
-    return {document_id: UUID(chosen) for document_id, (_, chosen) in latest.items() if chosen}
+    return {
+        document_id: supplier_id for document_id, supplier_id in session.execute(
+            select(UpdDocumentRow.id, UpdDocumentRow.supplier_id).where(
+                UpdDocumentRow.supplier_manual_at.is_not(None), UpdDocumentRow.supplier_id.is_not(None),
+            )
+        )
+    }
 
 
 def _received(session: Session) -> set[str]:
@@ -575,14 +573,13 @@ def set_supplier(uow, document_id: str, supplier_id: UUID | None, actor: Actor, 
         if supplier.inn in OWN_INNS:
             raise UpdError("У этого поставщика ИНН нашей организации — документ не может быть от неё")
         name = supplier.name
-    seq = 1 + sum(
-        1 for event in session.scalars(select(AuditEventRow).where(
-            AuditEventRow.event_type == SUPPLIER_EVENT, AuditEventRow.aggregate_id == aggregate_id(row.id),
-        ))
-    )
+    if supplier_id is None:
+        row.supplier_manual_at, row.supplier_manual_by = None, None
+    else:
+        row.supplier_id, row.supplier_manual_at, row.supplier_manual_by = supplier_id, now, actor.id
     uow.audit.add(AuditEvent(
         id=uuid4(), aggregate_id=aggregate_id(row.id), event_type=SUPPLIER_EVENT, actor=actor, occurred_at=now,
-        details={"document_id": row.id, "supplier_id": str(supplier_id or ""), "supplier": name, "seq": str(seq)},
+        details={"document_id": row.id, "supplier_id": str(supplier_id or ""), "supplier": name},
     ))
     session.flush()
     relink_documents(session, now)

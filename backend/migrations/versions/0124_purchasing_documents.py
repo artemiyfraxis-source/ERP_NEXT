@@ -73,6 +73,8 @@ def upgrade() -> None:
         sa.Column("verified_by", sa.Uuid()),
         sa.Column("verified_parser_updated", sa.String(128)),
         sa.Column("supplier_id", sa.Uuid(), sa.ForeignKey("purchasing_suppliers.id", ondelete="SET NULL")),
+        _when("supplier_manual_at"),
+        sa.Column("supplier_manual_by", sa.Uuid()),
         sa.Column("project_reference", sa.String(255)),
         sa.Column("twin_of", sa.String(128)),
         _when("created_at", nullable=False),
