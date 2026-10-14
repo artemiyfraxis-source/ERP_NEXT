@@ -39,6 +39,23 @@ export function setCoreColor(D: GenData, S: GenState, idx: number, unit: number,
   }) };
 }
 
+/** «Цвета жил» строки «Кабели»: цвет k-й жилы кабеля (с 0) — у каждого кабеля строки (×N — та же партия, те же цвета).
+ *  `patch[k]` — название палитры или null (вернуть цвет из БД.ПРОВ / наименования). Цвета хранятся в карте, не в БД.ПРОВ:
+ *  у разных партий кабеля они разные (владелец 14.10). */
+export function setCableCoreColors(D: GenData, S: GenState, idx: number, patch: Record<number, string | null>): GenState {
+  const w = S.wires.find((x) => x.idx === idx);
+  if (!w) return S;
+  const gen = makeGen(D, S);
+  const per = Math.max(1, gen.wireCores_(w)), cables = Math.max(1, Math.round(coreCount(gen, w) / per));
+  let next = S;
+  for (const [key, color] of Object.entries(patch)) {
+    const core = Number(key);
+    if (!(core >= 0 && core < per)) continue;
+    for (let c = 0; c < cables; c += 1) next = setCoreColor(D, next, idx, c * per + core, color);
+  }
+  return next;
+}
+
 /** Цепь жилы `unit` (или экрана) кабеля `idx`: имя, которое «Построить чертёж» ставит у провода и в колонку «Цепь»
  *  таблиц контактов. Пустое — снять. */
 export function setCoreNet(D: GenData, S: GenState, idx: number, unit: number, net: string): GenState {

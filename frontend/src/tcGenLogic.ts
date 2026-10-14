@@ -167,6 +167,10 @@ export const DIODE_RE_ = /tvs|диод|\d[.,]\d\s*ke\d|\bsmbj\d/i;
 export const LUG_RE_ = /^\s*(?:нки|нви|нвки|ншви|нши|рпи|тмл)(?![а-яa-z])/i;
 export const FOLD_STRIP_MM_ = "10";
 const JACKETED_RE_ = /\b\d+\s*P(?:R|AIR)?\b|\b\d+\s*C\s*[*xх×]|\b[SFU]?\/?[SFU]TP\b|\bUSB\b|витая\s*пара|экранир/i;
+/** Многожильный кабель в оболочке по стилю UL AWM (владелец 14.10: «UL2575 26AWG» без записи в БД.ПРОВ генератор резал
+ *  как 4 отдельных провода): стили 2000–2999 и 20000–29999 — многопроводные (UL2464, UL2547, UL2575, UL2725, UL20276…);
+ *  1000-е, 3000-е и 10000-е (UL1007, UL1061, UL3239, UL10368) — одиночный провод. */
+export const UL_MULTICORE_RE_ = /\bUL\s*-?\s*2\d{3}\d?(?!\d)/i;
 const DEFAULT_LEN_MM_ = "5";
 const RJ_STRIP_MM_ = "40";
 const SEAL_RE_ = /герметик|силагерм|компаунд|sealant/i;
@@ -268,8 +272,11 @@ export function cableCoresFromName_(value: string) {
   const s = String(value || "");
   const m3 = s.match(/(\d+)\s*[xх×*]\s*(\d+)\s*[xх×*]\s*\d/i);
   if (m3) return Number(m3[1]) * Number(m3[2]);
-  const m2 = s.match(/(?:^|[^\d.,])(\d+)\s*[xх×*]\s*\d+(?:[.,]\d+)?(?!\s*[xх×*\d])/i);
-  return m2 ? Number(m2[1]) : 1;
+  const m2 = s.match(/(?:^|[^\d.,])(\d+)\s*[xх×*]\s*(?:\d+(?:[.,]\d+)?(?!\s*[xх×*\d])|AWG)/i);
+  if (m2) return Number(m2[1]);
+  // «UL2464 24AWG 4C» — 4 проводника (C — conductors) в оболочке.
+  const conductors = /(?:^|\s)(\d{1,2})\s*C(?![a-zа-я\d])/i.exec(s);
+  return conductors && Number(conductors[1]) >= 2 ? Number(conductors[1]) : 1;
 }
 export function parseLengthVal_(s: string) {
   if (!s) return 0;
@@ -581,10 +588,14 @@ export function makeGen(D: GenData, S: GenState) {
     const c = w.compId ? getCompById(w.compId) : null;
     return cableScreened_(cableRecOf_(c)) || (!!c && /экран|shield|sheld|\b(?:S|SF|F)\/?[UF]TP\b|-C[YD]\b/i.test(`${c.name || ""} ${c.art || ""}`));
   };
+  /** Кабель по стилю UL AWM 2xxx, у которого нет записи БД.ПРОВ с «Число жил» (запись решает сама). */
+  function isUlMulticore_(c: Comp | null) {
+    return !!c && UL_MULTICORE_RE_.test(`${c.name || ""} ${c.art || ""}`) && !((cableRecOf_(c)?.cores || 0) > 0);
+  }
   function isJacketedCable_(w: WireEntry) {
     if (wireCores_(w) > 1) return true;
     const c = w.compId ? getCompById(w.compId) : null;
-    return !!c && JACKETED_RE_.test(`${c.name || ""} ${c.art || ""}`);
+    return !!c && (JACKETED_RE_.test(`${c.name || ""} ${c.art || ""}`) || isUlMulticore_(c));
   }
   /** Жил в строке «Кабели» всего: кабелей × жил (провод без оболочки — одна жила на штуку). */
   const unitCount_ = (w: WireEntry) => Math.max(1, Math.round(Number(w.qty) || 1)) * Math.max(1, wireCores_(w) || 1);
@@ -1930,7 +1941,7 @@ export function makeGen(D: GenData, S: GenState) {
 
   return {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
-    cableRecOf_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
+    cableRecOf_, isUlMulticore_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
     endpointOrdinal_, epPer_, epDoublePins_, epStripLen_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
     crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
@@ -2174,6 +2185,14 @@ export function autoFillAllWires(D: GenData, S0: GenState): GenState {
     const normaM = Number(wire.qty) || 0;
     if (normaM <= 0) return;
     const length = (wire.length || 0) > 0 ? wire.length! : (asmLen || calcLen[wire.id] || 0);
+    // Кабель UL 2xxx в оболочке: терминалов по N на сторону — это жилы кабелей, а кабелей столько, сколько их укладывается
+    // в норму на изделие (длина неизвестна — один). Владелец 14.10: «UL2575 26AWG» 0,42 м и 4 терминала на разъём →
+    // 1 шт × 4 жилы, а не 4 провода.
+    const cables = g.isUlMulticore_(wire) ? wireQtyFromNorma_(normaM, baseNorma, length) : 0;
+    if (byTerms > 1 && cables > 0 && byTerms > cables && byTerms % cables === 0) {
+      entries.push({ idx: nextIdx++, compId: wire.id, length, qty: cables, cores: byTerms / cables });
+      return;
+    }
     entries.push({ idx: nextIdx++, compId: wire.id, length, qty: byTerms || wireQtyFromNorma_(normaM, baseNorma, length) });
   });
   S = { ...S, wires: entries, nextWireIdx: nextIdx };

@@ -287,8 +287,9 @@ export function PinoutDiagram({ ends, links, units, housings, free = null, hand 
 }
 
 // ── Редактор распиновки над схемой ─────────────────────────────────────────────────────────────────────────────
-const Swatch = ({ color, stripe = null }: { color: string | null; stripe?: string | null }) =>
-  <span className={color ? "pin-swatch" : "pin-swatch is-unknown"} style={color ? { background: stripe ? `linear-gradient(135deg, ${color} 50%, ${stripe} 50%)` : color } : undefined} aria-hidden="true" />;
+/** `ask` — кружок жилы без цвета на палитре: «?» вместо пустого пунктира, чтобы было видно, что цвет выбирается (владелец 14.10). */
+const Swatch = ({ color, stripe = null, ask = false }: { color: string | null; stripe?: string | null; ask?: boolean }) =>
+  <span className={color ? "pin-swatch" : ask ? "pin-swatch is-ask" : "pin-swatch is-unknown"} style={color ? { background: stripe ? `linear-gradient(135deg, ${color} 50%, ${stripe} 50%)` : color } : undefined} aria-hidden="true">{!color && ask ? "?" : null}</span>;
 
 /** Цвет жилы с палитры магазина (wireColors.ts): один цвет — щелчок по кружку; два цвета — основной и полоса, название
  *  вида «бело-синий». «Сбросить цвет» возвращает цвет из наименования кабеля. */
@@ -509,7 +510,7 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
           </button>
           {u.shield ? <span className="pin-color-dot is-static" aria-hidden="true"><Swatch color={u.color} /></span>
             : <button type="button" className="pin-color-dot" aria-label={`Цвет жилы ${u.num}`} aria-expanded={palette === u.key} title={u.colorName || "выбрать цвет жилы"}
-              onClick={() => setPalette(palette === u.key ? null : u.key)}><Swatch color={u.color} stripe={u.stripe} /></button>}
+              onClick={() => setPalette(palette === u.key ? null : u.key)}><Swatch color={u.color} stripe={u.stripe} ask /></button>}
           {palette === u.key && <CoreColorPopover unit={u} onClose={() => setPalette(null)} onPick={(color) => onCoreColor?.(u.idx, u.unit, color)} />}
           </span>;
         })}

@@ -101,6 +101,8 @@
 .tcgen .pin-chip-wire.is-open small { color: var(--tone-warn); }
 .pin-swatch { display: inline-block; flex: none; width: 14px; height: 14px; border: 1px solid var(--pin-outline); border-radius: 50%; }
 .pin-swatch.is-unknown { background: repeating-linear-gradient(45deg, var(--pin-free-bg) 0 3px, var(--card) 3px 6px); border-style: dashed; }
+/* Жила без цвета на палитре и в «Цветах жил» — «?»: цвет не задан, щелчок его выбирает. */
+.pin-swatch.is-ask { display: inline-grid; place-items: center; border: 1px dashed var(--primary); background: var(--card); color: var(--primary); font-size: 10px; font-weight: 700; line-height: 1; }
 .tcgen .pin-hand { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; border: 1px solid var(--primary); border-radius: 8px; padding: 4px 12px;
   background: color-mix(in srgb, var(--primary) 6%, var(--card)); font-size: 12.5px; }
 .tcgen .pin-hand-what { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
@@ -156,4 +158,21 @@
 .pin-color-pop .pin-color-two input { width: auto; margin: 0; }
 .pin-color-pop .pin-color-foot { display: flex; align-items: center; gap: 12px; }
 .pin-color-pop .pin-color-foot .muted { margin-right: auto; }
-@media (pointer: coarse) { .pin-color-pop .swatch, .tcgen .pin-color-dot { width: 40px; height: 40px; } }
+/* «Цвета жил» под строкой многожильного кабеля в «Кабели»: жилы цветом и названием, окно — по жиле или типовым порядком. */
+.tcgen .wire-row > .cable-colors { position: relative; grid-column: 1 / -1; margin-top: -2px; }
+.cable-colors-btn { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 28px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--card); color: var(--foreground); font-size: 12.5px; text-align: left; cursor: pointer; }
+.cable-colors-btn:hover, .cable-colors-btn[aria-expanded="true"] { border-color: var(--primary); }
+.cable-colors-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.cable-colors-cap { color: var(--muted-foreground); font-weight: 600; }
+.cable-colors-core { display: inline-flex; align-items: center; gap: 4px; }
+.cable-colors-core .pin-num, .cable-colors-row .pin-num { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pin-color-pop.cable-colors-pop { width: 640px; max-width: calc(100vw - 32px); gap: 8px; }
+.cable-colors-list { display: grid; gap: 4px; max-height: 420px; overflow-y: auto; }
+.cable-colors-row { display: grid; grid-template-columns: 20px 14px 112px minmax(0, 1fr) 20px; align-items: center; gap: 8px; }
+.cable-colors-row .pin-num { text-align: right; }
+.cable-colors-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cable-colors-row .swatch-row { gap: 4px; }
+.cable-colors-pop .swatch { width: 20px; height: 20px; }
+.cable-colors-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (pointer: coarse) { .pin-color-pop .swatch, .tcgen .pin-color-dot { width: 40px; height: 40px; } .cable-colors-btn { min-height: 40px; } }

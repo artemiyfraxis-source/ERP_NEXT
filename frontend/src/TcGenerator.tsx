@@ -71,6 +71,7 @@ import {
   manualProblem, proposeFromKd, selectBlock, type KdCard, type LibraryCard, type ManualState,
 } from "./manualLogic";
 import { ComplexCables } from "./ComplexCables";
+import { CableCoreColors } from "./CableCoreColors";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
 import { lMinusMissing, lMinusSuggestion, terChanges, terEditProblem, terLost, terNewFields, terSaved, terSavedText, withTerRecord } from "./terDbSave";
 import { MarkTable, markTotal } from "./GenMarkTable";
@@ -82,7 +83,7 @@ import { GenDrawingPreview } from "./GenDrawingPreview";
 import { planTwist } from "./twistGroups";
 import {
   addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
-  setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
+  setBranchMode, setCableCoreColors, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
 } from "./pinoutCheck";
 import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
@@ -1165,6 +1166,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
               {cores > 1 ? <UnitInput unit="мм" aria-label={`Разделка кабеля ${n + 1}`} type="number" min={1} value={w.jacket || JACKET_STRIP_MM_} onChange={(event) => update((current) => updateWire(current, w.idx, { jacket: event.target.value.trim() }))} /> : <span />}
             </>}
             <button type="button" className="btn-remove" title="Удалить кабель" aria-label={`Удалить кабель ${n + 1}`} onClick={() => update((current) => ({ ...current, wires: current.wires.filter((x) => x.idx !== w.idx) }))}>×</button>
+            {cores > 1 && <CableCoreColors label={`кабель ${n + 1}`} colors={gen.coreColors_(w).slice(0, cores)}
+              onSet={(patch) => update((current) => setCableCoreColors(D, current, w.idx, patch))} />}
           </div>;
         })}
       </div>
