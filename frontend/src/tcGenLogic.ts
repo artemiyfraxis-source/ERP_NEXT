@@ -1362,6 +1362,9 @@ export function makeGen(D: GenData, S: GenState) {
           if (!routedWireIdxs_(e).includes(w.idx)) return;
           let len: string | null = null;
           if (crimpSides.includes(e.side)) len = (findTerRecord_((getCompById(e.termId) || ({} as Comp)).art) || ({} as TerRec)).strip || "—";
+          // Станок обжимает одну сторону — вторую, под ручной обжим, он же зачищает (владелец 14.10: «обжим с одной и
+          // зачистка с другой»); кабель в оболочке — по правилу ротора ниже.
+          else if (e.method === "crimp" && crimpSides.length === 1 && !isJacketedCable_(w)) len = (findTerRecord_((getCompById(e.termId) || ({} as Comp)).art) || ({} as TerRec)).strip || "—";
           else if (e.method === "solder") len = (e.solderStrip || "").trim() || DEFAULT_LEN_MM_;
           else if (e.method === "crimp" && e.fold && isComplex_()) len = FOLD_STRIP_MM_;
           else if (e.method === "crimp" && isRjEndpoint_(e)) len = RJ_STRIP_MM_;
@@ -1417,7 +1420,7 @@ export function makeGen(D: GenData, S: GenState) {
           const term = getCompById(crimpEp.termId)!;
           // С лужением свободного конца тем же станком (BZW-5.0+Z) отдельной операции «Лужение» у этих проводов нет.
           ops.push({ type: "cutWireCrimp", opKey: key, side: crimpSide, crimpEpId: crimpEp.id,
-            label: cutLabel(ws, `Резка с обжимом ${sideRu_(crimpSide)} (${term.art || term.name})${g.tin ? " и лужением" : ""}`),
+            label: cutLabel(ws, `Резка с обжимом ${sideRu_(crimpSide)} (${term.art || term.name})${g.tin ? " и лужением" : (crimpSide === "A" ? hasB : hasA) ? ` и зачисткой ${sideRu_(crimpSide === "A" ? "B" : "A")}` : ""}`),
             wireIdxs: ws.map((w) => w.idx), tmplHint: g.tin ? CRIMP_TIN_CODE_ : "CUT_WIRE+1crimp", strip, ...(g.tin ? { tin: true } : {}) });
         } else if (n === 0) {
           ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), wireIdxs: ws.map((w) => w.idx), tmplHint: "CUT_WIRE_auto", cat: "Резка" });
