@@ -4265,3 +4265,9 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 @media (max-width: 700px) { .eq-econ { grid-template-columns: minmax(0, 1fr); } }
 @media (pointer: coarse) { .eq-close { min-width: 40px; min-height: 40px; font-size: 26px; } .eq-head-act .small { min-height: 40px; } .eq-ops li { min-height: 40px; } }
 .eq-econ dd { flex: none; white-space: nowrap; } .eq-econ dt { min-width: 0; }
+/* ---- КП из PDF и текста ---- */
+.quote-import-panel { display: grid; gap: 6px; }
+.quote-import-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.quote-import-file { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted-foreground); }
+.quote-import-notes { margin: 0; padding: 8px 12px 8px 28px; border-radius: 6px; font-size: 13px; background: var(--panel-soft); border: 1px solid var(--border); }
+.quote-import-unmatched-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 4px; }
