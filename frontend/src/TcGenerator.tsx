@@ -44,6 +44,7 @@ import {
   toggleLengthMode,
   twistPitchForZ0_,
   twistZ0_,
+  setWireCores,
   updateEndpoint,
   updateWire,
   wireDiaFromRecords,
@@ -975,7 +976,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const typical = S.tab !== "coax" && !manualTab;
   const epsA = gen.endpointsOnSide_("A"), epsB = gen.endpointsOnSide_("B");
   const sidesFull = !epsA.length || !epsB.length;
-  const anyCores = S.wires.some((w) => gen.wireCores_(w) > 1 || !!w.cores);
+  // «Жил» видно всегда: кабель без записи в БД.ПРОВ и без «4x0,5» в названии иначе нельзя сделать многожильным.
+  const anyCores = S.wires.length > 0;
   const wireCols = `wire-row${S.advancedLength ? " adv" : ""}${anyCores ? " cores" : ""}`;
   const warning = typical ? gen.complexWarning() : "";
   const opsCount = manualTab ? manual.ops.length : ops.length;
@@ -1126,19 +1128,18 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>}
       {lMinusGaps.length > 0 && <div className="warning-inline">Нет L− в БД.ТЕР: {lMinusGaps.join(", ")} — длина реза эти концы не вычитает. Впишите L− в разъёме и «Записать в БД».</div>}
       <div className="wire-list">
-        {S.wires.length > 0 && <div className={`${wireCols} head`} aria-hidden="true"><span>Кабель</span>{S.advancedLength && <span>Длина по чертежу</span>}<span>Кол-во</span>{anyCores && <><span>Жил</span><span>Разделка</span></>}<span /></div>}
+        {S.wires.length > 0 && <div className={`${wireCols} head`} aria-hidden="true"><span>Кабель</span>{S.advancedLength && <span>Длина по чертежу</span>}<span>Кол-во</span>{anyCores && <><span>Жил</span><span>{S.wires.some((w) => gen.wireCores_(w) > 1) ? "Разделка" : ""}</span></>}<span /></div>}
         {!S.wires.length && <div className="gempty">Нет кабелей — добавьте кабель из состава</div>}
         {S.wires.map((w, n) => {
           const cores = gen.wireCores_(w);
-          const hasCores = cores > 1 || !!w.cores;
           return <div className={wireCols} key={w.idx}>
             {selectComps(wireOptions, w.compId, (id) => update((current) => updateWire(current, w.idx, { compId: id })), `Кабель ${n + 1}`, "— выберите —")}
             {S.advancedLength && <UnitInput unit="мм" aria-label={`Длина кабеля ${n + 1}`} type="number" min={1} value={w.length || ""} onChange={(event) => update((current) => updateWire(current, w.idx, { length: parseDecimal_(event.target.value) || 0 }))} />}
             <input aria-label={`Кол-во кабеля ${n + 1}`} type="number" min={1} value={w.qty || 1} onChange={(event) => update((current) => updateWire(current, w.idx, { qty: parseDecimal_(event.target.value) || 1 }))} />
-            {anyCores && (hasCores ? <>
-              <input aria-label={`Жил в кабеле ${n + 1}`} type="number" min={1} value={cores} onChange={(event) => update((current) => updateWire(current, w.idx, { cores: parseDecimal_(event.target.value) || 1 }))} />
-              <UnitInput unit="мм" aria-label={`Разделка кабеля ${n + 1}`} type="number" min={1} value={w.jacket || JACKET_STRIP_MM_} onChange={(event) => update((current) => updateWire(current, w.idx, { jacket: event.target.value.trim() }))} />
-            </> : <><span /><span /></>)}
+            {anyCores && <>
+              <input aria-label={`Жил в кабеле ${n + 1}`} type="number" min={1} value={cores} onChange={(event) => update((current) => setWireCores(current, w.idx, parseDecimal_(event.target.value) || 1, cores))} />
+              {cores > 1 ? <UnitInput unit="мм" aria-label={`Разделка кабеля ${n + 1}`} type="number" min={1} value={w.jacket || JACKET_STRIP_MM_} onChange={(event) => update((current) => updateWire(current, w.idx, { jacket: event.target.value.trim() }))} /> : <span />}
+            </>}
             <button type="button" className="btn-remove" title="Удалить кабель" aria-label={`Удалить кабель ${n + 1}`} onClick={() => update((current) => ({ ...current, wires: current.wires.filter((x) => x.idx !== w.idx) }))}>×</button>
           </div>;
         })}
