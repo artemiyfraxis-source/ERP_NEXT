@@ -231,6 +231,11 @@ details > summary { cursor: pointer; color: var(--muted-foreground); font-size: 
 .place-busy { background: #fff4d1; border-color: #e0a800; }
 /* «Переместить» (SUPPLYMAP wh05Move): a modal over the stock list, opened from a lot card or the toolbar. */
 .dialog-overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(0, 26, 24, .35); }
+/* PageWindow: панель страницы окном поверх неё (Простои, Календарь цеха, Компетенции, Запуск задания). */
+.page-window { max-height: calc(100vh - 32px); overflow: auto; overscroll-behavior: contain; outline: none; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); border-radius: 12px; }
+.page-window > .panel { margin: 0; padding: 18px; }
+/* Шапка окна с «Закрыть» остаётся видна при прокрутке длинного списка (Компетенции). */
+.page-window .manual-stock-head:first-child { position: sticky; top: -18px; z-index: 2; margin: -18px -18px 0; padding: 18px 18px 10px; background: var(--card); border-bottom: 1px solid var(--border); }
 .move-dialog { display: grid; gap: 12px; width: min(640px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 18px 20px; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
 .move-dialog > h2:first-child { margin: 0; padding: 0; font-size: 16px; font-weight: 600; }
 .move-dialog h3 { margin: 4px 0 -4px; font-size: 13px; font-weight: 600; }
