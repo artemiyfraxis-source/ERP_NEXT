@@ -45,6 +45,15 @@ class DeliveryTerms(str, Enum):
 class UpdType(str, Enum):
     EDO = "ЭДО"
     PAPER = "БУМАГА"
+    # Владелец 14.10.2026: отправка уходит и закрывается без УПД — ни файла, ни номера не нужно.
+    NONE = "БЕЗ УПД"
+
+
+# Без файла УПД груз уезжает только по ЭДО или «без УПД» (`shipGateMiss_`).
+UPD_WITHOUT_FILE = frozenset({UpdType.EDO, UpdType.NONE})
+
+
+LOCATION_MAX = 255
 
 
 @dataclass(frozen=True)
@@ -69,6 +78,8 @@ class FinishedGood:
     sent: Decimal = Decimal("0")
     # Отгружено ещё в Google, до ERP (комментарий строки «ОТГРУЖЕН» листа цеха «ЗАГРУЗ»); входит в accepted/shipped/sent.
     before_erp: Decimal = Decimal("0")
+    # Место хранения принятого на складе ГП (стеллаж, полка): одно на КБ, последняя приёмка с местом его заменяет.
+    location: str = ""
 
     @classmethod
     def create(
@@ -87,12 +98,17 @@ class FinishedGood:
     def remaining(self) -> Decimal:
         return max(self.accepted - self.shipped, Decimal("0"))
 
-    def accept(self, quantity: Decimal, received_at: date, grn: str) -> FinishedGood:
+    def accept(self, quantity: Decimal, received_at: date, grn: str, location: str = "") -> FinishedGood:
+        """Пустое место хранения оставляет прежнее."""
+        place = str(location or "").strip()
+        if len(place) > LOCATION_MAX:
+            raise ShippingValidationError(f"Место хранения — не длиннее {LOCATION_MAX} символов")
         return replace(
             self,
             accepted=self.accepted + _positive(quantity, "Количество"),
             received_at=received_at,
             grn=self.grn or _text(grn, "ГРН"),
+            location=place or self.location,
             version=self.version + 1,
         )
 
@@ -331,6 +347,9 @@ ADDRESSEE_CARD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "term
 SHIPMENT_HEAD_FIELDS = ("receiver", "shipping_point", "contact", "phone", "terms", "carrier", "deadline", "note")
 # Реквизиты отгрузочной ведомости (форма 04.1) в карточке проекта: `SHIP_PROJ_COLS_` «ЗАКАЗ №» … «ВРЕМЯ РАБОТЫ».
 ADDRESSEE_REQUISITE_FIELDS = ("po", "contract", "spec", "invoice", "pays", "customer_address", "hours")
+# План отгрузки в карточке проекта (владелец 14.10.2026): склад и менеджер заносят его заранее, пока КБ в цехе;
+# новая отправка берёт из него срок и комментарий, если свои пусты.
+ADDRESSEE_PLAN_FIELDS = ("plan_date", "note")
 
 
 @dataclass(frozen=True)
@@ -355,6 +374,8 @@ class ProjectAddressee:
     pays: str = ""
     customer_address: str = ""
     hours: str = ""
+    plan_date: date | None = None
+    note: str = ""
 
     @classmethod
     def empty(cls, project: str) -> ProjectAddressee:
@@ -372,7 +393,7 @@ class ProjectAddressee:
 
     def edit(self, fields: dict) -> ProjectAddressee:
         """Card edit (`shipProjectSet_(…, replace)`, `shipProjShipFields_`): a sent field replaces, empty erases."""
-        unknown = set(fields) - set(ADDRESSEE_CARD_FIELDS) - set(ADDRESSEE_REQUISITE_FIELDS)
+        unknown = set(fields) - set(ADDRESSEE_CARD_FIELDS) - set(ADDRESSEE_REQUISITE_FIELDS) - set(ADDRESSEE_PLAN_FIELDS)
         if unknown:
             raise ShippingValidationError("Неизвестное поле адресата: " + ", ".join(sorted(unknown)))
         changes = {}
@@ -381,12 +402,31 @@ class ProjectAddressee:
                 changes[key] = DeliveryTerms(value) if value else None
             elif key == "upd_type":
                 changes[key] = UpdType(value) if value else None
+            elif key == "plan_date":
+                changes[key] = _day(value)
             else:
                 changes[key] = str(value or "").strip()
         return replace(self, **changes)
 
     def differs(self, other: ProjectAddressee) -> bool:
-        return any(getattr(self, key) != getattr(other, key) for key in ADDRESSEE_CARD_FIELDS + ADDRESSEE_REQUISITE_FIELDS)
+        return any(
+            getattr(self, key) != getattr(other, key)
+            for key in ADDRESSEE_CARD_FIELDS + ADDRESSEE_REQUISITE_FIELDS + ADDRESSEE_PLAN_FIELDS
+        )
+
+
+def _day(value: object) -> date | None:
+    """Дата из карточки: date, ISO-строка или пусто (стирает)."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as error:
+        raise ShippingValidationError("Дата отгрузки по плану — в виде ГГГГ-ММ-ДД") from error
 
 
 @dataclass(frozen=True)
@@ -676,13 +716,13 @@ class Shipment:
 
     def mark_shipped(self, day: date) -> Shipment:
         """`shipShipped_`: груз уехал из любого активного статуса; гейт — `shipGateMiss_('Отгружена')`:
-        набрана хоть одна позиция и, кроме ЭДО, приложен файл УПД."""
+        набрана хоть одна позиция и, кроме ЭДО и «без УПД», приложен файл УПД."""
         if self.status not in {ShipmentStatus.NEW, ShipmentStatus.ASSEMBLED, ShipmentStatus.PACKED}:
             raise ShippingValidationError("Отгрузить можно только активную заявку")
         if not any(line.picked > 0 for line in self.lines):
             raise ShippingValidationError("Нельзя отгрузить: ни одна позиция не набрана")
-        if self.upd_type != UpdType.EDO and not self.upd_url:
-            raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО)")
+        if self.upd_type not in UPD_WITHOUT_FILE and not self.upd_url:
+            raise ShippingValidationError("Нельзя отгрузить: не хватает — файл УПД (без файла — только по ЭДО или «без УПД»)")
         return replace(self, status=ShipmentStatus.SHIPPED, shipped_at=self.shipped_at or day, version=self.version + 1)
 
     def unship(self) -> Shipment:
@@ -732,9 +772,9 @@ class Shipment:
         if self.status != ShipmentStatus.SHIPPED:
             raise ShippingValidationError("Закрыть можно только отгруженную заявку")
         missing = []
-        if not self.upd_number:
+        if self.upd_type != UpdType.NONE and not self.upd_number:
             missing.append("№ УПД")
-        if not self.upd_url:
+        if self.upd_type != UpdType.NONE and not self.upd_url:
             missing.append("файл УПД")
         if self.terms == DeliveryTerms.CARRIER and not self.track_number:
             missing.append("трек-номер")

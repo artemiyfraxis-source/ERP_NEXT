@@ -39,17 +39,22 @@ class AcceptOnePayload(BaseModel):
     version: int = Field(ge=1)
     quantity: Quantity
     received_at: date | None = None
+    # Место хранения на складе ГП; пусто — прежнее.
+    location: str = Field(default="", max_length=255)
 
 
 class AcceptLinePayload(BaseModel):
     project: str = Field(min_length=1, max_length=255)
     item_index: str = Field(min_length=1, max_length=255)
     quantity: Quantity
+    location: str = Field(default="", max_length=255)
 
 
 class AcceptBatchPayload(BaseModel):
     lines: list[AcceptLinePayload] = Field(min_length=1, max_length=500)
     received_at: date | None = None
+    # Место хранения для всех строк пакета; непустое место строки его заменяет; пусто — прежнее место КБ.
+    location: str = Field(default="", max_length=255)
 
 
 def _flow(request: Request) -> Callable[[], object]:
@@ -93,7 +98,7 @@ def accept_from_production(
     """Приёмка пакетом: отмеченные КБ с количеством — все или ни одной; не больше сданного цехом."""
     result = _run(lambda: accept_batch(AcceptBatchCommand(
         idempotency_key=idempotency_key,
-        lines=tuple(AcceptLine(line.project, line.item_index, line.quantity) for line in payload.lines),
+        lines=tuple(AcceptLine(line.project, line.item_index, line.quantity, line.location.strip() or payload.location) for line in payload.lines),
         received_at=payload.received_at, actor=principal.actor, now=now,
     ), flow))
     return {"goods": [_good_result(good) for good in result.goods], "replayed": result.replayed}
@@ -108,7 +113,7 @@ def receive_good(
 ) -> dict:
     good = _run(lambda: accept_one(AcceptOneCommand(
         good_id=good_id, expected_version=payload.version, quantity=payload.quantity,
-        received_at=payload.received_at, actor=principal.actor, now=now,
+        received_at=payload.received_at, actor=principal.actor, now=now, location=payload.location,
     ), flow))
     return {"good": _good_result(good)}
 

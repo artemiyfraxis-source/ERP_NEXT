@@ -114,6 +114,9 @@ class AddresseePayload(BaseModel):
     pays: str | None = Field(default=None, max_length=255)
     customer_address: str | None = Field(default=None, max_length=5000)
     hours: str | None = Field(default=None, max_length=255)
+    # План отгрузки: дата (null стирает) и комментарий; новая отправка берёт их, если свои пусты.
+    plan_date: date | None = None
+    note: str | None = Field(default=None, max_length=5000)
 
 
 class ProjectPackPayload(BaseModel):
@@ -240,7 +243,7 @@ def _good_result(good: FinishedGood) -> dict:
         "accepted": _number(good.accepted), "shipped": _number(good.shipped),
         "remaining": _number(good.remaining), "sent": _number(good.sent), "before_erp": _number(good.before_erp),
         "received_at": good.received_at.isoformat() if good.received_at else None,
-        "grn": good.grn, "note": good.note,
+        "grn": good.grn, "note": good.note, "location": good.location,
     }
 
 
@@ -253,6 +256,7 @@ def _addressee_result(addressee: ProjectAddressee) -> dict:
         "updated_by": addressee.updated_by,
         "updated_at": addressee.updated_at.isoformat() if addressee.updated_at else None,
         **{key: getattr(addressee, key) for key in ADDRESSEE_REQUISITE_FIELDS},
+        "plan_date": addressee.plan_date.isoformat() if addressee.plan_date else None, "note": addressee.note,
     }
 
 
@@ -429,7 +433,8 @@ def ship_project_goods(
 @router.put("/project-addressee")
 def save_project_addressee(
     payload: AddresseePayload,
-    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    # Карточку (и план отгрузки) правят и менеджер, и склад (владелец 14.10.2026).
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:

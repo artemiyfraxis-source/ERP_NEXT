@@ -78,6 +78,10 @@ def database(tmp_path, monkeypatch):
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN etk_ops JSON"))
         # 0121: ссылка на папку проекта.
         connection.execute(text("ALTER TABLE techcard_kitsets ADD COLUMN folder_url VARCHAR(1024)"))
+        # 0122: место хранения ГП и план отгрузки в карточке проекта.
+        connection.execute(text("ALTER TABLE finished_goods ADD COLUMN location VARCHAR(255) NOT NULL DEFAULT ''"))
+        connection.execute(text("ALTER TABLE shipping_project_addressees ADD COLUMN plan_date DATE"))
+        connection.execute(text("ALTER TABLE shipping_project_addressees ADD COLUMN note TEXT NOT NULL DEFAULT ''"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
         # 0106: «нет на складе» on a kit line.
