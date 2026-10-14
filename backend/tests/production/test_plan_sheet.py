@@ -150,7 +150,7 @@ def test_sheet_cells_compute_sheet_columns_from_erp_facts():
     stage = _stage(
         KitStage("КБ1", "В работе", tc=True, kit=True), KitStage("КБ2", "ТК готова", tc=True),
     )
-    supply = SupplySummary(total=4, stock=2, transit=2, customer_supplied=1, eta="09.10.2026")
+    supply = SupplySummary(total=4, stock=2, transit=2, customer_supplied=1, purchased=3, eta="09.10.2026")
     cells = sheet_cells(stage=stage, blocker="ОЖИД КОМПЛ", supply=supply, assigned=2, ready="40", marks={})
     values = {name: cell.value for name, cell in cells.items()}
     assert values == {
@@ -178,6 +178,13 @@ def test_sheet_cells_edge_cases_without_supply_and_all_in_stock():
     waiting = sheet_cells(stage=_stage(), blocker="", supply=SupplySummary(total=2, buying=2),
                           assigned=0, ready="", marks={})
     assert waiting["kit_arrival"].value == "Ждем"
+    # ЗКП — куплено, а не «есть заявки»: заявки в закупке ещё не оплачены.
+    assert waiting["zkp"].value == "нет"
+    part = sheet_cells(stage=_stage(), blocker="", supply=SupplySummary(total=3, transit=1, buying=1, stock=1, purchased=2),
+                       assigned=0, ready="", marks={})
+    assert part["zkp"].value == "нет"
+    # Только давальческое — покупать нечего, ЗКП не ставится.
+    assert stocked["zkp"].value == "нет"
 
 
 def test_manual_mark_overrides_and_keeps_the_auto_value():

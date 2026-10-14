@@ -2757,7 +2757,7 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-day-col { width: var(--zg-day); }
 .zg-table th, .zg-table td { height: var(--zg-row); padding: 0 4px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--card); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .zg-table thead th { position: sticky; top: 0; z-index: 4; height: auto; padding: 0 3px; background: var(--zg-head); color: var(--foreground); font-size: var(--zg-head-font); font-weight: 600; line-height: 1.15; letter-spacing: 0; text-transform: none; white-space: nowrap; text-align: center; }
-.zg-table thead th.zg-col-head { vertical-align: bottom; padding-bottom: 7px; border-bottom-color: var(--zg-edge); }
+.zg-table thead th.zg-col-head { vertical-align: bottom; padding-bottom: 5px; border-bottom-color: var(--zg-edge); white-space: normal; overflow-wrap: normal; }
 .zg-table thead th.zg-left { text-align: left; padding-left: 6px; }
 .zg-table thead .zg-head-days th { top: var(--zg-month-h); height: var(--zg-days-h); border-bottom-color: var(--zg-edge); }
 .zg-freeze { position: sticky; left: var(--zg-left); z-index: 2; }
