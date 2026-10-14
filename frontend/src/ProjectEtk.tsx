@@ -24,6 +24,8 @@ import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm"
 import { hasFullAccess } from "./navigation";
 import { EtkFold, EtkFoldScope, useEtkFold } from "./etkFold";
 import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
+import { etkLinkScheme } from "./etkLinkScheme";
+import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
@@ -86,10 +88,21 @@ function topology(document: ProjectTechcard["document"]): EtkTopology | null {
     проводов и длина. Раскладку контактов показывает только операция монтажа, где она нужна. Под схемой — таблица
     соединений провод за проводом, когда распиновка задана на обоих концах (перекрёст виден по номерам контактов).
     Свёрнута, пока её не откроют (владелец 13.10). В задании монтажника (`task`) — вид «Схема Э4», как в редакторе
-    чертежа: сохранённый чертёж КБ только для просмотра или плоская схема по ЭТК; таблица соединений — под ней, свёрнута. */
-function HarnessView({ value, list, connections, raw, task }: {
+    чертежа: сохранённый чертёж КБ только для просмотра или плоская схема по ЭТК; таблица соединений — под ней, свёрнута.
+    Есть распиновка генератора или таблица соединений (`scheme`, владелец 14.10: «не подтянулась новая версия») — схема
+    связей Э4, та же, что в генераторе: таблицы разъёмов с каждым проводом и линии между контактами; прежние объёмные
+    разъёмы и плоская таблица соединений её не повторяют. */
+function HarnessView({ value, list, connections, raw, task, scheme }: {
   value: EtkTopology | null; list: EtkOperation[]; connections: string[][]; raw?: unknown; task?: { project: string; index: string; taskId?: string };
+  scheme?: LinkScheme | null;
 }) {
+  const links = scheme ? <div className="etk-link-scheme"><LinkSchemeView scheme={scheme} titled={false} /></div> : null;
+  if (task && links) {
+    return <EtkFold block="schema" className="etk-schema" lazy summary="Схема Э4">
+      <EtkHarnessE4 project={task.project} index={task.index} taskId={task.taskId} model={null} fallback={links} />
+    </EtkFold>;
+  }
+  if (links) return <EtkFold block="schema" className="etk-schema" summary="Схема связей">{links}</EtkFold>;
   const table = connections.length > 0 && <table className="etk-result-table etk-links" aria-label="Таблица соединений">
     <thead><tr>{ETK_CONNECTION_COLUMNS.map((column, index) => <th key={index}>{column}</th>)}</tr></thead>
     <tbody>{connections.map((row) => <tr key={row[0]}>{row.map((cell, index) =>
@@ -703,6 +716,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
   const sketchLinks = () => Object.fromEntries(sketches.map((item) =>
     [item.operation_key, window.location.origin + source.url(item.operation_key, item.uploaded_at)]));
   const labelsPage = serial ? etkMarkLabelsPage(card, serial) : null;
+  const linkScheme = etkLinkScheme(card.document);
   const serialContext = serial && labelsPage ? {
     range: serial, print: () => openPrintDocument(`Надписи ${card.project} ${card.item_index}`, [labelsPage]),
   } : null;
@@ -720,7 +734,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     {warnings(card.document).length > 0 && <details className="etk-warnings"><summary>Предупреждения сборки · {warnings(card.document).length}</summary>
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)}
-      raw={card.document?.connections} task={task ? { project: card.project, index: card.item_index, taskId } : undefined} />
+      raw={card.document?.connections} scheme={linkScheme} task={task ? { project: card.project, index: card.item_index, taskId } : undefined} />
     <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);

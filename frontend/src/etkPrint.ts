@@ -1,8 +1,10 @@
 // Печатная форма электронной ТК (SUPPLYMAP PortalApp.html etkPrintHtml_ / etkPrint_): титул с маршрутом и
 // журналом ревизий, затем по листу на операцию — шапка документа, безопасность и разделы в порядке экрана ЭТК
 // (1 Вход · 2 Оснастка · 3 Ход операции · 4 Типовые дефекты · 5 Эскиз · 6 Результат), подписи. Через общий print.ts.
-// Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*).
+// Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*). Есть распиновка или
+// таблица соединений — на титуле схема связей Э4, та же, что на экране ЭТК и в генераторе (etkLinkScheme.tsx).
 import type { ProjectTechcard, TechcardRevision } from "./api";
+import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
 import {
   ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkCrimpChips, etkDrawHarness, etkFigure, etkTolerance,
   type EtkTopologyData,
@@ -122,8 +124,11 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
   const operations = rows(document.operations);
-  const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
-  const connections = etkConnectionRows(document.connections);
+  const linkScheme = etkLinkScheme(card.document);
+  const linkSvg = linkScheme ? etkLinkSchemeMarkup(linkScheme) : "";
+  // Схема связей перечисляет каждый провод в таблицах разъёмов — прежние схема жгута и таблица соединений её не повторяют.
+  const harness = linkSvg ? "" : etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
+  const connections = linkSvg ? [] : etkConnectionRows(document.connections);
   const route = etkRouteOf(card.document);
   const routeLine = etkRouteLine(route);
   const cover: PrintPage = {
@@ -133,6 +138,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       ...head(kit, revision, ""),
       // Схема полуфабрикатов одной строкой под шапкой — только у ветвящегося маршрута.
       ...(routeLine ? [{ text: routeLine }] as PrintBlock[] : []),
+      ...(linkSvg ? [{ heading: "Схема связей" }, { figure: linkSvg }] as PrintBlock[] : []),
       ...(harness ? [{ heading: "Схема жгута" }, { figure: harness }] as PrintBlock[] : []),
       ...(connections.length ? [{ heading: "Таблица соединений" }, { table: { columns: ETK_CONNECTION_COLUMNS, rows: connections } }] as PrintBlock[] : []),
       { heading: "Маршрут" },

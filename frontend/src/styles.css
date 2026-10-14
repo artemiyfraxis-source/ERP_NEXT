@@ -2143,6 +2143,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-schema summary, .etk-revs summary, .etk-warnings summary, .gen-more summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .etk-harness { display: flex; justify-content: center; overflow-x: auto; }
 .etk-harness svg { max-width: 900px; width: 100%; height: auto; }
+.etk-link-scheme { margin-top: 8px; }
 .etk-warnings { border-radius: 10px; padding: 8px 12px; color: #74451f; background: #fff3dd; font-size: 12.5px; }
 .etk-warnings > div { margin-top: 4px; white-space: pre-line; }
 .etk-revs { font-size: 12.5px; }
