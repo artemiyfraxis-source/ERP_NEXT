@@ -801,7 +801,7 @@ function QuoteDialog({ matrix, supplier, onClose, onSaved }: {
         <div className="quote-import-panel">
           <textarea
             aria-label="Текст КП" rows={6} value={importText} onChange={(event) => setImportText(event.target.value)}
-            placeholder="Вставьте текст письма или КП: в каждой строке наименование, количество, единица, цена (сумма и срок — по желанию)"
+            placeholder="Вставьте текст письма или КП: в каждой строке наименование, количество, цена и сумма (единица и срок — если есть)"
           />
           <div className="quote-import-actions">
             <button type="button" className="secondary small" disabled={!importText.trim() || importBusy} onClick={() => void runImport({ text: importText })}>Разобрать текст</button>

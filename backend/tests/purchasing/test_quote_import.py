@@ -71,6 +71,71 @@ def test_text_lines_are_read_with_total_lead_and_vat():
     assert lead.price == Decimal("305.00") and lead.lead_days == 9
 
 
+def _row(text: str):
+    (lines, unread), without_vat = qi.read_rows(text)
+    return lines, unread, without_vat
+
+
+def test_table_rows_are_found_by_arithmetic_in_any_column_order():
+    # Shapes of real quotes (14.10.2026): Элитан (no unit, «1 рд», УАМ, a pack row), laid out and pasted as one line.
+    laid_out = (
+        "Товары и услуги   УАМ  Срок   Кол-воЦена, руб.   Сумма, руб.\n"
+        "Электроэлемент 0029110063@MOLEX   Нет   1 рд   25   111,55   2 788,81\n"
+        "Электроэлемент 0430300002##12000@MOLEX упаковка 12000 шт. ##   2 рд   1   30 064,20   30 064,20\n"
+        "Цены и суммы в таблице рассчитаны без налога НДС (22%), налог подлежит оплате дополнительно к ним.\n"
+    )
+    lines, _, _ = _row(laid_out)
+    assert [(l.source_name, l.source_article, l.qty, l.unit, l.price, l.lead_days) for l in lines] == [
+        ("Электроэлемент 0029110063@MOLEX", "0029110063", 25, "", Decimal("111.55"), 2),
+        ("Электроэлемент 0430300002##12000@MOLEX упаковка 12000 шт. ##", "0430300002", 1, "уп", Decimal("30064.20"), 3),
+    ]
+    assert qi._without_vat(laid_out)
+    [pasted] = qi.read_text_lines("Электроэлемент 0029110063@MOLEX Нет 1 рд 25 111,55 2 788,81")[0]
+    assert (pasted.source_name, pasted.qty, pasted.price) == ("Электроэлемент 0029110063@MOLEX", 25, Decimal("111.55"))
+    [packed] = qi.apply_packs([qi.ImportedLine(**{**lines[1].__dict__, "rfq_line_id": LINE})], targets("12000"))
+    assert packed.price == Decimal("2.5054") and packed.pack == 12000
+
+
+def test_extra_columns_wrapped_names_vat_after_the_sum_and_rows_without_a_quantity():
+    lines, unread, without_vat = _row(
+        "  1  Провод НВ-4 0,5 600 (Красный)   ГОСТ 17515-72   200   200   м   в течение 1 дн.   10.45   2 090.00\n"
+        "   1   Т2925. Трубка 20-3001 3/1,5мм   0   м   84   11.50   966.00   212.52   1 178.5213.001222\n"
+        "   термоусаживаемая белая L=1м\n"
+        "   (Rexant)\n"
+        "  3   ТТК (3:1) 12/4 чёр. (т/ус трубка с клеем, 25шт/уп)   000015727   100  шт   77,87   7 786,71\n"
+        "  23   Доплата за передачу товара по   -   -   -   1 783.61   1 783.61   392.39\n"
+        "  Итого:   51 459.61   11 321.11   62 780.72\n"
+    )
+    assert [(l.source_name, l.qty, l.unit, l.price) for l in lines] == [
+        ("Провод НВ-4 0,5 600 (Красный)", 200, "м", Decimal("10.45")),
+        ("Т2925. Трубка 20-3001 3/1,5мм термоусаживаемая белая L=1м (Rexant)", 84, "м", Decimal("11.50")),
+        ("ТТК (3:1) 12/4 чёр. (т/ус трубка с клеем, 25шт/уп)", 100, "шт", Decimal("77.87")),
+    ]
+    assert lines[0].lead_days == 1 and lines[1].vat_rate == 22 and lines[2].source_article == ""
+    assert not without_vat, "one row of three shows its VAT — not most of them"
+    assert any(text.startswith("23 Доплата") for text in unread), "a 1 783.61 cell is one number, not 1 and 783.61"
+
+
+def test_a_pdf_protected_with_an_empty_password_is_read_laid_out():
+    # Элитан's FPDF quotes: «encrypted» against editing, open without a password; the small extractor gives nothing.
+    from fpdf import FPDF
+    from fpdf.enums import EncryptionMethod
+
+    from app.shared.pdf_text import pdf_text
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("helvetica", size=10)
+    for x, text in ((10, "Connector 0029110063@MOLEX"), (95, "No"), (115, "25"), (135, "111,55"), (165, "2 788,81")):
+        pdf.set_xy(x, 30)
+        pdf.cell(text=text)
+    pdf.set_encryption(owner_password="owner", user_password="", encryption_method=EncryptionMethod.RC4)
+    content = bytes(pdf.output())
+    assert pdf_text(content) == ""
+    [read] = qi.read_text_lines(qi.text_of_pdf(content))[0]
+    assert (read.source_article, read.qty, read.price) == ("0029110063", 25, Decimal("111.55"))
+
+
 def _enable(monkeypatch, tmp_path, quote_import=True):
     path = tmp_path / "options.json"
     path.write_text(json.dumps({"procurement.rfq": True, "procurement.quote_import": quote_import}), encoding="utf-8")
