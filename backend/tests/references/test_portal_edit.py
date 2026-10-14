@@ -1,9 +1,20 @@
 """Portal «Справочник» (SUPPLYMAP c61ce9d): per-row edit of technology bases, view-only СПР.КАБ/ТК."""
 
+from datetime import datetime
 from uuid import UUID
 
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
 from app.main import app
+from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
+from app.shared.persistence import create_schema
+from app.workflows.new_operation import SqlAlchemyReferencesOperationsUnitOfWork
 from tests.factories import Actor
 from tests.references.test_api import references_api  # noqa: F401  (fixture)
 
@@ -179,3 +190,93 @@ def test_generator_can_write_a_terminal_schema_value_the_record_never_had(refere
     assert response.status_code == 200, response.text
     assert response.json()["fields"]["terLMinus"] == "10"
     assert unknown.status_code == 409
+
+
+# --- БД.ОП «Номер» is the operation code — the key that joins the row to its card template (owner 14.10.2026) ---
+
+def _op(client, number, name="Резка"):
+    return client.post("/api/references/tech-operations", json={
+        "tab": "op", "fields": {"Номер": number, "Название": name, "Время операции": "3,5"},
+    })
+
+
+def test_operation_number_is_unique_on_create_and_rename(references_api):
+    first = _op(references_api, "CUT").json()
+    second = _op(references_api, "STRIP", "Зачистка").json()
+
+    duplicate = _op(references_api, "CUT", "Ещё резка")
+    other_case = _op(references_api, "cut", "Ещё резка")
+    rename = references_api.patch(f"/api/references/tech-operations/{second['id']}", json={
+        "edits": [{"field": "Номер", "old": "STRIP", "value": "CUT"}],
+    })
+    rename_key = references_api.patch(f"/api/references/tech-operations/{second['id']}", json={
+        "edits": [{"field": "opNumber", "old": "STRIP", "value": "Cut"}],
+    })
+    own = references_api.patch(f"/api/references/tech-operations/{first['id']}", json={
+        "edits": [{"field": "Номер", "old": "CUT", "value": "CUT_WIRE"}],
+    })
+    name_only = references_api.patch(f"/api/references/tech-operations/{second['id']}", json={
+        "edits": [{"field": "Название", "old": "Зачистка", "value": "Зачистка провода"}],
+    })
+
+    assert duplicate.status_code == 422
+    assert duplicate.json()["detail"] == "Операция с номером «CUT» уже есть — номер операции должен быть уникальным"
+    assert other_case.status_code == 422
+    assert rename.status_code == 422 and rename.json()["detail"] == duplicate.json()["detail"]
+    assert rename_key.status_code == 422
+    # no card template for CUT: the number may change; a name edit does not touch the number check
+    assert own.status_code == 200 and own.json()["fields"]["opNumber"] == "CUT_WIRE"
+    assert name_only.status_code == 200
+    numbers = sorted(item["fields"]["opNumber"] for item in references_api.get(
+        "/api/references/tech-operations", params={"tab": "op"}).json()["records"])
+    assert numbers == ["CUT_WIRE", "STRIP"]
+
+
+@pytest.fixture()
+def references_with_templates_api():
+    """«Справочник» on the unit of work that also sees the card template codes (app/workflows/new_operation.py)."""
+    engine = create_engine("sqlite+pysqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
+    app.state.references_uow_factory = lambda: SqlAlchemyReferencesOperationsUnitOfWork(sessions)
+    app.state.techcards_uow_factory = lambda: SqlAlchemyTechcardsUnitOfWork(sessions)
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("10000000-0000-0000-0000-000000000001"), name="Администратор", department="ERP"),
+        email="admin@example.test", roles=frozenset({"admin"}), permissions={"erpref": "edit", "erptctpl": "edit"},
+    )
+    app.dependency_overrides[moscow_now] = lambda: datetime(2026, 10, 14, 10, 0)
+    yield TestClient(app)
+    app.dependency_overrides.pop(authenticated_principal, None)
+    app.dependency_overrides.pop(moscow_now, None)
+    del app.state.references_uow_factory
+    del app.state.techcards_uow_factory
+    engine.dispose()
+
+
+def test_renaming_the_number_of_an_operation_with_a_card_is_refused(references_with_templates_api):
+    client = references_with_templates_api
+    created = client.post("/api/techcards/operations", json={"code": "NEW_OP", "name": "Новая"})
+    assert created.status_code == 201, created.text
+    record = created.json()["record"]
+    plain = _op(client, "PLAIN").json()
+    url = f"/api/references/tech-operations/{record['id']}"
+
+    orphan = client.patch(url, json={"edits": [{"field": "opNumber", "old": "NEW_OP", "value": "NEW_OP_2"}]})
+    cleared = client.patch(url, json={"edits": [{"field": "opNumber", "old": "NEW_OP", "value": ""}]})
+    taken = client.patch(f"/api/references/tech-operations/{plain['id']}", json={
+        "edits": [{"field": "Номер", "old": "PLAIN", "value": "NEW_OP"}],
+    })
+    free = client.patch(f"/api/references/tech-operations/{plain['id']}", json={
+        "edits": [{"field": "Номер", "old": "PLAIN", "value": "PLAIN_2"}],
+    })
+    renamed = client.patch(url, json={"edits": [{"field": "opName", "old": "Новая", "value": "Новая операция"}]})
+
+    assert orphan.status_code == 422
+    assert orphan.json()["detail"] == (
+        "Номер «NEW_OP» не меняется: по нему к строке привязана карточка операции, она осталась бы без строки. "
+        "Нужна другая операция — добавьте новую"
+    )
+    assert cleared.status_code == 422
+    assert taken.status_code == 422 and "уже есть" in taken.json()["detail"]
+    assert free.status_code == 200
+    assert renamed.status_code == 200 and renamed.json()["fields"]["opNumber"] == "NEW_OP"

@@ -77,3 +77,25 @@ it("the shield goes on a contact like a core: the card says which contact, a 20t
   fireEvent.change(screen.getByLabelText("Цепь 1.Э"), { target: { value: "SHIELD" } });
   expect(within(palette).getByRole("button", { name: /^1\.Э\s*экран/ })).toHaveTextContent("цепь SHIELD");
 });
+it("a multicore cable missing from БД.ПРОВ: «Жил» is still there, 19 cores turn 19 single wires into one cable", async () => {
+  vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: [] });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, columns: [], records: [] });
+    if (path.startsWith("/api/techcards/connector-families")) return json({ items: [], match: null });
+    if (path === "/api/references/technology/resolve-terminal") return json({ applicator: "", crimp_height: "", pull_force: "", by_section: [] });
+    if (path.startsWith("/api/harness/")) return json({ design: null });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kit} />);
+  // Без записи генератор видит 19 отдельных проводов (терминалов 19 на разъём).
+  expect(await screen.findByLabelText("Жил в кабеле 1")).toHaveValue(1);
+  expect(screen.getByLabelText("Кол-во кабеля 1")).toHaveValue(19);
+  expect(screen.queryByLabelText("Разделка кабеля 1")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Жил в кабеле 1"), { target: { value: "19" } });
+  expect(screen.getByLabelText("Кол-во кабеля 1")).toHaveValue(1);
+  expect(screen.getByLabelText("Разделка кабеля 1")).toBeInTheDocument();
+  const palette = screen.getByRole("group", { name: "Провода" });
+  await waitFor(() => expect(within(palette).getAllByRole("button", { name: /Цвет жилы/ })).toHaveLength(19));
+  expect(screen.getByLabelText("Кабель Helukabel 15201 на А1")).toHaveTextContent("Кабель Helukabel 15201: жил здесь 19 из 19");
+});

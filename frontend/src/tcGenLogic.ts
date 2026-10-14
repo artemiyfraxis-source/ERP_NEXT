@@ -2278,6 +2278,17 @@ export function updateWire(S: GenState, idx: number, patch: Partial<WireEntry>):
   }) };
 }
 
+/** «Жил» в строке «Кабели» (владелец 14.10: Helukabel 15201 без записи в БД.ПРОВ генератор резал как 19 отдельных проводов).
+ *  Технолог задаёт число жил сам; было 1 жила на штуку, а кол-во делится нацело — штуки пересчитываются в кабели,
+ *  общее число жил не меняется (19 шт × 1 → 1 шт × 19). `per` — жил в кабеле до правки (wireCores_). */
+export function setWireCores(S: GenState, idx: number, cores: number, per: number): GenState {
+  const w = S.wires.find((x) => x.idx === idx);
+  if (!w) return S;
+  const n = Math.max(1, Math.round(cores) || 1), qty = Math.max(1, Math.round(Number(w.qty) || 1));
+  const regroup = per <= 1 && n > 1 && qty % n === 0;
+  return updateWire(S, idx, { cores: n, ...(regroup ? { qty: qty / n } : {}) });
+}
+
 /** Оплётка включена/сменена — термоусадка на жгут следует за ней, пока галочку не трогали руками (syncHsWithBraid_). */
 export function syncHsWithBraid_(D: GenData, S: GenState): GenState {
   if (S.hs.manual) return S;

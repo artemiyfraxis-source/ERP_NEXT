@@ -15,7 +15,8 @@ const python = candidates.find((candidate) =>
 );
 const result = spawnSync(
   python,
-  ["-m", "pytest", "tests", "-q"],
+  // pytest-xdist: test files spread over all cores (a file stays on one worker — its module fixtures and files are shared).
+  ["-m", "pytest", "tests", "-q", "-n", "auto", "--dist", "loadfile"],
   { cwd: join(root, "backend"), encoding: "utf8", stdio: "inherit" },
 );
 
