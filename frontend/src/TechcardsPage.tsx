@@ -3,6 +3,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { formatDayMonth } from "./format";
 import { EtkSheet, GeneratorPane } from "./ProjectEtk";
 import { OperationCard } from "./OperationCard";
+import { NewOperationDialog, type NewOperationResult } from "./NewOperationDialog";
 import { StatusChip } from "./StatusChip";
 import { pfPending } from "./pfPropose";
 import { RECORD_CATEGORIES, recordCategory } from "./etkOperation";
@@ -103,6 +104,9 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const [selectedOpCode, setSelectedOpCode] = useState("");
   const [templateDetail, setTemplateDetail] = useState<OperationCardDetail | null>(null);
   const [sheetsOpen, setSheetsOpen] = useState(false);
+  const [newOpOpen, setNewOpOpen] = useState(false);
+  // Код только что созданной операции: её карточка открывается сразу в «Править».
+  const [freshCode, setFreshCode] = useState("");
   // ЭТК-3: под выданной ЭТК генератор свёрнут, пока не нажали «Пересобрать».
   const [rebuilding, setRebuilding] = useState(false);
   const [selectedId, setSelectedId] = useState("");
@@ -157,6 +161,17 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   }, [records, opByCode]);
   const selectedOp = selectedOpCode ? opByCode.get(selectedOpCode) : undefined;
   const canEditOps = principal.permissions.erpref === "edit";
+  const canCreateOp = canEditTemplates && canEditOps;
+  async function opCreated(result: NewOperationResult) {
+    setNewOpOpen(false);
+    setOpRows((rows) => [...rows.filter((row) => row.id !== result.record.id), result.record]);
+    const library = await techcardsApi.templates().then((value) => value.items, () => templates);
+    setTemplates(library);
+    const made = result.templates[0];
+    setFreshCode(result.code);
+    setNotice(`Операция ${result.code} создана`);
+    if (made) { setSelectedOpCode(""); setSelectedTemplateId(made.id); } else setSelectedOpCode(result.code);
+  }
   const replaceOp = (record: TechOperationRecord) => setOpRows((rows) => rows.map((row) => (row.id === record.id ? record : row)));
 
   async function load() {
@@ -247,14 +262,15 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     {sheetsOpen ? <TcTemplateSheets canEdit={canEditTemplates} onBack={() => setSheetsOpen(false)} onChanged={() => {
       void techcardsApi.templates().then((library) => setTemplates(library.items)).catch(() => undefined);
     }} /> : selectedOp ? <OperationCard code={opCode(selectedOp.fields)} name={selectedOp.fields.opName || selectedOp.fields["Название"] || ""} op={selectedOp}
-      canEditTemplate={false} canEditOp={canEditOps} onBack={() => setSelectedOpCode("")} onSaveTemplate={async () => undefined} onOpSaved={replaceOp}
+      canEditTemplate={false} canEditOp={canEditOps} initialEdit={freshCode === selectedOpCode} onBack={() => { setSelectedOpCode(""); setFreshCode(""); }} onSaveTemplate={async () => undefined} onOpSaved={replaceOp}
     /> : templateDetail && selectedTemplateId ? <OperationCard code={templateDetail.code} name={templateDetail.name} template={templateDetail} op={opByCode.get(templateDetail.code)}
-      canEditTemplate={canEditTemplates} canEditOp={canEditOps} onBack={() => setSelectedTemplateId("")} onSaveTemplate={saveTemplate} onOpSaved={replaceOp}
+      canEditTemplate={canEditTemplates} canEditOp={canEditOps} initialEdit={freshCode === templateDetail.code} onBack={() => { setSelectedTemplateId(""); setFreshCode(""); }} onSaveTemplate={saveTemplate} onOpSaved={replaceOp}
     /> : <>
-    <OperationsTable entries={operationEntries} toolbar={<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>} onOpen={(entry) => {
+    <OperationsTable entries={operationEntries} toolbar={<>{canCreateOp && <button type="button" className="primary small" onClick={() => setNewOpOpen(true)}>Новая операция</button>}<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button></>} onOpen={(entry) => {
       if (entry.template) { setSelectedOpCode(""); setSelectedTemplateId(entry.template.id); } else setSelectedOpCode(entry.code);
     }} />
     </>}
+    {newOpOpen && <NewOperationDialog operations={operationEntries.map((entry) => ({ code: entry.code, name: entry.name }))} onClose={() => setNewOpOpen(false)} onCreated={(result) => void opCreated(result)} />}
     </>}
   </section>;
 }

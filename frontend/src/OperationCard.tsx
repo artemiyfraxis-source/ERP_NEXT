@@ -78,7 +78,7 @@ function Steps({ template }: { template: OperationCardDetail }) {
   </section>;
 }
 
-export function OperationCard({ code, name, template, op, canEditTemplate, canEditOp, onBack, onSaveTemplate, onOpSaved }: {
+export function OperationCard({ code, name, template, op, canEditTemplate, canEditOp, onBack, onSaveTemplate, onOpSaved, initialEdit = false }: {
   code: string;
   name: string;
   /** Лист БД.ТК; у операции только из БД.ОП его нет. */
@@ -89,9 +89,11 @@ export function OperationCard({ code, name, template, op, canEditTemplate, canEd
   onBack: () => void;
   onSaveTemplate: (draft: OperationRecordEdit) => Promise<void>;
   onOpSaved: (record: TechOperationRecord) => void;
+  /** Только что созданная операция открывается сразу в «Править». */
+  initialEdit?: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Fields>({});
+  const [editing, setEditing] = useState(initialEdit);
+  const [draft, setDraft] = useState<Fields>(() => (initialEdit ? { ...(op?.fields ?? {}) } : {}));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const templateEditable = Boolean(template) && canEditTemplate;
