@@ -112,7 +112,9 @@ it("splits a 3-ended harness: trunk from A to a branch node, a branch per B end"
   ]);
   const [, b1, b2] = document.connectors;
   expect(b1.positions.drawing.y).toBeLessThan(b2.positions.drawing.y);
-  expect(document.drawingDocuments).toEqual({ tables: [], leaders: [], bomOrder: [] });
+  // Голые жилы — без объёмной подсветки; подписи проводов и разъёма А разведены по месту.
+  expect(document.drawingDocuments).toMatchObject({ tables: [], leaders: [], bomOrder: [], volumeShading: false });
+  expect(Object.keys(document.drawingDocuments!.indexOffsets ?? {}).sort()).toEqual(["gen-w1", "gen-w2", "gen-w3", "gen-w4", "gen-x1"]);
   expect(document.wires.every((w) => w.lengthMm === 300)).toBe(true);
   expect(warnings).toContain("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();

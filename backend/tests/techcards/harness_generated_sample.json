@@ -898,6 +898,30 @@
  "drawingDocuments": {
   "tables": [],
   "leaders": [],
-  "bomOrder": []
+  "bomOrder": [],
+  "volumeShading": false,
+  "physicalScale": 1.8,
+  "indexOffsets": {
+   "gen-x1": {
+    "x": -173.5,
+    "y": 34.57
+   },
+   "gen-w3": {
+    "x": -71.29,
+    "y": 13
+   },
+   "gen-w4": {
+    "x": -72.45,
+    "y": -19
+   },
+   "gen-w2": {
+    "x": 27.72,
+    "y": -14.39
+   },
+   "gen-w1": {
+    "x": 55.71,
+    "y": 11.46
+   }
+  }
  }
 }

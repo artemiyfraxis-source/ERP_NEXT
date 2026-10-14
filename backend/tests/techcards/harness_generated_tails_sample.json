@@ -1943,6 +1943,7 @@
   "tables": [],
   "leaders": [],
   "bomOrder": [],
+  "volumeShading": false,
   "indexOffsets": {
    "gen-x1": {
     "x": -156.5,
