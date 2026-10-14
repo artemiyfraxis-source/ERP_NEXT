@@ -14,7 +14,8 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Callable
-from urllib.parse import quote
+import re
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 
@@ -32,6 +33,20 @@ class DriveError(RuntimeError):
     def __init__(self, message: str, kind: str = "upstream"):
         super().__init__(message)
         self.kind = kind
+
+
+_PATH_ID = re.compile(r"/d/([A-Za-z0-9_-]{10,})")
+_BARE_ID = re.compile(r"^[A-Za-z0-9_-]{10,}$")
+
+
+def drive_file_id(url: str) -> str:
+    """Id файла из ссылки Google Таблиц/Диска: ``/d/<id>/…`` или ``?id=<id>`` (``open?id=``, ``uc?id=``); иначе пусто."""
+    text = str(url or "").strip()
+    found = _PATH_ID.search(urlparse(text).path)
+    if found:
+        return found.group(1)
+    ids = parse_qs(urlparse(text).query).get("id") or []
+    return ids[0] if ids and _BARE_ID.match(ids[0]) else ""
 
 
 @dataclass(frozen=True)
@@ -110,6 +125,21 @@ class GoogleDriveReader:
             mime_type=str(meta.get("mimeType") or "") or "application/octet-stream",
             content=content,
         )
+
+    def parent_folder(self, file_id: str) -> tuple[str, str] | None:
+        """Прямая папка файла: ``(id, имя)``; ``None`` — у файла нет папки, видимой сервисному аккаунту."""
+        meta = self._get(file_id, [("fields", "parents,name")]).json()
+        parents = meta.get("parents") or []
+        if not parents:
+            return None
+        folder_id = str(parents[0])
+        try:
+            name = str(self._get(folder_id, [("fields", "name")]).json().get("name") or "")
+        except DriveError as error:
+            if error.kind != "missing":  # папка видна как родитель, но имя не читается — id достаточно для ссылки
+                raise
+            name = ""
+        return folder_id, name
 
 
 def drive_reader_from_env() -> GoogleDriveReader:

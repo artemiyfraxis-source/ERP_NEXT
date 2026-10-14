@@ -3471,6 +3471,15 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kit-review-danger { color: var(--chip-danger-fg); }
 .kit-meta .kit-calc-link { color: var(--primary); text-decoration: none; }
 .kit-meta .kit-calc-link:hover { text-decoration: underline; }
+.kit-links { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.kit-links .link-button { font-size: inherit; }
+.kit-kd-list { position: relative; }
+.kit-kd-list summary { cursor: pointer; color: var(--primary); list-style: none; }
+.kit-kd-list summary::-webkit-details-marker { display: none; }
+.kit-kd-list ul { position: absolute; z-index: 5; top: 100%; left: 0; margin: 4px 0 0; padding: 6px 10px; list-style: none; min-width: 220px; background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+.kit-kd-list li { padding: 3px 0; white-space: nowrap; }
+.kit-kd-list a { color: var(--primary); text-decoration: none; }
+.kit-kd-list a:hover { text-decoration: underline; }
 /* «Ещё ▾» за чертой после рабочих кнопок: удаление отдельно от них (ПР-2). */
 .kit-head .kit-more { margin-left: 4px; }
 .kit-more .more-menu-list button.kit-more-danger { color: var(--tone-danger); }

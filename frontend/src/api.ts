@@ -4091,6 +4091,7 @@ export const kitsetsApi = {
     api<{ card: KitsetCard }>(`${kitsetPath(project)}/journal`, { method: "POST", body: JSON.stringify(payload) }),
   setFolder: (project: string, url: string) =>
     api<{ card: KitsetCard }>(`${kitsetPath(project)}/folder`, { method: "PUT", body: JSON.stringify({ url }) }),
+  folderFromCalc: (project: string) => api<{ card: KitsetCard }>(`${kitsetPath(project)}/folder/from-calc`, { method: "POST" }),
   addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
     api<{ res: KitsetDocument }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
