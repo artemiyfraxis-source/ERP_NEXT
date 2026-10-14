@@ -627,9 +627,9 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
           return <Fragment key={key}>
             <tr className={canBulk && offered ? `cand-row cand-${tone}` : undefined}>
               <td><strong>{position.article || "—"}</strong></td><td>{position.name}</td>
-              <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got)} / {round(kb.need)}{kb.off > 0 ? " · не заведено" : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
+              <td>{[...position.kb.values()].map((kb) => <button type="button" key={kb.request.id} className="secondary small" onClick={() => setTab(kb.request.id)}>{kbOf(kb.request)} {round(kb.got + kb.off)} / {round(kb.need)}{kb.off > 0 ? ` · ${round(kb.off)} не заведено` : ""}{kb.absent > 0 ? " · нет на складе" : ""}</button>)}</td>
               <td className="num">{round(position.need)} {position.unit}</td>
-              <td className="num">{round(position.got)}{position.off > 0 && <small>{round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
+              <td className="num">{round(position.got + position.off)}{position.off > 0 && <small>из них {round(position.off)} есть, не заведено</small>}{position.absent > 0 && <small>{round(position.absent)} нет на складе</small>}</td>
               {canBulk && <td className="cand-cell">{tone === "done" ? <span className="t-sub">—</span>
                 : !offered ? <span className="t-sub">…</span>
                 : best ? <button type="button" className="link-button" aria-expanded={bulkKey === key} disabled={Boolean(busyId)} title={`${matchText(best)} · ${best.name}`} onClick={() => setBulkKey(bulkKey === key ? null : key)}>
