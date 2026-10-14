@@ -398,6 +398,16 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   const [refreshing, setRefreshing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [folderOpen, setFolderOpen] = useState(false);
+  const [folderFinding, setFolderFinding] = useState(false);
+
+  /** «Папка?»: сервер находит папку проекта по ссылке на расчёт (файл расчёта лежит в ней) и сохраняет ссылку. */
+  async function findFolder() {
+    if (folderFinding) return;
+    setFolderFinding(true); setError("");
+    try { setCard((await kitsetsApi.folderFromCalc(project)).card); }
+    catch (reason) { setError(message(reason, "Папка не найдена")); }
+    finally { setFolderFinding(false); }
+  }
 
   /* kitRefresh: перечитать расчёт по сохранённой ссылке. Номер карточки передаётся явно: в ячейке расчёта он бывает
      короче («720К.»), и обновление завело бы рядом вторую карточку. */
@@ -479,7 +489,14 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
         onFolder={canEdit ? () => setFolderOpen(true) : undefined}
         onDelete={canEdit ? () => setDeleting(true) : undefined} />}
     </header>
-    <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.folder_url && <> · <a className="kit-calc-link" href={card.folder_url} target="_blank" rel="noopener">папка</a></>}{card.deadline && <> · дедлайн {formatDay(card.deadline)}</>} · обновлено {formatDateTime(card.updated_at)} {card.updated_by}</p>
+    <p className="kit-meta kit-links">
+      {card.calc_source && <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">Расчёт</a>}
+      {card.folder_url
+        ? <a className="kit-calc-link" href={card.folder_url} target="_blank" rel="noopener">Папка</a>
+        : canEdit && card.calc_source && <button type="button" className="link-button" disabled={folderFinding}
+            title="Найти папку проекта по ссылке на расчёт" onClick={() => void findFolder()}>Папка?</button>}
+      <KdLinks card={card} />
+    </p>
     {blockerInfo && <p className="kit-blocker"><StatusChip status={blockerInfo.type} /> <span>с {formatDay(blockerInfo.since)} · {blockerInfo.text} — {blockerInfo.who}</span></p>}
     {note && <div className="kit-actions"><span className="muted">{note}</span></div>}
     {folderOpen && <FolderDialog project={card.project} current={card.folder_url || ""} onClose={() => setFolderOpen(false)}
@@ -549,6 +566,22 @@ function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onFolder, onD
 }
 
 /** Ссылка на папку проекта: поле адреса, «Сохранить» (пусто — то же, что убрать) и «Убрать ссылку», если она задана. */
+/** КД, приложенный к КБ проекта: один файл — прямая ссылка, несколько — список «КБ1 · имя файла»; чертёж жгута — не файл. */
+function KdLinks({ card }: { card: KitsetCard }) {
+  const files = card.assemblies.flatMap((assembly) => assembly.kd
+    .filter((document) => document.kind !== "harness" && document.kind !== "harness_unlinked")
+    .map((document) => ({
+      id: document.id, label: `${assembly.index} · ${document.name.replace(/^\S+\s+—\s+/, "")}`,
+      href: document.stored || !document.url ? kitsetsApi.documentUrl(card.project, document.id) : document.url,
+    })));
+  if (!files.length) return null;
+  if (files.length === 1) return <a className="kit-calc-link" href={files[0].href} target="_blank" rel="noopener" title={files[0].label}>КД</a>;
+  return <details className="kit-kd-list">
+    <summary>КД · {files.length}</summary>
+    <ul>{files.map((file) => <li key={file.id}><a href={file.href} target="_blank" rel="noopener">{file.label}</a></li>)}</ul>
+  </details>;
+}
+
 export function folderUrlError(value: string) {
   const url = value.trim();
   if (!url) return "";

@@ -34,6 +34,9 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, kitset_tiles_principal, projects_edit_principal, projects_view_principal
 from app.shared.stored_files import file_response
 from app.workflows import kitset_reserve as reserve_flow
+from app.workflows.folders_from_calc import (
+    NO_ACCESS, NO_CALC, DriveError, FolderError, drive_reader_from_env, find_folder, save_folder,
+)
 from app.workflows import project_kitset as flow
 from app.workflows import project_track as track_flow
 
@@ -725,25 +728,37 @@ def set_folder(
 
     def save():
         url = clean_folder_url(payload.url)
-        with techcards_factory(request)() as uow:
-            current = uow.kitsets.get(project)
-            if current is None:
-                raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
-            before = current.folder_url
-            if url != before:
-                uow.kitsets.save(replace(
-                    current, folder_url=url, version=current.version + 1, updated_at=now, updated_by=principal.actor.name,
-                ))
-                uow.commit()
-        if url != before:
-            text = f"Папка проекта: {before or 'не задана'} → {url or 'ссылка убрана'}"
-            add_plan_event(AddPlanEventCommand(
-                project=current.project, kind="note", blocker="", text=text, deadline=None,
-                known_projects=(current.project,), actor=principal.actor, now=now,
-            ), factory())
+        save_folder(techcards_factory(request), factory, project, url, principal.actor, now)
         return _kitset(request, project)
 
     return {"card": _card(request, _run(save))}
+
+
+@router.post("/{project}/folder/from-calc")
+def folder_from_calc(
+    project: str,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Папка проекта — прямой родитель файла расчёта на Диске (только чтение). Заданную вручную папку не трогает."""
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    kitset = _kitset(request, project)
+    if kitset.folder_url:
+        return {"card": _card(request, kitset)}
+    if not kitset.calc_source:
+        raise HTTPException(status_code=422, detail=NO_CALC)
+    try:
+        reader = getattr(request.app.state, "drive_reader", None) or drive_reader_from_env()
+        found = find_folder(reader, kitset.calc_source)
+    except DriveError as error:
+        raise HTTPException(status_code=422, detail=NO_ACCESS) from error
+    except FolderError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    _run(lambda: save_folder(techcards_factory(request), factory, project, found.url, principal.actor, now, found_by_calc=True))
+    return {"card": _card(request, _kitset(request, project))}
 
 
 class DocumentPayload(BaseModel):
