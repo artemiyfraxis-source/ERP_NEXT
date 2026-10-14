@@ -2,7 +2,7 @@
 // жгутов и лист резки и разделки выбранной заготовки. Всё считает сервер (`rules.cut_length` — та же длина, что в
 // «Ручной сборке»); здесь только показ и правка исходных величин провода или кабеля командами редактора.
 // Рисунок листа — по схеме резки TECHMAP-GRAPHER (CutDiagramPanel.tsx, © Василий, SaveOurSouls, с разрешения автора).
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { DataTable, type DataColumn } from "../../DataTable";
 import type { HarnessCutEnd, HarnessCutItem, HarnessCutSheet } from "../../api";
 import type { EditorCommand } from "../editor/commands";
@@ -57,7 +57,10 @@ type CutField = "lengthMm" | "endCorrectionFromMm" | "endCorrectionToMm" | "cutR
 
 function CutInput({ label, value, nullable, onCommit }: { label: string; value: number | null; nullable: boolean; onCommit: (value: string) => boolean }) {
   const [draft, setDraft] = useState(value === null ? "" : String(value)), [invalid, setInvalid] = useState(false);
-  useEffect(() => { setDraft(value === null ? "" : String(value)); setInvalid(false); }, [value]);
+  // Черновик сбрасывается при смене значения прямо в отрисовке, а не эффектом: эффект при монтировании выходил позже
+  // первого ввода и возвращал прежнее значение поверх набранного.
+  const [shown, setShown] = useState(value);
+  if (shown !== value) { setShown(value); setDraft(value === null ? "" : String(value)); setInvalid(false); }
   const commit = () => {
     const v = draft.trim().replace(",", ".");
     if (v === String(value ?? "")) return;

@@ -28,6 +28,7 @@ import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay, formatDayMonth, formatMoment } from "./format";
 import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
+import { PageWindow } from "./PageWindow";
 import { DowntimeControl } from "./DowntimeControl";
 import { DowntimeReport } from "./DowntimeReport";
 import { JobPanel } from "./JobPlan";
@@ -154,16 +155,16 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
           {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>}
-      {canOverview && !mine && <div className="page-actions"><button className="secondary" aria-pressed={showDowntime} onClick={() => setShowDowntime((value) => !value)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></>}</div>}
+      {canOverview && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowDowntime(true)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar(true)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills(true)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch(true)}>+ Запустить задание</button></>}</div>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
     {mine && viewAs && <div className={`view-strip${acting ? " acting" : ""}`} role="status"><span>{acting ? `Работаете за сотрудника ${viewedName}` : `Вид сотрудника ${viewedName} — только просмотр`}</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
-    {showDowntime && canOverview && !mine && <DowntimeReport close={() => setShowDowntime(false)} />}
-    {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
-    {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
+    {showDowntime && canOverview && !mine && <PageWindow label="Простои" dismissable close={() => setShowDowntime(false)}><DowntimeReport close={() => setShowDowntime(false)} /></PageWindow>}
+    {showCalendar && canEdit && <PageWindow label="Календарь цеха" close={() => setShowCalendar(false)}><CalendarForm operators={operators} close={() => setShowCalendar(false)} /></PageWindow>}
+    {showSkills && canEdit && <PageWindow label="Компетенции" width={1280} close={() => { setShowSkills(false); void reload(); }}><SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} /></PageWindow>}
     {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
-    {showLaunch && canEdit && <LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
+    {showLaunch && canEdit && <PageWindow label="Запустить задание" close={() => setShowLaunch(false)}><LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} /></PageWindow>}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
     {/* «Коробки на подтверждение» убраны (владелец, 13.10.2026: «ОТК подтверждает и все»): сданная коробка сразу идёт
         на вход следующей операции, коробку последней операции принимает или возвращает «Очередь ОТК». */}
