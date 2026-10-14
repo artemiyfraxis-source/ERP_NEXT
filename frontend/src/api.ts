@@ -3881,6 +3881,8 @@ export interface KitsetCard {
   project: string;
   customer: string;
   calc_source: string;
+  /** Ссылка на папку проекта (http/https); null — не задана. */
+  folder_url?: string | null;
   updated_at: string;
   updated_by: string;
   version: number;
@@ -4066,6 +4068,8 @@ export const kitsetsApi = {
     api<{ events: number; card: KitsetCard }>(`${kitsetPath(project)}/status`, { method: "POST", body: JSON.stringify(payload) }),
   journal: (project: string, payload: { kind: "note" | "deadline"; text: string; deadline?: string | null }) =>
     api<{ card: KitsetCard }>(`${kitsetPath(project)}/journal`, { method: "POST", body: JSON.stringify(payload) }),
+  setFolder: (project: string, url: string) =>
+    api<{ card: KitsetCard }>(`${kitsetPath(project)}/folder`, { method: "PUT", body: JSON.stringify({ url }) }),
   addDocument: (project: string, payload: { index: string; file_name: string; content_type: string; content_b64: string }) =>
     api<{ res: KitsetDocument }>(`${kitsetPath(project)}/documents`, { method: "POST", body: JSON.stringify(payload) }),
   documentUrl: (project: string, id: string) => `${kitsetPath(project)}/documents/${encodeURIComponent(id)}`,
