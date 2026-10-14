@@ -24,4 +24,6 @@
 - [Resume at limit reset](resume-at-limit-reset.md) — on «session limit» schedule a cron at the reset time and resume workers
 - [Repo public for CI](repo-public-ci.md) — owner made ERP_NEXT public 10.10 after Actions billing block; keep secrets/vuln write-ups out
 - [Crimp contacts protocol](crimp-contacts-protocol.md) — owner's old v5.2 terminal DB rules: keep REEL+BAG in one row, null-spec, N units; ERP keeps Molex hyphens; field gaps vs TerminalRecord
+- [Prod reference write](prod-reference-write.md) — owner wants DB fills written straight to prod: ssh + import_rows by natural key, old="" guard, backup-now
+- [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
