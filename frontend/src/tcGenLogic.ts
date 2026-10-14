@@ -1156,7 +1156,9 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   // ── КОАКС ──
-  const coaxNorm_ = (s: string) => String(s || "").toLowerCase().replace(/\s+/g, "");
+  // Пробелы, дефисы, точки и подчёркивания не различают записи: «MMCX-Male RG316» из состава = «MMCX-male RG-316» в
+  // БД.КОАКС (владелец 14.10: генератор писал «нет в БД.КОАКС», а запись с размерами была).
+  const coaxNorm_ = (s: string) => String(s || "").toLowerCase().replace(/[\s\-–—_.]+/g, "");
   function coaxBomConnectors_() {
     const list: Array<{ art: string; name: string }> = [];
     comps().forEach((c) => {
