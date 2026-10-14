@@ -562,7 +562,7 @@ export function etkParams(operation: Row): EtkParams {
   }
   if (f.lengthKd) common.push(["Длина по КД", str(f.lengthKd)]);
   if (f.cutTolerance) common.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
-  // Диаметры провода в ЭТК пока не приходят из БД.ПРОВ — читаем, если появятся; нет — «—», не выдумываем.
+  // Диаметры провода приходят из БД.ПРОВ при сборке ЭТК (techcard_build.enrich_wire_diameters); нет в базе — «—», не выдумываем.
   const wires = list(f.wires), isWire = wires.length > 0 || /^cutWire/.test(str(operation.type)) || etkCrimpEnds(f).length > 0;
   if (isWire) {
     const outer = firstText(wires, ["outerDiameter", "outerDiameterMm", "outer"]) || str(f.outerDiameter).trim();
