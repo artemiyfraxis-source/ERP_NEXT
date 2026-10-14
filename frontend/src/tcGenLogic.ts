@@ -1372,9 +1372,10 @@ export function makeGen(D: GenData, S: GenState) {
           if (!routedWireIdxs_(e).includes(w.idx)) return;
           let len: string | null = null;
           if (crimpSides.includes(e.side)) len = epStripLen_(e);
-          // Станок обжимает одну сторону — вторую, под ручной обжим, он же зачищает (владелец 14.10: «обжим с одной и
-          // зачистка с другой»); кабель в оболочке — по правилу ротора ниже.
-          else if (e.method === "crimp" && crimpSides.length === 1 && !isJacketedCable_(w)) len = epStripLen_(e);
+          // «Без зачистки (ОТП)» — конец приходит на обжим уже зачищенным: его зачищает резка (владелец 14.10: «обжим с одной
+          // и ОТП с другой» → «резка с обжимом А и зачисткой В»). Без ОТП конец под ручной обжим резка не трогает — его
+          // зачищает пресс. Кабель в оболочке — по правилу ротора ниже.
+          else if (e.method === "crimp" && e.otp && !isJacketedCable_(w)) len = epStripLen_(e);
           else if (e.method === "solder") len = (e.solderStrip || "").trim() || DEFAULT_LEN_MM_;
           else if (e.method === "crimp" && e.fold && isComplex_()) len = FOLD_STRIP_MM_;
           else if (e.method === "crimp" && isRjEndpoint_(e)) len = RJ_STRIP_MM_;

@@ -329,16 +329,28 @@ it("«Сторона А» / «Сторона В» keep the one-side machine crim
     expect(g.crimpCutSideSelected_()).toBe("A");
     const ops = g.getActiveOps();
     expect(kinds(ops)).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
-    // Вторую сторону под ручной обжим станок зачищает (владелец 14.10).
-    expect(ops[0]).toMatchObject({ label: "Резка с обжимом А (SXH-001T-P0.6N) и зачисткой В — Провод НВ4 0,2", tmplHint: "CUT_WIRE+1crimp" });
-    expect(ops[0].strip).toMatchObject({ a: true, b: true });
+    // Без ОТП вторую сторону зачищает пресс ручной опрессовки — резка её не трогает.
+    expect(ops[0]).toMatchObject({ label: "Резка с обжимом А (SXH-001T-P0.6N) — Провод НВ4 0,2", tmplHint: "CUT_WIRE+1crimp" });
+    expect(ops[0].strip).toMatchObject({ a: true, b: false });
     const cfg = g.buildConfig() as Record<string, any>;
     expect(cfg.ops[0]).toMatchObject({ side: "A", templateId: "cwc", opNum: "CUT_WIRE+1crimp" });
     expect(cfg.ops.some((op: any) => "epB" in op)).toBe(false);
   }
   const b = usbGen({ side: "B" }).g;
   expect(kinds(b.getActiveOps())).toEqual(["cutWireCrimp:B", "prsTerm:A", "insTerm:A", "insTerm:B"]);
-  expect(b.getActiveOps()[0].label).toBe("Резка с обжимом В (SXH-001T-P0.6N) и зачисткой А — Провод НВ4 0,2");
+  expect(b.getActiveOps()[0].label).toBe("Резка с обжимом В (SXH-001T-P0.6N) — Провод НВ4 0,2");
+});
+
+it("обжим на станке с одной стороны и «Без зачистки (ОТП)» с другой — резка с обжимом и зачисткой (владелец 14.10)", () => {
+  const { g } = usbGen({ side: "A", patch: (S, D) => updateEndpoint(D, S, "b1", { otp: true }) });
+  const ops = g.getActiveOps();
+  expect(kinds(ops)).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
+  expect(ops[0].label).toBe("Резка с обжимом А (SXH-001T-P0.6N) и зачисткой В — Провод НВ4 0,2");
+  expect(ops[0].strip).toMatchObject({ a: true, b: true, lenB: "2" });
+  // ОТП без станка: резка с разделкой той стороны.
+  const plain = usbGen({ side: "", patch: (S, D) => updateEndpoint(D, S, "b1", { otp: true }) });
+  const manual = makeGen(plain.D, { ...plain.S, crimpCutManual: true, crimpCut: false });
+  expect(manual.getActiveOps()[0]).toMatchObject({ type: "cutWireStrip", strip: { b: true, lenB: "2" } });
 });
 
 it("a side the machine cannot crimp stays manual and says why; «Обе стороны» then falls back to the other side", () => {
@@ -481,8 +493,8 @@ describe("длина зачистки у разъёма", () => {
     expect(empty.g.getActiveOps()[0].strip).toEqual({ a: true, lenA: "2", b: true, lenB: "2" });
   });
 
-  it("one-side machine crimp: the override of the hand-crimped side goes into the cut's strip of that side", () => {
-    const { g } = usbGen({ side: "A", patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: "4" }) });
+  it("one-side machine crimp + ОТП: the override of the hand-crimped side goes into the cut's strip of that side", () => {
+    const { g } = usbGen({ side: "A", patch: (S, D) => updateEndpoint(D, S, "b1", { stripLen: "4", otp: true }) });
     expect(g.getActiveOps()[0].strip).toMatchObject({ a: true, lenA: "2", b: true, lenB: "4" });
   });
 
