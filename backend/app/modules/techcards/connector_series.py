@@ -121,13 +121,12 @@ GROUPS: tuple[dict[str, Any], ...] = (
 # shows the terminals and the picture of the closest shape (`pic` = a family whose sample is drawn), never a made-up
 # model number. (id, title, maker, category, pic, terminal keys).
 _LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
-    # CTX50 terminals go into the Mini50 / CTX50 housings, Pico-EZmate is sold as cable assemblies (36920): no housing
-    # part number the maker lists for them was found, so they keep the closest shape.
+    # CTX50 terminals 34905 (349052447, 349056447) go into the Mini50 sealed receptacle housing 34967 (Molex part sheet of
+    # 349052447; 349672001 = 2 positions per element14, 349671001 = 10 positions, polarization A per Arrow): the digit after
+    # 34967 is not the position count, so no count can be read from the number and no table is made up; the closest shape.
     ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",)),
-    ("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, "molex-picoblade", ("Pico-EZmate", "Pico-EZmate Plus")),
     ("jst-wp", "JST WP (JWPF)", "JST", AUTO, "te-superseal", ("WP (JWPF)",)),
     ("hsm-phu", "Hsuan Mao PHU / MHU / MX", "Hsuan Mao", WTB, "jst-ph", ("PHU/MHU/MX", "HC (PAP)")),
-    ("kls", "KLS Electronic", "KLS", WTB, "connfly-ds1071", ("KLS1-2.50", "KLS1-2.54", "KLS1-XL4-1.25 (HRS DF13 type)")),
     ("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, "connfly-ds1071", ("JR/Futaba servo connector contact",)),
     ("te-matenlok", "TE MATE-N-LOK", "TE", WTW, "molex-minifit-jr", ("MATE-N-LOK",)),
     ("te-multilock-070", "TE Multilock 070", "TE", AUTO, "te-multilock-040", ("AMP MULTILOCK 070",)),

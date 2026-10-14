@@ -27,7 +27,7 @@ def test_every_value_of_the_file_has_a_source():
     ("LiYCY 4x0,5", "LiYCY"), ("UNITRONIC LiYCY 2x0,34", "LiYCY"), ("H05RN-F 3x0,75", "H05RN-F"), ("Li2YCY 2x0,34", None),
     ("CCCU-4G", "CCCU"), ("CCC-9GG", "CCC"), ("FLEXICORE LiYCY 4x0,5", "FLEXICORE LiYCY"),
     ("FLEXICORE® 105 CY 0,6/1 кВ", "FLEXICORE 105 CY"), ("U/UTP 4х2х0,52мм Сat 5e", "Cat5e"), ("CAT5e FTP 4PR 24AWG", "Cat5e"),
-    ("Cat5 RC5-LB1", None), ("КДЭВГ 9х0,14", "КДВЭВГ"), ("КДВВГ 6x0,14", "КДВВГ"), ("ПВВС 4×0,35", None),
+    ("Cat5 RC5-LB1", None), ("КДЭВГ 9х0,14", "КДВЭВГ"), ("КДВВГ 6x0,14", "КДВВГ"), ("ПВВС 4×0,35", "ПВВС"),
     ("ПВС 3x1,5", "ПВС"), ("ШТСПЭн 2х2-А", "ШТЛЭ / ШТСПЭ"),
 ])
 def test_series_by_the_start_of_the_mark(mark, key):
@@ -96,3 +96,14 @@ def test_dry_run_apply_and_idempotence(references_api):
     assert fields["LiYCY 4x0,5"]["Изоляция"] == "ПВХ-пластикат"  # a filled cell stays
     assert "Изоляция" not in fields["Другой кабель"] or fields["Другой кабель"]["Изоляция"] == ""
     assert run(factory(), actor, now, apply=True).empty
+
+
+def test_the_sheath_gaps_filled_on_14_10_2026_are_marked_approximate_in_the_value_itself():
+    """Owner 14.10.2026: «найди значения сам или поставь примерные». Cat5e, RVVP and ПВВС have no source that opens for
+    the sheath, so the cell says «примерно» in its own text (the source stays a URL, as the loader demands)."""
+    series = {item["key"]: item for item in SERIES}
+    for key in ("Cat5e", "RVVP", "ПВВС"):
+        assert "примерно" in series[key]["insulation"]["value"], key
+        assert series[key]["insulation"]["source"].startswith("http"), key
+    assert series["RVVP"]["voltage_v"]["value"] == 300
+    assert series["ПВВС"]["voltage_v"]["value"] == 380 and series["ПВВС"]["temp_max_c"]["value"] == 60
