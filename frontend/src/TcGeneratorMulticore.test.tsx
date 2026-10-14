@@ -71,7 +71,7 @@ it("the shield goes on a contact like a core: the card says which contact, a 20t
   expect(a1).not.toHaveTextContent("скрутить и изолировать");
   expect(screen.getAllByText(/^20 шт/)).toHaveLength(2);
   expect(screen.getAllByText(/Скрутка экрана в вывод на контакт А1·20/).length).toBeGreaterThan(0);
-  expect(screen.getByRole("list", { name: "Соединения" }).querySelector('[data-wire="1.Э"]')).toHaveAttribute("data-from", "А1·20");
+  expect(document.querySelector('.pin-links-table[data-end="А1"] [data-pin="20"]')).toHaveAttribute("data-wires", "1.Э");
   // Цепь — в строке провода «в руке»; на чипе видна.
   fireEvent.click(within(palette).getByRole("button", { name: /^1\.Э\s*экран/ }));
   fireEvent.change(screen.getByLabelText("Цепь 1.Э"), { target: { value: "SHIELD" } });

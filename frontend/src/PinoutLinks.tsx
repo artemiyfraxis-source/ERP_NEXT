@@ -21,7 +21,7 @@ import "./pinoutLinks.css";
 
 const ROW = 20, TITLE = 22, COLS_H = 18, FOOT = 18, GAP_Y = 16, STUB = 22, SPLICE_GAP = 30, TAIL_DROP = 13, TAIL_STUB = 74;
 /** Свивка на схеме: шаг и размах волны, px. */
-const TWIST_PITCH = 18, TWIST_AMP = 4;
+const TWIST_PITCH = 18, TWIST_AMP = 4, TWIST_LANE = 24;
 const NEUTRAL = "#8a94a6", OUTLINE = "#3b4652";
 /** Средняя ширина знака подписи 11 px — для обрезки текста по колонке. */
 const CHAR = 5.6;
@@ -125,12 +125,12 @@ function columnsOf(side: SchemeSide, set: Column[]) {
 }
 
 /** Раскладка схемы: таблицы разъёмов, точки сростков, линии проводов. Чистая — для теста и для рисунка. */
-export function schemeLayout(M: LinkScheme, room = 1200) {
+export function schemeLayout(M: LinkScheme, room = 1200, showNet = false) {
   const units = M.wires;
   const wires = units.filter(drawnWire);
   const wide = room >= WIDE_FROM;
   const nets = units.some((u) => (u.net || "").trim());
-  const set = (wide ? WIDE : NARROW).filter((column) => wide || nets || column.key !== "net");
+  const set = (wide ? WIDE : NARROW).filter((column) => wide || nets || showNet || column.key !== "net");
   const TABLE_W = set.reduce((sum, column) => sum + column.width, 0);
   const mid = Math.max(MID_MIN, Math.min(MID_MAX, room - 16 - TABLE_W * 2));
   const width = TABLE_W * 2 + mid;
@@ -190,14 +190,22 @@ export function schemeLayout(M: LinkScheme, room = 1200) {
     });
   });
   // Свивка: провода группы сходятся к общей оси и идут волной со сдвигом фазы, затем расходятся к своим контактам.
-  const twists = M.twists.flatMap((keys) => {
+  // Каждая группа — своя дорожка: оси групп не ближе LANE друг к другу (владелец 14.10: две пары не сливаются в один шнур).
+  const groups = M.twists.flatMap((keys) => {
     const members = keys.map((key) => lines.find((l) => !l.free && l.w.key === key && l.b.x > l.a.x)).filter((l): l is LinkLine => !!l);
     if (members.length < 2) return [];
     const ax = Math.max(...members.map((l) => l.a.x)) + STUB, bx = Math.min(...members.map((l) => l.b.x)) - STUB;
+    if (bx - ax < TWIST_PITCH * 4) return [];
+    return [{ members, ax, bx, c0: members.reduce((s, l) => s + l.a.y, 0) / members.length, c1: members.reduce((s, l) => s + l.b.y, 0) / members.length }];
+  }).sort((p, q) => p.c0 + p.c1 - q.c0 - q.c1);
+  groups.forEach((g, i) => {
+    if (!i) return;
+    const prev = groups[i - 1], shift = Math.max(0, prev.c0 + TWIST_LANE - g.c0, prev.c1 + TWIST_LANE - g.c1);
+    g.c0 += shift; g.c1 += shift;
+  });
+  const twists = groups.map(({ members, ax, bx, c0, c1 }) => {
     const span = bx - ax;
-    if (span < TWIST_PITCH * 4) return [];
     const x0 = ax + span * 0.2, x1 = bx - span * 0.2;
-    const c0 = members.reduce((s, l) => s + l.a.y, 0) / members.length, c1 = members.reduce((s, l) => s + l.b.y, 0) / members.length;
     members.forEach((l, i) => {
       const phase = (2 * Math.PI * i) / members.length;
       const yAt = (x: number) => c0 + (c1 - c0) * ((x - x0) / (x1 - x0)) + TWIST_AMP * Math.sin((2 * Math.PI * (x - x0)) / TWIST_PITCH + phase);
@@ -208,7 +216,7 @@ export function schemeLayout(M: LinkScheme, room = 1200) {
         + `C${(x1 + rx) / 2},${y1} ${(x1 + rx) / 2},${l.b.y} ${rx},${l.b.y} H${l.b.x}`;
       l.twisted = true;
     });
-    return [{ keys: members.map((l) => l.w.key), x: (x0 + x1) / 2, y: Math.min(c0, c1) - TWIST_AMP - 6, count: members.length }];
+    return { keys: members.map((l) => l.w.key), x: (x0 + x1) / 2, y: Math.min(c0, c1) - TWIST_AMP - 6, count: members.length };
   });
   const height = Math.max(40, ...boxes.map((b) => b.y + b.height), ...nodes.map((n) => n.y + 16), ...lines.map((l) => Math.max(l.a.y, l.b.y) + 8));
   return { width, height, boxes, nodes, lines, wires, twists, mid, set, tableW: TABLE_W };
@@ -253,9 +261,28 @@ function whereOf(M: LinkScheme, w: SchemeWire, side: SchemeSide) {
     : x.kind === "splice" ? M.splices.find((s) => s.id === x.id)?.label ?? "" : x.kind === "tail" ? "хвост" : "—")).join(" + ");
 }
 
-/** Рисунок схемы связей — SVG по раскладке (экран и печать ЭТК). */
-export function LinkSchemeSvg({ scheme: M, layout: L }: { scheme: LinkScheme; layout: SchemeLayout }) {
+/** Правка цепи в ячейке таблицы: поле с подсказкой уже занятых цепей; Enter и уход из поля сохраняют, Esc отменяет. */
+function NetEditor({ x, y, width, wire, options, onDone }: { x: number; y: number; width: number; wire: SchemeWire; options: string[]; onDone: (net: string | null) => void }) {
+  const finished = useRef(false);
+  const finish = (net: string | null) => { if (finished.current) return; finished.current = true; onDone(net); };
+  return <foreignObject x={x} y={y} width={width} height={ROW - 2} className="pin-links-net-edit">
+    <input autoFocus defaultValue={wire.net ?? ""} maxLength={64} list="pin-links-nets" aria-label={`Цепь ${wire.num}`} className="pin-links-net-input"
+      onFocus={(event) => event.currentTarget.select()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") { event.preventDefault(); finish(event.currentTarget.value.trim()); }
+        else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(null); }
+      }}
+      onBlur={(event) => finish(event.currentTarget.value.trim())} />
+    <datalist id="pin-links-nets">{options.map((name) => <option key={name} value={name} />)}</datalist>
+  </foreignObject>;
+}
+
+/** Рисунок схемы связей — SVG по раскладке (экран и печать ЭТК). `onNet` — только в генераторе: ячейка «Цепь» правится по щелчку
+ *  (цепь принадлежит проводу, поэтому видна на обоих разъёмах); в ЭТК схема только для чтения. */
+export function LinkSchemeSvg({ scheme: M, layout: L, onNet }: { scheme: LinkScheme; layout: SchemeLayout; onNet?: (wireKey: string, net: string) => void }) {
   const TABLE_W = L.tableW;
+  const [editing, setEditing] = useState<string | null>(null);
+  const nets = [...new Set(M.wires.map((w) => (w.net || "").trim()).filter(Boolean))];
   const byPin = (epId: string, pin: number) => M.wires.filter((u) => u.at[epId] === pin);
   const twisted = new Set(L.twists.flatMap((t) => t.keys));
   const label = (id: string) => M.splices.find((s) => s.id === id)?.label ?? "";
@@ -284,6 +311,20 @@ export function LinkSchemeSvg({ scheme: M, layout: L }: { scheme: LinkScheme; la
               if (c.key === "color") return here.length ? <ColorChip key={c.key} units={here} x={cx + (c.width - (here.length > 1 ? 26 : 12)) / 2} y={y + 4} /> : null;
               if (c.key === "num") return <text key={c.key} x={cx + c.width / 2} y={y + 14} textAnchor="middle" className="pin-links-num">{pin}</text>;
               const value = cells[c.key];
+              const target = c.key === "net" && onNet && here.length ? here[0] : null;
+              if (target) {
+                const id = `${b.end.id}:${pin}`;
+                return <g key={c.key} className="pin-links-net">
+                  <rect x={cx} y={y} width={c.width} height={ROW} className="pin-links-net-hit" role="button" tabIndex={0} data-net-cell={id}
+                    aria-label={`Цепь, ${b.end.key} контакт ${pin}: ${value || "не задана"}. Изменить`}
+                    onClick={() => setEditing(id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setEditing(id); } }} />
+                  {editing === id
+                    ? <NetEditor x={cx + 1} y={y + 1} width={c.width - 2} wire={target} options={nets}
+                      onDone={(net) => { setEditing(null); if (net !== null && net !== (target.net ?? "").trim()) onNet?.(target.key, net); }} />
+                    : value ? <text x={cx + 5} y={y + 14} className="pin-links-cell">{cut(value, c.width)}</text>
+                      : null}
+                </g>;
+              }
               if (!value) return null;
               const shown = cut(value, c.width);
               return <text key={c.key} x={cx + 5} y={y + 14} className="pin-links-cell">{shown !== value && <title>{value}</title>}{shown}</text>;
@@ -354,11 +395,11 @@ function useRoom() {
 
 /** Схема связей и переключатель «Схема связей | Чертёж». `drawing` — чертёж по той же форме (рисуется, только пока открыта
  *  его вкладка). `titled={false}` — без заголовка «Схема связей» (его несёт блок ЭТК). Разъёмов нет — ничего не рисует. */
-export function LinkSchemeView({ scheme, drawing, titled = true }: { scheme: LinkScheme; drawing?: () => ReactNode; titled?: boolean }) {
+export function LinkSchemeView({ scheme, drawing, titled = true, onNet }: { scheme: LinkScheme; drawing?: () => ReactNode; titled?: boolean; onNet?: (wireKey: string, net: string) => void }) {
   const [view, setView] = useState<SchemeView>("scheme");
   const room = useRoom();
   if (!scheme.connectors.length) return null;
-  const L = schemeLayout(scheme, room.width);
+  const L = schemeLayout(scheme, room.width, !!onNet);
   const shown = drawing && view === "drawing" ? "drawing" : "scheme";
   return <div className="pin-links" role="group" aria-label="Схема связей">
     <div className="pin-links-head">
@@ -369,20 +410,22 @@ export function LinkSchemeView({ scheme, drawing, titled = true }: { scheme: Lin
       <span className="muted">{schemeCounts(L)}</span>
     </div>
     {shown === "drawing" ? drawing!() : <div className="pin-links-scroll" ref={room.ref}>
-      <LinkSchemeSvg scheme={scheme} layout={L} />
+      <LinkSchemeSvg scheme={scheme} layout={L} onNet={onNet} />
       {!L.wires.length && <small className="muted pin-links-empty">Линии появятся, когда провод встанет на контакт.</small>}
     </div>}
   </div>;
 }
 
 /** Схема связей генератора под торцами разъёмов: форма → модель (`pinoutScheme`) → рисунок. */
-export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing }: {
+export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing, onNet }: {
   ends: PinoutEnd[];
   units: PinUnit[];
   housings: Record<string, ConnectorHousing | null>;
   joins: Pick<GenState, "splices" | "tails">;
   info?: SchemeInfo;
   drawing?: () => ReactNode;
+  /** Цепь провода из ячейки таблицы: ключ провода (`PinUnit.key`), имя ("" — снять). */
+  onNet?: (wireKey: string, net: string) => void;
 }) {
-  return <LinkSchemeView scheme={pinoutScheme(ends, units, housings, joins, info)} drawing={drawing} />;
+  return <LinkSchemeView scheme={pinoutScheme(ends, units, housings, joins, info)} drawing={drawing} onNet={onNet} />;
 }

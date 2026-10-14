@@ -186,7 +186,7 @@ export function physicalTopologyScene(document: HarnessDesignDocument): EditorSc
       joiningTransitionMidpoints,
       wireIds: topology.routes.filter(route => route.steps.some(step => step.segmentId === segment.id)).map(route => route.wireId),
     },
-    metadata:{opacity:String(document.drawingDocuments?.pipeOpacity??.72),volumeShading:String(segment.volumeShading??document.drawingDocuments?.volumeShading!==false)},
+    metadata:{opacity:String(segment.opacity??document.drawingDocuments?.pipeOpacity??.72),volumeShading:String(segment.volumeShading??document.drawingDocuments?.volumeShading!==false)},
     };
   });
   const joining: EditorSceneObject[] = (topology.joiningPipes??[]).map((pipe,i)=>{

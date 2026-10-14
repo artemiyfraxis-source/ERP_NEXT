@@ -777,13 +777,16 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   topology = routePhysicalWires({ ...doc, physicalTopology: topology }, topology);
   // Участок, по которому идут все жилы кабеля и только они, — кабель в оболочке (ствол до разделки); ветки к разным
   // разъёмам после узла — жилы россыпью (кабель разделан, жилы разведены по разъёмам).
-  if (cableMembers.size) {
+  // Канал участка (серый «пайп» редактора) — это оболочка: рисуем её только у кабеля в оболочке. Без кабеля жилы идут
+  // голыми проводами своих цветов (свитые — свитыми), оплётка, лента и термоусадка рисуются своими отрезками ниже
+  // (владелец 14.10: «тут же нет оплётки, почему на чертеже она есть»).
+  {
     const through = (segmentId: string) => new Set(topology.routes.filter((route) => route.steps.some((step) => step.segmentId === segmentId)).map((route) => route.wireId));
     topology = { ...topology, segments: topology.segments.map((segment) => {
-      if (stubIds.has(segment.id)) return segment;
+      if (stubIds.has(segment.id)) return { ...segment, opacity: 0 };
       const inside = through(segment.id);
       const cable = [...cableMembers].find(([, members]) => members.length === inside.size && members.every((id) => inside.has(id)));
-      return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : segment;
+      return cable ? { ...segment, specificationItemId: cable[0], mode: "round" as const, color: CABLE_JACKET } : { ...segment, opacity: 0 };
     }) };
   }
   doc = run(doc, { type: "set-physical-topology", topology });
@@ -820,6 +823,11 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   });
   if (coverings.length) doc = run(doc, { type: "set-physical-topology", topology: { ...doc.physicalTopology!, coverings } });
 
+  // Жилы без оболочки — голые цветные провода: без объёмной подсветки (она сереет цвета) и, если есть свивка, покрупнее,
+  // чтобы цвета пар не тонули в подложке соседней пары.
+  const bare = !doc.physicalTopology!.segments.some((segment) => segment.specificationItemId);
+  const strands = bare ? { volumeShading: false, ...(plan.pairs.length ? { physicalScale: 1.8 } : {}) } : {};
+
   // 8. Размер: один участок А → В и одна длина у всех проводов — размер на участке (длины проводов идут от него).
   const lengths = [...new Set(doc.wires.map((wire) => wire.lengthMm))];
   const trunk = main.length === 1 ? doc.physicalTopology!.segments.find((segment) => segment.id === main[0].id) : undefined;
@@ -828,10 +836,10 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       id: "gen-d1", segmentId: trunk.id, from: 0, to: trunk.path.points.length + 1, pointCount: trunk.path.points.length + 2,
       routeKey: segmentDimensionKey(doc, trunk.id), mode: "aligned", modeOverride: false, offset: 40, lengthMm: lengths[0],
     };
-    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [], showDimensions: true, dimensions: [dimension] } });
+    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [], showDimensions: true, dimensions: [dimension], ...strands } });
   } else {
     // Пустые документы чертежа: без них редактор рисует «старые» размеры каждого провода косыми линиями через поле.
-    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [] } });
+    doc = run(doc, { type: "set-drawing-documents", documents: { tables: [], leaders: [], bomOrder: [], ...strands } });
     if (main.length > 1 && lengths.some((length) => length !== null)) {
       warnings.push("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
     }
@@ -840,8 +848,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   const twisted = withTwistNotes(doc, plan);
   doc = twisted.document;
   warnings.push(...twisted.warnings);
-  // Подписи проводов и разъёмов ствольного чертежа — без наложений.
-  if (geometry) doc = placeDrawingLabels(doc, sideOfId);
+  // Подписи проводов и разъёмов — без наложений (и у прямого жгута, где провода идут одной трассой).
+  doc = placeDrawingLabels(doc, sideOfId);
 
   const document = JSON.parse(JSON.stringify(doc)) as HarnessDesignDocument;
   parseHarnessDesignDocument(document);

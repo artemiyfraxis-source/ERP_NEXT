@@ -52,7 +52,6 @@ import {
   WIRE_DIA_OLD_,
   type CableRec,
   type Comp,
-  type Connection,
   type Endpoint,
   type GenData,
   type GenState,
@@ -107,18 +106,6 @@ const OP_TIMES = [["tPrep", "Подготовка", "Подготовка, се�
 function plural(n: number, one: string, few: string, many: string) {
   const d = n % 10, dd = n % 100;
   return d === 1 && dd !== 11 ? one : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many;
-}
-
-/** Сводка соединений формы: по проводу и паре разъёмов — «провод · А1 → В1» и пары контактов по порядку. */
-function linkGroups(list: Connection[]) {
-  const groups: Array<{ key: string; title: string; pairs: Array<[number, number]> }> = [];
-  list.forEach((item) => {
-    const key = `${item.wire}::${item.from.end}::${item.to.end}`;
-    let group = groups.find((g) => g.key === key);
-    if (!group) groups.push(group = { key, title: `${item.wire || "Провод"} · ${item.from.end} → ${item.to.end}`, pairs: [] });
-    group.pairs.push([item.from.pin, item.to.pin]);
-  });
-  return groups;
 }
 
 function badgeCls(t: string) {
@@ -940,8 +927,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           const pins = { ...(ep.pins || {}) };
           if (value) pins[wireIdx] = value; else delete pins[wireIdx];
           update((current) => syncRoutes(D, updateEndpoint(D, current, ep.id, { pins })));
-        }}
-        hint={ep.side === "B" && S.endpoints.some((e) => e.side === "A") ? "Контакты стыкуются по жилам: k-я жила здесь ↔ k-я на другой стороне. Перекрёст: А «1-6», В «3, 1, 2, 4, 5, 6» → 1→3, 2→1, 3→2… «11:1-9» — жилы с 11-й на контакты 1–9." : undefined} />}
+        }} />}
     </div>;
   }
 
@@ -1238,8 +1224,6 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onUndouble={(epId, pin, keep) => update((current) => undoublePin(D, current, epId, pin, keep))}
         onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}
         onAutoFill={() => { const plan = autoFillPinout(D, S, pinCounts, true); update(() => plan.state); return plan; }} />
-      {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>
-        <span key={i}>{i ? ", " : ""}{a === b ? `${a}→${b}` : <b>{a}→{b}</b>}</span>)}</div>)}
       {links.warnings.map((item) => <div className="warning-inline" key={item}>{item}</div>)}
     </section>}
     <section className="gsec full gen-proc" aria-label="Обработка">

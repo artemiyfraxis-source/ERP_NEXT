@@ -112,7 +112,9 @@ it("splits a 3-ended harness: trunk from A to a branch node, a branch per B end"
   ]);
   const [, b1, b2] = document.connectors;
   expect(b1.positions.drawing.y).toBeLessThan(b2.positions.drawing.y);
-  expect(document.drawingDocuments).toEqual({ tables: [], leaders: [], bomOrder: [] });
+  // Голые жилы — без объёмной подсветки; подписи проводов и разъёма А разведены по месту.
+  expect(document.drawingDocuments).toMatchObject({ tables: [], leaders: [], bomOrder: [], volumeShading: false });
+  expect(Object.keys(document.drawingDocuments!.indexOffsets ?? {}).sort()).toEqual(["gen-w1", "gen-w2", "gen-w3", "gen-w4", "gen-x1"]);
   expect(document.wires.every((w) => w.lengthMm === 300)).toBe(true);
   expect(warnings).toContain("Длины ствола и веток генератор не знает — размеры на чертеже не проставлены, длины проводов перенесены.");
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(document)))).not.toThrow();
@@ -291,4 +293,28 @@ it("double crimp in one contact: both wires into В·1 on the drawing, one termi
   const back = undoublePin(D, S, "b1", 1, { idx: idx(S, "r"), unit: 0 });
   expect(back.endpoints.find((e) => e.id === "b1")!.doublePins).toBeUndefined();
   expect(makeGen(D, back).getActiveOps().find((op) => op.type === "prsTerm" && op.side === "B")!.label).not.toMatch(/двойной/);
+});
+
+it("draws no sheath without a jacketed cable or a wrap: the channels are invisible, twisted pairs are the bare coloured wires", () => {
+  const S = twoEnded();
+  const twisted = { ...S, twist: { ...S.twist, enabled: true, mode: "pairs" as const, pairs: [{ a: "0", b: "1" }, { a: "2", b: "3" }] } };
+  const plan = planFromGenerator(D, twisted);
+  expect(plan.pairs).toHaveLength(2);
+  const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  const topology = document.physicalTopology!;
+  expect(topology.segments.length).toBeGreaterThan(0);
+  expect(topology.segments.every((s) => s.opacity === 0 && s.color === undefined && s.specificationItemId === undefined)).toBe(true);
+  expect(topology.coverings ?? []).toEqual([]);
+  expect(document.diffPairs).toHaveLength(2);
+});
+
+it("a wrap on the harness is a drawn sheath: the braid covers the trunk", () => {
+  const S = twoEnded();
+  const wrapped = { ...S, wrap: { enabled: true, slots: [{ mat: "w", kind: "braid" as const, len: "" }, ...S.wrap.slots.slice(1)] } };
+  const plan = planFromGenerator(D, wrapped);
+  const { document } = buildHarnessDocument(plan, sourcesOf(plan, free(4)));
+  const coverings = document.physicalTopology!.coverings ?? [];
+  expect(coverings).toHaveLength(1);
+  expect(coverings[0]).toMatchObject({ kind: "braid" });
+  expect(coverings[0].spans.length).toBeGreaterThan(0);
 });

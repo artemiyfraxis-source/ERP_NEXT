@@ -125,8 +125,8 @@ it("confirmed pinout collapses to a summary, builds without asking, survives a r
   expect(screen.getAllByText("✓ Проверена: 4 провода, перекрёст 3→2, 5→3, 7→4")).toHaveLength(2);
   expect(screen.queryByLabelText("Контакты А1: НВ4 0,2 белый")).not.toBeInTheDocument();
   expect(within(screen.getByRole("region", { name: "Соединения по распиновке" })).getByText("Распиновка проверена")).toBeInTheDocument();
-  // Список соединений — под схемой, как раньше.
-  expect(screen.getByRole("region", { name: "Соединения по распиновке" })).toHaveTextContent("НВ4 0,2 белый · А1 → В1: 3→2");
+  // Текстовой сводки «провод · А1 → В1: 3→2» под схемой больше нет (14.10): соединения — в схеме связей.
+  expect(screen.getByRole("region", { name: "Соединения по распиновке" })).not.toHaveTextContent("А1 → В1: 3→2");
 
   fireEvent.click(screen.getByRole("button", { name: "Создать" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -341,8 +341,8 @@ it("click a connected pin, then a cavity of the second B connector: «Добав
   expect(chip("НВ4 0,2 белый")).toHaveTextContent("А1·3 → В1·2 + В2·4");
   expect(cell("В2", 4)).toHaveAccessibleName("В2, контакт 4: 5 · НВ4 0,2 белый");
   const route = document.querySelector('.pin-route[data-wire="1"]') ?? document.querySelector('.pin-route[data-from="А1·3"]')!;
-  expect(route.querySelectorAll(".pin-route-to")).toHaveLength(2);
-  expect(route.querySelectorAll(".pin-glyph .pin-line")).toHaveLength(2);
+  // Список «провод → контакты» убран (14.10): в строке ответвления только переключатели режима.
+  expect(route.querySelectorAll(".pin-route-to, .pin-glyph")).toHaveLength(0);
   // Режим переключается на самом ответвлении: сросток.
   fireEvent.click(within(route as HTMLElement).getByRole("button", { name: "сросток" }));
   expect(chip("НВ4 0,2 белый")).toHaveTextContent("А1·3 → В1·2 + В2·4");
