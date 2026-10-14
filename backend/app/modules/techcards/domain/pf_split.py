@@ -1,8 +1,8 @@
 """The generator's ПФ split (owner + Vasily 13.10: «автоматику надо оставлять, генератор Вася оценил»).
 
 The ETK is cut into semi-finished products the way the generator's «Схема полуфабрикатов» draws its cards
-(`frontend/src/routeCards.ts` `opStages` / `genCards`): cut wires, cut tubes, crimped wires, side A assembled, side B
-assembled, the finished product. Every ETK operation goes to the ПФ of its stage, ops of one stage form one ПФ in ETK
+(`frontend/src/routeCards.ts` `opStages` / `genCards`): cut wires, cut tubes, wires with splices, crimped wires of
+side A, side A assembled, crimped wires of side B, side B assembled, the finished product. Every ETK operation goes to the ПФ of its stage, ops of one stage form one ПФ in ETK
 order, and the links between ПФ follow the operations' own links (the existing scheme, `per_unit` included).
 
 Pure: operations (`RouteOp` with type, code, side and the generator's opKey) and the current scheme in, a checked
@@ -18,7 +18,11 @@ from typing import Sequence
 from .route import Block, Edge, Route, RouteError, RouteOp, _ordered, derive_route, validate_route
 
 WIRES, TUBES, CRIMPED, SIDE_A, SIDE_B, FINAL = "wires", "tubes", "crimped", "A", "B", "final"
-STAGES = (WIRES, TUBES, CRIMPED, SIDE_A, SIDE_B, FINAL)
+# The hand crimp of a side, right before that side (owner 14.10: «резка, обжимка А, монтаж А, обжим Б, монтаж Б»);
+# CRIMPED — splices and the like without a side, before the first side.
+CRIMPED_A, CRIMPED_B = "crimpedA", "crimpedB"
+STAGES = (WIRES, TUBES, CRIMPED, CRIMPED_A, SIDE_A, CRIMPED_B, SIDE_B, FINAL)
+CRIMP_STAGES = frozenset({CRIMPED, CRIMPED_A, CRIMPED_B})
 WIRE_CUTS = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"})
 TUBE_CUTS = frozenset({"cutTut", "coaxCutTut"})
 # Crimping the ends by hand: terminals and lugs (a double crimp is the same operation), splices.
@@ -52,20 +56,29 @@ def _wire_end_prep(op: RouteOp) -> bool:
 
 def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     """The stage of every operation (by its ETK position): wire and cable cuts — cut wires, TUT and heat-shrink cuts —
-    cut tubes; the end preparation before the last side operation — crimped wires when some of it is a hand crimp
-    (all crimped on the cutting machine — no card of its own, stripping and tinning stay with the sides); a side
-    operation — its side; an operation without a side (twisting, marking, wrapping) prepares the next side, and after
-    the last side — the finished product."""
+    cut tubes; the end preparation of a side before the last side operation — the crimp of that side (`crimpedA` /
+    `crimpedB`, placed right before the side: cut, crimp A, side A, crimp B, side B — owner 14.10) when some of it is
+    a hand crimp (all crimped on the cutting machine — no card of its own, stripping and tinning stay with the side);
+    the end preparation without a side before the first side — the shared crimped wires (`crimped`) when there are
+    splices in it, else it prepares the next crimp or side; a side operation — its side; an operation without a side
+    (twisting, marking, wrapping) prepares the next crimp or side, and after the last side — the finished product."""
     ordered = sorted(ops, key=lambda op: op.position)
     sided = [op.position for op in ordered if _side(op) and not _cut_stage(op) and not _wire_end_prep(op)]
-    last_side = max(sided, default=0)
+    first_side, last_side = min(sided, default=0), max(sided, default=0)
     prep = [op for op in ordered if not _cut_stage(op) and _wire_end_prep(op) and op.position < last_side]
-    crimped = {op.position for op in prep} if any(op.type in END_CRIMPS for op in prep) else set()
+    crimped: dict[int, str] = {}
+    for side, stage in ((SIDE_A, CRIMPED_A), (SIDE_B, CRIMPED_B)):
+        own = [op for op in prep if _side(op) == side]
+        if any(op.type in END_CRIMPS for op in own):
+            crimped.update((op.position, stage) for op in own)
+    shared = [op for op in prep if not _side(op) and op.position < first_side]
+    if any(op.type in END_CRIMPS for op in shared):
+        crimped.update((op.position, CRIMPED) for op in shared)
     result: dict[int, str] = {}
     waiting: list[int] = []
     for op in ordered:
-        stage = _cut_stage(op) or (CRIMPED if op.position in crimped else _side(op))
-        if stage in (SIDE_A, SIDE_B):
+        stage = _cut_stage(op) or crimped.get(op.position) or _side(op)
+        if stage and stage not in (WIRES, TUBES):
             result.update((position, stage) for position in waiting)
             waiting = []
         if stage:
@@ -83,8 +96,10 @@ def _title(stage: str, ops: Sequence[RouteOp]) -> str:
         return "Нарезанные и обжатые провода" if any(op.type == "cutWireCrimp" for op in ops) else "Нарезанные провода"
     if stage == TUBES:
         return "Нарезанные трубки"
-    if stage == CRIMPED:
-        return "Обжатые провода" if any(op.type == "prsTerm" for op in ops) else "Провода со сростками"
+    if stage in CRIMP_STAGES:
+        if not any(op.type == "prsTerm" for op in ops):
+            return "Провода со сростками"
+        return "Обжатые провода" + {CRIMPED_A: ", сторона А", CRIMPED_B: ", сторона В"}.get(stage, "")
     return {SIDE_A: "Сторона А собрана", SIDE_B: "Сторона В собрана"}.get(stage, "Отделка")
 
 
@@ -101,10 +116,10 @@ def _op_links(route: Route) -> list[tuple[int, int, Decimal]]:
 def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route | None = None) -> Route:
     """One ПФ per generator stage, its operations in ETK order; the ПФ of the scheme's final operation is the product.
     Links between ПФ: the operations' links that go forward in the course of assembly (a ПФ by its first operation,
-    the product last) — a link back (side A built, then the crimp of side B) joins nothing, as on the generator's
-    cards; `per_unit` — the largest of the links between the two. Cut wires feed crimped wires even without a link
-    (the crimp came after a side), and a ПФ left without a way on feeds the next one. Raises RouteError when the
-    operations make no scheme."""
+    the product last) — a link back joins nothing, as on the generator's cards; `per_unit` — the largest of the links
+    between the two. Side A built feeds the crimp of side B that follows it (the wires go through); cut wires feed the
+    crimped wires before the first side even without a link, and a ПФ left without a way on feeds the next one.
+    Raises RouteError when the operations make no scheme."""
     if not ops:
         raise RouteError("нет операций")
     base = current or derive_route(ops, final_name)
@@ -116,40 +131,20 @@ def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route
     for position in sorted(stages):
         members.setdefault(stages[position], []).append(position)
     rank = {stage: (float("inf") if stage == final_stage else min(positions)) for stage, positions in members.items()}
+    for crimp, side in ((CRIMPED_A, SIDE_A), (CRIMPED_B, SIDE_B)):  # the crimp of a side goes right before it
+        if crimp in rank and side in rank and rank[crimp] > rank[side]:
+            rank[crimp] = rank[side] - 0.5
     order = sorted(members, key=lambda stage: (rank[stage], STAGES.index(stage)))
     links: dict[tuple[str, str], Decimal] = {}
-    op_links = _op_links(base)
-    outgoing: dict[int, list[int]] = {}
-    for source, target, _ in op_links:
-        outgoing.setdefault(source, []).append(target)
-
-    def add(start: str, end: str, per_unit: Decimal) -> None:
-        if start != end and rank[start] < rank[end]:
-            links[(start, end)] = max(links.get((start, end), Decimal(0)), per_unit)
-
-    for source, target, per_unit in op_links:
+    for source, target, per_unit in _op_links(base):
         start, end = stages.get(source), stages.get(target)
-        if not start or not end:
-            continue
-        if end != CRIMPED or start in (WIRES, TUBES, CRIMPED):
-            add(start, end, per_unit)
-            continue
-        # A side is built, then the ETK crimps the other side's wires: crimped wires are made of cut wires, not of the
-        # side — the side joins the ПФ that crimp goes on to.
-        seen: set[int] = set()
-        stack = [target]
-        while stack:
-            position = stack.pop()
-            if position in seen:
-                continue
-            seen.add(position)
-            for following in outgoing.get(position, []):
-                if stages.get(following) == CRIMPED:
-                    stack.append(following)
-                elif stages.get(following):
-                    add(start, stages[following], per_unit)
-    if WIRES in members and CRIMPED in members and rank[WIRES] < rank[CRIMPED]:
-        links.setdefault((WIRES, CRIMPED), Decimal(1))
+        if start and end and start != end and rank[start] < rank[end]:
+            links[(start, end)] = max(links.get((start, end), Decimal(0)), per_unit)
+    # Crimped wires are made of cut wires even without a link; the crimp of a side after another side takes the wires
+    # through that side (its link), and only when nothing feeds it — the cut wires.
+    for stage in CRIMP_STAGES & members.keys():
+        if WIRES in members and rank[WIRES] < rank[stage] and (stage == CRIMPED or not any(end == stage for _, end in links)):
+            links.setdefault((WIRES, stage), Decimal(1))
     for index, stage in enumerate(order[:-1]):
         if not any(start == stage for start, _ in links):
             links[(stage, order[index + 1])] = Decimal(1)
