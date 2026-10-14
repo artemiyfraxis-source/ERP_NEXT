@@ -47,7 +47,8 @@ it("shows «Оснастка» with all three sections, an empty one as «нет
   expect(sections).toEqual([["Инструмент", ""], ["Оборудование", ""], ["Расходники", "нет"]]);
 
   const input = screen.getByRole("region", { name: "Вход" });
-  expect(within(input).getByText(/^184,8\sм$/).className).toBe("etk-in-qty");
+  expect(within(input).getByText(/^184,8\sм$/).className).toBe("num");
+  expect(within(input).getByText("со склада по комплектации")).toBeInTheDocument();
   const result = screen.getByRole("region", { name: "Результат" });
   expect(within(result).getByText("ПВАМ 1,5 264мм")).toBeInTheDocument();
   expect(within(result).getByText(/^700\sшт$/)).toBeInTheDocument();

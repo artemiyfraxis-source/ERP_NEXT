@@ -15,7 +15,7 @@ import {
 import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkChips, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
-import { etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, formatMinutes } from "./etkRoute";
+import { ETK_PART_SOURCE, etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, etkSemiSource, formatMinutes } from "./etkRoute";
 import { defectArt, defectGroupCode } from "./etkDefectArt";
 import { ETK_TOOLING_SECTIONS, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
@@ -140,19 +140,39 @@ export function quantity(row: EtkRow): string {
   return row.norm ? formatQty(row.norm, row.unit) : "";
 }
 
-/** Строка входа: название слева, количество справа крупной цифрой — монтажник видит число с первого взгляда. */
-function InputLine({ children, qty }: { children: ReactNode; qty: string }) {
-  return <div className="etk-in-row">
-    <span className="etk-in-name">{children}</span>
-    <span className="etk-in-qty">{qty || "—"}</span>
-  </div>;
+/** Название полуфабриката одной и той же строкой в «Входе» и «Результате»: части по «; » — короткими строками, текст
+ *  целиком тот же слово в слово (в DOM части склеены обратно в исходную строку). */
+function ProductText({ text }: { text: string }) {
+  const parts = text.split("; ");
+  if (parts.length < 2) return <>{text}</>;
+  return <span className="etk-prod">{parts.map((part, index) =>
+    <span key={index} className="etk-prod-line">{part}{index < parts.length - 1 ? "; " : ""}</span>)}</span>;
 }
 
-function Rows({ title, rows }: { title: string; rows?: EtkRow[] }) {
-  if (!rows?.length) return null;
-  return <div className="etk-block"><strong>{title}</strong>{rows.map((row, index) =>
-    <InputLine key={`${row.name || row.art}:${index}`} qty={quantity(row)}>{row.name || row.art || "—"}</InputLine>
-  )}</div>;
+/** «Что взять / Сколько / Откуда»: сначала полуфабрикаты с прошлой операции (название — то же, что в её «Результате»),
+ *  потом комплектующие с артикулом; у каждой строки видно, откуда брать. */
+function PickList({ semis, parts, fields, semiFrom }: { semis?: EtkRow[]; parts?: EtkRow[]; fields?: unknown; semiFrom: string }) {
+  const crimp = fields && typeof fields === "object" ? fields as Record<string, unknown> : {};
+  return <table className="etk-pick" aria-label="Что взять">
+    <thead><tr><th>Что взять</th><th className="num">Сколько</th><th>Откуда</th></tr></thead>
+    <tbody>
+      {(semis ?? []).map((row, index) => <tr key={`semi:${row.name || row.art}:${index}`} className="etk-pick-semi">
+        <td><b><ProductText text={row.name || row.art || "—"} /></b><small>полуфабрикат</small></td>
+        <td className="num">{quantity(row) || "—"}</td>
+        <td className="etk-pick-from">{semiFrom}</td>
+      </tr>)}
+      {(parts ?? []).map((row, index) => <tr key={`part:${row.art || row.name}:${index}`}>
+        <td>
+          <b>{row.art || row.name || "—"}</b>
+          {row.kd && <small>по КД: {row.kd}, аналог</small>}
+          {row.art && row.name && <small>{row.name}</small>}{row.grn && <small>ГРН {row.grn}</small>}
+          {etkContactSpecs(crimp, row.art).map((spec) => <small key={spec} className="etk-spec"><MarkMissing text={spec} /></small>)}
+        </td>
+        <td className="num">{quantity(row) || "—"}</td>
+        <td className="etk-pick-from">{ETK_PART_SOURCE}</td>
+      </tr>)}
+    </tbody>
+  </table>;
 }
 
 function minutes(value: string | undefined): number {
@@ -168,41 +188,42 @@ function hoursText(value: number): string {
   return `${Math.floor(total / 60)} ч${rest ? ` ${rest} мин` : ""}`;
 }
 
-/** 6 Результат: что операция отдаёт дальше (наименование, количество) и расчётное время — две равные цифры одного
- *  размера и вида (владелец 12.10: «одно большое, а другое маленькое»; подпись «на партию» убрана — путала рядом с
- *  количеством полуфабриката). Одна строка результата — название и две цифры рядом; несколько строк — плотная таблица
- *  (время по строкам — колонкой, если у каждой своё) и итоговая цифра времени тем же видом. */
+/** 6 Результат: компактный блок. Слева главное — полуфабрикат (жирное название, части короткими строками), рядом тесная
+ *  пара «подпись над значением»: количество и расчётное время одного размера, на одной базовой линии, цифры
+ *  моноширинные. Несколько строк результата — плотная таблица (время по строкам — колонкой, если у каждой своё). */
 function ResultView({ label, result = [], time = [] }: { label: string; result?: EtkRow[]; time?: EtkRow[] }) {
   const byName = new Map(time.map((row) => [row.name || "", row.norm || ""]));
   const perRow = time.length > 1 && result.length === time.length && result.every((row) => byName.has(row.name || ""));
   const total = time.reduce((sum, row) => sum + minutes(row.norm), 0);
   const hours = hoursText(total);
-  const timeFig = time.length > 0 && <div className="etk-fig etk-time" aria-label="Расчётное время">
-    <small>{perRow || time.length > 1 ? "Расчётное время, итого" : "Расчётное время"}</small>
-    <b>{formatMinutes(total)} <span>мин{hours ? ` · ${hours}` : ""}</span></b>
-    {!perRow && time.length > 1 && <ul>{time.map((row, index) =>
-      <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>}
+  const timeKv = time.length > 0 && <div className="etk-time" aria-label="Расчётное время">
+    <dt>{perRow || time.length > 1 ? "Расчётное время, итого" : "Расчётное время"}</dt>
+    <dd>{formatMinutes(total)} <span>мин{hours ? ` · ${hours}` : ""}</span></dd>
   </div>;
+  const detail = !perRow && time.length > 1 && <ul className="etk-time-list">{time.map((row, index) =>
+    <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>;
   if (result.length === 1) {
     const [row] = result;
     return <div className="etk-result etk-result-one">
-      <div className="etk-result-name"><small>{label}</small><span>{row.name || "—"}</span></div>
-      <div className="etk-figs">
-        <div className="etk-fig"><small>Количество</small><b>{quantity(row) || "—"}</b></div>
-        {timeFig}
-      </div>
+      <div className="etk-result-name"><small>{label}</small><b><ProductText text={row.name || "—"} /></b></div>
+      <dl className="etk-kv">
+        <div><dt>Количество</dt><dd>{quantity(row) || "—"}</dd></div>
+        {timeKv}
+      </dl>
+      {detail}
     </div>;
   }
   return <div className="etk-result">
     {result.length > 0 && <table className="etk-result-table">
       <thead><tr><th>{label}</th><th>Кол-во</th>{perRow && <th>Время, мин</th>}</tr></thead>
       <tbody>{result.map((row, index) => <tr key={`${row.name}:${index}`}>
-        <td>{row.name || "—"}</td>
+        <td><ProductText text={row.name || "—"} /></td>
         <td className="num">{quantity(row)}</td>
         {perRow && <td className="num">{formatNumber(byName.get(row.name || ""))}</td>}
       </tr>)}</tbody>
     </table>}
-    {timeFig}
+    {timeKv && <dl className="etk-kv">{timeKv}</dl>}
+    {detail}
   </div>;
 }
 
@@ -210,20 +231,6 @@ function ResultView({ label, result = [], time = [] }: { label: string; result?:
 function MarkMissing({ text }: { text: string }) {
   const parts = text.split(ETK_NOT_SET);
   return <>{parts.map((part, index) => <Fragment key={index}>{part}{index < parts.length - 1 && <b className="tone-danger">{ETK_NOT_SET}</b>}</Fragment>)}</>;
-}
-
-/** Комплектующие (SUPPLYMAP etkPartRow_): артикул к применению, под ним «по КД», наименование по артикулу, ГРН партии;
- *  у обжимаемого контакта — строка спецификации на свой конец: аппликатор, высота обжима, отрыв, зачистка. */
-function PartRows({ rows, fields }: { rows?: EtkRow[]; fields?: unknown }) {
-  if (!rows?.length) return null;
-  const crimp = fields && typeof fields === "object" ? fields as Record<string, unknown> : {};
-  return <div className="etk-block"><strong>Комплектующие</strong>{rows.map((row, index) =>
-    <InputLine key={`${row.art || row.name}:${index}`} qty={quantity(row)}>
-      {row.art || row.name || "—"}{row.kd && <small>по КД: {row.kd}, аналог</small>}
-      {row.art && row.name && <small>{row.name}</small>}{row.grn && <small>ГРН {row.grn}</small>}
-      {etkContactSpecs(crimp, row.art).map((spec) => <small key={spec} className="etk-spec"><MarkMissing text={spec} /></small>)}
-    </InputLine>
-  )}</div>;
 }
 
 /** Допуск шага, которого нет в данных («длина не задана» у нарезки трубок-маркеров) — красным, как «не задано» пайки. */
@@ -262,8 +269,8 @@ function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
  *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
  *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
-function EtkOperationCard({ operation, number, total, batch = "", actions, sketch }: {
-  operation: EtkOperation; number: number; total: number; batch?: string; actions?: ReactNode; sketch?: ReactNode;
+function EtkOperationCard({ operation, number, total, batch = "", route = null, actions, sketch }: {
+  operation: EtkOperation; number: number; total: number; batch?: string; route?: EtkRoute | null; actions?: ReactNode; sketch?: ReactNode;
 }) {
   const raw = operation as Record<string, unknown>;
   // Эскизы — SVG-строки etkDraw (как в печати); монтаж в разъём — торец серии с номерами контактов всегда, даже без
@@ -294,10 +301,9 @@ function EtkOperationCard({ operation, number, total, batch = "", actions, sketc
     {safety && <EtkFold block="safety" className="etk-safety" summary="Требование безопасности"><div>{safety}</div></EtkFold>}
     {!operation.card && <div className="warning-inline">Карточка операции отсутствует в библиотеке.</div>}
     <EtkSection label="Вход" number={next()}>
-      {hasInput ? <div className="etk-flow">
-        <PartRows rows={operation.components} fields={raw.fields} />
-        <Rows title="Полуфабрикат на входе" rows={operation.semis} />
-      </div> : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
+      {hasInput ? <PickList semis={operation.semis} parts={operation.components} fields={raw.fields}
+        semiFrom={etkSemiSource(route, operation.position || number)} />
+      : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
     </EtkSection>
     <EtkSection label="Оснастка" number={next()}>
       {solder && <SolderPanel mode={solder} />}
@@ -476,7 +482,7 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
     chips: chips.length ? <div className="etk-chips" aria-label="Параметры операции">{chips.map(([label, value]) =>
       <span key={label}><small>{label}</small><MarkMissing text={value} /></span>)}</div> : undefined,
     input: operation.components?.length || operation.semis?.length
-      ? <div className="etk-flow"><PartRows rows={operation.components} fields={raw.fields} /><Rows title="Полуфабрикат на входе" rows={operation.semis} /></div> : undefined,
+      ? <PickList semis={operation.semis} parts={operation.components} fields={raw.fields} semiFrom={etkSemiSource(null, operation.position || 0)} /> : undefined,
     sketch: figure || sketchUrl ? <div className="etk-fig-row">
       {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
       {sketchUrl && <div className="etk-sketch"><img src={sketchUrl} alt="Эскиз операции" /></div>}
@@ -580,7 +586,7 @@ function EtkView({ card, canEdit, onSaved, onRouteSaved, sketches, onSketches, s
       const item = list[position - 1];
       return <details key={`${etkOperationKey(item)}:${position}`} className="etk-task-op">
         <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item) && <small>{navSub(item)}</small>}</summary>
-        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch}
+        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(item)} canEdit={false} url={sketchUrl}
             sketch={sketches.find((sketch) => sketch.operation_key === etkOperationKey(item))} onChanged={onSketches} />} />
       </details>;
@@ -627,7 +633,7 @@ function EtkView({ card, canEdit, onSaved, onRouteSaved, sketches, onSketches, s
         onSave={save}
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
-          batch={batch}
+          batch={batch} route={route}
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>Править операцию</button> : null}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />

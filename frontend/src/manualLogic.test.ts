@@ -709,11 +709,11 @@ describe("manual assembly: order of blocks and short names (owner 10.10: «ка�
 
   it("shortens a long generated block name to its operations, keeping the full name for the tooltip", () => {
     expect(shortBlockName(["Монтаж в разъём А1 — I-DS1071-SCB02X5", "Свивка", "Маркировка — БМ-25"])).toBe("Монтаж в разъём А1 · свивка · маркировка");
-    let state = renameBlock(twoBranches(), "b2", "Разъём I-DS1071-SCB02X5 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)");
+    let state = renameBlock(twoBranches(), "b2", "Разъём I-DS1071-SCB02X5 смонтирован (сторона А, 4 провода) (со свивкой) (маркирован)");
     state = renameBlock(state, "b3", "Трубка");
     const { route, ops } = manualRoute(state, 1);
     const title = (key: string) => manualShortTitle(route.blocks.find((block) => block.key === key)!, ops, "Изделие");
-    expect(title("b2")).toEqual({ title: "Резка · опрессовка терминалов (А)", full: "Разъём I-DS1071-SCB02X5 смонтирован (ст. А, 4 пров.) (со свивкой) (маркирован)" });
+    expect(title("b2")).toEqual({ title: "Резка · опрессовка терминалов (А)", full: "Разъём I-DS1071-SCB02X5 смонтирован (сторона А, 4 провода) (со свивкой) (маркирован)" });
     expect(title("b3")).toEqual({ title: "Трубка", full: "Трубка" });
     // Итог с операциями назван ими, изделие — в подсказке (и строкой «итог: …» на схеме).
   expect(title("b1")).toEqual({ title: "Усадка · контроль", full: "Изделие" });

@@ -103,10 +103,22 @@ def _side_label(op: Mapping[str, Any]) -> str:
     return "В" if op.get("side") == "B" else "А"
 
 
+def _wires_text(count: int) -> str:
+    """«1 провод», «2 провода», «5 проводов»: the full word, Russian plural."""
+    tail = count % 100
+    if 10 < tail < 20 or count % 10 >= 5 or count % 10 == 0:
+        word = "проводов"
+    elif count % 10 == 1:
+        word = "провод"
+    else:
+        word = "провода"
+    return f"{count} {word}"
+
+
 def _location(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     endpoint = _endpoint(op)
     label = str(endpoint.get("label") or endpoint.get("connName") or "")
-    return label if config.get("bigAssembly") and label else f"ст. {_side_label(op)}"
+    return label if config.get("bigAssembly") and label else f"сторона {_side_label(op)}"
 
 
 def _term_count(op: Mapping[str, Any], config: Mapping[str, Any]) -> int:
@@ -160,9 +172,39 @@ def _suffix(op: Mapping[str, Any]) -> str:
     return ""
 
 
+def _count_text(count: int, one: str, few: str, many: str) -> str:
+    """«1 отрезок», «2 отрезка», «5 отрезков»: a number and the right Russian plural form."""
+    tail = count % 100
+    if 10 < tail < 20 or count % 10 >= 5 or count % 10 == 0:
+        return f"{count} {many}"
+    return f"{count} {one if count % 10 == 1 else few}"
+
+
+def _cut_groups(wires: Sequence[Mapping[str, Any]]) -> str:
+    """«НВ4 0,2 — 4 шт по 211 мм; НВ4 0,5 — 2 шт по 300 мм»: the cut wires folded by grade and length."""
+    grouped: dict[tuple[str, str], Decimal] = {}
+    for wire in wires:
+        label = str(wire.get("art") or wire.get("name") or "").strip()
+        length = _decimal(wire.get("length"))
+        key = (label, _format(length) if length else "")
+        grouped[key] = grouped.get(key, Decimal(0)) + _number(wire.get("qty"), Decimal(1))
+    return "; ".join(
+        (f"{label} — " if label else "") + f"{_format(count)} шт" + (f" по {length} мм" if length else "")
+        for (label, length), count in grouped.items()
+    )
+
+
+def _side_word(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
+    """«Сторона А» for the start of a sentence; a big assembly names the end by its label."""
+    location = _location(op, config)
+    return location[:1].upper() + location[1:]
+
+
 def _result_name(
     op: Mapping[str, Any], config: Mapping[str, Any], previous: str,
 ) -> str:
+    """The semi-finished product an operation hands on, as one short Russian sentence: the subject first («Провода»,
+    «Сторона А»), then what was done, then the parts. Every technical fact (article, side, count) stays."""
     operation_type = str(op.get("type") or "")
     kind = _kind(op)
     wires = _wires(op, config)
@@ -171,44 +213,46 @@ def _result_name(
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
         sources = list(dict.fromkeys(str(item) for item in op.get("wireSources") or [] if item))
         if op.get("side") == "B" and previous and len(sources) <= 1:
-            return f"{previous}; {_location(op, config)}: обжат терм. {terminal}".strip()
-        return f"Заготовка: {len(wires)} пров. с обжатым терм. {terminal} ({_location(op, config)})"
+            return f"{previous}; {_location(op, config)}: обжаты терминалы {terminal}".strip()
+        return f"{_side_word(op, config)}: на {_wires_text(len(wires))} обжаты терминалы {terminal}"
     if kind == "ins":
         connector = str(endpoint.get("connArt") or endpoint.get("connName") or "")
-        return f"Разъём {connector} смонтирован ({_location(op, config)}, {len(wires)} пров.)"
+        return f"{_side_word(op, config)} собрана: провода вставлены в разъём {connector}"
     if kind == "sdr":
         connector = str(endpoint.get("connArt") or endpoint.get("connName") or "")
-        return f"Разъём {connector} припаян ({_location(op, config)})"
+        return f"{_side_word(op, config)} собрана: провода припаяны к разъёму {connector}"
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
-        cut = "; ".join(filter(None, (_wire_name(item) for item in wires)))
+        cut = f"Провода нарезаны: {_cut_groups(wires)}" if wires else ""
         terminal = str(endpoint.get("termArt") or endpoint.get("termName") or "")
         tinned = f"; {TINNED_END}" if op.get("tin") else ""
         side_b = _side_b_op(op)
-        crimped_b = f"; {_location(side_b, config)}: обжат терм. {_terminal(side_b)}" if _terminal(side_b) else ""
-        return f"{cut}; {_location(op, config)}: обжат терм. {terminal}{crimped_b}{tinned}" if terminal else cut
+        crimped_b = f"; {_location(side_b, config)}: обжаты терминалы {_terminal(side_b)}" if _terminal(side_b) else ""
+        return f"{cut}; {_location(op, config)}: обжаты терминалы {terminal}{crimped_b}{tinned}" if terminal else cut
     if operation_type == "cutTut":
         material = str(op.get("tutArt") or op.get("tutName") or "ТУТ")
         segments = op.get("tutSegs") if isinstance(op.get("tutSegs"), list) else []
         if any(item.get("len") for item in segments if isinstance(item, Mapping)):
-            parts = [f"{item.get('count', 0)}×{item.get('len')}мм" for item in segments if item.get("len")]
-            return f"{material}: {' + '.join(parts)}"
+            parts = [f"{item.get('count', 0)} шт по {item.get('len')} мм" for item in segments if item.get("len")]
+            return f"Трубка {material} нарезана: {'; '.join(parts)}"
         count = int(_decimal(op.get("tutCount")))
-        return f"{material}{f', {count} отрезков' if count else ''}"
+        return f"Трубка {material} нарезана" + (f": {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}" if count else "")
     if operation_type == "insTut":
-        if previous:
-            return f"{previous} ({'термоусадка надета' if op.get('harness') else 'ТУТ надет'})"
-        return "ТУТ надет на провода"
+        done = "термоусадка надета" if op.get("harness") else "трубка надета на провода"
+        return f"{previous}; {done}" if previous else "Трубка надета на провода"
     if operation_type == "heatTut":
-        if op.get("harness") and previous.endswith(" (термоусадка надета)"):
-            return previous.removesuffix(" (термоусадка надета)") + " (термоусадка усажена)"
-        return f"{previous} ({'термоусадка усажена' if op.get('harness') else 'ТУТ усажен'})" if previous else "Усадка ТУТ"
+        if op.get("harness") and previous.endswith("; термоусадка надета"):
+            return previous.removesuffix("; термоусадка надета") + "; термоусадка усажена"
+        done = "термоусадка усажена" if op.get("harness") else "трубка усажена"
+        return f"{previous}; {done}" if previous else "Термоусадка усажена"
     if operation_type == "stripCable":
-        return f"{previous} (концы разделаны)" if previous else f"Концы разделаны ({op.get('tutCount') or 0} конц.)"
+        count = int(_decimal(op.get("tutCount")))
+        return f"{previous}; концы разделаны" if previous else f"Концы разделаны: {count}"
     labels = {
-        "twist": "со свивкой", "tin": "с лужением", "insMark": "маркирован",
-        "seal": "загерметизирован", "insWrap": "в оплётке" if op.get("wrapKind") == "braid" else "в защитной ленте",
+        "twist": "провода скручены", "tin": "концы облужены", "insMark": "маркировка нанесена",
+        "seal": "место загерметизировано",
+        "insWrap": "надета оплётка" if op.get("wrapKind") == "braid" else "намотана защитная лента",
     }
-    return f"{previous} ({labels[operation_type]})" if previous and operation_type in labels else previous
+    return f"{previous}; {labels[operation_type]}" if previous and operation_type in labels else previous
 
 
 def _group_cut_components(wires: Sequence[Mapping[str, Any]], quantity: Decimal) -> list[dict[str, str]]:
@@ -329,7 +373,7 @@ def _double_crimp_rows(op: Mapping[str, Any], config: Mapping[str, Any], wires: 
     per = max(2, int(_number(_endpoint(op).get("perTerm"), Decimal(2))))
     label = f"обжим {per} проводов" if per > 2 else "двойной обжим"
     return [
-        f"{' + '.join(_wire_name(wire) for wire in wires[start:start + per])}, обж. терм. {_terminal(op)} "
+        f"{' + '.join(_wire_name(wire) for wire in wires[start:start + per])}, обжаты в терминал {_terminal(op)} "
         f"({label}, {_location(op, config)})"
         for start in range(0, len(wires), per)
     ]
@@ -395,7 +439,7 @@ def _semis_rows(
     if build_side and kind == "prs" and wires:
         return [_row(_wire_name(wire), _per_wire(wire, quantity)) for wire in wires]
     if build_side and kind in {"ins", "sdr"} and wires:
-        tail = " (ТУТ надет)" if tut_on else ""
+        tail = "; трубка надета на провода" if tut_on else ""
         return [_row(_wire_result_name(wire, _terminal(op)) + tail, _per_wire(wire, quantity)) for wire in wires]
     norm = previous_norm
     if not norm and operation_type in {"insTut", "endCap", "foldCore", "stripCable"}:
@@ -613,7 +657,7 @@ _NO_DATA = "⚠ НЕТ ДАННЫХ"
 
 def _wire_group(labels: Sequence[str]) -> str:
     """One name for the wires a contact crimps: the wire itself, or the words the colours of one grade share
-    («НВ4 0,2 белый», «НВ4 0,2 зелёный» → «НВ4 0,2»); nothing in common — «N пров.»."""
+    («НВ4 0,2 белый», «НВ4 0,2 зелёный» → «НВ4 0,2»); nothing in common — «N проводов»."""
     names = list(dict.fromkeys(label.strip() for label in labels if label.strip()))
     if len(names) <= 1:
         return names[0] if names else ""
@@ -622,7 +666,7 @@ def _wire_group(labels: Sequence[str]) -> str:
         if any(word != column[0] for word in column):
             break
         common.append(column[0])
-    return " ".join(common) or f"{len(names)} пров."
+    return " ".join(common) or _wires_text(len(names))
 
 
 def _crimp_ends(

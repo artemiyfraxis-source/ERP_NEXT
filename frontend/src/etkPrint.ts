@@ -9,7 +9,7 @@ import {
 } from "./etkDraw";
 import { ETK_TOOLING_SECTIONS, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
-import { etkRouteLine, etkRouteOf } from "./etkRoute";
+import { ETK_PART_SOURCE, etkRouteLine, etkRouteOf, etkSemiSource } from "./etkRoute";
 import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
@@ -124,7 +124,8 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const operations = rows(document.operations);
   const harness = etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
   const connections = etkConnectionRows(document.connections);
-  const routeLine = etkRouteLine(etkRouteOf(card.document));
+  const route = etkRouteOf(card.document);
+  const routeLine = etkRouteLine(route);
   const cover: PrintPage = {
     title: "Технологическая карта сборки",
     subtitle: `${text(kit.name)} · ${text(kit.project)} ${text(kit.index)} · ревизия ${revision}`,
@@ -169,9 +170,11 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       text(item.art) + (item.kd ? ` (по КД: ${text(item.kd)}, аналог)` : ""),
       // Обжимаемый контакт: под наименованием — спецификация обжима своего конца (как на экране).
       [text(item.name), ...etkContactSpecs(object(operation.fields), item.art)].filter(Boolean).join("\n"), text(item.grn),
-      text(item.norm), "", unitLabel(text(item.unit)),
+      text(item.norm), "", unitLabel(text(item.unit)), ETK_PART_SOURCE,
     ]);
-    const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
+    // «Что взять»: полуфабрикат — то же название, что в «Результате» прошлой операции, и откуда его брать.
+    const semiFrom = etkSemiSource(route, Number(operation.position) || index + 1);
+    const semis = numbered(rows(operation.semis), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit)), semiFrom]);
     const markRows = rows(object(operation.fields).marks);
     const withLength = markRows.some((mark) => text(mark.length));
     const marks = numbered(markRows, (mark) => [
@@ -191,8 +194,8 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         ...head(kit, revision, text(operation.code)),
         { text: text(opCard.safety) },
         section("Вход"),
-        ...table(["№", "Комплектующие: артикул", "Наименование", "ГРН", "Норма", "Факт", "Ед."], components),
-        ...table(["№", "Полуфабрикат на входе", "Норма", "Факт", "Ед."], semis),
+        ...table(["№", "Что взять: полуфабрикат", "Сколько", "Факт", "Ед.", "Откуда"], semis),
+        ...table(["№", "Что взять: комплектующие, артикул", "Наименование", "ГРН", "Сколько", "Факт", "Ед.", "Откуда"], components),
         ...(components.length || semis.length ? [] : [{ text: "Комплектующих и полуфабрикатов на входе нет." }]),
         section("Оснастка: инструмент, оборудование, расходники"),
         ...table(["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],

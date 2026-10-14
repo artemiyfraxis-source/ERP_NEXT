@@ -72,8 +72,8 @@ def test_tut_pieces_are_a_side_branch_into_the_operation_that_puts_them_on():
         ("b6", "b7", 1), ("b7", "b8", 1), ("b8", "b9", 1),
     ]
     by_key = blocks(route)
-    assert by_key["b2"]["name"] == "ТУТ 10/5мм, черная: 2×30мм" and by_key["b2"]["inputs"] == 0
-    assert by_key["b3"]["name"].endswith("(ТУТ надет)") and by_key["b3"]["inputs"] == 2
+    assert by_key["b2"]["name"] == "Трубка ТУТ 10/5мм, черная нарезана: 2 шт по 30 мм" and by_key["b2"]["inputs"] == 0
+    assert by_key["b3"]["name"].endswith("; трубка надета на провода") and by_key["b3"]["inputs"] == 2
     assert by_key["b6"]["inputs"] == 2 and by_key["b9"]["final"]
 
 
@@ -93,7 +93,7 @@ def test_strip_and_splice_stay_in_the_chain_they_work_on():
     }
     route = build(config)["route"]
     assert edges(route) == [("b1", "b2", 1), ("b2", "b3", 1), ("b3", "b4", 1)]
-    assert blocks(route)["b2"]["name"] == "ПВ3 300мм (концы разделаны)"
+    assert blocks(route)["b2"]["name"] == "Провода нарезаны: ПВ3 — 2 шт по 300 мм; концы разделаны"
 
 
 def test_tut_pieces_nobody_puts_on_and_a_late_cut_still_reach_the_product():

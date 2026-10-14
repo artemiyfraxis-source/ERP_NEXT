@@ -2253,7 +2253,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-def small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted-foreground); }
 .etk-def-text { white-space: pre-line; font-size: 12.5px; }
 /* 6 Результат: таблица «что отдаём дальше — сколько» + плитка расчётного времени отдельной цифрой. */
-.etk-result { display: grid; grid-template-columns: minmax(0, 960px) minmax(240px, 320px); gap: 10px; align-items: start; }
+.etk-result { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 40px; }
 /* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
 .etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
 .etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
@@ -2266,24 +2266,14 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-result-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
 .etk-result-table th { padding: 6px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); }
 .etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }
-.etk-result-table .num, .etk-time .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
+.etk-result-table .num, .etk-time-list .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; }
 .etk-result-table th:not(:first-child) { text-align: right; width: 1%; white-space: nowrap; }
 .etk-links { margin: 8px auto 0; width: auto; min-width: 640px; }
 .etk-links th:not(:first-child) { text-align: left; width: auto; }
 .etk-links th:first-child, .etk-links th:nth-child(4), .etk-links th:nth-child(6) { text-align: right; }
 .etk-links td { padding: 4px 12px; }
 .etk-fig { display: grid; gap: 2px; align-content: start; padding: 8px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
-.etk-fig > small { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
-.etk-fig > b { font-size: 18px; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.etk-fig > b > span { font-size: 13px; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; }
-.etk-time ul { margin: 6px 0 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; }
-.etk-time li { display: flex; justify-content: space-between; gap: 8px; }
-.etk-result-one { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
-.etk-result-name { display: grid; gap: 2px; flex: 1 1 260px; align-content: start; padding: 8px 0; font-size: 14px; font-weight: 600; }
-.etk-result-name > small { font-size: 12px; color: var(--muted-foreground); }
-.etk-figs { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 10px; flex: 0 1 460px; }
-.etk-result:not(:has(.etk-result-table)):not(.etk-result-one) { grid-template-columns: minmax(220px, 280px); }
-@media (max-width: 1100px) { .etk-result { grid-template-columns: 1fr; } .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
+@media (max-width: 1100px) { .etk-op .etk-flow { grid-auto-flow: row; } .etk-op .etk-block { border-left: 0; border-top: 1px solid var(--border); } }
 
 /* «Генератор» карточки проекта: сборки сегментами, одна кнопка «Создать» / «Пересобрать», служебное — в «Ещё». */
 .seg-tabs.sub { margin-bottom: 8px; }
@@ -3794,3 +3784,27 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .tr-head > .tr-head-act { display: flex; gap: 8px; margin-left: 10px; white-space: nowrap; }
 @media (max-width: 1048px) { .tr-head.with-act { grid-template-columns: 1fr; } .tr-head-act { margin-left: 0; } }
 .tc-edit .op-params { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+
+/* 6 Результат (14.10): полуфабрикат — главное (жирно, короткими строками), справа тесная пара «подпись над значением»;
+   «Вход» — таблица «Что взять / Сколько / Откуда». Одни цифры — tabular-nums. */
+.etk-result-table { width: auto; min-width: 420px; max-width: 100%; }
+.etk-result-name { display: grid; gap: 1px; min-width: 0; max-width: 72ch; align-content: start; }
+.etk-result-name > small, .etk-kv dt { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.etk-result-name > b { font-size: 14px; line-height: 1.35; }
+.etk-prod { display: grid; }
+.etk-prod-line { display: block; overflow-wrap: anywhere; }
+.etk-kv { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0; align-items: flex-start; }
+.etk-kv > div, .etk-kv > .etk-time { display: grid; gap: 1px; margin: 0; }
+.etk-kv dd { margin: 0; font-size: 15px; font-weight: 700; line-height: 1.35; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.etk-kv dd > span { font-size: 12px; font-weight: 600; color: var(--muted-foreground); }
+.etk-time-list { flex: 1 0 100%; margin: 0; padding: 6px 0 0; list-style: none; border-top: 1px solid var(--border); display: grid; gap: 3px; font-size: 12px; max-width: 520px; }
+.etk-time-list li { display: flex; justify-content: space-between; gap: 8px; }
+.etk-pick { width: max-content; min-width: min(100%, 640px); max-width: 100%; justify-self: start; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
+.etk-pick th.num { text-align: right; }
+.etk-pick th { padding: 5px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); white-space: nowrap; }
+.etk-pick td { padding: 5px 12px; border-top: 1px solid var(--border); vertical-align: top; }
+.etk-pick td > b { display: block; font-weight: 600; }
+.etk-pick td > small { display: block; font-size: 11px; color: var(--muted-foreground); }
+.etk-pick td.num { text-align: right; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
+.etk-pick-from { color: var(--muted-foreground); white-space: nowrap; }
+.etk-pick-semi td { background: color-mix(in srgb, var(--primary) 6%, transparent); }

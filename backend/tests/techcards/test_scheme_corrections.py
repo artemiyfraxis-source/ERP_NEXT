@@ -92,8 +92,8 @@ def test_typical_scheme_changes_are_listed_against_the_derived_scheme():
         "блок убран: «Жгут» (операции: «Опрессовка»)",
         "итоговый блок изменён: было «Жгут» → стало «Жгут»",
         "операция перенесена: «Опрессовка» — из «Жгут» в «Жгут»",
-        "шт на 1: «ПВ3 100мм» → «Жгут» было 1 → стало 2",
-        "вход убран: «ПВ3 100мм (ТУТ надет)» → «Жгут»",
+        "шт на 1: «Провода нарезаны: ПВ3 — 2 шт по 100 мм» → «Жгут» было 1 → стало 2",
+        "вход убран: «Провода нарезаны: ПВ3 — 2 шт по 100 мм; трубка надета на провода» → «Жгут»",
     ]
     assert details["ops"] == [
         {"position": 1, "code": "CUT_WIRE", "type": "cutWire", "label": "Резка провода"},
@@ -121,7 +121,7 @@ def test_typical_with_its_own_operation_order_derives_the_automatic_scheme_in_th
                   {"from": "b1", "to": "b4", "per_unit": 1}],
     }
     changes = scheme_correction(_build(config))["changes"]
-    assert changes == ["вход добавлен: «ТУТ, 2 отрезков» → «Жгут»", "вход убран: «ТУТ, 2 отрезков» → «ПВ3 100мм (ТУТ надет)»"]
+    assert changes == ["вход добавлен: «Трубка ТУТ нарезана: 2 отрезка» → «Жгут»", "вход убран: «Трубка ТУТ нарезана: 2 отрезка» → «Провода нарезаны: ПВ3 — 2 шт по 100 мм; трубка надета на провода»"]
 
 
 def test_manual_from_generator_unchanged_logs_nothing():
@@ -153,7 +153,7 @@ def test_manual_from_generator_lists_added_moved_reordered_operations_and_inputs
     assert details["changes"] == [
         "операция добавлена: «Проверка» — в блок «Жгут»",
         "порядок операций изменён: было 1, 2, 3, 4 → стало 2, 1, 3, 4",
-        "шт на 1: «ПВ3 100мм» → «ПВ3 100мм (ТУТ надет)» было 1 → стало 2",
+        "шт на 1: «Провода нарезаны: ПВ3 — 2 шт по 100 мм» → «Провода нарезаны: ПВ3 — 2 шт по 100 мм; трубка надета на провода» было 1 → стало 2",
     ]
     assert [(op["position"], op["seq"], op["code"]) for op in details["ops"]] == [
         (1, 2, "CUT_TUT"), (2, 1, "CUT_WIRE"), (3, 3, "INS_TUT"), (4, 4, "PRS_TERM"), (5, 5, ""),
@@ -190,7 +190,7 @@ def test_the_generators_own_hand_route_in_the_origin_is_not_the_automatic_scheme
     origin = _typical(CORRECTED)
     manual = generator_to_assembly(deepcopy(origin))  # the manual tab opened over the corrected typical scheme
     details = scheme_correction(_build(manual), origin)
-    assert details is not None and "вход убран: «ПВ3 100мм (ТУТ надет)» → «Жгут»" in details["changes"]
+    assert details is not None and "вход убран: «Провода нарезаны: ПВ3 — 2 шт по 100 мм; трубка надета на провода» → «Жгут»" in details["changes"]
 
 
 def test_rebuilding_with_the_same_scheme_as_the_last_build_is_not_a_new_correction():
@@ -271,7 +271,7 @@ def test_endpoint_reads_newest_first_with_since_and_project_and_a_tcgen_token(dr
 
     items = admin.get("/api/techcards/scheme-corrections").json()["items"]
     assert [item["mode"] for item in items] == ["ручная из генератора", "типовая"]
-    assert items[0]["changes"] == ["шт на 1: «ПВ3 100мм» → «ПВ3 100мм (ТУТ надет)» было 1 → стало 3"]
+    assert items[0]["changes"] == ["шт на 1: «Провода нарезаны: ПВ3 — 2 шт по 100 мм» → «Провода нарезаны: ПВ3 — 2 шт по 100 мм; трубка надета на провода» было 1 → стало 3"]
     assert items[0]["card_id"] == card["id"] and items[0]["actor"] == "Admin"
 
     token = _token(admin, "tcgen")
@@ -304,7 +304,7 @@ def test_cli_prints_a_russian_summary_and_json(tmp_path, monkeypatch, capsys):
     text = capsys.readouterr().out
     assert text.startswith("Правки схемы полуфабрикатов с 2026-10-01: 1")
     assert f"2026-10-10 12:00 · {PROJECT} / {INDEX} · ред. 0 · типовая · Мастер" in text
-    assert "  - шт на 1: «ПВ3 100мм» → «Жгут» было 1 → стало 2" in text
+    assert "  - шт на 1: «Провода нарезаны: ПВ3 — 2 шт по 100 мм» → «Жгут» было 1 → стало 2" in text
     assert "Чаще всего правят:" in text and "  шт на 1 — 1" in text
 
     assert scheme_corrections.main(["--since", "2026-10-01", "--project", PROJECT, "--json"]) == 0

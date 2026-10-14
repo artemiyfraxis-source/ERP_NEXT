@@ -90,10 +90,10 @@ SEMIS_DIFFERENCES: dict[str, dict[int, str]] = {
     "708К.2-КБ1": _708, "708К.2-КБ1 без длины": _708, "708К.5-КБ1": _708, "708К.5-КБ1 нормы терминалов": _708,
     "591К.5-КБ2": {4: "ТУТ", 5: "провода", 6: "провода", 7: "провода"},
     "729К.2-КБ1": {3: "ТУТ", 4: "провода"},
-    "345К.2-КБ1": {3: "ТУТ"},
+    "345К.2-КБ1": {3: "ТУТ", 4: "провода"},
     "резка с обжимом": {2: "провода"}, "резка с обжимом, мерительный инструмент": {2: "провода"},
     "резка, обжим, лужение": {2: "провода"},
-    "сростки и разделка": {2: "количество", 3: "цепочка", 4: "количество"},
+    "сростки и разделка": {2: "количество", 3: "цепочка", 4: "провода"},
     "коаксиал": {2: "первая"},
     "жгут: источник по имени разъёма": {1: "без входа"},
 }
@@ -199,7 +199,7 @@ def test_conversion_keeps_the_generator_data_and_operations_as_they_are():
     assert [(block["key"], block["ops"], block["final"]) for block in route["blocks"]] == [
         ("b1", [1], False), ("b2", [2], False), ("b3", [3], False), ("b4", [4], False), ("b5", [5], True),
     ]
-    assert route["blocks"][1]["name"].startswith("Заготовка: 2 пров. с обжатым терм.")
+    assert route["blocks"][1]["name"].startswith("Сторона А: на 2 провода обжаты терминалы")
     assert route["blocks"][-1]["name"] == config["assemblyName"]
     assert all(edge["per_unit"] == 1 for edge in route["edges"])
     assert "seq" not in config["ops"][0], "the source config is not changed"
@@ -254,10 +254,10 @@ def test_generator_library_and_own_operations_mix_in_one_manual_assembly():
     assert cut["fields"]["params"] == "L = 250 мм" and cut["fields"]["applicator"] == "A16"
     # Inside the block the cut hands its typed product on; the block's product is named by the block.
     assert cut["result"] == [{"name": "ПВ3 250мм, обжатый терминал SXH-001T-P0.6", "norm": "20", "unit": "Шт."}]
-    assert twist["semis"] == [{"name": "ПВ3 250мм; ст. А: обжат терм. SXH-001T-P0.6", "norm": "10", "unit": "Шт."}]
+    assert twist["semis"] == [{"name": "Провода нарезаны: ПВ3 — 2 шт по 250 мм; сторона А: обжаты терминалы SXH-001T-P0.6", "norm": "10", "unit": "Шт."}]
     assert twist["result"][0]["name"] == "Провода с терминалом"
     assert mount["semis"] == [{"name": "Провода с терминалом", "norm": "10", "unit": "Шт."}]
-    assert mount["result"][0]["name"] == "Разъём XHP-2 смонтирован (ст. А, 1 пров.)"
+    assert mount["result"][0]["name"] == "Сторона А собрана: провода вставлены в разъём XHP-2"
     assert mount["connector"] == "XHP-2"
     assert crimp["result"] == [{"name": "Жгут", "norm": "10", "unit": "Шт."}]
     assert crimp["result_label"] == "Изделие" and mount["result_label"] == "Полуфабрикат"
