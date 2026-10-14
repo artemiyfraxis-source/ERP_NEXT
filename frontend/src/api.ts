@@ -3077,7 +3077,9 @@ export const productionApi = {
   /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
   taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
-    api<{ card: ProjectTechcard; focus: { position: number; positions?: number[]; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
+    api<{ card: ProjectTechcard; focus: { position: number; positions?: number[]; code: string };
+      /** Номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции проекта). */
+      serial?: { first: number; last: number; task: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
   inputs: (taskId: string, operationId: string, operatorId = "") =>
     api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs${operatorId ? `?operator_id=${operatorId}` : ""}`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),

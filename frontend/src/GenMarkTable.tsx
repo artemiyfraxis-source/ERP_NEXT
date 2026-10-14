@@ -1,9 +1,10 @@
-import { useId } from "react";
+import { useId, useRef } from "react";
 import { AutoTextarea } from "./AutoTextarea";
 import { Toggle } from "./GenControls";
 import {
   MARK_KIND_DEFAULT, MARK_KINDS, MARK_PLACES, markIsTube, markMaterialSource, markRowActive, newMarkRow, productMarkRow, type MarkMat, type MarkPlace, type MarkRow,
 } from "./tcGenMarks";
+import { expandMarkSerial, hasMarkSerial, insertMarkSerial, MARK_SERIAL_WIDTHS, markSerialWidth, withMarkSerialWidth } from "./markSerial";
 
 type CompLike = { art?: string; name?: string };
 
@@ -34,10 +35,23 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
   note?: string;
 }) {
   const id = useId();
+  // Поле «Надпись» строки и где в нём стоял курсор: «№ изделия» встаёт туда, иначе в конец.
+  const textBoxes = useRef(new Map<number, HTMLTextAreaElement>());
+  const carets = useRef(new Map<number, number>());
   const set = (index: number, patch: Partial<MarkRow>) => onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   const kitNames = kitMarks.map((comp) => comp.art || comp.name || "").filter((name) => name && !(MARK_KINDS as readonly string[]).includes(name));
   const options = [...MARK_KINDS as readonly string[], ...kitNames];
   const hasProductRow = rows.some((row) => row.place === "item");
+  function insertSerial(index: number) {
+    const inserted = insertMarkSerial(rows[index].text, carets.current.get(index));
+    set(index, { text: inserted.text });
+    carets.current.set(index, inserted.caret);
+    requestAnimationFrame(() => {
+      const box = textBoxes.current.get(index);
+      box?.focus();
+      box?.setSelectionRange(inserted.caret, inserted.caret);
+    });
+  }
   return <div className="gen-marks" aria-label="Маркировка по КД">
     <div className="gen-marks-bar">
       <Toggle checked={enabled} onChange={onEnabled} title="Маркировка жгута" hint={hint} />
@@ -61,7 +75,19 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
         return <tr key={index}>
           <td className="num">{n}</td>
           <td><input aria-label={`Что маркируем ${n}`} list={`${id}-targets`} value={row.target} title={row.target || undefined} placeholder="жгут, разъём, провод" onChange={(event) => set(index, { target: event.target.value })} /></td>
-          <td><AutoTextarea aria-label={`Надпись ${n}`} value={row.text} placeholder="как в КД" onChange={(text) => set(index, { text })} /></td>
+          <td><AutoTextarea aria-label={`Надпись ${n}`} value={row.text} placeholder="как в КД" onChange={(text) => set(index, { text })}
+              ref={(node) => { if (node) textBoxes.current.set(index, node); else textBoxes.current.delete(index); }}
+              onSelect={(event) => carets.current.set(index, event.currentTarget.selectionStart)} />
+            {/* «№ изделия»: у надписи с номером — разрядность и пример всегда; у остальных кнопка видна в строке с фокусом. */}
+            {hasMarkSerial(row.text) ? <span className="gen-marks-serial on">
+              <select aria-label={`Цифр в номере ${n}`} value={markSerialWidth(row.text)} onChange={(event) => set(index, { text: withMarkSerialWidth(row.text, Number(event.target.value)) })}>
+                {MARK_SERIAL_WIDTHS.map((width) => <option key={width} value={width}>{width ? `${width} цифры, ${"1".padStart(width, "0")}` : "без нулей, 1"}</option>)}
+              </select>
+              <small title="Номер изделия ставит задание: на каждом изделии свой">{expandMarkSerial(row.text, 1)}, {expandMarkSerial(row.text, 2)} …</small>
+            </span> : <span className="gen-marks-serial">
+              <button type="button" className="gen-marks-serial-add" aria-label={`Вставить № изделия в надпись ${n}`}
+                title="Номер изделия в партии: на каждом изделии задания свой — 1, 2, 3…" onClick={() => insertSerial(index)}>+ № изделия</button>
+            </span>}</td>
           <td><select aria-label={`Материал ${n}`} className={missing ? "is-warn" : undefined} value={row.material} title={missing ? "Нет в справочнике БД.МАТ и в составе" : undefined}
             onChange={(event) => set(index, { material: event.target.value })}>
             {options.map((name) => <option key={name} value={name}>{name}</option>)}
