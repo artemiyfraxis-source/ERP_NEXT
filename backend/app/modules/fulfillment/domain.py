@@ -214,6 +214,18 @@ class FulfillmentLine:
             raise FulfillmentValidationError("У позиции выбрана партия — сначала сними её")
         return replace(self, off_book=True, absent_at=None, absent_by="")  # the part is there after all
 
+    def mark_off_book_part(self, quantity: Decimal) -> tuple[FulfillmentLine, FulfillmentLine | None]:
+        """«есть, но не заведено» on only `quantity` of the line (owner 14.10.2026: «вводить кол-во, сколько есть»).
+        Splits like a short lot (`bind`): the marked part is off_book, the remainder keeps waiting (a shortage — it
+        keeps «нет на складе» if the line had it). → (marked, remainder or None)."""
+        marked = self.mark_off_book()
+        amount = _positive(quantity, "Количество «есть, не заведено»")
+        if amount > self.requirement:
+            raise FulfillmentValidationError("Количество «есть, не заведено» больше потребности позиции")
+        if amount == self.requirement:
+            return marked, None
+        return replace(marked, requirement=amount), replace(self, id=uuid4(), requirement=self.requirement - amount)
+
     def clear_off_book(self) -> FulfillmentLine:
         if self.issued > 0:
             raise FulfillmentValidationError("Выданную позицию нельзя менять")
@@ -507,14 +519,27 @@ class FulfillmentRequest:
             shortfall_note=None,
         )
 
-    def mark_off_book(self, line_id: UUID, *, touch: bool = True) -> FulfillmentRequest:
+    def mark_off_book(
+        self, line_id: UUID, quantity: Decimal | None = None, *, touch: bool = True,
+    ) -> FulfillmentRequest:
         """«есть, но не заведено»: the waiting position counts as covered without a lot. Like a bound lot it moves the
         status (`_picked_status`: the last open line → «Укомплектован») and rewrites НЕДОБОР from the lines
-        (issueHeadSync_)."""
+        (issueHeadSync_). `quantity` below the need splits the line: the rest stays a waiting line right after it."""
         self._require_editable()
         if not any(line.id == line_id for line in self.lines):
             raise FulfillmentValidationError("Позиция заявки не найдена")
-        lines = tuple(line.mark_off_book() if line.id == line_id else line for line in self.lines)
+        updated: list[FulfillmentLine] = []
+        for line in self.lines:
+            if line.id != line_id:
+                updated.append(line)
+            elif quantity is None:
+                updated.append(line.mark_off_book())
+            else:
+                marked, remainder = line.mark_off_book_part(quantity)
+                updated.append(marked)
+                if remainder is not None:
+                    updated.append(remainder)
+        lines = tuple(updated)
         return replace(
             self, lines=lines, status=self._picked_status(lines, touch), version=self.version + 1, shortfall_note=None,
         )
