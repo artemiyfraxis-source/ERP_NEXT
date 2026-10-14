@@ -936,16 +936,18 @@ it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme a
   expect(steps.querySelector("details")).not.toHaveAttribute("open");
   expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
   expect(screen.getByText("Требование безопасности").closest("details")).not.toHaveAttribute("open");
-  const schema = screen.getByText("Схема Э4 и таблица соединений").closest("details")!;
+  const schema = screen.getByText("Схема Э4").closest("details")!;
   expect(schema).not.toHaveAttribute("open");
   // Схема строится только открытой: чертёж не запрошен, пока блок закрыт.
   expect(seen.some((path) => path.includes("/harness/"))).toBe(false);
 
-  fireEvent.click(screen.getByText("Схема Э4 и таблица соединений"));
-  const map = await screen.findByRole("img", { name: /Схема Э4: A1, B1/ });
-  expect([...map.querySelectorAll("text.etk-wm-pintext")].map((pin) => pin.textContent)).toEqual(["1", "3", "1", "2"]);
-  expect(map.querySelector("text.etk-wm-wire")).toHaveTextContent("НВ4 0,2 красный"); // контакт 1 — первым
-  expect(screen.getByText("Таблица соединений · 2").closest("details")).not.toHaveAttribute("open");
+  fireEvent.click(screen.getByText("Схема Э4"));
+  // Чертежа монтажнику не прочитать — схема связей по таблице соединений ЭТК, как в генераторе (владелец 14.10).
+  const map = await screen.findByRole("img", { name: "Провода с контакта на контакт, сростки и хвосты" });
+  expect([...map.querySelectorAll('[data-end="A1"] .pin-links-row')].map((row) => `${row.getAttribute("data-pin")}:${row.getAttribute("data-wires") ?? ""}`))
+    .toEqual(["1:2", "2:", "3:1"]);
+  expect([...map.querySelectorAll(".pin-links-line")].map((line) => `${line.getAttribute("data-a")}→${line.getAttribute("data-b")}`)).toEqual(["A1·3→B1·2", "A1·1→B1·1"]);
+  expect(screen.queryByText("Таблица соединений · 2")).toBeNull();
   expect(map.closest(".etk-e4")).toBeNull();
 
   fireEvent.click(within(steps).getByText("Ход операции"));

@@ -192,6 +192,10 @@ describe("etkPrint with sketches (etkPrintHtml_)", () => {
     expect(html).toContain("L = 100 мм");
     expect(html).not.toContain("Таблица соединений");
     (card.document as Record<string, unknown>).connections = [{ wire: "x", from: { end: "А1", conn: "A", pin: 1 }, to: { end: "В1", conn: "B", pin: 3 } }];
-    expect(buildPrintDocumentHtml("ТК", etkPrintPages(card, []))).toMatch(/<h2>Таблица соединений<\/h2>[\s\S]*А1 · A[\s\S]*В1 · B/);
+    // Таблица соединений есть — на титуле схема связей Э4 вместо схемы жгута и плоской таблицы (владелец 14.10).
+    const linked = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+    expect(linked).toMatch(/<h2>Схема связей<\/h2>[\s\S]*data-end="А1"[\s\S]*data-end="В1"[\s\S]*data-a="А1·1" data-b="В1·3"/);
+    expect(linked).not.toContain("<h2>Таблица соединений</h2>");
+    expect(linked).not.toContain("<h2>Схема жгута</h2>");
   });
 });

@@ -2,8 +2,8 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { isDark, type ConnectorHousing } from "./connectorArt";
 import { wireSectionOf, type PinoutEnd, type PinUnit } from "./pinoutCheck";
 import { pinCountFromArt } from "./terminalPick";
-import { linkWires, spliceLabel, type LinkAnchor, type LinkWire } from "./tcGenSplices";
-import type { Branch, GenState, Side } from "./tcGenLogic";
+import { linkWires } from "./tcGenSplices";
+import type { Branch, GenState } from "./tcGenLogic";
 import { canonicalColor } from "./wireColors";
 import "./pinoutLinks.css";
 
@@ -13,6 +13,10 @@ import "./pinoutLinks.css";
  * колонки зеркально, в подвале серия и корпус), провода — линиями своего цвета с контакта на контакт с номером провода,
  * свитые пары — свитыми линиями, сростки — точками посередине, хвосты — свободными концами с длиной. Только просмотр:
  * провода ставят на торцах разъёмов выше; вторая вкладка — «Чертёж» по той же форме.
+ *
+ * Рисунок берёт нейтральную модель `LinkScheme` (разъёмы, провода с концами, сростки, свивки): генератор строит её из
+ * формы (`pinoutScheme`, обёртка `PinoutLinks`), ЭТК — из документа (etkLinkScheme.tsx, владелец 14.10: «в ЭТК та же
+ * схема связей, что в генераторе»).
  */
 
 const ROW = 20, TITLE = 22, COLS_H = 18, FOOT = 18, GAP_Y = 16, STUB = 22, SPLICE_GAP = 30, TAIL_DROP = 13, TAIL_STUB = 74;
@@ -39,6 +43,24 @@ const WIDE_FROM = 1080;
 /** Просвет между таблицами: не уже (провода с номерами и свивка), не шире (таблицы не разъезжаются по 27"). */
 const MID_MIN = 120, MID_MAX = 560;
 
+// ── Модель схемы ─────────────────────────────────────────────────────────────────────────────────────────────────────
+export type SchemeSide = "A" | "B";
+/** Куда приходит конец провода: контакт разъёма, сросток, хвост или никуда (не задан). */
+export type SchemeAnchor = { kind: "pin"; epId: string; pin: number } | { kind: "splice"; id: string } | { kind: "tail" } | { kind: "open" };
+/** Разъём — таблица схемы: `key` «А1»/«В2», `designation` по чертежу («XS1», «GIMBAL»), `pins` — контактов в корпусе
+ *  (0 — не известно, строк по занятым), `series` — серия корпуса в подвале, `terminal` — терминал разъёма или «пайка». */
+export type SchemeConnector = { id: string; key: string; side: SchemeSide; conn: string; pins: number; series: string; designation: string; terminal: string };
+/** Провод (жила, экран): контакт на каждом разъёме (`at`) и концы сторон А и В. */
+export type SchemeWire = {
+  key: string; num: string; name: string; color: string | null; stripe: string | null;
+  /** Длина, мм (0 — не задана). */
+  length: number; shield?: boolean; net?: string;
+  at: Record<string, number | null>;
+  a: SchemeAnchor[]; b: SchemeAnchor[];
+};
+/** Схема связей целиком: свитые группы — ключами проводов, сростки по порядку с подписью «С1». */
+export type LinkScheme = { connectors: SchemeConnector[]; wires: SchemeWire[]; splices: Array<{ id: string; label: string }>; twists: string[][] };
+
 /** Что схеме нужно кроме распиновки: обозначение разъёма по чертежу («XS1», «GIMBAL»), терминал по разъёму, свитые
  *  группы ключами жил (`PinUnit.key`). */
 export type SchemeInfo = {
@@ -58,9 +80,37 @@ export function colorWord(u: Pick<PinUnit, "colorName" | "name">): string {
   return "";
 }
 
-type Box = { end: PinoutEnd; x: number; y: number; rows: number; height: number };
+/** Провод рисуется, когда хоть один его конец на контакте или в сростке. */
+export const drawnWire = (w: Pick<SchemeWire, "a" | "b">) => [...w.a, ...w.b].some((x) => x.kind === "pin" || x.kind === "splice");
+
+/** Модель схемы по форме генератора: распиновка, корпуса, сростки и хвосты, обозначения, терминалы, свивки, ответвления. */
+export function pinoutScheme(ends: PinoutEnd[], units: PinUnit[], housings: Record<string, ConnectorHousing | null>,
+  S: Pick<GenState, "splices" | "tails">, info: SchemeInfo = {}): LinkScheme {
+  const drawn = new Map(linkWires(ends, units, S).map((w) => {
+    const branch = (info.branches || []).find((b) => b.extra === w.unit.idx);
+    const source = branch && ends.find((e) => e.id === branch.from);
+    if (!branch || !source) return [w.unit.key, w];
+    const side = source.side === "A" ? "a" : "b";
+    return [w.unit.key, w[side].some((x) => x.kind === "pin" || x.kind === "splice") ? w : { ...w, [side]: [{ kind: "pin", epId: branch.from, pin: branch.pin }] }];
+  }));
+  return {
+    connectors: ends.map((end) => ({
+      id: end.id, key: end.key, side: end.side, conn: end.conn, pins: housings[end.conn]?.n || pinCountFromArt(end.conn) || 0,
+      series: (housings[end.conn]?.title || "").trim(), designation: info.designations?.[end.id] ?? "", terminal: info.terminals?.[end.id] ?? "",
+    })),
+    wires: units.map((u) => {
+      const w = drawn.get(u.key);
+      return { key: u.key, num: u.num, name: u.name, color: u.color, stripe: u.stripe, length: u.length, shield: u.shield, net: u.net, at: u.at,
+        a: w ? w.a : [], b: w ? w.b : [] };
+    }),
+    splices: (S.splices || []).map((s, i) => ({ id: s.id, label: `С${i + 1}` })),
+    twists: info.twists || [],
+  };
+}
+
+type Box = { end: SchemeConnector; x: number; y: number; rows: number; height: number };
 type Pt = { x: number; y: number };
-export type LinkLine = { w: LinkWire; a: Pt; b: Pt; free: null | "tail" | "open"; left: boolean; d: string; twisted: boolean };
+export type LinkLine = { w: SchemeWire; a: Pt; b: Pt; free: null | "tail" | "open"; left: boolean; d: string; twisted: boolean };
 
 const cut = (text: string, width: number) => {
   const room = Math.max(2, Math.floor((width - 8) / CHAR));
@@ -68,22 +118,16 @@ const cut = (text: string, width: number) => {
 };
 
 /** Колонки таблицы слева направо: сторона А — номер у правого края (к проводам), сторона В — зеркально. */
-function columnsOf(side: Side, set: Column[]) {
+function columnsOf(side: SchemeSide, set: Column[]) {
   const list = side === "A" ? set : [...set].reverse();
   let x = 0;
   return list.map((column) => { const at = { ...column, x }; x += column.width; return at; });
 }
 
 /** Раскладка схемы: таблицы разъёмов, точки сростков, линии проводов. Чистая — для теста и для рисунка. */
-export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record<string, ConnectorHousing | null>,
-  S: Pick<GenState, "splices" | "tails">, info: SchemeInfo = {}, room = 1200) {
-  const wires = linkWires(ends, units, S).map((w) => {
-    const branch = (info.branches || []).find((b) => b.extra === w.unit.idx);
-    const source = branch && ends.find((e) => e.id === branch.from);
-    if (!branch || !source) return w;
-    const side = source.side === "A" ? "a" : "b";
-    return w[side].some((x) => x.kind === "pin" || x.kind === "splice") ? w : { ...w, [side]: [{ kind: "pin", epId: branch.from, pin: branch.pin }] };
-  });
+export function schemeLayout(M: LinkScheme, room = 1200) {
+  const units = M.wires;
+  const wires = units.filter(drawnWire);
   const wide = room >= WIDE_FROM;
   const nets = units.some((u) => (u.net || "").trim());
   const set = (wide ? WIDE : NARROW).filter((column) => wide || nets || column.key !== "net");
@@ -91,11 +135,11 @@ export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record
   const mid = Math.max(MID_MIN, Math.min(MID_MAX, room - 16 - TABLE_W * 2));
   const width = TABLE_W * 2 + mid;
   const boxes: Box[] = [];
-  (["A", "B"] as Side[]).forEach((side) => {
+  (["A", "B"] as SchemeSide[]).forEach((side) => {
     let y = 0;
-    ends.filter((e) => e.side === side).forEach((end) => {
+    M.connectors.filter((e) => e.side === side).forEach((end) => {
       const used = units.map((u) => u.at[end.id] ?? 0);
-      const rows = Math.min(60, Math.max(1, housings[end.conn]?.n || pinCountFromArt(end.conn) || 0, ...used));
+      const rows = Math.min(60, Math.max(1, end.pins || 0, ...used));
       const height = TITLE + COLS_H + rows * ROW + FOOT;
       boxes.push({ end, x: side === "A" ? 0 : width - TABLE_W, y, rows, height });
       y += height + GAP_Y;
@@ -111,17 +155,17 @@ export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record
     return { x: box.end.side === "A" ? box.x + TABLE_W : box.x, y: box.y + TITLE + COLS_H + (pin - 0.5) * ROW + shift };
   };
   // Сросток — посередине, на высоте проводов, что в нём сходятся (их другой конец); сростки не налезают друг на друга.
-  const ids = (S.splices || []).map((s) => s.id).filter((id) => wires.some((w) => [...w.a, ...w.b].some((x) => x.kind === "splice" && x.id === id)));
+  const ids = M.splices.map((s) => s.id).filter((id) => wires.some((w) => [...w.a, ...w.b].some((x) => x.kind === "splice" && x.id === id)));
   const far = (id: string) => wires.flatMap((w) => {
-    const here = (list: LinkAnchor[]) => list.some((x) => x.kind === "splice" && x.id === id);
+    const here = (list: SchemeAnchor[]) => list.some((x) => x.kind === "splice" && x.id === id);
     const other = here(w.a) ? w.b : here(w.b) ? w.a : [];
-    return other.flatMap((x) => (x.kind === "pin" ? [pinPt(x.epId, x.pin)!.y] : []));
+    return other.flatMap((x) => { const p = x.kind === "pin" ? pinPt(x.epId, x.pin) : null; return p ? [p.y] : []; });
   });
   const nodes = ids.map((id) => { const ys = far(id); return { id, y: ys.length ? ys.reduce((s, y) => s + y, 0) / ys.length : 0 }; }).sort((a, b) => a.y - b.y);
   nodes.forEach((n, i) => { if (i && n.y < nodes[i - 1].y + SPLICE_GAP) n.y = nodes[i - 1].y + SPLICE_GAP; });
   const spliceX = TABLE_W + mid / 2;
   const splicePt = (id: string): Pt | null => { const n = nodes.find((x) => x.id === id); return n ? { x: spliceX, y: n.y } : null; };
-  const pt = (x: LinkAnchor, key: string): Pt | null => (x.kind === "pin" ? pinPt(x.epId, x.pin, key) : x.kind === "splice" ? splicePt(x.id) : null);
+  const pt = (x: SchemeAnchor, key: string): Pt | null => (x.kind === "pin" ? pinPt(x.epId, x.pin, key) : x.kind === "splice" ? splicePt(x.id) : null);
   /** Провод: прямой отрезок у таблицы, плавный переход, прямой отрезок у второй таблицы. */
   const route = (a: Pt, b: Pt) => {
     const dir = b.x >= a.x ? 1 : -1;
@@ -132,7 +176,7 @@ export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record
   // точки (не поверх проводов, что уходят из сростка), несколько хвостов одной точки — лесенкой.
   const drops = new Map<string, number>();
   const lines: LinkLine[] = wires.flatMap((w) => {
-    const from = w.a.map((x) => pt(x, w.unit.key)).filter((p): p is Pt => !!p), to = w.b.map((x) => pt(x, w.unit.key)).filter((p): p is Pt => !!p);
+    const from = w.a.map((x) => pt(x, w.key)).filter((p): p is Pt => !!p), to = w.b.map((x) => pt(x, w.key)).filter((p): p is Pt => !!p);
     if (from.length && to.length) return from.flatMap((a) => to.map((b): LinkLine => ({ w, a, b, free: null, left: false, d: route(a, b), twisted: false })));
     const loose = (w.a[0]?.kind === "tail" || w.b[0]?.kind === "tail") ? "tail" as const : "open" as const;
     const base = from.length ? from : to;
@@ -146,8 +190,8 @@ export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record
     });
   });
   // Свивка: провода группы сходятся к общей оси и идут волной со сдвигом фазы, затем расходятся к своим контактам.
-  const twists = (info.twists || []).flatMap((keys) => {
-    const members = keys.map((key) => lines.find((l) => !l.free && l.w.unit.key === key && l.b.x > l.a.x)).filter((l): l is LinkLine => !!l);
+  const twists = M.twists.flatMap((keys) => {
+    const members = keys.map((key) => lines.find((l) => !l.free && l.w.key === key && l.b.x > l.a.x)).filter((l): l is LinkLine => !!l);
     if (members.length < 2) return [];
     const ax = Math.max(...members.map((l) => l.a.x)) + STUB, bx = Math.min(...members.map((l) => l.b.x)) - STUB;
     const span = bx - ax;
@@ -164,14 +208,21 @@ export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record
         + `C${(x1 + rx) / 2},${y1} ${(x1 + rx) / 2},${l.b.y} ${rx},${l.b.y} H${l.b.x}`;
       l.twisted = true;
     });
-    return [{ keys: members.map((l) => l.w.unit.key), x: (x0 + x1) / 2, y: Math.min(c0, c1) - TWIST_AMP - 6, count: members.length }];
+    return [{ keys: members.map((l) => l.w.key), x: (x0 + x1) / 2, y: Math.min(c0, c1) - TWIST_AMP - 6, count: members.length }];
   });
   const height = Math.max(40, ...boxes.map((b) => b.y + b.height), ...nodes.map((n) => n.y + 16), ...lines.map((l) => Math.max(l.a.y, l.b.y) + 8));
   return { width, height, boxes, nodes, lines, wires, twists, mid, set, tableW: TABLE_W };
 }
+export type SchemeLayout = ReturnType<typeof schemeLayout>;
+
+/** Раскладка по форме генератора (тесты сложной сборки). */
+export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record<string, ConnectorHousing | null>,
+  S: Pick<GenState, "splices" | "tails">, info: SchemeInfo = {}, room = 1200) {
+  return schemeLayout(pinoutScheme(ends, units, housings, S, info), room);
+}
 
 /** Строка таблицы: что лежит в контакте (два провода — двойной обжим — через «+»). */
-function rowCells(here: PinUnit[], terminal: string): Record<Exclude<ColKey, "color" | "num">, string> {
+function rowCells(here: SchemeWire[], terminal: string): Record<Exclude<ColKey, "color" | "num">, string> {
   const uniq = (list: string[]) => [...new Set(list.filter(Boolean))].join(" + ");
   return {
     section: uniq(here.map((u) => (u.shield ? "" : wireSectionOf(u.name)))),
@@ -182,7 +233,7 @@ function rowCells(here: PinUnit[], terminal: string): Record<Exclude<ColKey, "co
 }
 
 /** Квадрат цвета жилы в таблице: двухцветная — с полосой, два провода в контакте — два квадрата. */
-function ColorChip({ units, x, y }: { units: PinUnit[]; x: number; y: number }) {
+function ColorChip({ units, x, y }: { units: SchemeWire[]; x: number; y: number }) {
   const size = 12;
   return <g className="pin-links-chip">
     {units.slice(0, 2).map((u, i) => {
@@ -194,6 +245,93 @@ function ColorChip({ units, x, y }: { units: PinUnit[]; x: number; y: number }) 
       </g>;
     })}
   </g>;
+}
+
+/** Подпись конца провода: «А1·2», «С1», «хвост», «—» — не задан. */
+function whereOf(M: LinkScheme, w: SchemeWire, side: SchemeSide) {
+  return (side === "A" ? w.a : w.b).map((x) => (x.kind === "pin" ? `${M.connectors.find((e) => e.id === x.epId)?.key ?? ""}·${x.pin}`
+    : x.kind === "splice" ? M.splices.find((s) => s.id === x.id)?.label ?? "" : x.kind === "tail" ? "хвост" : "—")).join(" + ");
+}
+
+/** Рисунок схемы связей — SVG по раскладке (экран и печать ЭТК). */
+export function LinkSchemeSvg({ scheme: M, layout: L }: { scheme: LinkScheme; layout: SchemeLayout }) {
+  const TABLE_W = L.tableW;
+  const byPin = (epId: string, pin: number) => M.wires.filter((u) => u.at[epId] === pin);
+  const twisted = new Set(L.twists.flatMap((t) => t.keys));
+  const label = (id: string) => M.splices.find((s) => s.id === id)?.label ?? "";
+  return <svg className="pin-links-svg" viewBox={`-8 -4 ${L.width + 16} ${L.height + 12}`} width={L.width + 16} role="img" aria-label="Провода с контакта на контакт, сростки и хвосты">
+    {L.boxes.map((b) => {
+      const cols = columnsOf(b.end.side, L.set);
+      const designation = b.end.designation;
+      const series = b.end.series;
+      const terminal = b.end.terminal;
+      const top = b.y + TITLE + COLS_H;
+      return <g key={b.end.id} className="pin-links-table" data-end={b.end.key}>
+        <rect x={b.x} y={b.y} width={TABLE_W} height={b.height} className="pin-links-frame" />
+        <rect x={b.x} y={b.y} width={TABLE_W} height={TITLE} className="pin-links-band" />
+        <text x={b.x + 8} y={b.y + 15} className="pin-links-name"><tspan className="pin-links-key">{b.end.key}</tspan>
+          {designation ? <tspan dx={8}>{designation}</tspan> : null}</text>
+        {cols.map((c) => <text key={c.key} x={b.x + c.x + c.width / 2} y={b.y + TITLE + 13} textAnchor="middle" className="pin-links-colhead">{c.title}</text>)}
+        <line x1={b.x} x2={b.x + TABLE_W} y1={b.y + TITLE + COLS_H} y2={b.y + TITLE + COLS_H} className="pin-links-rule is-strong" />
+        {cols.slice(1).map((c) => <line key={c.key} x1={b.x + c.x} x2={b.x + c.x} y1={b.y + TITLE} y2={top + b.rows * ROW} className="pin-links-rule" />)}
+        {Array.from({ length: b.rows }, (_, i) => {
+          const pin = i + 1, here = byPin(b.end.id, pin), y = top + i * ROW;
+          const cells = rowCells(here, terminal);
+          return <g key={pin} className={here.length ? "pin-links-row is-used" : "pin-links-row"} data-pin={pin} data-wires={here.map((u) => u.num).join(" ") || undefined}>
+            {i > 0 && <line x1={b.x} x2={b.x + TABLE_W} y1={y} y2={y} className="pin-links-rule" />}
+            {cols.map((c) => {
+              const cx = b.x + c.x;
+              if (c.key === "color") return here.length ? <ColorChip key={c.key} units={here} x={cx + (c.width - (here.length > 1 ? 26 : 12)) / 2} y={y + 4} /> : null;
+              if (c.key === "num") return <text key={c.key} x={cx + c.width / 2} y={y + 14} textAnchor="middle" className="pin-links-num">{pin}</text>;
+              const value = cells[c.key];
+              if (!value) return null;
+              const shown = cut(value, c.width);
+              return <text key={c.key} x={cx + 5} y={y + 14} className="pin-links-cell">{shown !== value && <title>{value}</title>}{shown}</text>;
+            })}
+          </g>;
+        })}
+        <line x1={b.x} x2={b.x + TABLE_W} y1={top + b.rows * ROW} y2={top + b.rows * ROW} className="pin-links-rule is-strong" />
+        <text x={b.x + 8} y={top + b.rows * ROW + 13} className="pin-links-foot"><title>{[series, b.end.conn].filter(Boolean).join(" · ")}</title>
+          {cut([series, b.end.conn || "разъём не выбран"].filter(Boolean).join("  "), TABLE_W)}</text>
+      </g>;
+    })}
+    {L.lines.map((l, i) => {
+      const c = l.w.color ?? NEUTRAL;
+      const len = l.w.length ? `${l.w.length} мм` : "";
+      const tip = `${l.w.num} · ${l.w.name || "провод"} · ${whereOf(M, l.w, "A")} → ${whereOf(M, l.w, "B")}${len ? ` · ${len}` : ""}${twisted.has(l.w.key) ? " · свивка" : ""}`;
+      return <g key={i} className="pin-links-line" data-wire={l.w.num} data-free={l.free ?? undefined} data-twisted={l.twisted || undefined}
+        data-a={whereOf(M, l.w, "A")} data-b={whereOf(M, l.w, "B")}>
+        <title>{tip}</title>
+        {(c === NEUTRAL || !isDark(c) || l.twisted) && <path d={l.d} fill="none" stroke={OUTLINE} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" opacity={0.7} />}
+        <path d={l.d} fill="none" stroke={c} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={l.free === "open" ? "5 4" : undefined} />
+        {l.w.stripe && <path d={l.d} fill="none" stroke={l.w.stripe} strokeWidth={2.4} strokeDasharray="4 4" />}
+      </g>;
+    })}
+    {/* Номер провода — у начала линии, над ней; провод с двух концов на одной стороне — у каждого конца. */}
+    {L.lines.filter((l, i, all) => all.findIndex((x) => x.w === l.w && x.a.x === l.a.x && x.a.y === l.a.y) === i).map((l, i) =>
+      <text key={i} x={l.left ? l.a.x - 6 : l.a.x + 6} y={l.a.y - 3} textAnchor={l.left ? "end" : "start"} className="pin-links-label">{l.w.num}</text>)}
+    {L.twists.map((t, i) => <text key={i} x={t.x} y={t.y} textAnchor="middle" className="pin-links-twist">{t.count > 2 ? `свивка ×${t.count}` : "свитая пара"}</text>)}
+    {L.nodes.map((n) => {
+      const first = L.wires.find((w) => [...w.a, ...w.b].some((x) => x.kind === "splice" && x.id === n.id));
+      const c = first?.color ?? NEUTRAL;
+      return <g key={n.id} className="pin-links-splice" data-splice={label(n.id)}>
+        <circle cx={TABLE_W + L.mid / 2} cy={n.y} r={5.5} fill={c} stroke={OUTLINE} strokeWidth={1.2} />
+        <text x={TABLE_W + L.mid / 2} y={n.y - 9} textAnchor="middle" className="pin-links-node">{label(n.id)}</text>
+      </g>;
+    })}
+    {/* Подписи хвостов — поверх всех линий. */}
+    {L.lines.filter((l) => l.free).map((l, i) => {
+      const len = l.w.length ? ` ${l.w.length} мм` : "";
+      return <text key={i} x={l.b.x + (l.left ? -4 : 4)} y={l.b.y + 4} textAnchor={l.left ? "end" : "start"} className="pin-links-tail">
+        {l.free === "tail" ? `хвост${len}` : "не задан"}</text>;
+    })}
+  </svg>;
+}
+
+/** «17 пр. · сростков 4 · хвостов 4 · свивок 1». */
+export function schemeCounts(L: SchemeLayout) {
+  const tails = L.lines.filter((l) => l.free === "tail").length;
+  return `${L.wires.length} пр.${L.nodes.length ? ` · сростков ${L.nodes.length}` : ""}${tails ? ` · хвостов ${tails}` : ""}${L.twists.length ? ` · свивок ${L.twists.length}` : ""}`;
 }
 
 export type SchemeView = "scheme" | "drawing";
@@ -214,8 +352,30 @@ function useRoom() {
   return { ref, width };
 }
 
-/** Схема связей под торцами разъёмов и переключатель «Схема связей | Чертёж». `drawing` — чертёж по той же форме
- *  (рисуется, только пока открыта его вкладка). Разъёмов нет — ничего не рисует. */
+/** Схема связей и переключатель «Схема связей | Чертёж». `drawing` — чертёж по той же форме (рисуется, только пока открыта
+ *  его вкладка). `titled={false}` — без заголовка «Схема связей» (его несёт блок ЭТК). Разъёмов нет — ничего не рисует. */
+export function LinkSchemeView({ scheme, drawing, titled = true }: { scheme: LinkScheme; drawing?: () => ReactNode; titled?: boolean }) {
+  const [view, setView] = useState<SchemeView>("scheme");
+  const room = useRoom();
+  if (!scheme.connectors.length) return null;
+  const L = schemeLayout(scheme, room.width);
+  const shown = drawing && view === "drawing" ? "drawing" : "scheme";
+  return <div className="pin-links" role="group" aria-label="Схема связей">
+    <div className="pin-links-head">
+      {drawing ? <div className="seg-tabs pin-links-tabs" role="tablist" aria-label="Вид соединений">
+        {([["scheme", "Схема связей"], ["drawing", "Чертёж"]] as const).map(([id, title]) =>
+          <button type="button" role="tab" key={id} aria-selected={shown === id} className={shown === id ? "on" : undefined} onClick={() => setView(id)}>{title}</button>)}
+      </div> : titled ? <span className="pin-links-title">Схема связей</span> : null}
+      <span className="muted">{schemeCounts(L)}</span>
+    </div>
+    {shown === "drawing" ? drawing!() : <div className="pin-links-scroll" ref={room.ref}>
+      <LinkSchemeSvg scheme={scheme} layout={L} />
+      {!L.wires.length && <small className="muted pin-links-empty">Линии появятся, когда провод встанет на контакт.</small>}
+    </div>}
+  </div>;
+}
+
+/** Схема связей генератора под торцами разъёмов: форма → модель (`pinoutScheme`) → рисунок. */
 export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing }: {
   ends: PinoutEnd[];
   units: PinUnit[];
@@ -224,94 +384,5 @@ export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing }
   info?: SchemeInfo;
   drawing?: () => ReactNode;
 }) {
-  const [view, setView] = useState<SchemeView>("scheme");
-  const room = useRoom();
-  if (!ends.length) return null;
-  const L = linkLayout(ends, units, housings, joins, info, room.width);
-  const TABLE_W = L.tableW;
-  const byPin = (epId: string, pin: number) => units.filter((u) => u.at[epId] === pin);
-  const where = (w: LinkWire, side: Side) => (side === "A" ? w.a : w.b).map((x) => (x.kind === "pin" ? `${ends.find((e) => e.id === x.epId)?.key ?? ""}·${x.pin}` : x.kind === "splice" ? spliceLabel(joins, x.id) : x.kind === "tail" ? "хвост" : "—")).join(" + ");
-  const tails = L.lines.filter((l) => l.free === "tail").length;
-  const twisted = new Set(L.twists.flatMap((t) => t.keys));
-  const shown = drawing && view === "drawing" ? "drawing" : "scheme";
-  return <div className="pin-links" role="group" aria-label="Схема связей">
-    <div className="pin-links-head">
-      {drawing ? <div className="seg-tabs pin-links-tabs" role="tablist" aria-label="Вид соединений">
-        {([["scheme", "Схема связей"], ["drawing", "Чертёж"]] as const).map(([id, title]) =>
-          <button type="button" role="tab" key={id} aria-selected={shown === id} className={shown === id ? "on" : undefined} onClick={() => setView(id)}>{title}</button>)}
-      </div> : <span className="pin-links-title">Схема связей</span>}
-      <span className="muted">{L.wires.length} пр.{L.nodes.length ? ` · сростков ${L.nodes.length}` : ""}{tails ? ` · хвостов ${tails}` : ""}{L.twists.length ? ` · свивок ${L.twists.length}` : ""}</span>
-    </div>
-    {shown === "drawing" ? drawing!() : <div className="pin-links-scroll" ref={room.ref}>
-      <svg className="pin-links-svg" viewBox={`-8 -4 ${L.width + 16} ${L.height + 12}`} width={L.width + 16} role="img" aria-label="Провода с контакта на контакт, сростки и хвосты">
-        {L.boxes.map((b) => {
-          const cols = columnsOf(b.end.side, L.set);
-          const designation = info.designations?.[b.end.id] ?? "";
-          const hs = housings[b.end.conn];
-          const series = (hs?.title || "").trim();
-          const terminal = info.terminals?.[b.end.id] ?? "";
-          const top = b.y + TITLE + COLS_H;
-          return <g key={b.end.id} className="pin-links-table" data-end={b.end.key}>
-            <rect x={b.x} y={b.y} width={TABLE_W} height={b.height} className="pin-links-frame" />
-            <rect x={b.x} y={b.y} width={TABLE_W} height={TITLE} className="pin-links-band" />
-            <text x={b.x + 8} y={b.y + 15} className="pin-links-name"><tspan className="pin-links-key">{b.end.key}</tspan>
-              {designation ? <tspan dx={8}>{designation}</tspan> : null}</text>
-            {cols.map((c) => <text key={c.key} x={b.x + c.x + c.width / 2} y={b.y + TITLE + 13} textAnchor="middle" className="pin-links-colhead">{c.title}</text>)}
-            <line x1={b.x} x2={b.x + TABLE_W} y1={b.y + TITLE + COLS_H} y2={b.y + TITLE + COLS_H} className="pin-links-rule is-strong" />
-            {cols.slice(1).map((c) => <line key={c.key} x1={b.x + c.x} x2={b.x + c.x} y1={b.y + TITLE} y2={top + b.rows * ROW} className="pin-links-rule" />)}
-            {Array.from({ length: b.rows }, (_, i) => {
-              const pin = i + 1, here = byPin(b.end.id, pin), y = top + i * ROW;
-              const cells = rowCells(here, terminal);
-              return <g key={pin} className={here.length ? "pin-links-row is-used" : "pin-links-row"} data-pin={pin} data-wires={here.map((u) => u.num).join(" ") || undefined}>
-                {i > 0 && <line x1={b.x} x2={b.x + TABLE_W} y1={y} y2={y} className="pin-links-rule" />}
-                {cols.map((c) => {
-                  const cx = b.x + c.x;
-                  if (c.key === "color") return here.length ? <ColorChip key={c.key} units={here} x={cx + (c.width - (here.length > 1 ? 26 : 12)) / 2} y={y + 4} /> : null;
-                  if (c.key === "num") return <text key={c.key} x={cx + c.width / 2} y={y + 14} textAnchor="middle" className="pin-links-num">{pin}</text>;
-                  const value = cells[c.key];
-                  if (!value) return null;
-                  const shown = cut(value, c.width);
-                  return <text key={c.key} x={cx + 5} y={y + 14} className="pin-links-cell">{shown !== value && <title>{value}</title>}{shown}</text>;
-                })}
-              </g>;
-            })}
-            <line x1={b.x} x2={b.x + TABLE_W} y1={top + b.rows * ROW} y2={top + b.rows * ROW} className="pin-links-rule is-strong" />
-            <text x={b.x + 8} y={top + b.rows * ROW + 13} className="pin-links-foot"><title>{[series, b.end.conn].filter(Boolean).join(" · ")}</title>
-              {cut([series, b.end.conn || "разъём не выбран"].filter(Boolean).join("  "), TABLE_W)}</text>
-          </g>;
-        })}
-        {L.lines.map((l, i) => {
-          const c = l.w.unit.color ?? NEUTRAL;
-          const len = l.w.unit.length ? `${l.w.unit.length} мм` : "";
-          const tip = `${l.w.unit.num} · ${l.w.unit.name || "провод"} · ${where(l.w, "A")} → ${where(l.w, "B")}${len ? ` · ${len}` : ""}${twisted.has(l.w.unit.key) ? " · свивка" : ""}`;
-          return <g key={i} className="pin-links-line" data-wire={l.w.unit.num} data-free={l.free ?? undefined} data-twisted={l.twisted || undefined}
-            data-a={where(l.w, "A")} data-b={where(l.w, "B")}>
-            <title>{tip}</title>
-            {(c === NEUTRAL || !isDark(c) || l.twisted) && <path d={l.d} fill="none" stroke={OUTLINE} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" opacity={0.7} />}
-            <path d={l.d} fill="none" stroke={c} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={l.free === "open" ? "5 4" : undefined} />
-            {l.w.unit.stripe && <path d={l.d} fill="none" stroke={l.w.unit.stripe} strokeWidth={2.4} strokeDasharray="4 4" />}
-          </g>;
-        })}
-        {/* Номер провода — у начала линии, над ней; провод с двух концов на одной стороне — у каждого конца. */}
-        {L.lines.filter((l, i, all) => all.findIndex((x) => x.w === l.w && x.a.x === l.a.x && x.a.y === l.a.y) === i).map((l, i) =>
-          <text key={i} x={l.left ? l.a.x - 6 : l.a.x + 6} y={l.a.y - 3} textAnchor={l.left ? "end" : "start"} className="pin-links-label">{l.w.unit.num}</text>)}
-        {L.twists.map((t, i) => <text key={i} x={t.x} y={t.y} textAnchor="middle" className="pin-links-twist">{t.count > 2 ? `свивка ×${t.count}` : "свитая пара"}</text>)}
-        {L.nodes.map((n) => {
-          const first = L.wires.find((w) => [...w.a, ...w.b].some((x) => x.kind === "splice" && x.id === n.id));
-          const c = first?.unit.color ?? NEUTRAL;
-          return <g key={n.id} className="pin-links-splice" data-splice={spliceLabel(joins, n.id)}>
-            <circle cx={TABLE_W + L.mid / 2} cy={n.y} r={5.5} fill={c} stroke={OUTLINE} strokeWidth={1.2} />
-            <text x={TABLE_W + L.mid / 2} y={n.y - 9} textAnchor="middle" className="pin-links-node">{spliceLabel(joins, n.id)}</text>
-          </g>;
-        })}
-        {/* Подписи хвостов — поверх всех линий. */}
-        {L.lines.filter((l) => l.free).map((l, i) => {
-          const len = l.w.unit.length ? ` ${l.w.unit.length} мм` : "";
-          return <text key={i} x={l.b.x + (l.left ? -4 : 4)} y={l.b.y + 4} textAnchor={l.left ? "end" : "start"} className="pin-links-tail">
-            {l.free === "tail" ? `хвост${len}` : "не задан"}</text>;
-        })}
-      </svg>
-      {!L.wires.length && <small className="muted pin-links-empty">Линии появятся, когда провод встанет на контакт.</small>}
-    </div>}
-  </div>;
+  return <LinkSchemeView scheme={pinoutScheme(ends, units, housings, joins, info)} drawing={drawing} />;
 }

@@ -195,8 +195,11 @@ class E4Boundary extends Component<{ fallback: ReactNode; children: ReactNode },
 type Loaded = { state: "loading" } | { state: "map" } | { state: "e4"; ports: HarnessDrawingPorts; catalog: HarnessEditorCatalogApi };
 
 /** Схема Э4 позиции: сохранённый чертёж — только просмотр; иначе плоская схема по ЭТК. В карточке задания (`taskId`)
- *  чертёж читается маршрутом заданий — раздел «Проекты» монтажнику не нужен; технолог (без `taskId`) — маршрутом проекта. */
-export function EtkHarnessE4({ project, index, model, taskId }: { project: string; index: string; model: WireMapModel | null; taskId?: string }) {
+ *  чертёж читается маршрутом заданий — раздел «Проекты» монтажнику не нужен; технолог (без `taskId`) — маршрутом проекта.
+ *  `fallback` — схема связей Э4 по распиновке ЭТК (etkLinkScheme.tsx): без чертежа — она вместо плоской схемы. */
+export function EtkHarnessE4({ project, index, model, taskId, fallback }: {
+  project: string; index: string; model: WireMapModel | null; taskId?: string; fallback?: ReactNode;
+}) {
   const [loaded, setLoaded] = useState<Loaded>({ state: "loading" });
   useEffect(() => {
     let live = true;
@@ -215,7 +218,7 @@ export function EtkHarnessE4({ project, index, model, taskId }: { project: strin
     return () => { live = false; };
   }, [project, index, taskId]);
 
-  const flat = model ? <div className="etk-wiremap-wrap"><EtkWireMap model={model} /></div>
+  const flat = fallback ? fallback : model ? <div className="etk-wiremap-wrap"><EtkWireMap model={model} /></div>
     : <div className="empty">Схема жгута не задана: нет ни чертежа, ни таблицы соединений.</div>;
   if (loaded.state === "loading") return <div className="empty">Загрузка схемы…</div>;
   if (loaded.state === "map") return flat;
