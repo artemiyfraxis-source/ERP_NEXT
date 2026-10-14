@@ -1,14 +1,17 @@
 export type AccessMode = "view" | "edit";
 export const AUTH_REQUIRED_EVENT = "erp:auth-required";
 
-/** Access levels (owner 04.10.2026), strongest first; names as in backend identity LEVEL_LABELS. */
+/** Access levels (owner 04.10.2026, 14.10.2026), strongest first; names as in backend identity LEVEL_LABELS. «admin» is
+ *  no level a person holds since 14.10.2026 — only the session of «Режим админа» carries it (backend ADMIN_MODE_LEVEL). */
 export const ACCESS_LEVEL_LABELS: Readonly<Record<string, string>> = {
   superadmin: "Суперадминистратор",
-  admin: "Администратор",
   commercial: "Коммерческое руководство",
   tech_lead: "Технический руководитель",
+  pm: "Менеджер по проектам",
+  storekeeper: "Кладовщик",
   foreman: "Бригадир",
   operator: "Оператор",
+  admin: "Администратор",
 };
 
 /** The level's Russian name; an unknown key is shown as is, an empty one as a dash. */
@@ -26,7 +29,8 @@ export interface Principal {
   };
   /** The access level key, one element (backend keeps the legacy name for one release); `access_level` is the same key. */
   roles: string[];
-  /** superadmin | admin | commercial | tech_lead | foreman | operator — the effective level, the admin mode included. */
+  /** superadmin | commercial | tech_lead | pm | storekeeper | foreman | operator — the effective level; «admin» while
+   *  the admin mode is on. */
   access_level?: string;
   /** Section → mode. superadmin/admin carry every section on edit; the screens never read anything else. */
   permissions: Record<string, AccessMode>;

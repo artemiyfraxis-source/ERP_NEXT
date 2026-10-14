@@ -5,9 +5,10 @@ import type { AccessOverview } from "./api";
 
 const LEVELS = [
   { key: "superadmin", label: "Суперадминистратор", full: true },
-  { key: "admin", label: "Администратор", full: true },
   { key: "commercial", label: "Коммерческое руководство", full: false },
   { key: "tech_lead", label: "Технический руководитель", full: false },
+  { key: "pm", label: "Менеджер по проектам", full: false },
+  { key: "storekeeper", label: "Кладовщик", full: false },
   { key: "foreman", label: "Бригадир", full: false },
   { key: "operator", label: "Оператор", full: false },
 ];
@@ -17,12 +18,12 @@ const SECTIONS = [
 ];
 const FULL_ROW = Object.fromEntries(SECTIONS.map((section) => [section.key, "edit" as const]));
 
-// superadmin/admin are always full (`full` in the answer, nothing stored for them); the other four levels are driven by
+// superadmin is always full (`full` in the answer, nothing stored for it); the other six levels are driven by
 // the stored matrix, an empty cell is closed. Бригадир holds a stored «закрыт» on the warehouse.
 const OVERVIEW: AccessOverview = {
   sections: SECTIONS,
   levels: LEVELS,
-  defaults: { superadmin: FULL_ROW, admin: FULL_ROW, commercial: {}, tech_lead: {}, foreman: {}, operator: {} },
+  defaults: { superadmin: FULL_ROW, commercial: {}, tech_lead: {}, pm: {}, storekeeper: {}, foreman: {}, operator: {} },
   seed: { foreman: { myops: "edit" } },
   matrix: {
     commercial: { requests: "edit" },
@@ -52,11 +53,11 @@ it("computes a level's sections as what it has with nothing stored plus the stor
   expect(levelModes(OVERVIEW, "foreman")).toEqual({ myops: "edit", shipping_goods: "edit" });
   expect(levelModes({ ...OVERVIEW, matrix: { foreman: { requests: "view", myops: "none" } } }, "foreman"))
     .toEqual({ requests: "view" });
-  expect(levelModes(OVERVIEW, "admin")).toEqual(FULL_ROW);
+  expect(levelModes(OVERVIEW, "superadmin")).toEqual(FULL_ROW);
   expect(levelModes(OVERVIEW, "operator")).toEqual({});
 });
 
-it("«Уровни × разделы»: one column per level with the owner's names, in the owner's order", async () => {
+it("«Уровни × разделы»: one column per level with the owner's names, in the owner's order, no «Администратор»", async () => {
   serve();
   render(<AccessPage />);
   await screen.findByLabelText("Склад · Бригадир");
@@ -64,19 +65,21 @@ it("«Уровни × разделы»: one column per level with the owner's na
   expect(screen.queryByText("Роли × разделы")).toBeNull();
   const table = screen.getByRole("table");
   expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
-    "Раздел", "Суперадминистратор", "Администратор", "Коммерческое руководство", "Технический руководитель", "Бригадир", "Оператор",
+    "Раздел", "Суперадминистратор", "Коммерческое руководство", "Технический руководитель", "Менеджер по проектам",
+    "Кладовщик", "Бригадир", "Оператор",
   ]);
+  expect(within(table).queryByRole("columnheader", { name: "Администратор" })).toBeNull();
 });
 
-it("the new sections «Задания», «ОТК» and «Отгрузка — склад» are rows with editable cells for the four levels", async () => {
+it("the new sections «Задания», «ОТК» and «Отгрузка — склад» are rows with editable cells for the six matrix levels", async () => {
   serve();
   render(<AccessPage />);
   await screen.findByLabelText("Склад · Бригадир");
   const table = screen.getByRole("table");
   for (const name of ["Задания", "ОТК", "Отгрузка — склад"]) {
     const row = within(table).getByText(name).closest("tr") as HTMLElement;
-    expect(within(row).getAllByRole("combobox")).toHaveLength(4);
-    for (const level of ["Коммерческое руководство", "Технический руководитель", "Бригадир", "Оператор"]) {
+    expect(within(row).getAllByRole("combobox")).toHaveLength(6);
+    for (const level of ["Коммерческое руководство", "Технический руководитель", "Менеджер по проектам", "Кладовщик", "Бригадир", "Оператор"]) {
       expect(screen.getByLabelText(`${name} · ${level}`)).toBeInTheDocument();
     }
   }
@@ -84,16 +87,16 @@ it("the new sections «Задания», «ОТК» and «Отгрузка — �
   expect((screen.getByLabelText("Отгрузка — склад · Оператор") as HTMLSelectElement).value).toBe("");
 });
 
-it("superadmin and admin are fixed «полный» with a drawn padlock and a tooltip, never an editable cell", async () => {
+it("superadmin is fixed «полный» with a drawn padlock and a tooltip, never an editable cell", async () => {
   serve();
   render(<AccessPage />);
   expect(await screen.findByText("всегда полный доступ")).toBeInTheDocument();
-  for (const level of ["Суперадминистратор", "Администратор"]) {
+  for (const level of ["Суперадминистратор"]) {
     for (const section of SECTIONS) expect(screen.queryByLabelText(`${section.label} · ${level}`)).toBeNull();
     expect(screen.getByRole("columnheader", { name: level })).toHaveAttribute("title", `${level} — всегда полный доступ`);
   }
   const locked = screen.getAllByTitle("Всегда полный доступ");
-  expect(locked).toHaveLength(SECTIONS.length * 2);
+  expect(locked).toHaveLength(SECTIONS.length);
   for (const cell of locked) {
     expect(cell).toHaveTextContent(/^полный$/);
     expect(cell.querySelector("svg.access-lock")).not.toBeNull();

@@ -270,3 +270,17 @@ def test_kb_marked_shipped_leaves_the_intake_even_without_erp_shipments():
         events=(PlanEvent(project="722К.1", item_index="КБ2", occurred_at=NOW, who="Мастер", kind="Этап КБ", value="Отгружено"),),
     )
     assert [row.item_index for row in intake_rows(facts)] == ["КБ1"]
+
+
+def test_kb_in_work_without_erp_tasks_can_be_accepted_up_to_the_order():
+    """Владелец 14.10: цех ведёт КБ вне заданий ERP — «В работе» без заданий принимается до заказанного минус принятое,
+    «Новый» — нет (как предел `finished_goods._limit` без заданий: заказанное)."""
+    facts = IntakeFacts(
+        projects=(PlanProjectSnapshot(project="723К.1"),),
+        kitsets=(_kitset("723К.1", ("КБ1", 50), ("КБ2", 50)),),
+        goods=(replace(_good("КБ1", 50, accepted=20), project="723К.1"), replace(_good("КБ2", 50), project="723К.1")),
+        events=(PlanEvent(project="723К.1", item_index="КБ1", occurred_at=NOW, who="Мастер", kind="Этап КБ", value="В работе"),),
+    )
+    rows = {row.item_index: row for row in intake_rows(facts)}
+    assert (rows["КБ1"].stage, rows["КБ1"].remaining) == ("В работе", 30)
+    assert rows["КБ2"].remaining == 0

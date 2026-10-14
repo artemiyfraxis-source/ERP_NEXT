@@ -22,8 +22,8 @@ from app.shared.clock import as_utc
 from app.shared.notifications import TECHNOLOGIST_AUDIENCE, notification_requested, publish_notification
 
 from .domain import (
+    ADMIN_MODE_LEVEL,
     FULL_ACCESS_LEVELS,
-    LEVEL_LABELS,
     AccessMode,
     can_admin_mode,
     hash_pin,
@@ -32,6 +32,7 @@ from .domain import (
     IdentityValidationError,
     validate_password,
     hash_password,
+    level_label,
     level_permissions,
     normalize_login,
     secret_hash,
@@ -222,9 +223,10 @@ def user_level(user: IdentityUser) -> str:
 
 
 def session_level(user: IdentityUser, *, admin_mode: bool = False) -> str:
-    """portalSession_: «Режим админа» raises the session to the level admin (a superadmin stays superadmin)."""
+    """portalSession_: «Режим админа» raises the session to the session-only level ADMIN_MODE_LEVEL — full access,
+    but not a superadministrator's (a superadmin stays superadmin). Since 14.10.2026 nobody can hold that level."""
     level = user_level(user)
-    return "admin" if admin_mode and level not in FULL_ACCESS_LEVELS else level
+    return ADMIN_MODE_LEVEL if admin_mode and level not in FULL_ACCESS_LEVELS else level
 
 
 def _principal(
@@ -257,7 +259,7 @@ def _principal_for(uow: UnitOfWork, user: IdentityUser, *, admin_mode: bool = Fa
 def role_label(principal: Principal) -> str:
     """portalState_ roleLabel: the effective level's name, «· режим» while the admin mode is on."""
     level = next(iter(principal.roles), "operator")
-    return LEVEL_LABELS.get(level, level) + (" · режим" if principal.admin_mode else "")
+    return level_label(level) + (" · режим" if principal.admin_mode else "")
 
 
 def _session_admin_mode(session: IdentitySession, user: IdentityUser, now: datetime) -> bool:

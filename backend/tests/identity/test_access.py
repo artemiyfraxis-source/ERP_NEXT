@@ -136,14 +136,33 @@ def test_only_superadmin_and_admin_open_access(access_api):
     assert {"key": "tech_lead", "label": "Технический руководитель", "full": False} in body["levels"]
     assert {"key": "superadmin", "label": "Суперадминистратор", "full": True} in body["levels"]
     assert body["roles"] == body["levels"]  # the legacy name, one release
-    # superadmin/admin are «полный» everywhere by default; a matrix level has an empty (closed) row.
+    # The columns (owner 14.10.2026): «Администратор» is gone, «Менеджер по проектам» and «Кладовщик» follow
+    # «Технический руководитель».
+    assert [(level["key"], level["label"]) for level in body["levels"]] == [
+        ("superadmin", "Суперадминистратор"), ("commercial", "Коммерческое руководство"),
+        ("tech_lead", "Технический руководитель"), ("pm", "Менеджер по проектам"), ("storekeeper", "Кладовщик"),
+        ("foreman", "Бригадир"), ("operator", "Оператор"),
+    ]
+    # superadmin is «полный» everywhere by default; a matrix level has an empty (closed) row.
     assert body["defaults"]["foreman"] == {}
-    assert body["defaults"]["admin"] == body["defaults"]["superadmin"] == {s: "edit" for s in FULL_LEVEL_SECTIONS}
+    assert body["defaults"]["superadmin"] == {s: "edit" for s in FULL_LEVEL_SECTIONS}
+    assert "admin" not in body["defaults"] and "admin" not in body["seed"]
     assert body["seed"]["foreman"] == FOREMAN_SEED
     assert body["matrix"]["foreman"] == FOREMAN_SEED
+    assert body["seed"]["pm"] == body["matrix"]["pm"] == {
+        "newrequest": "edit", "myrequests": "edit", "requests": "edit", "projects": "edit", "shipping": "edit",
+        "techcards": "view", "production": "view", "erpref": "view", "procurement": "view", "warehouse": "view",
+        "shipping_goods": "view",
+    }
+    assert body["seed"]["storekeeper"] == body["matrix"]["storekeeper"] == {
+        "newrequest": "edit", "myrequests": "edit", "receiving": "edit", "warehouse": "edit", "fulfillment": "edit",
+        "handout": "edit", "shipping_goods": "edit", "projects": "view", "erpref": "view", "procurement": "view",
+        "shipping": "view",
+    }
     assert "admin" not in body["matrix"] and "superadmin" not in body["matrix"]
+    # The legacy role admin (a full-access role) lands on superadmin, the only full level a person can hold.
     assert [(user["login"], user["access_level"], user["access"]) for user in body["users"]] == [
-        ("admin", "admin", {}), ("buyer", "tech_lead", {}), ("receiver", "foreman", {}),
+        ("admin", "superadmin", {}), ("buyer", "tech_lead", {}), ("receiver", "foreman", {}),
     ]
 
 
@@ -187,6 +206,7 @@ def test_unchanged_matrix_writes_no_audit(access_api):
     {"tech_lead": {"nowhere": "view"}},
     {"tech_lead": {"staffdir": "edit"}},  # «Сотрудники» is outside the matrix
     {"tech_lead": {"requests": "admin"}},
+    {"admin": {"requests": "view"}},  # «Администратор» is no level since 14.10.2026
 ])
 def test_unknown_level_section_or_mode_is_refused(access_api, matrix):
     response = _client("admin", "admin-password").put("/api/auth/access/levels", json={"matrix": matrix})
@@ -197,12 +217,13 @@ def test_unknown_level_section_or_mode_is_refused(access_api, matrix):
 @pytest.mark.parametrize("mode", ["none", "view"])
 def test_a_full_level_row_is_ignored(access_api, mode):
     admin = _client("admin", "admin-password")
-    saved = admin.put("/api/auth/access/levels", json={"matrix": {"admin": {"warehouse": mode}}})
+    saved = admin.put("/api/auth/access/levels", json={"matrix": {"superadmin": {"warehouse": mode}}})
     assert saved.status_code == 200 and saved.json()["matrix"] == {}
     assert admin.get("/api/auth/staff").status_code == 200
     assert admin.get("/api/auth/me").json()["permissions"]["warehouse"] == "edit"
     with access_api() as session:
-        assert session.scalars(select(IdentityLevelAccessRow).where(IdentityLevelAccessRow.level == "admin")).all() == []
+        stored = select(IdentityLevelAccessRow).where(IdentityLevelAccessRow.level == "superadmin")
+        assert session.scalars(stored).all() == []
 
 
 def test_a_full_level_ignores_a_personal_exception(access_api):

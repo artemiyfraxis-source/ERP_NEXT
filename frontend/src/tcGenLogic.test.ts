@@ -329,14 +329,16 @@ it("«Сторона А» / «Сторона В» keep the one-side machine crim
     expect(g.crimpCutSideSelected_()).toBe("A");
     const ops = g.getActiveOps();
     expect(kinds(ops)).toEqual(["cutWireCrimp:A", "insTerm:A", "prsTerm:B", "insTerm:B"]);
-    expect(ops[0]).toMatchObject({ label: "Резка с обжимом А (SXH-001T-P0.6N) — Провод НВ4 0,2", tmplHint: "CUT_WIRE+1crimp" });
+    // Вторую сторону под ручной обжим станок зачищает (владелец 14.10).
+    expect(ops[0]).toMatchObject({ label: "Резка с обжимом А (SXH-001T-P0.6N) и зачисткой В — Провод НВ4 0,2", tmplHint: "CUT_WIRE+1crimp" });
+    expect(ops[0].strip).toMatchObject({ a: true, b: true });
     const cfg = g.buildConfig() as Record<string, any>;
     expect(cfg.ops[0]).toMatchObject({ side: "A", templateId: "cwc", opNum: "CUT_WIRE+1crimp" });
     expect(cfg.ops.some((op: any) => "epB" in op)).toBe(false);
   }
   const b = usbGen({ side: "B" }).g;
   expect(kinds(b.getActiveOps())).toEqual(["cutWireCrimp:B", "prsTerm:A", "insTerm:A", "insTerm:B"]);
-  expect(b.getActiveOps()[0].label).toBe("Резка с обжимом В (SXH-001T-P0.6N) — Провод НВ4 0,2");
+  expect(b.getActiveOps()[0].label).toBe("Резка с обжимом В (SXH-001T-P0.6N) и зачисткой А — Провод НВ4 0,2");
 });
 
 it("a side the machine cannot crimp stays manual and says why; «Обе стороны» then falls back to the other side", () => {

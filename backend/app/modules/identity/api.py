@@ -52,6 +52,7 @@ from .domain import (
     AccessMode,
     IdentityUser,
     IdentityValidationError,
+    level_label,
     secret_hash,
 )
 from .staff import (
@@ -457,8 +458,7 @@ def _level(user: IdentityUser) -> str:
 
 
 def _level_label(user: IdentityUser) -> str:
-    level = _level(user)
-    return LEVEL_LABELS.get(level, level)
+    return level_label(_level(user))
 
 
 def _employee(user: IdentityUser, pin_set: bool = False) -> dict:

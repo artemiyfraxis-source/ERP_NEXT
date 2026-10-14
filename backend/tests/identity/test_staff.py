@@ -293,7 +293,7 @@ def test_last_admin_cannot_lose_the_level_or_the_login(staff_api, change):
     body = {"name": "Admin", "department": "ИТ", "role": "admin", "site": "", "active": True, **change}
     response = admin.put(f"/api/auth/staff/{ADMIN_ID}", json=body)
     assert response.status_code == 409
-    assert "хотя бы один активный суперадминистратор или администратор" in response.json()["detail"]
+    assert "хотя бы один активный суперадминистратор —" in response.json()["detail"]
     assert admin.post(f"/api/auth/users/{ADMIN_ID}/deactivate").status_code == 409
 
     # With a second admin the first one may step down.
@@ -313,9 +313,11 @@ def _user_row(sessions, user_id: UUID):
 
 
 def _add_admin(sessions) -> None:
-    """A second full-level person: an administrator, not a superadministrator."""
+    """A second full-access person below the superadministrator — what «Режим админа» makes of a session. The level
+    «Администратор» can no longer be given (14.10.2026); a stored one (a stray row) stays full, not superadmin."""
     with sessions() as session:
-        provision_user(session, _user(ADMIN2_ID, "admin2", "admin", ""), hash_password("admin2-password"))
+        provision_user(session, replace(_user(ADMIN2_ID, "admin2", "admin", ""), access_level="admin"),
+                       hash_password("admin2-password"))
         session.commit()
 
 
@@ -330,11 +332,10 @@ def test_only_a_superadmin_gives_and_takes_the_full_levels(staff_api):
     assert (created.json()["user"]["access_level"], created.json()["user"]["role"]) == ("commercial", "")
     assert admin2.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level="foreman")).status_code == 200
     # …but neither gives a full level, nor takes one, nor switches a full-level holder off or deletes them.
-    for level in ("admin", "superadmin"):
-        body = {"email": f"{level}-new@example.test", "name": "Новый", "access_level": level}
-        refused = admin2.post("/api/auth/staff", json=body)
-        assert refused.status_code == 403 and "только суперадминистратор" in refused.json()["detail"]
-        assert admin2.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level=level)).status_code == 403
+    body = {"email": "superadmin-new@example.test", "name": "Новый", "access_level": "superadmin"}
+    refused = admin2.post("/api/auth/staff", json=body)
+    assert refused.status_code == 403 and "только суперадминистратор" in refused.json()["detail"]
+    assert admin2.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level="superadmin")).status_code == 403
     boss_row = {"name": "Admin", "department": "ИТ", "role": "admin", "site": "", "active": True}
     assert admin2.put(f"/api/auth/staff/{ADMIN_ID}", json={**boss_row, "access_level": "tech_lead"}).status_code == 403
     assert admin2.put(f"/api/auth/staff/{ADMIN_ID}", json={**boss_row, "active": False}).status_code == 403
@@ -342,8 +343,12 @@ def test_only_a_superadmin_gives_and_takes_the_full_levels(staff_api):
     assert admin2.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(role="admin")).status_code == 403  # via the role
     assert _user_row(staff_api, BUYER_ID).access_level == "foreman"
 
-    # The superadministrator does all of it.
-    assert boss.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level="admin")).status_code == 200
+    # The superadministrator does all of it — but «Администратор» is no level to give any more (14.10.2026).
+    retired = boss.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level="admin"))
+    assert retired.status_code == 422 and "Уровня «Администратор» больше нет" in retired.json()["detail"]
+    retired = boss.post("/api/auth/staff", json={"email": "a@example.test", "name": "Новый", "access_level": "admin"})
+    assert retired.status_code == 422 and "Уровня «Администратор» больше нет" in retired.json()["detail"]
+    assert boss.put(f"/api/auth/staff/{BUYER_ID}", json=_edit(access_level="superadmin")).status_code == 200
     assert _client("buyer", "buyer-password").get("/api/auth/staff").status_code == 200
     assert boss.put(f"/api/auth/staff/{ADMIN2_ID}", json={
         "name": "Admin2", "department": "", "access_level": "operator", "active": True,
