@@ -79,10 +79,29 @@ def test_a_pair_the_base_has_gets_only_its_card():
 
 # --- the rules ---
 
-def test_an_entry_without_article_is_named_by_its_type_and_site_number():
+def test_an_entry_without_article_is_named_by_what_tells_it_apart_not_by_the_site_number():
     export = gsm_import_rows(_site(_entry(note="номер на сайте: 3148", cable=["RG-178", "RG-316"])))
-    assert [row["fields"]["coaxArticle"] for row in export.rows] == ["SMA-male №3148", "SMA-male №3148"]
+    assert [row["fields"]["coaxArticle"] for row in export.rows] == ["SMA-male для RG-178/RG-316"] * 2
     assert [row["fields"]["coaxWire"] for row in export.rows] == ["RG-178", "RG-316"]
+    named = gsm_import_rows(_site(
+        _entry(type_name="F-male", mount="резьбовой", cable=["RG-11"], url="https://gsm-repiteri.ru/f"),
+        _entry(type_name="U.FL-female", angle="угловой", cable=["RG-178"], url="https://gsm-repiteri.ru/u"),
+        _entry(type_name="FAKRA-female (тип Z)", full_name="Разъём Fakra Z для кабеля RG-174 (с интегрированной иглой)",
+               cable=["RG-174"], url="https://gsm-repiteri.ru/z"),
+        _entry(type_name="SMA-female", full_name="Разъём SMA female (на корпус, резьба M16)", mount=None,
+               cable=["RG-178"], url="https://gsm-repiteri.ru/s"),
+    ))
+    assert [row["fields"]["coaxArticle"] for row in named.rows] == [
+        "F-male резьбовой для RG-11", "U.FL-female угловой для RG-178", "FAKRA-female (тип Z) с иглой для RG-174",
+        "SMA-female на корпус для RG-178"]
+
+
+def test_two_different_site_entries_with_one_name_keep_the_site_number_on_the_second():
+    export = gsm_import_rows(_site(
+        _entry(note="номер на сайте: 1", url="https://gsm-repiteri.ru/a"),
+        _entry(note="номер на сайте: 2", url="https://gsm-repiteri.ru/b"),
+    ))
+    assert [row["fields"]["coaxArticle"] for row in export.rows] == ["SMA-male для RG-316", "SMA-male для RG-316 №2"]
 
 
 def test_the_angled_twin_of_an_article_is_named_r_a_and_the_same_connector_twice_is_one_row():
