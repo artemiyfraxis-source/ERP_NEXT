@@ -3307,6 +3307,11 @@ export const techcardsApi = {
       method: "PUT",
       body: JSON.stringify(record),
     }),
+  /** «Создать операцию»: строка БД.ОП и карточка БД.ТК вместе — пустая или копия `copy_of`. */
+  createOperation: (body: { code: string; name: string; copy_of?: string; category?: string }) =>
+    api<{ code: string; name: string; record: TechOperationRecord; templates: OperationCardDetail[] }>("/api/techcards/operations", {
+      method: "POST", body: JSON.stringify(body),
+    }),
   templateSheets: () => api<{ list: TemplateSheet[]; drafts: TemplateSheetDraft[] }>("/api/techcards/template-sheets"),
   openTemplateDraft: (templateId: string, title: string) =>
     api<TemplateSheetDraft>("/api/techcards/template-sheets/drafts", {
