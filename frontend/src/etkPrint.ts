@@ -10,6 +10,7 @@ import {
 import { ETK_TOOLING_SECTIONS, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
 import { ETK_PART_SOURCE, etkRouteLine, etkRouteOf, etkSemiSource } from "./etkRoute";
+import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
 type Row = Record<string, unknown>;
@@ -112,8 +113,11 @@ function table(columns: string[], body: string[][]): PrintBlock[] {
   return body.length ? [{ table: { columns, rows: body } }] : [];
 }
 
-/** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP. */
-export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {}): PrintPage[] {
+/** `sketches` — своя картинка эскиза по ключу операции (код::разъём::сторона), абсолютной ссылкой на файл в ERP.
+ *  `serial` — номера изделий задания: надписи с «№ изделия» печатаются диапазоном, в конце — лист «Надписи меток»;
+ *  без задания — «№ по партии». Надпись без номера печатается как раньше. */
+export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision[], sketches: Record<string, string> = {},
+  serial?: MarkSerialRange | null): PrintPage[] {
   const document = object(card.document);
   const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(document.kit) };
   const revision = card.revision || 1;
@@ -174,7 +178,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     const markRows = rows(object(operation.fields).marks);
     const withLength = markRows.some((mark) => text(mark.length));
     const marks = numbered(markRows, (mark) => [
-      text(mark.target), text(mark.text), text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
+      text(mark.target), markSerialText(text(mark.text), serial), text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
     ]);
     // Допуска нет в данных («длина не задана») — со знаком внимания, как «нет данных» у высоты обжима.
     const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text),
@@ -212,5 +216,30 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       sign: `${SIGN}\nДокумент составлен в соответствии с ГОСТ 3.1407-86 · ревизия ${revision}`,
     };
   });
-  return [cover, ...pages];
+  const labels = serial ? etkMarkLabelsPage(card, serial) : null;
+  return labels ? [cover, ...pages, labels] : [cover, ...pages];
+}
+
+/** Метки с «№ изделия» во всех операциях ЭТК, по порядку. */
+export function etkSerialMarks(document: unknown): Row[] {
+  return rows(object(document).operations).flatMap((operation) => rows(object(operation.fields).marks))
+    .filter((mark) => hasMarkSerial(text(mark.text)));
+}
+
+/** «Надписи меток» задания: строка — изделие, столбец — метка с «№ изделия»; надпись развёрнута для каждого номера.
+ *  Нет таких меток — null. Один лист на задание: его печатают к маркировке (принтер хлястиков, трубок). */
+export function etkMarkLabelsPage(card: ProjectTechcard, serial: MarkSerialRange): PrintPage | null {
+  const marks = etkSerialMarks(card.document);
+  if (!marks.length || serial.last < serial.first) return null;
+  const lists = marks.map((mark) => markSerialList(text(mark.text), serial));
+  const kit = { project: card.project, index: card.item_index, name: card.product_name, ...object(object(card.document).kit) };
+  const columns = ["№ изделия", ...marks.map((mark) => [text(mark.target) || "Метка", text(mark.material),
+    text(mark.qty) && text(mark.qty) !== "1" ? `${text(mark.qty)} шт на изделие` : ""].filter(Boolean).join(" · "))];
+  return {
+    title: "Надписи меток по КД",
+    subtitle: [text(kit.name), `${text(kit.project)} ${text(kit.index)}`.trim(), serial.task ? `задание ${serial.task}` : "",
+      `изделия № ${serial.first}–${serial.last}`].filter(Boolean).join(" · "),
+    blocks: [{ table: { columns, rows: lists[0].map((_, index) => [String(serial.first + index), ...lists.map((list) => list[index])]) } }],
+    sign: "Напечатал: ____________ / ________ Дата: ______    Проверил: ____________ / ________ Дата: ______",
+  };
 }

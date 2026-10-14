@@ -12,6 +12,7 @@ from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation
 import re
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from app.modules.requests.domain import unit_for_type
@@ -192,6 +193,22 @@ def document_json(document: KitDocument) -> dict[str, Any]:
     }
 
 
+FOLDER_URL_MAX = 1024
+
+
+def clean_folder_url(value: object) -> str:
+    """Ссылка на папку проекта: пусто — убрать; иначе http(s)-адрес не длиннее FOLDER_URL_MAX."""
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    if len(url) > FOLDER_URL_MAX:
+        raise KitsetValidationError(f"Ссылка длиннее {FOLDER_URL_MAX} символов.")
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc or any(ch.isspace() for ch in url):
+        raise KitsetValidationError("Введите ссылку, начинающуюся с http:// или https://")
+    return url
+
+
 @dataclass(frozen=True)
 class Kitset:
     project: str
@@ -202,6 +219,7 @@ class Kitset:
     updated_by: str
     created_at: datetime
     version: int = 1
+    folder_url: str = ""
 
     @property
     def lines(self) -> int:
@@ -309,6 +327,7 @@ def write_from_calc(
         updated_by=who,
         created_at=current.created_at if current is not None else now,
         version=current.version + 1 if current is not None else 1,
+        folder_url=current.folder_url if current is not None else "",
     )
 
 

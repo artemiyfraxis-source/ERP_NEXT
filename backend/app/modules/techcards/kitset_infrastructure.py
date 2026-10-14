@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, select, text, update
+from sqlalchemy import JSON, CheckConstraint, DateTime, Index, Integer, LargeBinary, String, Text, Uuid, delete, func, select, text, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
@@ -20,7 +20,13 @@ from .kitsets import KitAssembly, KitComponent, KitDocument, KitLot, Kitset, pro
 
 class KitsetRow(Base):
     __tablename__ = "techcard_kitsets"
-    __table_args__ = (Index("ux_techcard_kitsets_project_key", "project_key", unique=True),)
+    __table_args__ = (
+        Index("ux_techcard_kitsets_project_key", "project_key", unique=True),
+        CheckConstraint(
+            "folder_url IS NULL OR ((folder_url LIKE 'http://%' OR folder_url LIKE 'https://%') AND LENGTH(folder_url) <= 1024)",
+            name="ck_techcard_kitsets_folder_url",
+        ),
+    )
 
     project: Mapped[str] = mapped_column(String(255), primary_key=True)
     project_key: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -31,6 +37,7 @@ class KitsetRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    folder_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -104,6 +111,7 @@ class SqlAlchemyKitsetRepository:
                 for item in row.assemblies
             ),
             updated_at=row.updated_at, updated_by=row.updated_by, created_at=row.created_at, version=row.version,
+            folder_url=row.folder_url or "",
         )
 
     def get(self, project: str) -> Kitset | None:
@@ -129,6 +137,7 @@ class SqlAlchemyKitsetRepository:
         row.version = kitset.version
         row.customer = kitset.customer
         row.calc_source = kitset.calc_source
+        row.folder_url = kitset.folder_url or None
         row.assemblies = [
             {
                 "index": assembly.index, "name": assembly.name, "run": str(assembly.run),

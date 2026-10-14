@@ -1372,20 +1372,49 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks .gtable input.num { text-align: right; }
 .tcgen .gen-marks .gtable textarea.auto-textarea { width: 100%; height: 28px; min-height: 28px; line-height: 18px; padding-top: 4px; padding-bottom: 4px; }
 .tcgen .gen-marks .gtable td small { padding: 1px 2px 0; }
-.tcgen .gen-marks col.c-n { width: 34px; }
-.tcgen .gen-marks col.c-target { width: 17%; }
-.tcgen .gen-marks col.c-text { width: 38%; }
-.tcgen .gen-marks col.c-mat { width: 13%; }
-.tcgen .gen-marks col.c-place { width: 20%; }
-.tcgen .gen-marks col.c-qty { width: 64px; }
-.tcgen .gen-marks col.c-len { width: 84px; }
+/* Ширины по содержимому (16", панель генератора ~650 px): «Изделие КБ1», «Термотрубка», «На изделии» / «От конца, мм»
+   видны целиком, «Надпись» берёт остаток и переносится; заголовок — в две строки. Широкая панель (27") — доли. */
+.tcgen .gen-marks .gtable th { padding: 5px 4px; line-height: 1.25; vertical-align: bottom; white-space: normal; }
+.tcgen .gen-marks .gtable th:first-child { padding-left: 10px; }
+.tcgen .gen-marks .gtable input:not(.num) { padding-left: 6px; padding-right: 6px; }
+.tcgen .gen-marks .gtable select { padding-left: 6px; padding-right: 22px; background-position: right 7px center; }
+.tcgen .gen-marks col.c-n { width: 30px; }
+.tcgen .gen-marks col.c-target { width: 120px; }
+.tcgen .gen-marks col.c-text { width: auto; }
+.tcgen .gen-marks col.c-mat { width: 124px; }
+.tcgen .gen-marks col.c-place { width: 120px; }
+.tcgen .gen-marks col.c-qty { width: 50px; }
+.tcgen .gen-marks col.c-len { width: 58px; }
 .tcgen .gen-marks col.c-x { width: 32px; }
-.tcgen .gen-marks-place { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 4px; }
-.tcgen .gen-marks-place > select:only-child { grid-column: 1 / -1; }
+.tcgen .gen-marks .gtable td:last-child { padding-left: 2px; padding-right: 2px; }
+@container (min-width: 900px) {
+  .tcgen .gen-marks .gtable th { padding: 6px 8px; }
+  .tcgen .gen-marks col.c-target { width: 17%; }
+  .tcgen .gen-marks col.c-mat { width: 14%; }
+  .tcgen .gen-marks col.c-place { width: 18%; }
+  .tcgen .gen-marks col.c-qty { width: 64px; }
+  .tcgen .gen-marks col.c-len { width: 84px; }
+  .tcgen .gen-marks col.c-x { width: 32px; }
+  .tcgen .gen-marks-place > select { flex: 3 1 0; }
+  .tcgen .gen-marks-place > :not(select) { flex: 2 1 0; }
+}
+.tcgen .gen-marks-place { display: flex; flex-wrap: wrap; gap: 4px; }
+.tcgen .gen-marks-place > * { flex: 1 1 100%; min-width: 0; }
 .tcgen .gen-marks .btn-x { width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); font-size: 16px; cursor: pointer; }
 .tcgen .gen-marks .btn-x:hover { color: var(--tone-danger); }
+/* «№ изделия» под надписью: у надписи с номером — разрядность и пример; иначе кнопка вставки в строке с фокусом. */
+.tcgen .gen-marks-serial { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 3px; }
+.tcgen .gen-marks tr:not(:focus-within) .gen-marks-serial:not(.on) { display: none; }
+.tcgen .gen-marks .gen-marks-serial-add { height: 24px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+  color: var(--primary); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.tcgen .gen-marks .gen-marks-serial-add:hover { border-color: var(--primary); }
+.tcgen .gen-marks .gen-marks-serial-add:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.tcgen .gen-marks .gtable .gen-marks-serial select { width: auto; max-width: 100%; height: 26px; padding-top: 0; padding-bottom: 0; font-size: 12px;
+  padding-left: 5px; padding-right: 18px; background-position: right 5px center; }
+.tcgen .gen-marks-serial small { padding: 0; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 @media (pointer: coarse) {
   .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select, .tcgen .gen-marks .btn-x { height: 40px; }
+  .tcgen .gen-marks .gen-marks-serial-add, .tcgen .gen-marks .gtable .gen-marks-serial select { height: 40px; }
   .tcgen .gen-marks .gtable textarea.auto-textarea { min-height: 40px; padding-top: 10px; }
   .tcgen .gen-marks .btn-x { width: 40px; }
   .tcgen .gen-marks .gtable td:first-child { padding-top: 15px; }
@@ -2232,6 +2261,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-marks td { padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: top; }
 .etk-marks .num { width: 1%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .etk-marks td.num:not(:first-child) { font-weight: 600; }
+.etk-marks .etk-mark-serial { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.etk-marks-print { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: -4px 0 10px; font-size: 12px; }
 .etk-result-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 13px; }
 .etk-result-table th { padding: 6px 12px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); }
 .etk-result-table td { padding: 7px 12px; border-top: 1px solid var(--border); vertical-align: top; }

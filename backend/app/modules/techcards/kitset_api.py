@@ -8,6 +8,7 @@ import base64
 import binascii
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any
@@ -40,6 +41,7 @@ from .application import CreateProjectTechcardCommand, create_project_techcard
 from .kitsets import (
     Kitset,
     KitsetNotFound,
+    clean_folder_url,
     KitsetValidationError,
     document_json,
     document_kind,
@@ -322,6 +324,7 @@ def _card(request: Request, kitset: Kitset) -> dict:
         documents = uow.kitsets.documents(kitset.project)
     return {
         "project": kitset.project, "customer": kitset.customer, "calc_source": kitset.calc_source,
+        "folder_url": kitset.folder_url or None,
         "updated_at": kitset.updated_at.isoformat(), "updated_by": kitset.updated_by, "version": kitset.version,
         "status": stage.status, "blocker": blocker,
         "blocker_info": None if active is None else {
@@ -701,6 +704,46 @@ def journal_note(
         known_projects=(kitset.project,), actor=principal.actor, now=now,
     ), factory()))
     return {"card": _card(request, kitset)}
+
+
+class FolderPayload(BaseModel):
+    url: str = Field(default="", max_length=4000)
+
+
+@router.put("/{project}/folder")
+def set_folder(
+    project: str,
+    payload: FolderPayload,
+    request: Request,
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Ссылка на папку проекта: поставить, сменить или убрать (пустая строка); правка идёт в журнал проекта."""
+    factory = production_factory(request)
+    if factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+
+    def save():
+        url = clean_folder_url(payload.url)
+        with techcards_factory(request)() as uow:
+            current = uow.kitsets.get(project)
+            if current is None:
+                raise KitsetNotFound(f"Карточка набора «{project}» не найдена")
+            before = current.folder_url
+            if url != before:
+                uow.kitsets.save(replace(
+                    current, folder_url=url, version=current.version + 1, updated_at=now, updated_by=principal.actor.name,
+                ))
+                uow.commit()
+        if url != before:
+            text = f"Папка проекта: {before or 'не задана'} → {url or 'ссылка убрана'}"
+            add_plan_event(AddPlanEventCommand(
+                project=current.project, kind="note", blocker="", text=text, deadline=None,
+                known_projects=(current.project,), actor=principal.actor, now=now,
+            ), factory())
+        return _kitset(request, project)
+
+    return {"card": _card(request, _run(save))}
 
 
 class DocumentPayload(BaseModel):

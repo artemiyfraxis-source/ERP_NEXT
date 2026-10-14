@@ -131,8 +131,13 @@ def mark_length(item: Mapping[str, Any]) -> Decimal:
     return number if number > 0 else Decimal(0)
 
 
+# «№ изделия» в надписи (генератор, frontend markSerial.ts): `{№}` или `{№:3}` — номер изделия, его разворачивает
+# задание. В шагах ЭТК надпись — шаблоном «{№}», без разрядности.
+_SERIAL = re.compile(r"\{№:[1-6]\}")
+
+
 def _label(item: Mapping[str, Any]) -> str:
-    return str(item.get("text") or item.get("target") or "").strip() or "метка"
+    return _SERIAL.sub("{№}", str(item.get("text") or item.get("target") or "").strip()) or "метка"
 
 
 def _sizes(marks: Sequence[Mapping[str, Any]]) -> tuple[str, str]:

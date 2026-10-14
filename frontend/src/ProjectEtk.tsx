@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, Fragment, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { TcGenerator } from "./TcGenerator";
 import {
   kitsetsApi,
@@ -13,7 +13,8 @@ import {
   failureText,
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkChips, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, type EtkTopologyData } from "./etkDraw";
-import { etkPrintPages } from "./etkPrint";
+import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
+import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { ETK_PART_SOURCE, etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, etkSemiSource, formatMinutes } from "./etkRoute";
 import { defectArt, defectGroupCode } from "./etkDefectArt";
 import { ETK_TOOLING_SECTIONS, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
@@ -235,17 +236,34 @@ function MarkMissing({ text }: { text: string }) {
 /** Допуск шага, которого нет в данных («длина не задана» у нарезки трубок-маркеров) — красным, как «не задано» пайки. */
 const NOT_SET = /не задан/i;
 
+/** Номера изделий задания для «№ изделия» в надписях и печать их списка; вне задания — нет (номер «по партии»). */
+const MarkSerialContext = createContext<{ range: MarkSerialRange; print: () => void } | null>(null);
+
+/** Надпись метки: без «№ изделия» — как есть; с ним — шаблон и номера задания «КБ1-{№} → КБ1-001 … КБ1-010». */
+function MarkText({ text, range }: { text?: string; range?: MarkSerialRange }) {
+  if (!text || !hasMarkSerial(text)) return <b>{text || "—"}</b>;
+  return <><b>{markSerialTemplate(text)}</b> <span className="etk-mark-serial">→ {markSerialSpan(text, range)}</span></>;
+}
+
 /** Метки по КД в «Ходе операции» маркировки: монтажник видит, какую надпись, чем и где делать, сколько штук. */
 function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
+  const serial = useContext(MarkSerialContext);
   const lengths = marks.some((mark) => mark.length);
-  return <table className="etk-marks" aria-label="Метки по КД">
+  const numbered = marks.some((mark) => hasMarkSerial(mark.text));
+  const count = serial ? serial.range.last - serial.range.first + 1 : 0;
+  const table = <table className="etk-marks" aria-label="Метки по КД">
     <caption>Метки по КД</caption>
     <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th>{lengths && <th className="num">Длина, мм</th>}<th className="num">На изделие</th><th className="num">{batch ? `На партию ${formatQty(batch, "шт")}` : "На партию"}</th></tr></thead>
     <tbody>{marks.map((mark, index) => <tr key={index}>
-      <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><b>{mark.text || "—"}</b></td><td>{mark.material || "—"}</td>
+      <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><MarkText text={mark.text} range={serial?.range} /></td><td>{mark.material || "—"}</td>
       <td>{mark.place || "—"}</td>{lengths && <td className="num">{mark.length || ""}</td>}<td className="num">{mark.qty || ""}</td><td className="num">{mark.batch || ""}</td>
     </tr>)}</tbody>
   </table>;
+  if (!numbered || !serial || count < 1) return table;
+  return <>{table}<div className="etk-marks-print">
+    <button type="button" className="secondary small" onClick={serial.print}>Печать надписей № {serial.range.first}–{serial.range.last}</button>
+    <span className="muted">{countLabel(count, ["изделие", "изделия", "изделий"])} задания</span>
+  </div></>;
 }
 
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
@@ -640,12 +658,14 @@ function stamp(value: string | null | undefined) {
     ревизий свёрнут. Правят операции здесь («Править операцию»); пересборка — в «Генераторе». */
 export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
 
-export function EtkSheet({ card, principal, title, focus, task = false, taskId, onChange, onRebuild, sketchSource }: {
+export function EtkSheet({ card, principal, title, focus, task = false, taskId, serial, onChange, onRebuild, sketchSource }: {
   card: ProjectTechcard; principal: Principal; title?: ReactNode; focus?: EtkFocus;
   /** Задание монтажника: только операция `focus`, схема — вид Э4. */
   task?: boolean;
   /** Задание, чьей карточке принадлежит ЭТК: схема Э4 читает чертёж маршрутом заданий. */
   taskId?: string;
+  /** Номера изделий задания: «№ изделия» в надписях меток разворачивается в них; без задания — «№ по партии». */
+  serial?: MarkSerialRange;
   onChange: (card: ProjectTechcard) => void; onRebuild?: () => void;
   /** Откуда брать эскизы; по умолчанию раздел техкарт. Монтажнику экран «Мои задания» даёт свой источник. */
   sketchSource?: EtkSketchSource;
@@ -680,12 +700,18 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     } finally { setBusy(false); }
   }
 
-  return <EtkFoldScope user={principal.user.id}><div className="etk-sheet">
+  const sketchLinks = () => Object.fromEntries(sketches.map((item) =>
+    [item.operation_key, window.location.origin + source.url(item.operation_key, item.uploaded_at)]));
+  const labelsPage = serial ? etkMarkLabelsPage(card, serial) : null;
+  const serialContext = serial && labelsPage ? {
+    range: serial, print: () => openPrintDocument(`Надписи ${card.project} ${card.item_index}`, [labelsPage]),
+  } : null;
+
+  return <MarkSerialContext.Provider value={serialContext}><EtkFoldScope user={principal.user.id}><div className="etk-sheet">
     <div className="etk-top">
       <div className="etk-title">{title ?? <strong>{card.project} · {card.item_index}</strong>}
         <span className="muted">{countLabel(list.length, ["операция", "операции", "операций"])} · {issued ? `ревизия ${card.revision}${card.issued_at ? ` · выдана ${stamp(card.issued_at)}` : ""}` : "черновик, не выдана"}</span></div>
-      {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, Object.fromEntries(sketches.map((item) =>
-        [item.operation_key, window.location.origin + source.url(item.operation_key, item.uploaded_at)]))))}>Печать / PDF</button>}
+      {list.length > 0 && <button className="secondary small etk-print-btn" onClick={() => openPrintDocument(`ТК ${card.project} ${card.item_index}`, etkPrintPages(card, revisions, sketchLinks(), serial))}>Печать / PDF</button>}
       {canGenerate && onRebuild && <button className="secondary small" onClick={onRebuild}>Пересобрать</button>}
       {canEdit && !issued && card.document && <button className="primary small" disabled={busy} onClick={() => void issue()}>Выдать ЭТК</button>}
     </div>
@@ -706,7 +732,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
     {revisions.length > 0 && <EtkFold block="revs" className="etk-revs" summary={`Журнал ревизий · ${revisions.length}`}>
       {revisions.map((revision) => <div key={revision.id}><span>Ревизия {revision.revision} · {revision.reason}</span><span className="muted">{revision.actor_name} · {stamp(revision.occurred_at)}</span></div>)}
     </EtkFold>}
-  </div></EtkFoldScope>;
+  </div></EtkFoldScope></MarkSerialContext.Provider>;
 }
 
 /** «Генератор» сборки: форма и ОДНА кнопка. Нет ТК — «Создать» (сборка ЭТК и выдача сразу, как файл техкарты в

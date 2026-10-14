@@ -23,6 +23,7 @@ import {
 } from "./api";
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { EtkSheet } from "./ProjectEtk";
+import type { MarkSerialRange } from "./markSerial";
 import { PfCardBlocks, isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay, formatDayMonth, formatMoment } from "./format";
@@ -844,7 +845,7 @@ function cardState(operation: ProductionOperation, running: ProductionWorkSessio
 
 // ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции.
 function OperationEtk({ principal, task, operation }: { principal: Principal; task: ProductionTask; operation: ProductionOperation }) {
-  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string } } | undefined>(undefined);
+  const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string }; serial?: MarkSerialRange } | undefined>(undefined);
   const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
@@ -858,7 +859,7 @@ function OperationEtk({ principal, task, operation }: { principal: Principal; ta
   return <div className="panel mo-etk">
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!error && !view && <div className="empty">Загрузка…</div>}
-    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} sketchSource={{
+    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} serial={view.serial} sketchSource={{
       list: () => productionApi.operationEtkSketches(task.id, operation.id),
       url: (key, at) => productionApi.operationEtkSketchUrl(task.id, operation.id, key, at),
     }} />}

@@ -209,3 +209,20 @@ def test_mixed_heat_and_pvc_blocks_get_their_own_lengths():
     assert len(cuts) == 2
     assert cuts[0].startswith("Термоусадочная трубка — нарезать трубки в размер: X1 — 25 мм — ")
     assert cuts[1].startswith("ПВХ-трубка — нарезать трубки в размер: W1 — 40 мм — ")
+
+
+def test_product_number_token_stays_in_the_inscription_and_changes_nothing_else():
+    # «№ изделия» (`{№}`, `{№:3}`) разворачивает экран задания; ЭТК хранит надпись как есть, остальное — как у
+    # надписи без номера: ход операции, материалы, время.
+    numbered, _ = _build([_mark("Хлястик", "КБ1-{№:3}", target="Изделие КБ1"), _mark("Термотрубка", "X1-{№}")])
+    plain, _ = _build([_mark("Хлястик", "КБ1-001", target="Изделие КБ1"), _mark("Термотрубка", "X1-1")])
+    assert [mark["text"] for mark in numbered["fields"]["marks"]] == ["КБ1-{№:3}", "X1-{№}"]
+    for mark in (*numbered["fields"]["marks"], *plain["fields"]["marks"]):
+        mark.pop("text")
+    assert numbered == plain
+
+
+def test_tube_cut_step_names_a_numbered_inscription_by_its_template():
+    op, _warnings = _build([_tube("Термотрубка", "X1", 25), _tube("Термотрубка", "W1/{№:3}", 20)])
+    cut = next(step["text"] for step in op["card"]["steps"] if "арезать" in step["text"])
+    assert "X1 — 25 мм, W1/{№} — 20 мм" in cut
