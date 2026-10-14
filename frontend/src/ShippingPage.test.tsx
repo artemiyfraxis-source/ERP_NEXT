@@ -40,6 +40,7 @@ function stub(shipments: unknown[] = [], goods: unknown[] = [good], addressees: 
     if (url === "/api/shipping/shipments" && method === "POST") return json({ shipment: { ...shipment, version: 1 } });
     if (url === "/api/shipping/upd-files") return json({ shipment: { ...shipment, version: 2 } });
     if (url === "/api/shipping/project-addressees") return json({ addressees });
+    if (url === "/api/shipping/project-addressee" && method === "PUT") return json({ addressee: { ...card, ...JSON.parse(String(init?.body)), version: 3 } });
     if (/^\/api\/shipping\/shipments\/s\d+\/print/.test(url)) return json({ forms: [{ kind: "pl", title: "УПАКОВОЧНАЯ ВЕДОМОСТЬ", head: [{ label: "Номер документа", value: "PL1", side: "" }], columns: ["GRN"], rows: [["КБ1"]], blank_rows: 0, sign_label: "Штамп / подпись кладовщика:", sign_name: "" }] });
     if (url === "/api/shipping/shipments/s1/labels") return json({ labels: [{ shipper: "ООО «ЗЭП ФРАКСИС»", consignee: "Получатель", address: "Москва", project: "591К.3", pl_number: "PL1", place: "Упаковка 1/1", items: [{ item_index: "КБ1", quantity: "6", unit: "шт" }], net: "11", dims: "32x25x21" }] });
     if (url === "/api/shipping/shipments/s1/ship") return json({ shipment, closed: true, why: "" });
@@ -78,7 +79,7 @@ describe("ShippingPage", () => {
     tab(/^На складе/);
     expect(screen.queryByText("600К.1", { selector: "strong" })).not.toBeInTheDocument();
     fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
-    expect(screen.getByLabelText("Адрес отгрузки проекта 591К.3")).toHaveValue("Склад заказчика");
+    expect(screen.getByLabelText("Адрес доставки проекта 591К.3")).toHaveValue("Склад заказчика");
     expect(screen.queryByRole("button", { name: /^Отгрузить/ })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Сколько упаковать КБ1"), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText("Отгрузить до: проект 591К.3"), { target: { value: "2026-10-09" } });
@@ -99,8 +100,8 @@ describe("ShippingPage", () => {
     tab(/^На складе/);
     fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
     fireEvent.click(screen.getByRole("button", { name: "Упаковать · 6 шт" }));
-    expect(screen.getByText("Укажите адрес отгрузки")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Адрес отгрузки проекта 591К.3"), { target: { value: "Тула" } });
+    expect(screen.getByText("Укажите адрес доставки")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Адрес доставки проекта 591К.3"), { target: { value: "Тула" } });
     fireEvent.change(screen.getByLabelText("Сколько упаковать КБ1"), { target: { value: "9" } });
     fireEvent.click(screen.getByRole("button", { name: "Упаковать · 9 шт" }));
     expect(screen.getByText("КБ1: на складе только 6")).toBeInTheDocument();
@@ -125,13 +126,43 @@ describe("ShippingPage", () => {
     await loaded();
     tab(/^На складе/);
     fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
-    expect(screen.getByLabelText("Адрес отгрузки проекта 591К.3")).toBeDisabled();
     expect(screen.queryByLabelText("№ УПД проекта 591К.3")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Добавить КБ проекта" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Упаковать · 6 шт" }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(sent("/api/shipping/project-ship")).toEqual({ project: "591К.3", addressee_version: 2, lines: [{ good_id: "g1", version: 1, quantity: "6" }], ship: false });
     expect(vi.mocked(fetch).mock.calls.map(([target]) => String(target))).not.toContain("/api/shipping/finished-goods/from-production");
+  });
+
+  it("the storekeeper fills the dispatch data too: the card is saved first, then the pack goes with its new version", async () => {
+    stub([], [good], [card]);
+    render(<ShippingPage principal={{ ...principal, roles: ["foreman"], access_level: "foreman", permissions: { shipping_goods: "edit" } }} />);
+    await loaded();
+    tab(/^На складе/);
+    fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
+    fireEvent.change(screen.getByLabelText("Телефон проекта 591К.3"), { target: { value: "+7 900 000-00-00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Упаковать · 6 шт" }));
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(sent("/api/shipping/project-addressee", "PUT")).toEqual({ project: "591К.3", version: 2, phone: "+7 900 000-00-00" });
+    expect(sent("/api/shipping/project-ship")).toEqual({ project: "591К.3", addressee_version: 3, lines: [{ good_id: "g1", version: 1, quantity: "6" }], ship: false });
+  });
+
+  it("shows the four dispatch fields of the project, the rest under «Ещё», and the paper УПД file", async () => {
+    stub([], [good], [{ ...card, upd_type: "БУМАГА", upd_url: "/api/shipping/files/f1", upd_file_name: "УПД 591К.3.pdf", contact: "Иван" }]);
+    render(<ShippingPage principal={principal} />);
+    await loaded();
+    tab(/^На складе/);
+    fireEvent.click(await screen.findByText("591К.3", { selector: "strong" }));
+    const dispatch = screen.getByRole("heading", { name: "Данные отправки" }).parentElement!;
+    expect(within(dispatch).getAllByRole("textbox").map((input) => input.getAttribute("aria-label"))).toEqual(
+      ["Получатель проекта 591К.3", "Адрес доставки проекта 591К.3", "Телефон проекта 591К.3"]);
+    expect(within(dispatch).getByLabelText("УПД проекта 591К.3")).toHaveValue("БУМАГА");
+    expect(within(dispatch).getByRole("link", { name: "УПД 591К.3.pdf" })).toHaveAttribute("href", "/api/shipping/files/f1");
+    expect(within(dispatch).queryByLabelText("Контактное лицо проекта 591К.3")).not.toBeInTheDocument();
+    const more = screen.getByText(/^Ещё: контакт, доставка, план/).closest("details")!;
+    expect(more).not.toHaveAttribute("open");
+    expect(within(more).getByLabelText("Контактное лицо проекта 591К.3")).toHaveValue("Иван");
+    expect(within(more).getByLabelText("Условия доставки проекта 591К.3")).toHaveValue("САМОВЫВОЗ");
   });
 
   it("«Отправки» groups shipments by status and ships a packed one", async () => {

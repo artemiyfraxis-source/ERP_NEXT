@@ -10,6 +10,7 @@ import { formatDate } from "./format";
 import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
 import { GoodsStateBar, goodsPieces, sumPieces } from "./FinishedGoodsStates";
+import { DispatchFields, changedDispatch, dispatchDraft, readFile, type DispatchDraft } from "./DispatchCard";
 import "./shipping.css";
 
 /* Отгрузка (владелец 12–14.10.2026) — путь готовой продукции слева направо, штуки КБ в сквозных статусах.
@@ -56,15 +57,6 @@ function notClosed(why: string | undefined) {
   const text = String(why || "").replace(/^Нельзя закрыть:\s*/, "");
   const missing = /^не хватает\s*—\s*/.exec(text);
   return missing ? `Не закрыта — не хватает: ${text.slice(missing[0].length)}` : `Не закрыта — ${text || "не хватает данных"}`;
-}
-
-function readFile(file: File) {
-  return new Promise<{ name: string; type: string; base64: string }>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve({ name: file.name, type: file.type || "application/octet-stream", base64: String(reader.result ?? "").split(",")[1] ?? "" });
-    reader.onerror = () => reject(new Error("Не удалось прочитать файл"));
-    reader.readAsDataURL(file);
-  });
 }
 
 function initialTab(): Tab {
@@ -232,38 +224,34 @@ function RegisterGood({ busy, mutate, onDone }: { busy: string; mutate: Mutate; 
   </form>;
 }
 
-const CARD_FIELDS: Array<["receiver" | "shipping_point" | "contact" | "phone" | "carrier", string, string]> = [
-  ["receiver", "Получатель", "как в документах"], ["shipping_point", "Адрес отгрузки", "куда везём"], ["contact", "Контактное лицо", "кто принимает"],
-  ["phone", "Телефон", ""], ["carrier", "ТК / способ", "СДЭК, Деловые линии…"],
-];
+/* Остальные поля карточки — под «Ещё»: владелец 14.10 оставил на виду получателя, адрес, телефон и УПД. */
+const MORE_FIELDS: Array<["contact" | "carrier", string, string]> = [["contact", "Контактное лицо", "кто принимает"], ["carrier", "ТК / способ", "СДЭК, Деловые линии…"]];
 const REQUISITE_FIELDS: Array<[keyof ProjectAddressee, string, string]> = [
   ["po", "Заказ № (PO)", "номер заказа заказчика"], ["contract", "№ договора", ""], ["spec", "№ спецификации", "пусто — № проекта"],
   ["invoice", "№ счёта", ""], ["pays", "Оплачивает доставку", "заказчик / мы"], ["customer_address", "Адрес заказчика", "юридический"],
   ["hours", "Время работы", "пн–пт 9:00–18:00"],
 ];
-type CardDraft = Record<"receiver" | "shipping_point" | "contact" | "phone" | "carrier" | "terms" | "upd_type", string>;
+type MoreDraft = Record<"contact" | "carrier" | "terms", string>;
 
 /** Проект на вкладке «На складе»: что упаковать, куда, документы — и одна кнопка «Упаковать». Отгружают — в «Отправках». */
 function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Context & { row: ProjectRow }) {
   const stored = addressees.find((item) => item.project === row.project);
-  const storedCard = (): CardDraft => ({
-    receiver: stored?.receiver ?? "", shipping_point: stored?.shipping_point ?? "", contact: stored?.contact ?? "",
-    phone: stored?.phone ?? "", carrier: stored?.carrier ?? "", terms: stored?.terms ?? "", upd_type: stored?.upd_type ?? "",
-  });
-  const [card, setCard] = useState<CardDraft>(storedCard);
+  const storedMore = (): MoreDraft => ({ contact: stored?.contact ?? "", carrier: stored?.carrier ?? "", terms: stored?.terms ?? "" });
+  const [card, setCard] = useState<DispatchDraft>(() => dispatchDraft(stored));
+  const [more, setMore] = useState<MoreDraft>(storedMore);
   const [requisites, setRequisites] = useState<Record<string, string>>(() => Object.fromEntries(REQUISITE_FIELDS.map(([key]) => [key, String(stored?.[key] ?? "")])));
   const readyLines = row.lines.filter((line) => line.ready > 0);
   const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(readyLines.map((line) => [line.good.id, String(line.ready)])));
   const [marked, setMarked] = useState<Record<string, boolean>>(() => Object.fromEntries(readyLines.map((line) => [line.good.id, true])));
   const [plan, setPlan] = useState({ plan_date: stored?.plan_date ?? "", note: stored?.note ?? "" });
   const [docs, setDocs] = useState({ upd_number: "", upd_date: today(), deadline: "" });
-  const [file, setFile] = useState<File | null>(null);
   const [problem, setProblem] = useState("");
   // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже заведённую отправку, а не заведёт вторую.
   const packKey = useRef(crypto.randomUUID());
   const chosen = readyLines.filter((line) => marked[line.good.id] && num(qty[line.good.id]) > 0);
   const total = round2(chosen.reduce((sum, line) => sum + num(qty[line.good.id]), 0));
-  const editCard = canManage;
+  // Данные отправки правят и менеджер, и склад (владелец 14.10, как в «Приёмке с производства»).
+  const editCard = canEdit;
 
   const saveRequisite = (key: string, value: string) => {
     if (String(stored?.[key as keyof ProjectAddressee] ?? "") === value) return;
@@ -274,21 +262,28 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     setProblem("");
     const over = chosen.find((line) => num(qty[line.good.id]) > line.ready);
     if (over) { setProblem(`${over.good.item_index}: на складе только ${over.ready}`); return; }
-    if (!card.shipping_point.trim()) { setProblem("Укажите адрес отгрузки"); return; }
+    if (!card.shipping_point.trim()) { setProblem("Укажите адрес доставки"); return; }
     const lines = chosen.map((line) => ({ good_id: line.good.id, version: line.good.version, quantity: qty[line.good.id] }));
     void mutate(`pack:${row.project}`, async () => {
-      const before = storedCard();
-      const changed = editCard ? Object.fromEntries(Object.entries(card).filter(([key, value]) => value.trim() !== before[key as keyof CardDraft])
-        .map(([key, value]) => [key, (key === "terms" || key === "upd_type") ? value || null : value.trim()])) : {};
+      const before = storedMore();
+      const changed = editCard ? {
+        ...changedDispatch(card, stored),
+        ...Object.fromEntries(Object.entries(more).filter(([key, value]) => value.trim() !== before[key as keyof MoreDraft])
+          .map(([key, value]) => [key, key === "terms" ? value || null : value.trim()])),
+      } : {};
       const number = docs.upd_number.trim();
-      const upload = file ? await readFile(file) : null;
-      // Один запрос — одна транзакция: карточка, отправка с PL/DN и файл УПД сохраняются вместе или никак.
-      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта.
+      // Менеджер: один запрос — одна транзакция, карточка и отправка с PL/DN сохраняются вместе или никак. Склад карточку
+      // в упаковке не правит (сервер) — его правка уходит в карточку отдельно, перед упаковкой.
+      let version = stored?.version ?? 0;
+      if (!canManage && Object.keys(changed).length) {
+        version = (await shippingApi.saveAddressee({ project: row.project, version, ...changed })).addressee.version;
+      }
+      // Адресат не копируется в отправку: пустые поля идут за карточкой проекта, пока отправка открыта; бумажную УПД,
+      // приложенную к данным отправки, новая отправка берёт себе.
       const result = await shippingApi.projectShip({
-        project: row.project, addressee_version: stored?.version ?? 0, lines, ship: false,
-        ...(Object.keys(changed).length ? { addressee: changed } : {}),
+        project: row.project, addressee_version: version, lines, ship: false,
+        ...(canManage && Object.keys(changed).length ? { addressee: changed } : {}),
         ...(canManage ? { documents: { upd_number: number, upd_date: number ? docs.upd_date || null : null, deadline: docs.deadline || null } } : {}),
-        ...(upload ? { upd_file: { file_name: upload.name, content_type: upload.type, content_base64: upload.base64 } } : {}),
       }, packKey.current);
       packKey.current = crypto.randomUUID();
       return result;
@@ -298,12 +293,10 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     });
   };
 
-  const field = ([key, label, placeholder]: [keyof CardDraft, string, string], className?: string) => <label key={key} className={className}>{label}
-    <input aria-label={`${label} проекта ${row.project}`} disabled={!editCard} placeholder={editCard ? placeholder : ""} value={card[key]} onChange={(event) => setCard({ ...card, [key]: event.target.value })} /></label>;
-  const choice = (key: "terms" | "upd_type", label: string, options: Array<string | [string, string]>) => <label>{label}
-    <select aria-label={`${label} проекта ${row.project}`} disabled={!editCard} value={card[key]} onChange={(event) => setCard({ ...card, [key]: event.target.value })}>
-      <option value="">не выбрано</option>{options.map((option) => { const [value, text] = Array.isArray(option) ? option : [option, option]; return <option key={value} value={value}>{text}</option>; })}</select></label>;
-  const filled = REQUISITE_FIELDS.map(([key]) => String(stored?.[key] ?? "")).filter(Boolean);
+  const filled = [
+    stored?.contact, stored?.terms === "ДОСТАВКА ТК" ? "Доставка ТК" : stored?.terms === "САМОВЫВОЗ" ? "Самовывоз" : "", stored?.carrier,
+    stored?.plan_date ? formatDate(stored.plan_date) : "", ...(canManage ? REQUISITE_FIELDS.map(([key]) => String(stored?.[key] ?? "")) : []),
+  ].filter(Boolean);
 
   return <div className="ship-panel">
     <div className="table-scroll"><table className="ship-lines">
@@ -325,21 +318,28 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
     </table></div>
 
     {canEdit && readyLines.length > 0 && <>
-      <div className="ship-form">
-        {field(CARD_FIELDS[0])}{field(CARD_FIELDS[1], "ship-span2")}{field(CARD_FIELDS[2])}
-        {field(CARD_FIELDS[3])}{choice("terms", "Условия доставки", ["САМОВЫВОЗ", "ДОСТАВКА ТК"])}{field(CARD_FIELDS[4])}{choice("upd_type", "Тип УПД", UPD_TYPES)}
-        {canManage && <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>}
-        {canManage && <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>}
-        <label>Файл УПД<span className="ship-file"><span className="secondary">Выбрать файл</span><span>{file ? file.name : "не выбран"}</span>
-          <input aria-label={`Файл УПД проекта ${row.project}`} type="file" accept=".pdf,image/*" hidden onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></span></label>
-        {canManage && <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" value={docs.deadline} onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>}
-        <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
-        <label className="ship-span2">Комментарий проекта<input aria-label={`Комментарий проекта ${row.project}`} placeholder="попадёт в новые отправки" value={plan.note} onChange={(event) => setPlan({ ...plan, note: event.target.value })} onBlur={(event) => saveRequisite("note", event.target.value.trim())} /></label>
+      <div className="ship-dispatch">
+        <h3>Данные отправки</h3>
+        <DispatchFields project={row.project} draft={card} onChange={setCard} editable={editCard} card={stored} suffix={` проекта ${row.project}`}
+          onCardSaved={(saved, message) => void mutate(`addressee:${row.project}`, async () => saved, message)} />
       </div>
-      {canManage && <details className="ship-more"><summary>Реквизиты для отгрузочной ведомости <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
-        <div className="ship-form">{REQUISITE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
-          <input aria-label={`${label} проекта ${row.project}`} placeholder={placeholder} value={requisites[key] ?? ""} onChange={(event) => setRequisites({ ...requisites, [key]: event.target.value })} onBlur={(event) => saveRequisite(key, event.target.value.trim())} /></label>)}</div>
-      </details>}
+      {canManage && <div className="ship-form ship-pack-docs">
+        <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>
+        <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>
+        <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" value={docs.deadline} onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>
+      </div>}
+      <details className="ship-more"><summary>Ещё: контакт, доставка, план{canManage ? ", реквизиты" : ""} <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
+        <div className="ship-form">
+          {MORE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
+            <input aria-label={`${label} проекта ${row.project}`} disabled={!editCard} placeholder={editCard ? placeholder : ""} value={more[key]} onChange={(event) => setMore({ ...more, [key]: event.target.value })} /></label>)}
+          <label>Условия доставки<select aria-label={`Условия доставки проекта ${row.project}`} disabled={!editCard} value={more.terms} onChange={(event) => setMore({ ...more, terms: event.target.value })}>
+            <option value="">не выбрано</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option></select></label>
+          <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
+          <label className="ship-span2">Комментарий проекта<input aria-label={`Комментарий проекта ${row.project}`} placeholder="попадёт в новые отправки" value={plan.note} onChange={(event) => setPlan({ ...plan, note: event.target.value })} onBlur={(event) => saveRequisite("note", event.target.value.trim())} /></label>
+          {canManage && REQUISITE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
+            <input aria-label={`${label} проекта ${row.project}`} placeholder={placeholder} value={requisites[key] ?? ""} onChange={(event) => setRequisites({ ...requisites, [key]: event.target.value })} onBlur={(event) => saveRequisite(key, event.target.value.trim())} /></label>)}
+        </div>
+      </details>
       <div className="ship-actions">
         <span className="ship-total">Упаковать: <strong>{chosen.length} КБ · {total} шт</strong></span>
         {problem && <span className="tone-danger" role="alert">{problem}</span>}
