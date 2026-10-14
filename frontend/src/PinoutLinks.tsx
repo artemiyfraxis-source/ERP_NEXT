@@ -133,7 +133,7 @@ export function linkLayout(ends: PinoutEnd[], units: PinUnit[], housings: Record
   const drops = new Map<string, number>();
   const lines: LinkLine[] = wires.flatMap((w) => {
     const from = w.a.map((x) => pt(x, w.unit.key)).filter((p): p is Pt => !!p), to = w.b.map((x) => pt(x, w.unit.key)).filter((p): p is Pt => !!p);
-    if (from.length && to.length) return from.flatMap((a) => to.map((b) => ({ w, a, b, free: null, left: false, d: route(a, b), twisted: false })));
+    if (from.length && to.length) return from.flatMap((a) => to.map((b): LinkLine => ({ w, a, b, free: null, left: false, d: route(a, b), twisted: false })));
     const loose = (w.a[0]?.kind === "tail" || w.b[0]?.kind === "tail") ? "tail" as const : "open" as const;
     const base = from.length ? from : to;
     const dir = from.length ? 1 : -1;
