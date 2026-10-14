@@ -36,6 +36,7 @@ import { RequestsPage } from "./RequestsPage";
 import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
 import { ShippingPage } from "./ShippingPage";
+import { ProductionIntakePage } from "./ProductionIntakePage";
 import { ReferencesPage } from "./ReferencesPage";
 import { NotificationsPage } from "./NotificationsPage";
 import { NotificationBell } from "./NotificationBell";
@@ -303,6 +304,7 @@ export function App() {
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
         {activeSection === "stock" && <WarehousePage admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
+        {activeSection === "intake" && <ProductionIntakePage principal={principal} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}

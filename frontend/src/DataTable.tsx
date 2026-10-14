@@ -71,7 +71,7 @@ export interface DataTableProps<T> {
   allLast?: boolean;
   groupBy?: (row: T) => string;
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
-  groupLabel?: (name: string, rows: T[]) => string;
+  groupLabel?: (name: string, rows: T[]) => ReactNode;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
   collapsibleGroups?: boolean;
   bulkActions?: DataBulkAction<T>[];

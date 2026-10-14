@@ -1,0 +1,18 @@
+/* «Приёмка с производства»: свои мелочи; остальное — общие классы (.ship-take, .ship-accept-bar, .seg-tabs, .form-grid). */
+.intake-group { display: inline-flex; align-items: center; gap: 12px; }
+.intake-group .small { font-weight: 400; }
+.intake-page .seg-tabs { margin-bottom: 10px; }
+.intake-page .ship-handoff { margin-top: 16px; }
+.intake-location { width: 150px; flex: none; padding: 4px 8px; }
+.intake-page .data-table th, .intake-page .data-table td { padding-left: 8px; padding-right: 8px; }
+.intake-page .ship-inline { flex: none; }
+.dispatch-card .form-grid { padding: 0; }
+.dispatch-card .page-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.dispatch-card .page-head h2 { margin: 0; font-size: 16px; }
+.dispatch-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+@media (pointer: coarse) {
+  .intake-page .ship-take .ship-qty, .intake-page .ship-accept-bar .primary, .intake-page .ship-accept-bar input, .dispatch-card input, .dispatch-card select, .dispatch-card button { min-height: 40px; }
+  .intake-page .ship-take input[type="checkbox"], .intake-page .ship-accept-bar input[type="checkbox"] { width: 22px; height: 22px; }
+}
+.intake-take { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; max-width: 150px; }
+.intake-take .ship-row-error { flex-basis: auto; max-width: 150px; white-space: normal; }
