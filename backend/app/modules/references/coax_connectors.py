@@ -6,7 +6,9 @@
 One row per connector and cable (the table's key is the article + «Провод»; a connector the site gives for RG-174 and
 RG-316 is two rows, as БД.КОАКС keeps SMA-C174P). How a site entry becomes rows:
 
-* article — the site's; an entry without one gets «<тип> №<номер на сайте>» (unique, the card links the page);
+* article — the site's; an entry without one is named by what tells it apart: «<тип> [угловой] [монтаж, кроме
+  обжимного] [с иглой] [на корпус] для <кабели>» — «FAKRA-female (тип C) для RG-174/RG-316» (owner 14.10.2026: «а
+  зачем мне номера?»); the site number stays in «Примечание» and names it only when two entries would share a name;
   two entries with one article and cable: the angled one becomes «<артикул> R/A» (БД.КОАКС names angled connectors
   so), the same connector on two pages is one row with the second page in «Примечание»;
 * a pair БД.КОАКС already has (the mirror `backend/data/reference-mirror/БД.КОАКС.tsv`, matched as the import
@@ -99,9 +101,21 @@ def _article(entry: Mapping[str, Any]) -> str:
     article = _text(entry.get("article"))
     if article:
         return article
-    number = site_number(entry)
     kind = _text(entry.get("type_name")) or _text(entry.get("series"))
-    return f"{kind} №{number}" if number else _text(entry.get("full_name"))
+    if not kind:
+        return _text(entry.get("full_name"))
+    name, mount = _text(entry.get("full_name")).casefold(), _text(entry.get("mount"))
+    cables = "/".join(_text(cable) for cable in entry.get("cable") or [] if _text(cable))
+    parts = [kind, "угловой" if _text(entry.get("angle")) == "угловой" else "",
+             mount if mount and mount != "обжимной" else "", "с иглой" if "игл" in name else "",
+             "на корпус" if "на корпус" in name else "", f"для {cables}" if cables else ""]
+    return " ".join(part for part in parts if part)
+
+
+def _numbered(entry: Mapping[str, Any]) -> str:
+    """The name of a second, different site entry that would get the same descriptive name: with its site number."""
+    number = site_number(entry)
+    return f"{_article(entry)} №{number}" if number else _article(entry)
 
 
 def _card(entry: Mapping[str, Any], checked_on: str, source: str) -> dict[str, str]:
@@ -155,9 +169,13 @@ def gsm_import_rows(document: Mapping[str, Any], existing: Iterable[tuple[str, s
     entries: Sequence[Mapping[str, Any]] = document["connectors"]
     rows: dict[tuple[str, str], dict[str, Any]] = {}
     angle_of: dict[tuple[str, str], str] = {}
+    page_of: dict[str, str] = {}  # a descriptive name (no site article) → the page that took it
     merged: list[str] = []
     for entry in entries:
         name = _article(entry)
+        if not _text(entry.get("article")):
+            if page_of.setdefault(name, _text(entry.get("url"))) != _text(entry.get("url")):
+                name = _numbered(entry)
         cables = [_text(cable) for cable in entry.get("cable") or [] if _text(cable)]
         angle = _text(entry.get("angle"))
         if angle == "угловой" and any(angle_of.get(pair_key(name, cable), angle) != angle for cable in cables):

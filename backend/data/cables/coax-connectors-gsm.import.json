@@ -2,7 +2,7 @@
  "rows": [
   {
    "fields": {
-    "coaxArticle": "U.FL-female (IPX-female) №3148",
+    "coaxArticle": "U.FL-female (IPX-female) угловой для RG-178",
     "coaxWire": "RG-178",
     "coaxType": "U.FL-female (IPX-female)",
     "Тип экрана": "обжим",
@@ -44,7 +44,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "F-male №4321",
+    "coaxArticle": "F-male компрессионный для RG-6",
     "coaxWire": "RG-6",
     "coaxType": "F-male",
     "Серия": "F",
@@ -1747,7 +1747,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "F-male №2102",
+    "coaxArticle": "F-male для RG-11",
     "coaxWire": "RG-11",
     "coaxType": "F-male",
     "Тип пина": "пайка",
@@ -1769,7 +1769,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип C) №3163",
+    "coaxArticle": "FAKRA-female (тип C) для RG-174/RG-316",
     "coaxWire": "RG-174",
     "coaxType": "FAKRA-female (тип C)",
     "Тип пина": "пайка",
@@ -1792,7 +1792,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип C) №3163",
+    "coaxArticle": "FAKRA-female (тип C) для RG-174/RG-316",
     "coaxWire": "RG-316",
     "coaxType": "FAKRA-female (тип C)",
     "Тип пина": "пайка",
@@ -1815,7 +1815,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип C) №3874",
+    "coaxArticle": "FAKRA-female (тип C) для RG-58",
     "coaxWire": "RG-58",
     "coaxType": "FAKRA-female (тип C)",
     "Тип пина": "пайка",
@@ -2258,7 +2258,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип Z) №3166",
+    "coaxArticle": "FAKRA-female (тип Z) для RG-174/RG-316",
     "coaxWire": "RG-174",
     "coaxType": "FAKRA-female (тип Z)",
     "Тип пина": "пайка",
@@ -2281,7 +2281,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип Z) №3166",
+    "coaxArticle": "FAKRA-female (тип Z) для RG-174/RG-316",
     "coaxWire": "RG-316",
     "coaxType": "FAKRA-female (тип Z)",
     "Тип пина": "пайка",
@@ -2304,7 +2304,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип Z) №3884",
+    "coaxArticle": "FAKRA-female (тип Z) для RG-58",
     "coaxWire": "RG-58",
     "coaxType": "FAKRA-female (тип Z)",
     "Тип пина": "пайка",
@@ -2515,7 +2515,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "F-male №3558",
+    "coaxArticle": "F-male резьбовой для RG-11",
     "coaxWire": "RG-11",
     "coaxType": "F-male",
     "Серия": "F",
@@ -2532,7 +2532,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип D) №3164",
+    "coaxArticle": "FAKRA-female (тип D) для RG-174/RG-316",
     "coaxWire": "RG-174",
     "coaxType": "FAKRA-female (тип D)",
     "Тип пина": "пайка",
@@ -2555,7 +2555,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип D) №3164",
+    "coaxArticle": "FAKRA-female (тип D) для RG-174/RG-316",
     "coaxWire": "RG-316",
     "coaxType": "FAKRA-female (тип D)",
     "Тип пина": "пайка",
@@ -2578,7 +2578,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип D) №3885",
+    "coaxArticle": "FAKRA-female (тип D) для RG-58",
     "coaxWire": "RG-58",
     "coaxType": "FAKRA-female (тип D)",
     "Тип пина": "пайка",
@@ -2601,7 +2601,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип Z) №4335",
+    "coaxArticle": "FAKRA-female (тип Z) с иглой для RG-174/RG-316",
     "coaxWire": "RG-174",
     "coaxType": "FAKRA-female (тип Z)",
     "Тип пина": "пайка",
@@ -2624,7 +2624,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "FAKRA-female (тип Z) №4335",
+    "coaxArticle": "FAKRA-female (тип Z) с иглой для RG-174/RG-316",
     "coaxWire": "RG-316",
     "coaxType": "FAKRA-female (тип Z)",
     "Тип пина": "пайка",
@@ -4752,7 +4752,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "SMA-female №4574",
+    "coaxArticle": "SMA-female на корпус для RG-178/RG-316/RG-174",
     "coaxWire": "RG-178",
     "coaxType": "SMA-female",
     "Тип экрана": "пайка",
@@ -4771,7 +4771,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "SMA-female №4574",
+    "coaxArticle": "SMA-female на корпус для RG-178/RG-316/RG-174",
     "coaxWire": "RG-316",
     "coaxType": "SMA-female",
     "Тип экрана": "пайка",
@@ -4790,7 +4790,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "SMA-female №4574",
+    "coaxArticle": "SMA-female на корпус для RG-178/RG-316/RG-174",
     "coaxWire": "RG-174",
     "coaxType": "SMA-female",
     "Тип экрана": "пайка",
@@ -5278,7 +5278,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "4.3-10-male №3083",
+    "coaxArticle": "4.3-10-male для 1/2″",
     "coaxWire": "1/2″",
     "coaxType": "4.3-10-male",
     "Серия": "4.3-10",
@@ -6500,7 +6500,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "7/16 DIN-male №4115",
+    "coaxArticle": "7/16 DIN-male угловой для 1/2 SF",
     "coaxWire": "1/2 SF",
     "coaxType": "7/16 DIN-male",
     "Серия": "7/16 DIN",
@@ -6796,7 +6796,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "4.3-10-male №3084",
+    "coaxArticle": "4.3-10-male для 1/2″ SuperFlex (⌀13,5 мм)",
     "coaxWire": "1/2″ SuperFlex (⌀13,5 мм)",
     "coaxType": "4.3-10-male",
     "Серия": "4.3-10",
@@ -7356,7 +7356,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "4.3-10-female №4302",
+    "coaxArticle": "4.3-10-female для 1/2″",
     "coaxWire": "1/2″",
     "coaxType": "4.3-10-female",
     "Серия": "4.3-10",
@@ -7374,7 +7374,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "4.3-10-female №4301",
+    "coaxArticle": "4.3-10-female для 1/2″ SuperFlex",
     "coaxWire": "1/2″ SuperFlex",
     "coaxType": "4.3-10-female",
     "Серия": "4.3-10",
@@ -7556,7 +7556,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "4.3-10-female №4170",
+    "coaxArticle": "4.3-10-female для 7/8″",
     "coaxWire": "7/8″",
     "coaxType": "4.3-10-female",
     "Серия": "4.3-10",
@@ -7656,7 +7656,7 @@
   },
   {
    "fields": {
-    "coaxArticle": "4.3-10-male №4390",
+    "coaxArticle": "4.3-10-male для 7/8″",
     "coaxWire": "7/8″",
     "coaxType": "4.3-10-male",
     "Серия": "4.3-10",
