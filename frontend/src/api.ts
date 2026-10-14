@@ -1106,6 +1106,9 @@ export interface GenealogyResult {
   edges: Array<{ source: string; target: string; quantity: string; relation: string }>;
 }
 
+/** Способ УПД: ЭДО, бумага или отгрузка без УПД (закрывается без файла и номера). */
+export type UpdType = "ЭДО" | "БУМАГА" | "БЕЗ УПД";
+
 export interface FinishedGood {
   id: string;
   version: number;
@@ -1126,6 +1129,8 @@ export interface FinishedGood {
   received_at: string | null;
   grn: string | null;
   note: string;
+  /** Место хранения на складе. */
+  location?: string | null;
 }
 
 /** Состояние штук КБ в регистре готовой продукции: В производстве → Принято складом → Упаковано → Отгружено. */
@@ -1228,7 +1233,7 @@ export interface Shipment {
   terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
   deadline: string | null;
-  upd_type: "ЭДО" | "БУМАГА" | null;
+  upd_type: UpdType | null;
   upd_number: string;
   upd_date: string | null;
   upd_url: string;
@@ -1268,7 +1273,7 @@ export interface ProjectAddressee {
   phone: string;
   terms: "САМОВЫВОЗ" | "ДОСТАВКА ТК" | null;
   carrier: string;
-  upd_type: "ЭДО" | "БУМАГА" | null;
+  upd_type: UpdType | null;
   updated_by: string;
   updated_at: string | null;
   po: string;
@@ -1278,6 +1283,9 @@ export interface ProjectAddressee {
   pays: string;
   customer_address: string;
   hours: string;
+  /** Плановая дата отгрузки проекта (ISO) и комментарий — новые отправки берут их, пока свои пусты. */
+  plan_date?: string | null;
+  note?: string;
 }
 
 export interface ReferencePair {
