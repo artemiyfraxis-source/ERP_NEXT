@@ -3738,3 +3738,28 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 @media (max-width: 700px) { .eq-econ { grid-template-columns: minmax(0, 1fr); } }
 @media (pointer: coarse) { .eq-close { min-width: 40px; min-height: 40px; font-size: 26px; } .eq-head-act .small { min-height: 40px; } .eq-ops li { min-height: 40px; } }
 .eq-econ dd { flex: none; white-space: nowrap; } .eq-econ dt { min-width: 0; }
+
+/* Карточка операции (OperationCard): параметры строки БД.ОП тремя-четырьмя группами, как лист ЭТК. */
+.op-params h4 { font-size: 14px; }
+.op-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px 24px; align-items: start; }
+.op-group h5 { margin: 0 0 4px; padding-bottom: 3px; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.op-group dl { display: grid; margin: 0; }
+.op-row { display: grid; grid-template-columns: minmax(110px, 40%) minmax(0, 1fr); gap: 10px; align-items: center; min-height: 30px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.op-row dt { color: var(--muted-foreground); font-size: 12.5px; }
+.op-row dt label { font: inherit; color: inherit; }
+.op-row dd { display: flex; align-items: baseline; gap: 6px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.op-row dd small { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.op-row dd .cell-empty { color: var(--muted-foreground); }
+.op-row input, .op-row select { flex: 1 1 auto; min-width: 0; height: 28px; padding: 2px 8px; font-size: 13px; }
+.op-raw { margin-top: 4px; }
+.op-raw summary { cursor: pointer; color: var(--muted-foreground); font-size: 12.5px; }
+.op-raw summary span { margin-left: 6px; font-weight: 400; }
+.op-raw .op-groups { margin-top: 8px; }
+.op-ctl-chip { display: inline-block; margin-bottom: 2px; padding: 0 7px; border-radius: 999px; background: var(--ctl-bg); color: var(--ctl-text); border: 1px solid var(--ctl-line); font-size: 11px; font-weight: 600; line-height: 1.6; }
+.tr-steps tr.ctl td:first-child { box-shadow: inset 3px 0 0 var(--ctl-line); }
+.op-bar { bottom: 0; margin: 12px -18px -16px; }
+.tr-paper.template-detail { padding: 16px 18px; }
+.tr-head.with-act { grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; }
+.tr-head > .tr-head-act { display: flex; gap: 8px; margin-left: 10px; white-space: nowrap; }
+@media (max-width: 1048px) { .tr-head.with-act { grid-template-columns: 1fr; } .tr-head-act { margin-left: 0; } }
+.tc-edit .op-params { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
