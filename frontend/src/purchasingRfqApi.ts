@@ -84,6 +84,9 @@ export type PoolLine = RfqCandidate & {
   item: { id: string; name: string; category: string; matched_by: "link" | "part_key" | "alias" } | null;
   history: { purchases: number; last: PastPrice | null; min: PastPrice | null } | null;
   cheaper_before_pct: string | null;
+  /** With references.price_book: where the lower price came from («по закупкам», «по УПД», «прайс»). */
+  cheaper_source?: "procurement" | "upd" | "ref" | null;
+  cheaper_source_label?: string | null;
 };
 export type PoolGroup = {
   category: PoolCategory; label: string; count: number;

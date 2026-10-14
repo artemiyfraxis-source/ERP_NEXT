@@ -3897,3 +3897,9 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .purchasing-setting.purchasing-setting-list .purpose-add { display: flex; gap: 8px; align-items: center; max-width: 520px; }
 .purchasing-setting.purchasing-setting-list .purpose-add input { flex: 1 1 auto; }
 .purchasing-setting.purchasing-setting-list .purchasing-setting-default { white-space: normal; }
+
+/* ---- Цены и карточки ---- */
+.prices-sections h3 { margin-top: 16px; }
+.prices-sections small, .prices-points small { color: var(--muted-foreground); margin-left: 4px; }
+.prices-points { width: 100%; background: var(--panel-soft); }
+.prices-plan { max-height: 340px; overflow: auto; }
