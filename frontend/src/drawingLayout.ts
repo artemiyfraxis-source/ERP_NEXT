@@ -73,6 +73,8 @@ export interface TrunkInput {
   readonly geometry: TrunkGeometry;
   /** Сторона разъёма чертежа (id разъёма редактора). */
   readonly sideOf: (connectorId: string) => Side | null;
+  /** Узлы двойного обжима (второй провод в контакте): не сросток на стволе, а выход своего разъёма — узел трассы. */
+  readonly atConnector?: ReadonlyMap<string, string>;
 }
 
 /** Сторона сростка: 0 — провода только со стороны А, 1 — с обеих, 2 — только с В (по стволу от А к В). */
@@ -87,7 +89,7 @@ function spliceRank(doc: HarnessDesignDocument, junctionId: string, sideOf: Trun
 /** Ствол, веера к разъёмам, сростки на стволе и хвосты; трассы проводов сростков и хвостов (провода с разъёма на разъём
  *  трассирует редактор). Меняет `nodes` и `segments`. */
 export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
-  const { doc, nodes, segments, aExits, bExits, geometry, sideOf } = input;
+  const { doc, nodes, segments, aExits, bExits, geometry, sideOf, atConnector = new Map<string, string>() } = input;
   const { trunkY } = geometry;
   const nodeById = (id: string) => nodes.find((n) => n.id === id)!;
   const at = (id: string) => physicalNodePoint(doc, nodeById(id));
@@ -113,9 +115,9 @@ export function trunkTopology(input: TrunkInput): PhysicalRoute[] {
   }
 
   // Сростки на стволе: со стороны А — ближе к А, с обеих сторон — дальше, только со стороны В — у конца ствола.
-  const splices = doc.junctions.map((j, index) => ({ id: j.id, index, rank: spliceRank(doc, j.id, sideOf) }))
+  const splices = doc.junctions.filter((j) => !atConnector.has(j.id)).map((j, index) => ({ id: j.id, index, rank: spliceRank(doc, j.id, sideOf) }))
     .sort((x, y) => x.rank - y.rank || x.index - y.index);
-  const spliceNode = new Map<string, string>();
+  const spliceNode = new Map<string, string>(atConnector);
   const outward = new Map<string, Point>();
   const fromX = start ? at(start).x : geometry.startX, toX = end ? at(end).x : geometry.endX;
   splices.forEach((sp, k) => {

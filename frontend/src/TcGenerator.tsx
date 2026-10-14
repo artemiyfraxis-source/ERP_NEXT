@@ -78,9 +78,12 @@ import { MarkTable, markTotal } from "./GenMarkTable";
 import { DrawingButton, DrawingNoteView, configDrawingProblem } from "./GenDrawing";
 import { TwistGroups } from "./GenTwistGroups";
 import { PinoutAsk, PinoutBoard, PinoutChip, PinoutEditor, usePinHousings } from "./PinoutDiagram";
+import type { SchemeInfo } from "./PinoutLinks";
+import { GenDrawingPreview } from "./GenDrawingPreview";
+import { planTwist } from "./twistGroups";
 import {
   addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
-  setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin,
+  setBranchMode, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
 } from "./pinoutCheck";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
@@ -545,6 +548,21 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const pinFree = freeSide(gen, S);
   const pinHousings = usePinHousings(pinEnds.map((end) => end.conn));
   const pinCounts = Object.fromEntries(pinEnds.map((end) => [end.id, pinHousings[end.conn]?.n || null]));
+  // Схема связей (владелец 14.10): обозначение разъёма и терминал — как на чертеже «Построить чертёж» (XS по порядку
+  // А → В, в «Сложной сборке» — наименование по чертежу), свивка — жилами кабелей групп.
+  const scheme: SchemeInfo = (() => {
+    const ordered = (["A", "B"] as Side[]).flatMap((side) => gen.endpointsOnSide_(side));
+    const designations = Object.fromEntries(ordered.map((ep, i) => [ep.id, (complex ? (ep.label || "").trim() : "") || `XS${i + 1}`]));
+    const terminals = Object.fromEntries(ordered.map((ep) => [ep.id, ep.method === "solder" ? "пайка" : ep.termId ? compLabel(ep.termId) : ""]));
+    const coresOf = (pos: number) => { const w = active[pos]; return w ? Array.from({ length: gen.unitCount_(w) }, (_, k) => `${w.idx}.${k}`) : []; };
+    const plan = S.twist.enabled ? planTwist(S.twist.mode, S.twist.mode === "pairs" ? gen.getTwistPairs() : [gen.twistWireIndices_()], coresOf) : { pairs: [], groups: [] };
+    return { designations, terminals, twists: [...plan.pairs, ...plan.groups], branches: S.branches || [] };
+  })();
+  // «Чертёж» в схеме связей: та же сборка, что у «Построить чертёж», по текущей форме, без сохранения.
+  const formStamp = useMemo(() => JSON.stringify(S), [S]);
+  const housingsStamp = Object.entries(pinHousings).map(([art, hs]) => `${art}:${hs?.n ?? ""}`).sort().join("|");
+  const drawingPreview = () => <GenDrawingPreview stamp={`${formStamp}#${housingsStamp}`} project={card.project} index={card.item_index}
+    build={async (templates) => (await import("./generatorToHarness")).buildGeneratorDrawing(D, S, pinHousings, templates)} />;
   // «Сложная сборка»: терминал разъёма — по парам базы разъёмов, как только они прочитаны (кроме выбранного вручную).
   const termPairs = useTerminalPairs(complex ? S.endpoints.map((ep) => compLabel(ep.connId)).filter((art) => art !== "?") : []);
   const termPairsKey = complex ? JSON.stringify(termPairs) : "";
@@ -813,7 +831,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const routedSet = new Set(routedList);
     // Экран, заведённый на контакт, — ещё один терминал.
     const coresHere = gen.activeWires_().filter((w) => routedSet.has(w.idx)).reduce((s, w) => s + gen.endUnits_(ep, w) + gen.shieldPinsAt_(ep, w).length, 0);
-    const termCount = ep.double ? Math.ceil(coresHere / gen.epPer_(ep)) : coresHere;
+    // Двойной обжим в отдельных контактах: два провода — один терминал.
+    const termCount = ep.double ? Math.ceil(coresHere / gen.epPer_(ep)) : Math.max(0, coresHere - gen.epDoublePins_(ep).length);
     // Концы кабелей в оболочке у этого разъёма: сколько жил здесь, куда остальные, экран и незадействованные жилы.
     const cableLines = gen.cableEnds_(ep.side).filter((x) => x.eps.includes(ep)).map((x) => {
       const total = gen.unitCount_(x.w);
@@ -1190,7 +1209,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>}
       <PinoutBoard ends={pinEnds} links={links.list} units={pinUnitList} housings={pinHousings} free={pinFree}
         wireOptions={wireOptions.map((c) => ({ id: c.id, label: c.art || c.name }))} warnings={[...pinFitWarnings(pinEnds, pinCounts), ...routingWarnings(D, S)]}
-        branches={S.branches || []} complex={complex} joins={{ splices: S.splices, tails: S.tails }}
+        branches={S.branches || []} complex={complex} joins={{ splices: S.splices, tails: S.tails }} scheme={scheme} drawing={drawingPreview}
         onJoin={(end, value) => update((current) => (value === "" ? leaveJoin(D, current, end) : value === "tail" ? setTail(D, current, end) : joinSplice(D, current, end, value)))}
         onBranch={(from, toEpId, toPin, mode) => update((current) => addBranch(D, current, from, toEpId, toPin, mode))}
         onBranchMode={(extra, mode) => update((current) => setBranchMode(D, current, extra, mode))}
@@ -1200,6 +1219,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onAssign={(epId, idx, unit, pin) => update((current) => assignPinJoined(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
         onSwap={(epId, a, b) => update((current) => swapPins(D, current, epId, a, b))}
+        onDouble={(epId, idx, unit, pin) => update((current) => doublePin(D, current, epId, idx, unit, pin))}
+        onUndouble={(epId, pin, keep) => update((current) => undoublePin(D, current, epId, pin, keep))}
         onRecolor={(idx, compId) => update((current) => recolorWire(current, idx, compId))}
         onAutoFill={() => { const plan = autoFillPinout(D, S, pinCounts, true); update(() => plan.state); return plan; }} />
       {linkGroups(links.list).map((group) => <div key={group.key}>{group.title}: {group.pairs.map(([a, b], i) =>

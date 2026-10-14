@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.modules.techcards.etk_builder import _result_name, _suffix, _topology, build_etk
+from app.modules.techcards.etk_builder import _result_name, _suffix, _term_count, _topology, build_etk
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard, TechcardValidationError
 from app.modules.references.technology import TerminalRecord
@@ -612,3 +612,14 @@ def test_product_mark_with_a_tab_goes_to_the_etk_in_russian_and_feeds_the_materi
         ("Разъём X1", "Термотрубка", "у разъёма"), ("Изделие КБ1", "Хлястик", "на изделии"),
     ]
     assert {c["art"] for c in op["components"]} == {"Термотрубка", "Хлястик"}
+
+def test_terminal_norm_counts_one_terminal_per_double_crimped_contact():
+    """Генератор 14.10: два провода в одном контакте (`doublePins`) — один терминал на двоих; весь разъём двойным обжимом —
+    как раньше, по `perTerm`."""
+    wires = [{"name": f"НВ4 0,2 {color}", "qty": 1} for color in ("красный", "черный", "белый", "зеленый")]
+    op = {"type": "prsTerm", "wires": wires, "ep": {"double": False}}
+    assert _term_count(op, {}) == 4
+    assert _term_count({**op, "ep": {"double": False, "doublePins": [3]}}, {}) == 3
+    assert _term_count({**op, "ep": {"double": False, "doublePins": [1, 3]}}, {}) == 2
+    assert _term_count({**op, "ep": {"double": False, "doublePins": [3, 3, "x", True, 0]}}, {}) == 3
+    assert _term_count({**op, "ep": {"double": True, "perTerm": 2, "doublePins": [3]}}, {}) == 2
