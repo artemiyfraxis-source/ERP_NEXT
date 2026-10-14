@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { failureText, referencesApi, type CrimpCodes, type TechOperationRecord } from "./api";
+import { PageWindow } from "./PageWindow";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
@@ -45,7 +46,7 @@ function FieldList({ items }: { items: Array<[string, string]> }) {
   }</dd></div>)}</dl>;
 }
 
-export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate, onChanged, onNotice, onError, focusId, toolbar, editor, onSelect }: {
+export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate, onChanged, onNotice, onError, focusId, toolbar, editor, onSelect, onCancelEdit }: {
   records: TechOperationRecord[];
   operations: TechOperationRecord[];
   canEdit: boolean;
@@ -57,13 +58,14 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   /** A record to open (from the «Аппликатор» link in БД.ТЕР). */
   focusId?: string;
   toolbar?: ReactNode;
-  /** The edit / create form: shown in the right-hand panel instead of the card, the list stays on the left. */
+  /** The edit / create form: shown in a window over the list (owner 14.10: edit forms open as windows). */
   editor?: ReactNode;
   /** A row was picked or the card closed: the page drops an open editor. */
   onSelect?: () => void;
+  /** Esc in the edit window: the page drops the editor (same as its «Отмена»). */
+  onCancelEdit?: () => void;
 }) {
   const [openId, setOpenId] = useState(() => focusId || new URLSearchParams(window.location.search).get("equipment") || "");
-  const panelRef = useRef<HTMLElement>(null);
   const [busy, setBusy] = useState(false);
   const [codes, setCodes] = useState<CrimpCodes | null>(null);
   const [opQuery, setOpQuery] = useState("");
@@ -98,18 +100,6 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const opsOf = (model: EquipmentModel) => operationsOfModel(model, operations);
   const open = openId ? models.find((model) => model.items.some((item) => item.id === openId)) : undefined;
   const openKey = open?.key;
-  // Esc closes the card; switching machines starts the panel from its top.
-  useEffect(() => {
-    if (!openKey) return;
-    panelRef.current?.scrollTo?.({ top: 0 });
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented || (event.target as HTMLElement | null)?.closest?.("[role='dialog']")) return;
-      select("");
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [openKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
   async function guarded(action: () => Promise<unknown>, done: string) {
     if (busy) return;
     setBusy(true);
@@ -118,9 +108,9 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
 
   let panel: ReactNode = null;
   if (editor) {
-    panel = <aside className="eq-panel" aria-label="Правка оборудования" ref={panelRef}>
+    panel = <PageWindow label="Правка оборудования" width={860} close={() => onCancelEdit?.()}>
       <article className="panel eq-card eq-editor">{editor}</article>
-    </aside>;
+    </PageWindow>;
   } else if (open) {
     const field = operationField(open.type);
     const linked = opsOf(open);
@@ -140,7 +130,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
 
     // Коды терминалов есть только у обжимного инструмента и матриц (owner 12.10.2026).
     const withCodes = open.type === CRIMP_TOOL_TYPE || open.type === MATRIX_TYPE;
-    panel = <aside className="eq-panel" aria-label="Карточка оборудования" ref={panelRef}>
+    panel = <PageWindow label="Карточка оборудования" width={760} dismissable close={() => select("")}>
       <article className="panel eq-card">
         <header className="eq-head">
           <div className="eq-title"><b>{open.name || "—"}</b>{subtitle && <span className="muted">{subtitle}</span>}</div>
@@ -193,7 +183,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         {economy.length > 0 && <div className="tr-block"><h4>Экономика</h4><EconomyList items={economy} /></div>}
         {rest.length > 0 && <details className="tr-block eq-rest"><summary>Прочее <span className="muted">({rest.length})</span></summary><FieldList items={rest} /></details>}
       </article>
-    </aside>;
+    </PageWindow>;
   }
 
   const columns: DataColumn<EquipmentModel>[] = [
@@ -209,7 +199,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   ];
   const presets = types.map(([name]) => ({ label: name, test: (model: EquipmentModel) => model.type === name }));
   const missing = codes?.missing ?? [];
-  return <div className={open || editor ? "eq-split has-card" : "eq-split"}>
+  return <div className="eq-split">
     <div className="eq-list">
       {missing.length > 0 && <details className="eq-missing">
         <summary>Коды обжима без записи <span className="muted">({missing.length})</span></summary>

@@ -10,6 +10,7 @@ import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
+import { PageWindow } from "./PageWindow";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
 import { CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
@@ -436,7 +437,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     })()}
 
     {techTab && <>
-      {canEdit && editing && techTab !== "ob" && <div className="panel db-edit">
+      {canEdit && editing && techTab !== "ob" && <PageWindow label={editing.id === null ? "Новая запись" : "Правка записи"} width={860} close={() => setEditing(null)}><div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
         <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
@@ -444,7 +445,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
           <h3>Со склада</h3>
           <StockLinksJournal recordId={editing.id} fieldTitle={fieldTitle} />
         </div>}
-      </div>}
+      </div></PageWindow>}
       {techTab === "ob" ? <EquipmentCards
         records={tech.records}
         operations={obOps}
@@ -456,6 +457,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         onError={(message) => { setNotice(""); setError(message); }}
         focusId={focusTool}
         onSelect={() => setEditing(null)}
+        onCancelEdit={() => setEditing(null)}
         editor={canEdit && editing ? <>
           <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
           <EquipmentForm values={editing.values} isNew={editing.id === null} records={tech.records} onChange={(values) => setEditing({ ...editing, values })} />
@@ -468,7 +470,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         canEdit={canEdit}
         onEdit={startEdit}
         toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Запись</button> : undefined}
-      /> : <div className={terminal ? "eq-split has-card" : "eq-split"}><div className="eq-list"><DataTable
+      /> : <div className="eq-split"><div className="eq-list"><DataTable
         key={techTab}
         label={current?.label ?? "База"}
         rows={tech.records}

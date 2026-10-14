@@ -1,3 +1,4 @@
+import { PageWindow } from "./PageWindow";
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
 import { CABLE_KIND_LABELS, CoaxCardView, num, spanText } from "./CableStructure";
@@ -130,10 +131,10 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   </>;
 
   return <>
-    {adding && <div className="panel db-edit">
+    {adding && <PageWindow label="Новая запись кабеля" width={900} close={() => setAdding(false)}><div className="panel db-edit">
       <div className="manual-stock-head"><h2>Новая запись: {CABLE_KIND_LABELS[kind].toLowerCase()}</h2></div>
       <CableEditor row={null} kind={kind} data={data} onSaved={async (message) => { setAdding(false); await onSaved(message); }} onError={onError} onCancel={() => setAdding(false)} />
-    </div>}
+    </div></PageWindow>}
     <DataTable
       key={kind}
       label={CABLE_KIND_LABELS[kind]}
