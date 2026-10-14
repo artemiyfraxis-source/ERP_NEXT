@@ -145,9 +145,18 @@ def test_missing_molex_housings_are_in_the_catalogue():
     assert series["molex-boardin"]["variants"][0]["housings"][0]["n"] == 4
     for series_id in ("molex-kk396", "molex-minilock", "molex-sl", "molex-igrid", "molex-boardin"):
         assert series[series_id]["maker"] == "Molex" and series[series_id]["category"] == "Провод — плата"
-    # No housing part number was found for these two: they keep only the terminals and the closest shape.
-    for series_id in ("molex-ctx50", "molex-picoezmate"):
-        assert series[series_id]["variants"] == [] and series[series_id]["sample"]["article"] == ""
+    # No housing part number table was found for CTX50 (Mini50 34967): it keeps only the terminals and the closest shape.
+    assert series["molex-ctx50"]["variants"] == [] and series["molex-ctx50"]["sample"]["article"] == ""
+    # Owner's reference-data gaps, 14.10.2026: only the housings a document or a distributor listing confirms.
+    ez = series["molex-picoezmate"]
+    assert [h["article"] for v in ez["variants"] for h in v["housings"]] == [f"78172-000{n}" for n in (2, 3, 4, 5)]
+    assert [h["n"] for v in ez["variants"] for h in v["housings"]] == [2, 3, 4, 5] and not ez["range_checked"]
+    assert ez["pitch"] == 1.2 and ez["sources"]
+    kls = series["kls"]
+    assert [h["n"] for v in kls["variants"] for h in v["housings"]] == list(range(2, 21))
+    assert kls["variants"][0]["housings"][0]["article"] == "L-KLS1-2.50-02-H" and kls["pitch"] == 2.5
+    assert kls["maker"] == "KLS" and kls["contacts"][0]["article"] == "L-KLS1-2.50-T"
+    assert kls["variants"][0]["housings"][0]["headers"][0]["article"] == "L-KLS1-2.50-02-S"
 
     connectors = connector_series()
     assert find_in_series("Molex 0009508051", connectors)["series"] == "molex-kk396"

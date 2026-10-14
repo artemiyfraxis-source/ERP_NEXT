@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { HarnessBomRow, HarnessConnectionRow, HarnessCutItem, HarnessCutSheet, HarnessDocuments } from "../../api";
@@ -134,6 +135,41 @@ describe("карта резки с сервера", () => {
     fireEvent.change(length, { target: { value: "150" } });
     fireEvent.blur(length);
     expect(onCommand).toHaveBeenCalledWith({ type: "update-wire", wireId: "W1", lengthMm: 150 });
+  });
+
+  it("правка в поле сразу после появления карты не стирается отложенным эффектом поля", async () => {
+    // Раньше поле сбрасывало черновик эффектом при монтировании: эффект, вышедший после ввода, возвращал пустую длину,
+    // и blur не слал команду. Здесь ввод идёт в тот же тик, что и появление карты, до отложенных эффектов React.
+    const { wrap } = source({ cut: { kind: "cut", quantity: 2, items: [item], sheets: [sheet], status: "ready" } });
+    const onCommand = vi.fn(() => true);
+    const host = window.document.createElement("div");
+    window.document.body.appendChild(host);
+    const flags = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const wasAct = flags.IS_REACT_ACT_ENVIRONMENT;
+    flags.IS_REACT_ACT_ENVIRONMENT = false;
+    const root = createRoot(host);
+    try {
+      const typed = new Promise<void>((resolve, reject) => {
+        const observer = new MutationObserver(() => {
+          const input = host.querySelector<HTMLInputElement>('input[aria-label="Исходная длина, мм"]');
+          if (!input) return;
+          observer.disconnect();
+          try {
+            act(() => { fireEvent.change(input, { target: { value: "150" } }); fireEvent.blur(input); });
+            resolve();
+          } catch (reason) { reject(reason); }
+        });
+        observer.observe(host, { childList: true, subtree: true });
+      });
+      root.render(wrap(<CutListPanel document={physicalFixture()} quantity={2} readOnly={false} relatedIds={[]} onReveal={vi.fn()} onCommand={onCommand} />));
+      await typed;
+      expect(onCommand).toHaveBeenCalledWith({ type: "update-wire", wireId: "W1", lengthMm: 150 });
+    } finally {
+      flags.IS_REACT_ACT_ENVIRONMENT = true;
+      await act(async () => { root.unmount(); });
+      flags.IS_REACT_ACT_ENVIRONMENT = wasAct;
+      host.remove();
+    }
   });
 
   it("рисует концы, размеры в мм и снятие оболочки кабеля", () => {
