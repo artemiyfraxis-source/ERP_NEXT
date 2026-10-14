@@ -13,6 +13,7 @@ import { CoveringsTable } from "./Coverings";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
 import { CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
+import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, fieldTitle, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -394,6 +395,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   return <section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
       <div className="page-actions">
+        {!stockLog && <ReferenceRoundtrip tab={tab} principal={principal} onApplied={() => { if (techTab) void loadTech(techTab); if (cables !== null) void loadCables(); referencesApi.maps().then(applyMaps).catch(() => undefined); loadBases(); }} />}
         <button type="button" className={stockLog ? "secondary small active" : "secondary small"} aria-pressed={stockLog} onClick={() => setStockLog((value) => !value)}>Журнал «Склад → база»</button>
       </div>
     </header>

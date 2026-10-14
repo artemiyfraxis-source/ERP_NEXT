@@ -65,6 +65,11 @@ export const FIELD_TITLES: Record<string, string> = {
   terType: "Тип контакта", artISL: "Артикул ISL", artSAG: "Артикул SAG", terArticle: "Артикул контакта", terLPlus: "L+",
   terLMinus: "L−", terStep: "Шаг", terApplicator: "Аппликатор", terStrip: "Длина зачистки, мм",
   terCrimpHeight: "Высота обжима проводника, мм", terPullForceMin: "Усилие обрыва от, Н", terPullForceMax: "Усилие обрыва до, Н",
+  // Карточка контакта по протоколу v5.2 (TerminalCard): выгрузка «Скачать для правки» пишет их под этими подписями.
+  awgFrom: "От AWG", awgTo: "До AWG", mm2From: "Сечение от, мм²", mm2To: "Сечение до, мм²", terGender: "Пол",
+  terArticleBag: "Артикул BAG (россыпь)", terMaterial: "Материал / покрытие", terMaxCurrent: "Макс. ток, А",
+  terDatasheet: "Даташит", terInsCrimpHeight: "Высота обжима изоляции, мм", terInsOdFrom: "Диаметр изоляции от, мм",
+  terInsOdTo: "Диаметр изоляции до, мм",
   coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
 };
 
