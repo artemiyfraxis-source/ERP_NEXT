@@ -30,6 +30,9 @@ from app.modules.references.load_mirror import default_source, read_mirror  # no
 
 SOURCES = HERE / "ter-lminus-sources.json"
 BODY = HERE / "ter-lminus.json"
+ESTIMATES_BODY = HERE / "ter-lengths-estimates.json"
+DF1B_BODY = HERE / "hirose-df1b.json"  # contacts loaded from the Hirose catalogue: in the base once that body is applied
+SHARE = Decimal("0.83")  # contact length / housing length: JST PH 5.7/6.85, ZH 4.0/4.8, KLS 6.45/7.95, Hirose DF1B 9.5/11.5
 NOTE_FIELD = TER_CARD_COLUMNS[0]  # «Источник L-»: the БД.ТЕР column the note goes to
 NOTE_PREFIX = "оценка по чертежу корпуса"
 
@@ -83,8 +86,71 @@ def build(sources: dict[str, Any], terminals: dict[str, dict[str, str]]) -> list
     return rows
 
 
+def catalogue_terminals() -> dict[str, dict[str, str]]:
+    """Mirror terminals plus the Hirose DF1B contacts (hirose-df1b.json: no L+ / L−, they are created by that body)."""
+    terminals = mirror_terminals()
+    for row in json.loads(DF1B_BODY.read_text(encoding="utf-8"))["rows"]:
+        terminals.setdefault(row["fields"]["terArticle"], dict(row["fields"]))
+    return terminals
+
+
+def build_estimates(sources: dict[str, Any], terminals: dict[str, dict[str, str]]) -> list[dict[str, dict[str, str]]]:
+    """Rows of the estimates body: L+ and L− of terminals whose L+ is missing or longer than the housing, or whose L− is
+    wrong. L− = housing length − L+; L+ is the contact length of the maker's drawing (`basis` «contact»), 0,83 of the
+    housing where no contact drawing was found («proportion», an estimate), or the base's own («keep»). Every row says
+    so in «Источник L-» and carries `old` — what the base holds now — so a changed cell is refused, never overwritten."""
+    rows: list[dict[str, dict[str, str]]] = []
+    seen: set[str] = set()
+    for group in sources["estimates"]:
+        length, l_plus = _mm(group["length_mm"]), _mm(group["l_plus"])
+        basis = group["basis"]
+        if basis == "contact" and _mm(group["contact_mm"]) != l_plus:
+            raise ValueError(f"{group['housing']}: L+ не равен длине контакта по чертежу")
+        if basis == "proportion" and abs(l_plus - length * SHARE) > Decimal("0.06"):
+            raise ValueError(f"{group['housing']}: L+ {l_plus} не 0,83 от корпуса {length}")
+        l_minus = length - l_plus
+        if not 0 < l_plus < length or l_minus <= 0:
+            raise ValueError(f"{group['housing']}: L+ {l_plus} вне корпуса {length}")
+        if basis == "contact":
+            how = f"L+ = длина контакта {shown(l_plus)} мм по чертежу"
+        elif basis == "proportion":
+            how = "L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B)"
+        else:
+            how = f"L+ {shown(l_plus)} мм оставлен как в базе"
+        note = (f"примерно: {how}; L− = {group['housing']} {shown(length)} мм − L+ {shown(l_plus)} мм; "
+                f"{group['doc']}, {group['url']}")
+        if group.get("remark"):
+            note += f"; {group['remark']}"
+        for article in group["terminals"]:
+            if article in seen:
+                raise ValueError(f"{article}: назван дважды")
+            seen.add(article)
+            fields = terminals.get(article)
+            if fields is None:
+                raise ValueError(f"{article}: нет в БД.ТЕР зеркала и в hirose-df1b.json")
+            old_plus = str(fields.get("terLPlus") or "").strip()
+            old_minus = str(fields.get("terLMinus") or "").strip()
+            if basis == "keep" and _mm(old_plus) != l_plus:
+                raise ValueError(f"{article}: L+ в базе {old_plus}, источник считает {l_plus}")
+            new = {"terArticle": article, "terLMinus": shown(l_minus), NOTE_FIELD: note}
+            if basis != "keep":
+                new["terLPlus"] = shown(l_plus)
+            rows.append({"fields": new,
+                         "old": {"terArticle": article, "terLPlus": old_plus, "terLMinus": old_minus, NOTE_FIELD: ""}})
+    return rows
+
+
+def write_body(path: Path, rows: list[dict[str, dict[str, str]]]) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        json.dump({"rows": rows}, stream, ensure_ascii=False, indent=1)
+        stream.write("\n")
+
+
 def main() -> int:
     sources = json.loads(SOURCES.read_text(encoding="utf-8"))
+    estimates = build_estimates(sources, catalogue_terminals())
+    write_body(ESTIMATES_BODY, estimates)
+    print(f"{ESTIMATES_BODY.name}: {len(estimates)} строк (L+ и L- примерно, см. «Источник L-»)")
     rows = build(sources, mirror_terminals())
     with BODY.open("w", encoding="utf-8", newline="\n") as stream:
         json.dump({"rows": rows}, stream, ensure_ascii=False, indent=1)
