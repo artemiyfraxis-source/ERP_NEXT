@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  cutEnds, depthOrder, genArtHeight, genCardHeight, genCards, layoutByDepth, linkGeometry, opStages, opsMinutes, schemeArt, widestRow, EMPTY_ART,
+  crimpWires, cutEnds, depthOrder, genArtHeight, genCardHeight, genCards, layoutByDepth, linkGeometry, opStages, opsMinutes, schemeArt, widestRow, EMPTY_ART,
 } from "./routeCards";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 import type { PinoutEnd, PinUnit } from "./pinoutCheck";
@@ -73,7 +73,7 @@ describe("карточки «Схемы полуфабрикатов» гене�
 
   it("assigns every operation to its semi-finished product: a sideless one prepares the next side, the last ones finish", () => {
     expect([...opStages(OPS).entries()].sort(([a], [b]) => a - b).map(([, stage]) => stage))
-      .toEqual(["wires", "tubes", "crimped", "crimped", "A", "B", "B", "final"]);
+      .toEqual(["wires", "tubes", "crimpedA", "crimpedA", "A", "B", "B", "final"]);
   });
 
   it("groups the ETK blocks into wires, tubes, crimped wires, side А, side В and the finished cable with their links", () => {
@@ -81,12 +81,12 @@ describe("карточки «Схемы полуфабрикатов» гене�
     expect(cards.map((card) => [card.id, card.kind, card.title, card.ops.map((item) => item.position)])).toEqual([
       ["wires", "semiFinished", "Нарезанные провода", [1]],
       ["tubes", "semiFinished", "Нарезанные трубки", [2]],
-      ["crimped", "semiFinished", "Обжатые провода", [3, 4]],
+      ["crimpedA", "semiFinished", "Обжатые провода, сторона А", [3, 4]],
       ["A", "assembly", "Сторона А собрана", [5]],
       ["B", "assembly", "Сторона В собрана", [6, 7]],
       ["final", "final", "Готовый кабель", [8]],
     ]);
-    expect(links.map((link) => `${link.from}>${link.to}`)).toEqual(["wires>crimped", "tubes>crimped", "crimped>A", "A>B", "B>final"]);
+    expect(links.map((link) => `${link.from}>${link.to}`)).toEqual(["wires>crimpedA", "tubes>crimpedA", "crimpedA>A", "A>B", "B>final"]);
     expect(links.every((link) => link.qty === 1)).toBe(true);
     // Минуты на штуку при партии 5: (3 + 4) / 5.
     expect(opsMinutes(cards[2].ops, 5)).toBeCloseTo(1.4);
@@ -130,25 +130,35 @@ describe("карточка «Обжатые провода»", () => {
   const titles = (ops: RouteOp[]) => genCards(deriveRoute(ops), ops).cards.map((card) => card.title);
   const linkIds = (ops: RouteOp[]) => genCards(deriveRoute(ops), ops).links.map((link) => link.id);
 
-  it("takes stripping, splices and hand crimping of the owner's НВ4 harness; inserting and marking stay with the sides", () => {
+  it("cuts the owner's НВ4 harness into splices, crimp А, side А, crimp В, side В; marking prepares the crimp of В", () => {
     // Чертёж «Жгут НВ4» (tcGenRealHarness.fixture.ts) — операции так, как их ставит генератор.
     const ops: RouteOp[] = makeGen(D, harness(D)).getActiveOps().map((spec, index) =>
       ({ position: index + 1, key: spec.opKey, type: spec.type, code: "", label: spec.label, minutes: null, ...(spec.side ? { side: spec.side } : {}) }));
     const { cards, links } = genCards(deriveRoute(ops), ops);
     const labels = (id: string) => cards.find((card) => card.id === id)!.ops.map((item) => item.label.replace(/ — .*/, ""));
-    expect(cards.map((card) => card.title)).toEqual(["Нарезанные провода", "Обжатые провода", "Сторона А собрана", "Готовый кабель"]);
-    expect(labels("crimped")).toEqual(["Зачистка концов под сростки", "Сростки", "Опрессовка терминалов А1", "Опрессовка терминалов А2",
-      "Опрессовка терминалов А3", "Опрессовка терминалов А4", "Опрессовка терминалов В1", "Опрессовка терминалов В2"]);
+    expect(cards.map((card) => card.title)).toEqual(["Нарезанные провода", "Провода со сростками", "Обжатые провода, сторона А",
+      "Сторона А собрана", "Обжатые провода, сторона В", "Готовый кабель"]);
+    expect(labels("crimped")).toEqual(["Зачистка концов под сростки", "Сростки"]);
+    expect(labels("crimpedA")).toEqual(["Опрессовка терминалов А1", "Опрессовка терминалов А2", "Опрессовка терминалов А3", "Опрессовка терминалов А4"]);
     expect(labels("A")).toEqual(["Монтаж в разъём А1", "Монтаж в разъём А2", "Монтаж в разъём А3", "Монтаж в разъём А4"]);
-    expect(labels("B")).toEqual(["Маркировка", "Монтаж в разъём В1", "Монтаж в разъём В2"]);
-    expect(links.map((link) => `${link.id}:${link.qty}`)).toEqual(["wires>crimped:1", "crimped>A:1", "A>B:1", "crimped>B:1"]);
+    expect(labels("crimpedB")).toEqual(["Маркировка", "Опрессовка терминалов В1", "Опрессовка терминалов В2"]);
+    expect(labels("B")).toEqual(["Монтаж в разъём В1", "Монтаж в разъём В2"]);
+    expect(links.map((link) => `${link.id}:${link.qty}`)).toEqual(["wires>crimped:1", "crimped>crimpedA:1", "crimpedA>A:1", "A>crimpedB:1", "crimpedB>B:1"]);
   });
 
-  it("links side А on to side В through the crimp of В that follows it in the ETK", () => {
+  it("cuts the owner's cable 14.10 as cut, crimp А, side А, crimp В, side В — each fed by the previous one", () => {
+    // I-DS1071-SCB01X4 (А) ↔ PHR-4 (В): ЭТК 01 Резка, 02 Опрессовка А, 03 Монтаж А, 04 Опрессовка В, 05 Монтаж В.
     const ops = [op(1, "cutWire", "Резка"), op(2, "prsTerm", "Опрессовка А1", { side: "A" }), op(3, "insTerm", "Монтаж А1", { side: "A" }),
       op(4, "prsTerm", "Опрессовка В1", { side: "B" }), op(5, "insTerm", "Монтаж В1", { side: "B" })];
-    expect(titles(ops)).toEqual(["Нарезанные провода", "Обжатые провода", "Сторона А собрана", "Готовый кабель"]);
-    expect(linkIds(ops)).toEqual(["wires>crimped", "crimped>A", "A>B", "crimped>B"]);
+    expect(titles(ops)).toEqual(["Нарезанные провода", "Обжатые провода, сторона А", "Сторона А собрана", "Обжатые провода, сторона В", "Готовый кабель"]);
+    expect(linkIds(ops)).toEqual(["wires>crimpedA", "crimpedA>A", "A>crimpedB", "crimpedB>B"]);
+  });
+
+  it("puts the crimp of a side right before it when a side operation stands earlier in the ETK", () => {
+    const ops = [op(1, "cutWire", "Резка"), op(2, "stripCable", "Скрутка экрана А1", { key: "shieldA1", side: "A" }),
+      op(3, "prsTerm", "Опрессовка А1", { side: "A" }), op(4, "insTerm", "Монтаж А1", { side: "A" }), op(5, "heatTut", "Усадка")];
+    const { cards } = genCards(deriveRoute(ops), ops);
+    expect(cards.map((card) => [card.id, card.ops.map((item) => item.position)])).toEqual([["wires", [1]], ["crimpedA", [3]], ["A", [2, 4]], ["final", [5]]]);
   });
 
   it("names the wires card «Нарезанные и обжатые провода» after the cutting machine crimps, with a crimped card only for the hand crimps left", () => {
@@ -156,23 +166,24 @@ describe("карточка «Обжатые провода»", () => {
     expect(titles(machine)).toEqual(["Нарезанные и обжатые провода", "Сторона А собрана", "Готовый кабель"]);
     const handB = [op(1, "cutWireCrimp", "Резка с обжимом А"), op(2, "insTerm", "Монтаж А1", { side: "A" }),
       op(3, "prsTerm", "Опрессовка В1 (двойной обжим)", { side: "B" }), op(4, "insTerm", "Монтаж В1", { side: "B" })];
-    expect(titles(handB)).toEqual(["Нарезанные и обжатые провода", "Сторона А собрана", "Обжатые провода", "Готовый кабель"]);
-    expect(linkIds(handB)).toEqual(["wires>crimped", "wires>A", "A>B", "crimped>B"]);
+    expect(titles(handB)).toEqual(["Нарезанные и обжатые провода", "Сторона А собрана", "Обжатые провода, сторона В", "Готовый кабель"]);
+    expect(linkIds(handB)).toEqual(["wires>A", "A>crimpedB", "crimpedB>B"]);
     // Станок обжал, руками — только разделка кабеля: отдельной карточки нет, разделка у своей стороны.
     const stripOnly = [op(1, "cutWireCrimp", "Резка с обжимом А"), op(2, "insTerm", "Монтаж А1", { side: "A" }),
       op(3, "stripCable", "Разделка кабеля под пайку В1", { key: "stripCableB1", side: "B" }), op(4, "solderConn", "Пайка разъёма В1", { side: "B" })];
     expect(titles(stripOnly)).toEqual(["Нарезанные и обжатые провода", "Сторона А собрана", "Готовый кабель"]);
   });
 
-  it("puts the ТУТ for soldering and the cable stripping in it when a hand crimp is there; the shield twist stays with its side", () => {
+  it("keeps the ТУТ for soldering and the cable stripping of a side without a hand crimp with that side; the crimp of А is its own", () => {
     const ops = [op(1, "cutWireStrip", "Резка с разделкой"), op(2, "cutTut", "Резка ТУТ"), op(3, "prsTerm", "Опрессовка А1", { side: "A" }),
       op(4, "insTerm", "Монтаж А1", { side: "A" }), op(5, "insTut", "Надеть ТУТ на провод", { key: "insTut" }),
       op(6, "stripCable", "Разделка кабеля под пайку В1", { key: "stripCableB1", side: "B" }),
       op(7, "stripCable", "Скрутка экрана В1", { key: "shieldB1", side: "B" }), op(8, "solderConn", "Пайка разъёма В1", { side: "B" }),
       op(9, "heatTut", "Усадка ТУТ", { key: "heatTut" })];
     expect([...opStages(ops).entries()].sort(([a], [b]) => a - b).map(([, stage]) => stage))
-      .toEqual(["wires", "tubes", "crimped", "A", "crimped", "crimped", "B", "B", "final"]);
-    expect(linkIds(ops)).toEqual(["wires>crimped", "tubes>crimped", "crimped>A", "A>B", "crimped>B", "B>final"]);
+      .toEqual(["wires", "tubes", "crimpedA", "A", "B", "B", "B", "B", "final"]);
+    // ТУТ надевают на провода стороны В перед пайкой — трубки идут в неё.
+    expect(linkIds(ops)).toEqual(["wires>crimpedA", "tubes>B", "crimpedA>A", "A>B", "B>final"]);
   });
 
   it("leaves a cable without a hand crimp as it was, and finishing tinning or a lug crimped last with the finished cable", () => {
@@ -180,7 +191,7 @@ describe("карточка «Обжатые провода»", () => {
       op(3, "solderConn", "Пайка разъёма А1", { side: "A" }), op(4, "tin", "Лужение")];
     expect(titles(solder)).toEqual(["Нарезанные провода", "Сторона А собрана", "Готовый кабель"]);
     const tinned = [op(1, "cutWire", "Резка"), op(2, "prsTerm", "Опрессовка А1", { side: "A" }), op(3, "insTerm", "Монтаж А1", { side: "A" }), op(4, "tin", "Лужение")];
-    expect(titles(tinned)).toEqual(["Нарезанные провода", "Обжатые провода", "Сторона А собрана", "Готовый кабель"]);
+    expect(titles(tinned)).toEqual(["Нарезанные провода", "Обжатые провода, сторона А", "Сторона А собрана", "Готовый кабель"]);
     expect(opStages(tinned).get(4)).toBe("final");
     const lug = [op(1, "cutWire", "Резка"), op(2, "prsTerm", "Опрессовка наконечников А1", { side: "A" })];
     expect(titles(lug)).toEqual(["Нарезанные провода", "Готовый кабель"]);
@@ -242,6 +253,11 @@ describe("рисунки карточек генератора", () => {
       ["u1", "А1:1 → В1:1", "terminal", "terminal"], ["u2", "В1:2", "cut", "terminal"],
     ]);
     expect(genArtHeight("crimped", art, false)).toBe(2 * 22 + 8);
+    // Обжим одной стороны — провода, обжатые на ней, наконечник только у её конца.
+    expect(art.crimpedBy?.A.map((wire) => [wire.key, wire.left, wire.right])).toEqual([["u1", "terminal", "cut"]]);
+    expect(art.crimpedBy?.B.map((wire) => [wire.key, wire.left, wire.right])).toEqual([["u1", "cut", "terminal"], ["u2", "cut", "terminal"]]);
+    expect(genArtHeight("crimpedA", art, false)).toBe(22 + 8);
+    expect(crimpWires("crimpedB", art)).toBe(art.crimpedBy?.B);
     // Обжато на станке резки — в обжатые не попадает.
     const machine = schemeArt([{ type: "cutWireCrimp", opKey: "cutWire", side: "A", label: "Резка с обжимом А", wireIdxs: [0] } as OpSpec], ends, [units[0]], {}, null);
     expect(machine.crimped).toEqual([]);
