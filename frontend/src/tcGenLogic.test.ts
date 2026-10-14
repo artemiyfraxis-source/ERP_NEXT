@@ -1,5 +1,5 @@
-﻿import { expect, it } from "vitest";
-import { applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+﻿import { describe, expect, it } from "vitest";
+import { savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -450,4 +450,17 @@ it("connector sleeve is not counted twice as harness sleeve; old endpoints load 
   expect(makeGen(D, base).harnessSleeveComps_().map((c) => c.id)).toEqual(["ttk"]);
   const S = updateEndpoint(D, base, "a1", { shrinkOn: true });
   expect(makeGen(D, S).harnessSleeveComps_()).toEqual([]);
+});
+
+describe("savedComplex", () => {
+  it("reads the saved tab, and an older config by what only «Сложная сборка» writes", () => {
+    expect(savedComplex({ tab: "complex" })).toBe(true);
+    expect(savedComplex({ tab: "inter", bigAssembly: true })).toBe(false);
+    expect(savedComplex({ bigAssembly: true })).toBe(true);
+    expect(savedComplex({ ops: [{ type: "seal" }] })).toBe(true);
+    expect(savedComplex({ ops: [{ ep: { label: "NODE" } }] })).toBe(true);
+    expect(savedComplex({ mode: "manual", bigAssembly: true })).toBe(false);
+    expect(savedComplex({ ops: [{ type: "cutWire" }] })).toBe(false);
+    expect(savedComplex(null)).toBe(false);
+  });
 });

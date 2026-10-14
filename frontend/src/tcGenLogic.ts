@@ -2026,6 +2026,20 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
   return S;
 }
 
+/** Собрана ли карта на «Сложной сборке»: сборка пишет `tab`; конфиг старше — по тому, что пишет только эта вкладка
+ *  (как `generator_tab` в etk_builder.py): >2 разъёмов, связи по контактам, сростки/герметизация/складывание, подпись разъёма. */
+export function savedComplex(config: unknown): boolean {
+  if (!config || typeof config !== "object") return false;
+  const c = config as Record<string, unknown>;
+  if (c.mode === "manual" || c.mode === "coax") return false;
+  const tab = typeof c.tab === "string" ? c.tab.trim() : "";
+  if (tab) return tab === "complex";
+  const ops = (Array.isArray(c.ops) ? c.ops : []).filter((o): o is Record<string, unknown> => !!o && typeof o === "object");
+  const ends = ops.flatMap((o) => [o.ep, o.epB]).filter((e): e is Record<string, unknown> => !!e && typeof e === "object");
+  return !!(c.bigAssembly || c.connections || ops.some((o) => ["splice", "seal", "foldCore"].includes(String(o.type)))
+    || ends.some((e) => String(e.label ?? "").trim() || e.fold));
+}
+
 /** Новая карта на «Сложной сборке» (владелец 13.10: «в сложной сборке не нужно автоподбора конфигурации проводов»):
  *  кабели, длины и свивку технолог задаёт сам — засев из состава снимается. Пакетная сборка (tcGenBatch) и пересборка
  *  карты (распиновка прошлой сборки читается по засеянным кабелям) засев сохраняют. */
