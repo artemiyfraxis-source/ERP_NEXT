@@ -518,7 +518,6 @@ table.ship-lines td:first-child { width: 1%; }
 .goods-panel-head .link-button { padding: 0; font-size: 13px; }
 /* ГРН — цифрами одной ширины, без моноширинного шрифта: у него нет кириллицы и «ГП» выглядит строчными. */
 .goods-grn { font-variant-numeric: tabular-nums slashed-zero; white-space: nowrap; }
-.kit-sostav td.kit-goods .goods-counts { display: grid; grid-template-columns: auto auto; gap: 0 12px; justify-content: start; }
 @media (pointer: coarse) {
   .shipping-page .ship-take .ship-qty, .shipping-page .ship-accept-bar .primary, .shipping-page .ship-accept-bar input, .shipping-page .ship-rollback input, .shipping-page .ship-rollback button { min-height: 40px; }
   .shipping-page .ship-take input[type="checkbox"], .shipping-page .ship-accept-bar input[type="checkbox"] { width: 22px; height: 22px; }
