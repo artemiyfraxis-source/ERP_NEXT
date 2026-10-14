@@ -223,6 +223,25 @@ export function openEndLabelBoxes(scene: readonly EditorSceneObject[]): LabelBox
   });
 }
 
+/** Рамка текста размера («300 мм») на чертеже: так его рисует поле (CanvasViewport) — по середине среднего звена, повёрнутым вдоль линии,
+ *  кегль 12 px, базовая линия на 7 px над ней; берётся охватывающий прямоугольник повёрнутого текста. */
+export function dimensionLabelBoxes(scene: readonly EditorSceneObject[]): LabelBox[] {
+  return scene.flatMap((object) => {
+    const points = object.points ?? [];
+    if (object.kind !== "dimension" || object.metadata?.boundDimension !== "true" || points.length < 4) return [];
+    const line = points.slice(1, -1), mid = Math.floor((line.length - 1) / 2), a = line[mid]!, b = line[mid + 1]!;
+    const scale = Math.max(0.25, Math.min(4, Number(object.metadata.dimensionScale ?? 1) || 1));
+    const angle = Math.atan2(b.y - a.y, b.x - a.x), flipped = angle > Math.PI / 2 || angle < -Math.PI / 2;
+    const rotation = flipped ? angle + Math.PI : angle, cos = Math.cos(rotation), sin = Math.sin(rotation);
+    const halfWidth = (object.label.length * 7 * scale) / 2 + 2, top = -(7 + 11) * scale, bottom = -7 * scale + 3 * scale;
+    const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    const corners = ([[-halfWidth, top], [halfWidth, top], [halfWidth, bottom], [-halfWidth, bottom]] as const)
+      .map(([u, v]) => ({ x: cx + u * cos - v * sin, y: cy + u * sin + v * cos }));
+    const x = Math.min(...corners.map((c) => c.x)), y = Math.min(...corners.map((c) => c.y));
+    return [{ id: `dimension:${object.id}`, x, y, width: Math.max(...corners.map((c) => c.x)) - x, height: Math.max(...corners.map((c) => c.y)) - y }];
+  });
+}
+
 /** Рамки подписей позиций на чертеже (object-index): так их рисует поле (13 px, поля по 4 px). */
 export function indexLabelBoxes(scene: readonly EditorSceneObject[]): LabelBox[] {
   return scene.filter((object) => object.kind === "object-index").map((object) => ({
@@ -280,7 +299,7 @@ const LEADER_ANGLE = Math.cos((9 * Math.PI) / 180);
 export function placeDrawingLabels(document: HarnessDesignDocument, sideOf: (connectorId: string) => Side | null): HarnessDesignDocument {
   const scene = designToScene(document, "drawing");
   const owners = new Map(scene.filter((o) => o.kind !== "object-index").map((o) => [o.id, o]));
-  const taken: Omit<LabelBox, "id">[] = [...openEndLabelBoxes(scene)];
+  const taken: Omit<LabelBox, "id">[] = [...openEndLabelBoxes(scene), ...dimensionLabelBoxes(scene)];
   // Узел ствола или сросток — с запасом: подписи не толпятся у точки, где сходятся провода.
   scene.filter((o) => o.kind === "physical-node").forEach((o) => {
     const room = o.metadata?.nodeRole === "junction" ? NODE_ROOM : 2;
