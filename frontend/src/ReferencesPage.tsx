@@ -8,6 +8,7 @@ import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
 import { CrimpCell, CRIMP_COLUMN_TITLE, crimpText } from "./CrimpCell";
 import { CableTable, kindSelect } from "./CableTables";
+import { AddColumnButton } from "./CustomColumn";
 import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
 import { PageWindow } from "./PageWindow";
@@ -322,6 +323,9 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   }
 
   const fieldColumns = tech.columns?.length ? tech.columns : Object.keys(tech.records[0]?.fields ?? {});
+  // «+ Столбец» на таблицах кабелей: колонка БД.ПРОВ общая для всех четырёх списков.
+  const columnButton = principal.permissions.erpref === "edit"
+    ? <AddColumnButton tab="prov" onAdded={(name) => cablesSaved(`Столбец «${name}» добавлен`)} /> : undefined;
   const coaxTab = techTab === "coax";
   const cableOf = (record: TechOperationRecord) => cableDia[cableKey(record.fields["Провод"] ?? record.fields.coaxWire ?? "")];
   // Edit form: the sheet's columns only (the server moves the schema values derived from them); on БД.КОАКС without
@@ -471,7 +475,12 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         cableOf={cableOf}
         canEdit={canEdit}
         onEdit={startEdit}
-        toolbar={canEdit && !editing ? <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Запись</button> : undefined}
+        ownColumns={tech.custom_columns}
+        onEdited={() => loadTech("coax")}
+        toolbar={canEdit && !editing ? <>
+          <button type="button" className="secondary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Запись</button>
+          <AddColumnButton tab="coax" onAdded={async (name) => { await loadTech("coax"); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />
+        </> : undefined}
       /> : <div className="eq-split"><div className="eq-list"><DataTable
         key={techTab}
         label={current?.label ?? "База"}
@@ -504,6 +513,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       onSaved={cablesSaved}
       onError={(message) => { setNotice(""); setError(message); }}
       kindSelect={kindSelect}
+      toolbar={columnButton}
     />}
     {cableKind && cableKind !== "wire" && cables !== null && <CableTable
       kind={cableKind}
@@ -511,6 +521,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       canEdit={principal.permissions.erpref === "edit"}
       onSaved={cablesSaved}
       onError={(message) => { setNotice(""); setError(message); }}
+      toolbar={columnButton}
     />}
     </div>
   </section>;

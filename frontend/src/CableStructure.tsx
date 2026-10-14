@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
+import { ownCellEdit } from "./CustomColumn";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
   failureText,
@@ -202,6 +203,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   const clip = (text: string) => <span className="cable-clip" title={text}>{text}</span>;
+  const own = data.custom_columns ?? [];
   const columns: DataColumn<CableRow>[] = [
     { key: "cable", title: "Марка провода", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
     {
@@ -218,7 +220,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
     { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
     ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
-      key: name, title: name, value: (row) => field(row, name), hidden: true, render: (row) => clip(field(row, name)),
+      key: name, title: name, value: (row) => field(row, name), hidden: !own.includes(name), render: (row) => clip(field(row, name)),
+      edit: canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : undefined,
     })),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
@@ -243,6 +246,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       exportName="Монтажные провода"
       renderDetail={detail}
       presets={unparsed ? [{ label: "Не разобраны", test: (row) => !row.hookup }] : undefined}
+      onEdited={() => onSaved("")}
       emptyText="Монтажных проводов нет — добавьте провод."
       toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Провод</button>}</>}
     />
