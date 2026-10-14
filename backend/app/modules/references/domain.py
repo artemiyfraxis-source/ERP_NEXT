@@ -26,6 +26,9 @@ class ReferenceKind(str, Enum):
     # «Кабели и провода»: БД.ПРОВ mark → the list the user moved it to (coax / wire / multi / other). Kept beside the
     # maps, not on the record, so a mirror reload neither drops the move nor freezes the row's other cells.
     CABLE_KIND = "cable_kind"
+    # A column the owner added to a tech-operation table («+ Столбец», 14.10.2026): key «<tab>:<name>», value — the name.
+    # Fields are JSON, so the column is real in every record; this entry says it is the owner's (removable when empty).
+    CUSTOM_COLUMN = "custom_column"
 
 
 # The three maps of «Соответствия» / ГОСТ→AWG; a maps save never touches the other kinds.
@@ -351,6 +354,7 @@ _KEY_NORMALIZERS = {
     ReferenceKind.COUNTRY: normalized_manufacturer_key,
     ReferenceKind.GOST_AWG: normalized_section_key,
     ReferenceKind.CABLE_KIND: normalized_cable_key,
+    ReferenceKind.CUSTOM_COLUMN: lambda key: " ".join(str(key).casefold().split()),
 }
 
 
@@ -439,6 +443,9 @@ BASE_COLUMNS = {
 }
 # The v14 GAS snapshot never carries these; a snapshot without them must not wipe portal-edited rows.
 # Same for СПР.КАБ (REF-SPRKAB): only the mirror carries it.
+# Tabs whose table accepts the owner's own columns («+ Столбец»): БД.ПРОВ (all four cable lists), БД.МАТ, БД.КОАКС.
+CUSTOM_COLUMN_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.COAX)
+MAX_COLUMN_NAME = 60
 SHEET_TABLE_TABS = (TechOperationTab.WIRE, TechOperationTab.MATERIAL, TechOperationTab.KAB_COAX, TechOperationTab.KAB_AWG)
 
 

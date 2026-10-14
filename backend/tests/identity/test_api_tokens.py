@@ -382,6 +382,9 @@ TOKEN_REFUSED_IN_ENDPOINT = {
     ("POST", "/api/techcards/projects/{card_id}/build"),
     ("DELETE", "/api/references/wire-gauges/{gauge_id}"),
     ("DELETE", "/api/references/tech-operations/{record_id}/crimps/terminals/{terminal_id}"),
+    # … and the columns of a table («+ Столбец», 14.10.2026): the owner shapes the table, a token fills it.
+    ("POST", "/api/references/tech-operations/columns"),
+    ("POST", "/api/references/tech-operations/columns/remove"),
 }
 
 

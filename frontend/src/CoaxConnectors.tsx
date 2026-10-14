@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { PageWindow } from "./PageWindow";
 import { DataTable, type DataColumn, type DataPreset } from "./DataTable";
 import type { TechOperationRecord } from "./api";
+import { ownCellEdit } from "./CustomColumn";
 import "./coaxConnectors.css";
 
 /* «База данных → Коаксиальные разъёмы» (owner 13.10.2026): БД.КОАКС — разъёмы базы и 311 разъёмов gsm-repiteri.ru —
@@ -99,12 +100,15 @@ const PRESETS: DataPreset<TechOperationRecord>[] = [
   { label: "Без разделки", test: (record) => !stripping(record.fields) },
 ];
 
-export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar }: {
+export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar, ownColumns = [], onEdited }: {
   records: TechOperationRecord[];
   cableOf: CableDia;
   canEdit: boolean;
   onEdit: (record: TechOperationRecord) => void;
   toolbar?: ReactNode;
+  /** Столбцы, добавленные владельцем («+ Столбец»): видны сразу, правятся в ячейках. */
+  ownColumns?: string[];
+  onEdited?: () => Promise<unknown> | void;
 }) {
   const rows = useMemo(() => sortRows(records), [records]);
   const [selectedId, setSelectedId] = useState("");
@@ -134,6 +138,10 @@ export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar }: {
     { key: "ghz", title: "До, ГГц", value: text("Частота до, ГГц"), numeric: true, hidden: true },
     { key: "name", title: "Наименование", value: text("Наименование"), hidden: true },
     { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true },
+    ...ownColumns.map((name): DataColumn<TechOperationRecord> => ({
+      key: `own:${name}`, title: name, value: text(name), wrap: true, maxWidth: 140,
+      edit: canEdit ? ownCellEdit<TechOperationRecord>(name, (record) => record) : undefined,
+    })),
   ];
 
   return <div className="coax-db">
@@ -152,6 +160,7 @@ export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar }: {
         rowClassName={(record) => (record.id === selectedId ? "coax-row-active" : "")}
         emptyText="Разъёмов нет — загрузите их или добавьте «+ Запись»."
         pageSize={1000}
+        onEdited={onEdited}
         toolbar={toolbar}
       />
     </div>

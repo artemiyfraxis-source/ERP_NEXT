@@ -399,3 +399,81 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     expect(document.querySelector("td.dt-editable")).toBeNull();
   });
 });
+
+describe("«+ Столбец» (owner 14.10: «добавить свои столбцы»)", () => {
+  it("asks the name in a window, adds the column to the table and lets it be edited in the cell", async () => {
+    const calls = mockApi();
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let added = false;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/references/tech-operations/columns" && init?.method === "POST") {
+        calls.push({ path, method: "POST", body: JSON.parse(String(init.body)) });
+        added = true;
+        return json({ tab: "prov", name: "Полка", records: 7 });
+      }
+      if (path === "/api/references/cables" && added) {
+        calls.push({ path, method: "GET", body: null });
+        const rows = ROWS.map((row) => row.record ? { ...row, record: { ...row.record, fields: { ...row.record.fields, "Полка": "" } } } : row);
+        return json({ columns: [...COLUMNS, "Цвета", "Полка"], custom_columns: ["Полка"], counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows, gauges: GAUGES });
+      }
+      return answer(input, init);
+    });
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(screen.queryByRole("columnheader", { name: "Полка" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Столбец" }));
+    const dialog = screen.getByRole("dialog", { name: "Новый столбец" });
+    expect(within(dialog).getByRole("button", { name: "Добавить столбец" })).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Название столбца"), { target: { value: "Полка" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Добавить столбец" }));
+
+    expect(await screen.findByRole("columnheader", { name: "Полка" })).toBeInTheDocument();
+    expect(calls.find((call) => call.method === "POST")?.body).toEqual({ tab: "prov", name: "Полка" });
+    expect(screen.queryByRole("dialog", { name: "Новый столбец" })).toBeNull();
+
+    const line = screen.getByText("RG316", { selector: "td.key strong" }).closest("tr") as HTMLElement;
+    const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === "Полка");
+    const cell = line.querySelectorAll("td")[index] as HTMLElement;
+    expect(cell).toHaveClass("dt-editable");
+    fireEvent.click(cell);
+    fireEvent.keyDown(cell, { key: "Enter" });
+    const input = within(cell).getByRole("textbox");
+    fireEvent.change(input, { target: { value: "А-12" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(calls.find((call) => call.method === "PATCH")).toMatchObject({
+      path: "/api/references/tech-operations/w-rg316", body: { edits: [{ field: "Полка", old: "", value: "А-12" }] },
+    }));
+  });
+
+  it("shows the server's reason in the window and keeps it open", async () => {
+    mockApi();
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => String(input).endsWith("/tech-operations/columns")
+      ? new Response(JSON.stringify({ detail: "Столбец «Цвета» уже есть в таблице" }), { status: 422, headers: { "Content-Type": "application/json" } })
+      : answer(input, init));
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    fireEvent.click(screen.getByRole("button", { name: "+ Столбец" }));
+    fireEvent.change(screen.getByLabelText("Название столбца"), { target: { value: "Цвета" } });
+    fireEvent.click(screen.getByRole("button", { name: "Добавить столбец" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Столбец «Цвета» уже есть в таблице");
+    expect(screen.getByRole("dialog", { name: "Новый столбец" })).toBeInTheDocument();
+  });
+
+  it("is on every cable list and hidden without the edit right", async () => {
+    mockApi();
+    const { unmount } = render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    for (const list of ["Монтажные провода", "Многожильные кабели", "Прочие кабели", "Коаксиальные кабели"]) {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${list}`) }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "+ Столбец" })).toBeInTheDocument());
+    }
+    unmount();
+    render(<ReferencesPage principal={{ ...admin, roles: ["foreman"], access_level: "foreman", permissions: { erpref: "view" } }} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(screen.queryByRole("button", { name: "+ Столбец" })).toBeNull();
+  });
+});

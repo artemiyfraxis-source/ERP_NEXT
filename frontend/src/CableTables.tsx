@@ -3,7 +3,6 @@ import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
 import { CABLE_KIND_LABELS, CoaxCardView, num, spanText } from "./CableStructure";
 import {
-  ApiError,
   failureText,
   referencesApi,
   type CableDiameters,
@@ -14,6 +13,7 @@ import {
 } from "./api";
 import { CATEGORIES, CATEGORY_CELL, cableCategory, cableGroup, compareCables } from "./cableCategory";
 import { coaxGroupOf, coaxNaming, sortCoax } from "./coaxFamilies";
+import { cellFailure, ownCellEdit } from "./CustomColumn";
 import { MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
@@ -59,10 +59,6 @@ const cardState = (row: CableRow) => !row.card ? "нет карточки"
 const NUMBER = /^-?\d[\d\s]*([.,]\d+)?$/;
 const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
 const diaText = (dia: CableDiameters) => DIAMETERS.map((name) => dia[name] || "—").join(" · ");
-/** A refusal of a cell written in the table, in the words of the cell: a 409 means the rows are read again under it. */
-const cellFailure = (reason: unknown) => new Error(reason instanceof ApiError && reason.status === 409
-  ? "Ячейку уже поменяли — в таблице свежее значение. Enter запишет ваше, Esc отменит."
-  : failureText(reason, "Не записано"));
 // Cells not written from the table: the mark renames the cable (its D-row and links follow it) and the category is a
 // choice list — both stay in the record's own editor.
 const NOT_IN_CELL = new Set([MARK, CATEGORY_CELL]);
@@ -117,11 +113,13 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   } : undefined;
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
+  const own = data.custom_columns ?? [];
   const textColumn = (name: string, hidden: boolean): DataColumn<CableRow> => {
     const values = rows.map((row) => field(row, name)).filter((value) => value && value !== "—");
     const long = values.some((value) => value.length > 28);
     return {
-      key: name, title: name, value: (row) => field(row, name), hidden, edit: fieldEdit(name),
+      key: name, title: name, value: (row) => field(row, name), hidden,
+      edit: canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldEdit(name),
       render: long ? (row) => <span className="cable-clip" title={field(row, name)}>{field(row, name)}</span> : undefined,
       numeric: values.length > 0 && values.every((value) => NUMBER.test(value)),
     };
@@ -145,7 +143,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
       },
     ] : []),
     ...shown.map((name) => textColumn(name, false)),
-    ...data.columns.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, true)),
+    ...data.columns.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, !own.includes(name))),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
 

@@ -1428,6 +1428,8 @@ export interface CableRow {
 
 export interface CablesResult {
   columns: string[];
+  /** Столбцы, добавленные владельцем («+ Столбец»), в конце `columns`. */
+  custom_columns?: string[];
   counts: Record<CableKind, number>;
   rows: CableRow[];
   gauges?: WireGauge[];
@@ -1507,6 +1509,7 @@ export interface TechOperationResult {
     record_count: number;
   };
   columns?: string[];
+  custom_columns?: string[];
   records: TechOperationRecord[];
 }
 
@@ -3282,6 +3285,8 @@ export const referencesApi = {
   coaxDia: () => api<TechOperationResult>("/api/references/coax-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
+  addColumn: (tab: TechOperationTab, name: string) =>
+    api<{ tab: TechOperationTab; name: string; records: number }>("/api/references/tech-operations/columns", { method: "POST", body: JSON.stringify({ tab, name }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
   equipmentNumber: (type: string) =>

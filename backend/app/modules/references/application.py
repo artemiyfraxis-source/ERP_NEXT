@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dc_field, replace
 from datetime import datetime
 from typing import Mapping, Protocol, Sequence
 from uuid import UUID, uuid4
@@ -18,7 +18,7 @@ from .cable_structure import (
     validate_aliases, validate_gauges, vocabulary_cells, vocabulary_changes, written_back_fields,
 )
 from .cables import DIAMETERS, CableKind, CableRow, auto_kind, cable_mark, cable_rows, clean_diameter, diameter_index
-from .domain import EDITABLE_TABS, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
+from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
 from .domain import StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent
 from .equipment import (
     BASE_KEY, CODE_KEY, EXTRA_KEYS, INV_KEY, ROW_KEY, base_value as fields_base, field, next_instance_inventory,
@@ -257,8 +257,11 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     display = record.display_text
     refused: list[str] = []
     stored = stored_schema_keys(record.tab.value)
+    own_columns: list[str] | None = None  # the owner's columns: a row that came from a mirror reload may lack one
     for edit in edits:
-        known = (edit.field in record.fields or edit.field in stored
+        if edit.field not in record.fields and own_columns is None:
+            own_columns = custom_columns(record.tab, uow)
+        known = (edit.field in record.fields or edit.field in stored or edit.field in (own_columns or ())
                  or (record.tab == TechOperationTab.EQUIPMENT and edit.field in EXTRA_KEYS))
         if not known:
             refused.append(f"{edit.field}: поля нет в записи")
@@ -313,6 +316,98 @@ def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRec
         }, uow)
         uow.commit()
     return updated
+
+
+# --- «+ Столбец»: the owner's own column of a table (owner 14.10.2026: «добавить свои столбцы») ---
+
+def custom_columns(tab: TechOperationTab, uow: UnitOfWork) -> list[str]:
+    """The columns the owner added to the tab, in the order added."""
+    references = getattr(uow, "references", None)  # the workflows' units of work carry no maps: no own columns there
+    if tab not in CUSTOM_COLUMN_TABS or references is None:
+        return []
+    prefix = f"{tab.value}:"
+    own = [entry for entry in references.list() if entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key.startswith(prefix)]
+    return [entry.value for entry in sorted(own, key=lambda entry: entry.position)]
+
+
+def _check_column_tab(tab: TechOperationTab) -> None:
+    if tab not in CUSTOM_COLUMN_TABS:
+        raise ReferenceValidationError("В этой таблице свои столбцы не добавляются")
+
+
+def _folded(name: str) -> str:
+    return " ".join(str(name).casefold().split())
+
+
+def _taken_names(tab: TechOperationTab, records: Sequence[TechOperationRecord], uow: UnitOfWork) -> set[str]:
+    """Every name the tab already uses as a column or a schema value (folded), the owner's own columns included."""
+    names = set(BASE_COLUMNS.get(tab, ())) | set(schema_keys(tab.value)) | set(stored_schema_keys(tab.value))
+    names |= {name for record in records for name in record.fields} | set(custom_columns(tab, uow))
+    if tab == TechOperationTab.COAX:
+        from .importers import TECH_TABLES
+        names |= set(TECH_TABLES["coax"].card_columns)
+    return {_folded(name) for name in names}
+
+
+@dataclass(frozen=True)
+class ColumnCommand:
+    tab: TechOperationTab
+    name: str
+    actor: Actor
+    now: datetime
+
+
+def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
+    """Adds an empty column to every record of the tab in one transaction; the records are marked edited in ERP, so a
+    mirror reload keeps the column. Returns the number of records written."""
+    _check_column_tab(command.tab)
+    name = " ".join(str(command.name or "").split())
+    if not name:
+        raise ReferenceValidationError("Назовите столбец")
+    if len(name) > MAX_COLUMN_NAME:
+        raise ReferenceValidationError(f"Название столбца — не длиннее {MAX_COLUMN_NAME} знаков")
+    _clean_cell(name)  # a formula is not a name
+    with uow:
+        records = uow.tech_operations.list(tab=command.tab, query="", limit=100_000)
+        if _folded(name) in _taken_names(command.tab, records, uow):
+            raise ReferenceValidationError(f"Столбец «{name}» уже есть в таблице")
+        if not records:
+            raise ReferenceValidationError("В таблице нет записей — столбцу негде жить")
+        for record in records:
+            uow.tech_operations.save(replace(record, fields={**record.fields, name: ""}, edited_in_erp=True))
+        entries = list(uow.references.list())
+        position = max((entry.position for entry in entries if entry.kind == ReferenceKind.CUSTOM_COLUMN), default=-1) + 1
+        uow.references.replace((*entries, ReferenceEntry.create(
+            ReferenceKind.CUSTOM_COLUMN, f"{command.tab.value}:{name}", name, position)))
+        _audit("references.column_added", command.actor, command.now, {
+            "tab": command.tab.value, "column": name, "records": len(records)}, uow)
+        uow.commit()
+    return len(records)
+
+
+def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
+    """Removes the owner's own column, only when every value in it is empty. Returns the number of records written."""
+    _check_column_tab(command.tab)
+    with uow:
+        name = next((item for item in custom_columns(command.tab, uow) if _folded(item) == _folded(command.name)), None)
+        if name is None:
+            raise ReferenceValidationError("Удалить можно только свой столбец")
+        records = uow.tech_operations.list(tab=command.tab, query="", limit=100_000)
+        filled = sum(1 for record in records if str(record.fields.get(name, "")).strip())
+        if filled:
+            raise ReferenceValidationError(f"В столбце «{name}» есть данные ({filled}) — очистите их, потом удаляйте")
+        written = 0
+        for record in records:
+            if name in record.fields:
+                uow.tech_operations.save(replace(record, fields={k: v for k, v in record.fields.items() if k != name}, edited_in_erp=True))
+                written += 1
+        key = f"{command.tab.value}:{name}"
+        uow.references.replace(tuple(entry for entry in uow.references.list()
+                                     if not (entry.kind == ReferenceKind.CUSTOM_COLUMN and entry.key == key)))
+        _audit("references.column_removed", command.actor, command.now, {
+            "tab": command.tab.value, "column": name, "records": written}, uow)
+        uow.commit()
+    return written
 
 
 @dataclass(frozen=True)
@@ -421,7 +516,7 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork) -
     filled = [value for value in fields.values() if value]
     if not filled:
         raise ReferenceValidationError("Заполни хотя бы одно поле")
-    fields = sync_schema_fields(tab.value, fields)
+    fields = {**{name: "" for name in custom_columns(tab, uow)}, **sync_schema_fields(tab.value, fields)}
     _check_terminal_card(tab, fields)
     if tab == TechOperationTab.OPERATION:
         _check_operation_code(None, fields, uow)
@@ -575,6 +670,7 @@ class CableCatalog:
     gauges: list[WireGauge]
     hookups: dict[str, HookupWire]  # by mark key
     usage: dict[UUID, int]  # gauge id → hook-up wires on it
+    columns: list[str] = dc_field(default_factory=list)  # the owner's own БД.ПРОВ columns, after the base ones
 
 
 def cable_catalog(uow: UnitOfWork) -> CableCatalog:
@@ -586,8 +682,9 @@ def cable_catalog(uow: UnitOfWork) -> CableCatalog:
         gauges = uow.cable_structure.gauges()
         hookups = {wire.mark_key: wire for wire in uow.cable_structure.hookups()}
         usage = uow.cable_structure.gauge_usage()
+        own_columns = custom_columns(TechOperationTab.WIRE, uow)
     rows = sorted(cable_rows(wires, diameters, overrides, cards), key=lambda row: (row.key, row.cable))
-    return CableCatalog(rows, gauges, hookups, usage)
+    return CableCatalog(rows, gauges, hookups, usage, own_columns)
 
 
 # --- «Сечения AWG ↔ мм²» ---
