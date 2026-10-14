@@ -202,6 +202,20 @@ curl -s -H "Authorization: Bearer $ERP_TOKEN" "$ERP/api/references/import/ter/sc
 (`gauges_added`, `gauge_mismatches`, `moved_out_of_montage`, `counts`); формат файла описан в
 `backend/app/modules/references/importers.py`.
 
+## 5. Файл .xlsx: «Скачать для правки» / «Загрузить исправленную»
+
+То же, что кнопки «Базы данных» (14.10.2026): строки — по «ID записи», а не по ключу. Таблицы: `ob`, `op`, `ter`,
+`coax`, `prov` (`kind`: `coax` / `wire` / `multi` / `other`), `mat` (`kind`: `cov` — оболочки), `wire-gauges`,
+`suppliers`, `countries`.
+
+- `GET …/import/<таблица>/file/fields?kind=` — поля по порядку и подписи самой таблицы (`refs:read`).
+- `POST …/import/<таблица>/file/export` `{"titles": {поле: подпись}, "kind": ""}` → `{file_name, content_base64, rows}`:
+  лист с «ID записи», полями и скрытой «Версией» (отпечаток строки на момент скачивания) и скрытый лист «Поля».
+- `POST …/import/<таблица>/file?dry_run=1|0` `{"file_name": "…", "content_base64": "…"}` (`refs:write`; карты —
+  закупщик) → `updated` (поле: было → станет), `created` (строки без ID), `conflicts` (запись изменили после
+  скачивания — пропущена), `not_found`, `errors` (строку отклонила проверка формы), `unchanged`, `ignored_columns`.
+  Строка, которой нет в файле, не трогается: удалить запись файлом нельзя. Каждая правка — в журнале с `via: file`.
+
 ## Для разработчика
 
 Таблицы — `backend/app/modules/references/importers.py` (`import_rows`, `import_schema`, `import_hookups`),

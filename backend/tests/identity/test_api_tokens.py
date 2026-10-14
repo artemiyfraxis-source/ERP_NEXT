@@ -421,7 +421,9 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("GET", "/api/references/cables"),
         ("GET", "/api/references/coax-dia"),
         ("GET", "/api/references/coverings"),
+        ("GET", "/api/references/import/{table}/file/fields"),
         ("GET", "/api/references/import/{table}/schema"),
+        ("POST", "/api/references/import/{table}/file/export"),
         ("GET", "/api/references/stock-links"),
         ("GET", "/api/references/tech-operations"),
         ("GET", "/api/references/tech-operations/crimp-codes"),
@@ -433,6 +435,7 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
     writes = [
         ("PATCH", "/api/references/tech-operations/{record_id}"),
         ("POST", "/api/references/import/{table}"),
+        ("POST", "/api/references/import/{table}/file"),
         ("POST", "/api/references/stock-links"),
         ("POST", "/api/references/tech-operations"),
         ("POST", "/api/references/tech-operations/{record_id}/crimps/targets"),

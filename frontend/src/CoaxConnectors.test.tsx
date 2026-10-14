@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { CoaxConnectors, coaxAngle, coaxGender, coaxSeries } from "./CoaxConnectors";
+import { CoaxConnectors, coaxAngle, coaxGender, coaxSeries, coaxSupplier } from "./CoaxConnectors";
 import type { TechOperationRecord } from "./api";
 
 const record = (id: string, fields: Record<string, string>): TechOperationRecord => ({
@@ -55,16 +55,16 @@ it("groups the connectors by series in the shop's order with the cable's D1–D3
 it("opens the connector's card on a row click: what the technologist still has to fill, the link, the other cables", () => {
   const onEdit = vi.fn();
   render(<CoaxConnectors records={RECORDS} cableOf={cableOf} canEdit onEdit={onEdit} />);
-  expect(screen.queryByRole("complementary")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull();
   fireEvent.click(screen.getAllByRole("row").find((row) => row.textContent?.includes("RG-174") && row.textContent.includes("N-111L"))!);
-  let card = screen.getByRole("complementary", { name: "Карточка разъёма N-111L" });
+  let card = screen.getByRole("dialog", { name: "Карточка разъёма N-111L" });
   expect(within(card).getByText("RG-174")).toBeInTheDocument();
   expect(within(card).getAllByText("не задано")).toHaveLength(3); // разделка, пин, экран
   expect(within(card).getByText("нет у кабеля")).toBeInTheDocument();
   expect(within(card).getByText("gsm-repiteri.ru, 12.10.2026")).toBeInTheDocument();
 
   fireEvent.click(within(card).getByRole("button", { name: "RG-316" }));
-  card = screen.getByRole("complementary", { name: "Карточка разъёма N-111L" });
+  card = screen.getByRole("dialog", { name: "Карточка разъёма N-111L" });
   expect(within(card).getByText("Разъём N-111L (N-male, обжимной, на кабель RG-174, RG-316)")).toBeInTheDocument();
   expect(within(card).getByText("0,5 · 1,48 · 1,95")).toBeInTheDocument();
   expect(within(card).getByText("50 Ом")).toBeInTheDocument();
@@ -73,14 +73,38 @@ it("opens the connector's card on a row click: what the technologist still has t
 
   fireEvent.click(within(card).getByRole("button", { name: "Править запись" }));
   expect(onEdit).toHaveBeenCalledWith(RECORDS[0]);
-  fireEvent.click(within(card).getByRole("button", { name: "Закрыть карточку" }));
-  expect(screen.queryByRole("complementary")).toBeNull();
+  expect(screen.queryByRole("dialog")).toBeNull(); // правка открывается своим окном, карточка уходит
+});
+
+it("closes the card with the close button and with Esc", () => {
+  render(<CoaxConnectors records={RECORDS} cableOf={cableOf} canEdit onEdit={() => undefined} />);
+  fireEvent.click(screen.getByText("SMA-C174P"));
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Закрыть карточку" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(screen.getByText("SMA-C174P"));
+  fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("shows the manufacturer and the supplier columns; the supplier is a field or the domain of the link / source", () => {
+  expect(coaxSupplier({ Поставщик: "Чип и Дип" })).toBe("Чип и Дип");
+  expect(coaxSupplier({ Ссылка: "https://www.gsm-repiteri.ru/n-111l" })).toBe("gsm-repiteri.ru");
+  expect(coaxSupplier({ "Источник данных": "gsm-repiteri.ru, 12.10.2026" })).toBe("gsm-repiteri.ru");
+  expect(coaxSupplier({ "Источник данных": "зеркало БД.КОАКС" })).toBe("");
+  const records = [...RECORDS, record("m1", { Артикул: "MCX-1", Провод: "RG-316", Производитель: "Amphenol" })];
+  render(<CoaxConnectors records={records} cableOf={cableOf} canEdit onEdit={() => undefined} />);
+  expect(screen.getByRole("columnheader", { name: "Производитель" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Поставщик" })).toBeInTheDocument();
+  const mcx = screen.getAllByRole("row").find((row) => row.textContent?.includes("MCX-1"))!;
+  expect(within(mcx).getByText("Amphenol")).toBeInTheDocument();
+  const n316 = screen.getAllByRole("row").find((row) => row.textContent?.includes("N-111L") && row.textContent.includes("RG-316"))!;
+  expect(within(n316).getByText("gsm-repiteri.ru")).toBeInTheDocument();
 });
 
 it("shows the card without the edit button to a viewer", () => {
   render(<CoaxConnectors records={RECORDS} cableOf={cableOf} canEdit={false} onEdit={() => undefined} />);
   fireEvent.click(screen.getByText("SMA-C174P"));
-  const card = screen.getByRole("complementary", { name: "Карточка разъёма SMA-C174P" });
+  const card = screen.getByRole("dialog", { name: "Карточка разъёма SMA-C174P" });
   expect(within(card).getByText("угловой")).toBeInTheDocument();
   expect(within(card).queryByRole("button", { name: "Править запись" })).toBeNull();
 });

@@ -1,29 +1,30 @@
 /* Схема связей под торцами разъёмов (PinoutLinks.tsx): таблицы разъёмов как на схеме Э4, провода цветом, свивка, сростки,
    хвосты; вкладка «Чертёж» — чертёж по форме только для просмотра (GenDrawingPreview.tsx). */
-.pin-diagram .pin-links { display: grid; gap: 6px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
-.pin-diagram .pin-links-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
-.pin-diagram .pin-links-head .seg-tabs { margin: 0; }
-.pin-diagram .pin-links-title { font-weight: 600; }
-.pin-diagram .pin-links-scroll { overflow-x: auto; }
-.pin-diagram .pin-links-svg { display: block; max-width: 100%; height: auto; margin: 0 auto; overflow: visible; }
-.pin-diagram .pin-links-empty { display: block; text-align: center; }
-.pin-diagram .pin-links-frame { fill: var(--card); stroke: var(--pin-outline); stroke-width: 1.2; }
-.pin-diagram .pin-links-band { fill: var(--accent); stroke: var(--pin-outline); stroke-width: 1.2; }
-.pin-diagram .pin-links-rule { stroke: var(--border); stroke-width: 1; }
-.pin-diagram .pin-links-rule.is-strong { stroke: var(--pin-outline); }
-.pin-diagram .pin-links-name { fill: var(--foreground); font-size: 12.5px; font-weight: 700; }
-.pin-diagram .pin-links-key { fill: var(--primary); }
-.pin-diagram .pin-links-colhead { fill: var(--muted-foreground); font-size: 10.5px; font-weight: 600; }
-.pin-diagram .pin-links-num { fill: var(--foreground); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.pin-diagram .pin-links-row:not(.is-used) .pin-links-num { fill: var(--muted-foreground); font-weight: 400; }
-.pin-diagram .pin-links-cell { fill: var(--foreground); font-size: 11px; font-variant-numeric: tabular-nums; }
-.pin-diagram .pin-links-foot { fill: var(--muted-foreground); font-size: 11px; white-space: pre; }
-.pin-diagram .pin-links-swatch { stroke: var(--pin-outline); stroke-width: .8; }
+.pin-links { display: grid; gap: 6px; }
+.pin-diagram .pin-links { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--border); }
+.pin-links .pin-links-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pin-links .pin-links-head .seg-tabs { margin: 0; }
+.pin-links .pin-links-title { font-weight: 600; }
+.pin-links .pin-links-scroll { overflow-x: auto; }
+.pin-links .pin-links-svg { display: block; max-width: 100%; height: auto; margin: 0 auto; overflow: visible; }
+.pin-links .pin-links-empty { display: block; text-align: center; }
+.pin-links .pin-links-frame { fill: var(--card); stroke: var(--pin-outline, #3b4652); stroke-width: 1.2; }
+.pin-links .pin-links-band { fill: var(--accent); stroke: var(--pin-outline, #3b4652); stroke-width: 1.2; }
+.pin-links .pin-links-rule { stroke: var(--border); stroke-width: 1; }
+.pin-links .pin-links-rule.is-strong { stroke: var(--pin-outline, #3b4652); }
+.pin-links .pin-links-name { fill: var(--foreground); font-size: 12.5px; font-weight: 700; }
+.pin-links .pin-links-key { fill: var(--primary); }
+.pin-links .pin-links-colhead { fill: var(--muted-foreground); font-size: 10.5px; font-weight: 600; }
+.pin-links .pin-links-num { fill: var(--foreground); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pin-links .pin-links-row:not(.is-used) .pin-links-num { fill: var(--muted-foreground); font-weight: 400; }
+.pin-links .pin-links-cell { fill: var(--foreground); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pin-links .pin-links-foot { fill: var(--muted-foreground); font-size: 11px; white-space: pre; }
+.pin-links .pin-links-swatch { stroke: var(--pin-outline, #3b4652); stroke-width: .8; }
 /* Подписи проводов, хвостов, свивки и сростков — с подложкой цвета карточки: провод под ними не перечёркивает текст. */
-.pin-diagram .pin-links-label { fill: var(--foreground); font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
-.pin-diagram .pin-links-twist { fill: var(--muted-foreground); font-size: 10.5px; font-style: italic; paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
-.pin-diagram .pin-links-tail { fill: var(--muted-foreground); font-size: 11px; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
-.pin-diagram .pin-links-node { fill: var(--foreground); font-size: 11px; font-weight: 700; paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
+.pin-links .pin-links-label { fill: var(--foreground); font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
+.pin-links .pin-links-twist { fill: var(--muted-foreground); font-size: 10.5px; font-style: italic; paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
+.pin-links .pin-links-tail { fill: var(--muted-foreground); font-size: 11px; font-variant-numeric: tabular-nums; paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
+.pin-links .pin-links-node { fill: var(--foreground); font-size: 11px; font-weight: 700; paint-order: stroke; stroke: var(--card); stroke-width: 4px; stroke-linejoin: round; }
 /* «Чертёж» по форме: поле редактора в режиме просмотра, без его переключателя «Схема Э4 / Чертёж». */
 .pin-diagram .gen-drawing-view { display: flex; flex-direction: column; height: clamp(420px, 62vh, 760px); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .pin-diagram .gen-drawing-view > .harness-root { flex: 1; min-height: 0; display: flex; flex-direction: column; }

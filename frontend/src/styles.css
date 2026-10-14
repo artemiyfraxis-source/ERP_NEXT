@@ -2143,6 +2143,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-schema summary, .etk-revs summary, .etk-warnings summary, .gen-more summary { cursor: pointer; font-size: 13px; font-weight: 600; }
 .etk-harness { display: flex; justify-content: center; overflow-x: auto; }
 .etk-harness svg { max-width: 900px; width: 100%; height: auto; }
+.etk-link-scheme { margin-top: 8px; }
 .etk-warnings { border-radius: 10px; padding: 8px 12px; color: #74451f; background: #fff3dd; font-size: 12.5px; }
 .etk-warnings > div { margin-top: 4px; white-space: pre-line; }
 .etk-revs { font-size: 12.5px; }
@@ -3473,6 +3474,15 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .kit-review-danger { color: var(--chip-danger-fg); }
 .kit-meta .kit-calc-link { color: var(--primary); text-decoration: none; }
 .kit-meta .kit-calc-link:hover { text-decoration: underline; }
+.kit-links { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.kit-links .link-button { font-size: inherit; }
+.kit-kd-list { position: relative; }
+.kit-kd-list summary { cursor: pointer; color: var(--primary); list-style: none; }
+.kit-kd-list summary::-webkit-details-marker { display: none; }
+.kit-kd-list ul { position: absolute; z-index: 5; top: 100%; left: 0; margin: 4px 0 0; padding: 6px 10px; list-style: none; min-width: 220px; background: var(--card, var(--background)); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+.kit-kd-list li { padding: 3px 0; white-space: nowrap; }
+.kit-kd-list a { color: var(--primary); text-decoration: none; }
+.kit-kd-list a:hover { text-decoration: underline; }
 /* «Ещё ▾» за чертой после рабочих кнопок: удаление отдельно от них (ПР-2). */
 .kit-head .kit-more { margin-left: 4px; }
 .kit-more .more-menu-list button.kit-more-danger { color: var(--tone-danger); }
@@ -3742,11 +3752,9 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .cov-title { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
 .cov-other { display: grid; gap: 8px; justify-items: start; }
 .cov-other > .cov-group { justify-self: stretch; }
-/* БД.ОБ master–detail: the list stays on the left, the machine card is a right-hand panel (full-screen on a tablet). */
+/* БД.ОБ master–detail: the list stays on the left, the machine card opens as a PageWindow. */
 .eq-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
-.eq-split.has-card { grid-template-columns: minmax(0, 1fr) minmax(380px, 40%); }
 .eq-list { min-width: 0; }
-.eq-panel { position: sticky; top: 0; max-height: calc(100dvh - 60px); overflow: auto; overscroll-behavior: contain; min-width: 0; }
 .eq-card { display: grid; gap: 12px; padding: 12px 16px; }
 .eq-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .eq-title { display: grid; gap: 2px; min-width: 0; }
@@ -3767,8 +3775,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .eq-calc { margin-left: 6px; padding: 0 5px; border: 1px dashed var(--border); border-radius: 4px; font-size: 11px; font-style: normal; }
 .eq-split .eq-selected td { background: color-mix(in srgb, var(--primary) 14%, var(--card)); }
 @media (max-width: 1100px), (pointer: coarse) {
-  .eq-split.has-card { grid-template-columns: minmax(0, 1fr); }
-  .eq-panel { position: fixed; inset: 0; z-index: 45; max-height: none; padding: 8px; background: var(--background, #f6f8f8); }
   .eq-econ { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 700px) { .eq-econ { grid-template-columns: minmax(0, 1fr); } }

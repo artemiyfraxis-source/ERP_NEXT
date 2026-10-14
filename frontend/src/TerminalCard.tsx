@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { PageWindow } from "./PageWindow";
 import type { TechOperationRecord } from "./api";
 
 /** «База данных → Терминалы»: карточка контакта по протоколу v5.2 (владелец 12–13.10.2026) — справа от списка, как
@@ -126,18 +126,11 @@ export function TerminalCard({ record, canEdit, onEdit, onClose }: {
   onEdit: (record: TechOperationRecord) => void;
   onClose: () => void;
 }) {
-  const panelRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [onClose]);
-  useEffect(() => { panelRef.current?.scrollTo?.({ top: 0 }); }, [record.id]);
   const card = record.card;
   const subtitle = card ? [card.maker, card.series, card.product].map(trim).filter(Boolean)
     .filter((part, index, parts) => parts.indexOf(part) === index).join(" · ") : "";
   const lines = card ? terminalCardLines(card) : null;
-  return <aside className="eq-panel" aria-label="Карточка контакта" ref={panelRef}>
+  return <PageWindow label="Карточка контакта" width={640} dismissable close={onClose}>
     <article className="panel eq-card">
       <header className="eq-head">
         <div className="eq-title"><b className="tnum">{trim(card?.article) || record.display_text || "—"}</b>{subtitle && <span className="muted">{subtitle}</span>}</div>
@@ -153,5 +146,5 @@ export function TerminalCard({ record, canEdit, onEdit, onClose }: {
         </>
         : <div className="empty">Карточка не пришла с сервера — обновите страницу.</div>}
     </article>
-  </aside>;
+  </PageWindow>;
 }

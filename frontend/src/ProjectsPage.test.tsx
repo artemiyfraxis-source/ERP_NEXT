@@ -322,7 +322,7 @@ describe("ProjectsPage", () => {
     });
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
-    expect((await screen.findByRole("link", { name: "расчёт" })).getAttribute("href")).toBe(linked.calc_source);
+    expect((await screen.findByRole("link", { name: "Расчёт" })).getAttribute("href")).toBe(linked.calc_source);
     fireEvent.click(screen.getByRole("button", { name: "Ещё действия с проектом 708К.4" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Обновить из расчёта/ }));
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === "/api/techcards/kitsets/load")).toBe(true));
@@ -342,7 +342,7 @@ describe("ProjectsPage", () => {
     render(<ProjectsPage principal={editor} />);
     fireEvent.click(await screen.findByText("708К.4"));
     await screen.findByRole("button", { name: "Ещё действия с проектом 708К.4" });
-    expect(screen.queryByRole("link", { name: "папка" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Папка" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Ещё действия с проектом 708К.4" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Папка проекта/ }));
     const input = await screen.findByLabelText("Ссылка на папку");
@@ -351,12 +351,71 @@ describe("ProjectsPage", () => {
     expect((await screen.findByRole("alert")).textContent).toContain("http://");
     fireEvent.change(input, { target: { value: folder } });
     fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-    const link = await screen.findByRole("link", { name: "папка" });
+    const link = await screen.findByRole("link", { name: "Папка" });
     expect(link.getAttribute("href")).toBe(folder);
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("rel")).toBe("noopener");
     const [, init] = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/folder"))!;
     expect(JSON.parse(String(init?.body))).toEqual({ url: folder });
+  });
+
+  it("finds the project folder from the calculation link with «Папка?» and then shows «Папка»", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    const folder = "https://drive.google.com/drive/folders/fold123";
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = decodeURIComponent(String(input));
+      if (url === "/api/techcards/kitsets/708К.4/folder/from-calc" && init?.method === "POST") return json({ card: { ...card, folder_url: folder } });
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("button", { name: "Папка?" }));
+    const link = await screen.findByRole("link", { name: "Папка" });
+    expect(link.getAttribute("href")).toBe(folder);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(screen.queryByRole("button", { name: "Папка?" })).toBeNull();
+  });
+
+  it("shows a Russian error when the folder cannot be found by the calculation", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/folder/from-calc")) return json({ detail: "Нет доступа к файлу расчёта у сервисного аккаунта ERP" }, 422);
+      return base(input, init);
+    });
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    fireEvent.click(await screen.findByRole("button", { name: "Папка?" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Нет доступа к файлу расчёта");
+    expect(screen.getByRole("button", { name: "Папка?" })).toBeTruthy();
+  });
+
+  it("keeps only «Расчёт», «Папка» and «КД» in the header line, КД opening in a new tab", async () => {
+    const fetchMock = vi.mocked(fetch);
+    const base = fetchMock.getMockImplementation()!;
+    const doc = (id: string, name: string) => ({ id, index: "КБ1", name, size: 3, stored: true, url: null, uploaded_at: "2026-09-29T10:00:00", who: "Технолог" });
+    const withKd = (docs: ReturnType<typeof doc>[]) => ({ ...card, deadline: "2026-10-28", assemblies: [{ ...card.assemblies[0], kd: docs }] });
+    let current = withKd([doc("d1", "708К.4КБ1 — Чертёж.pdf")]);
+    fetchMock.mockImplementation(async (input, init) => {
+      if (decodeURIComponent(String(input)) === "/api/techcards/kitsets/708К.4" && (init?.method || "GET") === "GET") return json(current);
+      return base(input, init);
+    });
+    const first = render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    const kd = await screen.findByRole("link", { name: "КД" });
+    expect(kd.getAttribute("href")).toBe("/api/techcards/kitsets/708%D0%9A.4/documents/d1");
+    expect(kd.getAttribute("target")).toBe("_blank");
+    expect(kd.getAttribute("rel")).toBe("noopener");
+    expect(document.querySelector(".kit-links")!.textContent).not.toMatch(/дедлайн|обновлено|ООО Заказчик/);
+    first.unmount();
+
+    current = withKd([doc("d1", "708К.4КБ1 — Чертёж.pdf"), doc("d2", "708К.4КБ1 — ТЗ.docx")]);
+    render(<ProjectsPage principal={editor} />);
+    fireEvent.click(await screen.findByText("708К.4"));
+    await screen.findByText("КД · 2");
+    const names = Array.from(document.querySelectorAll(".kit-kd-list a")).map((link) => [link.textContent, link.getAttribute("target")]);
+    expect(names).toEqual([["КБ1 · Чертёж.pdf", "_blank"], ["КБ1 · ТЗ.docx", "_blank"]]);
   });
 
   it("opens the assembly techcard right inside the project card, as SUPPLYMAP does", async () => {
