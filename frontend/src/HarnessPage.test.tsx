@@ -207,4 +207,18 @@ describe("HarnessPage", () => {
     expect(editor.getAttribute("data-read-only")).toBe("false");
     expect(editor.getAttribute("data-placements")).toBe("true");
   });
+
+  it("на телефоне — только просмотр: в шапке «История версий» и «Выгрузить», правки и обмена .zip нет", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: true, media: query, addEventListener: () => {}, removeEventListener: () => {} }));
+    try {
+      render(<HarnessPage project="708К.4" index="КБ1" canEdit />);
+      expect(await screen.findByTestId("editor")).toBeTruthy();
+      expect(screen.getByRole("status").textContent).toBe("Только просмотр");
+      expect(screen.getByRole("button", { name: "История версий" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: /Выгрузить/ })).toBeTruthy();
+      for (const name of ["Сохранить версию", "Загрузить .zip", "Библиотека компонентов"]) expect(screen.queryByRole("button", { name })).toBeNull();
+      expect(screen.queryByRole("link", { name: "Скачать .zip" })).toBeNull();
+      expect(screen.getByRole("region", { name: /Чертёж жгута/ }).className).toContain("harness-page-phone");
+    } finally { vi.unstubAllGlobals(); }
+  });
 });

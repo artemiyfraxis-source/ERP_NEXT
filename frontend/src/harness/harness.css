@@ -48,8 +48,9 @@
 .harness-root .info-hint > button { border: 1px solid var(--muted-foreground); border-radius: 50%; background: transparent; color: var(--muted-foreground); width: 20px; height: 20px; padding: 0; cursor: help; }
 
 /* Shared compact controls for library and E4 panels. Canvas geometry stays local. */
-.harness-root .ui-control { min-height: var(--ui-control-height); padding: 5px 9px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-surface); color: var(--ui-ink); font: 600 11px/1.3 Inter, "Segoe UI", Arial, sans-serif; cursor: pointer; }
-.harness-root .ui-control:hover:not(:disabled) { border-color: var(--muted-foreground); background: var(--ui-accent-soft); }
+/* ERP small button (.secondary.small): 30 px, 12.5 px text in the app font. */
+.harness-root .ui-control { min-height: var(--ui-control-height); padding: 4px 10px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-surface); color: var(--ui-ink); font-size: 12.5px; font-weight: 500; line-height: 18px; cursor: pointer; }
+.harness-root .ui-control:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
 .harness-root .ui-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--ui-ink); font-size: 11px; }
 .harness-root :is(.component-library, .harness-editor) :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 /* Keep help icons independent of surrounding form/button rules. */
@@ -70,3 +71,27 @@
 .harness-root .info-hint > .info-hint-popup[popover]:not(:popover-open) { display: none; }
 .harness-root .info-hint > .info-hint-popup[popover]:popover-open { display: block; }
 .harness-root .info-hint-popup::backdrop { background: transparent; pointer-events: none; }
+
+/* Шапка страницы чертежа на телефоне (HarnessPage, класс .harness-page-phone): переносится в две строки, без подзаголовка.
+   Лежит здесь, рядом с остальными стилями чертежа, а не в общем styles.css. */
+.harness-page-phone { padding: 8px 8px 0; }
+.harness-page-phone .harness-page-head { flex-wrap: wrap; row-gap: 6px; }
+.harness-page-phone .harness-page-head > .muted { display: none; }
+.harness-page-phone .harness-page-head h1 { flex: 1 1 0; }
+.harness-page-phone .harness-page-actions { margin-left: 0; flex: 1 1 100%; flex-wrap: wrap; }
+.harness-page-phone .harness-page-note { flex: 1 1 100%; max-width: none; white-space: normal; }
+
+/* Строка пояснений (HelpLine): одна на панель вместо разбросанных «i». Пока ни на что не наведено — серая подсказка;
+   длинное пояснение растёт вверх поверх панели и не сдвигает поля под указателем. */
+.harness-root :has(> .help-line-slot) .info-hint { display: none; }
+.harness-root .help-line-slot { position: relative; flex: 0 0 auto; min-width: 0; }
+.harness-root .help-line-slot:has(> .help-line:not([data-idle=""])) { min-height: 44px; border-top: 1px solid var(--border); background: var(--card); }
+.harness-root .help-line { margin: 0; padding: 7px 12px; background: var(--card); color: var(--foreground); font-size: 12px; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal; overflow-wrap: anywhere; pointer-events: none; }
+.harness-root .help-line:not([data-idle=""]) { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; min-height: 44px; max-height: 40vh; overflow: hidden; }
+.harness-root .help-line:not([data-idle=""]):not(:empty) { border-top: 1px solid var(--border); box-shadow: 0 -6px 14px color-mix(in srgb, var(--foreground) 7%, transparent); }
+.harness-root .help-line:empty::before { content: attr(data-idle); color: var(--muted-foreground); }
+.harness-root .help-line[data-idle=""] { border-top: 1px solid var(--border); }
+.harness-root .help-line[data-idle=""]:empty { display: none; }
+/* In a header (table windows): one grey line between the title and the controls, cut with «…». */
+.harness-root .help-line-slot.inline { flex: 1 1 auto; align-self: center; min-height: 0; border: 0; background: transparent; }
+.harness-root .help-line-slot.inline .help-line { position: static; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); box-shadow: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -69,6 +69,8 @@ export interface EditorToolbarProps {
   readonly onSnapsChange?: (snaps: { corners: boolean; contours: boolean; tangents: boolean }) => void;
   /** View mode: «Выбор» and «Перемещение поля» plus the zoom tab; nothing that draws or edits. */
   readonly readOnly?: boolean;
+  /** Phone: the zoom group only — no tabs, no tools (one finger moves the field, two fingers zoom). */
+  readonly phoneView?: boolean;
   /** Extra controls of the «Вид» tab after the zoom group (the drawing's «Реальные размеры, мм»). */
   readonly viewControls?: ReactNode;
 }
@@ -93,6 +95,7 @@ export function EditorToolbar({
   snaps,
   onSnapsChange,
   readOnly = false,
+  phoneView = false,
   viewControls,
 }: EditorToolbarProps) {
   const zoomIsPreset = editorZoomPresets.some((preset) => Math.abs(preset - zoom) < 0.001);
@@ -121,6 +124,21 @@ export function EditorToolbar({
   );
 
   const drawingTools = visibleTools.map(toolButton);
+  const zoomGroup = (
+    <div className="he-toolbar-group he-zoom-tools" aria-label="Масштаб">
+      <button className="he-tool" type="button" aria-label="Уменьшить масштаб" title="Уменьшить" onClick={onZoomOut}><span className="he-tool-symbol" aria-hidden="true">−</span><span className="he-tool-caption">Уменьшить</span></button>
+      <select className="he-zoom-select" aria-label="Масштаб редактора" title="Масштаб редактора" value={zoomIsPreset ? String(zoom) : "custom"} onChange={(event) => event.target.value === "fit" ? onFitView() : event.target.value !== "custom" && onZoomChange(Number(event.target.value))}>
+        {!zoomIsPreset && <option value="custom">{Math.round(zoom * 100)}%</option>}
+        {editorZoomPresets.map((preset) => <option key={preset} value={preset}>{Math.round(preset * 100)}%</option>)}
+        <option value="fit">Вписать в экран</option>
+      </select>
+      <button className="he-tool" type="button" aria-label="Увеличить масштаб" title="Увеличить" onClick={onZoomIn}><span className="he-tool-symbol" aria-hidden="true">+</span><span className="he-tool-caption">Увеличить</span></button>
+      <button className="he-tool he-fit-tool" type="button" aria-label="Вписать в экран" title="Вписать в экран" onClick={onFitView}><span className="he-tool-symbol" aria-hidden="true">⌂</span><span className="he-tool-caption">Вписать</span></button>
+    </div>
+  );
+  if (phoneView) {
+    return <aside className="he-toolbar he-toolbar-phone" aria-label="Инструменты редактора">{zoomGroup}</aside>;
+  }
   const renderSection = (section: ToolbarSection) => {
     if (section === "drawing") {
       return <div className="he-toolbar-panel" role="tabpanel" id="he-toolbar-panel-drawing" aria-labelledby="he-toolbar-tab-drawing">
@@ -139,16 +157,7 @@ export function EditorToolbar({
     }
     if (section === "view") {
       return <div className="he-toolbar-panel" role="tabpanel" id="he-toolbar-panel-view" aria-labelledby="he-toolbar-tab-view">
-        <div className="he-toolbar-group he-zoom-tools" aria-label="Масштаб">
-          <button className="he-tool" type="button" aria-label="Увеличить масштаб" title="Увеличить" onClick={onZoomIn}><span className="he-tool-symbol" aria-hidden="true">+</span><span className="he-tool-caption">Увеличить</span></button>
-          <select className="he-zoom-select" aria-label="Масштаб редактора" title="Масштаб редактора" value={zoomIsPreset ? String(zoom) : "custom"} onChange={(event) => event.target.value === "fit" ? onFitView() : event.target.value !== "custom" && onZoomChange(Number(event.target.value))}>
-            {!zoomIsPreset && <option value="custom">{Math.round(zoom * 100)}%</option>}
-            {editorZoomPresets.map((preset) => <option key={preset} value={preset}>{Math.round(preset * 100)}%</option>)}
-            <option value="fit">Вписать в экран</option>
-          </select>
-          <button className="he-tool" type="button" aria-label="Уменьшить масштаб" title="Уменьшить" onClick={onZoomOut}><span className="he-tool-symbol" aria-hidden="true">−</span><span className="he-tool-caption">Уменьшить</span></button>
-          <button className="he-tool he-fit-tool" type="button" aria-label="Вписать в экран" title="Вписать в экран" onClick={onFitView}><span className="he-tool-symbol" aria-hidden="true">⌂</span><span className="he-tool-caption">Вписать</span></button>
-        </div>
+        {zoomGroup}
         {viewControls}
       </div>;
     }

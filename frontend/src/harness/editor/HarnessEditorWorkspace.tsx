@@ -1,11 +1,12 @@
 import type { PhysicalDragMode } from "./physical-editing";
 import { InfoHint } from "../InfoHint";
+import { HelpLine } from "../HelpLine";
 import type { CoveringDragPart } from "./covering-layout";
 import {type PhysicalContextAction,type PhysicalContextTarget} from "./physical-coverings";
 import type { DimensionMode } from "./drawing-dimensions";
 import type { DrawingGraphic } from "./drawing-documents";
 import type { DrawingSnaps } from "../component-library/drawing-geometry";
-import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { RealSizeScaleBar, type RealSizeStatus } from "./DrawingScaleControl";
 import { MaterialObjectsPanel, materialObjectGroup } from "./MaterialObjectsPanel";
 import {
@@ -45,6 +46,7 @@ import type { WireBlankEnd } from "../WireBlankCatalog";
 import { FreeWireEndsPanel } from "./FreeWireEndsPanel";
 import { HarnessSectionNavigation, type HarnessSectionId } from "./HarnessSectionNavigation";
 import "./harness-editor.css";
+import { pinchCamera } from "../phone-view";
 import type { HarnessExportPort } from "../export/port";
 
 const defaultLayers: readonly EditorLayer[] = [
@@ -133,6 +135,8 @@ export type EditorSaveState = "saved" | "saving" | "changed" | "error";
 export interface HarnessEditorWorkspaceProps {
   /** View mode: the canvas only pans, zooms and selects; panels are shown disabled, the catalog is hidden. */
   readonly readOnly?: boolean;
+  /** Phone: view mode with nothing but the field — touch pan, pinch zoom, the zoom buttons and the Э4 / drawing switch. */
+  readonly phoneView?: boolean;
   readonly harnessId: string;
   readonly harnessDesignation: string;
   readonly view?: HarnessEditorView;
@@ -329,6 +333,7 @@ function ReadOnlyFieldset({ readOnly, children }: { readonly readOnly: boolean; 
 
 export function HarnessEditorWorkspace({
   readOnly = false,
+  phoneView = false,
   harnessId,
   harnessDesignation,
   view: controlledView,
@@ -419,7 +424,9 @@ export function HarnessEditorWorkspace({
     [onExportPort, realSizeDenominator],
   );
   const [localView, setLocalView] = useState<HarnessEditorView>("e4");
-  const [tool, setTool] = useState<EditorTool>("select");
+  // On a phone one finger moves the field: the tool is «Перемещение поля» and there is no other.
+  const [tool, setTool] = useState<EditorTool>(phoneView ? "pan" : "select");
+  useEffect(() => { setTool(phoneView ? "pan" : "select"); }, [phoneView]);
   const [localObjects, setLocalObjects] = useState(defaultObjects);
   const [localLayers, setLocalLayers] = useState(defaultLayers);
   const [localSelectedObjectId, setLocalSelectedObjectId] = useState<string | null>("W1");
@@ -445,6 +452,39 @@ export function HarnessEditorWorkspace({
     canvas.addEventListener("pointerleave", leave);
     return () => { canvas.removeEventListener("pointermove", move); canvas.removeEventListener("pointerleave", leave); };
   }, [showRealSize]);
+  // Phone: two fingers zoom the field. The touches are read before the canvas sees them; once a second finger lands, both
+  // fingers belong to the pinch until they lift, so the canvas's one-finger pan never resumes from a stale start.
+  const touchPoints = useRef(new Map<number, EditorPoint>());
+  const pinchRef = useRef<{ readonly ids: readonly [number, number]; readonly from: readonly [EditorPoint, EditorPoint]; readonly camera: EditorCamera } | null>(null);
+  const pinchPointers = useRef(new Set<number>());
+  const touchPoint = (event: ReactPointerEvent<HTMLElement>): EditorPoint => {
+    const frame = event.target instanceof Element ? event.target.closest(".he-canvas-frame") : null;
+    const rect = frame?.getBoundingClientRect();
+    return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) };
+  };
+  const touchDown = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!phoneView || event.pointerType !== "touch") return;
+    touchPoints.current.set(event.pointerId, touchPoint(event));
+    if (touchPoints.current.size === 2 && !pinchRef.current) {
+      const [a, b] = [...touchPoints.current.entries()];
+      pinchRef.current = { ids: [a![0], b![0]], from: [a![1], b![1]], camera: cameraRef.current };
+      pinchPointers.current.add(a![0]); pinchPointers.current.add(b![0]);
+    } else if (touchPoints.current.size > 2) pinchPointers.current.add(event.pointerId);
+    if (pinchPointers.current.has(event.pointerId)) event.stopPropagation();
+  };
+  const touchMove = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!touchPoints.current.has(event.pointerId)) return;
+    touchPoints.current.set(event.pointerId, touchPoint(event));
+    const pinch = pinchRef.current;
+    const a = pinch && touchPoints.current.get(pinch.ids[0]), b = pinch && touchPoints.current.get(pinch.ids[1]);
+    if (pinch && a && b) setCamera(pinchCamera(pinch.camera, pinch.from, [a, b]));
+    if (pinchPointers.current.has(event.pointerId)) event.stopPropagation();
+  };
+  const touchUp = (event: ReactPointerEvent<HTMLElement>) => {
+    touchPoints.current.delete(event.pointerId);
+    if (pinchRef.current?.ids.includes(event.pointerId)) pinchRef.current = null;
+    if (pinchPointers.current.delete(event.pointerId)) event.stopPropagation();
+  };
   const [inspectorTab, setInspectorTab] = useState<"properties" | "layers">("properties");
   const [freeWireEndFocus, setFreeWireEndFocus] = useState<{ readonly wireId: string; readonly end: "from" | "to"; readonly requestId: number } | null>(null);
   const [catalogExpanded, setCatalogExpanded] = useState(true);
@@ -653,7 +693,9 @@ export function HarnessEditorWorkspace({
     () => objects.filter((object) => (view !== "e4" || object.kind !== "dimension") && !localCopyControls?.hiddenObjectIds.includes(object.id)),
     [objects, view, localCopyControls?.hiddenObjectIds],
   );
+  const viewportMeasured = useRef(false);
   const rememberViewportSize = useCallback((size: EditorViewportSize) => {
+    viewportMeasured.current = true;
     setViewportSize((current) => current.width === size.width && current.height === size.height ? current : size);
   }, []);
   const fitView = () => setCamera((current) => fitEditorCameraToBounds(
@@ -702,8 +744,19 @@ export function HarnessEditorWorkspace({
     if (bounds) setCamera(current => fitEditorCameraToBounds(current, bounds, viewportSize));
   }, [revealRequest]);
 
+  // Phone: each view opens fitted to the screen once the field has its real size and the scene has objects; after
+  // that the camera is the user's (pan, pinch, buttons).
+  const phoneFittedView = useRef<HarnessEditorView | null>(null);
+  useEffect(() => {
+    if (!phoneView) { phoneFittedView.current = null; return; }
+    if (!viewportMeasured.current || !viewportObjects.length || phoneFittedView.current === view) return;
+    if (!getEditorSceneBounds(viewportObjects, layers, view, e4Overlays, componentTemplateViewInstances, resolveComponentTemplateAssetUrl, cables)) return;
+    phoneFittedView.current = view;
+    fitView();
+  });
+
   return (
-    <section className="harness-editor" data-harness-id={harnessId} aria-label={`Редактор жгута ${harnessDesignation}`} onFocusCapture={selectEditorTextField}>
+    <section className={phoneView ? "harness-editor he-phone-view" : "harness-editor"} data-harness-id={harnessId} aria-label={`Редактор жгута ${harnessDesignation}`} onFocusCapture={selectEditorTextField}>
       <header className="he-header">
         {!localCopyControls ? (
           <HarnessSectionNavigation
@@ -719,6 +772,30 @@ export function HarnessEditorWorkspace({
             </div>
           </div>
         )}
+        {/* ERP: one header row — the Э4 / drawing switch, then the toolbar of the open view. */}
+        <EditorToolbar
+          readOnly={readOnly}
+          phoneView={phoneView}
+          view={view}
+          activeTool={tool}
+          zoom={camera.zoom}
+          selectedGraphic={selectedGraphic}
+          canPasteGraphic={canPasteGraphic}
+          onCopy={onGraphicCopy}
+          onPaste={onGraphicPaste}
+          onDelete={onGraphicDelete}
+          onUndo={onUndo}
+          angleStep={angleStep}
+          onAngleStepChange={onAngleStepChange}
+          snaps={drawingSnaps}
+          onSnapsChange={onDrawingSnapsChange}
+          onToolChange={setTool}
+          onZoomIn={() => changeZoom(1.2)}
+          onZoomOut={() => changeZoom(1 / 1.2)}
+          onZoomChange={setZoom}
+          onFitView={fitView}
+          viewControls={view === "drawing" ? viewControls : undefined}
+        />
         {localCopyControls && <button
           className={`he-save-state ${saveState}`}
           type="button"
@@ -732,7 +809,7 @@ export function HarnessEditorWorkspace({
       </header>
 
       <div className={`he-workspace ${view === "drawing" ? "he-workspace-drawing" : ""} ${utilityPanelOpen ? "he-utility-open" : "he-utility-closed"} ${inspectorOpen ? "he-inspector-open" : "he-inspector-closed"} ${materialPanelOpen ? "he-material-open" : "he-material-closed"}`}>
-        <aside className={`he-utility-panel ${utilityPanelOpen ? "open" : "closed"}`} aria-label="Параметры и документы">
+        {!phoneView && <aside className={`he-utility-panel ${utilityPanelOpen ? "open" : "closed"}`} aria-label="Параметры и документы">
           <button className="he-utility-toggle" type="button" title={utilityPanelOpen ? "Скрыть панель" : "Показать параметры и документы"} onClick={() => { setUtilityPanelOpen(value => !value); if (window.innerWidth <= 1100) setInspectorOpen(false); }} aria-expanded={utilityPanelOpen} aria-controls="he-utility-content">
             <span aria-hidden="true">{utilityPanelOpen ? "‹" : "›"}</span>
             <span>{utilityPanelOpen ? "Скрыть панель" : "Параметры"}</span>
@@ -787,29 +864,9 @@ export function HarnessEditorWorkspace({
             <ReadOnlyFieldset readOnly={readOnly}>{documentActions}</ReadOnlyFieldset>
             {readOnly && viewActions}
           </div>
-        </aside>
-        <EditorToolbar
-          readOnly={readOnly}
-          view={view}
-          activeTool={tool}
-          zoom={camera.zoom}
-          selectedGraphic={selectedGraphic}
-          canPasteGraphic={canPasteGraphic}
-          onCopy={onGraphicCopy}
-          onPaste={onGraphicPaste}
-          onDelete={onGraphicDelete}
-          onUndo={onUndo}
-          angleStep={angleStep}
-          onAngleStepChange={onAngleStepChange}
-          snaps={drawingSnaps}
-          onSnapsChange={onDrawingSnapsChange}
-          onToolChange={setTool}
-          onZoomIn={() => changeZoom(1.2)}
-          onZoomOut={() => changeZoom(1 / 1.2)}
-          onZoomChange={setZoom}
-          onFitView={fitView}
-          viewControls={view === "drawing" ? viewControls : undefined}
-        />
+          {utilityPanelOpen && <HelpLine idle="Наведите на настройку — здесь появится пояснение" />}
+        </aside>}
+        <div className="he-touch-layer" onPointerDownCapture={touchDown} onPointerMoveCapture={touchMove} onPointerUpCapture={touchUp} onPointerCancelCapture={touchUp}>
         <CanvasViewport
           readOnly={readOnly}
           view={view}
@@ -875,13 +932,14 @@ export function HarnessEditorWorkspace({
           onCatalogDrop={droppedCatalogItem}
           inlineEditor={canvasEditor}
         />
+        </div>
         {drawingWindows && <div className="he-table-window-layer">{drawingWindows(camera)}</div>}
         {showRealSize && realSize && <div ref={realSizeBarRef} className="he-real-size-anchor"><RealSizeScaleBar status={realSize} zoom={camera.zoom} cursor={realSizeCursor} /></div>}
         {(previewMessage || cableSheathWarning) && <div className="he-routing-preview-error" role="status">
           {previewMessage || cableSheathWarning}
         </div>}
 
-        <aside className="he-right-panel" aria-label="Настройки редактора" hidden={!inspectorOpen}>
+        <aside className="he-right-panel" aria-label="Настройки редактора" hidden={!inspectorOpen || phoneView}>
           <div className="he-inspector-tabs" role="tablist" aria-label="Панель объекта">
             <button type="button" role="tab" aria-selected={inspectorTab === "properties"} className={inspectorTab === "properties" ? "active" : ""} onClick={() => setInspectorTab("properties")}>Свойства</button>
             <button type="button" role="tab" aria-selected={inspectorTab === "layers"} className={inspectorTab === "layers" ? "active" : ""} onClick={() => setInspectorTab("layers")}>Слои <span>{layers.length}</span></button>
@@ -949,9 +1007,10 @@ export function HarnessEditorWorkspace({
               </section>}</>
             )}
           </ReadOnlyFieldset></div>
+          <HelpLine idle="Наведите на поле — здесь появится пояснение" />
         </aside>
 
-        <aside id="he-material-panel" className="he-material-panel" aria-label="Список материальных объектов" hidden={!materialPanelOpen}>
+        <aside id="he-material-panel" className="he-material-panel" aria-label="Список материальных объектов" hidden={!materialPanelOpen || phoneView}>
           <MaterialObjectsPanel
             objects={objects}
             hiddenObjectIds={localCopyControls?.hiddenObjectIds ?? []}

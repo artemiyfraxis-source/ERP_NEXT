@@ -36,7 +36,7 @@ Run ..\scripts\stock_export_google.py --key $Key --out $data
 if (-not $DatabaseUrl) { Write-Host "== Пересоздаю базу $DbFile"; Remove-Item -ErrorAction SilentlyContinue $DbFile }
 Run -m alembic upgrade head
 $env:ERP_NEW_USER_PASSWORD = $Password
-& $py -m app.identity_admin create-user --login $Login --email "$Login@example.com" --name 'Артемий' --department 'Руководство' --role admin
+& $py -m app.identity_admin create-user --login $Login --email "$Login@example.com" --name 'Артемий' --department 'Руководящий состав' --role admin
 Remove-Item Env:ERP_NEW_USER_PASSWORD
 Run -m app.modules.references.load_mirror
 Run -m app.modules.techcards.seed_library

@@ -28,9 +28,10 @@ from app.shared.http_auth import Principal, projects_edit_principal, projects_vi
 from app.shared.stored_files import decode_upload, file_response
 
 from .api import optional_references_uow_factory, techcards_uow_factory
-from .harness import application as harness, documents as harness_documents
+from .harness import application as harness, documents as harness_documents, route_application as harness_route
 from .harness.assembly import assembly_from_harness
 from .harness.exchange import design_from_export, export_zip
+from .harness.route_to_assembly import draft_from_route, draft_json
 from .harness.schema import Expected, HarnessError, decode, normalized
 from .harness.snapshot import parse_design
 from .harness.validate import ReferenceBook
@@ -101,6 +102,24 @@ class RelinkPayload(BaseModel):
 
 class RestoreRevisionPayload(BaseModel):
     # The revision on screen; None — restore over whatever is stored.
+    revision: int | None = Field(default=None, ge=0)
+
+
+class RouteSavePayload(BaseModel):
+    document: dict[str, Any]
+    # The route revision the edit was made on; None — the position has no route yet.
+    revision: int | None = Field(default=None, ge=0)
+    # The drawing revision the route was built on (the `revision` of the drawing read with it).
+    drawing_revision: int = Field(ge=0)
+
+
+class RouteGeneratePayload(BaseModel):
+    # The route revision on screen; None — the position has no route yet.
+    revision: int | None = Field(default=None, ge=0)
+
+
+class RouteDraftPayload(BaseModel):
+    # The route revision the master previewed; a save needs it (what is stored is what was shown).
     revision: int | None = Field(default=None, ge=0)
 
 
@@ -284,6 +303,19 @@ def relink_harness(
         return harness.view(linked)
 
 
+@router.delete("/{project}/harness/{index}/unlinked/{document_id}")
+def delete_unlinked_harness(
+    project: str, index: str, document_id: UUID,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """«Удалить» отвязанный чертёж позиции насовсем (с историей версий). Привязанный — 409: сначала «Отвязать»."""
+    with _refusals():
+        revisions = harness.delete_unlinked(factory, project, index, document_id, actor=principal.actor, now=now)
+    return {"res": {"deleted": 1, "revisions": revisions}}
+
+
 @router.get("/{project}/harness/{index}/revisions")
 def harness_revisions(
     project: str, index: str,
@@ -327,6 +359,78 @@ def restore_harness_revision(
         return _saved(harness.restore_revision(
             factory, project, index, number, expected, actor=principal.actor, now=now, references=references,
         ), created=False)
+
+
+# ── «Маршрут v3» of the position (harness/route_v3.py, harness/route_application.py) ─────────────────────────────────
+
+
+@router.get("/{project}/harness/{index}/route")
+def get_harness_route(
+    project: str, index: str,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    _principal: Annotated[Principal, Depends(projects_view_principal)],
+) -> dict:
+    """Маршрут v3 позиции: карточки, слепки, связи, номер версии маршрута и версия чертежа, на которой он построен.
+    `stale` — чертёж с тех пор изменился; `missing_refs` — части, которых в чертеже уже нет; `complete` — есть одна
+    карточка «Готовый жгут» со всеми частями чертежа. Маршрута нет — `route: null`."""
+    with _refusals():
+        return harness_route.read(factory, project, index)
+
+
+@router.put("/{project}/harness/{index}/route")
+def save_harness_route(
+    project: str, index: str, payload: RouteSavePayload,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+) -> dict:
+    """Сохранить маршрут новой версией. Версия маршрута — та, что пришла с чтением; чужое сохранение после неё — 409.
+    Маршрут, который нельзя хранить (повтор id, цикл, часть не из чертежа, два «Готовый жгут»…), — 422 со списком
+    причин."""
+    with _refusals():
+        return harness_route.save(
+            factory, project, index, payload.document, revision=payload.revision,
+            drawing_revision=payload.drawing_revision, actor=principal.actor, now=now,
+        )
+
+
+@router.post("/{project}/harness/{index}/route/generate")
+def generate_harness_route(
+    project: str, index: str,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    payload: RouteGeneratePayload | None = None,
+) -> dict:
+    """«Построить по чертежу»: заготовки резки — из сохранённого чертежа, слепки маршрута сохраняются (нет — один
+    слепок всего чертежа), карточки и связи строятся заново; маршрут сохраняется новой версией на текущей версии
+    чертежа. Версия маршрута с экрана должна быть текущей."""
+    with _refusals():
+        return harness_route.generate(
+            factory, project, index, revision=payload.revision if payload is not None else None,
+            actor=principal.actor, now=now,
+        )
+
+
+@router.post("/{project}/harness/{index}/route/draft")
+def harness_route_draft(
+    project: str, index: str,
+    factory: Annotated[Factory, Depends(techcards_uow_factory)],
+    principal: Annotated[Principal, Depends(projects_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    payload: RouteDraftPayload | None = None,
+    dry_run: bool = Query(default=False),
+) -> dict:
+    """«Заполнить техкарту»: карточки маршрута — черновиком «Ручной сборки» (блоки и связи схемы полуфабрикатов,
+    операции по порядку карточек). `dry_run` — только показать, что получится (проверка настоящим сборщиком ЭТК);
+    без него — сохранить черновик у позиции по просмотренной версии маршрута. Техкарту проекта не трогает: её
+    собирают из черновика и выпускают отдельно."""
+    with _refusals():
+        result = draft_from_route(
+            factory, project, index, revision=payload.revision if payload is not None else None, dry_run=dry_run,
+            actor=principal.actor, now=now,
+        )
+    return draft_json(result, dry_run=dry_run)
 
 
 # ── Documents of the drawing: connection table, cut list, specification (harness/documents.py) ─────────────────────

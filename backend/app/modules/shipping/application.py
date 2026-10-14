@@ -22,8 +22,9 @@ from app.shared.notifications import (
 )
 
 from .domain import (
-    DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine, ShipmentStatus,
-    ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index, plan_project_queue,
+    DeliveryTerms, FinishedGood, GoodMove, MoveContext, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
+    ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
+    plan_project_queue,
 )
 
 
@@ -43,11 +44,12 @@ class FinishedGoodsRepository(Protocol):
     def get(self, good_id: UUID) -> FinishedGood | None: ...
     def by_key(self, project: str, item_index: str) -> FinishedGood | None: ...
     def list(self, limit: int = 500) -> Sequence[FinishedGood]: ...
-    def add(self, good: FinishedGood) -> None: ...
+    def add(self, good: FinishedGood, move: MoveContext | None = None) -> tuple[GoodMove, ...]: ...
     def reserve_grn(self, year: int) -> str: ...
     def by_project(self, project: str) -> Sequence[FinishedGood]: ...
     def for_project(self, project: str) -> Sequence[FinishedGood]: ...
     def in_shipments(self, good_ids: Sequence[UUID]) -> set[UUID]: ...
+    def in_journal(self, good_ids: Sequence[UUID]) -> set[UUID]: ...
     def remove(self, good_id: UUID) -> None: ...
 
 
@@ -60,6 +62,7 @@ class ShipmentRepository(Protocol):
     def add(self, shipment: Shipment) -> None: ...
     def open_for_project(self, project: str) -> Sequence[Shipment]: ...
     def created_details(self, shipment_id: UUID) -> dict | None: ...
+    def packer(self, shipment_id: UUID) -> tuple[UUID, str] | None: ...
 
 
 class ProjectAddresseeRepository(Protocol):
@@ -150,6 +153,11 @@ class AcceptGoodCommand:
     received_at: date
     actor: Actor
     now: datetime
+    # Сколько всего можно принять по КБ (сдано цехом; без заданий в ERP — тираж) и как это назвать в отказе;
+    # None — без предела (приёмка до регистра, тесты домена).
+    limit: Decimal | None = None
+    limit_basis: str = "сдано цехом"
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -203,6 +211,13 @@ class ShipmentCommand:
 @dataclass(frozen=True)
 class UnpickCommand(ShipmentCommand):
     line_id: UUID
+
+
+@dataclass(frozen=True)
+class RollbackShippedCommand(ShipmentCommand):
+    """Откат «Отгружено» — только руководитель (администратор), всегда с причиной."""
+    reason: str
+    allowed: bool
 
 
 @dataclass(frozen=True)
@@ -324,7 +339,8 @@ def drop_project(command: DropProjectCommand, uow: UnitOfWork) -> DropProjectRes
         return DropProjectResult(deleted=0, kept=0)
     with uow:
         goods = list(uow.goods.by_project(project))
-        referenced = uow.goods.in_shipments([good.id for good in goods])
+        ids = [good.id for good in goods]
+        referenced = uow.goods.in_shipments(ids) | uow.goods.in_journal(ids)
         deleted = kept = 0
         for good in goods:
             if good.has_movement or good.id in referenced:
@@ -345,7 +361,7 @@ def ship_before_erp(command: ShipBeforeErpCommand, uow: UnitOfWork) -> FinishedG
             raise ShippingValidationError(f"В готовой продукции нет КБ {command.item_index} проекта {command.project}")
         updated = good.ship_before_erp(command.total)
         if updated is not good:
-            uow.goods.add(updated)
+            uow.goods.add(updated, _context(command.actor, command.now, reason="отгружено до ERP (лист цеха)"))
             _audit(good.id, "shipping.shipped_before_erp", command.actor, command.now, {
                 "total": str(command.total), "added": str(updated.before_erp - good.before_erp),
             }, uow)
@@ -353,15 +369,47 @@ def ship_before_erp(command: ShipBeforeErpCommand, uow: UnitOfWork) -> FinishedG
         return updated
 
 
+def _context(actor: Actor, now: datetime, **values) -> MoveContext:
+    return MoveContext(actor=actor.name, actor_id=actor.id, occurred_at=now, **values)
+
+
+def _plain(value: Decimal) -> str:
+    return format(Decimal(value).normalize(), "f")
+
+
 def accept_good(command: AcceptGoodCommand, uow: UnitOfWork) -> FinishedGood:
     with uow:
         good = _good(command.good_id, command.expected_version, uow)
-        grn = good.grn or uow.goods.reserve_grn(command.now.year)
-        updated = good.accept(command.quantity, command.received_at, grn)
-        uow.goods.add(updated)
-        _audit(good.id, "shipping.good_accepted", command.actor, command.now, {"quantity": str(command.quantity), "grn": grn}, uow)
+        updated = accept_into_stock(
+            uow, good, command.quantity, received_at=command.received_at, actor=command.actor, now=command.now,
+            limit=command.limit, limit_basis=command.limit_basis, reason=command.reason,
+        )
         uow.commit()
         return updated
+
+
+def accept_into_stock(
+    uow, good: FinishedGood, quantity: Decimal, *, received_at: date, actor: Actor, now: datetime,
+    limit: Decimal | None = None, limit_basis: str = "сдано цехом", reason: str = "", id_seed: UUID | None = None,
+) -> FinishedGood:
+    """«Принято складом» без фиксации: в производстве → принято, не больше `limit` всего по КБ (сдано цехом).
+    Зовут приёмка одной КБ и пакетная «Из производства» — фиксирует вызывающий."""
+    amount = Decimal(quantity)
+    if not amount.is_finite() or amount <= 0:
+        raise ShippingValidationError(f"{good.project} {good.item_index}: количество должно быть больше нуля")
+    if limit is not None and good.accepted + amount > limit:
+        left = max(limit - good.accepted, Decimal("0"))
+        raise ShippingValidationError(
+            f"{good.project} {good.item_index}: {limit_basis} {_plain(limit)} {good.unit}, уже принято "
+            f"{_plain(good.accepted)} — принять можно ещё {_plain(left)}"
+        )
+    grn = good.grn or uow.goods.reserve_grn(now.year)
+    updated = good.accept(amount, received_at, grn)
+    uow.goods.add(updated, _context(actor, now, reason=reason, id_seed=id_seed))
+    _audit(good.id, "shipping.good_accepted", actor, now, {
+        "quantity": str(amount), "grn": grn, **({"reason": reason} if reason else {}),
+    }, uow)
+    return updated
 
 
 def create_shipment(command: CreateShipmentCommand, uow: UnitOfWork) -> Shipment:
@@ -439,7 +487,7 @@ def _pick(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork) -> t
         {good_id: good.grn or "" for good_id, good in typed.items()},
     )
     for good_id, quantity in taken.items():
-        uow.goods.add(typed[good_id].take(quantity))
+        uow.goods.add(typed[good_id].take(quantity), _context(actor, now, shipment_id=shipment.id))
     if taken:
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.picked", actor, now, {str(key): str(value) for key, value in taken.items()}, uow)
@@ -544,7 +592,7 @@ def unpick_line(command: UnpickCommand, uow: UnitOfWork) -> Shipment:
         good = uow.goods.get(good_id)
         if good is None:
             raise ShippingValidationError("Позиция готовой продукции больше не существует")
-        uow.goods.add(good.put_back(quantity))
+        uow.goods.add(good.put_back(quantity), _context(command.actor, command.now, shipment_id=shipment.id))
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.unpicked", command.actor, command.now, {"line_id": str(command.line_id), "quantity": str(quantity)}, uow)
         uow.commit()
@@ -688,7 +736,7 @@ def _mark_shipped(shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWo
         good = uow.goods.get(good_id)
         if good is None:
             raise ShippingValidationError("Позиция готовой продукции больше не существует")
-        uow.goods.add(good.dispatch(quantity))
+        uow.goods.add(good.dispatch(quantity), _context(actor, now, shipment_id=shipment.id))
     _audit(shipment.id, "shipping.shipped", actor, now, {}, uow)
     why = ""
     try:
@@ -932,8 +980,42 @@ def cancel_shipment(command: ShipmentCommand, uow: UnitOfWork) -> Shipment:
             good = uow.goods.get(good_id)
             if good is None:
                 raise ShippingValidationError("Позиция готовой продукции больше не существует")
-            uow.goods.add(good.put_back(quantity))
+            uow.goods.add(good.put_back(quantity), _context(command.actor, command.now, shipment_id=shipment.id))
         uow.shipments.add(updated)
         _audit(shipment.id, "shipping.cancelled", command.actor, command.now, {}, uow)
+        uow.commit()
+        return updated
+
+
+ROLLBACK_SHIPPED_DENIED = "Откатить «Отгружено» может только руководитель (администратор)"
+
+
+def rollback_shipped(command: RollbackShippedCommand, uow: UnitOfWork) -> Shipment:
+    """Откат «Отгружено» (ошибочно нажали «Отгрузить»): отправка снова «Упакована», её штуки по КБ — из «Отгружено» в
+    «Упаковано» ходами отката с причиной. Только руководитель; возврат от заказчика — не это (вне регистра)."""
+    if not command.allowed:
+        raise ShippingPermissionError(ROLLBACK_SHIPPED_DENIED)
+    reason = str(command.reason or "").strip()
+    if not reason:
+        raise ShippingValidationError("Укажите причину отката")
+    with uow:
+        shipment = _shipment(command.shipment_id, command.expected_version, uow)
+        updated = shipment.unship()
+        back: dict[UUID, Decimal] = {}
+        for line in shipment.lines:
+            if line.picked > 0:
+                back[line.finished_good_id] = back.get(line.finished_good_id, Decimal("0")) + line.picked
+        for good_id, quantity in back.items():
+            good = uow.goods.get(good_id)
+            if good is None:
+                raise ShippingValidationError("Позиция готовой продукции больше не существует")
+            uow.goods.add(good.undispatch(quantity), _context(
+                command.actor, command.now, shipment_id=shipment.id, reason=reason, correction=True,
+            ))
+        uow.shipments.add(updated)
+        _audit(shipment.id, "shipping.ship_rolled_back", command.actor, command.now, {
+            "reason": reason, "from": shipment.status.value, "to": updated.status.value,
+            "quantities": {str(key): _plain(value) for key, value in back.items()},
+        }, uow)
         uow.commit()
         return updated

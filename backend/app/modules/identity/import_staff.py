@@ -106,26 +106,26 @@ class SourceEmployee:
 # Монтажники (installers) and the Жуковский (ЖУК) participok, owner 2026-09-29: they are not in the SUPPLYMAP snapshot
 # (new people), so the import adds them itself, on the same run and with a PIN each — the master assigns operations to
 # them, and the operator list is every active employee (production has no role filter), so the role is «Сотрудник»
-# (staff); department «Монтаж» puts them on the master board (MasterBoard.installers). `site` splits the board by
-# participok: ЦАР (Москва, master's default) and ЖУК (Раменское/Жуковский, master Степан — his board shows only ЖУК).
+# (staff); department «Монтажный отдел» (0104, was «Монтаж») puts them on the master board (MasterBoard.installers).
+# `site` splits the board by participok: ЦАР (Москва, master's default) and ЖУК (Раменское/Жуковский, master Степан — his board shows only ЖУК).
 # Logins are transliterated; there are no real mailboxes yet (login is by name + PIN), the administrator can edit them.
 ADDITIONAL_STAFF: list[SourceEmployee] = [
     # ЦАР — the nine installers of the Moscow participok.
-    SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="epifanov.ilya@fraxis.local", name="Епифанов Илья", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="popov.ignat@fraxis.local", name="Попов Игнат", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="bogorodskaya.elina@fraxis.local", name="Богородская Элина", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="makarova.polina@fraxis.local", name="Макарова Полина", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="naumova.elena@fraxis.local", name="Наумова Елена", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="puzanov.aleksandr@fraxis.local", name="Пузанов Александр", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="dumanskaya.anna@fraxis.local", name="Думанская Анна", department="Монтаж", role="staff", site="ЦАР"),
-    SourceEmployee(email="shilov.artem@fraxis.local", name="Шилов Артем", department="Монтаж", role="staff", site="ЦАР"),
+    SourceEmployee(email="rybkina.olga@fraxis.local", name="Рыбкина Ольга", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="epifanov.ilya@fraxis.local", name="Епифанов Илья", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="popov.ignat@fraxis.local", name="Попов Игнат", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="bogorodskaya.elina@fraxis.local", name="Богородская Элина", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="makarova.polina@fraxis.local", name="Макарова Полина", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="naumova.elena@fraxis.local", name="Наумова Елена", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="puzanov.aleksandr@fraxis.local", name="Пузанов Александр", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="dumanskaya.anna@fraxis.local", name="Думанская Анна", department="Монтажный отдел", role="staff", site="ЦАР"),
+    SourceEmployee(email="shilov.artem@fraxis.local", name="Шилов Артем", department="Монтажный отдел", role="staff", site="ЦАР"),
     # ЖУК — Жуковский participok: Степан is its master (distributes on his own board), the rest are installers.
-    SourceEmployee(email="stepan.zhuk@fraxis.local", name="Степан", department="Монтаж", role="master", site="ЖУК"),
-    SourceEmployee(email="zinger.anton@fraxis.local", name="Зингер Антон", department="Монтаж", role="staff", site="ЖУК"),
-    SourceEmployee(email="naumov.aleksandr@fraxis.local", name="Наумов Александр", department="Монтаж", role="staff", site="ЖУК"),
-    SourceEmployee(email="evseev.anton@fraxis.local", name="Евсеев Антон", department="Монтаж", role="staff", site="ЖУК"),
-    SourceEmployee(email="bezmenov.nikita@fraxis.local", name="Безменов Никита", department="Монтаж", role="staff", site="ЖУК"),
+    SourceEmployee(email="stepan.zhuk@fraxis.local", name="Степан", department="Монтажный отдел", role="master", site="ЖУК"),
+    SourceEmployee(email="zinger.anton@fraxis.local", name="Зингер Антон", department="Монтажный отдел", role="staff", site="ЖУК"),
+    SourceEmployee(email="naumov.aleksandr@fraxis.local", name="Наумов Александр", department="Монтажный отдел", role="staff", site="ЖУК"),
+    SourceEmployee(email="evseev.anton@fraxis.local", name="Евсеев Антон", department="Монтажный отдел", role="staff", site="ЖУК"),
+    SourceEmployee(email="bezmenov.nikita@fraxis.local", name="Безменов Никита", department="Монтажный отдел", role="staff", site="ЖУК"),
 ]
 
 
@@ -269,8 +269,8 @@ def import_staff(
                                         action="PIN перевыдан", access_level=current.access_level))
             elif current.name != name or current.department != department or current.site != site:
                 # Already imported, but the source shape moved: name to «Фамилия Имя», the participok/department (ЖУК
-                # added, installers → «Монтаж»). Bring name, department and site to the source; keep the PIN, role
-                # and level (the administrator may have changed the level since).
+                # added, installers → «Монтажный отдел»). Bring name, department and site to the source; keep the PIN,
+                # role and level (the administrator may have changed the level since).
                 if apply:
                     uow.identity.update_user(replace(current, name=name, department=department, site=site))
                 rows.append(ImportedRow(name=name, login=current.login, role=current.role, pin=None,

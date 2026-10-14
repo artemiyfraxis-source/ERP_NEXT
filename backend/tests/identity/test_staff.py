@@ -56,7 +56,9 @@ ADMIN2_ID = UUID("30000000-0000-0000-0000-000000000004")  # an administrator (no
 def test_department_list_is_union_without_roles_duplicates_and_blanks():
     saved = ["Цех", "  Склад ", "", "Кладовщик"]
     in_use = ["цех", "Администратор", "Ёлочный", "Снабжение", "admin"]
-    assert department_list(saved, in_use) == ["Ёлочный", "Склад", "Снабжение", "Цех"]
+    # The saved list keeps its order; departments only people have go to the end, alphabetically.
+    assert department_list(saved, in_use) == ["Цех", "Склад", "Ёлочный", "Снабжение"]
+    assert department_list([], in_use) == ["Ёлочный", "Снабжение", "цех"]  # nothing saved yet: alphabetical
 
 
 @pytest.mark.parametrize("value", ["Технолог", "технолог", "receiver", "Приёмка/склад", "Закупщик", "Сотрудник"])
@@ -411,12 +413,26 @@ def test_department_list_keeps_departments_in_use_and_drops_roles(staff_api):
     response = admin.put("/api/auth/departments", json={"departments": ["Бухгалтерия", "Кладовщик", "ОТК", "цех", "Цех", ""]})
 
     assert response.status_code == 200, response.text
-    # «Снабжение» and «ИТ» stay: people have them. Role labels («Кладовщик», «ОТК») are not departments.
-    assert response.json()["departments"] == ["Бухгалтерия", "ИТ", "Снабжение", "цех"]
-    assert admin.get("/api/auth/staff").json()["departments"] == ["Бухгалтерия", "ИТ", "Снабжение", "цех"]
+    # «Снабжение» and «ИТ» stay: people have them, so they go after the typed ones. Role labels («Кладовщик», «ОТК»)
+    # are not departments. The typed order is kept, not sorted.
+    assert response.json()["departments"] == ["Бухгалтерия", "цех", "ИТ", "Снабжение"]
+    assert admin.get("/api/auth/staff").json()["departments"] == ["Бухгалтерия", "цех", "ИТ", "Снабжение"]
     [event] = _events(staff_api, "identity.departments_saved")
     assert event.actor_id == ADMIN_ID
     assert _client("receiver", "recv-password").put("/api/auth/departments", json={"departments": []}).status_code == 403
+
+
+def test_saved_department_order_is_kept_and_new_ones_go_to_the_end(staff_api):
+    admin = _client("admin", "admin-password")
+    admin.put("/api/auth/departments", json={"departments": ["Снабжение", "Цех", "Бухгалтерия", "ИТ"]})
+    listed = admin.get("/api/auth/staff").json()["departments"]
+    assert listed == ["Снабжение", "Цех", "Бухгалтерия", "ИТ"]
+
+    added = admin.put("/api/auth/departments", json={"departments": [*listed, "Аудит"]}).json()["departments"]
+    assert added == ["Снабжение", "Цех", "Бухгалтерия", "ИТ", "Аудит"]
+    renamed = admin.post("/api/auth/departments/rename", json={"source": "Цех", "target": "Монтажный отдел"})
+    assert renamed.json()["departments"] == ["Снабжение", "Монтажный отдел", "Бухгалтерия", "ИТ", "Аудит"]
+    assert _head(admin, "Аудит", BUYER_ID).json()["departments"] == renamed.json()["departments"]
 
 
 def test_department_rename_moves_employees(staff_api):

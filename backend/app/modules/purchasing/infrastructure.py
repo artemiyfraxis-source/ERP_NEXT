@@ -1,4 +1,4 @@
-"""Tables of the purchasing hybrid (migration 0104_purchasing_hybrid) and its unit of work.
+"""Tables of the purchasing hybrid (migration 0120_purchasing_hybrid) and its unit of work.
 
 Repositories live next to the feature that needs them (settings.py, suppliers.py, items.py, rfq.py); they take the
 unit of work's session. Cross-module reads (procurement lines) go through app/workflows/purchasing_*.py."""
@@ -133,7 +133,7 @@ class LineItemRow(Base):
 
 
 class LotItemRow(Base):
-    """Explicit lot → item link (migration 0105): lots without the receiving chain, or a choice that overrides it."""
+    """Explicit lot → item link (migration 0121): lots without the receiving chain, or a choice that overrides it."""
 
     __tablename__ = "purchasing_lot_items"
     __table_args__ = (
@@ -149,7 +149,7 @@ class LotItemRow(Base):
 
 
 class InternalProjectRow(_Who, Base):
-    """«Внутренний проект» (migration 0106): a project of the company itself, numbered «ВП-001»; requests and lines
+    """«Внутренний проект» (migration 0122): a project of the company itself, numbered «ВП-001»; requests and lines
     refer to it through `project_reference` like to a commercial «591К.3»; its purpose decides the GRN prefix."""
 
     __tablename__ = "purchasing_internal_projects"
@@ -229,7 +229,7 @@ class RfqSupplierRow(Base):
 
 
 class RfqSupplierLineRow(Base):
-    """A line a supplier of a request is asked for (migration 0107). No rows for a request supplier = every line."""
+    """A line a supplier of a request is asked for (migration 0123). No rows for a request supplier = every line."""
 
     __tablename__ = "purchasing_rfq_supplier_lines"
     __table_args__ = (Index("ix_purchasing_rfq_supplier_lines_line", "rfq_line_id"),)
@@ -333,7 +333,7 @@ class DecisionRow(Base):
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-# ---- documents (migration 0108): the UPD registry, Kaiten invoices, the buyer's invoice ↔ UPD word, price refs ----
+# ---- documents (migration 0124): the UPD registry, Kaiten invoices, the buyer's invoice ↔ UPD word, price refs ----
 # Ported from Roller_Buyer (upd_documents, upd_lines, invoices, upd_invoice_links, price_refs). Money in kopecks
 # (BigInteger) as there; unit prices of UPD lines in rubles as printed. Files live in the database like every other
 # ERP upload (app/shared/stored_files.py), one row per distinct content.

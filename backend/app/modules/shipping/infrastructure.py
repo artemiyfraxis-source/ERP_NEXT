@@ -9,20 +9,35 @@ from decimal import Decimal
 from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, or_, select
+from sqlalchemy import (
+    CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, Uuid, and_, func, or_,
+    select,
+)
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.persistence import AuditEventRow, Base, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 from app.shared.project_number import normalize_project_number
 from .domain import (
-    ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, ProjectAddressee, Shipment, ShipmentBox,
-    ShipmentLine, ShipmentStatus, StoredFile, UpdType,
+    ADDRESSEE_REQUISITE_FIELDS, BoxItem, DeliveryTerms, FinishedGood, GoodMove, GoodsState, MOVE_ROUTES, MoveContext,
+    MoveKind, ProjectAddressee, Shipment, ShipmentBox, ShipmentLine, ShipmentStatus, StoredFile, UpdType,
+    balance_moves,
 )
+
+
+# Остаток ГП по состояниям (0111): принято ≥ упаковано ≥ отгружено ≥ отгружено до ERP ≥ 0.
+FINISHED_GOODS_CHECKS = {
+    "ck_finished_goods_sent_nonneg": "before_erp >= 0 AND sent >= before_erp",
+    "ck_finished_goods_packed_over_sent": "shipped >= sent",
+    "ck_finished_goods_accepted_over_packed": "accepted >= shipped",
+}
 
 
 class FinishedGoodRow(Base):
     __tablename__ = "finished_goods"
-    __table_args__ = (Index("ux_finished_goods_project_item", "project", "item_index", unique=True),)
+    __table_args__ = (
+        Index("ux_finished_goods_project_item", "project", "item_index", unique=True),
+        *(CheckConstraint(sql, name=name) for name, sql in FINISHED_GOODS_CHECKS.items()),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -123,6 +138,71 @@ class ShipmentLineRow(Base):
         return value
 
 
+def _in(column: str, values) -> str:
+    return f"{column} IN ({', '.join(repr(value) for value in values)})"
+
+
+def _route(kind: MoveKind, pairs) -> str:
+    return " OR ".join(
+        f"(kind = '{kind.value}' AND from_state = '{source.value}' AND to_state = '{target.value}')"
+        for source, target in sorted(pairs, key=lambda pair: (pair[0].value, pair[1].value))
+    )
+
+
+# Журнал ГП (0111). Порядок значений в IN важен сеялке CI (tests/migrations/seed_any_revision): она берёт первое —
+# 'accept' из 'production' в 'accepted', и такой ход проходит проверку маршрута.
+MOVE_STATES_FROM = ("production", "accepted", "packed", "shipped")
+MOVE_STATES_TO = ("accepted", "production", "packed", "shipped")
+FINISHED_GOODS_MOVE_CHECKS = {
+    "ck_finished_goods_moves_kind": _in("kind", [kind.value for kind in MoveKind]),
+    "ck_finished_goods_moves_from_state": _in("from_state", MOVE_STATES_FROM),
+    "ck_finished_goods_moves_to_state": _in("to_state", MOVE_STATES_TO),
+    "ck_finished_goods_moves_quantity": "quantity > 0",
+    "ck_finished_goods_moves_route": " OR ".join(
+        _route(kind, pairs) for kind, pairs in MOVE_ROUTES.items()
+    ),
+    "ck_finished_goods_moves_correction_reason": "kind <> 'correction' OR reason <> ''",
+}
+
+
+class FinishedGoodMoveRow(Base):
+    """Журнал ГП: ход штук КБ из состояния в состояние. Только дополняется; остаток — счётчики `finished_goods`,
+    меняются вместе с ходом в одной транзакции (`SqlAlchemyFinishedGoodsRepository.add`)."""
+
+    __tablename__ = "finished_goods_moves"
+    __table_args__ = (
+        Index("ix_finished_goods_moves_kb", "project_key", "item_index"),
+        *(CheckConstraint(sql, name=name) for name, sql in FINISHED_GOODS_MOVE_CHECKS.items()),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    finished_good_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("finished_goods.id", ondelete="RESTRICT"), nullable=False, index=True,
+    )
+    project_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    item_index: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    from_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    to_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    shipment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("shipments.id", ondelete="RESTRICT"), nullable=True, index=True,
+    )
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    actor_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(Text(), nullable=False, default="")
+
+
+def _move(row: FinishedGoodMoveRow) -> GoodMove:
+    return GoodMove(
+        id=row.id, finished_good_id=row.finished_good_id, project_key=row.project_key, item_index=row.item_index,
+        kind=MoveKind(row.kind), quantity=row.quantity, from_state=GoodsState(row.from_state),
+        to_state=GoodsState(row.to_state), actor=row.actor, occurred_at=row.occurred_at,
+        shipment_id=row.shipment_id, actor_id=row.actor_id, reason=row.reason or "",
+    )
+
+
 class ProjectAddresseeRow(Base):
     """Project card's shipping defaults; a shipment copies them at creation."""
 
@@ -199,12 +279,50 @@ class SqlAlchemyFinishedGoodsRepository:
     def remove(self, good_id: UUID) -> None:
         row = self.session.get(FinishedGoodRow, good_id)
         if row is not None: self.session.delete(row)
-    def add(self, good: FinishedGood) -> None:
+    def add(self, good: FinishedGood, move: MoveContext | None = None) -> tuple[GoodMove, ...]:
+        """Строка ГП и, если её счётчики изменились, ходы журнала в той же транзакции (`balance_moves`): остаток по
+        состояниям без записи в журнал не меняется. Версия строки сторожит гонку двух ходов одной КБ."""
         row = self.session.get(FinishedGoodRow, good.id)
+        before = _good(row) if row is not None else None
+        moves = balance_moves(before, good, move, normalize_project_number(good.project) or good.project.strip())
         if row is None:
             row = FinishedGoodRow(id=good.id); self.session.add(row)
         for key in ("version", "project", "item_index", "customer", "article", "name", "ordered", "unit", "accepted", "shipped", "received_at", "grn", "note", "sent", "before_erp"):
             setattr(row, key, getattr(good, key))
+        for item in moves:
+            self.session.add(FinishedGoodMoveRow(
+                id=item.id, finished_good_id=item.finished_good_id, project_key=item.project_key,
+                item_index=item.item_index, kind=item.kind.value, quantity=item.quantity,
+                from_state=item.from_state.value, to_state=item.to_state.value, shipment_id=item.shipment_id,
+                actor=item.actor, actor_id=item.actor_id, occurred_at=item.occurred_at, reason=item.reason,
+            ))
+        return moves
+    def in_journal(self, good_ids) -> set[UUID]:
+        if not good_ids: return set()
+        return set(self.session.scalars(select(FinishedGoodMoveRow.finished_good_id).where(FinishedGoodMoveRow.finished_good_id.in_(list(good_ids))).distinct()))
+    def move_exists(self, move_id: UUID) -> bool:
+        return self.session.get(FinishedGoodMoveRow, move_id) is not None
+    def moves_for_project(self, project: str, limit: int = 2000) -> list[GoodMove]:
+        """Журнал ГП проекта (по `normalize_project_number`), новые сверху."""
+        key = normalize_project_number(project)
+        if not key:
+            return []
+        rows = self.session.scalars(select(FinishedGoodMoveRow).where(FinishedGoodMoveRow.project_key == key).order_by(
+            FinishedGoodMoveRow.occurred_at.desc(), FinishedGoodMoveRow.id,
+        ).limit(limit))
+        return [_move(row) for row in rows]
+    def journal_totals(self, good_ids=None) -> dict[UUID, dict[tuple[str, str], Decimal]]:
+        """Σ штук журнала по (из, в) на строку ГП — сверка с её счётчиками."""
+        query = select(
+            FinishedGoodMoveRow.finished_good_id, FinishedGoodMoveRow.from_state, FinishedGoodMoveRow.to_state,
+            func.sum(FinishedGoodMoveRow.quantity),
+        ).group_by(FinishedGoodMoveRow.finished_good_id, FinishedGoodMoveRow.from_state, FinishedGoodMoveRow.to_state)
+        if good_ids is not None:
+            query = query.where(FinishedGoodMoveRow.finished_good_id.in_(list(good_ids)))
+        totals: dict[UUID, dict[tuple[str, str], Decimal]] = {}
+        for good_id, source, target, total in self.session.execute(query):
+            totals.setdefault(good_id, {})[(source, target)] = Decimal(total or 0)
+        return totals
 
 
 class SqlAlchemyShipmentRepository:
@@ -265,6 +383,16 @@ class SqlAlchemyShipmentRepository:
             AuditEventRow.aggregate_id == shipment_id, AuditEventRow.event_type == "shipping.created",
         ).order_by(AuditEventRow.occurred_at).limit(1))
         return dict(details) if isinstance(details, dict) else None
+    def packer(self, shipment_id: UUID) -> tuple[UUID, str] | None:
+        """Кто упаковал: последний, кто разложил по коробам («shipping.boxes_laid_out»), иначе кто сформировал
+        PL/DN («shipping.packed»). Имя — из карточки сотрудника на момент действия (actor_name журнала)."""
+        for event_type in ("shipping.boxes_laid_out", "shipping.packed"):
+            row = self.session.execute(select(AuditEventRow.actor_id, AuditEventRow.actor_name).where(
+                AuditEventRow.aggregate_id == shipment_id, AuditEventRow.event_type == event_type,
+            ).order_by(AuditEventRow.occurred_at.desc(), AuditEventRow.id.desc()).limit(1)).first()
+            if row is not None:
+                return row[0], row[1]
+        return None
     def reserve_number(self, day: date) -> str:
         stamp = day.strftime("%Y%m%d"); key = f"shipment-{stamp}"
         row = self.session.scalar(select(ShippingSequenceRow).where(ShippingSequenceRow.name == key).with_for_update())

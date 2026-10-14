@@ -88,7 +88,7 @@ const openManual = async () => {
 it("«Поправить вручную» opens the typical assembly in the manual tab with blocks and generator operations", async () => {
   const calls = mockApi([], (path, init) => (path === "/api/techcards/assembly/from-generator" && init?.method === "POST" ? json(fromGenerator()) : undefined));
   const onBuild = mount();
-  expect(await screen.findByText("Резка — МГТФ 0,12")).toBeInTheDocument();
+  expect((await screen.findAllByText("Резка — МГТФ 0,12"))[0]).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Поправить вручную" }));
 
   expect(await screen.findByText("Ручная сборка", { selector: "[role=tab][aria-selected=true]" }, { timeout: 10000 })).toBeInTheDocument();
@@ -99,10 +99,11 @@ it("«Поправить вручную» opens the typical assembly in the manu
 
   // Собранная сборка открывается схемой, без панели блока; нажатый блок её открывает.
   expect(screen.queryByRole("region", { name: /^Блок «/ })).not.toBeInTheDocument();
-  // Итоговый блок — его операции первыми, изделие — строкой «итог: …», полное название — в подсказке.
-  expect(screen.getByTitle("Жгут XHP 150мм").querySelector(".route-block-name")).toHaveTextContent("Резка с разделкой · опрессовка терминалов");
-  expect(screen.getByTitle("Жгут XHP 150мм")).toHaveTextContent("итог: Жгут XHP 150мм");
-  fireEvent.click(screen.getByTitle("Жгут XHP 150мм"));
+  // Итоговая карточка — названа своими операциями, изделие — строкой «итог: …».
+  const product = screen.getByRole("article", { name: /^ФИНАЛ: / });
+  expect(product.querySelector(".rc-title")).toHaveTextContent("Резка с разделкой · опрессовка терминалов");
+  expect(product.querySelector(".rc-sub")).toHaveTextContent("итог: Жгут XHP 150мм");
+  fireEvent.keyDown(product, { key: "Enter" });
   // Блок схемы и обе операции; итог назван своими операциями (изделие — строкой «итог: …»), не типами.
   expect(screen.getByRole("region", { name: "Блок «Резка с разделкой · опрессовка терминалов»" })).toBeInTheDocument();
   const first = screen.getByLabelText("Операция 1: Резка с разделкой");
@@ -179,7 +180,7 @@ it("lists the drafts of the position, opens one into the manual assembly and bui
 
 /** Названия блоков схемы. */
 function blockNames() {
-  return [...document.querySelectorAll(".route-block")].map((block) => block.textContent || "").join("|");
+  return [...document.querySelectorAll("[aria-label=\"Блоки схемы\"] .rc-card")].map((block) => block.textContent || "").join("|");
 }
 
 it("does not finalise the draft when the build fails", async () => {

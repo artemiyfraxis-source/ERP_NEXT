@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { applyGrapherGroups, applyOpOrder, grapherLengthText, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+﻿import { expect, it } from "vitest";
+import { applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -386,4 +386,64 @@ it("applyOpOrder keeps new operations where the generator put them and moves «f
   expect(sorted.map((item) => item.opKey)).toEqual(["cut", "prsB", "new", "prsA"]);
   expect(sorted.map((item) => item.firstTerm)).toEqual([undefined, true, undefined, false]);
   expect(applyOpOrder(ops, [])).toBe(ops);
+});
+
+it("finds a terminal by its BAG article too, spelled any way (protocol v5.2, owner 12.10)", () => {
+  const card = terFromFields("t1", { terArticle: "39000038", terArticleBag: "39000039", terStep: "4.20", terApplicator: "M5" });
+  const legacy = terFromFields("t2", { terArticle: "5556-T", "Артикул контакта (BAG)": "5556-TL ", terStep: "4.20" });
+  const gen = makeGen({ ...data(interboard), terRecords: [card, legacy] }, initState(data(interboard)));
+  expect(gen.findTerRecord_("39000039")?.id).toBe("t1");
+  expect(gen.findTerRecord_("Molex 39000039")?.id).toBe("t1");
+  expect(gen.findTerRecord_("39000038")?.id).toBe("t1");
+  expect(gen.findTerRecord_("5556 tl")?.id).toBe("t2"); // a row stored before terArticleBag: the sheet column
+  expect(legacy.articleBag).toBe("5556-TL"); // the stored spelling is kept
+  expect(gen.findTerRecord_("39000040")).toBeNull();
+});
+
+it("зачистка под лужение по умолчанию — 5 мм (владелец 12.10.2026)", () => {
+  expect(emptyState().tin.stripLen).toBe("5");
+});
+
+const TTK = { id: "ttk", type: "ТУТ", name: "ТТК 6/2мм, чёрная", art: "ТТК 6/2", qty: 0.05 };
+const shrinkTemplates = [...templates, { id: "heatTtk", title: "HEAT_TTK_short | Усадка ТТК", category: "Усадка" }];
+
+it("heat-shrink over a connector: cut with other tubes, put on before this end's crimp, shrink after its mount", () => {
+  const D = { ...data([...interboard, TTK]), templates: shrinkTemplates };
+  const S = updateEndpoint(D, initState(D), "a1", { shrinkOn: true, shrinkLen: "25" });
+  const ops = makeGen(D, S).getActiveOps();
+  const keys = ops.map((o) => o.opKey);
+  expect(ops.find((o) => o.opKey === "cutShr1")).toMatchObject({ type: "cutTut", tmplHint: "CUT_TUT_short", label: "Резка ТТК поверх разъёма А1 — 1×25 мм",
+    tutArt: "ТТК 6/2", tutSegs: [{ len: "25", count: 1 }] });
+  const put = keys.indexOf("insShrA1"), shrink = keys.indexOf("heatShrA1");
+  expect(ops[put].label).toBe("Надеть ТТК на кабель (А1) — 1 шт");
+  expect(ops[shrink]).toMatchObject({ label: "Усадка ТТК поверх разъёма А1", tmplHint: "HEAT_TTK_short" });
+  const ownOps = ops.filter((o) => o.side === "A" && o.epId).map((o) => keys.indexOf(o.opKey));
+  expect(put).toBeLessThan(Math.min(...ownOps));
+  expect(shrink).toBe(Math.max(...ownOps) + 1);
+  expect(keys.indexOf("cutShr1")).toBeLessThan(put);
+  expect(keys.some((k) => /Shr.*B/.test(k))).toBe(false);
+});
+
+it("heat-shrink over a solder connector shrinks after its mount; toggle off gives no ops", () => {
+  const D = { ...data([{ id: "w", type: "Провод", name: "ПВАМ 0,5", art: "ПВАМ 0,5", qty: 0.3 },
+    { id: "x", type: "Соед", name: "XT60 папа", art: "XT60-M", qty: 2 }, TTK]), templates: shrinkTemplates };
+  const off = makeGen(D, initState(D)).getActiveOps();
+  expect(off.some((o) => /Shr/.test(o.opKey))).toBe(false);
+  const S = updateEndpoint(D, initState(D), "a1", { shrinkOn: true });
+  const ops = makeGen(D, S).getActiveOps();
+  const keys = ops.map((o) => o.opKey);
+  expect(ops.find((o) => o.opKey === "cutShr1")?.tutSegs).toEqual([{ len: "20", count: 1 }]);
+  const own = ops.filter((o) => o.epId === "a1").map((o) => keys.indexOf(o.opKey));
+  expect(keys.indexOf("insShrA1")).toBeLessThan(Math.min(...own));
+  expect(keys.indexOf("heatShrA1")).toBeGreaterThan(Math.max(...own));
+});
+
+it("connector sleeve is not counted twice as harness sleeve; old endpoints load without the fields", () => {
+  const D = data([...interboard, TTK]);
+  const base = initState(D);
+  expect(base.endpoints[0].shrinkOn).toBeUndefined();
+  expect(makeGen(D, base).getActiveOps().some((o) => /Shr/.test(o.opKey))).toBe(false);
+  expect(makeGen(D, base).harnessSleeveComps_().map((c) => c.id)).toEqual(["ttk"]);
+  const S = updateEndpoint(D, base, "a1", { shrinkOn: true });
+  expect(makeGen(D, S).harnessSleeveComps_()).toEqual([]);
 });

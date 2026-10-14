@@ -27,9 +27,12 @@ import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
 import { formatDay, formatDayMonth, formatMoment } from "./format";
 import { MasterBoard, type ProjectDeadlines } from "./MasterBoard";
 import { AutoplanPanel } from "./AutoplanPanel";
+import { DowntimeControl } from "./DowntimeControl";
+import { DowntimeReport } from "./DowntimeReport";
 import { JobPanel } from "./JobPlan";
 import { AutoTextarea } from "./AutoTextarea";
 import { StatusChip } from "./StatusChip";
+import { BoxLabelPanel, BoxName, boxMatches, boxTitle } from "./BoxLabel";
 import { deadlineChips, feedsText, isFirst, isNetwork, previousStage, requiredNote, requiredOf, taskItemLabel, windowText } from "./productionGraph";
 
 export function ProductionPage({ principal, mine = false }: { principal: Principal; mine?: boolean }) {
@@ -46,6 +49,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [showAutoplan, setShowAutoplan] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
+  const [showDowntime, setShowDowntime] = useState(false);
   const [holidays, setHolidays] = useState<string[]>([]);
   const [skills, setSkills] = useState<ProductionSkill[]>([]);
   const [absences, setAbsences] = useState<ProductionAbsence[]>([]);
@@ -53,8 +57,12 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [selectedOperationId, setSelectedOperationId] = useState("");
   const [week, setWeek] = useState(0);
-  // Вид сотрудника (только просмотр): планировщик выбирает монтажника и видит его очередь и коробки как он сам.
+  // Сотрудник: планировщик выбирает монтажника и видит его очередь и коробки как он сам. Мастер его площадки и полный
+  // доступ работают за него (владелец, 12.10.2026: «мне нужен полный функционал от неё»), остальные — только смотрят.
   const [viewAs, setViewAs] = useState("");
+  // За кого сервер разрешил работать (id из ответа на его очередь): пока очередь не загрузилась — только просмотр.
+  const [actFor, setActFor] = useState<string | null>(null);
+  const [shown, setShown] = useState<{ number: string; fixed: boolean; box?: ProductionBox } | null>(null);
   const [staff, setStaff] = useState<ProductionOperator[]>([]);
   const [staffSite, setStaffSite] = useState("");
   const canEdit = canAct(principal, "production");
@@ -74,6 +82,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
           : canOverview ? productionApi.boxes() : Promise.resolve({ boxes: [] }),
       ]);
       setTasks(taskResult.tasks);
+      setActFor((taskResult as { can_act?: boolean }).can_act ? viewAs : null);
       setOperators(operatorResult.operators);
       setViewerSite((operatorResult as { viewer_site?: string }).viewer_site ?? "");
       if (mine) setExecution(executionResult as { session: ProductionWorkSession | null; boxes: ProductionBox[] });
@@ -112,7 +121,9 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   // Мастер площадки видит монтажников своей площадки, полный доступ — всех.
   const viewable = staff.filter((item) => hasFullAccess(principal) || !staffSite || item.site === staffSite);
   const viewedName = viewable.find((item) => item.id === viewAs)?.name ?? "";
-  const readOnly = mine && Boolean(viewAs);
+  const acting = mine && Boolean(viewAs) && actFor === viewAs;
+  const readOnly = mine && Boolean(viewAs) && !acting;
+  const onBehalfOf = acting ? viewAs : "";
   const canPick = mine && canOverview && viewable.length > 0;
 
   async function mutate(key: string, operation: () => Promise<unknown>) {
@@ -138,7 +149,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
 
   return <section className="page production-page">
     <header className="page-head">
-      <h1>{readOnly ? "Задания" : mine ? "Мои задания" : "Ресурсное планирование"}</h1>
+      <h1>{mine && viewAs ? "Задания" : mine ? "Мои задания" : "Ресурсное планирование"}</h1>
       <span className="page-count">{tasks.length}</span>
       {canPick && <label className="view-as">Сотрудник
         <select aria-label="Сотрудник" style={{ width: "auto" }} value={viewAs} onChange={(event) => setViewAs(event.target.value)}>
@@ -146,19 +157,23 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
           {viewable.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
       </label>}
-      {canEdit && !mine && <div className="page-actions"><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></div>}
+      {canOverview && !mine && <div className="page-actions"><button className="secondary" aria-pressed={showDowntime} onClick={() => setShowDowntime((value) => !value)}>Простои</button>{canEdit && <><button className="secondary" onClick={() => setShowAutoplan(true)}>Автоплан</button><button className="secondary" onClick={() => setShowCalendar((value) => !value)}>Календарь цеха</button><button className="secondary" onClick={() => setShowSkills((value) => !value)}>Компетенции</button><button className="primary" onClick={() => setShowLaunch((value) => !value)}>+ Запустить задание</button></>}</div>}
     </header>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="success-banner">{notice}</div>}
-    {readOnly && <div className="view-strip" role="status"><span>Вид сотрудника {viewedName} — только просмотр</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
+    {mine && viewAs && <div className={`view-strip${acting ? " acting" : ""}`} role="status"><span>{acting ? `Работаете за сотрудника ${viewedName}` : `Вид сотрудника ${viewedName} — только просмотр`}</span><button type="button" className="secondary" onClick={() => setViewAs("")}>Вернуться к моим заданиям</button></div>}
+    {showDowntime && canOverview && !mine && <DowntimeReport close={() => setShowDowntime(false)} />}
     {showCalendar && canEdit && <CalendarForm operators={operators} close={() => setShowCalendar(false)} />}
     {showSkills && canEdit && <SkillsForm operators={operators} close={() => { setShowSkills(false); void reload(); }} />}
-    {showAutoplan && canEdit && <AutoplanPanel tasks={tasks} close={() => setShowAutoplan(false)} onApplied={(count) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций`); void reload(); }} />}
+    {showAutoplan && canEdit && <AutoplanPanel projectDeadlines={projectDeadlines} close={() => setShowAutoplan(false)} onApplied={(count, created) => { setShowAutoplan(false); setNotice(`Назначено ${count} операций${created ? `, создано заданий: ${created}` : ""}`); void reload(); }} />}
     {showLaunch && canEdit && <LaunchForm tasks={tasks} projectDeadlines={projectDeadlines} busy={Boolean(busy)} mutate={mutate} close={() => setShowLaunch(false)} />}
     {!mine && canOverview && SHOW_TRACEABILITY && <TraceabilitySearch />}
-    {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={readOnly ? viewedName : ""} />}
     {!mine && canEdit && <BoxReview boxes={boxes} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
-    {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} />}
+    {/* Задания — первыми (кнопки действий видны сразу), коробки сотрудника — под ними. */}
+    {mine && <MyQueue principal={principal} tasks={tasks} session={execution.session} busy={busy} mutate={mutate} readOnly={readOnly} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => setShown({ number, box, fixed: false })} />}
+    {mine && <OperatorExecution execution={execution} tasks={tasks} busy={Boolean(busy)} mutate={mutate} readOnly={readOnly} ownerName={viewAs ? viewedName : ""} onBehalfOf={onBehalfOf}
+      onSubmitted={(number, box) => setShown({ number, box, fixed: false })} onCorrected={(number, box) => setShown({ number, box, fixed: true })} />}
+    {shown && <ShownBox shown={shown} boxes={execution.boxes} tasks={tasks} close={() => setShown(null)} />}
     {!mine && selectedTask && <TaskDetail
       key={`${selectedTask.id}:${selectedTask.version}`}
       task={selectedTask}
@@ -181,7 +196,7 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
       canEdit={canEdit} busy={busy} mutate={mutate}
       openTask={(taskId, operationId) => { setSelectedTaskId(taskId); setSelectedOperationId(operationId ?? ""); }}
     />}
-    {mine && loaded && !tasks.length && <div className="empty">{readOnly ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
+    {mine && loaded && !tasks.length && <div className="empty">{viewAs ? "Операции сотруднику не назначены." : canPick ? "Вам операции не назначены. Выберите сотрудника, чтобы увидеть его задания." : "Операции вам пока не назначены — мастер назначает их в «Ресурсном планировании»."}</div>}
   </section>;
 }
 
@@ -503,6 +518,7 @@ function TaskDetail({ task, project, initialOperationId = "", tasks, operators, 
         {!done && !cancelled && <div className="task-deadlines">{deadlineChips(project, task.deadline).map((chip) => <StatusChip key={chip.kind} tone={chip.tone} title={chip.title}>{chip.text}</StatusChip>)}</div>}</div>
       <StatusChip status={task.status} />
     </div>
+    {!done && !cancelled && <DowntimeControl taskId={task.id} performerId="" wholeTask master={canEdit} readOnly={!canEdit} />}
     {canEdit && <div className="page-actions">
       {edit && !task.handed_to && <SchedulePlanner task={task} operators={operators} busy={Boolean(busy)} mutate={mutate} />}
       {edit && !task.handed_to && finalDone && <button className="primary small" disabled={Boolean(busy)} onClick={() => void mutate(`done:${task.id}`, () => productionApi.setDone(task.id, task.version, true))}>Отметить «Выполнено»</button>}
@@ -680,18 +696,23 @@ function SchedulePlanner({ task, operators, busy, mutate }: {
 }
 
 // Очередь оператора (myOpsRender_): операции по дням плана — «Сегодня / Завтра / Начато ранее», факт «сдано X из N»,
-// «вместе с», «план истёк»; «Начать» нет у выполненных и недоступно, пока есть начатая работа.
-function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: {
+// «вместе с», «план истёк». Главное действие карточки — справа вверху, рядом с состоянием (владелец, 12.10.2026: «я не
+// вижу старт»): «Начать», у начатой — «Пауза» / «Продолжить» и «Сдать…»; ЭТК — второстепенная кнопка. Начатая — первой.
+function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, onBehalfOf = "", onSubmitted }: {
   principal: Principal;
   tasks: ProductionTask[];
   session: ProductionWorkSession | null;
   busy: string;
   readOnly?: boolean;
+  /** Работа за выбранного сотрудника: его id уходит с каждым действием, право проверяет сервер. */
+  onBehalfOf?: string;
+  onSubmitted: (number: string, box?: ProductionBox) => void;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [starting, setStarting] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const [etkOpen, setEtkOpen] = useState("");
-  const now = new Date();
+  const now = useNow(30_000);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const weekdays = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
   const dayTitle = (date: Date | null, started: boolean) => {
@@ -705,6 +726,7 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: 
     const operation = task.operations[0];
     return Boolean(operation && (operation.state === "выполнена" || operation.my_share?.finished_at));
   };
+  const isRunning = (task: ProductionTask) => Boolean(session && session.task_id === task.id && session.operation_id === task.operations[0]?.id);
   const renderCard = (task: ProductionTask, last: { title: string | null }) => {
     const operation = task.operations[0];
     if (!operation) return null;
@@ -715,35 +737,51 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: 
     const startAt = parseDate(plannedStart);
     const finishAt = parseDate(plannedFinish);
     const processed = Number(operation.fact?.processed ?? 0);
-    const running = Boolean(session && session.task_id === task.id && session.operation_id === operation.id);
-    const title = dayTitle(startAt, running || processed > 0 || Boolean(share?.started_at));
+    const running = isRunning(task) ? session : null;
+    const title = dayTitle(startAt, Boolean(running) || processed > 0 || Boolean(share?.started_at));
     const header = title !== last.title ? <div className="mo-day">{title}</div> : null;
     last.title = title;
     const done = isDone(task);
     const late = Boolean(finishAt && finishAt < now && !done);
     const key = `${task.id}:${operation.id}`;
     const stage = operation.stage || `Этап ${operation.position}`;
+    const state = cardState(operation, running, done, now);
+    const fact = operation.time_fact;
+    const work = { onBehalfOf };
+    const paused = running?.status === "Пауза";
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
-        <div className="mo-h"><div className="mo-name"><b>{stage}</b>{running && <span className="mo-tag run">в работе</span>}{operation.code && <small className="op-code">{operation.code}</small>}</div><span className="mo-time">{startAt ? windowText(plannedStart, plannedFinish) : "время не назначено"}</span></div>
+        <div className="mo-h">
+          <div className="mo-name"><b>{stage}</b>{operation.code && <small className="op-code">{operation.code}</small>}</div>
+          <div className="mo-side">
+            {state && <span className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
+            {!readOnly && running && <>
+              {paused
+                ? <button className="primary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "resume", { ...work, key: stepKey(running, "resume") }))}>Продолжить</button>
+                : <button className="secondary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "pause", { ...work, key: stepKey(running, "pause") }))}>Пауза</button>}
+              <button className={paused ? "secondary" : "primary"} aria-expanded={submitting} onClick={() => setSubmitting((value) => !value)}>Сдать…</button>
+            </>}
+            {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдайте начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
+            <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>ЭТК</button>
+          </div>
+        </div>
         <div className="mo-s">{task.number} · этап {operation.position} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>ваши {share.quantity} шт</b></> : null}</div>
         {operation.description && !operation.description.startsWith(stage) && <div className="mo-d">{operation.description}</div>}
-        <div className="mo-s">норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
-        {operation.readiness && operation.readiness.state !== "done" && <div className={`mo-ready ${operation.readiness.state === "ready" || operation.readiness.state === "assembly" ? "tone-ok" : "tone-warn"}`}>{operation.readiness.text}{operation.readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${operation.readiness.boxes.length}` : ""}</div>}
-        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}</div>
-        <div className="mo-act">
-          {!readOnly && !running && !done && <button className="primary" disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдайте начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>▶ Начать</button>}
-          <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>ЭТК</button>
-        </div>
+        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span> · норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>
+        {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
+        {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => { setSubmitting(false); onSubmitted(number, box); }} />}
+        {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
         {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
-        {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} />}
       </div>
     </div>;
   };
-  // Невыполненное — наверх по дням плана; выполненное свёрнуто ниже, чтобы «Начать» не искали под сделанным.
-  const active = tasks.filter((task) => !isDone(task));
+  // Начатая — первой, невыполненное — по дням плана; выполненное свёрнуто ниже, чтобы «Начать» не искали под сделанным.
+  const active = tasks.filter((task) => !isDone(task)).sort((left, right) => Number(isRunning(right)) - Number(isRunning(left)));
   const finished = tasks.filter(isDone);
+  // Простой — на задание: полоса с «Закончить простой» — на первой невыполненной карточке задания, на остальных — строка.
+  const firstOfTask = new Set(active.filter((task, index) => active.findIndex((other) => other.id === task.id) === index).map((task) => `${task.id}:${task.operations[0]?.id}`));
   const activeMark = { title: null as string | null };
   const finishedMark = { title: null as string | null };
   return <div className="my-queue">
@@ -753,6 +791,54 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false }: 
       <div className="my-queue">{finished.map((task) => renderCard(task, finishedMark))}</div>
     </details>}
   </div>;
+}
+
+/** Текущее время, обновляемое раз в period мс: таймер начатой работы на карточке. */
+function useNow(period: number): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), period);
+    return () => window.clearInterval(timer);
+  }, [period]);
+  return now;
+}
+
+/** Часы:минуты длительности: 5880 с → «1:38». */
+export function clock(seconds: number): string {
+  const minutes = Math.max(0, Math.floor((Number(seconds) || 0) / 60));
+  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+/** Сколько сессия проработала к now: от начала без пауз (идущая пауза тоже не считается). */
+export function workedSeconds(session: ProductionWorkSession, now: Date): number {
+  const started = parseDate(session.started_at);
+  if (!started) return 0;
+  const pausedSince = session.status === "Пауза" ? parseDate(session.pause_started_at) : null;
+  const end = pausedSince ?? now;
+  return Math.max(0, Math.round((end.getTime() - started.getTime()) / 1000) - (Number(session.pause_seconds) || 0));
+}
+
+// Ключ повтора действия по сессии: двойной клик по той же кнопке в том же состоянии — один и тот же ключ, сервер не
+// делает действие второй раз; после паузы и продолжения состояние другое — и ключ новый.
+function stepKey(session: ProductionWorkSession, action: string): string {
+  return `${session.id}:${action}:${session.pause_seconds}:${session.pause_started_at ?? ""}`;
+}
+
+/** Строка состояния карточки рядом с главной кнопкой. */
+function cardState(operation: ProductionOperation, running: ProductionWorkSession | null, done: boolean, now: Date): { text: string; tone: string } | null {
+  if (running) {
+    const since = formatMoment(running.started_at);
+    const sameDay = since.slice(0, 5) === formatMoment(now.toISOString()).slice(0, 5);
+    const worked = clock(workedSeconds(running, now));
+    return running.status === "Пауза"
+      ? { text: `на паузе · ${worked}`, tone: "tone-warn" }
+      : { text: `в работе с ${sameDay ? since.slice(6) : since} · ${worked}`, tone: "tone-ok" };
+  }
+  if (done) return { text: "выполнена", tone: "tone-neutral" };
+  const readiness = operation.readiness;
+  if (!readiness || readiness.state === "done") return null;
+  const text = `${readiness.text}${readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${readiness.boxes.length}` : ""}`;
+  return { text, tone: readiness.state === "ready" || readiness.state === "assembly" ? "tone-ok" : "tone-warn" };
 }
 
 // ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции.
@@ -771,7 +857,7 @@ function OperationEtk({ principal, task, operation }: { principal: Principal; ta
   return <div className="panel mo-etk">
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!error && !view && <div className="empty">Загрузка…</div>}
-    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} sketchSource={{
+    {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} sketchSource={{
       list: () => productionApi.operationEtkSketches(task.id, operation.id),
       url: (key, at) => productionApi.operationEtkSketchUrl(task.id, operation.id, key, at),
     }} />}
@@ -786,81 +872,102 @@ export function goodPrefill(remaining: string | undefined, inputLimit: string | 
   return limit < left ? String(limit) : remaining;
 }
 
-function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, ownerName = "" }: {
-  execution: { session: ProductionWorkSession | null; boxes: ProductionBox[] };
-  tasks: ProductionTask[];
+// Сдача начатой работы: годные (остаток доли, не больше, чем во взятых входных коробках) и брак с характером.
+function SubmitWorkForm({ session, operation, busy, mutate, onBehalfOf = "", onSubmitted }: {
+  session: ProductionWorkSession;
+  operation: ProductionOperation | undefined;
   busy: boolean;
-  readOnly?: boolean;
-  ownerName?: string;
+  onBehalfOf?: string;
+  onSubmitted: (number: string, box?: ProductionBox) => void;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [good, setGood] = useState("");
   const [defect, setDefect] = useState("0");
   const [defectCharacter, setDefectCharacter] = useState("");
   const [defectDescription, setDefectDescription] = useState("");
-  const [correcting, setCorrecting] = useState("");
-  const [shown, setShown] = useState<{ number: string; fixed: boolean } | null>(null);
-  const session = execution.session;
-  // «Задания» приходят по одной операции на карточку: задание ищем вместе с операцией сессии, иначе этап не найдётся.
-  const task = session ? tasks.find((item) => item.id === session.task_id && item.operations.some((op) => op.id === session.operation_id))
-    ?? tasks.find((item) => item.id === session.task_id) : null;
-  const operation = task?.operations.find((item) => item.id === session?.operation_id);
   // «Годные» — остаток его доли, но не больше, чем есть во взятых входных коробках: не печатать то, что уже известно.
-  const prefill = goodPrefill(operation?.remaining, session?.input_limit);
+  const prefill = goodPrefill(operation?.remaining, session.input_limit);
   useEffect(() => {
-    if (session && prefill) setGood((current) => current === "" ? prefill : current);
-  }, [session?.id, operation?.id, prefill]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (prefill) setGood((current) => current === "" ? prefill : current);
+  }, [session.id, operation?.id, prefill]); // eslint-disable-line react-hooks/exhaustive-deps
+  const work = { onBehalfOf };
+  return <div className="execution-actions mo-submit">
+    <label>Годные<input aria-label="Годные изделия" type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
+    <label>Брак<input aria-label="Брак" type="number" min="0" step="any" value={defect} onChange={(event) => setDefect(event.target.value)} /></label>
+    {Number(defect) > 0 && <><label>Характер брака<input aria-label="Характер брака" value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label className="defect-text">Описание брака<AutoTextarea aria-label="Описание брака" multiline value={defectDescription} onChange={setDefectDescription} /></label></>}
+    <button className="primary" disabled={busy || !good || (Number(defect) > 0 && (!defectCharacter.trim() || !defectDescription.trim()))} onClick={() => void mutate(session.id, async () => {
+      const result = await productionApi.submitWork(session.id, good, defect || "0", defectCharacter, defectDescription, { ...work, key: `${session.id}:submit` });
+      onSubmitted(result.box.number ?? "", result.box);
+      setGood(""); setDefect("0"); setDefectCharacter(""); setDefectDescription("");
+      return result;
+    })}>Сдать</button>
+    <button className="link-button danger-link" disabled={busy} onClick={() => { if (window.confirm("Отменить начало? Время не запишется.")) void mutate(session.id, () => productionApi.workAction(session.id, "cancel", { ...work, key: `${session.id}:cancel` })); }}>Отменить начало</button>
+  </div>;
+}
+
+// Начатая работа, которой нет в очереди (задание отменили или оно за пределом списка): управление здесь, чтобы её
+// можно было сдать или отменить. Коробки сотрудника — всегда здесь.
+function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, ownerName = "", onBehalfOf = "", onSubmitted, onCorrected }: {
+  execution: { session: ProductionWorkSession | null; boxes: ProductionBox[] };
+  tasks: ProductionTask[];
+  busy: boolean;
+  readOnly?: boolean;
+  ownerName?: string;
+  onBehalfOf?: string;
+  onSubmitted: (number: string, box?: ProductionBox) => void;
+  onCorrected: (number: string, box?: ProductionBox) => void;
+  mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
+}) {
+  const [correcting, setCorrecting] = useState("");
+  const session = execution.session;
+  const queued = session ? tasks.some((item) => item.id === session.task_id && item.operations[0]?.id === session.operation_id) : false;
+  const task = session ? tasks.find((item) => item.id === session.task_id) : null;
+  const operation = task?.operations.find((item) => item.id === session?.operation_id);
+  const work = { onBehalfOf };
   return <>
-    {session && <div className="panel execution-current">
+    {session && !queued && <div className="panel execution-current">
       <div className="manual-stock-head"><div><h2>Идёт работа{operation?.stage ? `: ${operation.stage}` : ""}</h2><small>{task?.number ?? "Задание"}{operation ? ` · этап ${operation.position}` : ""}{task ? ` · ${taskItemLabel(task)}` : ""} · с {formatMoment(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}</small></div><StatusChip status={session.status} /></div>
       {!readOnly && <div className="execution-actions">
-        {session.status === "В работе" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "pause"))}>Пауза</button>}
-        {session.status === "Пауза" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "resume"))}>Продолжить</button>}
-        <label>Годные<input aria-label="Годные изделия" type="number" min="0" step="any" value={good} onChange={(event) => setGood(event.target.value)} /></label>
-        <label>Брак<input aria-label="Брак" type="number" min="0" step="any" value={defect} onChange={(event) => setDefect(event.target.value)} /></label>
-        {Number(defect) > 0 && <><label>Характер брака<input aria-label="Характер брака" value={defectCharacter} onChange={(event) => setDefectCharacter(event.target.value)} /></label><label className="defect-text">Описание брака<AutoTextarea aria-label="Описание брака" multiline value={defectDescription} onChange={setDefectDescription} /></label></>}
-        <button className="primary" disabled={busy || !good || (Number(defect) > 0 && (!defectCharacter.trim() || !defectDescription.trim()))} onClick={() => void mutate(session.id, async () => {
-          const result = await productionApi.submitWork(session.id, good, defect || "0", defectCharacter, defectDescription);
-          setShown({ number: result.box.number ?? "", fixed: false });
-          setGood(""); setDefect("0"); setDefectCharacter(""); setDefectDescription("");
-          return result;
-        })}>Сдать</button>
-        <button className="link-button danger-link" disabled={busy} onClick={() => { if (window.confirm("Отменить начало? Время не запишется.")) void mutate(session.id, () => productionApi.workAction(session.id, "cancel")); }}>Отменить начало</button>
+        {session.status === "В работе" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "pause", { ...work, key: stepKey(session, "pause") }))}>Пауза</button>}
+        {session.status === "Пауза" && <button className="secondary" disabled={busy} onClick={() => void mutate(session.id, () => productionApi.workAction(session.id, "resume", { ...work, key: stepKey(session, "resume") }))}>Продолжить</button>}
+        <SubmitWorkForm session={session} operation={operation} busy={busy} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={onSubmitted} />
       </div>}
     </div>}
     {execution.boxes.length > 0 && <div className="panel execution-boxes">
       <h2>{ownerName ? `Коробки: ${ownerName}` : "Мои коробки"}</h2>
       <div className="box-grid">{execution.boxes.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
-        <strong>{box.number ?? "Номер после закрытия"}</strong>
+        <BoxName box={box} />
         <span>{box.item} · этап {box.operation_position}</span>
         <span>{box.quantity} шт · доступно {box.available}</span>
         <StatusChip status={box.status} />
         {box.return_reason && <small className="danger-text">{box.return_reason}</small>}
         {!readOnly && box.status === "Возвращена" && <button className="secondary small" disabled={busy} onClick={() => setCorrecting(correcting === box.id ? "" : box.id)}>Исправить</button>}
-        {!readOnly && box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} onDone={(number) => setShown({ number, fixed: true })} />}
+        {!readOnly && box.status === "Возвращена" && correcting === box.id && <BoxCorrection box={box} busy={busy} mutate={mutate} onBehalfOf={onBehalfOf} onDone={onCorrected} />}
       </div>)}</div>
     </div>}
-    {shown && <BoxNumberDialog number={shown.number} fixed={shown.fixed} close={() => setShown(null)} />}
   </>;
 }
 
-// prodBoxShow_: номер новой коробки крупно — его переписывают на коробку от руки.
-function BoxNumberDialog({ number, fixed, close }: { number: string; fixed: boolean; close: () => void }) {
-  const title = fixed ? "Коробка исправлена" : "Напишите на коробке";
-  return <div className="panel kit-modal box-dialog" role="dialog" aria-label={title}>
-    <h3>{title}</h3>
-    <p>{fixed ? "Коробка снова ждёт подтверждения мастера." : "Коробка закрыта и ждёт подтверждения мастера. Без номера её не возьмут дальше."}</p>
-    <div className="box-no">{number}</div>
-    <button className="primary" onClick={close}>Записал</button>
-  </div>;
+// prodBoxShow_: после «Сдать» — код коробки крупно (его пишут маркером), свежая коробка из списка или из ответа сдачи.
+function ShownBox({ shown, boxes, tasks, close }: {
+  shown: { number: string; fixed: boolean; box?: ProductionBox };
+  boxes: ProductionBox[];
+  tasks: ProductionTask[];
+  close: () => void;
+}) {
+  const box = boxes.find((item) => item.id === shown.box?.id) ?? shown.box;
+  // В «Моих заданиях» одно задание приходит несколькими карточками (по операции на карточку) — ищем по всем.
+  const stage = box ? tasks.flatMap((task) => task.id === box.task_id ? task.operations : []).find((item) => item.id === box.operation_id)?.stage ?? "" : "";
+  return <BoxLabelPanel number={shown.number} box={box} stage={stage} fixed={shown.fixed} close={close} />;
 }
 
 // Correction replaces one output of a returned box (SUPPLYMAP `prodWorkFix_`); the box goes back to the master.
-function BoxCorrection({ box, busy, mutate, onDone }: {
+function BoxCorrection({ box, busy, mutate, onDone, onBehalfOf = "" }: {
   box: ProductionBox;
   busy: boolean;
+  onBehalfOf?: string;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
-  onDone?: (number: string) => void;
+  onDone?: (number: string, box?: ProductionBox) => void;
 }) {
   const [outputs, setOutputs] = useState<ProductionOutput[]>([]);
   const [outputId, setOutputId] = useState("");
@@ -895,8 +1002,8 @@ function BoxCorrection({ box, busy, mutate, onDone }: {
       const result = await productionApi.correctBox(box.id, box.version, {
         output_id: outputId, good_quantity: good, defect_quantity: defect || "0",
         defect_character: defectCharacter, defect_description: defectDescription,
-      });
-      onDone?.(result.box.number ?? box.number ?? "");
+      }, onBehalfOf);
+      onDone?.(result.box.number ?? box.number ?? "", result.box);
       return result;
     })}>Записать исправление</button>
   </div>;
@@ -904,10 +1011,11 @@ function BoxCorrection({ box, busy, mutate, onDone }: {
 
 // prodWorkStart_: первая операция начинается сразу (складские партии — по желанию), дальше оператор вводит номера
 // входных коробок с предыдущего этапа, подтверждённых мастером; штуки из них берутся при сдаче.
-function StartWorkForm({ task, operation, busy, mutate }: {
+function StartWorkForm({ task, operation, busy, mutate, onBehalfOf = "" }: {
   task: ProductionTask;
   operation: ProductionOperation;
   busy: boolean;
+  onBehalfOf?: string;
   mutate: (key: string, operation: () => Promise<unknown>) => Promise<void>;
 }) {
   const [boxes, setBoxes] = useState<ProductionBox[]>([]);
@@ -917,14 +1025,16 @@ function StartWorkForm({ task, operation, busy, mutate }: {
   const [error, setError] = useState("");
   const first = isFirst(operation);
   const source = feedsText(task, operation);
+  // Ключ повтора на эту форму: двойной клик «Начать работу» не начинает дважды.
+  const key = useRef(crypto.randomUUID());
   useEffect(() => {
-    productionApi.inputs(task.id, operation.id)
+    productionApi.inputs(task.id, operation.id, onBehalfOf)
       .then((result) => { setBoxes(result.boxes); setMaterials(result.materials); })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Коробки не загружены"));
   }, [task.id, operation.id, operation.position]);
   const [picked, setPicked] = useState<string[]>([]);
-  const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.quantity, stage: box.stage, position: box.operation_position }))
-    ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", quantity: box.available, stage: "", position: box.operation_position }));
+  const chips = operation.readiness?.boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code ?? null, quantity: box.quantity, stage: box.stage, position: box.operation_position }))
+    ?? boxes.map((box) => ({ id: box.id, number: box.number ?? "", code: box.code, quantity: box.available, stage: "", position: box.operation_position }));
   const typed = numbers.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
   const inputs = [...picked, ...typed.filter((item) => !picked.includes(item))];
   const materialInputs = materials.flatMap((material) => {
@@ -934,7 +1044,7 @@ function StartWorkForm({ task, operation, busy, mutate }: {
   const [manual, setManual] = useState(false);
   const wrongMaterial = materialInputs.some((item) => Number(item.quantity) > Number(materials.find((material) => material.fulfillment_line_id === item.fulfillment_line_id)?.available ?? 0));
   const needBox = !first && !inputs.length;
-  const why = busy ? "Идёт сохранение" : needBox ? "Выберите коробку или введите её номер" : wrongMaterial ? "Количество больше доступного в партии" : "";
+  const why = busy ? "Идёт сохранение" : needBox ? "Выберите коробку или введите её код" : wrongMaterial ? "Количество больше доступного в партии" : "";
   return <div className="start-work sw-col">
     {error && <small className="danger-text">{error}</small>}
     {first && materials.map((material) => <label key={material.fulfillment_line_id}>{material.grn}{material.package ? ` · ${material.package}` : ""} · {material.article || material.name} · доступно {material.available} {material.unit}<input aria-label={`Количество из партии ${material.grn} ${material.package}`} type="number" min="0" max={material.available} step="any" value={quantities[material.fulfillment_line_id] ?? ""} onChange={(event) => setQuantities((current) => ({ ...current, [material.fulfillment_line_id]: event.target.value }))} /></label>)}
@@ -942,12 +1052,12 @@ function StartWorkForm({ task, operation, busy, mutate }: {
       <div className="sw-title">Из каких коробок берёте детали <small>({source ? `${source}; подтверждённые мастером` : `с этапа ${previousStage(operation)}, подтверждённые мастером`})</small></div>
       {chips.length > 0 && <div className="box-chips" role="group" aria-label="Готовые коробки">{chips.map((chip) => <button key={chip.id} type="button" className={`box-chip${picked.includes(chip.number) ? " on" : ""}`} aria-pressed={picked.includes(chip.number)}
         onClick={() => setPicked((current) => current.includes(chip.number) ? current.filter((item) => item !== chip.number) : [...current, chip.number])}>
-        <b>{chip.number}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
+        <b>{boxTitle(chip)}</b><span>{chip.quantity} шт{source ? ` · ${chip.stage || `этап ${chip.position}`}` : ""}</span></button>)}</div>}
       {chips.length > 0 && !manual && !typed.length
-        ? <button type="button" className="link-button sw-manual-toggle" onClick={() => setManual(true)}>Ввести номер вручную</button>
-        : <label className="sw-manual">Ввести номер вручную<textarea aria-label="Номера коробок" rows={2} placeholder="000001-8; несколько — через запятую" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>}
+        ? <button type="button" className="link-button sw-manual-toggle" onClick={() => setManual(true)}>Ввести код вручную</button>
+        : <label className="sw-manual">Ввести код вручную<textarea aria-label="Номера коробок" rows={2} placeholder="код с коробки или номер 000001-8; несколько — через запятую" value={numbers} onChange={(event) => setNumbers(event.target.value)} /></label>}
     </>}
-    <button className="primary sw-go" aria-label="Начать работу" disabled={busy || needBox || wrongMaterial} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs))}>▶ Начать</button>
+    <button className="primary sw-go" disabled={busy || needBox || wrongMaterial} onClick={() => void mutate(operation.id, () => productionApi.startWork(task.id, operation.id, inputs, materialInputs, { onBehalfOf, key: key.current }))}>Начать работу</button>
     {why && <small className="sw-why">{why}</small>}
   </div>;
 }
@@ -960,15 +1070,19 @@ function BoxReview({ boxes, operators, busy, mutate }: {
 }) {
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [returning, setReturning] = useState<Record<string, boolean>>({});
+  const [query, setQuery] = useState("");
   const pending = boxes.filter((box) => box.status === "Закрыта оператором");
   if (!pending.length) return null;
+  const shown = pending.filter((box) => boxMatches(box, query));
   const confirmAll = () => mutate("confirm-all", async () => {
     for (const box of pending) await productionApi.boxAction(box.id, "confirm", box.version);
   });
   return <div className="panel box-review"><div className="manual-stock-head"><h2>Коробки на подтверждение</h2><span className="page-count">{pending.length}</span>
+    {pending.length > 3 && <input className="search box-search" type="search" aria-label="Найти коробку по коду" placeholder="Код с коробки или номер" value={query} onChange={(event) => setQuery(event.target.value)} />}
     {pending.length > 1 && <button className="primary small" disabled={busy} onClick={() => void confirmAll()}>Подтвердить все</button>}</div>
-    <div className="box-grid">{pending.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
-      <strong>{box.number}</strong>
+    {!shown.length && <div className="empty">Нет коробки с кодом «{query}» — проверьте код на коробке.</div>}
+    <div className="box-grid">{shown.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
+      <BoxName box={box} />
       <span>{box.item} · этап {box.operation_position}</span>
       <span>{box.quantity} шт · {operators.find((operator) => operator.id === box.operator_id)?.name ?? box.operator_id}</span>
       <button className="primary small" disabled={busy} onClick={() => void mutate(box.id, () => productionApi.boxAction(box.id, "confirm", box.version))}>Подтвердить</button>

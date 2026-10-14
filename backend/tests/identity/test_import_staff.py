@@ -156,7 +156,7 @@ def test_installers_are_added_to_the_import(source):
     installers = [person for person in everyone if person in ADDITIONAL_STAFF]
     assert len(installers) == 14
     assert {"Рыбкина Ольга", "Шилов Артем", "Пузанов Александр"} <= {person.name for person in installers}
-    assert all(person.department == "Монтаж" for person in installers)
+    assert all(person.department == "Монтажный отдел" for person in installers)
     car = [person for person in installers if person.site == "ЦАР"]
     zhuk = [person for person in installers if person.site == "ЖУК"]
     assert len(car) == 9 and all(person.role == "staff" for person in car)
@@ -198,7 +198,7 @@ def test_reimport_updates_department_and_site_but_keeps_pin(source, sessions):
     assert olga.action == "обновлён (имя/отдел/площадка)" and olga.pin is None
     with _uow(sessions)() as uow:
         stored = next(user for user in uow.identity.all_users() if user.email == "rybkina.olga@fraxis.local")
-    assert stored.department == "Монтаж" and stored.site == "ЦАР"
+    assert stored.department == "Монтажный отдел" and stored.site == "ЦАР"
     # PIN untouched: the first one still opens the door.
     who = str(staff_id("rybkina.olga@fraxis.local"))
     assert login_with_pin(who, olga_pin, NOW, _uow(sessions)(), client_key="k").principal.email == "rybkina.olga@fraxis.local"

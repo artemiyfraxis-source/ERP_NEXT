@@ -162,7 +162,7 @@ def test_generate_builds_and_issues_only_where_a_techcard_is_missing_and_skips_s
 
     def generator(payload):
         asked.extend(item["bom"]["index"] for item in payload["items"])
-        assert {"templates", "op", "ter", "coax", "kab_awg", "kab_coax"} <= set(payload["refs"])
+        assert {"templates", "op", "ter", "coax", "wire_dia", "kab_coax"} <= set(payload["refs"])
         return {"items": [{"key": item["key"], "config": CONFIG, "error": "", "warnings": []} for item in payload["items"]]}
 
     report = generate(state, generator, None, actor=ACTOR, now=NOW, apply=True)

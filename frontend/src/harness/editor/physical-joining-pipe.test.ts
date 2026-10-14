@@ -22,6 +22,8 @@ import {drawingRouteCommands,drawingRouteHitPoints} from "./drawing-route-path";
 import {bendSnapAnchors,pipeBendSnapAnchors,physicalObjectRouteAnchors,joiningPipeEndpointSnapAnchors,snapBendPoint,snapPhysicalPoint} from "./physical-editing";
 import {unprojectPipeBundleEdit} from "./pipe-bundle-projection";
 import {resolvePhysicalRoutePointCommand} from "./physical-route-point-command";
+import {physicalSegmentControls} from "./physical-geometry";
+import {projectOntoPolyline} from "./physical-coverings";
 
 function fixture():HarnessDesignDocument {
  const d=createEmptyHarnessDesign();
@@ -48,6 +50,26 @@ it("keeps automatically routed member corners editable after OP creation",()=>{
  const removed=applyEditorCommand(document,{type:"remove-physical-bend",segmentId:"p0",index:authoredIndex-1});
  expect(removed.physicalTopology!.segments.find(segment=>segment.id==="p0")!.path.kind).toBe("polyline");
  expect(parseHarnessDesignDocument(JSON.parse(JSON.stringify(removed))).physicalTopology).toEqual(removed.physicalTopology);
+});
+
+it("rebuilds a member scene without stale bends and midpoints inside the OP axis",()=>{
+ const d=fixture();
+ const source={...d,physicalTopology:{...d.physicalTopology!,segments:d.physicalTopology!.segments.map(segment=>
+   segment.id==="p0"?{...segment,path:{kind:"polyline" as const,points:[{x:220,y:30},{x:380,y:30}]} }:segment)}};
+ const op=createJoiningPipe(source,[["p0"],["p1"]],"op");
+ const document={...source,physicalTopology:{...source.physicalTopology!,joiningPipes:[op]}};
+ const member=physicalTopologyScene(document).find(object=>object.id==="p0")!;
+ const axis=op.members[0]!;
+ const route=physicalSegmentControls(document,source.physicalTopology!.segments[0]!);
+ const inAxis=(point:{x:number;y:number})=>{
+   const fraction=projectOntoPolyline(route,point).fraction;
+   return fraction>=axis.from-1e-6&&fraction<=axis.to+1e-6;
+ };
+ const stale=member.pipe!.handles.filter((point,index)=>member.pipe!.authoredHandleIndices![index]! >= 0 && inAxis(point));
+ expect(stale).toEqual([]);
+ // The canvas removes controlled axis midpoints; only transition shoulders
+ // remain available for insertion.
+ expect(pipeMidpoints(member).filter(handle=>inAxis(handle.point))).toEqual([]);
 });
 
 it("keeps an outer OP covering outside the inner covering along both member tails",()=>{

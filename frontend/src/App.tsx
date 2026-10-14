@@ -11,6 +11,8 @@ import { DraftProvider, DraftStore } from "./formDrafts";
 import {
   accessLevelOf,
   canAct,
+  canSee,
+  hasAccess,
   hasFullAccess,
   isBlock,
   isViewOnly,
@@ -51,6 +53,7 @@ import { ProfilePanel } from "./ProfilePanel";
 import { StageOptionsPanel } from "./StageOptions";
 import { ThemeSwitch } from "./ThemeSwitch";
 import { GlobalSearch } from "./CommandPalette";
+import { ViewAsBanner } from "./ViewAs";
 
 /** `user`: with `section=card` — whose card (empty — own); with `section=staff` — whose edit form opens at once. */
 type Place = { section: Section; block: BlockId | null; user?: string | null; harness?: { project: string; index: string; library?: boolean } };
@@ -171,6 +174,19 @@ export function App() {
     }
   }
 
+  // «Смотреть как сотрудник» (из своей карточки): весь ERP глазами выбранного — с главного экрана, как у него.
+  async function startViewAs(employee: { id: string }) {
+    const viewed = await identityApi.viewAs(employee.id);
+    setPrincipal(viewed);
+    go({ section: "cabinet", block: null });
+  }
+  // «Вернуться к себе» — туда, откуда начали: своя карточка.
+  async function exitViewAs() {
+    const own = await identityApi.stopViewAs();
+    setPrincipal(own);
+    go({ section: "card", block: null });
+  }
+
   async function signOut() {
     setShellError("");
     const leaving = principal;
@@ -220,6 +236,7 @@ export function App() {
   if (place.harness && visibleNav.some(({ id }) => id === "projects")) {
     return <>
       <div key={principal.user.id} className="harness-host" inert={expired}>
+        <ViewAsBanner principal={principal} onExit={exitViewAs} />
         <Suspense fallback={<div className="screen-center muted">Загрузка редактора…</div>}>
           {place.harness.library
             ? <ComponentLibraryPage project={place.harness.project} index={place.harness.index} canEdit={principal.permissions.projects === "edit"} />
@@ -281,6 +298,7 @@ export function App() {
       </aside>
       <GlobalSearch principal={principal} />
       <main className="workspace main">
+        <ViewAsBanner principal={principal} onExit={exitViewAs} />
         {shellError && <div className="shell-error error-banner" role="alert">{shellError}</div>}
         {runsTheSystem(principal) && <UpdateFailure />}
         {activeSection === "cabinet" && !activeBlock && <Home principal={principal} blocks={blocks} openBlock={openBlock} />}
@@ -293,7 +311,8 @@ export function App() {
         {activeSection === "requests" && <RequestsPage principal={principal} />}
         {activeSection === "procurement" && <ProcurementPage key={visit} readOnly={!canAct(principal, "procurement")} buyerName={principal.user.name} />}
         {activeSection === "receiving" && <ReceivingPage readOnly={!canAct(principal, "receiving")} />}
-        {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")} />}
+        {activeSection === "stock" && <WarehousePage key={visit} admin={hasFullAccess(principal)} readOnly={!canAct(principal, "warehouse")}
+          canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} />}
         {activeSection === "shipping" && <ShippingPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
@@ -314,6 +333,7 @@ export function App() {
           openStaffEdit={openStaffEdit}
           openCard={openCard}
           openStaff={() => navigate("staff")}
+          startViewAs={startViewAs}
         />}
         {activeSection === "access" && <AccessPage />}
       </main>

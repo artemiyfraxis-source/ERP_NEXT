@@ -213,3 +213,61 @@
 /* The catalog picker is deliberately scrollable even when the first page is short. */
 .harness-root .e4cce-wire-suggestions { overflow-y: scroll; scrollbar-gutter: stable; }
 .harness-root .he-connection-suggestion-count { display: block; padding: 5px 8px; border-bottom: 1px solid var(--border); background: var(--panel-soft); color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
+
+/* ERP-вид панели соединителя Э4 (13.10.2026): шрифт приложения, подписи 12 px обычным регистром, поля 30 px,
+   «Поля таблицы» — переключатели-строки с флажком вместо плиток, разделы — линией. Пояснения — в строке внизу панели. */
+.harness-root .e4-connector-inspector { font-family: inherit; font-size: 13px; line-height: 1.4; }
+.harness-root .e4ci-header { min-height: 0; padding: 12px 12px 10px; background: var(--card); }
+.harness-root .e4ci-header strong { font-size: 15px; font-weight: 600; }
+.harness-root .e4ci-eyebrow { color: var(--muted-foreground); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.harness-root .e4ci-flip-button,
+.harness-root .e4ci-name-global button { height: auto; min-height: 30px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-family: inherit; font-size: 12.5px; font-weight: 500; }
+.harness-root .e4ci-flip-button:hover:not(:disabled),
+.harness-root .e4ci-name-global button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+.harness-root .e4ci-identity { padding: 12px; gap: 10px; }
+.harness-root .e4ci-identity label { gap: 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.harness-root .e4ci-identity input,
+.harness-root .e4ci-identity select,
+.harness-root .e4ci-add-field input { font-family: inherit; font-size: 13px; font-weight: 400; }
+.harness-root .e4ci-identity-help { color: var(--muted-foreground); font-size: 12px; }
+.harness-root .e4ci-readonly-value { min-height: 30px; padding: 5px 8px; border-color: var(--border); border-radius: 6px; background: var(--accent); font-size: 13px; }
+.harness-root .e4ci-canvas-edit-note { padding: 10px 12px; border-bottom-color: var(--border); background: var(--card); }
+.harness-root .e4ci-canvas-edit-note strong,
+.harness-root .e4ci-section-title strong { color: var(--foreground); font-size: 13px; font-weight: 600; }
+.harness-root .e4ci-section-title span { color: var(--muted-foreground); font-size: 12px; }
+.harness-root .e4ci-column-settings summary { padding: 10px 12px; color: var(--foreground); font-size: 13px; font-weight: 600; }
+.harness-root .e4ci-column-settings[open] summary { border-bottom: 0; background: transparent; }
+.harness-root .e4ci-base-columns { padding: 0 12px 10px; gap: 0 12px; }
+.harness-root .e4ci-column-toggle,
+.harness-root .e4ci-column-toggle.active {
+  min-height: 30px; padding: 0 4px; grid-template-columns: 16px minmax(0, 1fr); gap: 6px; border: 0; border-bottom: 1px solid var(--sheet-line);
+  border-radius: 0; background: transparent; color: var(--foreground);
+}
+.harness-root .e4ci-column-toggle:hover:not(:disabled) { background: var(--accent); }
+.harness-root .e4ci-column-toggle > span { font-size: 13px; }
+.harness-root .e4ci-column-toggle > span:first-child { display: grid; place-items: center; width: 15px; height: 15px; border: 1.5px solid var(--chip-box); border-radius: 3px; color: transparent; font-size: 0; }
+.harness-root .e4ci-column-toggle.active > span:first-child { border-color: var(--primary); background: var(--primary); }
+.harness-root .e4ci-column-toggle.active > span:first-child::after { content: "✓"; color: var(--primary-foreground); font-size: 11px; font-weight: 700; line-height: 1; }
+.harness-root .e4ci-column-toggle:not(.active) > span:last-of-type { color: var(--muted-foreground); }
+.harness-root .e4ci-custom-columns { padding: 10px 12px 12px; gap: 6px; border-top-color: var(--border); }
+.harness-root .e4ci-custom-columns > p { color: var(--muted-foreground); font-size: 12px; }
+.harness-root .e4ci-custom-column { min-height: 30px; border: 0; border-bottom: 1px solid var(--sheet-line); border-radius: 0; }
+.harness-root .e4ci-custom-column > span { font-size: 13px; }
+.harness-root .e4ci-add-field { gap: 6px; }
+.harness-root .e4ci-add-field button,
+.harness-root .e4ci-add-contact { min-height: 30px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-family: inherit; font-size: 12.5px; font-weight: 500; }
+.harness-root .e4ci-add-field button:hover:not(:disabled),
+.harness-root .e4ci-add-contact:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+.harness-root .e4ci-table-section th { height: 30px; padding: 0 8px; background: var(--table-head); color: var(--table-head-fg); font-size: 12px; font-weight: 600; }
+.harness-root .e4ci-table-section td { height: 30px; border-color: var(--sheet-line); }
+.harness-root .e4ci-table-section td input:not([type="checkbox"]) { height: 26px; min-height: 26px; border-color: transparent; font-size: 13px; }
+.harness-root .he-companion-list { padding: 10px 12px; gap: 0; font-family: inherit; font-size: 13px; }
+.harness-root .he-companion-list label { min-height: 32px; padding: 0 4px; border: 0; border-bottom: 1px solid var(--sheet-line); border-radius: 0; background: transparent; }
+.harness-root .he-companion-list input[type="checkbox"] { width: 15px; height: 15px; flex-basis: 15px; accent-color: var(--primary); }
+.harness-root .drawing-scale-control input[type="number"] { height: 28px; border-radius: 6px; font-size: 13px; }
+@media (pointer: coarse) {
+  .harness-root .e4ci-column-toggle,
+  .harness-root .e4ci-custom-column,
+  .harness-root .he-companion-list label { min-height: 40px; }
+  .harness-root :is(.e4ci-flip-button, .e4ci-name-global button, .e4ci-add-field button, .e4ci-add-contact) { min-height: 40px; }
+}

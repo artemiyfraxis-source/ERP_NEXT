@@ -24,17 +24,31 @@ PLAN_KINDS = {
     "mark": "Отметка плана",
 }
 PLAN_BLOCKERS = ("ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА")
-KIT_STAGES = ("Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено")
+# Одна лестница этапов на всё ERP (владелец 12.10.2026): «Распланировано» — задания КБ стоят в ресурсном плане
+# (у всех открытых заданий КБ все операции с плановым окном); «В работе» — кто-то начал работу (смена по заданию КБ
+# или «взял» по доле операции); ОТК — производство закончено (задание «Выполнено» или коробка последней операции
+# в очереди ОТК / принята ОТК), ГП ещё не принята на склад; «Принято складом» — ГП принята (принято ≥ нужно);
+# «Упаковано» — ГП отобрана в отправки и упакована (отобрано ≥ нужно), ещё не уехала; «Отгружено» — уехало (отправлено ≥ нужно).
+KIT_STAGES = (
+    "Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено",
+)
+# Старые записи журнала «Этап КБ» неизменяемы (0101): их слово читается как этап новой лестницы; новые записи
+# со старым словом не принимаются (422 в приложении, CHECK 0108 в базе).
+LEGACY_STAGE_ALIASES = {
+    "КБ на складе": "Принято складом", "Готово к отгрузке": "Принято складом", "На отгрузке": "Упаковано",
+}
 TC_REVIEW_VALUES = ("не проверена", "проверена", "с погрешностями")
 PLAN_STAGE_AUTO = "авто"
 # ERP_PROJ_TERMINALS_ (Schema.gs): решение человека перекрывает вычисленный этап. В SUPPLYMAP — СТАТУС листа
 # «Проекты»; в ERP ставится записью журнала «Статус проекта» (value «авто» — вернуть в работу), она сильнее снимка.
-PROJECT_TERMINALS = ("Отказ", "Слился", "Отменён")
+# Владелец 12.10: закрыть проект можно только «Отменён»; «Отказ» и «Слился» в старых записях читаются как «Отменён».
+PROJECT_TERMINALS = ("Отменён",)
+LEGACY_TERMINAL_ALIASES = {"Отказ": "Отменён", "Слился": "Отменён"}
 # Лист цеха «ЗАГРУЗ» (владелец 04.10: «тут вот такое представление я хочу»): статусы ячейки «Статус», в одной
 # ячейке их может быть несколько через запятую. Порядок — как в выпадающем списке листа.
 SHOP_STATUSES = (
-    "ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ",
-    "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН",
+    "ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "РАСПЛАН", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ",
+    "ОТК", "НА ОТГР", "ГОТОВО", "УПАК", "ОТГРУЖЕН",
 )
 # ProdPlan.gs planShopStatus_: статусы в листе набраны руками — опечатки к словарю.
 _SHOP_STATUS_TYPOS = {"К ЗАПУС": "К ЗАПУСК", "ОЖД ИНФ": "ОЖИД ИНФ", "ОЖИД КОМП": "ОЖИД КОМПЛ"}
@@ -48,11 +62,43 @@ PLAN_MARK_FIELDS = (
     "zkp", "kit_arrival", "tc_ready", "test_sb", "kit_picked",
 )
 PLAN_MARK_FLAG_FIELDS = ("in_plan", "kit_checked", "kit_present", "zkp", "tc_ready", "test_sb", "kit_picked")
+# Owner 12.10: статус листа сквозной (этап проекта + блокер); старые отметки `status` читаются как история и не действуют.
+STATUS_MARK_REFUSAL = "Статус в загрузке цеха берётся из этапа проекта — меняйте этап"
 PLAN_DAY_FIELD_PREFIX = "day:"
 PLAN_DAY_NOTE_MAX = 16
-_KIT_STAGE_FACTS = ("", "tc", "kit", "work", "stock", "shipped")
+# Факт, дающий этап лестницы (тот же порядок, что KIT_STAGES): planned — задания в ресурсном плане, work — работа
+# начата, qc — производство закончено, stock — ГП принята, packed — упакована в отправки, shipped — уехало.
+_KIT_STAGE_FACTS = ("", "tc", "kit", "planned", "work", "qc", "stock", "packed", "shipped")
 # № проекта сравнивается по `app.shared.project_number` (normalize_project_number / project_from_purpose выше).
 MANUAL_TECHCARD_PROJECTS = frozenset(("714К.1", "35К.М.34"))
+
+
+def stage_alias(value: object) -> str:
+    """A stored stage word as the current ladder reads it: an old word (from an immutable journal row) → its new name."""
+    text = str(value or "")
+    return LEGACY_STAGE_ALIASES.get(text, text)
+
+
+def terminal_alias(value: object) -> str:
+    """A stored closed-project word as the current list reads it («Отказ» / «Слился» → «Отменён»)."""
+    text = str(value or "")
+    return LEGACY_TERMINAL_ALIASES.get(text, text)
+
+
+def legacy_stage_refusal(value: object) -> str:
+    """The refusal for a new write of an old stage word ("" — not an old word)."""
+    text = str(value or "").strip()
+    return f"Этапа «{text}» больше нет — теперь «{LEGACY_STAGE_ALIASES[text]}»." if text in LEGACY_STAGE_ALIASES else ""
+
+
+def require_stage_value(value: object) -> str:
+    """A stage pick (a ladder stage or «авто») or a Russian refusal; the old «КБ на складе» is refused by name."""
+    text = str(value or "")
+    if legacy_stage_refusal(text):
+        raise ProductionValidationError(legacy_stage_refusal(text))
+    if text not in (*KIT_STAGES, PLAN_STAGE_AUTO):
+        raise ProductionValidationError("Неизвестный этап.")
+    return text
 
 
 def kit_stage_key(project: object, item_index: object) -> str:
@@ -257,9 +303,7 @@ def plan_stage_change(kits: Iterable[KitStageNow], value: object, kb: object = "
     """What a manual pick of ``value`` (a ladder stage or «авто») does to one КБ (``kb``) or to the whole project.
 
     A refused pick comes back with ``error`` (the preview shows it); an unknown stage or КБ raises."""
-    value = str(value or "").strip()
-    if value not in (*KIT_STAGES, PLAN_STAGE_AUTO):
-        raise ProductionValidationError("Неизвестный этап.")
+    value = require_stage_value(str(value or "").strip())
     kb = str(kb or "").strip().upper()
     kits = tuple(kits)
     if kb:
@@ -489,7 +533,7 @@ def summarize_journal(events: Iterable[PlanEvent]) -> dict[str, ProjectJournal]:
         elif event.kind == PLAN_KINDS["deadline"]:
             row["deadline"] = event.deadline
         elif event.kind == PLAN_KINDS["status"]:
-            row["status"] = event.value if event.value in PROJECT_TERMINALS else ""
+            row["status"] = terminal_alias(event.value) if terminal_alias(event.value) in PROJECT_TERMINALS else ""
         if event.text and event.kind in {
             PLAN_KINDS["note"], PLAN_KINDS["block"], PLAN_KINDS["unblock"],
         }:
@@ -504,7 +548,7 @@ def project_terminal(snapshot: PlanProjectSnapshot | None, journal: ProjectJourn
     """Терминальный статус проекта (Отказ/Слился/Отменён) или "": запись журнала сильнее снимка реестра."""
     if journal is not None and journal.status is not None:
         return journal.status
-    return snapshot.status if snapshot is not None and snapshot.terminal and snapshot.status else ""
+    return terminal_alias(snapshot.status) if snapshot is not None and snapshot.terminal and snapshot.status else ""
 
 
 def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
@@ -515,11 +559,12 @@ def summarize_kit_marks(events: Iterable[PlanEvent]) -> dict[str, KitMark]:
         key = kit_stage_key(event.project, event.item_index)
         current = marks.get(key, KitMark())
         if event.kind == PLAN_KINDS["stage"]:
-            stage = None if event.value == PLAN_STAGE_AUTO else event.value
+            # An old word (immutable journal row) reads as the current ladder stage, whatever store the event came from.
+            stage = None if event.value == PLAN_STAGE_AUTO else stage_alias(event.value)
             skipped: tuple[str, ...] = ()
             if stage in KIT_STAGES:
                 # Пропущенное вживую копится по ручным шагам вперёд; шаг назад срезает то, что выше нового этапа.
-                jumped = (*current.skipped, *stage_skipped(event.from_value, stage))
+                jumped = (*current.skipped, *stage_skipped(stage_alias(event.from_value), stage))
                 skipped = tuple(item for item in KIT_STAGES[:KIT_STAGES.index(stage)] if item in jumped)
             marks[key] = KitMark(stage=stage, review=current.review, skipped=skipped)
         else:
@@ -547,6 +592,8 @@ def plan_mark_value(field_name: str, value: object, text: object = "") -> str:
     raw = str(value or "").strip()
     if field_name == "comment":
         return str(text or "").strip()
+    if field_name == "status":
+        raise ProductionValidationError(STATUS_MARK_REFUSAL)
     if raw in ("", PLAN_STAGE_AUTO):
         return ""
     if field_name.startswith(PLAN_DAY_FIELD_PREFIX):
@@ -557,12 +604,6 @@ def plan_mark_value(field_name: str, value: object, text: object = "") -> str:
         return raw
     if field_name not in PLAN_MARK_FIELDS:
         raise ProductionValidationError("Неизвестная колонка плана.")
-    if field_name == "status":
-        statuses = normalize_shop_statuses(raw)
-        unknown = [status for status in statuses.split(", ") if status not in SHOP_STATUSES]
-        if unknown:
-            raise ProductionValidationError(f"Неизвестный статус: {', '.join(unknown)}.")
-        return statuses
     if field_name == "ready":
         if not re.fullmatch(r"\d{1,3}", raw) or int(raw) > 100:
             raise ProductionValidationError("Готовность — число от 0 до 100.")
@@ -595,7 +636,7 @@ def summarize_plan_marks(events: Iterable[PlanEvent]) -> dict[str, dict[str, str
     """Current manual value per project and sheet column; the latest mark wins, an empty one clears."""
     marks: dict[str, dict[str, str]] = {}
     for event in events:
-        if event.kind != PLAN_KINDS["mark"] or not event.field:
+        if event.kind != PLAN_KINDS["mark"] or not event.field or event.field == "status":
             continue
         project = normalize_project_number(event.project)
         current = marks.setdefault(project, {})
@@ -625,8 +666,8 @@ def validate_plan_note(payload: Mapping[str, object], known_projects: Iterable[s
     item_index = str(payload.get("item_index") or "").strip()
     if (kind == "tcReview" or (kind == "stage" and item_index)) and not re.match(r"^КБ\d+", item_index, flags=re.I):
         raise ProductionValidationError("Укажи КБ.")
-    if kind == "stage" and payload.get("value") not in (*KIT_STAGES, PLAN_STAGE_AUTO):
-        raise ProductionValidationError("Неизвестный этап.")
+    if kind == "stage":
+        require_stage_value(payload.get("value"))
     if kind == "status" and payload.get("value") not in (*PROJECT_TERMINALS, PLAN_STAGE_AUTO):
         raise ProductionValidationError("Неизвестный статус проекта.")
     if kind == "tcReview" and payload.get("value") not in TC_REVIEW_VALUES:

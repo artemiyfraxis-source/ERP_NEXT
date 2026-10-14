@@ -107,7 +107,7 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 
 | Таблица | Что это | Ключ | Поля `fields` |
 |---|---|---|---|
-| `ter` | БД.ТЕР — контакты, терминалы и разъёмы | `terArticle` (артикул; ищется как в генераторе: точно, потом без пробелов и `. / ( ) _ -`) | поля схемы (ниже) + колонки листа |
+| `ter` | БД.ТЕР — контакты, терминалы и разъёмы | `terArticle` (артикул REEL; ищется как в генераторе: точно, потом без пробелов и `. / ( ) _ -` — и среди артикулов REEL, и среди BAG) | поля схемы (ниже) + колонки листа |
 | `coax` | БД.КОАКС — коаксиальные разъёмы | `coaxArticle` + `coaxWire` (артикул + «Провод»; одна строка на пару) | `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire` + колонки листа |
 | `ob` | БД.ОБ — станки и оборудование | `baseValue` («Для базы», как строка видна в базе) | `baseValue`, `obType` + колонки листа |
 | `prov` | БД.ПРОВ — кабели и провода | `Марка` (без пробелов и дефисов, без регистра: «UL1061-28AWG» = «UL1061 28AWG») | колонки БД.ПРОВ (ниже) |
@@ -115,15 +115,21 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 | `suppliers` | Ссылка → поставщик | `key` (ссылка или домен: `https://www.chipdip.ru/…` = `chipdip.ru`) | `key`, `value` (поставщик) |
 | `countries` | Изготовитель → страна | `key` (изготовитель, без регистра и лишних пробелов) | `key`, `value` (страна) |
 | `gost_awg` | ГОСТ → AWG | `key` (сечение ГОСТ, мм²: `0,35` = `0.35`) | `key`, `value` (AWG, целое) |
-| `wire-gauges` | Сечения AWG ↔ мм² | `awg`, а у строки без AWG — `section_mm2` | `awg`, `section_mm2`, `conductor_d_mm`, `strands` |
+| `wire-gauges` | Сечения AWG ↔ мм² | `awg`, а у строки без AWG — `section_mm2` | `awg`, `section_mm2`, `conductor_d_mm` (скрутки у сечения нет с 0114 — она в строке провода) |
 | `hookups` | База монтажных проводов | марка БД.ПРОВ (серия + размер) | файл `hookup-wires.json` целиком (ниже) |
 
 Поля схемы — то, что читает генератор техкарт:
 
 - `ter`: `terManufacturer`, `terSeries`, `terComponent`, `terType`, `terArticle`, `terLPlus`, `terLMinus`,
   `terStep`, `terApplicator`, `terStrip`, `terCrimpHeight`, `terPullForceMin`, `terPullForceMax`, `awgFrom`,
-  `awgTo`, `mm2From`, `mm2To`;
-- `coax`: `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire`;
+  `awgTo`, `mm2From`, `mm2To`; карточка контакта по протоколу v5.2: `terGender` (Male / Female из «Тип контакта»),
+  `terArticleBag` (тот же контакт в упаковке BAG — вторая колонка той же строки, не отдельная строка),
+  `terInsCrimpHeight`, `terInsOdFrom`, `terInsOdTo`, `terMaterial` («Металл / Покрытие»), `terMaxCurrent` (А),
+  `terDatasheet` (ссылка на сайт производителя);
+- `coax`: `coaxArticle`, `coaxType`, `coaxMfr`, `coaxWire`; колонки карточки разъёма принимаются и до того, как они
+  есть у строк: «Тип пина», «Тип экрана», «Серия», «Пол», «Полярность», «Исполнение», «Монтаж», «Центральный
+  контакт», «Крепление экрана», «Волновое сопротивление, Ом», «Частота до, ГГц», «Материал корпуса», «Покрытие»,
+  «Габариты», «Наименование», «Ссылка», «Примечание», «Источник данных»;
 - `ob`: `baseValue`, `obType`.
 
 Колонки листа («Шаг разьема», «Артикул контакта (REEL)», «Инв. номер»…) — как их показывает «База данных»; точный
@@ -131,6 +137,19 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 колонку, из которой оно читается (`terStep` → «Шаг разьема»), а колонка — в своё поле схемы, так что генератор и
 экран видят одно. Поле схемы и его колонка в одной строке с разными значениями отклоняют строку. `connType`,
 `artISL`, `artSAG`, `supplier`, `program` генератор не хранит — их пишут через колонки листа.
+
+`ter` по протоколу контактов v5.2: аппликатор (`terApplicator`, «Аппликатор»), «Пневма Автомат», «ОТР», «С
+зачисткой» и мм² (`mm2From`, `mm2To`, «От мм2», «До мм2») заполняет технолог — строка с любым из них отклоняется,
+мм² из AWG не считаются. Усилие обрыва хранится в Н: значения в kgf/кгс умножаются на 9,8, в lbf — на 4,448
+(округление до 0,1); AWG пишется без «#»; материал — «Металл / Покрытие». Значения обжима, которых нет в документации
+производителя, не присылайте: пустое не усредняется и не подставляется. `terGender`, расходящийся с присланным в той
+же строке «Тип контакта», отклоняет строку; присланный без него становится типом контакта. База (миграция 0115) держит
+карточку проверками: `terGender` — Male, Female или пусто (непонятное слово отклоняет строку); `terInsOdFrom` /
+`terInsOdTo` — пусто или число мм больше нуля, «от» ≤ «до» (с учётом уже записанного); `terDatasheet` — пусто или
+ссылка http(s)://. Такая строка отклоняется с причиной, остальные пишутся. `GET /api/references/tech-operations?tab=ter`
+отдаёт у каждой записи `card` — карточку контакта для экрана «Терминалы». Тело загрузки из зеркала
+БД.ТЕР (по артикулу REEL: производитель, серия, тип и карточка контакта):
+`python -m app.modules.references.load_mirror --export-ter ter.json`.
 
 Колонки `prov`: «Марка», «Тип провода», «Стандарт / производитель», «Сечение, мм2», «AWG», «Жила: проволок ×
 диаметр, мм», «Число жил», «Цвета», «Наружный диаметр, мм», «Изоляция», «Экран», «Волновое сопротивление, Ом»,
@@ -156,7 +175,7 @@ curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: applicat
 post() { curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
   --data "$2" "$ERP/api/references/import/$1?dry_run=1"; }
 
-post ter '{"rows":[{"fields":{"terArticle":"ZHR-5","terManufacturer":"JST","terStep":"1,5","terApplicator":"AP-1","awgFrom":"28","awgTo":"26"}}]}'
+post ter '{"rows":[{"fields":{"terArticle":"ZHR-5","terManufacturer":"JST","terStep":"1,5","terGender":"Female","awgFrom":"28","awgTo":"26"}}]}'
 post coax '{"rows":[{"fields":{"coaxArticle":"BNC-C58P","coaxWire":"RG58","coaxType":"BNC-male","coaxMfr":"RUICHI"}}]}'
 post ob '{"rows":[{"fields":{"baseValue":"T21/Станция паяльная","obType":"Инструмент"}}]}'
 post prov '{"rows":[{"fields":{"Марка":"UL1061 28AWG","Цвета":"чёрный, красный","Наружный диаметр, мм":"0,89"}}]}'
@@ -169,6 +188,11 @@ post wire-gauges '{"rows":[{"fields":{"awg":"22","section_mm2":"0,35","conductor
 # Монтажные провода: тело — файл backend/data/cables/hookup-wires.json как есть (не {"rows": …})
 curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
   --data @backend/data/cables/hookup-wires.json "$ERP/api/references/import/hookups?dry_run=1"
+
+# Коаксиальные разъёмы gsm-repiteri.ru (311 разъёмов → строки «разъём × кабель» БД.КОАКС): тело собрано
+# `python -m app.modules.references.coax_connectors` из backend/data/cables/coax-connectors-gsm.json
+curl -s -X POST -H "Authorization: Bearer $ERP_TOKEN" -H "Content-Type: application/json" \
+  --data @backend/data/cables/coax-connectors-gsm.import.json "$ERP/api/references/import/coax?dry_run=1"
 
 # Поля таблицы
 curl -s -H "Authorization: Bearer $ERP_TOKEN" "$ERP/api/references/import/ter/schema"

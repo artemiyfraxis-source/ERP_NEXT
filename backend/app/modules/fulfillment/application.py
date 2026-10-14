@@ -19,9 +19,15 @@ from app.modules.warehouse.domain import (
     WriteOffEntry,
     issue_writeoff_reason,
 )
+from app.shared.article_match import binding_kind
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
-from app.shared.notifications import NotificationOutbox, notification_requested, publish_notification
+from app.shared.notifications import (
+    SUPPLY_AUDIENCE,
+    NotificationOutbox,
+    notification_requested,
+    publish_notification,
+)
 from app.shared.print_sheet import PrintSheet
 
 from .domain import (
@@ -56,6 +62,8 @@ class FulfillmentRepository(Protocol):
     def add(self, request: FulfillmentRequest) -> None: ...
     def delete(self, request_id: UUID) -> None: ...
     def open_requests(self) -> Sequence[FulfillmentRequest]: ...
+    # Read model for the ETK (`app.workflows.etk_lots`): (project_key, item_index, article, name, grn, package).
+    def issued_lots(self, kits: Sequence[tuple[str, str]]) -> Sequence[tuple[str, str, str, str, str, str]]: ...
 
 
 class WarehouseRepository(Protocol):
@@ -64,6 +72,12 @@ class WarehouseRepository(Protocol):
         self,
         limit: int = 200,
         after_id: UUID | None = None,
+        query: str = "",
+        warehouse: str | None = None,
+        include_zero: bool = False,
+    ) -> Sequence[StockLot]: ...
+    def filtered(
+        self,
         query: str = "",
         warehouse: str | None = None,
         include_zero: bool = False,
@@ -177,6 +191,14 @@ class OffBookCommand(VersionedFulfillmentCommand):
 
     line_id: UUID
     off_book: bool = True
+
+
+@dataclass(frozen=True)
+class AbsentCommand(VersionedFulfillmentCommand):
+    """«нет на складе» on one line without a lot (`absent=True`) or the mark removed (`absent=False`)."""
+
+    line_id: UUID
+    absent: bool = True
 
 
 @dataclass(frozen=True)
@@ -427,6 +449,17 @@ def refuse_duplicate_kits(requests: Sequence[FulfillmentRequest]) -> None:
         raise DuplicateKitRequest("; ".join(doubled) + " — отмените лишнюю, ничего не привязано")
 
 
+def binding_details(kd_article: str, position_name: str, lot: StockLot, via: str) -> dict:
+    """What a binding log event keeps (owner, 12.10.2026): the КД position, the lot it was bound to and how the two
+    matched — `python -m app.workflows.article_bindings_report` turns these into the pairs that warehouse articles
+    are normalized by. `match_kind`: exact · fuzzy-<rule> · manual (picked by search, no rule offered it)."""
+    return {
+        "kd_article": kd_article, "position_name": position_name, "lot_grn": lot.grn, "lot_package": lot.package or "",
+        "lot_article": lot.article, "lot_name": lot.name,
+        "match_kind": binding_kind(kd_article, position_name, lot.article, lot.name), "via": via,
+    }
+
+
 def _reserve_details(reserve: KitReserve, quantity: Decimal) -> dict:
     return {
         "quantity": format(quantity.normalize(), "f"), "unit": reserve.unit, "holder": reserve.label,
@@ -436,10 +469,12 @@ def _reserve_details(reserve: KitReserve, quantity: Decimal) -> dict:
 
 def release_kit_reserves(
     reserves: Sequence[KitReserve], actor: Actor, now: datetime, uow, lots: dict[UUID, StockLot] | None = None,
+    reason: str = "",
 ) -> dict[UUID, StockLot]:
     """Give the reserves back to their lots: РЕЗЕРВ goes down by what each still holds, the reserve keeps its trace
     (`released_at`). The lot is saved under its version, so a concurrent move of the lot refuses the whole step.
-    → the lots as saved (a caller reserving next on one of them goes on from that version)."""
+    ``reason`` — why, into the audit events. → the lots as saved (a caller reserving next on one of them goes on
+    from that version)."""
     lots = {} if lots is None else lots
     for reserve in reserves:
         if not reserve.active:
@@ -449,7 +484,7 @@ def release_kit_reserves(
             lot = lot.release_reserve(reserve.quantity)
             lots[lot.id] = lot
             uow.warehouse.add(lot)
-        details = _reserve_details(reserve, reserve.quantity)
+        details = _reserve_details(reserve, reserve.quantity) | ({"reason": reason} if reason else {})
         uow.kit_reserves.add(reserve.release(now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=reserve.lot_id, event_type="warehouse.kit_reserve_released",
@@ -512,7 +547,7 @@ def hold_kit_reserve(command: HoldKitReserveCommand, uow) -> KitReserve | None:
         created_at=command.now, created_by=command.actor.name,
     )
     uow.kit_reserves.add(reserve)
-    details = _reserve_details(reserve, wanted)
+    details = {**_reserve_details(reserve, wanted), **binding_details(reserve.article, "", held, "kitset")}
     uow.audit.add(AuditEvent(
         id=uuid4(), aggregate_id=held.id, event_type="warehouse.kit_reserve_held",
         actor=command.actor, occurred_at=command.now, details=details,
@@ -823,7 +858,7 @@ def bind_lot(command: BindLotCommand, uow: UnitOfWork) -> FulfillmentRequest:
         updated = request.bind_line(line.id, snapshot, quantity, lot.unit).stamped(command.now)
         uow.warehouse.add(reserved_lot)
         uow.fulfillment.add(updated)
-        _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity)}, uow)
+        _audit(updated, "fulfillment.lot_bound", command.actor, command.now, {"line_id": str(line.id), "lot_id": str(lot.id), "quantity": str(quantity), **binding_details(line.article, line.name, lot, "line")}, uow)
         _audit_auto_complete(request, updated, command.actor, command.now, uow)
         uow.commit()
         return updated
@@ -870,6 +905,52 @@ def set_off_book(command: OffBookCommand, uow: UnitOfWork) -> FulfillmentRequest
         uow.fulfillment.add(updated)
         _audit(updated, event, command.actor, command.now, _off_book_details(line), uow)
         _audit_auto_complete(request, updated, command.actor, command.now, uow)
+        uow.commit()
+        return updated
+
+
+def set_absent(command: AbsentCommand, uow: UnitOfWork) -> FulfillmentRequest:
+    """«нет на складе» (owner 12.10.2026): the storekeeper confirms the part is physically absent. The line stays open
+    as a shortage («ждут» on the КБ, НЕДОБОР «(нет на складе)»), «есть, но не заведено» on it is dropped; nothing on
+    the warehouse moves. Supply hears it once per mark; the project's «Снабжение» counts the line short, so «Заказать
+    недостающее» orders it (that order is idempotent by itself). A repeated press on a line already in the wanted
+    state changes nothing — no version bump, no second audit or message — whatever version the screen sent."""
+    with uow:
+        request = uow.fulfillment.get(command.request_id)
+        if request is None:
+            raise KeyError(f"Fulfillment request not found: {command.request_id}")
+        line = next((item for item in request.lines if item.id == command.line_id), None)
+        if line is None:
+            raise FulfillmentValidationError("Позиция заявки не найдена")
+        if line.absent == command.absent:
+            return request
+        if request.version != command.expected_version:
+            raise ConcurrentFulfillmentUpdate("Заявка изменилась после загрузки формы")
+        details = _off_book_details(line)
+        if command.absent:
+            updated = request.mark_absent(line.id, command.actor.name, command.now).stamped(command.now)
+            event = "fulfillment.absent_marked"
+            if line.off_book:
+                details["off_book_cleared"] = True
+        else:
+            updated = request.clear_absent(line.id).stamped(command.now)
+            event = "fulfillment.absent_cleared"
+        uow.fulfillment.add(updated)
+        _audit(updated, event, command.actor, command.now, details, uow)
+        if command.absent:
+            kit = f"{updated.purpose}, заявка {updated.number}"
+            publish_notification(uow.outbox, notification_requested(
+                key=f"fulfillment:{updated.id}:absent:{line.id}:v{updated.version}",
+                now=command.now,
+                title=f"Нет на складе: {line.article or line.name}",
+                body=(
+                    f"{line.name} — {_display_number(line.requirement)} {line.unit}. {kit}."
+                    f"\nОтметил: {command.actor.name}. Нужна закупка: проект → «Снабжение» → «Заказать недостающее»."
+                ),
+                kind="absent",
+                reference=updated.number,
+                audiences=(SUPPLY_AUDIENCE,),
+            ))
         uow.commit()
         return updated
 
@@ -937,6 +1018,7 @@ def _fill_line_fifo(
         ))
         _audit(request, "fulfillment.lot_bound", actor, now, {
             "line_id": str(target), "lot_id": str(lot.id), "quantity": str(give), **details,
+            **binding_details(line.article, line.name, lot, "project"),
         }, uow)
         need -= give
         if need > 0:  # the lot fell short: the split-off remainder waits for the next lot
@@ -1391,21 +1473,38 @@ def cancel_fulfillment(
 ) -> FulfillmentRequest:
     with uow:
         request = _versioned(command.request_id, command.expected_version, uow)
-        updated = request.cancel()
-        if updated == request:
+        updated = cancel_request_in(request, command.actor, command.now, uow)
+        if updated is request:
             return request
-        updated = updated.stamped(command.now)
-        for line in request.lines:
-            if line.lot is None or line.reserved <= 0:
-                continue
-            lot = uow.warehouse.get(line.lot.lot_id)
-            if lot is None:
-                raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
-            uow.warehouse.add(lot.release_reserve(line.reserved))
-        uow.fulfillment.add(updated)
-        _audit(updated, "fulfillment.cancelled", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
+
+
+def cancel_request_in(
+    request: FulfillmentRequest, actor: Actor, now: datetime, uow, details: dict | None = None,
+    lots: dict[UUID, StockLot] | None = None,
+) -> FulfillmentRequest:
+    """The body of `cancel_fulfillment` inside the caller's transaction (the caller commits): the request goes to
+    «Отменена», each line's РЕЗЕРВ goes back to its lot (stock itself does not move), one audit event. ``lots`` —
+    lots already changed in this transaction (two requests on one lot go on from its saved version). An already
+    closed request comes back as it is."""
+    updated = request.cancel()
+    if updated == request:
+        return request
+    updated = updated.stamped(now)
+    lots = {} if lots is None else lots
+    for line in request.lines:
+        if line.lot is None or line.reserved <= 0:
+            continue
+        lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
+        if lot is None:
+            raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
+        lot = lot.release_reserve(line.reserved)
+        lots[lot.id] = lot
+        uow.warehouse.add(lot)
+    uow.fulfillment.add(updated)
+    _audit(updated, "fulfillment.cancelled", actor, now, dict(details or {}), uow)
+    return updated
 
 
 def return_to_kitting(command: VersionedFulfillmentCommand, uow: UnitOfWork) -> FulfillmentRequest:
@@ -1509,6 +1608,8 @@ def build_issue_print_sheet(request: FulfillmentRequest, now: datetime) -> Print
     for index, line in enumerate(request.lines, start=1):
         if line.off_book:
             grn = "есть, не заведено"
+        elif line.absent:
+            grn = "— нет на складе —"
         else:
             grn = line.lot.grn if line.lot else "— ждём поставки —"
         package = line.lot.package if line.lot else ""

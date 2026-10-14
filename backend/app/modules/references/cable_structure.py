@@ -15,7 +15,7 @@ Pure rules only; storage is `infrastructure.py`, flows are `application.py`."""
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import UUID, uuid4
@@ -83,8 +83,11 @@ class WireGauge:
     awg: str | None  # «28», «1/0»; None — a ГОСТ-only size (0,07 мм²)
     section_mm2: Decimal
     conductor_d_mm: Decimal | None
-    strands: str
-    position: int
+    # The column «скрутка у сечения» is gone (migration 0114: strands belong to the wire). Migration 0096, frozen on
+    # main, still builds a WireGauge with the strands it seeded in this place and reads `.strands`: an init-only
+    # argument, never stored — `.strands` is always "".
+    strands: InitVar[str] = ""
+    position: int = 0
 
     @property
     def awg_number(self) -> int | None:
@@ -96,8 +99,8 @@ class WireGauge:
         return f"{self.awg} AWG · {section}" if self.awg else section
 
     @classmethod
-    def create(cls, *, awg: str, section_mm2: object, conductor_d_mm: object = "", strands: str = "",
-               position: int = 0, id: UUID | None = None) -> WireGauge:
+    def create(cls, *, awg: str, section_mm2: object, conductor_d_mm: object = "", position: int = 0,
+               id: UUID | None = None) -> WireGauge:
         clean_awg = str(awg or "").strip().upper().removesuffix("AWG").strip()
         if clean_awg and not _AWG.match(clean_awg):
             raise ReferenceValidationError("AWG: целое число (28) или 1/0…4/0; пусто — размер только по ГОСТ")
@@ -106,7 +109,7 @@ class WireGauge:
         section = positive("Сечение, мм²", section_mm2, required=True)
         diameter = positive("Ø жилы, мм", conductor_d_mm)
         return cls(id or uuid4(), str(int(clean_awg)) if clean_awg.isdigit() else (clean_awg or None), section, diameter,
-                   str(strands or "").strip(), position)
+                   position=position)
 
 
 def section_key(value: Decimal) -> str:
@@ -407,6 +410,21 @@ def attenuation_point(name: str, freq: Decimal, kind: str, value: object, unit: 
     )
 
 
+# Another name a coax cable is known by (owner 12.10.2026, «Коаксиальные кабели: алиасы + полное название»): the short
+# mark and its spellings («RG316», «RG1.37»), a supplier's full name («Кабель RG-316 50 Ом»), a supplier's article
+# («1951», with the supplier and the page). The key is the generator's cable key; it is unique across all cables.
+ALIAS_KINDS = ("mark", "full_name", "supplier_article")
+
+
+@dataclass(frozen=True)
+class CoaxAlias:
+    alias: str
+    alias_key: str
+    kind: str  # mark | full_name | supplier_article
+    supplier: str = ""
+    url: str = ""
+
+
 @dataclass(frozen=True)
 class CoaxCard:
     name: str
@@ -432,6 +450,9 @@ class CoaxCard:
     max_operating_ghz: Decimal | None = None  # the rated maximum operating frequency (datasheet), ≠ f_c
     max_operating_note: str = ""
     param_notes: Mapping[str, str] = field(default_factory=dict)
+    # From the supplier file (`coax-articles.json`), not the card file: the card load never changes them.
+    full_name: str = ""
+    aliases: tuple[CoaxAlias, ...] = ()
 
 
 def _text(value: object) -> str:
@@ -583,13 +604,210 @@ def cards_from_seed(document: Mapping[str, Any] | Sequence[Mapping[str, Any]]) -
     return cards
 
 
+def same_card(stored: CoaxCard, seed: CoaxCard) -> bool:
+    """The stored card already says what the file says (its id, full name and aliases are not the file's). Attenuation
+    is compared as a set: points of one frequency and kind from two sources have no order of their own."""
+    def points(card: CoaxCard) -> list:
+        return sorted(card.attenuation, key=lambda point: (point.freq_mhz, point.kind, point.source))
+
+    seed = replace(seed, id=stored.id, full_name=stored.full_name, aliases=stored.aliases)
+    return replace(seed, attenuation=()) == replace(stored, attenuation=()) and points(seed) == points(stored)
+
+
 def card_for(key: str, cards: Mapping[str, CoaxCard]) -> tuple[CoaxCard | None, bool]:
-    """The card of a cable row: by its exact key, else the family card («RG-58» for «RG-58 A/U», `cables.family_dia`
-    rule — a non-digit after the prefix). Returns (card, exact)."""
+    """The card of a cable row: by its exact key, then by one of a card's aliases (another name of the same cable —
+    exact too), else the family card («RG-58» for «RG-58 A/U», `cables.family_dia` rule — a non-digit after the
+    prefix), which is only a suggestion. Returns (card, exact)."""
     if key in cards:
         return cards[key], True
+    by_alias = next((card for card in cards.values() if any(alias.alias_key == key for alias in card.aliases)), None)
+    if by_alias is not None:
+        return by_alias, True
     best = ""
     for candidate in cards:
         if len(candidate) >= 3 and len(candidate) > len(best) and key.startswith(candidate) and not key[len(candidate):][:1].isdigit():
             best = candidate
     return (cards[best], False) if best else (None, False)
+
+
+# --- «Коаксиальные кабели»: full names and aliases from the supplier file ---
+
+ALIAS_MAX = 500  # coax_cable_aliases.alias / alias_key
+URL_MAX = 1000
+
+
+@dataclass(frozen=True)
+class CoaxNames:
+    """What the supplier file gives one card: its full name and its other names."""
+    full_name: str = ""
+    aliases: tuple[CoaxAlias, ...] = ()
+
+
+@dataclass(frozen=True)
+class ArticlesPlan:
+    names: dict[str, CoaxNames]  # card name key → names; every card, an empty CoaxNames when the file has none
+    no_card: tuple[str, ...]  # marks of the file no card is named as: their names wait until the card exists
+    refused: tuple[str, ...]  # «alias»: why it is not loaded
+    family_only: int  # offers of the family only («у поставщика RG-58 без суффикса») — never an alias
+
+
+def _alias(text: object, kind: str, supplier: object = "", url: object = "") -> CoaxAlias:
+    clean = _text(text)
+    return CoaxAlias(clean, cable_key(clean), kind, _text(supplier), _text(url))
+
+
+def names_from_articles(document: Mapping[str, Any], cards: Sequence[CoaxCard]) -> ArticlesPlan:
+    """The supplier file (`backend/data/cables/coax-articles.json`: cables[{mark, aliases[], offers[{supplier, article,
+    full_name, url, family_only}]}]) → the full name and aliases of each card.
+
+    An entry belongs to the card named as its mark or as one of its spellings — never to a family card («RG-58 A/U»
+    is not «RG-58»). Its aliases: the mark and its spellings, then the full name and the article of every offer of
+    this very cable (a family-only offer is not one). The full name of a card is the first such offer's. An alias
+    that is only the card's own key is dropped as a repeat. Refused, with the reason: an alias that is the name of
+    another card, or one two cables of the file both claim (an article of «5D-FB» and of «5D-FB Cu» — while only one
+    of them has a card, it is that card's)."""
+    by_key = {card.name_key: card for card in cards}
+    entries = [entry for entry in document.get("cables") or [] if isinstance(entry, Mapping)]
+    owners: list[str | None] = []
+    candidates: list[list[CoaxAlias]] = []
+    full_names: list[str] = []
+    family_only = 0
+    for entry in entries:
+        spellings = [_alias(entry.get("mark"), "mark")] + [_alias(item, "mark") for item in entry.get("aliases") or []]
+        owners.append(next((alias.alias_key for alias in spellings if alias.alias_key in by_key), None))
+        found = [alias for alias in spellings if alias.alias_key]
+        first_name = ""
+        for offer in entry.get("offers") or []:
+            if not isinstance(offer, Mapping):
+                continue
+            if offer.get("family_only"):
+                family_only += 1
+                continue
+            name = _alias(offer.get("full_name"), "full_name", offer.get("supplier"), offer.get("url"))
+            article = _alias(offer.get("article"), "supplier_article", offer.get("supplier"), offer.get("url"))
+            found += [alias for alias in (name, article) if alias.alias_key]
+            first_name = first_name or name.alias
+        candidates.append(found)
+        full_names.append(first_name)
+    claims: dict[str, set[str | None]] = {}
+    for owner, found in zip(owners, candidates):
+        for alias in found:
+            claims.setdefault(alias.alias_key, set()).add(owner)
+    names: dict[str, CoaxNames] = {key: CoaxNames() for key in by_key}
+    refused: dict[str, str] = {}
+    no_card: list[str] = []
+    for entry, owner, found, full_name in zip(entries, owners, candidates, full_names):
+        if owner is None:
+            no_card.append(_text(entry.get("mark")) or "(без марки)")
+            continue
+        kept = list(names[owner].aliases)
+        for alias in found:
+            if alias.alias_key == owner or any(item.alias_key == alias.alias_key for item in kept):
+                continue
+            problem = _alias_problem(alias, owner, by_key, claims)
+            if problem:
+                refused.setdefault(alias.alias, problem)
+                continue
+            kept.append(alias)
+        names[owner] = CoaxNames(names[owner].full_name or full_name, tuple(kept))
+    return ArticlesPlan(names, tuple(no_card), tuple(f"«{alias}»: {why}" for alias, why in refused.items()), family_only)
+
+
+def _alias_problem(alias: CoaxAlias, owner: str, by_key: Mapping[str, CoaxCard], claims: Mapping[str, set]) -> str:
+    if alias.alias_key in by_key:
+        return f"это название другого кабеля «{by_key[alias.alias_key].name}»"
+    with_cards = sorted(key for key in claims[alias.alias_key] if key in by_key)
+    if len(with_cards) > 1:
+        return "так названы разные кабели: " + ", ".join(by_key[key].name for key in with_cards)
+    if len(alias.alias) > ALIAS_MAX or len(alias.url) > URL_MAX:
+        return f"длиннее {ALIAS_MAX} знаков (ссылка — {URL_MAX})"
+    if alias.kind == "supplier_article" and not alias.supplier:
+        return "у артикула не указан поставщик"
+    return ""
+
+
+def validate_aliases(names: Mapping[str, CoaxNames], cards: Sequence[CoaxCard]) -> None:
+    """One cable per alias key, and never the name of another cable — what the loader refuses before writing (the
+    UNIQUE key in the base refuses the first case too)."""
+    by_key = {card.name_key: card for card in cards}
+    seen: dict[str, str] = {}
+    for owner, item in names.items():
+        for alias in item.aliases:
+            if alias.kind not in ALIAS_KINDS or not alias.alias_key:
+                raise ReferenceValidationError(f"«{alias.alias}»: вид алиаса — марка, полное название или артикул")
+            if alias.alias_key in by_key and alias.alias_key != owner:
+                raise ReferenceValidationError(f"«{alias.alias}» — это название другого кабеля «{by_key[alias.alias_key].name}»")
+            if seen.setdefault(alias.alias_key, owner) != owner:
+                raise ReferenceValidationError(f"«{alias.alias}» уже есть у кабеля «{by_key[seen[alias.alias_key]].name}»")
+
+
+def alias_dia_rows(index: Mapping[str, Mapping[str, str]], cards: Iterable[CoaxCard],
+                   diameters: Sequence[str] = ("D1", "D2", "D3")) -> list[dict[str, str]]:
+    """One more D-table row per name of a cable that has none of its own: named as that name (the first column, as
+    `coaxDiaFromRecords` reads it), with the D1–D3 of the cable — of the row named as the card, else of the first of
+    its aliases that has one. `index` — cable key → the D-table row the generator uses. A name with a row of its own
+    keeps it: every old key finds what it found before."""
+    rows: list[dict[str, str]] = []
+    for card in cards:
+        names = [(card.name, card.name_key)] + [(alias.alias, alias.alias_key) for alias in card.aliases]
+        source = next((index[key] for _name, key in names if key in index), None)
+        if source is None:
+            continue
+        rows += [{"Кабель": name, **{column: str(source.get(column) or "") for column in diameters}}
+                 for name, key in names if key not in index]
+    return rows
+
+
+# --- `load_cables --coax-vocabulary`: the БД.ПРОВ coax cells in the words of the coax vocabulary ---
+
+VOCABULARY_SOURCE = "БД.ПРОВ"
+PART_SEPARATOR = " / "  # «ПТФЭ (диэлектрик) / ФЭП (оболочка)»: one part per layer in the «Изоляция» cell
+
+
+@dataclass(frozen=True)
+class VocabularyCell:
+    mark: str
+    mark_key: str
+    field: str
+    old: str
+    new: str
+
+
+def vocabulary_cells(document: Mapping[str, Any]) -> list[VocabularyCell]:
+    """The `map` of `coax-vocabulary.json`, БД.ПРОВ entries → one cell per (cable, column): the old text and the
+    vocabulary term. The parts of one cell (`part`: диэлектрик, оболочка) are joined in the file's order with « / »,
+    as the cell keeps them. An entry with nothing old and nothing new (an empty cell) changes nothing. The entry's
+    `note` (sizes, «по данным продавца») stays in the file."""
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in document.get("map") or []:
+        if not isinstance(entry, Mapping) or _text(entry.get("source")) != VOCABULARY_SOURCE:
+            continue
+        mark, column = _text(entry.get("cable")), _text(entry.get("field"))
+        old, new = _text(entry.get("old")), _text(entry.get("new"))
+        if not cable_key(mark) or not column or not (old or new):
+            continue
+        cell = grouped.setdefault((cable_key(mark), column), {"mark": mark, "old": [], "new": []})
+        cell["old"].append(old)
+        cell["new"].append(new)
+    return [VocabularyCell(cell["mark"], key, column, PART_SEPARATOR.join(item for item in cell["old"] if item),
+                           PART_SEPARATOR.join(item for item in cell["new"] if item))
+            for (key, column), cell in grouped.items()]
+
+
+def vocabulary_changes(fields: Mapping[str, str], cells: Iterable[VocabularyCell]) -> tuple[dict[str, str], list[str]]:
+    """The cells of one БД.ПРОВ row to rewrite: a cell that still holds the old text gets the term; one that already
+    holds the term stays; one changed since (by hand, by the mirror) is not touched and is listed."""
+    changes: dict[str, str] = {}
+    problems: list[str] = []
+    for cell in cells:
+        if cell.field not in fields:
+            problems.append(f"{cell.mark}: нет столбца «{cell.field}»")
+            continue
+        current = _text(fields.get(cell.field))
+        if current == cell.new:
+            continue
+        if current == cell.old:
+            changes[cell.field] = cell.new
+        else:
+            problems.append(f"{cell.mark}, {cell.field}: в ячейке «{current}», в словаре было «{cell.old}» — не изменено")
+    return changes, problems

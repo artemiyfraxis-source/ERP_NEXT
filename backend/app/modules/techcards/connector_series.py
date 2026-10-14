@@ -5,9 +5,11 @@ A series groups the housing families of `connector_housings.FAMILIES` (SM: SMR +
 lists every housing the maker offers. The JST lists below are the «Housing» and «Header» tables of the JST catalogue
 sheets (jst-mfg.com/product/pdf/eng/e<series>.pdf, read 10.10.2026): each `(format, counts)` pair rebuilds the model
 numbers exactly as the sheet prints them, e.g. ("GHR-{:02d}V-S", (2, …, 15)) is GHR-02V-S … GHR-15V-S. Headers follow
-the JST rule «B… — top entry, S… — side entry, BM/SM — SMT». Series without such a table (Molex, Hirose, TE, …) show
-only the housings the ERP already knows — the family's sample article — and say «диапазон не сверен»; no model number
-is made up. Compatible crimp terminals come from БД.ТЕР by its «Series» column (housing prefixes such as «GHDR, GHR»).
+the JST rule «B… — top entry, S… — side entry, BM/SM — SMT». The other makers' catalogues (and the later JST sheets)
+are in `connector_catalog_data.CATALOG_SERIES` in the same format, each with the documents it was read from. Series
+without such a table show only the housings the ERP already knows — the family's sample article — and say «диапазон не
+сверен»; no model number is made up. Compatible crimp terminals come from БД.ТЕР by its «Series» column (housing
+prefixes such as «GHDR, GHR»); the contacts the catalogue lists are checked against БД.ТЕР («нет в «Терминалы»»).
 """
 
 from __future__ import annotations
@@ -18,11 +20,10 @@ from typing import Any
 
 from app.workflows.terminal_crimp import crimp_display
 
+from .connector_catalog_data import (
+    AUTO, BTB, CATALOG_SERIES, IFACE, JST_PDF, LUGS, PLUG, POWER, RF, ROUND, SIDE, SIDE_SMT, TOP, TOP_SMT, WTB, WTW,
+)
 from .connector_housings import CATALOG_SAMPLES, FAMILIES, housing_of, normalize_article
-
-JST_PDF = "https://www.jst-mfg.com/product/pdf/eng/{}.pdf"
-TOP, SIDE = "Вилка на плату, вертикальная", "Вилка на плату, угловая"
-TOP_SMT, SIDE_SMT = "Вилка на плату SMD, вертикальная", "Вилка на плату SMD, угловая"
 
 
 def _counts(first: int, last: int, *extra: int) -> tuple[int, ...]:
@@ -79,6 +80,8 @@ JST_SERIES: tuple[dict[str, Any], ...] = (
                   ("Розетка SMR, белая", "jst-sm-r", "SMR-{:02d}V-N", _counts(2, 12)),
                   ("Вилка SMP, чёрная", "jst-sm-p", "SMP-{:02d}V-BC", _counts(2, 12)),
                   ("Вилка SMP, белая", "jst-sm-p", "SMP-{:02d}V-NC", _counts(2, 12))),
+     # eSM «Contact»: the receptacle SMR takes the pin contact, the plug SMP the socket contact.
+     "contacts": (("SYM-001T-P0.6", "штырь, в розетку SMR, AWG 28–22"), ("SHF-001T-0.8BS", "гнездо, в вилку SMP, AWG 28–22")),
      "headers": (), "note": "18 конт. — двухрядный корпус, в базе не рисуется"},
     {"id": "jst-rcy", "title": "JST RCY", "sheet": "eRCY", "terminals": ("SYR", "SYP"),
      "variants": (("Розетка SYR, штыри", "jst-rcy", "SYR-{:02d}T", (2,)),
@@ -89,9 +92,6 @@ JST_SERIES: tuple[dict[str, Any], ...] = (
 )
 
 # Gallery sections in their fixed order (owner, 12.10.2026: grouping by type). Every series has exactly one.
-WTB, WTW, BTB = "Провод — плата", "Провод — провод", "Плата — плата"
-AUTO, ROUND, POWER, IFACE = "Автомобильные", "Цилиндрические", "Силовые", "Интерфейсные"
-PLUG, LUGS, RF = "Питание и штекеры", "Наконечники и клеммы", "ВЧ"
 CATEGORIES: tuple[str, ...] = (WTB, WTW, BTB, AUTO, ROUND, POWER, IFACE, PLUG, LUGS, RF)
 
 # Category of the families that are a series of their own (no entry in GROUPS).
@@ -103,26 +103,11 @@ FAMILY_CATEGORY: dict[str, str] = {
 # Other series: which families form one series and how БД.ТЕР names their terminals (a «Series» token, or the whole
 # «Series» / «Product Name» cell). A family not listed here is a series of its own, without terminals.
 GROUPS: tuple[dict[str, Any], ...] = (
-    {"id": "molex-picoblade", "title": "Molex PicoBlade", "category": WTB, "families": ("molex-picoblade", "molex-picoblade-plug"), "terminals": ("51021", "51047")},
-    {"id": "molex-minifit-jr", "title": "Molex Mini-Fit Jr.", "category": WTB, "families": ("molex-minifit-jr",), "terminals": ("5557", "Mini-Fit Jr.")},
-    {"id": "molex-microfit", "title": "Molex Micro-Fit 3.0", "category": WTB,
-     "families": ("molex-microfit", "molex-microfit-1r", "molex-microfit-plug", "molex-microfit-plug-1r"),
-     "terminals": ("43025", "43645", "43020", "43640")},
-    {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "category": WTB, "families": ("molex-sl-2r",), "terminals": ("SL",)},
+    {"id": "molex-sl", "title": "Molex SL", "category": WTB, "families": ("molex-sl-1r", "molex-sl-2r"), "terminals": ("SL",)},
+    {"id": "molex-igrid", "title": "Molex iGrid", "category": WTB, "families": ("molex-igrid",), "terminals": ("iGrid",)},
+    {"id": "molex-boardin", "title": "Molex Board-in", "category": WTB, "families": ("molex-boardin",), "terminals": ("Board-in",)},
     {"id": "molex-clikmate", "title": "Molex CLIK-Mate", "category": WTB, "families": ("molex-clikmate",), "terminals": ("502578", "CLIK-Mate")},
     {"id": "molex-picoclasp", "title": "Molex Pico-Clasp", "category": WTB, "families": ("molex-picoclasp-1r", "molex-picoclasp"), "terminals": ("501189", "501330")},
-    {"id": "molex-milligrid", "title": "Molex Milli-Grid", "category": WTB, "families": ("molex-milligrid",), "terminals": ("51110", "Milli-Grid")},
-    {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "category": WTB, "families": ("connfly-ds1071",),
-     "terminals": ("I-DS1071-SCB01", "I-DS1071-SCB02", "BLD2, BLS2"),
-     "datasheet": "https://www.connfly.com/static/upload/file/pdf/DS1071.pdf"},
-    {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "category": WTB, "families": ("connfly-ds1069",), "terminals": ("I-DS1069",),
-     "datasheet": "https://www.connfly.com/static/upload/file//DS1069.pdf"},
-    # DS1066 is in our data as a warehouse lot («Гнездо на провод … шаг 2,0», type «Соединитель»); БД.ТЕР names its contacts.
-    {"id": "connfly-ds1066", "title": "Connfly DS1066 (шаг 2,0)", "category": WTB, "families": ("connfly-ds1066",), "terminals": ("I-DS1066",)},
-    {"id": "hirose-df11", "title": "Hirose DF11", "category": WTB, "families": ("hirose-df11",), "terminals": ("DF11", "DF11EP")},
-    {"id": "hirose-df13", "title": "Hirose DF13", "category": WTB, "families": ("hirose-df13",), "terminals": ("DF13",)},
-    {"id": "hirose-df14", "title": "Hirose DF14", "category": WTB, "families": ("hirose-df14",), "terminals": ("DF14",)},
-    {"id": "jae-fix", "title": "JAE FI-X", "category": WTB, "families": ("jae-fix",), "terminals": ("FI-X",)},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "category": AUTO, "families": ("te-multilock-040",), "terminals": ("Multilock 040 MK-II",)},
     {"id": "te-superseal", "title": "TE Superseal 1.5", "category": AUTO, "families": ("te-superseal",), "terminals": ("Superseal 1.5", "SUPERSEAL (legacy)")},
     {"id": "deutsch-dt", "title": "Deutsch DT", "category": AUTO, "families": ("deutsch-dt",),
@@ -136,55 +121,14 @@ GROUPS: tuple[dict[str, Any], ...] = (
 # shows the terminals and the picture of the closest shape (`pic` = a family whose sample is drawn), never a made-up
 # model number. (id, title, maker, category, pic, terminal keys).
 _LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
-    ("molex-kk254", "Molex KK 254", "Molex", WTB, "jst-xh", ("KK 254",)),
-    ("molex-kk396", "Molex KK 396", "Molex", WTB, "jst-vh", ("KK 396 (legacy KK 156)", "KK 396/508")),
-    ("molex-cgrid3", "Molex C-Grid III", "Molex", WTB, "connfly-ds1071", ("C-Grid III",)),
-    ("molex-nanofit", "Molex Nano-Fit", "Molex", WTB, "molex-microfit", ("Nano-Fit",)),
-    ("molex-microfit-plus", "Molex Micro-Fit+", "Molex", WTB, "molex-microfit", ("Micro-Fit+", "Micro-Fit+ PCIe")),
-    ("molex-minifit-plus", "Molex Mini-Fit Plus", "Molex", WTB, "molex-minifit-jr", ("Mini-Fit Plus", "Mini-Fit Plus Grounding Terminal")),
-    ("molex-minifit-tpa2", "Molex Mini-Fit TPA2", "Molex", WTB, "molex-minifit-jr", ("Mini-Fit TPA2",)),
-    ("molex-minifit-max", "Molex Mini-Fit Max", "Molex", WTB, "molex-minifit-jr", ("Mini-Fit Max",)),
-    ("molex-ultrafit", "Molex ULTRA-FIT", "Molex", WTB, "molex-minifit-jr", ("ULTRA-FIT",)),
-    ("molex-picolock", "Molex Pico-Lock", "Molex", WTB, "molex-picoblade", ("Pico-Lock",)),
-    ("molex-microlock-plus", "Molex Micro-Lock Plus", "Molex", WTB, "molex-picoblade", ("Micro-Lock Plus",)),
-    ("molex-microlatch", "Molex Micro-Latch", "Molex", WTB, "molex-picoblade", ("Micro-Latch",)),
-    ("molex-minilock", "Molex Mini-Lock", "Molex", WTB, "jst-ph", ("Mini-Lock",)),
-    ("molex-microone", "Molex Micro-One", "Molex", WTB, "molex-picoblade", ("Micro-One",)),
-    ("molex-igrid", "Molex iGrid", "Molex", WTB, "molex-picoclasp-1r", ("iGrid",)),
+    # CTX50 terminals go into the Mini50 / CTX50 housings, Pico-EZmate is sold as cable assemblies (36920): no housing
+    # part number the maker lists for them was found, so they keep the closest shape.
     ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",)),
-    ("molex-minispox", "Molex Mini-SPOX", "Molex", WTB, "jst-xh", ("Mini-SPOX",)),
-    ("molex-picospox", "Molex Pico-SPOX", "Molex", WTB, "molex-picoblade", ("Pico-SPOX",)),
     ("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, "molex-picoblade", ("Pico-EZmate", "Pico-EZmate Plus")),
-    ("molex-oneblade", "Molex OneBlade", "Molex", WTB, "molex-picoblade", ("OneBlade",)),
-    ("molex-zerohachi", "Molex Zero-Hachi", "Molex", WTB, "molex-picoblade", ("Zero-Hachi",)),
-    ("molex-boardin", "Molex Board-in", "Molex", WTB, "jst-xh", ("Board-in",)),
-    ("jst-el", "JST EL", "JST", WTB, "jst-vh", ("EL",)),
-    ("jst-pad", "JST PAD / PND", "JST", WTB, "jst-pa", ("PAD, PND", "PAD")),
-    ("jst-gvh", "JST GVH", "JST", WTB, "jst-vh", ("GVH",)),
-    ("jst-pud", "JST PUD", "JST", WTB, "jst-ph", ("PUD",)),
-    ("jst-sqs", "JST SQS", "JST", WTB, "jst-ph", ("SQS",)),
-    ("jst-zpd", "JST ZPD", "JST", WTB, "jst-zh", ("ZPD",)),
-    ("jst-nshd", "JST NSHD", "JST", WTB, "jst-nsh", ("NSHD",)),
-    ("jst-shj", "JST SHJ", "JST", WTB, "jst-sh", ("SHJ",)),
-    ("jst-lbt", "JST LBT", "JST", WTB, "jst-sh", ("LBT",)),
-    ("jst-ra", "JST RA", "JST", WTB, "jst-ph", ("RA",)),
-    ("jst-suh", "JST SUH", "JST", WTB, "jst-ph", ("SUH",)),
     ("jst-wp", "JST WP (JWPF)", "JST", AUTO, "te-superseal", ("WP (JWPF)",)),
-    ("hirose-df19", "Hirose DF19", "Hirose", WTB, "hirose-df13", ("DF19",)),
-    ("hirose-df20", "Hirose DF20", "Hirose", WTB, "hirose-df13", ("DF20",)),
-    ("hirose-df61", "Hirose DF61", "Hirose", WTB, "hirose-df13", ("DF61",)),
-    ("jae-fir", "JAE FI-R", "JAE", WTB, "jae-fix", ("FI-R",)),
-    ("jae-fis", "JAE FI-S", "JAE", WTB, "jae-fix", ("FI-S",)),
-    ("connfly-ds1070", "Connfly DS1070", "Connfly", WTB, "connfly-ds1071", ("I-DS1070",)),
-    ("connfly-ds1072", "Connfly DS1072", "Connfly", WTB, "connfly-ds1071", ("I-DS1072",)),
-    ("connfly-ds1073", "Connfly DS1073 (серия MF)", "Connfly", WTB, "connfly-ds1071", ("I-DS1073",)),
-    ("connfly-ds1074", "Connfly DS1074", "Connfly", WTB, "connfly-ds1071", ("T-DS1074",)),
-    ("samtec-isd2", "Samtec ISD2 / ITD2", "Samtec", WTB, "connfly-ds1071", ("ISD2, ITD2",)),
     ("hsm-phu", "Hsuan Mao PHU / MHU / MX", "Hsuan Mao", WTB, "jst-ph", ("PHU/MHU/MX", "HC (PAP)")),
     ("kls", "KLS Electronic", "KLS", WTB, "connfly-ds1071", ("KLS1-2.50", "KLS1-2.54", "KLS1-XL4-1.25 (HRS DF13 type)")),
     ("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, "connfly-ds1071", ("JR/Futaba servo connector contact",)),
-    ("te-minict", "TE AMP Mini CT", "TE", WTB, "jst-xh", ("AMP Mini CT",)),
-    ("te-sl156", "TE SL-156", "TE", WTB, "connfly-ds1071", ("SL-156 Connector Contacts",)),
     ("te-matenlok", "TE MATE-N-LOK", "TE", WTW, "molex-minifit-jr", ("MATE-N-LOK",)),
     ("te-multilock-070", "TE Multilock 070", "TE", AUTO, "te-multilock-040", ("AMP MULTILOCK 070",)),
     ("te-mcon12", "TE MCON 1.2", "TE", AUTO, "te-superseal", ("MCON 1.2 LL (Locking-Lance)", "MCON 1.2mm")),
@@ -216,7 +160,6 @@ _RF: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
     ("rf-sr50", "СР-50", RF, ("СР-50",)), ("rf-fakra", "Fakra", AUTO, ("FAKRA",)),
 )
 
-MAKERS = ("JST", "Molex", "Connfly", "Hirose", "JAE", "TE", "Deutsch", "Amass", "Weipu", "CNLINKO")
 
 
 def _key(value: object) -> str:
@@ -276,19 +219,25 @@ def wire_range(terminals: Iterable[Mapping[str, Any]]) -> dict[str, float] | Non
     return result
 
 
-def _headers_by_count(headers: Iterable[tuple[str, str, tuple[int, ...]]]) -> dict[int, list[dict[str, str]]]:
-    out: dict[int, list[dict[str, str]]] = {}
-    for title, fmt, counts in headers:
+def _headers_by_count(headers: Iterable[tuple]) -> dict[int, list[dict[str, Any]]]:
+    """(title, format, counts[, family ids]) → headers by contact count; with family ids — only for the housings of
+    those families (Hirose DF1B: 18 contacts in one row and 18 in two rows mate different headers, the in-line
+    sockets none)."""
+    out: dict[int, list[dict[str, Any]]] = {}
+    for title, fmt, counts, *families in headers:
+        only = (families[0],) if families and isinstance(families[0], str) else (tuple(families[0]) if families else ())
         for count in counts:
-            out.setdefault(count, []).append({"title": title, "article": fmt.format(count)})
+            out.setdefault(count, []).append({"title": title, "article": fmt.format(count), "families": only})
     return out
 
 
-def _housing(article: str, headers: Mapping[int, list[dict[str, str]]] | None = None) -> dict[str, Any] | None:
+def _housing(article: str, headers: Mapping[int, list[dict[str, Any]]] | None = None) -> dict[str, Any] | None:
     layout = housing_of(article)
     if layout is None:
         return None
-    return {"article": article, "n": layout["n"], "housing": layout, "headers": (headers or {}).get(layout["n"], [])}
+    fitting = [{"title": h["title"], "article": h["article"]} for h in (headers or {}).get(layout["n"], [])
+               if not h["families"] or layout["family"] in h["families"]]
+    return {"article": article, "n": layout["n"], "housing": layout, "headers": fitting}
 
 
 def _summary(series: dict[str, Any]) -> dict[str, Any]:
@@ -303,6 +252,8 @@ def _summary(series: dict[str, Any]) -> dict[str, Any]:
         sample=housings[0] if housings else _picture(series.get("pic")),
     )
     series.pop("pic", None)
+    series.setdefault("sources", [{"title": "Чертёж производителя", "url": series["datasheet"]}] if series.get("datasheet") else [])
+    series.setdefault("contacts", [])
     return series
 
 
@@ -344,41 +295,105 @@ def _bare(series_id: str, title: str, maker: str, category: str, *, terminals: l
     })
 
 
+def _flat(article: object) -> str:
+    """A part number without separators: Molex «39-01-2080» and «39012080», JST «SHJP-02V-S (HF)» and «…(HF)» meet."""
+    return re.sub(r"[^0-9A-ZА-Я]", "", normalize_article(article))
+
+
+def _variant_articles(variant: tuple) -> tuple[str, str, list[str]]:
+    """(title, family, format, counts) → the part numbers the format rebuilds; (title, family, (part, …)) → as listed."""
+    if len(variant) == 3:
+        title, family, articles = variant
+        return title, family, list(articles)
+    title, family, fmt, counts = variant
+    return title, family, [fmt.format(count) for count in counts]
+
+
+def _jst_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """The first JST sheets (`JST_SERIES`) in the catalogue format of `connector_catalog_data`."""
+    return {**spec, "maker": "JST", "category": WTW if spec["id"] in {"jst-rcy", "jst-sm"} else WTB,
+            "datasheet": JST_PDF.format(spec["sheet"]), "range_checked": True, "range_src": f"JST {spec['sheet']}, Housing",
+            "sources": ((f"JST {spec['sheet']}", JST_PDF.format(spec["sheet"])),), "contacts": spec.get("contacts", ())}
+
+
+def _catalog_series(spec: Mapping[str, Any], records: list[Mapping[str, Any]], known: set[str]) -> dict[str, Any]:
+    """A series with its housing table from the maker's catalogue: every housing drawn by its family, the board headers
+    by contact count, the БД.ТЕР terminals and the catalogue's contacts marked present / missing in БД.ТЕР."""
+    headers = _headers_by_count(spec.get("headers", ()))
+    variants = []
+    for variant in spec["variants"]:
+        title, family, articles = _variant_articles(variant)
+        housings = [h for h in (_housing(article, headers) for article in articles) if h]
+        variants.append({"title": title, "family": family, "housings": housings})
+    terminals = terminals_for(spec["terminals"], records)
+    return _summary({
+        "id": spec["id"], "title": spec["title"], "maker": spec["maker"], "category": spec["category"],
+        "variants": variants, "range_checked": bool(spec.get("range_checked", True)), "range_src": spec.get("range_src", ""),
+        "datasheet": spec.get("datasheet", ""), "note": spec.get("note", ""), "terminals": terminals,
+        "wire": wire_range(terminals), "catalog": [],
+        "sources": [{"title": title, "url": url} for title, url in spec.get("sources", ())],
+        "contacts": [{"article": article, "wire": wire, "in_base": _flat(article) in known}
+                     for article, wire in spec.get("contacts", ())],
+    })
+
+
+# Makers sort the gallery inside a section (owner, 12.10.2026: «по производителю, затем по шагу»); a maker the list
+# lacks sorts by name after them, a series without a maker last.
+MAKERS = ("JST", "Molex", "Hirose", "JAE", "TE", "Connfly", "Samtec", "Hsuan Mao", "KLS", "Deutsch", "Amass", "Weipu",
+          "CNLINKO", "Sumitomo")
+
+
+def _order(series: Mapping[str, Any]) -> tuple:
+    maker = series.get("maker") or ""
+    rank = MAKERS.index(maker) if maker in MAKERS else len(MAKERS) + (1 if not maker else 0)
+    pitch = series.get("pitch")
+    return (CATEGORIES.index(series["category"]), rank, maker.casefold(), pitch if pitch is not None else 1e9,
+            str(series["title"]).casefold())
+
+
 def connector_series(
     terminal_records: Iterable[Mapping[str, Any]] = (), coax_records: Iterable[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     """Every series with all its housings (each drawn by `housing_of`), the board headers by contact count, the
-    compatible terminals and the wire range they take; each series has one `category`, the list runs by `CATEGORIES`
-    (inside one: JST first — catalogue ranges — then the rest by family order, then the series known only from
-    БД.ТЕР / БД.КОАКС)."""
+    compatible terminals and the wire range they take; each series has one `category`. The list runs by `CATEGORIES`,
+    inside one by maker (`MAKERS`), then by pitch: catalogue series (JST sheets, `CATALOG_SERIES`), the families the
+    ERP draws without a catalogue table, and the series known only from БД.ТЕР / БД.КОАКС."""
     records = list(terminal_records)
     coax = list(coax_records)
+    known = {_flat(fields.get(key)) for fields in records for key in ("terArticle", "terArticleBag") if fields.get(key)}
     result: list[dict[str, Any]] = []
     used: set[str] = set()
-    for spec in JST_SERIES:
-        headers = _headers_by_count(spec["headers"])
-        variants = []
-        for title, family, fmt, counts in spec["variants"]:
-            used.add(family)
-            housings = [h for h in (_housing(fmt.format(count), headers) for count in counts) if h]
-            variants.append({"title": title, "family": family, "housings": housings})
-        terminals = terminals_for(spec["terminals"], records)
-        result.append(_summary({
-            "id": spec["id"], "title": spec["title"], "maker": "JST", "variants": variants,
-            "category": WTW if spec["id"] in {"jst-rcy", "jst-sm"} else WTB,
-            "range_checked": True, "range_src": f"JST {spec['sheet']}, Housing",
-            "datasheet": JST_PDF.format(spec["sheet"]), "note": spec.get("note", ""),
-            "terminals": terminals, "wire": wire_range(terminals), "catalog": [],
-        }))
-    groups = {family: group for group in GROUPS for family in group["families"]}
+    for spec in (*(_jst_spec(spec) for spec in JST_SERIES), *CATALOG_SERIES):
+        series = _catalog_series(spec, records, known)
+        used.update(variant["family"] for variant in series["variants"])
+        result.append(series)
+    ids = {series["id"] for series in result}
+    # A family of a catalogue series whose drawing was not found (Molex CLIK-Mate 502578 beside 502439) keeps the
+    # housing the ERP knows; the series then says «диапазон не сверен».
+    catalogued = {series["id"]: series for series in result}
+    for group in GROUPS:
+        series = catalogued.get(group["id"])
+        if series is None:
+            continue
+        for family in FAMILIES:
+            if family["id"] in group["families"] and family["id"] not in used:
+                housings = [h for h in (_housing(article) for article in _known_articles(family)) if h]
+                if housings:
+                    series["variants"].append({"title": family["title"], "family": family["id"], "housings": housings})
+                    series["range_checked"] = False
+                    used.add(family["id"])
+        _summary(series)
+    groups = {family: group for group in GROUPS for family in group["families"] if group["id"] not in ids}
     by_id: dict[str, dict[str, Any]] = {}
     for family in FAMILIES:
         if family["id"] in used:
             continue
         group = groups.get(family["id"]) or {
             "id": family["id"], "title": family["title"], "families": (family["id"],), "terminals": (),
-            "category": FAMILY_CATEGORY[family["id"]],
+            "category": FAMILY_CATEGORY.get(family["id"], WTB),
         }
+        if group["id"] in ids:
+            continue
         articles = _known_articles(family)
         housings = [h for h in (_housing(article) for article in articles) if h]
         if not housings:
@@ -392,15 +407,16 @@ def connector_series(
                 "variants": [], "range_checked": False, "range_src": "", "datasheet": group.get("datasheet", ""),
                 "note": "", "terminals": terminals, "wire": wire_range(terminals), "catalog": [],
             }
-            result.append(series)
         series["variants"].append({"title": family["title"], "family": family["id"], "housings": housings})
-    for series in result[len(JST_SERIES):]:
-        _summary(series)
+    for series in by_id.values():
+        result.append(_summary(series))
+    ids |= set(by_id)
     for series_id, title, maker, category, pic, keys in _LOOSE:
-        result.append(_bare(series_id, title, maker, category, terminals=terminals_for(keys, records), pic=pic))
+        if series_id not in ids:
+            result.append(_bare(series_id, title, maker, category, terminals=terminals_for(keys, records), pic=pic))
     for series_id, title, category, bases in _RF:
         result.append(_bare(series_id, title, "", category, catalog=_rf_catalog(bases, coax), pic="dc-barrel"))
-    return sorted(result, key=lambda series: CATEGORIES.index(series["category"]))
+    return sorted(result, key=_order)
 
 
 def _known_articles(family: Mapping[str, Any]) -> list[str]:
@@ -412,16 +428,17 @@ def _known_articles(family: Mapping[str, Any]) -> list[str]:
 
 
 def find_in_series(article: object, series: Iterable[Mapping[str, Any]]) -> dict[str, Any] | None:
-    """The series and housing an article belongs to: exact model number first, then the series of the family the
-    article is drawn by (a count the catalogue table lacks still opens its series)."""
-    key = normalize_article(article)
+    """The series and housing an article belongs to: exact model number first (separators ignored, so «39012080»
+    finds «39-01-2080»), then the series of the family the article is drawn by (a count the catalogue table lacks
+    still opens its series)."""
+    key = _flat(article)
     layout = housing_of(article)
     family = layout["family"] if layout else None
     fallback = None
     for item in series:
         for variant in item["variants"]:
             for housing in variant["housings"]:
-                if normalize_article(housing["article"]) == key:
+                if _flat(housing["article"]) == key:
                     return {"series": item["id"], "article": housing["article"], "housing": housing["housing"]}
             if family and variant["family"] == family and fallback is None:
                 fallback = {"series": item["id"], "article": None, "housing": layout}

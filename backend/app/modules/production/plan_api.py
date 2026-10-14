@@ -76,6 +76,8 @@ class PlanEventPayload(BaseModel):
     field: str = Field(default="", max_length=32)
     # «Этап КБ» назад — причина обязательна (годится и `text`).
     reason: str = Field(default="", max_length=2000)
+    # «Этап КБ»: `preview_token` из `/stage-preview` — изменилось закрываемое с тех пор → 409.
+    preview_token: str = Field(default="", max_length=64)
 
 
 def _factory(request: Request, name: str, *, required: bool = False):
@@ -174,12 +176,17 @@ def production_plan(
     goods = _safe_read("goods", shipping_uow_factory, lambda uow: tuple(uow.goods.list(limit=10_000)))
     requests = _safe_read("requests", requests_uow_factory, lambda uow: tuple(uow.requests.recent(10_000)))
     procurement = _safe_read("procurement", procurement_uow_factory, lambda uow: tuple(uow.procurement.list(limit=10_000)))
+    # ОТК лестницы: коробки последней операции в очереди ОТК или проверенные ОТК.
+    boxes = _safe_read("boxes", production_uow_factory, lambda uow: tuple(uow.boxes.list(limit=100_000)))
+    inspected = _safe_read("qc", production_uow_factory, lambda uow: frozenset(uow.qc.inspected_box_ids()), frozenset())
+    worked = _safe_read("work", production_uow_factory, lambda uow: frozenset(uow.production.worked([task.id for task in tasks])), frozenset())
     running = tuple(task.id for task in tasks)
     outputs = _safe_read("outputs", production_uow_factory, lambda uow: tuple(uow.outputs.active_for_tasks(running)))
     rows = build_production_plan(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods,
         requests=requests, procurement=procurement, projects=projects,
         events=events, today=today, kitsets=kitsets, processed=_processed(outputs),
+        boxes=boxes, inspected=inspected, worked=worked,
     )
     first_day, last_day = calendar_span(today)
     return {
@@ -294,7 +301,8 @@ def stage_preview(
     value: Annotated[str, Query(min_length=1, max_length=64)],
     kb: Annotated[str, Query(max_length=64)] = "",
 ) -> dict:
-    """Предпросмотр ручной смены этапа с «Производственного плана» — тот же ответ, что у карточки проекта."""
+    """Предпросмотр ручной смены этапа с «Производственного плана» — тот же ответ, что у карточки проекта: по КБ что
+    закроется (`close`) и что останется с причиной (`keep`), итоги, `preview_token` для записи."""
     try:
         state = _stage_state(project, kb, uow_factory, techcards_uow_factory, fulfillment_uow_factory, shipping_uow_factory)
         return stage_flow.preview_project_stage(state, value, kb)
@@ -322,6 +330,7 @@ def save_plan_event(
             change = stage_flow.change_project_stage(stage_flow.ChangeProjectStageCommand(
                 project=payload.project, value=payload.value, kb=payload.item_index,
                 reason=payload.reason or payload.text, actor=principal.actor, now=now,
+                preview_token=payload.preview_token,
             ), state, uow_factory)
         except StageChangeConflict as error:
             raise HTTPException(status_code=409, detail=str(error)) from error

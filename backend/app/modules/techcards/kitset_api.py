@@ -45,6 +45,7 @@ from .kitsets import (
     document_kind,
     item_id,
     sort_kitsets,
+    supply_state,
 )
 from .project_cards import TechcardValidationError
 
@@ -91,6 +92,10 @@ def procurement_factory(request: Request):
 
 def receiving_factory(request: Request):
     return _factory(request, "receiving_uow_factory")
+
+
+def references_factory(request: Request):
+    return _factory(request, "references_uow_factory")
 
 
 def _name_queue(request: Request):
@@ -423,9 +428,12 @@ def supply(
     kitset = _kitset(request, project)
     lines, _requests = flow.project_supply(
         kitset, requests_factory(request), procurement_factory(request), fulfillment_factory(request),
+        references_factory(request),
     )
     return {"project": kitset.project, "lines": [{
-        "art": line.article, "name": line.name, "kbs": list(line.kbs), "need": _number(line.need),
+        "art": line.article, "name": line.name, "name_source": line.name_source, "name_hint": line.name_hint,
+        **_state_json(supply_state(line)),
+        "kbs": list(line.kbs), "need": _number(line.need),
         "unit": unit_for_type(line.item_type),
         "free": _number(line.free), "off_book": _number(line.off_book), "ordered": _number(line.ordered),
         "kitted": _number(line.kitted),
@@ -433,6 +441,11 @@ def supply(
         "grn": line.grn, "stage": line.stage, "received": line.received,
         "rows": [{"where": row.where, "status": row.status, "source_id": row.source_id} for row in line.rows],
     } for line in lines]}
+
+
+def _state_json(state) -> dict[str, str]:
+    """«Стадия» of a supply position: one word, its tone and the numbers behind it (`supply_state`)."""
+    return {"state": state.key, "state_label": state.label, "state_tone": state.tone, "state_hint": state.hint}
 
 
 class OrderMissingPayload(BaseModel):
@@ -467,6 +480,7 @@ def order_missing(
             return flow.order_missing(
                 command, techcards_factory(request), factory, procurement_uow=procurement_factory(request),
                 fulfillment_uow=fulfillment_factory(request), production_uow=production_factory(request),
+                references_uow=references_factory(request),
             )
         except RequestValidationError as error:
             raise KitsetValidationError(str(error)) from error
@@ -561,6 +575,8 @@ class MarkPayload(BaseModel):
     text: str = Field(default="", max_length=5000)
     # Ручной этап назад — причина обязательна (для этапа годится и `text`).
     reason: str = Field(default="", max_length=2000)
+    # Из предпросмотра: изменилось закрываемое (задания, заявки, резервы) или этапы — 409.
+    preview_token: str = Field(default="", max_length=64)
 
 
 def _stage_state(request: Request, kitset: Kitset, kb: str = "") -> flow.ProjectStageState:
@@ -583,7 +599,8 @@ def status_preview(
     kb: Annotated[str, Query(max_length=64)] = "",
 ) -> dict:
     """Что сделает ручная смена этапа (проекта или одной КБ) — до записи: по КБ «было → станет», пропущенные этапы,
-    что смена не трогает (задания цеха, заявки на комплектацию, непоставленная ГП, блокер), нужна ли причина."""
+    что закроется (`close`: задания цеха, заявки на комплектацию, резервы) и что останется с причиной (`keep`),
+    итоги, `preview_token` для записи, нужна ли причина."""
     kitset = _kitset(request, project)
     return _run(lambda: flow.preview_project_stage(_stage_state(request, kitset, kb), value, kb))
 
@@ -606,7 +623,7 @@ def mark(
     if payload.kind == "stage":
         change = _run(lambda: flow.change_project_stage(flow.ChangeProjectStageCommand(
             project=kitset.project, value=payload.value, kb=payload.kb, reason=payload.reason or payload.text,
-            actor=principal.actor, now=now,
+            actor=principal.actor, now=now, preview_token=payload.preview_token,
         ), _stage_state(request, kitset, payload.kb), factory))
         last = change.events[-1] if change.events else None
         return {
@@ -627,6 +644,8 @@ class StatusPayload(BaseModel):
     text: str = Field(default="", max_length=5000)
     # Этап назад — причина обязательна (для этапа годится и `text`).
     reason: str = Field(default="", max_length=2000)
+    # Этап — из предпросмотра: изменилось закрываемое или этапы — 409.
+    preview_token: str = Field(default="", max_length=64)
 
 
 @router.post("/{project}/status")
@@ -648,6 +667,7 @@ def change_status(
         project=kitset.project, item_indexes=tuple(assembly.index for assembly in kitset.assemblies),
         action=payload.action, value=payload.value,
         text=(payload.reason or payload.text) if stage else payload.text, actor=principal.actor, now=now,
+        preview_token=payload.preview_token if stage else "",
     ), factory, techcards=techcards_factory(request), fulfillment=fulfillment_factory(request),
         shipping=shipping_factory(request)))
     if isinstance(result, flow.ProjectStageChange):

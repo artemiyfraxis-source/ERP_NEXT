@@ -1,5 +1,6 @@
-"""Persistence of the harness drawing (infrastructure): its history `techcard_harness_revisions` (migration 0090) and
-the component library `harness_component_templates` (migration 0091, at the end of this file).
+"""Persistence of the harness drawing (infrastructure): its history `techcard_harness_revisions` (migration 0090),
+the component library `harness_component_templates` (migration 0091) and the «Маршрут v3» of a position
+`techcard_harness_routes` (migration 0111) — the last two at the end of this file.
 
 The drawing itself is the КД register row of its position (`kitset_infrastructure.KitDocumentRow`, current bytes);
 each save appends one revision here with the same bytes. The database holds the rules: a revision belongs to an
@@ -18,7 +19,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint, Uuid, false,
-    func, select, update,
+    delete, func, select, update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column, undefer
@@ -27,6 +28,7 @@ from app.shared.persistence import Base
 
 from . import kitset_infrastructure as _kitsets  # noqa: F401  (the FK target in the same metadata)
 from .harness.components import ComponentTemplate
+from .harness.route_v3 import StoredRoute
 from .harness.schema import REVISION_KINDS, HarnessRevision, HarnessWriteConflict, content_sha256
 
 _KINDS = ", ".join(f"'{kind}'" for kind in REVISION_KINDS)
@@ -101,6 +103,11 @@ class SqlAlchemyHarnessRevisionRepository:
         return self.session.scalar(
             select(func.count()).select_from(HarnessRevisionRow).where(HarnessRevisionRow.document_id == document_id)
         ) or 0
+
+    def delete_all(self, document_id: UUID) -> int:
+        """The whole history of a drawing — before its register row goes (the FK is RESTRICT)."""
+        result = self.session.execute(delete(HarnessRevisionRow).where(HarnessRevisionRow.document_id == document_id))
+        return result.rowcount or 0
 
     def get(self, document_id: UUID, revision: int) -> tuple[HarnessRevision, bytes] | None:
         row = self.session.scalar(
@@ -276,3 +283,82 @@ class SqlAlchemyHarnessComponentRepository:
         if row is None or row.snapshot_png is None:
             return None
         return _template(row), bytes(row.snapshot_png)
+
+
+# ── «Маршрут v3» of a position (migration 0111) ─────────────────────────────────────────────────────────────────────
+
+
+class HarnessRouteRow(Base):
+    """The route document of one КБ position (`harness.route_v3`). The database holds the rules: one route per position
+    (UNIQUE(project, item_index)), its revision is ≥ 1 and moves only by a write naming the revision it was made on
+    (`replace`), it names the drawing (an existing КД row, ON DELETE RESTRICT) and the drawing revision (≥ 0) it was
+    built on, the author and time are always there."""
+    __tablename__ = "techcard_harness_routes"
+    __table_args__ = (
+        UniqueConstraint("project", "item_index", name="uq_techcard_harness_routes_position"),
+        CheckConstraint("revision >= 1", name="ck_techcard_harness_routes_revision"),
+        CheckConstraint("drawing_revision >= 0", name="ck_techcard_harness_routes_drawing_revision"),
+        CheckConstraint("length(trim(project)) > 0 AND length(trim(item_index)) > 0",
+                        name="ck_techcard_harness_routes_position"),
+        CheckConstraint("length(trim(updated_by)) > 0", name="ck_techcard_harness_routes_updated_by"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    project: Mapped[str] = mapped_column(String(255), nullable=False)
+    item_index: Mapped[str] = mapped_column(String(64), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    drawing_document_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("techcard_kitset_documents.id", ondelete="RESTRICT",
+                   name="fk_techcard_harness_routes_drawing_document_id"),
+        nullable=False,
+    )
+    drawing_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    document: Mapped[dict] = mapped_column(JSON, nullable=False, deferred=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+def _route(row: HarnessRouteRow) -> StoredRoute:
+    return StoredRoute(
+        project=row.project, item_index=row.item_index, revision=row.revision,
+        drawing_document_id=row.drawing_document_id, drawing_revision=row.drawing_revision,
+        document=dict(row.document or {}), updated_at=row.updated_at, updated_by=row.updated_by,
+    )
+
+
+class SqlAlchemyHarnessRouteRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def get(self, project: str, item_index: str) -> StoredRoute | None:
+        row = self.session.scalar(
+            select(HarnessRouteRow).options(undefer(HarnessRouteRow.document))
+            .where(HarnessRouteRow.project == project, HarnessRouteRow.item_index == item_index)
+        )
+        return None if row is None else _route(row)
+
+    def add(self, route: StoredRoute) -> None:
+        """The first route of a position; one written meanwhile fails here as HarnessWriteConflict."""
+        self.session.add(HarnessRouteRow(
+            id=uuid4(), project=route.project, item_index=route.item_index, revision=route.revision,
+            drawing_document_id=route.drawing_document_id, drawing_revision=route.drawing_revision,
+            document=route.document, updated_at=route.updated_at, updated_by=route.updated_by,
+        ))
+        try:
+            self.session.flush()
+        except IntegrityError as error:
+            raise HarnessWriteConflict(str(error.orig)) from error
+
+    def replace(self, route: StoredRoute, expected_revision: int) -> bool:
+        """The route of the position moves on from `expected_revision`; False — someone wrote it meanwhile."""
+        result = self.session.execute(
+            update(HarnessRouteRow)
+            .where(HarnessRouteRow.project == route.project, HarnessRouteRow.item_index == route.item_index,
+                   HarnessRouteRow.revision == expected_revision)
+            .values(revision=route.revision, drawing_document_id=route.drawing_document_id,
+                    drawing_revision=route.drawing_revision, document=route.document,
+                    updated_at=route.updated_at, updated_by=route.updated_by)
+            .execution_options(synchronize_session=False)
+        )
+        return bool(result.rowcount)

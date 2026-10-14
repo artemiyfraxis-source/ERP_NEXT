@@ -3,7 +3,8 @@
 
 `POST /api/references/import/<table>?dry_run=1|0&source=api` — body `{"rows": [{"fields": {…}, "old": {…} | null}]}`
 (shared/bulk_import.py `ImportRequest`), answer `ImportReport`; `hookups` takes the hookup-wires.json document and
-answers its own report (the same sections plus its own). Without `dry_run=0` it is a check. Gate: a token with
+answers its own report (the same sections plus its own); `&fill_empty=1` writes only its empty cells (importers.py).
+Without `dry_run=0` it is a check. Gate: a token with
 `refs:write` or a person with «Справочник» edit; the supplier / country maps also want the buyer's right
 (`procurement` edit) from a person, as on screen. `GET /api/references/import/<table>/schema` — the key and fields.
 docs/api-references.md is the caller's manual."""
@@ -55,8 +56,11 @@ def import_table(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
     dry_run: Annotated[bool, Query()] = True,
     source: Annotated[Source, Query()] = "api",
+    fill_empty: Annotated[bool, Query()] = False,
 ) -> dict:
     _known(table)
+    if fill_empty and table != "hookups":
+        raise HTTPException(status_code=422, detail="fill_empty — только для базы монтажных проводов (hookups)")
     if table in MAP_TABLES and not principal.service and not (
         principal.full_access or principal.permissions.get("procurement") == "edit"
     ):
@@ -64,7 +68,8 @@ def import_table(
     try:
         if table == "hookups":
             bulk_import.RATE_LIMITER.check(principal.actor.id)
-            return import_hookups(uow_factory(), body, principal.actor, now, dry_run=dry_run, source=source).as_dict()
+            return import_hookups(uow_factory(), body, principal.actor, now, dry_run=dry_run, source=source,
+                                  fill_empty=fill_empty).as_dict()
         rows = body.get("rows")
         if isinstance(rows, list) and len(rows) > MAX_IMPORT_ROWS:
             raise bulk_import.ImportTooLarge(f"Строк за раз: не больше {MAX_IMPORT_ROWS}")

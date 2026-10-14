@@ -16,9 +16,13 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 from app.shared.persistence import Base, SqlAlchemyAuditRepository
 
 from .cable_structure import (
-    LAYERS, PARAMS, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, HookupWire, WireGauge,
+    ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
+    HookupWire, WireGauge, same_card,
 )
-from .domain import ReferenceEntry, ReferenceKind, TechOperationRecord, TechOperationTab
+from .domain import (
+    EDITABLE_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent,
+    TechOperationRecord, TechOperationTab,
+)
 
 
 class ReferenceEntryRow(Base):
@@ -34,10 +38,45 @@ class ReferenceEntryRow(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+def terminal_card_checks(dialect: str) -> dict[str, str]:
+    """БД.ТЕР contact card CHECKs over the JSON `fields` (migration 0115 holds a literal copy): gender Male / Female or
+    empty; insulation Ø from / to a positive number (decimal point or comma), from ≤ to; datasheet a http(s) link.
+    CASE keeps a text from being cast before it is known to be a number (PostgreSQL does not order AND / OR)."""
+    def value(key: str) -> str:
+        raw = f"json_extract(fields, '$.{key}')" if dialect == "sqlite" else f"(fields ->> '{key}')"
+        return f"COALESCE({raw}, '')"
+
+    def number(text: str) -> str:
+        if dialect == "sqlite":
+            return (f"({text} GLOB '[0-9]*' AND {text} NOT GLOB '*[^0-9.,]*' AND {text} NOT GLOB '*[.,]*[.,]*'"
+                    f" AND {text} NOT GLOB '*[.,]')")
+        return f"({text} ~ '^[0-9]+([.,][0-9]+)?$')"
+
+    def cast(text: str) -> str:
+        return f"CAST(REPLACE({text}, ',', '.') AS {'REAL' if dialect == 'sqlite' else 'NUMERIC'})"
+
+    def positive(text: str) -> str:
+        return f"CASE WHEN {text} = '' THEN TRUE WHEN {number(text)} THEN {cast(text)} > 0 ELSE FALSE END"
+
+    gender, od_from, od_to, sheet = (value(key) for key in ("terGender", "terInsOdFrom", "terInsOdTo", "terDatasheet"))
+    return {
+        "ck_tech_operation_records_ter_gender": f"tab <> 'ter' OR {gender} IN ('', 'Male', 'Female')",
+        "ck_tech_operation_records_ter_ins_od": (
+            f"tab <> 'ter' OR (({positive(od_from)}) AND ({positive(od_to)}) AND (CASE WHEN {number(od_from)} AND"
+            f" {number(od_to)} THEN {cast(od_from)} <= {cast(od_to)} ELSE TRUE END))"
+        ),
+        "ck_tech_operation_records_ter_datasheet": (
+            f"tab <> 'ter' OR {sheet} = '' OR {sheet} LIKE 'http://%' OR {sheet} LIKE 'https://%'"
+        ),
+    }
+
+
 class TechOperationRecordRow(Base):
     __tablename__ = "tech_operation_records"
     __table_args__ = (
         Index("ix_tech_operation_records_tab_sort", "tab", "sort_key"),
+        *(CheckConstraint(sql, name=name).ddl_if(dialect=dialect)
+          for dialect in ("sqlite", "postgresql") for name, sql in terminal_card_checks(dialect).items()),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     tab: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
@@ -90,6 +129,9 @@ class SqlAlchemyTechOperationRepository:
     def get(self, record_id: UUID) -> TechOperationRecord | None:
         row = self.session.get(TechOperationRecordRow, record_id)
         return None if row is None else self._domain(row)
+    def delete(self, record_id: UUID) -> None:
+        row = self.session.get(TechOperationRecordRow, record_id)
+        if row is not None: self.session.delete(row)
     def save(self, record: TechOperationRecord) -> None:
         row = self.session.get(TechOperationRecordRow, record.id)
         if row is None: row = TechOperationRecordRow(id=record.id); self.session.add(row)
@@ -152,7 +194,6 @@ class WireGaugeRow(Base):
     awg: Mapped[str | None] = mapped_column(String(8), nullable=True)
     section_mm2: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     conductor_d_mm: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
-    strands: Mapped[str] = mapped_column(String(64), nullable=False, default="", server_default="")
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
 
@@ -210,6 +251,7 @@ class CoaxCableRow(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     name_key: Mapped[str] = mapped_column(String(255), nullable=False)
     family: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    full_name: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     span_from_mhz: Mapped[Decimal | None] = mapped_column(Numeric(12, 3), nullable=True)
     span_to_ghz: Mapped[Decimal | None] = mapped_column(Numeric(10, 3), nullable=True)
     span_note: Mapped[str] = mapped_column(String(2000), nullable=False, default="", server_default="")
@@ -313,8 +355,30 @@ class CoaxCableAttenuationRow(Base):
     basis: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
 
 
+class CoaxCableAliasRow(Base):
+    """Another name of a coax card (migration 0108): the key is unique across all cables."""
+    __tablename__ = "coax_cable_aliases"
+    __table_args__ = (
+        UniqueConstraint("alias_key", name="ux_coax_cable_aliases_key"),
+        CheckConstraint("alias <> ''", name="ck_coax_cable_aliases_alias_not_blank"),
+        CheckConstraint("alias_key <> ''", name="ck_coax_cable_aliases_key_not_blank"),
+        CheckConstraint("kind IN (" + ", ".join(f"'{kind}'" for kind in ALIAS_KINDS) + ")", name="ck_coax_cable_aliases_kind"),
+        CheckConstraint("kind <> 'supplier_article' OR supplier <> ''", name="ck_coax_cable_aliases_article_supplier"),
+        Index("ix_coax_cable_aliases_cable", "cable_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    cable_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("coax_cables.id", ondelete="CASCADE"), nullable=False)
+    alias: Mapped[str] = mapped_column(String(500), nullable=False)
+    alias_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    supplier: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    url: Mapped[str] = mapped_column(String(1000), nullable=False, default="", server_default="")
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+
 def _gauge(row: WireGaugeRow) -> WireGauge:
-    return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm), row.strands, row.position)
+    return WireGauge(row.id, row.awg, Decimal(row.section_mm2), None if row.conductor_d_mm is None else Decimal(row.conductor_d_mm),
+                     position=row.position)
 
 
 def _dec(value) -> Decimal | None:
@@ -332,7 +396,7 @@ class SqlAlchemyCableStructureRepository:
         row = self.session.get(WireGaugeRow, gauge.id)
         if row is None: row = WireGaugeRow(id=gauge.id); self.session.add(row)
         row.awg = gauge.awg; row.section_mm2 = gauge.section_mm2; row.conductor_d_mm = gauge.conductor_d_mm
-        row.strands = gauge.strands; row.position = gauge.position
+        row.position = gauge.position
         self.session.flush()
 
     def delete_gauge(self, gauge_id: UUID) -> None:
@@ -368,7 +432,7 @@ class SqlAlchemyCableStructureRepository:
     def cards(self) -> list[CoaxCard]:
         cables = list(self.session.scalars(select(CoaxCableRow).order_by(CoaxCableRow.position, CoaxCableRow.name)))
         ids = [row.id for row in cables]
-        children: dict[UUID, dict[str, list]] = {cable_id: {"layers": [], "connectors": [], "markers": [], "attenuation": []} for cable_id in ids}
+        children: dict[UUID, dict[str, list]] = {cable_id: {"layers": [], "connectors": [], "markers": [], "attenuation": [], "aliases": []} for cable_id in ids}
         if ids:
             order = {layer: index for index, layer in enumerate(LAYERS)}
             for row in self.session.scalars(select(CoaxCableLayerRow).where(CoaxCableLayerRow.cable_id.in_(ids))):
@@ -379,6 +443,8 @@ class SqlAlchemyCableStructureRepository:
                 children[row.cable_id]["markers"].append(row)
             for row in self.session.scalars(select(CoaxCableAttenuationRow).where(CoaxCableAttenuationRow.cable_id.in_(ids)).order_by(CoaxCableAttenuationRow.freq_mhz, CoaxCableAttenuationRow.kind)):
                 children[row.cable_id]["attenuation"].append(row)
+            for row in self.session.scalars(select(CoaxCableAliasRow).where(CoaxCableAliasRow.cable_id.in_(ids)).order_by(CoaxCableAliasRow.position)):
+                children[row.cable_id]["aliases"].append(row)
         else:
             order = {}
         result = []
@@ -400,22 +466,31 @@ class SqlAlchemyCableStructureRepository:
                 params={key: _dec(getattr(row, key)) for key in PARAMS if getattr(row, key) is not None},
                 position=row.position, fc_note=row.fc_note, max_operating_ghz=_dec(row.max_operating_ghz),
                 max_operating_note=row.max_operating_note, param_notes=dict(row.param_notes or {}),
+                full_name=row.full_name or "",
+                aliases=tuple(CoaxAlias(item.alias, item.alias_key, item.kind, item.supplier, item.url) for item in own["aliases"]),
             ))
         return result
 
     def replace_cards(self, cards: Sequence[CoaxCard], now: datetime) -> dict[str, int]:
-        """Idempotent seed: a card per name key — kept id, its rows and children replaced by the file's; cards the
-        file no longer names are removed with their children."""
+        """Idempotent seed: a card per name key — kept id, its rows and children replaced by the file's when they
+        differ (an unchanged card is not written); cards the file no longer names are removed with their children and
+        aliases. The full name and the aliases are not the card file's (`replace_names`)."""
         existing = {row.name_key: row for row in self.session.scalars(select(CoaxCableRow))}
+        stored = {card.name_key: card for card in self.cards()}
         keys = {card.name_key for card in cards}
         removed = [row.id for key, row in existing.items() if key not in keys]
         if removed:
+            # the FK cascades on PostgreSQL; SQLite (tests, preview) does not enforce it, and an orphan name would
+            # still hold its unique key
+            self.session.execute(delete(CoaxCableAliasRow).where(CoaxCableAliasRow.cable_id.in_(removed)))
             self.session.execute(delete(CoaxCableRow).where(CoaxCableRow.id.in_(removed)))
         created = updated = 0
         for card in cards:
             row = existing.get(card.name_key)
             if row is None:
                 row = CoaxCableRow(id=card.id); self.session.add(row); created += 1
+            elif same_card(stored[card.name_key], card):
+                continue
             else:
                 updated += 1
                 for child in (CoaxCableLayerRow, CoaxCableConnectorRow, CoaxCableMarkerRow, CoaxCableAttenuationRow):
@@ -445,6 +520,103 @@ class SqlAlchemyCableStructureRepository:
         self.session.flush()
         return {"created": created, "updated": updated, "removed": len(removed)}
 
+    def replace_names(self, names: dict[str, CoaxNames]) -> dict[str, int]:
+        """Full name and aliases of each card (card name key → names; a card not given keeps its own). Written only
+        where they differ: a second load with the same file changes nothing. Aliases of every changed card go first,
+        so a name moving from one card to another never meets itself on the unique key."""
+        rows = {row.name_key: row for row in self.session.scalars(select(CoaxCableRow))}
+        cards = {card.name_key: card for card in self.cards()}
+        changed = [key for key, item in names.items() if key in cards and cards[key].aliases != item.aliases]
+        renamed = [key for key, item in names.items() if key in cards and cards[key].full_name != item.full_name]
+        if changed:
+            self.session.execute(delete(CoaxCableAliasRow).where(CoaxCableAliasRow.cable_id.in_([rows[key].id for key in changed])))
+            self.session.flush()
+        for key in renamed:
+            rows[key].full_name = names[key].full_name
+        added = removed = 0
+        for key in changed:
+            before = {alias.alias_key for alias in cards[key].aliases}
+            after = {alias.alias_key for alias in names[key].aliases}
+            added += len(after - before); removed += len(before - after)
+            self.session.add_all(CoaxCableAliasRow(
+                id=uuid4(), cable_id=rows[key].id, alias=alias.alias, alias_key=alias.alias_key, kind=alias.kind,
+                supplier=alias.supplier, url=alias.url, position=index) for index, alias in enumerate(names[key].aliases))
+        self.session.flush()
+        return {"cables_changed": len(set(changed) | set(renamed)), "aliases_added": added, "aliases_removed": removed,
+                "full_names_changed": len(renamed)}
+
+
+# --- «Склад → база данных» journal (migration 0116): append-only, the repository only adds and reads ---
+
+STOCK_LINK_EVENTS = tuple(event.value for event in StockLinkEvent)
+STOCK_LINK_TABS = tuple(sorted(tab.value for tab in EDITABLE_TABS))
+
+
+class ReferenceStockLinkRow(Base):
+    __tablename__ = "reference_stock_links"
+    __table_args__ = (
+        CheckConstraint("event IN ('linked', 'created', 'updated')", name="ck_reference_stock_links_event"),
+        CheckConstraint("record_tab IN ('coax', 'mat', 'ob', 'op', 'prov', 'ter')", name="ck_reference_stock_links_tab"),
+        CheckConstraint("length(trim(grn)) > 0", name="ck_reference_stock_links_grn"),
+        CheckConstraint("length(trim(record_text)) > 0", name="ck_reference_stock_links_record_text"),
+        CheckConstraint("length(trim(actor_name)) > 0", name="ck_reference_stock_links_actor"),
+        Index("ix_reference_stock_links_record_id", "record_id"),
+        Index("ix_reference_stock_links_lot_id", "lot_id"),
+        Index("ix_reference_stock_links_occurred_at", "occurred_at"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event: Mapped[str] = mapped_column(String(16), nullable=False)
+    lot_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_lots.id", ondelete="RESTRICT", name="fk_reference_stock_links_lot_id"),
+        nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(8), nullable=False)
+    grn: Mapped[str] = mapped_column(String(32), nullable=False)
+    package: Mapped[str] = mapped_column(String(32), nullable=False)
+    article: Mapped[str] = mapped_column(String(1024), nullable=False)
+    name: Mapped[str] = mapped_column(String(1024), nullable=False)
+    record_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tech_operation_records.id", ondelete="SET NULL", name="fk_reference_stock_links_record_id"),
+        nullable=True)
+    record_tab: Mapped[str] = mapped_column(String(16), nullable=False)
+    record_text: Mapped[str] = mapped_column(String(2000), nullable=False)
+    changes: Mapped[list] = mapped_column(JSON, nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class SqlAlchemyStockLinkRepository:
+    def __init__(self, session: Session): self.session = session
+
+    def add(self, entry: StockLinkEntry) -> None:
+        article = entry.article
+        self.session.add(ReferenceStockLinkRow(
+            id=entry.id, occurred_at=entry.occurred_at, event=entry.event.value, lot_id=article.lot_id,
+            warehouse=article.warehouse, grn=article.grn, package=article.package, article=article.article,
+            name=article.name, record_id=entry.record_id, record_tab=entry.record_tab.value,
+            record_text=entry.record_text,
+            changes=[{"field": change.field, "old": change.old, "new": change.new} for change in entry.changes],
+            actor_id=entry.actor_id, actor_name=entry.actor_name,
+        ))
+
+    def list(self, *, record_id: UUID | None = None, lot_id: UUID | None = None, limit: int = 500) -> list[StockLinkEntry]:
+        """Newest first."""
+        statement = select(ReferenceStockLinkRow)
+        if record_id is not None: statement = statement.where(ReferenceStockLinkRow.record_id == record_id)
+        if lot_id is not None: statement = statement.where(ReferenceStockLinkRow.lot_id == lot_id)
+        rows = self.session.scalars(statement.order_by(
+            ReferenceStockLinkRow.occurred_at.desc(), ReferenceStockLinkRow.id.desc()).limit(limit))
+        return [StockLinkEntry(
+            id=row.id, occurred_at=row.occurred_at, event=StockLinkEvent(row.event),
+            article=StockArticle(lot_id=row.lot_id, warehouse=row.warehouse, grn=row.grn, package=row.package,
+                                 article=row.article, name=row.name),
+            record_id=row.record_id, record_tab=TechOperationTab(row.record_tab), record_text=row.record_text,
+            changes=tuple(StockLinkChange(str(item.get("field", "")), str(item.get("old", "")), str(item.get("new", "")))
+                          for item in row.changes or []),
+            actor_id=row.actor_id, actor_name=row.actor_name,
+        ) for row in rows]
+
 
 class SqlAlchemyReferencesUnitOfWork:
     def __init__(self, session_factory: sessionmaker[Session]):
@@ -455,6 +627,7 @@ class SqlAlchemyReferencesUnitOfWork:
         self.tech_operations = SqlAlchemyTechOperationRepository(self.session)
         self.cable_structure = SqlAlchemyCableStructureRepository(self.session)
         self.audit = SqlAlchemyAuditRepository(self.session)
+        self.stock_links = SqlAlchemyStockLinkRepository(self.session)
         return self
     def __exit__(self, exc_type, exc, traceback) -> None:
         if self.session is None: return

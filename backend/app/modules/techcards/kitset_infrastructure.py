@@ -110,6 +110,14 @@ class SqlAlchemyKitsetRepository:
         row = self.session.scalar(select(KitsetRow).where(KitsetRow.project_key == project_key(project)))
         return self._domain(row) if row is not None else None
 
+    def for_projects(self, projects) -> dict[str, Kitset]:
+        """Kitsets of several projects in one query, by `project_key` (the ETK list reads its ГРН bindings so)."""
+        keys = {project_key(project) for project in projects if str(project or "").strip()}
+        if not keys:
+            return {}
+        rows = self.session.scalars(select(KitsetRow).where(KitsetRow.project_key.in_(keys)))
+        return {row.project_key: self._domain(row) for row in rows}
+
     def list(self) -> list[Kitset]:
         return [self._domain(row) for row in self.session.scalars(select(KitsetRow).order_by(KitsetRow.project))]
 

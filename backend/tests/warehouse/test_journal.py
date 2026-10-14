@@ -127,10 +127,10 @@ def journal_api():
     app.state.warehouse_uow_factory = factory
     app.dependency_overrides[moscow_now] = lambda: datetime(2026, 9, 21, 12, 0)
 
-    def login(*roles: str):
+    def login(*roles: str, warehouse: str = "edit"):
         app.dependency_overrides[authenticated_principal] = lambda: Principal(
             actor=Actor(name="Админ", department="Администрация"), email="admin@example.test",
-            roles=frozenset(roles), permissions={"warehouse": "edit"},
+            roles=frozenset(roles), permissions={"warehouse": warehouse},
         )
 
     login("admin")
@@ -171,11 +171,17 @@ def test_journal_endpoint_reads_real_movements_once_newest_first(journal_api):
 
 
 @pytest.mark.parametrize("roles", [("receiver",), ("master",), ("staff",)])
-def test_journal_is_for_the_administrator_only(journal_api, roles):
+def test_the_storekeeper_sees_the_journal(journal_api, roles):
+    # Владелец 12.10.2026: кто работает со складом, видит историю ГРН (в SUPPLYMAP — только администратор).
     client, _, login = journal_api
     login(*roles)
 
-    response = client.get("/api/stock/journal")
+    assert client.get("/api/stock/journal").status_code == 200
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "Журнал склада доступен только администратору."
+
+@pytest.mark.parametrize("warehouse", ["view", "none"])
+def test_the_journal_is_closed_without_warehouse_edit(journal_api, warehouse):
+    client, _, login = journal_api
+    login("staff", warehouse=warehouse)
+
+    assert client.get("/api/stock/journal").status_code == 403

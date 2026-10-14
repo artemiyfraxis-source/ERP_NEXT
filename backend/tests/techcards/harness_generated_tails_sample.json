@@ -1,0 +1,1824 @@
+{
+ "schemaVersion": 1,
+ "customWireColors": [
+  "#F4F4F4",
+  "#2E9E4F",
+  "#F2C200",
+  "#D7322D",
+  "#222222",
+  "#2463C7"
+ ],
+ "connectors": [
+  {
+   "id": "gen-x1",
+   "designation": "5",
+   "libraryCode": "FREE",
+   "partNumber": "SMR-02V-B",
+   "contacts": [
+    {
+     "id": "gen-x1:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "SYM-001T-P0.6",
+     "wire": "НВ4 0,5 красный",
+     "color": "#D7322D",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,5 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x1:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "SYM-001T-P0.6",
+     "wire": "НВ4 0,5 черный",
+     "color": "#222222",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,5 мм²",
+     "colorMode": "manual"
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-right",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 0,
+     "y": 0
+    },
+    "drawing": {
+     "x": 0,
+     "y": 40
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  },
+  {
+   "id": "gen-x2",
+   "designation": "I3",
+   "libraryCode": "FREE",
+   "partNumber": "SMR-02V-B",
+   "contacts": [
+    {
+     "id": "gen-x2:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "SYM-001T-P0.6",
+     "wire": "НВ4 0,12 белый",
+     "color": "#F4F4F4",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x2:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "SYM-001T-P0.6",
+     "wire": "НВ4 0,12 синий",
+     "color": "#2463C7",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-right",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 0,
+     "y": 172
+    },
+    "drawing": {
+     "x": 0,
+     "y": 206
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  },
+  {
+   "id": "gen-x3",
+   "designation": "C",
+   "libraryCode": "FREE",
+   "partNumber": "SMP-02V-BC",
+   "contacts": [
+    {
+     "id": "gen-x3:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "shf-001T-0.8BS",
+     "wire": "НВ4 0,12 белый",
+     "color": "#F4F4F4",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x3:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "shf-001T-0.8BS",
+     "wire": "НВ4 0,12 синий",
+     "color": "#2463C7",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-right",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 0,
+     "y": 344
+    },
+    "drawing": {
+     "x": 0,
+     "y": 372
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  },
+  {
+   "id": "gen-x4",
+   "designation": "A6",
+   "libraryCode": "FREE",
+   "partNumber": "SMR-04V-B",
+   "contacts": [
+    {
+     "id": "gen-x4:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "",
+     "color": "",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {}
+    },
+    {
+     "id": "gen-x4:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "SYM-001T-P0.6",
+     "wire": "НВ4 0,2 белый",
+     "color": "#F4F4F4",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x4:contact:3",
+     "number": 3,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "SYM-001T-P0.6",
+     "wire": "НВ4 0,2 зеленый",
+     "color": "#2E9E4F",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x4:contact:4",
+     "number": 4,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "SYM-001T-P0.6",
+     "wire": "НВ4 0,2 желтый",
+     "color": "#F2C200",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-right",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 0,
+     "y": 516
+    },
+    "drawing": {
+     "x": 0,
+     "y": 538
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  },
+  {
+   "id": "gen-x5",
+   "designation": "XS5",
+   "libraryCode": "FREE",
+   "partNumber": "I-DS1071-SCB01X3",
+   "contacts": [
+    {
+     "id": "gen-x5:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "T-DS1071-SC600",
+     "wire": "НВ4 0,5 красный",
+     "color": "#D7322D",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,5 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x5:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "T-DS1071-SC600",
+     "wire": "НВ4 0,2 красный",
+     "color": "#D7322D",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x5:contact:3",
+     "number": 3,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "T-DS1071-SC600",
+     "wire": "НВ4 0,5 черный",
+     "color": "#222222",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,5 мм²",
+     "colorMode": "manual"
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-left",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 1097,
+     "y": 148
+    },
+    "drawing": {
+     "x": 700,
+     "y": 190
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  },
+  {
+   "id": "gen-x6",
+   "designation": "XS6",
+   "libraryCode": "FREE",
+   "partNumber": "I-DS1071-SCB02X3",
+   "contacts": [
+    {
+     "id": "gen-x6:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "",
+     "color": "",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {}
+    },
+    {
+     "id": "gen-x6:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "T-DS1071-SC600",
+     "wire": "НВ4 0,2 черный",
+     "color": "#222222",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x6:contact:3",
+     "number": 3,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "T-DS1071-SC600",
+     "wire": "НВ4 0,2 желтый",
+     "color": "#F2C200",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x6:contact:4",
+     "number": 4,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "T-DS1071-SC600",
+     "wire": "НВ4 0,2 зеленый",
+     "color": "#2E9E4F",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x6:contact:5",
+     "number": 5,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "T-DS1071-SC600",
+     "wire": "НВ4 0,2 белый",
+     "color": "#F4F4F4",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,2 мм²",
+     "colorMode": "manual"
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-left",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 1097,
+     "y": 344
+    },
+    "drawing": {
+     "x": 700,
+     "y": 372
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  }
+ ],
+ "wires": [
+  {
+   "id": "gen-w1",
+   "from": {
+    "connectorId": "gen-x4",
+    "contactId": "gen-x4:contact:2"
+   },
+   "to": {
+    "connectorId": "gen-x6",
+    "contactId": "gen-x6:contact:5"
+   },
+   "circuit": "",
+   "color": "#F4F4F4",
+   "colorSource": {
+    "connectorId": "gen-x4",
+    "contactId": "gen-x4:contact:2"
+   },
+   "lengthMm": 330,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 491,
+     "y": 604
+    },
+    {
+     "x": 491,
+     "y": 504
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-w2",
+   "from": {
+    "connectorId": "gen-x4",
+    "contactId": "gen-x4:contact:3"
+   },
+   "to": {
+    "connectorId": "gen-x6",
+    "contactId": "gen-x6:contact:4"
+   },
+   "circuit": "",
+   "color": "#2E9E4F",
+   "colorSource": {
+    "connectorId": "gen-x4",
+    "contactId": "gen-x4:contact:3"
+   },
+   "lengthMm": 330,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 512,
+     "y": 628
+    },
+    {
+     "x": 512,
+     "y": 480
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-w3",
+   "from": {
+    "connectorId": "gen-x4",
+    "contactId": "gen-x4:contact:4"
+   },
+   "to": {
+    "connectorId": "gen-x6",
+    "contactId": "gen-x6:contact:3"
+   },
+   "circuit": "",
+   "color": "#F2C200",
+   "colorSource": {
+    "connectorId": "gen-x4",
+    "contactId": "gen-x4:contact:4"
+   },
+   "lengthMm": 330,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 533,
+     "y": 652
+    },
+    {
+     "x": 533,
+     "y": 456
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp1-w1",
+   "from": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:1"
+   },
+   "to": {
+    "junctionId": "gen-sp1",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#D7322D",
+   "colorSource": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:1"
+   },
+   "lengthMm": 150,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 825.5,
+     "y": 64
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp1-w3",
+   "from": {
+    "junctionId": "gen-sp1",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "connectorId": "gen-x5",
+    "contactId": "gen-x5:contact:2"
+   },
+   "circuit": "",
+   "color": "#D7322D",
+   "colorSource": {
+    "connectorId": "gen-x5",
+    "contactId": "gen-x5:contact:2"
+   },
+   "lengthMm": 160,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 825.5,
+     "y": 236
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp1-w2",
+   "from": {
+    "junctionId": "gen-sp1",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "connectorId": "gen-x5",
+    "contactId": "gen-x5:contact:1"
+   },
+   "circuit": "",
+   "color": "#D7322D",
+   "colorSource": {
+    "connectorId": "gen-x5",
+    "contactId": "gen-x5:contact:1"
+   },
+   "lengthMm": 160,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp1-w4",
+   "from": {
+    "junctionId": "gen-sp1",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "freeEnd": {
+     "x": 762,
+     "y": 212
+    },
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#D7322D",
+   "lengthMm": 60,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp2-w1",
+   "from": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:2"
+   },
+   "to": {
+    "junctionId": "gen-sp2",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#222222",
+   "colorSource": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:2"
+   },
+   "lengthMm": 150,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 741,
+     "y": 88
+    },
+    {
+     "x": 741,
+     "y": 260
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp2-w3",
+   "from": {
+    "junctionId": "gen-sp2",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "connectorId": "gen-x6",
+    "contactId": "gen-x6:contact:2"
+   },
+   "circuit": "",
+   "color": "#222222",
+   "colorSource": {
+    "connectorId": "gen-x6",
+    "contactId": "gen-x6:contact:2"
+   },
+   "lengthMm": 180,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 919,
+     "y": 432
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp2-w2",
+   "from": {
+    "junctionId": "gen-sp2",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "connectorId": "gen-x5",
+    "contactId": "gen-x5:contact:3"
+   },
+   "circuit": "",
+   "color": "#222222",
+   "colorSource": {
+    "connectorId": "gen-x5",
+    "contactId": "gen-x5:contact:3"
+   },
+   "lengthMm": 160,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp2-w4",
+   "from": {
+    "junctionId": "gen-sp2",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "freeEnd": {
+     "x": 855,
+     "y": 260
+    },
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#222222",
+   "lengthMm": 60,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 919,
+     "y": 191
+    },
+    {
+     "x": 855,
+     "y": 191
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp3-w1",
+   "from": {
+    "connectorId": "gen-x2",
+    "contactId": "gen-x2:contact:1"
+   },
+   "to": {
+    "junctionId": "gen-sp3",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#F4F4F4",
+   "colorSource": {
+    "connectorId": "gen-x2",
+    "contactId": "gen-x2:contact:1"
+   },
+   "lengthMm": 150,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 485,
+     "y": 236
+    },
+    {
+     "x": 485,
+     "y": 301
+    },
+    {
+     "x": 470,
+     "y": 301
+    },
+    {
+     "x": 470,
+     "y": 322
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp3-w3",
+   "from": {
+    "junctionId": "gen-sp3",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "freeEnd": {
+     "x": 555,
+     "y": 322
+    },
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#F4F4F4",
+   "lengthMm": 60,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp3-w2",
+   "from": {
+    "connectorId": "gen-x3",
+    "contactId": "gen-x3:contact:1"
+   },
+   "to": {
+    "junctionId": "gen-sp3",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#F4F4F4",
+   "colorSource": {
+    "connectorId": "gen-x3",
+    "contactId": "gen-x3:contact:1"
+   },
+   "lengthMm": 150,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 491,
+     "y": 408
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp4-w1",
+   "from": {
+    "connectorId": "gen-x2",
+    "contactId": "gen-x2:contact:2"
+   },
+   "to": {
+    "junctionId": "gen-sp4",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#2463C7",
+   "colorSource": {
+    "connectorId": "gen-x2",
+    "contactId": "gen-x2:contact:2"
+   },
+   "lengthMm": 150,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 512,
+     "y": 260
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp4-w3",
+   "from": {
+    "junctionId": "gen-sp4",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "to": {
+    "freeEnd": {
+     "x": 576,
+     "y": 346
+    },
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#2463C7",
+   "lengthMm": 60,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-sp4-w2",
+   "from": {
+    "connectorId": "gen-x3",
+    "contactId": "gen-x3:contact:2"
+   },
+   "to": {
+    "junctionId": "gen-sp4",
+    "connectorId": "",
+    "contactId": ""
+   },
+   "circuit": "",
+   "color": "#2463C7",
+   "colorSource": {
+    "connectorId": "gen-x3",
+    "contactId": "gen-x3:contact:2"
+   },
+   "lengthMm": 150,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 512,
+     "y": 432
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  }
+ ],
+ "cables": [],
+ "junctions": [
+  {
+   "id": "gen-sp1",
+   "position": {
+    "x": 825.5,
+    "y": 212
+   },
+   "wireIds": [
+    "gen-sp1-w1",
+    "gen-sp1-w3",
+    "gen-sp1-w2",
+    "gen-sp1-w4"
+   ]
+  },
+  {
+   "id": "gen-sp2",
+   "position": {
+    "x": 919,
+    "y": 260
+   },
+   "wireIds": [
+    "gen-sp2-w1",
+    "gen-sp2-w3",
+    "gen-sp2-w2",
+    "gen-sp2-w4"
+   ]
+  },
+  {
+   "id": "gen-sp3",
+   "position": {
+    "x": 491,
+    "y": 322
+   },
+   "wireIds": [
+    "gen-sp3-w1",
+    "gen-sp3-w3",
+    "gen-sp3-w2"
+   ]
+  },
+  {
+   "id": "gen-sp4",
+   "position": {
+    "x": 512,
+    "y": 346
+   },
+   "wireIds": [
+    "gen-sp4-w1",
+    "gen-sp4-w3",
+    "gen-sp4-w2"
+   ]
+  }
+ ],
+ "diffPairs": [],
+ "screens": [],
+ "views": {
+  "e4": {
+   "layers": [
+    {
+     "id": "material-indexes",
+     "name": "Индексы материалов и позиции",
+     "order": 4,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connection-points",
+     "name": "Точки соединения",
+     "order": 3,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "dimensions",
+     "name": "Размеры",
+     "order": 2,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connectors",
+     "name": "Соединители",
+     "order": 1,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "wires",
+     "name": "Провода",
+     "order": 0,
+     "visible": true,
+     "locked": false
+    }
+   ],
+   "wireCrossingStyle": "none",
+   "e4RoutingMode": "orthogonal"
+  },
+  "drawing": {
+   "layers": [
+    {
+     "id": "material-indexes",
+     "name": "Индексы материалов и позиции",
+     "order": 4,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connection-points",
+     "name": "Точки соединения",
+     "order": 3,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "dimensions",
+     "name": "Размеры",
+     "order": 2,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connectors",
+     "name": "Соединители",
+     "order": 1,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "wires",
+     "name": "Провода",
+     "order": 0,
+     "visible": true,
+     "locked": false
+    }
+   ],
+   "wireCrossingStyle": "none"
+  }
+ },
+ "requiredWriterContractVersion": 1,
+ "physicalTopology": {
+  "snap": true,
+  "nodes": [
+   {
+    "id": "gen-n1",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 36
+    },
+    "direction": "right"
+   },
+   {
+    "id": "gen-n2",
+    "connectorId": "gen-x2",
+    "position": {
+     "x": 178,
+     "y": 36
+    },
+    "direction": "right"
+   },
+   {
+    "id": "gen-n3",
+    "connectorId": "gen-x3",
+    "position": {
+     "x": 178,
+     "y": 36
+    },
+    "direction": "right"
+   },
+   {
+    "id": "gen-n4",
+    "connectorId": "gen-x4",
+    "position": {
+     "x": 178,
+     "y": 60
+    },
+    "direction": "right"
+   },
+   {
+    "id": "gen-n5",
+    "connectorId": "gen-x5",
+    "position": {
+     "x": -60,
+     "y": 44
+    },
+    "direction": "left"
+   },
+   {
+    "id": "gen-n6",
+    "connectorId": "gen-x6",
+    "position": {
+     "x": -60,
+     "y": 68
+    },
+    "direction": "left"
+   },
+   {
+    "id": "gen-j1",
+    "position": {
+     "x": 409,
+     "y": 337
+    }
+   },
+   {
+    "id": "gen-n-gen-sp3",
+    "position": {
+     "x": 469,
+     "y": 417
+    }
+   },
+   {
+    "id": "gen-n-gen-sp4",
+    "position": {
+     "x": 469,
+     "y": 257
+    }
+   },
+   {
+    "id": "gen-n-gen-sp1",
+    "position": {
+     "x": 255,
+     "y": 163
+    }
+   },
+   {
+    "id": "gen-n-gen-sp2",
+    "position": {
+     "x": 332,
+     "y": 250
+    }
+   },
+   {
+    "id": "gen-n-gen-sp1-w4",
+    "position": {
+     "x": 315,
+     "y": 110
+    }
+   },
+   {
+    "id": "gen-n-gen-sp2-w4",
+    "position": {
+     "x": 392,
+     "y": 197
+    }
+   },
+   {
+    "id": "gen-n-gen-sp3-w3",
+    "position": {
+     "x": 517,
+     "y": 481
+    }
+   },
+   {
+    "id": "gen-n-gen-sp4-w3",
+    "position": {
+     "x": 517,
+     "y": 193
+    }
+   }
+  ],
+  "segments": [
+   {
+    "id": "gen-s1",
+    "from": "gen-n1",
+    "to": "gen-n-gen-sp1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s1-1",
+    "from": "gen-n-gen-sp1",
+    "to": "gen-n-gen-sp2",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s1-2",
+    "from": "gen-n-gen-sp2",
+    "to": "gen-j1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s2",
+    "from": "gen-n2",
+    "to": "gen-j1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s3",
+    "from": "gen-n3",
+    "to": "gen-j1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s4",
+    "from": "gen-n4",
+    "to": "gen-j1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s5",
+    "from": "gen-j1",
+    "to": "gen-n5",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s6",
+    "from": "gen-j1",
+    "to": "gen-n6",
+    "path": {
+     "kind": "routed",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s7",
+    "from": "gen-j1",
+    "to": "gen-n-gen-sp3",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s8",
+    "from": "gen-j1",
+    "to": "gen-n-gen-sp4",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s11",
+    "from": "gen-n-gen-sp1",
+    "to": "gen-n-gen-sp1-w4",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s12",
+    "from": "gen-n-gen-sp2",
+    "to": "gen-n-gen-sp2-w4",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s13",
+    "from": "gen-n-gen-sp3",
+    "to": "gen-n-gen-sp3-w3",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   },
+   {
+    "id": "gen-s14",
+    "from": "gen-n-gen-sp4",
+    "to": "gen-n-gen-sp4-w3",
+    "path": {
+     "kind": "polyline",
+     "points": []
+    }
+   }
+  ],
+  "routes": [
+   {
+    "wireId": "gen-sp1-w1",
+    "steps": [
+     {
+      "segmentId": "gen-s1",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp1-w3",
+    "steps": [
+     {
+      "segmentId": "gen-s1-1",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s1-2",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp1-w2",
+    "steps": [
+     {
+      "segmentId": "gen-s1-1",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s1-2",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp1-w4",
+    "steps": [
+     {
+      "segmentId": "gen-s11",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp2-w1",
+    "steps": [
+     {
+      "segmentId": "gen-s1",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s1-1",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp2-w3",
+    "steps": [
+     {
+      "segmentId": "gen-s1-2",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp2-w2",
+    "steps": [
+     {
+      "segmentId": "gen-s1-2",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp2-w4",
+    "steps": [
+     {
+      "segmentId": "gen-s12",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp3-w1",
+    "steps": [
+     {
+      "segmentId": "gen-s2",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp3-w3",
+    "steps": [
+     {
+      "segmentId": "gen-s13",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp3-w2",
+    "steps": [
+     {
+      "segmentId": "gen-s3",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp4-w1",
+    "steps": [
+     {
+      "segmentId": "gen-s2",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp4-w3",
+    "steps": [
+     {
+      "segmentId": "gen-s14",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-sp4-w2",
+    "steps": [
+     {
+      "segmentId": "gen-s3",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s8",
+      "reverse": false
+     }
+    ]
+   },
+   {
+    "wireId": "gen-w1",
+    "steps": [
+     {
+      "segmentId": "gen-s4",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     }
+    ],
+    "automatic": true
+   },
+   {
+    "wireId": "gen-w2",
+    "steps": [
+     {
+      "segmentId": "gen-s4",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     }
+    ],
+    "automatic": true
+   },
+   {
+    "wireId": "gen-w3",
+    "steps": [
+     {
+      "segmentId": "gen-s4",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     }
+    ],
+    "automatic": true
+   }
+  ]
+ },
+ "drawingDocuments": {
+  "tables": [],
+  "leaders": [],
+  "bomOrder": []
+ }
+}

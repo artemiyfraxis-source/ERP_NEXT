@@ -139,7 +139,8 @@ class _Reader:
 
     # --- wires ----------------------------------------------------------------------------------------------
     def endpoint(self, value: object, where: str) -> Endpoint:
-        """parseEndpoint (model.ts): junction, screen or connector contact; anything else is a free end."""
+        """parseEndpoint (model.ts): junction, screen, connector contact or an open end (`freeEnd`); anything else is a free
+        end too, with a warning."""
         item = _map(value)
         if item.get("junctionId"):
             return Endpoint("junction", junction_id=_text(item["junctionId"]))
@@ -150,6 +151,8 @@ class _Reader:
             return Endpoint("screen", screen_id=_text(item["screenId"]), screen_side=side)
         if item.get("connectorId") and item.get("contactId"):
             return Endpoint("contact", connector_id=_text(item["connectorId"]), contact_id=_text(item["contactId"]))
+        if "freeEnd" in item:
+            return Endpoint("free")  # an open end («хвост»): its point on the Э4 scheme stays in the raw endpoint
         if item and set(item) - {"connectorId", "contactId"}:
             self.warn(f"{where}: незнакомый тип конца ({', '.join(sorted(item))}) — конец свободный")
         return Endpoint("free")

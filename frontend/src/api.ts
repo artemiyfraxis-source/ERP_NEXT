@@ -35,6 +35,9 @@ export interface Principal {
   /** «Режим админа» (portalToggleAdmin): the account may switch it / it is on for this session. */
   can_admin_mode?: boolean;
   admin_mode?: boolean;
+  /** «Смотреть как сотрудник»: `user` and the rights above are the viewed employee's; who really looks and until when.
+   *  The server refuses every change while it is on, except «Вернуться к себе» and «Выйти». */
+  viewing?: { viewer: { id: string; name: string }; until: string | null } | null;
 }
 
 /** The login list (portalStaffLite_): active employees, no e-mails. */
@@ -547,6 +550,23 @@ export interface FulfillmentLot {
   available: string;
 }
 
+/** «Возможно есть»: a warehouse lot that may be a КД position; `kind` exact — the same article, fuzzy — a lookalike;
+ * `by` — matched by the position's name (against the lot's article) or, as the fallback, by the КД article. */
+export interface FulfillmentCandidate extends FulfillmentLot {
+  lot_id: string;
+  kind: "exact" | "fuzzy";
+  match: string;
+  by?: "name" | "article";
+}
+
+export interface FulfillmentPositionCandidates {
+  article: string;
+  name: string;
+  unit: string;
+  candidates: FulfillmentCandidate[];
+  more: number;
+}
+
 export interface FulfillmentLine {
   id: string;
   requirement_id: string;
@@ -576,6 +596,18 @@ export interface PrintSheet {
   rows: string[][];
   note: string;
   sign: string;
+}
+
+/** Лист PL/DN отгрузки по образцу владельца: шапка «подпись | значение | реквизиты», позиции, пустые строки. */
+export interface ShippingForm {
+  kind: "pl" | "dn";
+  title: string;
+  head: { label: string; value: string; side: string }[];
+  columns: string[];
+  rows: string[][];
+  blank_rows: number;
+  sign_label: string;
+  sign_name: string;
 }
 
 export interface FulfillmentRequest {
@@ -684,6 +716,8 @@ export interface ProductionOperation {
   /** Готовность входов для монтажника («Мои задания») и сколько штук ему осталось сдать. */
   readiness?: ProductionReadiness;
   remaining?: string;
+  /** «Факт / норма» сданного исполнителем по журналу времени: факт без пауз, норма на сданные штуки. */
+  time_fact?: { actual_seconds: number; norm_seconds: number; percent: number | null; finishes: number } | null;
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;
@@ -695,6 +729,8 @@ export interface ProductionOperation {
 export interface ProductionReadyBox {
   id: string;
   number: string | null;
+  /** Код с коробки «180К.11·КБ1·13.10·Б07·3»; null — коробка до 13.10.2026. */
+  code?: string | null;
   /** Доступно в коробке, шт. */
   quantity: string;
   operation_position: number;
@@ -959,6 +995,8 @@ export interface ProductionScheduleVariant {
 export interface ProductionBox {
   id: string;
   number: string | null;
+  /** Код для подписи маркером «180К.11·КБ1·13.10·Б07·3»; null — коробка до 13.10.2026. */
+  code: string | null;
   version: number;
   task_id: string;
   operation_id: string;
@@ -1036,6 +1074,19 @@ export interface ProductionOutput {
   correction_of_id: string | null;
 }
 
+export interface WorkCall {
+  onBehalfOf?: string;
+  key?: string;
+}
+
+function behalfQuery(onBehalfOf: string | undefined): string {
+  return onBehalfOf ? `?on_behalf_of=${encodeURIComponent(onBehalfOf)}` : "";
+}
+
+function replayHeaders(key: string | undefined): Record<string, string> | undefined {
+  return key ? { "Idempotency-Key": key } : undefined;
+}
+
 export interface CorrectBoxInput {
   output_id: string;
   good_quantity: string;
@@ -1060,6 +1111,7 @@ export interface ProductionQcRejection {
   id: string;
   box_id: string;
   box_number: string | null;
+  box_code?: string | null;
   item: string;
   inspected_at: string;
   rejected: number;
@@ -1110,6 +1162,78 @@ export interface FinishedGood {
   received_at: string | null;
   grn: string | null;
   note: string;
+}
+
+/** Состояние штук КБ в регистре готовой продукции: В производстве → Принято складом → Упаковано → Отгружено. */
+export type GoodsStateKey = "production" | "accepted" | "packed" | "shipped";
+
+/** Задание цеха КБ и сколько из его тиража сдано (площадка — «Сдано N шт», цех — годные финальной операции). */
+export interface FinishedGoodsTaskShare {
+  number: string;
+  status: string;
+  /** Площадка (ЖУК), пусто — свой цех. */
+  site: string;
+  quantity: number;
+  delivered: string;
+}
+
+/** «Из производства»: КБ с живыми заданиями, которые склад принял не целиком. */
+export interface FromProductionRow {
+  project: string;
+  item_index: string;
+  name: string;
+  unit: string;
+  needed: string;
+  /** Сдано цехом по живым заданиям. */
+  delivered: string;
+  accepted: string;
+  /** Сдано, но склад ещё не принял — можно принять сейчас. */
+  remaining: string;
+  in_production: string;
+  good_id: string | null;
+  good_version: number | null;
+  tasks: FinishedGoodsTaskShare[];
+}
+
+/** Ход журнала готовой продукции (новые сверху). */
+export interface FinishedGoodsMove {
+  id: string;
+  item_index: string;
+  kind: string;
+  kind_label: string;
+  quantity: string;
+  from: GoodsStateKey;
+  to: GoodsStateKey;
+  from_label: string;
+  to_label: string;
+  shipment_id: string | null;
+  shipment_number: string | null;
+  actor: string;
+  occurred_at: string;
+  reason: string;
+}
+
+/** Сквозной статус КБ проекта: штуки в каждом состоянии, отправки КБ. */
+export interface ProjectGoodsKb {
+  item_index: string;
+  name: string;
+  unit: string;
+  good_id: string | null;
+  needed: string;
+  delivered: string | null;
+  waiting: string;
+  pieces: Record<GoodsStateKey, string>;
+  totals: { accepted: string; packed: string; shipped: string };
+  has_tasks: boolean;
+  journal_ok: boolean;
+  shipments: Array<{ id: string; number: string; status: string; picked: string }>;
+}
+
+export interface ProjectGoodsStatus {
+  project: string;
+  states: Array<{ key: GoodsStateKey; label: string }>;
+  kbs: ProjectGoodsKb[];
+  moves: FinishedGoodsMove[];
 }
 
 export interface ShipmentLine {
@@ -1328,6 +1452,45 @@ export interface CablesResult {
   gauges?: WireGauge[];
 }
 
+/** «Оболочки»: БД.МАТ rows that cover a harness, grouped and parsed by the server (`coverings.py`). */
+export type CoveringGroup = "tut" | "ttk" | "braid" | "corrugated" | "other";
+export interface CoveringRow {
+  id: string;
+  name: string;
+  group: CoveringGroup;
+  /** «вручную» — the override cell; otherwise how the classifier decided. */
+  group_source: string;
+  auto_group: CoveringGroup | null;
+  datasheet: string;
+  unit: string;
+  before_mm: number | null;
+  after_mm: number | null;
+  ratio: string;
+  wall_mm: number | null;
+  adhesive: string;
+  nominal_mm: number | null;
+  min_mm: number | null;
+  max_mm: number | null;
+  density: string;
+  inner_mm: number | null;
+  outer_mm: number | null;
+  split: boolean | null;
+  material: string;
+  material_short: string;
+  temp_min_c: number | null;
+  temp_max_c: number | null;
+  color: string;
+  maker: string;
+  series: string;
+  series_family: string;
+  notes: string[];
+}
+export interface CoveringsResult {
+  counts: Record<CoveringGroup, number>;
+  titles: Record<CoveringGroup, string>;
+  rows: CoveringRow[];
+}
+
 export interface HookupPayload {
   series: string;
   gauge_id: string;
@@ -1344,6 +1507,15 @@ export interface TechOperationRecord {
   display_text: string;
   source_sheet: string;
   fields: Record<string, string>;
+}
+
+/** GET /api/references/wire-dia — «Ø изоляции по маркам» из базы монтажных проводов: строка на размер «Сечения AWG ↔
+ *  мм²», поля по порядку «По старой таблице» · AWG · ГОСТ · Ø жилы · Ø наружный по каждой из 12 серий («—» — нет).
+ *  «По старой таблице» — серии, чей Ø в строке взят из старой СПР.КАБ (в базе его ещё нет). Читает генератор ЭТК. */
+export interface WireDiaResult {
+  columns: string[];
+  series: string[];
+  records: Array<{ id: string; display_text: string; source_sheet: string; fields: Record<string, string> }>;
 }
 
 export interface TechOperationResult {
@@ -1542,6 +1714,10 @@ export interface ConnectorSeries {
   category: string;
   /** Артикулы БД.КОАКС для ВЧ-серий. */
   catalog: Array<{ article: string; kind: string; maker: string; wire: string }>;
+  /** Документы производителя, по которым заполнен каталог серии (первый — основной). */
+  sources?: Array<{ title: string; url: string }>;
+  /** Контакты из каталога производителя; in_base — есть ли артикул (REEL или BAG) во вкладке «Терминалы». */
+  contacts?: Array<{ article: string; wire: string; in_base: boolean }>;
 }
 
 export interface ConnectorSeriesMatch {
@@ -1894,7 +2070,12 @@ export const identityApi = {
   adminMode: (on: boolean) =>
     api<Principal>("/api/auth/admin-mode", { method: "POST", body: JSON.stringify({ on }), safe: true }),
   logout: () => api<void>("/api/auth/logout", { method: "POST", safe: true }),
-  profile: () => api<OwnProfile>("/api/auth/profile"),
+  /** «Смотреть как сотрудник» (administrator only): the answer is the viewed employee's principal. */
+  viewAs: (userId: string) =>
+    api<Principal>("/api/auth/view-as", { method: "POST", body: JSON.stringify({ user_id: userId }) }),
+  /** «Вернуться к себе»: the own principal again. */
+  stopViewAs: () => api<Principal>("/api/auth/view-as", { method: "DELETE", safe: true }),
+  profile:() => api<OwnProfile>("/api/auth/profile"),
   changePassword: (current: string, next: string) =>
     api<void>("/api/auth/password", { method: "POST", body: JSON.stringify({ current, new: next }) }),
 };
@@ -2713,6 +2894,14 @@ export const fulfillmentApi = {
   remove: (requestId: string) =>
     api<{ message: string }>(`/api/issues/${requestId}`, { method: "DELETE" }),
   lots: () => api<{ lots: FulfillmentLot[] }>("/api/issues/lots"),
+  /** «Возможно есть»: the lots that may be each position of the project, one request for the whole card. */
+  candidates: (project: string) =>
+    api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`),
+  /** The same «Возможно есть» for positions the caller names (the project's «Снабжение», before any kit request). */
+  candidatesFor: (project: string, positions: Array<{ article: string; name: string; unit?: string }>) =>
+    api<{ positions: FulfillmentPositionCandidates[] }>(`/api/issues/projects/${encodeURIComponent(project)}/candidates`, {
+      method: "POST", body: JSON.stringify({ positions }),
+    }),
   printSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/print`),
   returnSheet: (requestId: string) => api<{ sheet: PrintSheet }>(`/api/issues/${requestId}/return-sheet`),
   bind: (requestId: string, lineId: string, version: number, lotId: string) =>
@@ -2797,37 +2986,61 @@ export interface AutoplanProposal {
   changeover_seconds: number;
   setup_seconds: number;
   batched: boolean;
+  /** Операция будущего задания: КБ с выданной техкартой без задания, задание создаст «Применить». */
+  new?: boolean;
 }
 
+/** «Весь цех» — вся работа на всех монтажников; «По проекту» — работа проекта на выбранных людей. */
+export type AutoplanMode = "shop" | "project";
+
 export interface AutoplanRequest {
-  date_from: string;
-  date_to: string;
-  task_ids?: string[];
-  replan_auto: boolean;
+  mode: AutoplanMode;
+  project?: string;
+  people?: string[];
+  /** «Весь цех»: исключённые задания (id) и КБ без задания (id техкарты). */
+  exclude?: string[];
+  /** «До даты» вручную; без неё — план до горизонта работы. */
+  date_to?: string | null;
+}
+
+export interface AutoplanContext {
+  period: { start: string; last_day: string; auto: boolean };
+  max_days: number;
+  tasks: Array<{ id: string; number: string; project: string; item: string; name: string; deadline: string | null }>;
+  new: Array<{ techcard_id: string; project: string; index: string; name: string; run: string; deadline: string | null; operations: number; skipped: string }>;
+  projects: Array<{ project: string; deadline: string | null; tasks: number; new: number }>;
+  fitters: Array<{ id: string; name: string; site: string; free_seconds: number }>;
 }
 
 export interface AutoplanPreview {
-  period: { start: string; finish: string };
+  period: { start: string; last_day: string };
+  scope: { tasks: number; new: number; fitters: number };
+  new_tasks: Array<{ task_id: string; techcard_id: string; project: string; index: string; name: string; quantity: number; deadline: string | null }>;
   proposals: AutoplanProposal[];
   batches: Array<{ operator_id: string; operator_name: string; batches: Array<{ label: string; machine: string; operations: number; tasks: string[]; start: string; finish: string; changeover_seconds: number }> }>;
-  unplaced: Array<{ operation_id: string; task_id: string; task_number: string; position: number | null; reason: string }>;
+  unplaced: Array<{ operation_id: string | null; task_id: string | null; techcard_id?: string; task_number: string; position: number | null; reason: string }>;
   warnings: string[];
   stats: { changeovers: number; changeovers_naive: number; saved_seconds: number };
   fingerprint: string;
 }
 
 export const productionApi = {
+  autoplanContext: (payload: AutoplanRequest) => api<AutoplanContext>("/api/production/autoplan/context", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
   autoplanPreview: (payload: AutoplanRequest) => api<AutoplanPreview>("/api/production/autoplan/preview", {
     method: "POST",
     body: JSON.stringify(payload),
   }),
   autoplanApply: (payload: AutoplanRequest & { items: Array<{ task_id: string; operation_id: string; operator_id: string }>; fingerprint: string }) =>
-    api<{ applied: number; tasks: Array<{ id: string; number: string; version: number }> }>("/api/production/autoplan/apply", {
+    api<{ applied: number; tasks: Array<{ id: string; number: string; version: number }>; created: Array<{ id: string; number: string }> }>("/api/production/autoplan/apply", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
   list: () => api<{ tasks: ProductionTask[]; next_cursor: string | null }>("/api/production/tasks"),
-  mine: (operatorId = "") => api<{ tasks: ProductionTask[] }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
+  /** can_act — смотрящий может работать за выбранного сотрудника (сервер проверяет то же при каждом действии). */
+  mine: (operatorId = "") => api<{ tasks: ProductionTask[]; can_act?: boolean }>(`/api/production/my${operatorId ? `?operator_id=${operatorId}` : ""}`),
   operators: () => api<{ operators: ProductionOperator[]; viewer_site?: string }>("/api/production/operators"),
   calendar: () => api<{ holidays: string[]; absences: ProductionAbsence[]; shift: ProductionShift }>("/api/production/calendar"),
   saveCalendar: (holidays: string[], absences: ProductionAbsence[], shift: ProductionShift) => api<void>("/api/production/calendar", {
@@ -2910,28 +3123,32 @@ export const productionApi = {
     api<{ items: OperationSketch[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches`),
   operationEtkSketchUrl: (taskId: string, operationId: string, operationKey: string, at = "") =>
     `/api/production/my/tasks/${taskId}/operations/${operationId}/etk/sketches/${encodeURIComponent(operationKey)}${at ? `?v=${encodeURIComponent(at)}` : ""}`,
+  /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
+  taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
     api<{ card: ProjectTechcard; focus: { position: number; code: string } }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk`),
-  inputs: (taskId: string, operationId: string) =>
-    api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs`),
+  inputs: (taskId: string, operationId: string, operatorId = "") =>
+    api<{ boxes: ProductionBox[]; materials: ProductionMaterialSource[] }>(`/api/production/tasks/${taskId}/operations/${operationId}/inputs${operatorId ? `?operator_id=${operatorId}` : ""}`),
   boxes: (taskId?: string) => api<{ boxes: ProductionBox[] }>(`/api/production/boxes${taskId ? `?task_id=${taskId}` : ""}`),
-  startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = []) =>
-    api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start`, {
-      method: "POST", body: JSON.stringify({ inputs, materials }),
+  // «Задания»: work.onBehalfOf — работа за выбранного сотрудника (право проверяет сервер), work.key — ключ повтора:
+  // тот же ключ второй раз не делает действие дважды (двойной клик, повтор после обрыва связи).
+  startWork: (taskId: string, operationId: string, inputs: string[], materials: Array<{ fulfillment_line_id: string; quantity: string }> = [], work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession }>(`/api/production/tasks/${taskId}/operations/${operationId}/work/start${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ inputs, materials }),
     }),
-  workAction: (sessionId: string, action: "pause" | "resume" | "cancel") =>
-    api<{ session: ProductionWorkSession }>(`/api/production/work/${sessionId}/${action}`, { method: "POST" }),
-  submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "") =>
-    api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit`, {
-      method: "POST", body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
+  workAction: (sessionId: string, action: "pause" | "resume" | "cancel", work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession }>(`/api/production/work/${sessionId}/${action}${behalfQuery(work.onBehalfOf)}`, { method: "POST", headers: replayHeaders(work.key) }),
+  submitWork: (sessionId: string, goodQuantity: string, defectQuantity: string, defectCharacter = "", defectDescription = "", work: WorkCall = {}) =>
+    api<{ session: ProductionWorkSession; box: ProductionBox; output_id: string; defect: ProductionDefect | null }>(`/api/production/work/${sessionId}/submit${behalfQuery(work.onBehalfOf)}`, {
+      method: "POST", headers: replayHeaders(work.key), body: JSON.stringify({ good_quantity: goodQuantity, defect_quantity: defectQuantity, defect_character: defectCharacter, defect_description: defectDescription }),
     }),
   boxAction: (boxId: string, action: "confirm", version: number) =>
     api<{ box: ProductionBox }>(`/api/production/boxes/${boxId}/${action}`, {
       method: "POST", body: JSON.stringify({ version }),
     }),
   boxOutputs: (boxId: string) => api<{ outputs: ProductionOutput[] }>(`/api/production/boxes/${boxId}/outputs`),
-  correctBox: (boxId: string, version: number, input: CorrectBoxInput) =>
-    api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct`, {
+  correctBox: (boxId: string, version: number, input: CorrectBoxInput, onBehalfOf = "") =>
+    api<{ box: ProductionBox; output: ProductionOutput; defect: ProductionDefect | null }>(`/api/production/boxes/${boxId}/correct${behalfQuery(onBehalfOf)}`, {
       method: "POST", body: JSON.stringify({ version, ...input }),
     }),
   returnBox: (boxId: string, version: number, reason: string) =>
@@ -2972,7 +3189,7 @@ export const productionPlanApi = {
     api<StagePreview>(`/api/production/plan/stage-preview?project=${encodeURIComponent(project)}&value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
   addEvent: (payload: {
     project: string;
-    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark";
+    kind: "note" | "block" | "unblock" | "deadline" | "stage" | "tcReview" | "mark" | "status";
     blocker?: string;
     text?: string;
     deadline?: string | null;
@@ -2980,6 +3197,7 @@ export const productionPlanApi = {
     value?: string;
     field?: string;
     reason?: string;
+    preview_token?: string;
   }) => api<{ event: ProductionPlanEvent }>("/api/production/plan/events", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -3020,7 +3238,7 @@ export const shippingApi = {
   boxes: (shipmentId: string, payload: Record<string, unknown>) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/boxes`, {
     method: "PUT", body: JSON.stringify(payload),
   }),
-  print: (shipmentId: string, document: "pl" | "dn") => api<{ sheets: PrintSheet[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
+  print: (shipmentId: string, document: "pl" | "dn") => api<{ forms: ShippingForm[] }>(`/api/shipping/shipments/${shipmentId}/print?document=${document}`),
   addressees: () => api<{ addressees: ProjectAddressee[] }>("/api/shipping/project-addressees"),
   /** `portalShipUpdFile`: файл УПД к отправке; ссылка на него встаёт в отправку. */
   uploadUpd: (shipmentId: string, version: number, file: { name: string; type: string; base64: string }) => api<{ shipment: Shipment }>("/api/shipping/upd-files", {
@@ -3046,11 +3264,28 @@ export const shippingApi = {
   }, idempotencyKey: string) => api<{ shipment: Shipment; shipped: boolean; closed: boolean; why: string; replayed: boolean }>("/api/shipping/project-ship", {
     method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: JSON.stringify(payload),
   }),
+  /** «Из производства»: что цех сдал, а склад ещё не принял, и что ещё в производстве. */
+  fromProduction: () => api<{ rows: FromProductionRow[] }>("/api/shipping/finished-goods/from-production"),
+  /** Приёмка пакетом: все отмеченные КБ или ни одной; не больше сданного цехом. Тот же ключ с тем же телом — уже сделанное. */
+  acceptFromProduction: (lines: Array<{ project: string; item_index: string; quantity: string }>, receivedAt: string | null, idempotencyKey: string) =>
+    api<{ goods: FinishedGood[]; replayed: boolean }>("/api/shipping/finished-goods/accept", {
+      method: "POST", headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(receivedAt ? { lines, received_at: receivedAt } : { lines }),
+    }),
+  /** Сквозной статус проекта по КБ и журнал ходов. */
+  projectGoods: (project: string) => api<ProjectGoodsStatus>(`/api/shipping/finished-goods/project?project=${encodeURIComponent(project)}`),
+  /** Откат «Отгружено» — только администратор, с причиной; штуки снова «Упаковано». */
+  unship: (shipmentId: string, version: number, reason: string) => api<{ shipment: Shipment }>(`/api/shipping/shipments/${shipmentId}/unship`, {
+    method: "POST", body: JSON.stringify({ version, reason }),
+  }),
 };
 
 export const referencesApi = {
   bases: () => api<BasesResult>("/api/references/bases"),
   cables: () => api<CablesResult>("/api/references/cables"),
+  coverings: () => api<CoveringsResult>("/api/references/coverings"),
+  setCoveringGroup: (recordId: string, group: string) =>
+    api<TechOperationRecord>(`/api/references/coverings/${recordId}/group`, { method: "PUT", body: JSON.stringify({ group }) }),
   moveCable: (recordId: string, kind: CableKind) =>
     api<CableRow>(`/api/references/cables/${recordId}/kind`, { method: "PUT", body: JSON.stringify({ kind }) }),
   saveCableDiameters: (payload: { cable: string; dia_id: string | null; old: Record<string, string>; value: Record<string, string> }) =>
@@ -3071,13 +3306,37 @@ export const referencesApi = {
     if (limit) params.set("limit", String(limit));
     return api<TechOperationResult>(`/api/references/tech-operations?${params}`);
   },
+  wireDia: () => api<WireDiaResult>("/api/references/wire-dia"),
+  /** СПР.КАБ · коаксиал для генератора ЭТК: строки D1·D2·D3 и по строке на каждое другое имя кабеля (полное название,
+   *  артикул поставщика, другое написание марки) с D1–D3 этого кабеля. */
+  coaxDia: () => api<TechOperationResult>("/api/references/coax-dia"),
   editRecord: (id: string, edits: Array<{ field: string; old: string; value: string }>) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}`, { method: "PATCH", body: JSON.stringify({ edits }) }),
   createRecord: (tab: TechOperationTab, fields: Record<string, string>) =>
     api<TechOperationRecord>("/api/references/tech-operations", { method: "POST", body: JSON.stringify({ tab, fields }) }),
+  equipmentNumber: (type: string) =>
+    api<{ inventory: string; row: string }>(`/api/references/tech-operations/equipment-number?${new URLSearchParams({ type })}`),
+  duplicateRecord: (id: string) =>
+    api<TechOperationRecord>(`/api/references/tech-operations/${id}/duplicate`, { method: "POST" }),
+  crimps: (id: string) => api<CrimpOverview>(`/api/references/tech-operations/${id}/crimps`),
+  crimpCodes: () => api<CrimpCodes>("/api/references/tech-operations/crimp-codes"),
+  crimpTerminal: (toolId: string, terminalId: string, add: boolean) =>
+    api<CrimpTerminal>(`/api/references/tech-operations/${toolId}/crimps/terminals/${terminalId}`, { method: add ? "POST" : "DELETE" }),
+  crimpTarget: (toolId: string, target: CrimpTarget, add: boolean) =>
+    api<{ targets: CrimpTarget[] }>(`/api/references/tech-operations/${toolId}/crimps/targets${add ? "" : "/remove"}`, {
+      method: "POST", body: JSON.stringify(target),
+    }),
   resolveTerminal: (payload: { article: string; wires: string[]; folded?: boolean; gost_awg?: Record<string, number> }) =>
     api<TerminalResolution>("/api/references/technology/resolve-terminal", { method: "POST", body: JSON.stringify(payload) }),
 };
+
+export interface CrimpTerminal {
+  id: string; display_text: string; article: string; series: string; maker: string; kind: string;
+  applicator: string; doubtful: boolean;
+}
+export interface CrimpTarget { kind: string; key: string; label: string }
+export interface CrimpOverview { code: string; terminals: CrimpTerminal[]; targets: CrimpTarget[] }
+export interface CrimpCodes { owners: Record<string, string>; missing: Array<{ code: string; count: number }> }
 
 export interface TerminalResolution {
   applicator: string;
@@ -3467,7 +3726,15 @@ export interface StagePreviewKb {
   change: boolean;
   note: string;
   warnings: string[];
+  /** Что смена закроет в этой КБ и что оставит (с причиной). */
+  close?: StageCloseItem[];
+  keep?: StageKeepItem[];
 }
+
+/** Закрываемое ручной сменой вперёд: задание цеха, заявка на комплектацию, резерв техкарты. */
+export interface StageCloseItem { kind: "task" | "kit_request" | "reserve" | string; id: string; label: string; qty: string; unit: string }
+export interface StageKeepItem { kind: string; label: string; reason: string }
+export interface StageCascadeTotals { tasks: number; kit_requests: number; reserves: number; close: number; keep: number }
 
 export interface StagePreview {
   project: string;
@@ -3481,6 +3748,13 @@ export interface StagePreview {
   blocker: string;
   kbs: StagePreviewKb[];
   warnings: string[];
+  close?: StageCloseItem[];
+  keep?: StageKeepItem[];
+  totals?: StageCascadeTotals;
+  /** «Назад ничего не открывается» — для хода назад и «авто». */
+  cascade_note?: string;
+  /** Уходит с записью: изменилось закрываемое с момента предпросмотра — сервер ответит 409. */
+  preview_token?: string;
 }
 
 export interface KitsetTile {
@@ -3682,7 +3956,7 @@ export interface KitsetJournalEvent {
 }
 
 /** Смена статуса проекта в один клик (POST …/status): этап на все КБ, «авто», закрытие, блокер. */
-export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string }
+export type ProjectStatusAction = { action: "status"; value: string; text?: string; reason?: string; preview_token?: string }
   | { action: "block"; value: string; text: string }
   | { action: "unblock"; text?: string };
 
@@ -3704,6 +3978,16 @@ export interface KitsetLoadResult {
 export interface KitsetSupplyLine {
   art: string;
   name: string;
+  /** Where the name comes from: ref — справочник ERP, spec — спецификация, stock — склад, site — сайт, "" — not found. */
+  name_source?: "ref" | "spec" | "stock" | "site" | "";
+  /** Tooltip of the name: its source, or why the article is unknown. */
+  name_hint?: string;
+  /** «Стадия» in one word: short · kitting · procurement · received · outside · stock · none. */
+  state?: string;
+  state_label?: string;
+  state_tone?: "ok" | "warn" | "danger" | "info" | "neutral";
+  /** The numbers behind the state. */
+  state_hint?: string;
   kbs: string[];
   need: string;
   unit: string;
@@ -3818,7 +4102,7 @@ export const kitsetsApi = {
       `${kitsetPath(project)}/issue`, { method: "POST", body: JSON.stringify({ deadline }) },
     ),
   remove: (project: string) => api<{ res: KitsetDeleteResult }>(kitsetPath(project), { method: "DELETE" }),
-  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string }) =>
+  mark: (project: string, payload: { kb: string; kind: "stage" | "tcReview"; value: string; text: string; reason?: string; preview_token?: string }) =>
     api<{ msg: string }>(`${kitsetPath(project)}/marks`, { method: "POST", body: JSON.stringify(payload) }),
   stagePreview: (project: string, value: string, kb = "") =>
     api<StagePreview>(`${kitsetPath(project)}/status/preview?value=${encodeURIComponent(value)}&kb=${encodeURIComponent(kb)}`),
@@ -3872,6 +4156,37 @@ export interface HarnessPlacementGraph {
   unresolved: string[];
 }
 
+/** «Маршрут» позиции как его читает холст (techcards/harness/route_application.py `view`): `stale` — чертёж с тех пор
+ *  изменился; `missing_refs` — части, которых в чертеже уже нет; `complete` — одна карточка «Готовый жгут» со всеми
+ *  частями чертежа. Маршрута нет — `route: null`; чертежа нет — `drawing: null`. */
+export interface HarnessRouteRead {
+  route: {
+    revision: number; document: Record<string, unknown>; drawing_document_id: string; drawing_revision: number;
+    updated_at: string; updated_by: string;
+  } | null;
+  drawing: { document_id: string; revision: number } | null;
+  stale: boolean;
+  missing_refs: Array<{ kind: string; id: string }>;
+  complete: boolean;
+}
+
+/** «Заполнить техкарту» (techcards/harness/route_to_assembly.py): карточки маршрута — черновиком «Ручной сборки».
+ *  `route` — схема полуфабрикатов, как её собрал сборщик ЭТК (блоки с операциями, стрелки с количеством на штуку);
+ *  `draft` — сохранённый черновик (при просмотре — null). */
+export interface HarnessRouteDraft {
+  dry_run: boolean;
+  revision: number;
+  build_config: { ops?: Array<{ label?: string; qty?: string; tOp?: string; seq?: number }> } & Record<string, unknown>;
+  operations: number;
+  route: {
+    source: string; final: string;
+    blocks: Array<{ key: string; name: string; ops: number[]; final: boolean; minutes: number }>;
+    edges: Array<{ from: string; to: string; per_unit: number }>;
+  } | null;
+  warnings: string[];
+  draft: { id: string; project: string; item_index: string; source: string; author: string; status: string; note: string; created_at: string } | null;
+}
+
 const componentsPath = "/api/techcards/harness-components";
 const componentPath = (templateId: string, revision?: number) =>
   `${componentsPath}/${encodeURIComponent(templateId)}${revision === undefined ? "" : `/versions/${revision}`}`;
@@ -3882,9 +4197,11 @@ export const harnessApi = {
   /** Чертёж позиции; `revision` — номер версии, с которым сохранять (чертежа нет — всё null). */
   drawing: (project: string, index: string) => api<HarnessDrawing>(harnessPath(project, index)),
   /** Сохранить чертёж новой версией: `revision` — из последнего чтения (null — чертежа ещё нет; иначе 409, если его
-   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`). */
-  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null) =>
-    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT", body: JSON.stringify({ design, revision }) }),
+   *  сохранили после). Чертёж, который нельзя хранить, — 422 со списком причин (`ApiError.detail.errors`).
+   *  `checkpoint` — записать версию сразу закрытой строкой истории (автосохранения в неё не сольются). */
+  save: (project: string, index: string, design: Record<string, unknown>, revision: number | null, options: { checkpoint?: boolean } = {}) =>
+    api<HarnessDrawing & { created: boolean }>(harnessPath(project, index), { method: "PUT",
+      body: JSON.stringify({ design, revision, ...(options.checkpoint ? { checkpoint: true } : {}) }) }),
   /** «Сохранить версию»: текущая версия остаётся в истории отдельной строкой; `revision` — версия на экране (иначе 409). */
   checkpoint: (project: string, index: string, revision: number | null) =>
     api<{ revision: number | null; row: HarnessRevision | null }>(`${harnessPath(project, index)}/checkpoint`, { method: "POST", body: JSON.stringify({ revision }) }),
@@ -3912,6 +4229,22 @@ export const harnessApi = {
   /** «Вернуть» отвязанный чертёж позиции (если у неё нет другого). */
   relink: (project: string, index: string, documentId: string) =>
     api<HarnessDrawing>(`${harnessPath(project, index)}/restore`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+  /** «Удалить» отвязанный чертёж позиции насовсем, с историей версий; привязанный сервер не удалит (409). */
+  removeUnlinked: (project: string, index: string, documentId: string) =>
+    api<{ res: { deleted: number; revisions: number } }>(`${harnessPath(project, index)}/unlinked/${encodeURIComponent(documentId)}`, { method: "DELETE" }),
+  /** «Маршрут» позиции (Маршрут v3): карточки, связи, версия и версия чертежа, на которой он построен. */
+  route: (project: string, index: string) => api<HarnessRouteRead>(`${harnessPath(project, index)}/route`),
+  /** Сохранить маршрут новой версией: `revision` — из последнего чтения (null — маршрута ещё нет; иначе 409, если его
+   *  сохранили после); `drawingRevision` — версия чертежа, на которой маршрут построен. Нельзя хранить — 422 со списком. */
+  saveRoute: (project: string, index: string, document: Record<string, unknown>, revision: number | null, drawingRevision: number) =>
+    api<HarnessRouteRead>(`${harnessPath(project, index)}/route`, { method: "PUT", body: JSON.stringify({ document, revision, drawing_revision: drawingRevision }) }),
+  /** «Построить по чертежу»: карточки и связи заново по сохранённому чертежу (ручные правки карточек пропадают). */
+  generateRoute: (project: string, index: string, revision: number | null) =>
+    api<HarnessRouteRead>(`${harnessPath(project, index)}/route/generate`, { method: "POST", body: JSON.stringify({ revision }) }),
+  /** «Заполнить техкарту»: карточки маршрута — черновиком «Ручной сборки». `dryRun` — только показать результат;
+   *  без него — сохранить черновик по просмотренной версии маршрута `revision` (изменился после просмотра — 409). */
+  routeDraft: (project: string, index: string, revision: number | null, dryRun: boolean) =>
+    api<HarnessRouteDraft>(`${harnessPath(project, index)}/route/draft${dryRun ? "?dry_run=true" : ""}`, { method: "POST", body: JSON.stringify({ revision }) }),
   /** `.techmap-project.zip` чертежа — открыть в TECHMAP-GRAPHER. */
   exportUrl: (project: string, index: string) => `${harnessPath(project, index)}/export`,
   /** Чертёж из `.techmap-project.zip` TECHMAP-GRAPHER — новой версией (та же проверка версии и содержимого). */

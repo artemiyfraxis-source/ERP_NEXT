@@ -25,6 +25,8 @@ import { openPrintSheet } from "./print";
 import { countLabel } from "./format";
 import { BUSY_TITLE, PlaceHint, usePlaceHint } from "./WarehousePlaceHint";
 import { UndoLast, WarehouseScanBar } from "./WarehouseScan";
+import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
+import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
   chooserColumns, ColumnChooser, columnTitle, defaultLayout, moveColumn, readLayouts, shownColumns as visibleColumns, writeLayouts,
@@ -66,8 +68,28 @@ function passportParts(mass: string, fields: Partial<Omit<WarehouseLotPassport, 
 
 /** `admin` — the administrator sees «Журнал склада» (SK-16, SUPPLYMAP portalStock05Log is admin only).
  *  `readOnly` — «режим просмотра» (ID-6): the stock is read, every entry/move/writeoff/edit control is gone
- *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes). */
-export function WarehousePage({ admin = false, readOnly = false }: { admin?: boolean; readOnly?: boolean } = {}) {
+ *  (SUPPLYMAP portalApplyAccess_ 'view' drops b.edit, portalStock05Guard_ refuses writes).
+ *  `finishedGoods` — the viewer reads «Отгрузка»: the «Готовая продукция» tab (read-only, owner 12.10.2026). */
+export function WarehousePage({ admin = false, readOnly = false, finishedGoods = false, canEditReferences = false }: { admin?: boolean; readOnly?: boolean; finishedGoods?: boolean; canEditReferences?: boolean } = {}) {
+  // `?section=stock&view=goods` opens «Готовая продукция» (a link, a screenshot).
+  const [view, setView] = useState<"stock" | "goods">(() => new URLSearchParams(window.location.search).get("view") === "goods" ? "goods" : "stock");
+  if (finishedGoods && view === "goods") return <section className="page stock-page">
+    <header className="page-head"><h1>Склад</h1></header>
+    <StockViews view={view} onChange={setView} />
+    <FinishedGoodsPanel />
+  </section>;
+  return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={finishedGoods ? <StockViews view={view} onChange={setView} /> : null} />;
+}
+
+/** «Материалы» | «Готовая продукция» под заголовком склада. */
+function StockViews({ view, onChange }: { view: "stock" | "goods"; onChange: (view: "stock" | "goods") => void }) {
+  return <div className="seg-tabs stock-views" role="tablist" aria-label="Склад">
+    {([["stock", "Материалы и комплектующие"], ["goods", "Готовая продукция"]] as const).map(([key, label]) =>
+      <button key={key} type="button" role="tab" aria-selected={view === key} className={view === key ? "on" : undefined} onClick={() => onChange(key)}>{label}</button>)}
+  </div>;
+}
+
+function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boolean; readOnly: boolean; canEditReferences: boolean; views: ReactNode }) {
   const purposeText = usePurposeLabel();
   const [lots, setLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
@@ -274,6 +296,7 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
           {!readOnly && <button className="primary" disabled={loading || Boolean(busy)} onClick={() => setAdding((value) => !value)}>+ Внести позиции</button>}
         </div>
       </header>
+      {views}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {putawayError && <div className="error-banner" role="alert">{putawayError}</div>}
       {scanOn && <WarehouseScanBar readOnly={readOnly} disabled={Boolean(busy) || loading} mutate={mutate} />}
@@ -380,8 +403,9 @@ export function WarehousePage({ admin = false, readOnly = false }: { admin?: boo
             disabled={Boolean(busy) || loading}
             mutate={mutate}
             onMove={(item) => { setMoveLot(item); setMoveOpen(true); }}
-            history={admin}
+            history={admin || !readOnly}
             readOnly={readOnly}
+            canLink={canEditReferences}
           />)}</tbody>
         </table>
       </div>}
@@ -659,7 +683,7 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
   }
 }
 
-function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly }: {
+function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled, mutate, onMove, history, readOnly, canLink }: {
   group: WarehouseGroup;
   columns: ColumnKey[];
   pinned: ColumnKey;
@@ -671,6 +695,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
   onMove: (lot: WarehouseLot) => void;
   history: boolean;
   readOnly: boolean;
+  canLink: boolean;
 }) {
   const lotItems = useContext(LotItems);
   return <>
@@ -682,7 +707,7 @@ function ArticleGroup({ group, columns, pinned, expanded, toggle, busy, disabled
           {columns.map((key) => articleCell(key, item, open, () => toggle(item.key), key === pinned, lotItems.on ? lotItems.items : {}))}
         </tr>
         {open && <tr className="stock-cards-row"><td colSpan={columns.length}><div className="lot-cards">
-          {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} />)}
+          {item.lots.map((lot) => <LotCard key={`${lot.id}:${lot.version}`} lot={lot} busy={busy === lot.id} disabled={disabled} mutate={mutate} onMove={onMove} history={history} readOnly={readOnly} canLink={canLink} />)}
         </div></td></tr>}
       </Fragment>;
     })}
@@ -1419,7 +1444,7 @@ function LotHistoryDialog({ lot, onClose }: { lot: WarehouseLot; onClose: () => 
   </LotDialog>;
 }
 
-function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
+function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLink }: {
   lot: WarehouseLot;
   busy: boolean;
   disabled: boolean;
@@ -1427,10 +1452,12 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
   onMove: (lot: WarehouseLot) => void;
   history: boolean;
   readOnly: boolean;
+  /** «Справочник» на правку: кнопка «В базу данных…». */
+  canLink: boolean;
 }) {
   const purposeText = usePurposeLabel();
   // Every action is a window over the stock, as the buttons on a SUPPLYMAP partition card (− / + / ✎ / История).
-  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "item">("");
+  const [dialog, setDialog] = useState<"" | "writeoff" | "return" | "edit" | "history" | "item" | "link">("");
   const close = () => setDialog("");
   const writtenOff = Number(lot.written_off) > 0;
   const passport = passportLine(lot);
@@ -1452,7 +1479,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
       </p>
       {passport && <p className="lot-card-passport" aria-label="Паспорт партии">{passport}</p>}
       {itemsCtx.on && brief && <p className="lot-card-meta"><small className="muted lot-item-chip" title={`Связь: ${VIA_LABELS[brief.via]}`}>Позиция: {brief.name}</small></p>}
-      {(!readOnly || history) && <div className="lot-card-actions">
+      {(!readOnly || history || canLink) && <div className="lot-card-actions">
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}
@@ -1460,12 +1487,14 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly }: {
           <button className="secondary small" disabled={disabled} onClick={() => setDialog("edit")}>✎ Правка</button>
         </>}
         {!readOnly && itemsCtx.on && <button className="secondary small" disabled={disabled} onClick={() => setDialog("item")}>Позиция номенклатуры…</button>}
+        {canLink && <button className="secondary small" title="Привязать к записи базы или создать запись" onClick={() => setDialog("link")}>В базу данных…</button>}
         {history && <button className="secondary small" onClick={() => setDialog("history")}>История</button>}
       </div>}
       {!readOnly && undoOn && <UndoLast lot={lot} disabled={disabled} mutate={mutate} />}
       {!readOnly && dialog === "writeoff" && <WriteoffDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "return" && writtenOff && <ReturnDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
       {!readOnly && dialog === "edit" && <LotEditDialog lot={lot} disabled={disabled} mutate={mutate} onClose={close} />}
+      {canLink && dialog === "link" && <StockLinkDialog lot={lot} onClose={close} />}
       {history && dialog === "history" && <LotHistoryDialog lot={lot} onClose={close} />}
       {!readOnly && itemsCtx.on && dialog === "item" && <LotItemDialog lot={lot} brief={brief} onClose={close} onChanged={itemsCtx.reload} />}
     </article>

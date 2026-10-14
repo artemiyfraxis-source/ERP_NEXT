@@ -51,6 +51,12 @@ export function formatMoment(value: string | null | undefined): string {
   return `${p.day}.${p.month} ${p.hour}:${p.minute}`;
 }
 
+/** Момент плана как его записал сервер (московское время), без пересчёта в пояс браузера: «01.10 14:30». */
+export function formatWallMoment(value: string | null | undefined): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(String(value ?? ""));
+  return match ? `${match[3]}.${match[2]} ${match[4]}:${match[5]}` : String(value ?? "");
+}
+
 /** Только день: «2026-10-01T00:00:00+03:00» → «01.10.2026»; не ISO — как есть, пусто — пустая строка. */
 export function formatDay(value: string | null | undefined): string {
   const match = String(value ?? "").match(ISO_DAY_PREFIX);

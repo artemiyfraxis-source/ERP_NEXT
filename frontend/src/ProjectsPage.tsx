@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ApiError,
   failureText,
+  fulfillmentApi,
   harnessApi,
   kitsetsApi,
   requestsApi,
+  shippingApi,
   type KitsetAssembly,
+  type KitsetDocument,
   type KitsetCard,
   type KitsetComponent,
   type KitsetDeleteResult,
@@ -17,8 +20,12 @@ import {
   type KitsetReserve,
   type KitsetStockLot,
   type KitsetTile,
+  type FulfillmentCandidate,
   type Principal,
+  type ProjectGoodsStatus,
 } from "./api";
+import { canSee } from "./navigation";
+import { GoodsStateBar, movesHint, piecesOf } from "./FinishedGoodsStates";
 import { DataTable, type DataColumn } from "./DataTable";
 import { KitTile, tcProgress } from "./ProjectCard";
 import { PendingLesson } from "./AssemblyDrafts";
@@ -26,7 +33,11 @@ import { EtkSheet, GeneratorPane, useTechcard } from "./ProjectEtk";
 import { AutoTextarea } from "./AutoTextarea";
 import { formatDate, formatDateTime, formatDay, formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
-import { openHarness } from "./harnessNav";
+import { CANDIDATE_LEGEND, candidateTone, matchText } from "./stockCandidates";
+// Редактор чертежа жгута — отдельным куском, вкладкой карточки проекта («Чертёж КБn»).
+const HarnessPage = lazy(() => import("./HarnessPage").then((module) => ({ default: module.HarnessPage })));
+// «Маршрут КБn» — холст маршрута позиции с чертежом, тоже отдельным куском (ядро поля жгута рисует карточки).
+const HarnessRouteView = lazy(() => import("./HarnessRouteView"));
 import { useLatestSearch } from "./useLatestSearch";
 import { ProjectStatus } from "./ProjectStatus";
 import { StageChangeDialog, STAGE_AUTO } from "./StageChangeDialog";
@@ -120,8 +131,8 @@ const STALE_LOT_TEXT = "Партия изменилась — обновите �
 
 /** «Генератор» карточки проекта (SUPPLYMAP renderGen_ / mountGen_): сверху сборки проекта, ниже генератор выбранной.
     Карточку ТК сборки заводит открытие генератора (kitsetsApi.openTechcard). */
-function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: {
-  card: KitsetCard; principal: Principal; index: string; pick: (index: string) => void; done: (index: string) => void;
+function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange, openDrawing }: {
+  card: KitsetCard; openDrawing: (index: string) => void; principal: Principal; index: string; pick: (index: string) => void; done: (index: string) => void;
   builtId: string; onBuiltChange: (draftId: string) => void;
 }) {
   const [cardId, setCardId] = useState("");
@@ -147,10 +158,10 @@ function GenTab({ card, principal, index, pick, done, builtId, onBuiltChange }: 
     <div className="seg-tabs sub" role="tablist" aria-label="Сборка">{card.assemblies.map((item) =>
       <button key={item.index} role="tab" aria-selected={item.index === index} className={item.index === index ? "on" : ""} onClick={() => pick(item.index)}>{item.index}</button>)}</div>
     {!index && !first && <div className="empty">{card.assemblies.length ? "Выберите сборку — генератор откроется здесь." : "В проекте нет сборок."}</div>}
-    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}{assembly.kd.some((document) => document.kind === "harness") && <> · <button className="link-button" onClick={() => openHarness(card.project, assembly.index)}>Чертёж жгута</button></>}</p>}
+    {assembly && <p className="kit-meta"><strong>{assembly.index}</strong> {assembly.name} · кол-во {assembly.run} · ТК: {assembly.techcard?.issued ? `готова, ревизия ${assembly.techcard.revision}` : assembly.techcard?.stages ? "черновик" : assembly.techcard ? "не собрана" : "нет"}{assembly.kd.some((document) => document.kind === "harness") && <> · <button className="link-button" onClick={() => openDrawing(assembly.index)}>Чертёж жгута</button></>}</p>}
     {(error || loadError) && <div className="error-banner" role="alert">{error || loadError}</div>}
     {index && !error && !loadError && !techcard && <div className="empty">Читаю состав {index}…</div>}
-    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange}
+    {techcard && <GeneratorPane key={techcard.id} card={techcard} principal={principal} onChange={setTechcard} builtId={builtId} onBuiltChange={onBuiltChange} onOpenDrawing={() => openDrawing(index)}
       onDone={(updated) => { if (updated.status === "Выдана") done(index); }} />}
   </div>;
 }
@@ -387,7 +398,7 @@ function CreateFromCalc({ canRequest, close, done }: {
   </div>;
 }
 
-type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${string}`;
+type Tab = "sostav" | "supply" | "spec" | "gen" | "journal" | "track" | `tc:${string}` | `hn:${string}` | `rt:${string}`;
 
 function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   project: string; principal: Principal; canEdit: boolean; canRequest: boolean; back: (result?: Flash) => void;
@@ -461,6 +472,10 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   const tabs: Array<[Tab, string]> = [
     ["sostav", "Состав"], ["supply", "Снабжение"], ["spec", "Спецификация"], ["gen", "Генератор"],
     ...tcTabs.map((assembly) => [`tc:${assembly.index}` as Tab, `ТК ${assembly.index}`] as [Tab, string]),
+    // «Чертёж КБn» — редактор жгута в карточке: вкладка есть у позиции с привязанным чертежом и пока она открыта.
+    // «Маршрут КБn» — рядом с чертежом: карточки полуфабрикатов, построенные по нему.
+    ...card.assemblies.filter((assembly) => assembly.kd.some((document) => document.kind === "harness") || tab === `hn:${assembly.index}` || tab === `rt:${assembly.index}`)
+      .flatMap((assembly) => [[`hn:${assembly.index}` as Tab, `Чертёж ${assembly.index}`], [`rt:${assembly.index}` as Tab, `Маршрут ${assembly.index}`]] as Array<[Tab, string]>),
     ["journal", `Журнал${card.journal?.length ? ` · ${card.journal.length}` : ""}`],
     ["track", "Трек"],
   ];
@@ -472,33 +487,42 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
     <header className="page-head kit-head">{toList}<h1>{card.project}</h1>
       <ProjectStatus project={card.project} status={card.status} blocker={card.blocker} canEdit={canEdit}
         stages={card.stages} terminals={card.terminals} blockers={card.blockers} onChanged={setCard} onError={setError} />
+      {/* Рабочие действия — в «Ещё» рядом с этапом (владелец 12.10: «много кнопок рудиментов»); «Отгрузить» убрана:
+          отгрузка идёт через приёмку кладовщика на экране «Отгрузка». Без прав на правку и заявку меню нет. */}
+      {(canEdit || (canRequest && card.calc_source)) && <CardMoreMenu project={card.project}
+        refreshing={refreshing} onRefresh={canEdit ? () => void refresh() : undefined}
+        onRequest={canRequest && card.calc_source ? () => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project }) : undefined}
+        onDelete={canEdit ? () => setDeleting(true) : undefined} />}
     </header>
     <p className="kit-meta">{card.customer || "—"}{card.calc_source && <> · <a className="kit-calc-link" href={card.calc_source} target="_blank" rel="noopener">расчёт</a></>}{card.deadline && <> · дедлайн {formatDay(card.deadline)}</>} · обновлено {formatDateTime(card.updated_at)} {card.updated_by}</p>
     {blockerInfo && <p className="kit-blocker"><StatusChip status={blockerInfo.type} /> <span>с {formatDay(blockerInfo.since)} · {blockerInfo.text} — {blockerInfo.who}</span></p>}
-    <div className="kit-actions">
-      {canEdit && <button className="secondary small" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
-      <button className="secondary small" onClick={() => openSection("shipping", { ship_project: card.project })}>Отгрузить</button>
-      {/* Заявка — отдельный шаг, как в SUPPLYMAP (заведение создаёт её только по галочке «Сразу создать заявки»);
-          кнопка открывает «Оформить заявку → Из расчёта» с этой ссылкой и номером, оператор проверяет строки. */}
-      {canRequest && card.calc_source && <button className="secondary small" onClick={() => openSection("newrequest", { calc_url: card.calc_source, calc_project: card.project })}>Оформить заявку из расчёта</button>}
-      {/* Удаление — отдельно от рабочих кнопок, в «Ещё», красным и только через окно подтверждения (аудит 10.10, ПР-2). */}
-      {canEdit && <CardMoreMenu project={card.project} onDelete={() => setDeleting(true)} />}
-      {note && <span className="muted">{note}</span>}
-    </div>
+    {note && <div className="kit-actions"><span className="muted">{note}</span></div>}
     {deleting && <DeleteProjectDialog project={card.project} remove={remove} onClose={() => setDeleting(false)} />}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {warning && <div className="warning-banner" role="alert">{warning}</div>}
     <div className="seg-tabs" role="tablist">
       {tabs.map(([key, label]) => <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}
     </div>
-    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} />}
-    {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline} />}
+    {tab === "sostav" && <SostavTab card={card} canEdit={canEdit} goodsVisible={canSee(principal, "shipping") || canSee(principal, "shipping_goods")} reload={load} setNote={setNote} setError={setError} openGen={openGen} openTc={(index) => setTab(`tc:${index}`)} openDrawing={(index) => setTab(`hn:${index}`)} />}
+    {tab === "supply" && <SupplyTab project={card.project} canOrder={canEdit && canRequest} deadline={card.deadline}
+      canSeeStock={canSee(principal, "warehouse") || canSee(principal, "fulfillment", "edit")} />}
     {tab === "spec" && <SpecTab card={card} canEdit={canEdit} setNote={setNote} setWarning={setWarning} reload={load} />}
-    {tab === "gen" && <GenTab card={card} principal={principal} index={genIndex} pick={setGenIndex} builtId={builtDrafts[genIndex] || ""}
+    {tab === "gen" && <GenTab card={card} principal={principal} openDrawing={(index) => setTab(`hn:${index}`)} index={genIndex} pick={setGenIndex} builtId={builtDrafts[genIndex] || ""}
       onBuiltChange={(id) => setBuiltDrafts((current) => ({ ...current, [genIndex]: id }))}
       done={(index) => { void load(); setTab(`tc:${index}`); setNote(`Техкарта ${index} готова — открыта вкладка «ТК ${index}».`); }} />}
     {tab === "journal" && <JournalTab card={card} canEdit={canEdit} changed={setCard} />}
     {tab === "track" && <ProjectTrack project={card.project} />}
+    {tab.startsWith("hn:") && <div className="kit-pane kit-pane-harness">
+      <Suspense fallback={<div className="empty">Загрузка редактора…</div>}>
+        <HarnessPage key={tab} project={card.project} index={tab.slice(3)} canEdit={canEdit}
+          onBack={() => { setTab("sostav"); void load(); }} />
+      </Suspense>
+    </div>}
+    {tab.startsWith("rt:") && <div className="kit-pane kit-pane-route">
+      <Suspense fallback={<div className="empty">Загрузка маршрута…</div>}>
+        <HarnessRouteView key={tab} project={card.project} index={tab.slice(3)} canEdit={canEdit} onOpenDrawing={() => setTab(`hn:${tab.slice(3)}`)} />
+      </Suspense>
+    </div>}
     {tab.startsWith("tc:") && (() => {
       const assembly = card.assemblies.find((item) => `tc:${item.index}` === tab);
       if (!assembly?.techcard) return <div className="empty">Сборка не найдена.</div>;
@@ -507,8 +531,12 @@ function KitsetCardView({ project, principal, canEdit, canRequest, back }: {
   </section>;
 }
 
-/** «Ещё ▾» карточки проекта: редкие и опасные действия подальше от рабочих кнопок. Пока одно — «Удалить проект…». */
-function CardMoreMenu({ project, onDelete }: { project: string; onDelete: () => void }) {
+/** «Ещё ▾» карточки проекта: «Обновить из расчёта», «Оформить заявку из расчёта» и — последним, красным — «Удалить
+ *  проект…». Заявка — отдельный шаг, как в SUPPLYMAP: «Оформить заявку → Из расчёта» открывается с этой ссылкой и
+ *  номером, оператор проверяет строки. Пункт показан только если действие доступно. */
+function CardMoreMenu({ project, refreshing, onRefresh, onRequest, onDelete }: {
+  project: string; refreshing: boolean; onRefresh?: () => void; onRequest?: () => void; onDelete?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -525,7 +553,9 @@ function CardMoreMenu({ project, onDelete }: { project: string; onDelete: () => 
     <button type="button" className="secondary small more-menu-trigger" aria-haspopup="menu" aria-expanded={open}
       aria-label={`Ещё действия с проектом ${project}`} onClick={() => setOpen((value) => !value)}>Ещё ▾</button>
     {open && <div className="more-menu-list" role="menu">
-      <button type="button" role="menuitem" className="kit-more-danger" autoFocus onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>
+      {onRefresh && <button type="button" role="menuitem" autoFocus disabled={refreshing} onClick={() => { setOpen(false); onRefresh(); }}>{refreshing ? "Читаю расчёт…" : "Обновить из расчёта"}</button>}
+      {onRequest && <button type="button" role="menuitem" autoFocus={!onRefresh} onClick={() => { setOpen(false); onRequest(); }}>Оформить заявку из расчёта</button>}
+      {onDelete && <button type="button" role="menuitem" className="kit-more-danger" autoFocus={!onRefresh && !onRequest} onClick={() => { setOpen(false); onDelete(); }}>Удалить проект…</button>}
     </div>}
   </div>;
 }
@@ -611,16 +641,35 @@ function JournalTab({ card, canEdit, changed }: { card: KitsetCard; canEdit: boo
 
 const REVIEW_TONE: Record<string, string> = { "проверена": "ok", "с погрешностями": "danger", "не проверена": "neutral" };
 
-function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }: {
-  card: KitsetCard; canEdit: boolean; reload: () => Promise<void>; setNote: (text: string) => void;
-  setError: (text: string) => void; openGen: (index: string) => void; openTc: (index: string) => void;
+function SostavTab({ card, canEdit, goodsVisible = false, reload, setNote, setError, openGen, openTc, openDrawing }: {
+  card: KitsetCard; canEdit: boolean; goodsVisible?: boolean; reload: () => Promise<void>; setNote: (text: string) => void;
+  setError: (text: string) => void; openGen: (index: string) => void; openTc: (index: string) => void; openDrawing: (index: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [kdIndex, setKdIndex] = useState("");
   const [stagePick, setStagePick] = useState<{ assembly: KitsetAssembly; value: string } | null>(null);
+  // Сквозной статус готовой продукции по КБ (владелец 12.10): В производстве → Принято складом → Упаковано → Отгружено.
+  const [goods, setGoods] = useState<{ status: ProjectGoodsStatus | null; error: string }>({ status: null, error: "" });
+  useEffect(() => {
+    if (!goodsVisible) return;
+    let live = true;
+    shippingApi.projectGoods(card.project)
+      .then((status) => { if (live) setGoods({ status, error: "" }); })
+      .catch((reason) => { if (live) setGoods({ status: null, error: failureText(reason, "Статус готовой продукции не загружен") }); });
+    return () => { live = false; };
+  }, [goodsVisible, card.project]);
+  const goodsCell = (assembly: KitsetAssembly) => {
+    if (goods.error) return <span className="muted" title={goods.error}>не загружено</span>;
+    if (!goods.status) return <span className="muted">…</span>;
+    const wanted = assembly.index.trim().toUpperCase();
+    const kb = (goods.status.kbs ?? []).find((item) => item.item_index.trim().toUpperCase() === wanted);
+    if (!kb) return <span className="muted">—</span>;
+    const moves = (goods.status.moves ?? []).filter((move) => move.item_index.trim().toUpperCase() === wanted);
+    return <GoodsStateBar pieces={piecesOf(kb.pieces)} unit={kb.unit} title={movesHint(moves)} />;
+  };
 
-  async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string) {
-    const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason });
+  async function applyKbStage(assembly: KitsetAssembly, value: string, reason: string, previewToken: string) {
+    const result = await kitsetsApi.mark(card.project, { kb: assembly.index, kind: "stage", value, text: "", reason, preview_token: previewToken });
     setStagePick(null);
     setNote(result.msg || `${assembly.index}: этап — ${value === STAGE_AUTO ? "по фактам" : value}`);
     await reload();
@@ -652,7 +701,8 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
     } catch (reason) { setError(message(reason, "КД не приложена")); }
   }
 
-  // Чертёж жгута не удаляется: «Отвязать» оставляет его в КД позиции отвязанным, «Вернуть» привязывает обратно.
+  // Привязанный чертёж жгута не удаляется: «Отвязать» оставляет его в КД позиции отвязанным, «Вернуть» привязывает обратно,
+  // «Удалить» стирает только отвязанный.
   async function unlinkHarness(index: string) {
     if (!window.confirm(`Отвязать чертёж жгута от ${index}? Он останется в КД отвязанным — вернуть можно кнопкой «Вернуть».`)) return;
     try { await harnessApi.unlink(card.project, index); setNote(`${index}: чертёж жгута отвязан.`); await reload(); }
@@ -662,6 +712,13 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   async function restoreHarness(index: string, documentId: string) {
     try { await harnessApi.relink(card.project, index, documentId); setNote(`${index}: чертёж жгута возвращён.`); await reload(); }
     catch (reason) { setError(message(reason, "Чертёж не возвращён")); }
+  }
+
+  /** «Удалить» отвязанный чертёж насовсем (вместе с историей версий): только отвязанный, привязанный — сначала «Отвязать». */
+  async function removeUnlinked(index: string, document: KitsetDocument) {
+    if (!window.confirm(`Удалить отвязанный чертёж жгута (сохранён ${formatDate(document.uploaded_at)})? Вернуть его будет нельзя.`)) return;
+    try { await harnessApi.removeUnlinked(card.project, index, document.id); setNote(`${index}: отвязанный чертёж жгута удалён.`); await reload(); }
+    catch (reason) { setError(message(reason, "Чертёж не удалён")); }
   }
 
   async function detach(documentId: string) {
@@ -675,7 +732,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
     const unlinked = assembly.kd.filter((document) => document.kind === "harness_unlinked");
     return <>
     {harness && <div className="kit-kd">
-      <button className="link-button" onClick={() => openHarness(card.project, assembly.index)}>Чертёж жгута</button>
+      <button className="link-button" onClick={() => openDrawing(assembly.index)}>Чертёж жгута</button>
       {canEdit && <button className="link-button kit-kd-action" onClick={() => void unlinkHarness(assembly.index)}>Отвязать</button>}
     </div>}
     {unlinked.map((document) => <div key={document.id} className="kit-kd kit-kd-unlinked">
@@ -683,6 +740,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
       {canEdit && <button className="link-button kit-kd-action" disabled={Boolean(harness)}
         title={harness ? "У позиции уже есть чертёж — сначала отвяжите его" : undefined}
         onClick={() => void restoreHarness(assembly.index, document.id)}>Вернуть</button>}
+      {canEdit && <button className="link-button kit-kd-action kit-kd-delete" onClick={() => void removeUnlinked(assembly.index, document)}>Удалить</button>}
     </div>)}
     {assembly.kd.filter((document) => document.kind !== "harness" && document.kind !== "harness_unlinked").map((document) => <div key={document.id} className="kit-kd">
       {document.stored || !document.url
@@ -690,7 +748,7 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
         : <><a href={document.url} target="_blank" rel="noopener">{document.name.replace(/^\S+\s+—\s+/, "")}</a> <span className="muted">на Диске (архив)</span></>}
       {canEdit && <button className="link-button" title="Отвязать" onClick={() => void detach(document.id)}>✕</button>}
     </div>)}
-    {canEdit && !harness && <button className="kit-file" onClick={() => openHarness(card.project, assembly.index)}>Создать в редакторе</button>}
+    {canEdit && !harness && <button className="kit-file" onClick={() => openDrawing(assembly.index)}>Создать в редакторе</button>}
     {canEdit && <button className="kit-file" onClick={() => { setKdIndex(assembly.index); fileRef.current?.click(); }}>＋ файл</button>}
   </>;
   };
@@ -723,44 +781,69 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc }
   return <div className="kit-pane">
     <input ref={fileRef} type="file" hidden data-testid="kd-file" onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ""; }} />
     {!card.assemblies.length ? <div className="empty">В проекте нет сборок.</div> : <div className="table-wrap kit-sostav"><table className="grid" aria-label="Состав проекта">
-      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th></tr></thead>
+      <thead><tr><th>КБ</th><th>Наименование</th><th className="num">Кол-во</th><th className="num">Позиций</th><th>КД</th><th>Техкарта</th><th>Этап</th><th>Проверка ТК</th>{goodsVisible && <th title="Штуки КБ: в производстве · принято складом · упаковано · отгружено">Готовая продукция</th>}</tr></thead>
       <tbody>{card.assemblies.map((assembly) => <tr key={assembly.index} title={`Открыть генератор ${assembly.index}`} onClick={(event) => {
         // Внутри строки свои кликабельные вещи — ссылка на КД, «＋ файл», выпадающие списки.
         if ((event.target as HTMLElement).closest("a, button, input, select, label")) return;
         openGen(assembly.index);
       }}>
-        <td><strong>{assembly.index}</strong></td>
-        <td className="wrap">{assembly.name}</td>
-        <td className="num">{assembly.run}</td>
-        <td className="num">{assembly.components.length}</td>
-        <td>{kdCell(assembly)}</td>
-        <td>{assembly.techcard && assembly.techcard.stages > 0
+        <td data-label="КБ"><strong>{assembly.index}</strong></td>
+        <td className="wrap" data-label="Наименование">{assembly.name}</td>
+        <td className="num" data-label="Кол-во">{assembly.run}</td>
+        <td className="num" data-label="Позиций">{assembly.components.length}</td>
+        <td data-label="КД">{kdCell(assembly)}</td>
+        <td data-label="Техкарта">{assembly.techcard && assembly.techcard.stages > 0
           ? <button className="link-button" onClick={() => (assembly.techcard!.issued ? openTc : openGen)(assembly.index)}>{assembly.techcard.issued ? "готова" : "черновик"} · {assembly.techcard.stages} эт.</button>
           : <span className="muted">{assembly.techcard ? "не собрана" : "нет"}</span>}</td>
-        <td>{stageCell(assembly)}</td>
-        <td>{reviewCell(assembly)}</td>
+        <td data-label="Этап">{stageCell(assembly)}</td>
+        <td data-label="Проверка ТК">{reviewCell(assembly)}</td>
+        {goodsVisible && <td className="kit-goods" data-label="Готовая продукция">{goodsCell(assembly)}</td>}
       </tr>)}</tbody>
     </table></div>}
     {stagePick && <StageChangeDialog project={card.project} kb={stagePick.assembly.index}
       current={stagePick.assembly.stage?.status || "—"} value={stagePick.value}
       loadPreview={() => kitsetsApi.stagePreview(card.project, stagePick.value, stagePick.assembly.index)}
-      apply={(reason) => applyKbStage(stagePick.assembly, stagePick.value, reason)} onClose={() => setStagePick(null)} />}
+      apply={(reason, token) => applyKbStage(stagePick.assembly, stagePick.value, reason, token)} onClose={() => setStagePick(null)} />}
   </div>;
 }
 
+/* «Стадия» одним словом (владелец 12.10.2026): счётчики сверху идут в том же порядке и тех же цветах. */
+const SUPPLY_STATES: Array<[key: string, label: string, tone: string]> = [
+  ["short", "Не хватает", "danger"], ["procurement", "В закупке", "warn"], ["outside", "Куплено вне системы", "neutral"],
+  ["stock", "Со склада", "info"], ["kitting", "В комплектации", "ok"], ["received", "Принято на склад", "ok"],
+];
+
+type Maybe = { items: FulfillmentCandidate[]; more: number };
+
 /* «Снабжение»: Нужно / Свободно / Без ГРН / В закупке / Не хватает по каждой позиции. Позиции, где не хватает, отмечаются
-   галочкой, и одна кнопка «Заказать недостающее» оформляет на них заявки на закупку (ничего не отмечено — на все). */
-function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder: boolean; deadline?: string | null }) {
+   галочкой, и одна кнопка «Заказать недостающее» оформляет на них заявки на закупку (ничего не отмечено — на все).
+   Тому, кому открыт склад, строки нехватки окрашены «Возможно есть» — как в комплектации. */
+function SupplyTab({ project, canOrder, canSeeStock, deadline }: {
+  project: string; canOrder: boolean; canSeeStock: boolean; deadline?: string | null;
+}) {
   const [lines, setLines] = useState<SupplyLine[] | null>(null);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [until, setUntil] = useState((deadline || "").slice(0, 10));
   const [ordering, setOrdering] = useState(false);
   const [result, setResult] = useState<{ text: string; bad: boolean } | null>(null);
+  // «Возможно есть»: one request for the positions short of stock; a failure leaves the column empty.
+  const [maybe, setMaybe] = useState<Map<string, Maybe> | null>(null);
   function load() {
     return supplyApi.lines(project).then((answer) => setLines(answer.lines)).catch((reason) => setError(message(reason, "Сервер не ответил.")));
   }
   useEffect(() => { void load(); }, [project]);  // eslint-disable-line react-hooks/exhaustive-deps
+  const wanted = (lines ?? []).filter((line) => Number(line.short) > 0);
+  const wantedKey = wanted.map((line) => `${line.art}\u0000${line.short}`).join("\u0001");
+  useEffect(() => {
+    if (!canSeeStock || !wanted.length) { setMaybe(null); return; }
+    let alive = true;
+    setMaybe(null);
+    fulfillmentApi.candidatesFor(project, wanted.map((line) => ({ article: line.art, name: line.name, unit: line.unit })))
+      .then((answer) => { if (alive) setMaybe(new Map(answer.positions.map((item) => [item.article, { items: item.candidates, more: item.more }]))); })
+      .catch(() => { if (alive) setMaybe(new Map()); });
+    return () => { alive = false; };
+  }, [project, canSeeStock, wantedKey]);  // eslint-disable-line react-hooks/exhaustive-deps
   if (error) return <div className="empty">{error}</div>;
   if (!lines) return <div className="empty">Считаю по заявкам и закупке…</div>;
   if (!lines.length) return <div className="empty">В спецификации проекта нет позиций с артикулом.</div>;
@@ -768,17 +851,18 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
   const shortLines = lines.filter(isShort);
   const chosen = shortLines.filter((line) => picked.has(line.art));
   const count = chosen.length || shortLines.length;
-  const missing = lines.filter((line) => line.stage === "не заведено").length;
-  const received = lines.filter((line) => line.received).length;
-  // Закрыто «Есть на складе, без ГРН» — тоже со склада, без закупки (стадия «Закупка · Готово · без ГРН»).
-  const fromStock = (line: SupplyLine) => line.stage === "со склада" || line.stage.endsWith("без ГРН");
-  const stock = lines.filter(fromStock).length;
-  const tone = (line: SupplyLine) => line.received ? "ok" : line.stage === "не заведено" ? "danger" : fromStock(line) ? "info" : "warn";
   const zeroDash = (value: string) => Number(value) ? value : "—";
   // «Готово · без ГРН»: партию к строке привязывает её закупщик — подсказка говорит, где.
   const grnHint = (line: SupplyLine) => {
     const row = line.rows.find((item) => item.status.endsWith("без ГРН"));
-    return row ? `ГРН привязывает закупщик: Закупка → Мои позиции → ${row.source_id} → «Привязать ГРН»` : undefined;
+    return row ? `ГРН привязывает закупщик: Закупка → Мои позиции → ${row.source_id} → «Привязать ГРН»` : "";
+  };
+  const stateHint = (line: SupplyLine) => [line.state_hint, line.rows.length ? `Цепочка: ${line.stage}` : "", grnHint(line)]
+    .filter(Boolean).join("\n");
+  const offered = (line: SupplyLine) => (isShort(line) && maybe ? maybe.get(line.art) : undefined);
+  const candTone = (line: SupplyLine) => {
+    const found = offered(line);
+    return found ? candidateTone(Number(line.short), found.items) : null;
   };
 
   function toggle(art: string, on: boolean) {
@@ -810,32 +894,59 @@ function SupplyTab({ project, canOrder, deadline }: { project: string; canOrder:
         ? <label className="sel-hit"><input type="checkbox" aria-label={`Заказать ${line.art}`} checked={picked.has(line.art)} onChange={(event) => toggle(line.art, event.target.checked)} /></label>
         : null }] : []),
     { key: "art", title: "Артикул КД", width: 170, wrap: true, value: (line) => line.art, render: (line) => <strong>{line.art}</strong> },
-    { key: "name", title: "Наименование", width: 170, value: (line) => line.name, wrap: true },
+    // Источник имени — подсказкой (справочник / склад / спецификация / сайт); без имени — «—» и почему.
+    { key: "name", title: "Наименование", width: 260, value: (line) => line.name, wrap: true,
+      render: (line) => line.name
+        ? <span title={line.name_hint || undefined}>{line.name}</span>
+        : <span className="supply-unknown" title={line.name_hint || undefined}>— <small>артикул неизвестен</small></span> },
+    // «Стадия» одним словом сразу за именем (владелец 12.10.2026): цифры за ней — в подсказке.
+    { key: "stage", title: "Стадия", width: 165, wrap: true, filter: true, value: (line) => line.state_label || line.stage,
+      render: (line) => <span className={`tone-${line.state_tone || "neutral"}`} title={stateHint(line) || undefined}>{line.state_label || line.stage}</span> },
     { key: "need", title: "Нужно", width: 72, value: (line) => line.need, numeric: true },
     { key: "free", title: "Свободно", width: 90, value: (line) => zeroDash(line.free), numeric: true, hint: "Свободно на складе, с резервами самого проекта" },
+    // Ключевые — до «Возможно есть» (влезают в 16"), разбивка «Без ГРН / В закупке / В комплектации» — за ней.
+    { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,
+      render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
+    ...(canSeeStock ? [{ key: "maybe", title: "Возможно есть", width: 200, wrap: true,
+      hint: "Партии склада, которые могут быть этой позицией: тот же артикул или похожий",
+      value: (line: SupplyLine) => offered(line)?.items[0]?.grn ?? "",
+      render: (line: SupplyLine) => {
+        if (!isShort(line)) return <span className="muted">—</span>;
+        if (!maybe) return <span className="t-sub">…</span>;
+        const found = offered(line);
+        const best = found?.items[0];
+        if (!best) return <span className="cand-none-text">не найдено</span>;
+        const others = (found?.items.length ?? 1) - 1 + (found?.more ?? 0);
+        return <span className="supply-cand" title={`${matchText(best)} · ${best.article} · ${best.name}`}>
+          <span>ГРН {best.grn} · {best.available} {best.unit}</span>
+          <small>{matchText(best)} · {best.warehouse}{others > 0 ? ` · ещё ${others}` : ""}</small>
+        </span>;
+      } }] : []),
     { key: "off_book", title: "Без ГРН", width: 76, value: (line) => zeroDash(line.off_book || "0"), numeric: true, hint: "Закупка отметила «Есть на складе, без ГРН»: лежит на полке, но не заведено в партию и не в резерве" },
     { key: "ordered", title: "В закупке", width: 84, value: (line) => zeroDash(line.ordered), numeric: true, hint: "Заявки и строки закупки проекта, ещё не принятые" },
     { key: "kitted", title: "В комплектации", width: 132, value: (line) => zeroDash(line.kitted), numeric: true, hint: "В резерве или выдано по комплектации проекта" },
-    { key: "short", title: "Не хватает", width: 100, value: (line) => zeroDash(line.short), numeric: true,
-      render: (line) => isShort(line) ? <strong className="tone-danger">{line.short}</strong> : <span className="muted">—</span> },
     { key: "unit", title: "Ед.", width: 48, value: (line) => line.unit },
     { key: "kbs", title: "КБ", width: 72, wrap: true, value: (line) => line.kbs.join(" · ") },
-    { key: "stage", title: "Стадия", width: 170, wrap: true, filter: true, value: (line) => line.stage, render: (line) => <span className={`tone-${tone(line)}`} title={grnHint(line)}>
-      {line.stage}{line.grn && line.stage !== "со склада" && <span className="t-sub"> · ГРН в спец.</span>}
-    </span> },
     { key: "rows", title: "Строк", width: 64, hidden: true, value: (line) => line.rows.length || "—", numeric: true },
   ];
 
   return <div className="kit-pane">
     {/* Счётчики одной строкой (аудит 10.10, ПР-8): число — цветом своего тона, ноль — серым. */}
     <dl className="kit-supply-summary" aria-label="Итог по снабжению">
-      {([["Принято на склад", received, "ok"], ["В работе снабжения", lines.length - missing - received - stock, "warn"], ["Со склада, без закупки", stock, "info"], ["Не заведено", missing, "danger"], ["Не хватает", shortLines.length, "danger"]] as Array<[string, number, string]>).map(([label, value, toneName]) =>
-        <div key={label} className="kit-supply-count"><dt>{label}</dt><dd className={value ? `tone-${toneName}` : "muted"}>{value}</dd></div>)}
+      {SUPPLY_STATES.map(([key, label, toneName]) => {
+        const value = lines.filter((line) => line.state === key).length;
+        return <div key={key} className="kit-supply-count"><dt>{label}</dt><dd className={value ? `tone-${toneName}` : "muted"}>{value}</dd></div>;
+      })}
     </dl>
     {result && <div className={result.bad ? "error-banner" : "success-banner"} role={result.bad ? "alert" : "status"}>{result.text}</div>}
+    {canSeeStock && shortLines.length > 0 && <div className="cand-legend" aria-label="Цвета строк">
+      <span>Возможно есть на складе (для нехватки):</span>
+      {CANDIDATE_LEGEND.filter((item) => item.tone !== "done").map((item) => <span key={item.tone} className={`cand-key cand-${item.tone}`}>{item.text}</span>)}
+    </div>}
     <DataTable
       rows={lines}
       columns={columns}
+      rowClassName={(line) => { const toneName = candTone(line); return toneName ? `cand-row cand-${toneName}` : ""; }}
       rowKey={(line) => line.art}
       storageKey="kit-supply"
       label="Снабжение проекта"

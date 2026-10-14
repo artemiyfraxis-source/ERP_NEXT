@@ -23,7 +23,7 @@ function json(body: unknown) {
   });
 }
 
-afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/"); });
 
 it("edits and atomically saves all reference maps", async () => {
   let payload: unknown;
@@ -110,7 +110,8 @@ it("edits a technology row with the old value and hides editing for non-admins",
 
   const { unmount } = render(<ReferencesPage principal={admin} />);
   fireEvent.click(await screen.findByRole("button", { name: "Терминалы" }));
-  fireEvent.click((await screen.findAllByText("МГТФ"))[0]); // строка целиком открывает правку
+  fireEvent.click((await screen.findAllByText("МГТФ"))[0]); // строка «Терминалов» открывает карточку контакта, правка — из неё
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
   fireEvent.change(screen.getByLabelText("Поле Сечение"), { target: { value: "0,5" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
 
@@ -151,25 +152,20 @@ it("offers the create form on an empty tab from the known column schema", async 
   await waitFor(() => expect(created).toEqual({ tab: "coax", fields: { Наименование: "Трубка", Группа: "" } }));
 });
 
-it("shows the AWG table as a read-only grid right after the hookup wires", async () => {
+it("opens the retired «Ø изоляции по маркам» key (kab_awg) on the hookup wires and has no tab of that name", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
-    if (path.startsWith("/api/references/tech-operations?tab=kab_awg")) return json({
-      metadata: null, columns: ["AWG", "ГОСТ"],
-      records: [{ id: "4", tab: "kab_awg", display_text: "22", source_sheet: "СПР.КАБ · AWG", fields: { AWG: "22", ГОСТ: "0,35" } }],
-    });
     if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
+    if (path === "/api/references/cables") return json({ columns: [], counts: { coax: 0, wire: 0, multi: 0, other: 0 }, rows: [], gauges: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<ReferencesPage principal={admin} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Ø изоляции по маркам" }));
-  expect(await screen.findByText("0,35")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Править" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "+ Запись" })).toBeNull();
-  expect(screen.queryByText(/СПР\.КАБ/)).toBeNull(); // the code-like group name is gone (owner 04.10.2026)
+  render(<ReferencesPage principal={admin} initialTab="kab_awg" />);
+  expect(await screen.findByRole("button", { name: /^Монтажные провода/ })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.queryByRole("button", { name: /Ø изоляции по маркам/ })).toBeNull();
+  expect(screen.queryByLabelText("Артикул провода")).toBeNull();
 });
 
 it("shows record counts on the tabs and opens a base from its tab", async () => {
@@ -252,11 +248,13 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   });
 
   render(<ReferencesPage principal={admin} initialTab="coax" />);
-  expect(await screen.findByText("3,5")).toBeInTheDocument(); // D3 of RG58, not the connector's own «9»
-  expect(screen.queryByText("9")).toBeNull();
-  expect(screen.getAllByText("нет у кабеля")).toHaveLength(3);
-  expect(screen.getByRole("columnheader", { name: "D1 кабеля" })).toBeInTheDocument();
-  fireEvent.click(screen.getAllByRole("row")[1]);
+  expect(await screen.findByText("1 · 2,95 · 3,5")).toBeInTheDocument(); // D of RG58, not the connector's own «9»
+  expect(screen.queryByText(/9 · 9/)).toBeNull();
+  expect(screen.getAllByText("нет у кабеля")).toHaveLength(1);
+  expect(screen.getByRole("columnheader", { name: "D1 · D2 · D3 кабеля" })).toBeInTheDocument();
+  // Строка открывает карточку разъёма, правка — кнопкой в ней.
+  fireEvent.click(screen.getByText("BNC-C58P"));
+  fireEvent.click(screen.getByRole("button", { name: "Править запись" }));
   expect(screen.getByLabelText("Поле L1")).toBeInTheDocument();
   expect(screen.queryByLabelText("Поле D1")).toBeNull();
 });
@@ -286,29 +284,26 @@ it("shows БД.ОБ as cards by type with every column and the БД.ОП operati
   fireEvent.click(screen.getByText("ОБ.015"));
   expect(screen.getByText("900 000,00")).toBeInTheDocument();
   expect(screen.getByText("CUT_WIRE_auto")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Править" })).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: /^Править/ }).length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "Ещё такой же" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Код терминалов" })).toBeNull(); // only crimp tools and dies have terminal codes
 });
 
-it("matches a wire article to AWG, ГОСТ section and Ø by cable type, as the generator does", async () => {
+it("shows the terminal-code column in the instances table of a crimp tool only", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
-    if (path.includes("tab=kab_awg")) return json({ metadata: null, records: [
-      { id: "a1", tab: "kab_awg", display_text: "24", source_sheet: "", fields: { AWG: "24", "ГОСТ": "0,2", "Ø жилы": "0,51", "МГТФ": "1", "UL1061": "1,15", "UL1571": "1,2" } },
-      { id: "a2", tab: "kab_awg", display_text: "22", source_sheet: "", fields: { AWG: "22", "ГОСТ": "0,35", "Ø жилы": "0,64", "МГТФ": "1,2", "UL1061": "1,35", "UL1571": "1,4" } },
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "c1", tab: "ob", display_text: "Пресс", source_sheet: "БД.ОБ", fields: { baseValue: "Пресс", "Тип": "Обжимной инструмент", "Инв. номер": "ОБ.101", "Наменование": "Пресс", "Для базы": "Пресс", "Код терминалов": "KT-77" } },
     ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<ReferencesPage principal={admin} initialTab="kab_awg" />);
-  fireEvent.change(await screen.findByLabelText("Артикул провода"), { target: { value: "UL1571 22AWG" } });
-  expect(screen.getByText("Ø по изоляции UL1571, мм").nextSibling).toHaveTextContent("1,4");
-  fireEvent.change(screen.getByLabelText("Артикул провода"), { target: { value: "МГТФ 0,2" } });
-  expect(screen.getByText("Ø по изоляции МГТФ, мм").nextSibling).toHaveTextContent("1");
-  expect(screen.getByText("AWG", { selector: ".wire-result small" }).nextSibling).toHaveTextContent("24");
-  fireEvent.change(screen.getByLabelText("Артикул провода"), { target: { value: "ПуГВ 1,5" } });
-  expect(screen.getByText(/Марка не распознана/)).toBeInTheDocument();
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByText("ОБ.101"));
+  expect(await screen.findByRole("columnheader", { name: "Код терминалов" })).toBeInTheDocument();
 });
 
 it("БД-1: terminals show Russian headers and «гнездо/штырь» instead of the sheet's English words", async () => {
@@ -361,6 +356,143 @@ it("БД-5: equipment shows «ЦАР» whatever case the sheet wrote and lists u
   expect(within(row).getByText("ЦАР")).toBeInTheDocument();
   expect(screen.queryByText("Цар")).toBeNull();
   fireEvent.click(row);
-  expect(screen.getByText("Строка БД.ОБ")).toBeInTheDocument();
-  expect(screen.getByText("ЦАР", { selector: "dd" })).toBeInTheDocument();
+  expect(screen.getByText("Экземпляры")).toBeInTheDocument();
+  expect(within(screen.getByText("Экземпляры").closest(".tr-block") as HTMLElement).getByText("ЦАР")).toBeInTheDocument();
+});
+
+const unitFields = (inv: string, extra: Record<string, string> = {}) => ({
+  "Тип": "Оборудование", "Инв. номер": inv, "Наменование": "Станция паяльная", "Артикул": "8620DX-Pro", "Производитель": "SUGON",
+  "Расположение": "ЦАР", "Для базы": "8620DX-Pro/Станция паяльная", ...extra,
+});
+
+it("collapses the units of one model into a row with a count and an inventory range; search finds a unit", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      ...[1, 2, 3].map((k) => ({ id: `u${k}`, tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields(`ОБ.070.${k}`) })),
+      { id: "s1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Артикул": "APS3010H", "Для базы": "APS3010H/Блок питания" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  expect(await screen.findByText("ОБ.070.1–3")).toBeInTheDocument();
+  expect(screen.getByText("3 шт.")).toBeInTheDocument();
+  expect(screen.getByText("ОБ.044")).toBeInTheDocument();
+  expect(screen.queryByText("ОБ.070.2")).toBeNull();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "ОБ.070.2" } });
+  expect(screen.getByText("ОБ.070.1–3")).toBeInTheDocument();
+  expect(screen.queryByText("ОБ.044")).toBeNull();
+  fireEvent.click(screen.getByText("ОБ.070.1–3"));
+  expect(screen.getByText("Экземпляры")).toBeInTheDocument();
+  expect(screen.getByText("ОБ.070.2")).toBeInTheDocument();
+});
+
+it("the new record form asks for the essentials first, proposes the inventory number and keeps the rest folded", async () => {
+  const posted: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.startsWith("/api/references/tech-operations/equipment-number")) return json({ inventory: "ОБ.105", row: "190" });
+    if (path.includes("tab=ob")) return json({ metadata: null, columns: ["№", "Тип", "Инв. номер", "Артикул", "Наменование", "Производитель", "Расположение", "Стоимость", "Для базы"], records: [
+      { id: "s1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: unitFields("ОБ.104") },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    if (path === "/api/references/tech-operations" && init?.method === "POST") {
+      posted.push(JSON.parse(String(init.body)));
+      return json({ id: "n1", tab: "ob", display_text: "x", source_sheet: "", fields: {} });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByRole("button", { name: "+ Новая запись" }));
+  await waitFor(() => expect(screen.getByLabelText("Инв. номер")).toHaveValue("ОБ.105"));
+  expect(screen.getByLabelText("Тип")).toHaveValue("Оборудование");
+  expect(screen.queryByLabelText("Поле Стоимость")).not.toBeVisible();
+  expect(screen.queryByLabelText("Поле №")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Наименование"), { target: { value: "Новый станок" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(posted).toHaveLength(1));
+  expect((posted[0].fields as Record<string, string>)["Наменование"]).toBe("Новый станок");
+  expect((posted[0].fields as Record<string, string>)["Инв. номер"]).toBe("ОБ.105");
+});
+
+it("БД.ОБ: the machine card is a side panel — the list stays, another row switches it, × and Esc close it, a reload reopens it", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010", { "Срок окупаемости": "14 мес.", "Стоимость": "900 000,00" }) },
+      { id: "b1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Артикул": "APS3010H", "Для базы": "APS3010H/Блок питания" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  window.history.replaceState({}, "", "/");
+  const { unmount } = render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByText("ОБ.010"));
+  const panel = screen.getByRole("complementary", { name: "Карточка оборудования" });
+  expect(within(panel).getByText("Станция паяльная")).toBeInTheDocument();
+  expect(within(panel).getByText("8620DX-Pro · SUGON · Оборудование · ЦАР")).toBeInTheDocument();
+  expect(within(panel).getByText("расчёт")).toBeInTheDocument(); // окупаемость is derived
+  expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list is still there
+  expect(window.location.search).toContain("equipment=a1");
+
+  fireEvent.click(screen.getByText("Блок питания"));
+  expect(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByText("APS3010H · Оборудование")).toBeInTheDocument();
+  expect(window.location.search).toContain("equipment=b1");
+
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  expect(window.location.search).not.toContain("equipment");
+  expect(screen.getByText("ОБ.010")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("ОБ.010"));
+  fireEvent.click(screen.getByRole("button", { name: "Закрыть карточку" }));
+  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+
+  fireEvent.click(screen.getByText("ОБ.010"));
+  unmount();
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  expect(await screen.findByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
+});
+
+it("БД.ОБ: a picked row opens the edit form in the right panel, the list stays, saving patches the record and returns to the card", async () => {
+  const patched: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path.includes("tab=ob")) return json({ metadata: null, records: [
+      { id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: unitFields("ОБ.010") },
+      { id: "b1", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.044", "Наменование": "Блок питания", "Для базы": "X/Блок питания" } },
+    ] });
+    if (path.includes("tab=op")) return json({ metadata: null, records: [] });
+    if (path === "/api/references/tech-operations/crimp-codes") return json({ missing: [] });
+    if (path === "/api/references/tech-operations/a1" && init?.method === "PATCH") {
+      patched.push(JSON.parse(String(init.body)));
+      return json({ id: "a1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: {} });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  window.history.replaceState({}, "", "/");
+  render(<ReferencesPage principal={admin} initialTab="ob" />);
+  fireEvent.click(await screen.findByText("ОБ.010"));
+  fireEvent.click(within(screen.getByRole("complementary", { name: "Карточка оборудования" })).getByRole("button", { name: /^Править/ }));
+  const panel = screen.getByRole("complementary", { name: "Правка оборудования" });
+  expect(within(panel).getByLabelText("Артикул")).toHaveValue("8620DX-Pro");
+  expect(screen.getByText("Блок питания")).toBeInTheDocument(); // the list stays on the left
+  expect(screen.queryByRole("complementary", { name: "Карточка оборудования" })).toBeNull();
+  fireEvent.change(within(panel).getByLabelText("Артикул"), { target: { value: "9999" } });
+  fireEvent.click(within(panel).getByRole("button", { name: "Сохранить запись" }));
+  await waitFor(() => expect(patched).toHaveLength(1));
+  expect((patched[0].edits as Array<{ field: string; value: string }>).some((edit) => edit.field === "Артикул" && edit.value === "9999")).toBe(true);
+  await waitFor(() => expect(screen.queryByRole("complementary", { name: "Правка оборудования" })).toBeNull());
+  expect(screen.getByRole("complementary", { name: "Карточка оборудования" })).toBeInTheDocument();
+  window.history.replaceState({}, "", "/");
 });

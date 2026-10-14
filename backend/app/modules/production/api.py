@@ -1,7 +1,7 @@
 """HTTP contract for production resource planning."""
 
 from collections.abc import Callable
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
@@ -12,9 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
-from app.modules.techcards.etk_read import card_view, issued_card_for_item
+from app.modules.techcards.etk_read import IssuedLots, card_views, issued_card_for_item, saved_harness
+from app.workflows.etk_lots import IssuedKitLots
 from app.modules.techcards.project_cards import TechcardStatus
-from app.shared.clock import moscow_now
+from app.shared.clock import MOSCOW, moscow_now
+from app.shared.identity import Actor
 from app.shared.stored_files import file_response
 from app.shared.http_auth import Principal, production_edit_principal, production_overview_principal, production_quality_principal, production_view_principal, production_view_work_principal, section_allowed, shipping_warehouse_principal
 
@@ -55,8 +57,8 @@ from .application import (
 from .domain import FLOW_MODE_NAMES, FlowMode, OperatorSkill, ProductionTask, ProductionValidationError, TaskDelivery, WorkShift, delivered_total
 from .flow import EARLY_LIMIT, EARLY_NOTICE
 from .launchable import (
-    item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, route_from_document,
-    stage_name,
+    item_id, launch_operations, launch_route, launched_quantity, operation_code, operation_codes, ready_cards,
+    route_from_document, stage_name,
 )
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant
@@ -84,6 +86,7 @@ from .execution import (
     submit_work,
 )
 from .traceability import BoxStatus, DefectDisposition, DefectRecord, MaterialInput, ProductionBox, ProductionOutput, WorkSession
+from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
 from .quality import (
     DecideQcRejectionCommand,
     InspectBoxCommand,
@@ -271,6 +274,12 @@ def techcards_uow_factory(request: Request) -> Callable[[], TechcardsUnitOfWork]
     return factory if callable(factory) else None
 
 
+def etk_issued_lots(request: Request) -> IssuedLots | None:
+    """Lots handed to the shop for the КБ, so the fitter's ETK names the ГРН bound after it was issued."""
+    factory = getattr(request.app.state, "fulfillment_uow_factory", None)
+    return IssuedKitLots(factory) if callable(factory) else None
+
+
 def _number(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
@@ -421,7 +430,7 @@ def _run(operation) -> dict:
 
 def _box_result(box: ProductionBox) -> dict:
     return {
-        "id": str(box.id), "number": box.number, "version": box.version,
+        "id": str(box.id), "number": box.number, "code": box.code, "version": box.version,
         "task_id": str(box.task_id), "operation_id": str(box.operation_id),
         "item": box.item, "operation_position": box.operation_position,
         "operator_id": str(box.operator_id), "quantity": _number(box.quantity),
@@ -471,6 +480,8 @@ def _execution(operation):
         return operation()
     except ProductionValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except ConcurrentProductionUpdate as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
@@ -533,6 +544,68 @@ def _viewed_operator(uow: UnitOfWork, principal: Principal, operator_id: UUID | 
     return operator_id
 
 
+def _may_act_for(principal: Principal, viewer, target) -> bool:
+    """Работать за сотрудника (владелец, 12.10.2026: «мне нужен полный функционал от неё»): полный доступ — за любого,
+    мастер (правка «Ресурсного планирования») — за монтажника своей площадки; без площадки у мастера — за любого."""
+    if principal.full_access:
+        return True
+    if not section_allowed(principal, ("production",), "edit"):
+        return False
+    return viewer is None or not viewer.site or target.site == viewer.site
+
+
+def _performer(uow_factory: Callable[[], UnitOfWork], principal: Principal, on_behalf_of: UUID | None) -> Actor | None:
+    """За кого нажата кнопка «Заданий». Правку «Заданий» уже проверил гейт маршрута (production_view_work_principal);
+    без on_behalf_of (или себя) — сам. За другого — сверх гейта право `_may_act_for`, проверенное здесь, а не на
+    экране; возвращает исполнителя."""
+    if on_behalf_of is None or on_behalf_of == principal.actor.id:
+        return None
+    with uow_factory() as uow:
+        target = uow.operators.get(on_behalf_of)
+        viewer = uow.operators.get(principal.actor.id)
+    if target is None or not target.active:
+        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+    if not _may_act_for(principal, viewer, target):
+        raise HTTPException(status_code=403, detail="Работать за сотрудника может мастер его площадки или администратор.")
+    return Actor(id=target.id, name=target.name, department=target.department)
+
+
+def _replay_key(value: str | None) -> str | None:
+    key = str(value or "").strip()
+    if len(key) > 128:
+        raise HTTPException(status_code=422, detail="Ключ повтора длиннее 128 символов")
+    return key or None
+
+
+def _time_result(entry: WorkTimeEntry) -> dict:
+    return {
+        "id": str(entry.id), "session_id": str(entry.session_id), "sequence": entry.sequence,
+        "event": entry.event.value, "occurred_at": entry.occurred_at.isoformat(),
+        "task_id": str(entry.task_id), "operation_id": str(entry.operation_id),
+        "operator_id": str(entry.operator_id), "operator_name": entry.operator_name,
+        "actor_id": str(entry.actor_id), "actor_name": entry.actor_name, "on_behalf": entry.on_behalf,
+        "project": entry.project, "item": entry.item, "task_number": entry.task_number,
+        "operation_code": entry.operation_code, "stage": entry.stage, "position": entry.position,
+        "seconds_per_unit": _number(entry.seconds_per_unit), "setup_seconds": _number(entry.setup_seconds),
+        "planned_norm_seconds": entry.planned_norm_seconds,
+        "good_quantity": _number(entry.good_quantity) if entry.good_quantity is not None else None,
+        "defect_quantity": _number(entry.defect_quantity) if entry.defect_quantity is not None else None,
+        "running_seconds": entry.running_seconds, "earned_norm_seconds": entry.earned_norm_seconds,
+    }
+
+
+def _period(date_from: date, date_to: date) -> tuple[datetime, datetime]:
+    """Дни периода по Москве включительно: [00:00 первого дня, 00:00 дня после последнего)."""
+    if date_to < date_from:
+        raise HTTPException(status_code=422, detail="Конец периода раньше начала")
+    if (date_to - date_from).days > 731:
+        raise HTTPException(status_code=422, detail="Период не длиннее двух лет")
+    return (
+        datetime.combine(date_from, time(0), tzinfo=MOSCOW),
+        datetime.combine(date_to + timedelta(days=1), time(0), tzinfo=MOSCOW),
+    )
+
+
 _MY_TASK_LIMIT = 300
 _MY_BOX_LIMIT = 2_000
 
@@ -553,7 +626,7 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
         found = [box for box in boxes if box.operation_id == edge.input_operation_id and box.status is BoxStatus.CONFIRMED and box.available > 0]
         if found:
             ready.extend({
-                "id": str(box.id), "number": box.number, "quantity": _number(box.available),
+                "id": str(box.id), "number": box.number, "code": box.code, "quantity": _number(box.available),
                 "operation_position": box.operation_position,
                 "stage": (stage_name(source.stage) if source else "") or f"этап {position}",
             } for box in sorted(found, key=lambda item: (item.created_at, item.number or "")))
@@ -604,6 +677,16 @@ def my_operations(
         outputs = list(uow.outputs.active_for_tasks(tuple(mine_ids)))
         facts = _facts(uow, mine, boxes, outputs)
         names = {item.id: item.name for item in uow.operators.list()}
+        # «Факт / норма» сданного: сдачи исполнителя из журнала времени по его операциям.
+        own_operations = tuple(operation.id for task in mine for operation in task.operations if viewed in operation.operator_ids)
+        logged: dict[UUID, list[WorkTimeEntry]] = {}
+        for entry in uow.work_log.entries(operator_id=viewed, operation_ids=own_operations):
+            logged.setdefault(entry.operation_id, []).append(entry)
+        # Свои задания — сам; чужие — работает ли за него смотрящий (иначе экран остаётся только просмотром).
+        # Действия идут через гейт правки «Заданий» (production_view_work_principal) — без неё только просмотр.
+        can_act = section_allowed(principal, ("myops",), "edit") and (viewed == principal.actor.id or _may_act_for(
+            principal, uow.operators.get(principal.actor.id), uow.operators.get(viewed),
+        ))
     boxes_by_task: dict[UUID, list[ProductionBox]] = {}
     for box in boxes:
         boxes_by_task.setdefault(box.task_id, []).append(box)
@@ -623,12 +706,20 @@ def my_operations(
                     "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != viewed],
                     "readiness": _readiness(task, operation, boxes_by_task.get(task.id, ()), result["operations"][index]["state"]),
                     "remaining": _remaining(task, operation, viewed, outputs, result["operations"][index]),
+                    "time_fact": _time_fact_result(logged.get(operation.id, ())),
                 }]})
     operations.sort(key=lambda item: (
         (item["operations"][0]["my_share"] or {}).get("planned_start") or item["operations"][0]["planned_start"] or "9999",
         item["number"], item["operations"][0]["position"],
     ))
-    return {"tasks": operations}
+    return {"tasks": operations, "can_act": can_act}
+
+
+def _time_fact_result(entries) -> dict | None:
+    fact = time_fact(entries)
+    if fact is None:
+        return None
+    return {"actual_seconds": fact.actual_seconds, "norm_seconds": fact.norm_seconds, "percent": fact.percent, "finishes": fact.finishes}
 
 
 @router.get("/tasks/{task_id}/operations/{operation_id}/inputs")
@@ -637,8 +728,11 @@ def available_inputs(
     operation_id: UUID,
     principal: Annotated[Principal, Depends(production_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    operator_id: UUID | None = None,
 ) -> dict:
     with uow_factory() as uow:
+        # Работа за сотрудника: входы его операции — тому, кто видит его задания.
+        viewed = _viewed_operator(uow, principal, operator_id)
         task = uow.production.get(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Задание не найдено")
@@ -646,7 +740,7 @@ def available_inputs(
             operation = task.operation(operation_id)
         except ProductionValidationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
-        if principal.actor.id not in operation.operator_ids:
+        if viewed not in operation.operator_ids:
             raise HTTPException(status_code=403, detail="Операция не назначена сотруднику")
         # Сетевой график: коробки всех этапов-входов операции (у сборки — каждой ветки), не только предыдущего номера.
         sources = {item.input_operation_id for item in operation.inputs}
@@ -693,6 +787,7 @@ def operation_etk(
     principal: Annotated[Principal, Depends(production_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+    issued_lots: Annotated[IssuedLots | None, Depends(etk_issued_lots)],
 ) -> dict:
     """ЭТК операции для монтажника без доступа к разделу техкарт: только выданная карта проекта и КБ этого ПЗ
     и операция, на которой её открыть. Монтажнику — своя операция, планировщику — любая."""
@@ -701,10 +796,33 @@ def operation_etk(
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     with techcards_factory() as techcards:
         card = issued_card_for_item(techcards, task.project, task.item)
-        result = card_view(card) if card is not None else None
+        result = card_views(techcards, [card], issued=issued_lots)[0] if card is not None else None
     if result is None:
         raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
     return {"card": result, "focus": {"position": operation.position, "code": operation_code(operation.code)}}
+
+
+@router.get("/my/tasks/{task_id}/harness")
+def task_harness(
+    task_id: UUID,
+    principal: Annotated[Principal, Depends(production_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
+) -> dict:
+    """Сохранённый чертёж жгута позиции задания — только чтение, без истории версий; раздел «Проекты» монтажнику не
+    нужен. Монтажнику — задание, где он назначен на любую операцию; мастеру с правом «Производство» — любое."""
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        mine = any(principal.actor.id in operation.operator_ids for operation in task.operations)
+        if not mine and not section_allowed(principal, ("production",), "view"):
+            raise HTTPException(status_code=403, detail="Задание не назначено сотруднику")
+        project, item = task.project, task.item
+    if techcards_factory is None:
+        raise HTTPException(status_code=503, detail="База ERP не настроена")
+    with techcards_factory() as techcards:
+        return saved_harness(techcards, project, item)
 
 
 @router.get("/my/tasks/{task_id}/operations/{operation_id}/etk/sketches")
@@ -794,9 +912,13 @@ def boxes(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
     task_id: UUID | None = None,
+    q: str = "",
 ) -> dict:
+    """Коробки; q — поиск по коду с коробки (без учёта точек и пробелов) или по номеру."""
     with uow_factory() as uow:
-        rows = uow.boxes.list(task_id=task_id)
+        rows = uow.boxes.search(q) if q.strip() else uow.boxes.list(task_id=task_id)
+        if q.strip() and task_id is not None:
+            rows = [box for box in rows if box.task_id == task_id]
         result = [{**_box_result(box), "qc_inspected": uow.qc.by_box(box.id) is not None} for box in rows]
     return {"boxes": result}
 
@@ -821,6 +943,9 @@ def finished_goods_ready(
     return {"boxes": rows}
 
 
+# «Задания»: start / pause / resume / cancel / submit / correct. Свои — по правке «Заданий»; за сотрудника
+# (on_behalf_of) — по праву `_may_act_for`: исполнитель — он (факт, коробки, время), нажавший — в журналах.
+# Idempotency-Key: тот же ключ второй раз отдаёт уже записанное, не делая действие дважды.
 @router.post("/tasks/{task_id}/operations/{operation_id}/work/start")
 def start_execution(
     task_id: UUID,
@@ -829,46 +954,99 @@ def start_execution(
     principal: Annotated[Principal, Depends(production_view_work_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    on_behalf_of: UUID | None = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict:
+    performer = _performer(uow_factory, principal, on_behalf_of)
     session = _execution(lambda: start_work(StartWorkCommand(
         task_id=task_id, operation_id=operation_id,
         box_numbers=tuple(payload.inputs),
         actor=principal.actor, now=now,
         materials=tuple(MaterialInput(item.fulfillment_line_id, item.quantity) for item in payload.materials),
+        performer=performer, idempotency_key=_replay_key(idempotency_key),
     ), uow_factory()))
     return {"session": _session_result(session)}
 
 
+def _session_command(session_id: UUID, principal: Principal, now: datetime, uow_factory, on_behalf_of: UUID | None, idempotency_key: str | None) -> SessionCommand:
+    return SessionCommand(
+        session_id, principal.actor, now,
+        performer=_performer(uow_factory, principal, on_behalf_of), idempotency_key=_replay_key(idempotency_key),
+    )
+
+
 @router.post("/work/{session_id}/pause")
-def pause_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    session = _execution(lambda: pause_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
+def pause_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+    command = _session_command(session_id, principal, now, uow_factory, on_behalf_of, idempotency_key)
+    session = _execution(lambda: pause_work(command, uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/resume")
-def resume_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    session = _execution(lambda: resume_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
+def resume_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+    command = _session_command(session_id, principal, now, uow_factory, on_behalf_of, idempotency_key)
+    session = _execution(lambda: resume_work(command, uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/cancel")
-def cancel_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
-    session = _execution(lambda: cancel_work(SessionCommand(session_id, principal.actor, now), uow_factory()))
+def cancel_execution(session_id: UUID, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+    command = _session_command(session_id, principal, now, uow_factory, on_behalf_of, idempotency_key)
+    session = _execution(lambda: cancel_work(command, uow_factory()))
     return {"session": _session_result(session)}
 
 
 @router.post("/work/{session_id}/submit")
-def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def submit_execution(session_id: UUID, payload: SubmitWorkPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None, idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> dict:
+    performer = _performer(uow_factory, principal, on_behalf_of)
     session, box, output, defect = _execution(lambda: submit_work(SubmitWorkCommand(
         session_id=session_id, actor=principal.actor, now=now,
         good_quantity=payload.good_quantity, defect_quantity=payload.defect_quantity,
         defect_character=payload.defect_character,
         defect_description=payload.defect_description,
+        performer=performer, idempotency_key=_replay_key(idempotency_key),
     ), uow_factory()))
     return {
         "session": _session_result(session), "box": _box_result(box),
         "output_id": str(output.id), "defect": _defect_result(defect) if defect else None,
     }
+
+
+@router.get("/work-time")
+def work_time_log(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    date_from: date,
+    date_to: date,
+    operator_id: UUID | None = None,
+) -> dict:
+    """Журнал рабочего времени за дни периода (по Москве): каждое начало / пауза / продолжение / сдача / отмена."""
+    since, until = _period(date_from, date_to)
+    with uow_factory() as uow:
+        rows = uow.work_log.entries(since=since, until=until, operator_id=operator_id)
+    return {"entries": [_time_result(item) for item in rows]}
+
+
+@router.get("/work-time/summary")
+def work_time_summary(
+    _principal: Annotated[Principal, Depends(production_overview_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    date_from: date,
+    date_to: date,
+    by: str = "operation_code",
+) -> dict:
+    """Сводка «факт / норма» сдач за период: по коду операции, исполнителю или проекту. Экрана пока нет (владелец,
+    12.10.2026: данные копятся, сводка — через пару месяцев)."""
+    if by not in SUMMARY_KEYS:
+        raise HTTPException(status_code=422, detail="Сводка группируется по коду операции, исполнителю или проекту")
+    since, until = _period(date_from, date_to)
+    with uow_factory() as uow:
+        rows = uow.work_log.summary(by, since=since, until=until)
+    return {"by": by, "date_from": date_from.isoformat(), "date_to": date_to.isoformat(), "rows": [{
+        "key": str(row["key"]), "label": row["label"], "finishes": int(row["finishes"]),
+        "quantity": _number(Decimal(row["quantity"])), "actual_seconds": int(row["actual_seconds"]),
+        "norm_seconds": int(row["norm_seconds"]), "percent": percent(int(row["actual_seconds"]), int(row["norm_seconds"])),
+    } for row in rows]}
 
 
 @router.get("/boxes/{box_id}/outputs")
@@ -883,9 +1061,10 @@ def box_outputs(
 
 
 @router.post("/boxes/{box_id}/correct")
-def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)]) -> dict:
+def correct_execution_box(box_id: UUID, payload: CorrectBoxPayload, principal: Annotated[Principal, Depends(production_view_work_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)], on_behalf_of: UUID | None = None) -> dict:
+    performer = _performer(uow_factory, principal, on_behalf_of)
     box, output, defect = _execution(lambda: correct_box(CorrectBoxCommand(
-        box_id=box_id, expected_version=payload.version, actor=principal.actor, now=now,
+        box_id=box_id, expected_version=payload.version, actor=principal.actor, now=now, performer=performer,
         output_id=payload.output_id, good_quantity=payload.good_quantity,
         defect_quantity=payload.defect_quantity,
         defect_character=payload.defect_character,
@@ -1028,6 +1207,7 @@ def qc_rejections(
             rows.append({
                 "id": str(inspection.id), "box_id": str(inspection.box_id),
                 "box_number": box.number if box else None,
+                "box_code": box.code if box else None,
                 "item": box.item if box else "",
                 "inspected_at": inspection.inspected_at.isoformat(),
                 "rejected": inspection.rejected,
@@ -1098,30 +1278,15 @@ def launchable(
     with techcards_factory() as techcards:
         cards = [card for card in techcards.techcards.list() if card.status is TechcardStatus.ISSUED]
         kitsets = tuple(techcards.kitsets.list()) if hasattr(techcards, "kitsets") else ()
-    # Тираж и заказчик — из карточки набора (prodLaunchable_ читает «Наборы»); нет набора — партия ЭТК.
-    kit_rows = {
-        kit_stage_key(kitset.project, assembly.index): (kitset.customer, assembly.run)
-        for kitset in kitsets for assembly in kitset.assemblies
-    }
     with uow_factory() as uow:
         launched = launched_quantity(uow.production.list(limit=10_000))
-    items = []
-    for card in cards:
-        planned = launch_route(card.document)
-        route = planned.steps
-        if not route:
-            continue
-        item = item_id(card.project, card.item_index)
-        kit = (card.document or {}).get("kit") if isinstance(card.document, dict) else None
-        customer, run = kit_rows.get(kit_stage_key(card.project, card.item_index), ("", None))
-        items.append({
-            "techcard_id": str(card.id), "project": card.project, "index": card.item_index,
-            "item": item, "name": card.product_name, "customer": customer,
-            "run": _number(run) if run else str((kit or {}).get("part_quantity") or ""),
-            "deadline": card.deadline.isoformat() if card.deadline else None,
-            "launched": launched.get(kit_stage_key(card.project, card.item_index), 0), "operations": len(route),
-            "warnings": list(planned.warnings),
-        })
+    items = [{
+        "techcard_id": str(card.techcard_id), "project": card.project, "index": card.index,
+        "item": item_id(card.project, card.index), "name": card.name, "customer": card.customer, "run": card.run,
+        "deadline": card.deadline.isoformat() if card.deadline else None,
+        "launched": launched.get(card.key, 0), "operations": len(card.route.steps),
+        "warnings": list(card.route.warnings),
+    } for card in ready_cards(cards, kitsets)]
     items.sort(key=lambda value: (value["project"], value["index"]))
     return {"items": items}
 

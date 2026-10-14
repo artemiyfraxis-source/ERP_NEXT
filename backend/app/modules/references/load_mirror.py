@@ -2,6 +2,7 @@
 
     ERP_DATABASE_URL=... python -m app.modules.references.load_mirror --dry-run
     ERP_DATABASE_URL=... python -m app.modules.references.load_mirror [--source <папка>]
+    python -m app.modules.references.load_mirror --export-ter ter.json [--source <папка>]   (no database)
 
 The default source is the snapshot bundled with the repo, `backend/data/reference-mirror/` (the SUPPLYMAP mirror
 `_local/db` as of 29.09.2026, copied once, owner 05.10: nothing in the ERP needs the sibling SUPPLYMAP checkout).
@@ -17,6 +18,15 @@ or deleted (as in SUPPLYMAP, where the base sheet is the single source and porta
 the mirror rows skipped because of that. The snapshot's source date is the mirror's latest `pulledAt`
 (`_meta.json`). Exit code: 0 — done; 2 — a file is missing, unreadable or not a valid table, or ERP_DATABASE_URL is
 not set.
+
+`--export-ter FILE` (owner 12.10.2026, «карточка контакта по протоколу v5.2») writes the body of
+`POST /api/references/import/ter` built from the mirror's БД.ТЕР instead of loading anything: per REEL article its
+identity (manufacturer, series, product name, contact type) and the contact card keys (`TER_CARD_KEYS`: Male/Female,
+BAG article, insulation crimp height and OD, «Металл / Покрытие», max current, datasheet). The crimp / strip / L± /
+pull force / AWG values already have keys in the base and may have been corrected in ERP since the pull, so they are
+not re-sent; the technologist's fields (applicator, pneumatics, ОТР, «С зачисткой», mm²) never are. Empty cells are
+left out (null-spec: the load does not clear or guess them). Send it with `dry_run=1` first; a second apply changes
+nothing.
 """
 
 from __future__ import annotations
@@ -25,7 +35,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -34,8 +44,9 @@ from app.shared.identity import Actor
 
 from .application import ReplaceSnapshotCommand, TechRecordInput, UnitOfWork, replace_snapshot_detailed
 from .domain import ReferenceValidationError, TechOperationTab
+from .wire_makers import split_fields
 from .technology import (
-    KAB_TABLES, SHEET_TABLES, SPR_KAB_SHEET, TECH_SHEETS, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table,
+    TER_CARD_KEYS, KAB_TABLES, SHEET_TABLES, SPR_KAB_SHEET, TECH_SHEETS, TECH_SNAPSHOT_SCHEMA_VERSION, import_sheet_table,
     import_supplymap_snapshot, parse_mirror_rows, parse_mirror_tsv, parse_spr_kab_tsv, sheet_snapshot_records,
 )
 
@@ -146,6 +157,9 @@ def read_mirror(source: Path) -> MirrorSnapshot:
             tables[tab] = _inputs(import_sheet_table(tab, table))
         except ValueError as error:
             raise MirrorLoadError(f"{path.name}: {error}") from error
+        if tab == TechOperationTab.WIRE.value:
+            # БД.ПРОВ: the sheet's «Стандарт / производитель» arrives as two cells (the mirror file itself stays frozen).
+            tables[tab] = [replace(item, fields=split_fields(item.fields)) for item in tables[tab]]
     kab_path = db / f"{SPR_KAB_SHEET}.tsv"
     if kab_path.is_file():
         try:
@@ -154,6 +168,32 @@ def read_mirror(source: Path) -> MirrorSnapshot:
         except ValueError as error:
             raise MirrorLoadError(f"{kab_path.name}: {error}") from error
     return MirrorSnapshot(tables=tables, source_updated_at=snapshot.source_updated_at)
+
+
+TER_EXPORT_KEYS = ("terArticle", "terManufacturer", "terSeries", "terComponent", "terType", *TER_CARD_KEYS)
+
+
+@dataclass(frozen=True)
+class TerExport:
+    rows: list[dict[str, dict[str, str]]]  # `ImportRequest.rows`: [{"fields": {...}}]
+    skipped: list[str]  # display texts of the mirror rows without a REEL article (the import key)
+
+
+def ter_import_rows(source: Path) -> TerExport:
+    """БД.ТЕР of the mirror (built as `read_mirror` builds it) → rows for `POST /api/references/import/ter`."""
+    db = mirror_dir(source)
+    sheet, _row = TECH_SHEETS["ter"]
+    headers, records = sheet_snapshot_records("ter", parse_mirror_rows(_read_text(db / f"{sheet}.tsv")))
+    snapshot = import_supplymap_snapshot({"meta": {
+        "schemaVersion": TECH_SNAPSHOT_SCHEMA_VERSION, "columnHeadersByTab": {"ter": headers},
+    }, "records": records})
+    rows, skipped = [], []
+    for record in snapshot.records:
+        if not record.fields.get("terArticle"):
+            skipped.append(record.display_text)
+            continue
+        rows.append({"fields": {key: record.fields[key] for key in TER_EXPORT_KEYS if record.fields.get(key)}})
+    return TerExport(rows=rows, skipped=skipped)
 
 
 def load_mirror(source: Path, uow: UnitOfWork, *, dry_run: bool, now: datetime) -> MirrorLoadResult:
@@ -197,9 +237,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Загрузка баз «Технологии» (БД.ОБ, БД.ОП, БД.ТЕР, БД.КОАКС, БД.ПРОВ, БД.МАТ, СПР.КАБ) из зеркала в снимок справочников (REF-MIRROR-ALL)")
     parser.add_argument("--source", default=None, help="папка с .tsv зеркала или репозиторий с ними в _local/db (по умолчанию — снимок в backend/data/reference-mirror)")
     parser.add_argument("--dry-run", action="store_true", help="только посчитать строки, без записи в базу")
+    parser.add_argument("--export-ter", default=None, metavar="FILE",
+                        help="не загружать, а записать в FILE тело POST /api/references/import/ter из БД.ТЕР зеркала "
+                             "(карточка контакта по протоколу v5.2)")
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    if args.export_ter:
+        try:
+            export = ter_import_rows(Path(args.source) if args.source else default_source())
+        except (MirrorLoadError, ValueError) as error:
+            print(f"Зеркало не читается: {error}", file=sys.stderr)
+            return 2
+        Path(args.export_ter).write_text(json.dumps({"rows": export.rows}, ensure_ascii=False, indent=1),
+                                         encoding="utf-8", newline="")
+        print(f"БД.ТЕР → {args.export_ter}: строк {len(export.rows)}, без артикула REEL пропущено {len(export.skipped)}")
+        return 0
     database_url = os.getenv("ERP_DATABASE_URL", "").strip()
     if not database_url:
         print("Задайте ERP_DATABASE_URL (та же база, что у приложения)", file=sys.stderr)

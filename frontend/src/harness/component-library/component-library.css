@@ -307,3 +307,117 @@
 .drawing-properties-sidebar .library-properties input:not([type=checkbox]), .drawing-properties-sidebar .library-properties select { height:28px; padding:3px 6px; }
 .drawing-properties-sidebar .node-style-panel { padding:8px; gap:6px; }
 @media(max-width:800px) { .drawing-properties-sidebar { flex-basis:220px; } .drawing-editor-shell .library-workarea:has(.generator-preview) { grid-template-columns:minmax(120px,2fr) minmax(90px,1fr); } }
+
+/* ERP-вид «Библиотеки компонентов» (13.10.2026). Разметка и логика — из TECHMAP-GRAPHER (В. Васильев, с разрешения),
+   вид — ERP: шрифт приложения, подписи 12 px серым обычным регистром, поля и кнопки 30 px, таблицы как DataTable
+   (шапка 12 px, строки 30 px), список шаблонов плотными строками. Вместо «i» у полей — строка пояснений внизу редактора
+   (HelpLine), она прилипает к низу окна, пока редактор на экране. Блок идёт последним. */
+.component-library { font-size: 13px; }
+.component-library :is(button, input, select, textarea) { font-family: inherit; }
+.component-library .library-layout { margin-top: 0; gap: 12px; }
+.component-library :is(.library-catalog, .library-editor) { border-radius: 8px; box-shadow: none; }
+.component-library .library-editor { overflow: clip; }
+.component-library .library-editor > .help-line-slot { position: sticky; bottom: 0; z-index: 6; border-radius: 0 0 8px 8px; }
+.component-library .drawing-editor-shell > .help-line-slot { flex: 0 0 auto; }
+.component-library .library-catalog .panel-heading { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.component-library .library-catalog .panel-heading h2 { font-size: 16px; font-weight: 600; }
+.component-library .library-template-list { border-top: 0; }
+.component-library .library-template { padding: 7px 12px; gap: 1px; border-bottom-color: var(--sheet-line); }
+.component-library .library-template.selected { padding-left: 9px; border-left-width: 3px; background: var(--sheet-selected); }
+.component-library .library-template > :first-child { font-size: 13px; font-weight: 600; }
+.component-library .library-template span { color: var(--foreground); font-size: 12px; }
+.component-library .library-template small { font-size: 12px; }
+
+/* Подписи и поля. */
+.component-library :is(.library-metadata, .library-properties, .coordinate-grid, .binding-form, .series-v3-add-variant, .series-v3-contact-group, .series-v3-add-contact-type, .series-v3-reference-search, .series-v3-preview, .series-v3-terminal-reference-search, .series-v3-standard-terminal, .drawing-editor-shell, .template-contacts-v2, .template-layers-v2, .template-parameters-v2) label,
+.component-library .series-v3-add-mode legend { color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.component-library :is(.library-editor, .drawing-editor-shell) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"]), select):not(td *) {
+  height: 30px; min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background-color: var(--card);
+  color: var(--foreground); font-size: 13px; font-weight: 400; line-height: 1.2;
+}
+.component-library :is(.library-editor, .drawing-editor-shell) textarea { padding: 6px 8px; border-radius: 6px; font-size: 13px; }
+.component-library :is(.library-editor, .drawing-editor-shell) :is(input, select, textarea):not(td *):focus { border-color: var(--primary); outline: 0; box-shadow: 0 0 0 1px var(--primary); }
+.component-library :is(.library-editor, .drawing-editor-shell) :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--primary); }
+.component-library .library-metadata input[aria-label="Серия соединителя"] { font-weight: 600; }
+.component-library .library-metadata > div { color: var(--muted-foreground); font-size: 12px; }
+.component-library .library-save-state { font-weight: 600; }
+
+/* Кнопки — маленькие кнопки ERP; удаление — тихое красное. */
+.component-library :is(.template-series-v3, .library-tools, .drawing-editor-shell, .library-properties, .binding-form, .asset-actions, .template-contacts-v2, .template-layers-v2, .template-parameters-v2, .library-e4-preview, .library-e4-companion) button:not(.primary-action):not(.danger-action):not(.series-v3-remove-terminal):not(.series-v3-delete-article):not(.series-v3-select-article):not(.drawing-primitive):not([role="tab"]):not([aria-pressed="true"]):not(:is(.drawing-ribbon-tabs, .drawing-property-tabs, .graphic-editor-switcher) > button) {
+  min-height: 30px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+  color: var(--foreground); font-size: 12.5px; font-weight: 500; line-height: 18px; box-shadow: none;
+}
+.component-library :is(.template-series-v3, .library-tools, .drawing-editor-shell, .library-properties, .binding-form, .template-contacts-v2, .template-layers-v2, .template-parameters-v2, .library-e4-preview, .library-e4-companion) button:not(.primary-action):not(.danger-action):hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+.component-library button[aria-pressed="true"]:not(.primary-action),
+.component-library .library-tools button.active { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--sheet-selected); color: var(--primary); }
+.component-library :is(.primary-action, .library-metadata > div > .primary-action) { min-height: 32px; padding: 4px 14px; border-radius: var(--control-radius); font-size: 13px; font-weight: 600; box-shadow: none; }
+.component-library .danger-action,
+.component-library .series-v3-groups li button,
+.component-library .series-v3-variant > header > button,
+.component-library .series-v3-remove-terminal { border-color: color-mix(in srgb, var(--tone-danger) 40%, var(--border)) !important; border-radius: 6px; background: var(--card) !important; color: var(--tone-danger) !important; font-size: 12.5px; font-weight: 500; }
+
+/* Переключатели вида («Схема Э4 / Рисунок», вкладки ленты) — сегменты ERP. */
+.component-library .graphic-editor-switcher { padding: 8px 12px; gap: 2px; border-bottom: 1px solid var(--border); background: var(--card); }
+.component-library .graphic-editor-switcher button:not(.primary-action) { min-height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 13px; font-weight: 600; }
+.component-library .graphic-editor-switcher button:not(.primary-action):hover:not(:disabled) { background: var(--accent); color: var(--foreground); }
+.component-library .graphic-editor-switcher button:not(.primary-action).active { background: var(--sheet-selected); color: var(--primary); }
+.component-library .library-view-tabs { background: var(--card); }
+.component-library .library-view-tabs button { padding: 9px 12px 7px; border-bottom-width: 2px; font-size: 13px; font-weight: 600; }
+.component-library .library-view-tabs button.active { color: var(--primary); font-weight: 600; }
+.component-library .drawing-editor-shell .drawing-ribbon-tabs { gap: 2px; padding: 4px 12px; background: var(--card); }
+.component-library :is(.drawing-ribbon-tabs, .drawing-property-tabs) button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px; color: var(--muted-foreground); font-family: inherit; font-size: 13px; font-weight: 600; }
+.component-library :is(.drawing-ribbon-tabs, .drawing-property-tabs) button:hover { background: var(--accent); color: var(--foreground); }
+.component-library :is(.drawing-ribbon-tabs, .drawing-property-tabs) button[aria-pressed="true"] { border: 0; background: var(--sheet-selected); color: var(--primary); }
+.component-library .drawing-editor-shell { border-radius: 8px; box-shadow: 0 0 0 30px color-mix(in srgb, var(--foreground) 40%, transparent); }
+.component-library .drawing-editor-shell > header { min-height: 48px; padding: 8px 12px; background: var(--card); }
+.component-library .drawing-editor-shell > header strong { font-size: 15px; font-weight: 600; }
+.component-library .drawing-editor-shell > header label { display: inline-flex; align-items: center; gap: 6px; }
+.component-library .library-tools span { color: var(--muted-foreground); font-size: 12px; font-weight: 600; text-transform: none; }
+
+/* Разделы серии: заголовок 13 px, рамка — одна, пояснения 12 px серым. */
+.component-library :is(.series-v3-groups, .series-v3-variants, .series-v3-series-terminals, .library-e4-preview, .library-e4-companion, .series-v3-preview) { padding: 10px 12px; gap: 8px; border-color: var(--border); border-radius: 8px; background: var(--card); }
+.component-library :is(.series-v3-groups, .series-v3-variants, .series-v3-series-terminals) > header,
+.component-library :is(.library-e4-preview, .library-e4-companion) > header,
+.component-library .series-v3-selected-terminals > header { color: var(--foreground); font-size: 13px; }
+.component-library :is(.series-v3-groups, .series-v3-variants, .series-v3-series-terminals) > header strong,
+.component-library :is(.library-e4-preview, .library-e4-companion) > header strong { font-weight: 600; }
+.component-library :is(.series-v3-guide, .series-v3-add-hint, .series-v3-reference-limit, .readonly-note),
+.component-library :is(.series-v3-groups, .series-v3-variants, .series-v3-series-terminals) :is(small, p) { color: var(--muted-foreground); font-size: 12px; }
+.component-library .series-v3-add-mode label { min-height: 30px; padding: 0 10px; border-radius: 6px; color: var(--foreground); font-size: 13px; font-weight: 500; }
+.component-library .series-v3-add-mode label:has(input:checked) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--sheet-selected); color: var(--primary); }
+.component-library .series-v3-reference-search { border-radius: 8px; background: var(--card); }
+.component-library .series-v3-contact-group { border-radius: 8px; }
+.component-library .series-v3-contact-group.configured { border-color: color-mix(in srgb, var(--tone-ok) 45%, var(--border)); }
+.component-library .library-e4-preset { color: var(--foreground); font-size: 13px; }
+.component-library .library-e4-preview-scroll { border-radius: 6px; }
+
+/* Таблицы серии и привязок — как DataTable ERP. */
+.component-library :is(.series-v3-article-table, .series-v3-terminal-table) { font-size: 13px; }
+.component-library :is(.series-v3-article-table, .series-v3-terminal-table) th { height: 30px; padding: 0 8px; background: var(--table-head); color: var(--table-head-fg); font-size: 12px; font-weight: 600; }
+.component-library :is(.series-v3-article-table, .series-v3-terminal-table) td { height: 30px; padding: 1px 4px; }
+.component-library :is(.series-v3-article-table, .series-v3-terminal-table) :is(th, td):not(:last-child) { border-right-color: var(--sheet-line); }
+.component-library :is(.series-v3-article-table, .series-v3-terminal-table) tbody tr:not(:last-child) td { border-bottom-color: var(--sheet-line); }
+.component-library .series-v3-article-table tbody tr.selected { background: var(--sheet-selected); }
+.component-library :is(.series-v3-article-table-wrap, .series-v3-terminal-table-wrap, .series-v3-preview-rows) { border-radius: 6px; }
+.component-library .binding-list > span { font-size: 12px; }
+.component-library :is(.library-bindings, .library-assets, .template-series-v3) > summary { color: var(--foreground); font-size: 13px; font-weight: 600; }
+.component-library .asset-list strong { font-size: 13px; font-weight: 600; }
+.component-library .asset-list small { font-size: 12px; }
+
+/* Панели ленты рисунка (контакты, слои, параметры, повторы): текст не мельче 12 px, заголовки 13 px. */
+.component-library :is(.template-contacts-v2, .template-layers-v2, .template-parameters-v2) { font-size: 13px; }
+.component-library :is(.template-contacts-v2, .template-layers-v2, .template-parameters-v2) strong { font-size: 13px; font-weight: 600; }
+.component-library :is(.template-contacts-v2, .template-layers-v2, .template-parameters-v2) :is(small, p, output, .template-layer-v2-name span, .template-parameters-v2-heading > span, .template-dimensions-v2-heading span) { font-size: 12px; }
+.component-library :is(.template-contacts-v2, .template-layers-v2, .template-parameters-v2) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]), select) { border-color: var(--border); border-radius: 6px; }
+
+/* Свойства рисунка (справа в редакторе рисунка). */
+.component-library .drawing-properties-sidebar .library-properties > h3 { font-size: 14px; font-weight: 600; }
+.component-library .drawing-editor-shell :is(.library-properties, .drawing-articles) { font-size: 13px; }
+.component-library .node-style-panel { border-radius: 8px; background: var(--card); }
+.component-library .node-style-panel > strong { font-size: 13px; font-weight: 600; }
+
+@media (pointer: coarse) {
+  .component-library :is(.library-editor, .drawing-editor-shell) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"]), select):not(td *),
+  .component-library :is(.template-series-v3, .library-tools, .drawing-editor-shell, .library-properties) button { min-height: 40px; }
+  .component-library .library-template { min-height: 44px; }
+}

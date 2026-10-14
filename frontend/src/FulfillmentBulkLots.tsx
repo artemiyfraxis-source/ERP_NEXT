@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, ApiError, failureText, type FulfillmentLine, type FulfillmentLot, type FulfillmentRequest } from "./api";
+import { api, ApiError, failureText, type FulfillmentCandidate, type FulfillmentLine, type FulfillmentLot, type FulfillmentRequest } from "./api";
 import { matchesWords } from "./DataTable";
 import { fifoOrder, fifoPick } from "./FulfillmentPage";
+import { matchText } from "./stockCandidates";
 
 /* Комплектация: «ГРН на все КБ» и «Есть, не заведено» (owner 05.10.2026). One position of a project is closed for every
    КБ at once: the person ticks several lots, the server spreads them over the КБ in natural order, lots by ГРН (FIFO).
@@ -20,12 +21,26 @@ export const bulkApi = {
     api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/off-book`, {
       method: on ? "POST" : "DELETE", body: JSON.stringify({ version }),
     }),
+  /** «Нет на складе» (owner 12.10.2026): the line stays open as a shortage; a repeat on a marked line changes nothing. */
+  absent: (requestId: string, lineId: string, version: number, on: boolean) =>
+    api<{ request: FulfillmentRequest }>(`/api/issues/${requestId}/lines/${lineId}/absent`, {
+      method: on ? "POST" : "DELETE", body: JSON.stringify({ version }),
+    }),
 };
 
 /** «Есть, не заведено»: the line is marked, not bound to a lot. */
 export function isOffBook(line: FulfillmentLine) {
   return Boolean((line as FulfillmentLine & { off_book?: boolean }).off_book);
 }
+
+/** «Нет на складе»: who confirmed the part is absent and when; null — no mark. */
+export function absentMark(line: FulfillmentLine): { by: string; at: string } | null {
+  const mark = line as FulfillmentLine & { absent_at?: string | null; absent_by?: string | null };
+  return mark.absent_at ? { by: mark.absent_by ?? "", at: mark.absent_at } : null;
+}
+
+// «Возможно есть»: the tones, legend and wording live in stockCandidates.ts (the project's «Снабжение» uses them too).
+export { CANDIDATE_LEGEND, candidateTone, matchText, type CandidateTone } from "./stockCandidates";
 
 export const STALE_TEXT = "Заявки изменились, пока выбирали ГРН. Список обновлён — повторите.";
 
@@ -74,9 +89,11 @@ export async function bindPosition(project: string, position: BulkPosition, lotI
 }
 
 /** Detail row under a position of «Весь заказ». `run` goes through the page's mutate (busy, notice, reload). */
-export function BulkLotsPanel({ project, position, versionKey, busy, run, onClose }: {
+export function BulkLotsPanel({ project, position, versionKey, busy, run, onClose, suggested = [] }: {
   project: string;
   position: BulkPosition;
+  /** «Возможно есть»: the lots the rules offered for this position, shown first and marked. */
+  suggested?: FulfillmentCandidate[];
   versionKey: string;
   busy: boolean;
   run: (operation: () => Promise<{ message: string }>) => void;
@@ -84,7 +101,7 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
 }) {
   const [lots, setLots] = useState<FulfillmentLot[] | null>(null);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState(position.name);
+  const [query, setQuery] = useState(suggested.length ? "" : position.name);
   const [chosen, setChosen] = useState<string[]>([]);
   const [attempt, setAttempt] = useState(0);
 
@@ -96,7 +113,10 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
     return () => { alive = false; };
   }, [project, versionKey, attempt]);
 
-  const found = (lots ?? []).filter((lot) => chosen.includes(lot.id) || matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query));
+  const offered = useMemo(() => new Map(suggested.map((candidate, index) => [candidate.lot_id, { candidate, index }])), [suggested]);
+  const found = (lots ?? [])
+    .filter((lot) => chosen.includes(lot.id) || offered.has(lot.id) || matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query))
+    .sort((a, b) => (offered.get(a.id)?.index ?? 1e9) - (offered.get(b.id)?.index ?? 1e9));
   const selected = useMemo(() => (lots ?? []).filter((lot) => chosen.includes(lot.id)), [lots, chosen]);
   const preview = useMemo(() => previewSplit(position, selected), [position, selected]);
   const total = round(position.kbs.reduce((sum, kb) => sum + kb.remaining, 0));
@@ -113,7 +133,7 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
       {found.length > 0 && <table className="grid wide"><thead><tr><th /><th>Наименование</th><th>ГРН</th><th className="num">Доступно</th></tr></thead><tbody>
         {found.slice(0, 200).map((lot) => <tr key={lot.id}>
           <td><input type="checkbox" aria-label={`ГРН ${lot.grn}`} checked={chosen.includes(lot.id)} onChange={() => toggle(lot.id)} /></td>
-          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small></td>
+          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small>{offered.has(lot.id) && <small className="cand-tag">возможно есть · {matchText(offered.get(lot.id)!.candidate)}</small>}</td>
           <td>{lot.grn}<small>{lot.warehouse}{lot.package ? ` · пакет ${lot.package}` : ""}</small></td>
           <td className="num">{lot.available} {lot.unit}</td>
         </tr>)}

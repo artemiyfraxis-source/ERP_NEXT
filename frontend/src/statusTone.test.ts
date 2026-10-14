@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STATUS_WORDS, TONES, deadlineTone, isKnownStatus, statusLabel, statusTone } from "./statusTone";
 
-/* Статусы, которые отдаёт сервер — перечисления и словари backend (копия на 10.10.2026; Vite не читает файлы вне
+/* Статусы, которые отдаёт сервер — перечисления и словари backend (копия на 12.10.2026; Vite не читает файлы вне
    frontend, поэтому список здесь). Новое слово статуса на сервере — добавить сюда и в словарь statusTone.ts. */
 const BACKEND_STATUSES: Record<string, string[]> = {
   "fulfillment/domain.py FulfillmentStatus": ["Новая", "Недоукомплектован", "Укомплектован", "Готов к выдаче", "КБ Выдана", "КБ Возвращена", "Готово", "Отменена"],
@@ -18,10 +18,10 @@ const BACKEND_STATUSES: Record<string, string[]> = {
   "shipping/domain.py ShipmentStatus": ["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта", "Отменена"],
   "techcards/project_cards.py TechcardStatus": ["Черновик", "Выдана"],
   "production/plan.py PLAN_BLOCKERS": ["ХОЛД", "СТОП", "ОЖИД ИНФ", "ОЖИД КОМПЛ", "ПАУЗА"],
-  "production/plan.py KIT_STAGES": ["Новый", "ТК готова", "КБ набрана", "В работе", "КБ на складе", "Отгружено"],
-  "production/plan.py SHOP_STATUSES": ["ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "ОТГРУЖЕН"],
+  "production/plan.py KIT_STAGES": ["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"],
+  "production/plan.py SHOP_STATUSES": ["ХОЛД", "СТОП", "ПАУЗА", "ПРВ КОМПЛ", "К ЗАПУСК", "РАСПЛАН", "В РАБОТЕ", "ОЖИД КОМПЛ", "ОЖИД ИНФ", "ОТК", "НА ОТГР", "ГОТОВО", "УПАК", "ОТГРУЖЕН"],
   "production/plan.py TC_REVIEW_VALUES": ["не проверена", "проверена", "с погрешностями"],
-  "production/plan.py PROJECT_TERMINALS": ["Отказ", "Слился", "Отменён"],
+  "production/plan.py PROJECT_TERMINALS": ["Отменён"],
   "identity/leave.py STATUS_LABELS": ["Черновик", "На согласовании у руководителя", "Согласовано руководителем", "Зарегистрировано кадрами", "Отклонено", "Отозвано"],
   "operations/domain.py PROJECT_TASK_STATUS_LABELS": ["Открыта", "Закрыта", "Отменена"],
 };
@@ -67,7 +67,10 @@ describe("statusTone", () => {
   it("shows the ERP word instead of the shop sheet word", () => {
     expect(statusLabel("В РАБОТЕ")).toBe("В работе");
     expect(statusLabel("ОТГРУЖЕН")).toBe("Отгружено");
-    expect(statusLabel("К ЗАПУС")).toBe("К запуску");
+    expect(statusLabel("К ЗАПУС")).toBe("КБ набрана");
+    expect(statusLabel("НА ОТГР")).toBe("Упаковано");
+    expect(statusLabel("УПАК")).toBe("Упаковано");
+    expect(statusLabel("РАСПЛАН")).toBe("Распланировано");
     expect(statusLabel("Жду счет")).toBe("Жду счёт");
     expect(statusTone("В РАБОТЕ")).toBe(statusTone("В работе"));
     expect(statusTone("ГОТОВО")).toBe("success");
@@ -75,6 +78,13 @@ describe("statusTone", () => {
     expect(statusLabel("ОЖИД ИНФ")).toBe("ОЖИД ИНФ");
     expect(statusLabel("ОЖД ИНФ")).toBe("ОЖИД ИНФ");
     expect(statusLabel(" Новый ")).toBe("Новый");
+  });
+
+  it("colours the project stage ladder from new to shipped", () => {
+    expect(["Новый", "ТК готова", "КБ набрана", "Распланировано", "В работе", "ОТК", "Принято складом", "Упаковано", "Отгружено"]
+      .map(statusTone)).toEqual(["neutral", "info", "info", "info", "info", "info", "success", "info", "success"]);
+    // Слова листа «К ЗАПУСК» больше нет на экране — это этап «КБ набрана».
+    expect(statusLabel("К ЗАПУСК")).toBe("КБ набрана");
   });
 
   it("leaves an unknown word neutral", () => {

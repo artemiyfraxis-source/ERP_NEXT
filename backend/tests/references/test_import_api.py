@@ -83,7 +83,7 @@ def _seed(sessions) -> None:
             uow.tech_operations.save(record)
         uow.references.replace((ReferenceEntry.create(ReferenceKind.GOST_AWG, "0,75", "18", 0),))
         uow.commit()
-    save_gauge(SaveGaugeCommand(gauge_id=None, awg="20", section_mm2="0,5", conductor_d_mm="", strands="",
+    save_gauge(SaveGaugeCommand(gauge_id=None, awg="20", section_mm2="0,5", conductor_d_mm="",
                                 actor=SEEDER, now=moscow_now()), SqlAlchemyReferencesUnitOfWork(sessions))
 
 
@@ -323,12 +323,14 @@ def test_the_first_supplier_load_stores_the_seed_the_screen_showed(loader):
 def test_a_size_writes_its_gost_awg_and_is_matched_by_awg_else_by_section(loader):
     sessions, _tokens, _client, load = loader
     report = load("wire-gauges", [{"fields": {"awg": "22", "section_mm2": "0,35"}},
-                                  {"fields": {"section_mm2": "0,07", "strands": "7×0,1"}},
+                                  {"fields": {"section_mm2": "0,07"}},
                                   {"fields": {"section_mm2": "0.50", "conductor_d_mm": "0,8"}},
-                                  {"fields": {"strands": "1"}}]).json()
+                                  {"fields": {"conductor_d_mm": "1"}},
+                                  {"fields": {"awg": "24", "strands": "7×0,2"}}]).json()
     assert report["created"] == ["22 AWG", "0,07 мм²"]
     assert report["updated"] == [{"key": "0,5 мм²", "changes": {"conductor_d_mm": ["", "0,8"]}}]
-    assert report["refused"] == [{"key": "#4", "reason": "не заполнен ключ: AWG или сечение"}]
+    assert report["refused"] == [{"key": "#4", "reason": "не заполнен ключ: AWG или сечение"},
+                                 {"key": "24 AWG", "reason": "неизвестное поле: strands"}]  # dropped in 0114
     with sessions() as session:
         gost = {row.key: row.value for row in session.scalars(
             select(ReferenceEntryRow).where(ReferenceEntryRow.kind == "gost_awg"))}

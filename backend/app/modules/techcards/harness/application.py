@@ -70,6 +70,7 @@ class TechcardsUnitOfWork(Protocol):
     kitsets: Any
     harness_revisions: Any
     harness_components: Any
+    harness_routes: Any  # «Маршрут v3» (route_application)
     audit: Any
 
     def __enter__(self) -> "TechcardsUnitOfWork": ...
@@ -421,6 +422,27 @@ def unlink(factory: Factory, project: str, index: str, expected: Expected, *, ac
         })
         uow.commit()
     return replace(stored, content_type=HARNESS_UNLINKED_CONTENT_TYPE)
+
+
+def delete_unlinked(factory: Factory, project: str, index: str, document_id, *, actor: Actor, now: datetime) -> int:
+    """«Удалить» an UNLINKED drawing of this position for good: the register row, its bytes and its whole history go.
+    A drawing that is still linked is refused — it is unlinked first."""
+    with factory() as uow:
+        kitset, index = position(uow, project, index)
+        document = uow.kitsets.document(kitset.project, document_id)
+        if document is None or document.item_index.upper() != index.upper() or document_kind(document) == "file":
+            raise HarnessNotFound(f"У сборки {index} нет такого чертежа жгута")
+        if document_kind(document) != "harness_unlinked":
+            raise HarnessConflict(f"Чертёж жгута {index} привязан к позиции — сначала отвяжите его, потом удалите")
+        revisions = uow.harness_revisions.delete_all(document.id)
+        if not uow.kitsets.delete_document(kitset.project, document.id):
+            raise HarnessConflict("Чертёж жгута только что изменили — обновите страницу")
+        _audit(uow, actor, now, "techcards.kitset_harness_deleted", {
+            "project": kitset.project, "item_index": index, "file": document.file_name,
+            "document_id": str(document.id), "revisions": revisions,
+        })
+        uow.commit()
+    return revisions
 
 
 def relink(factory: Factory, project: str, index: str, document_id, *, actor: Actor, now: datetime) -> Drawing:

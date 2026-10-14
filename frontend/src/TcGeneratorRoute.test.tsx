@@ -34,6 +34,11 @@ function mockApi() {
 
 afterEach(() => vi.restoreAllMocks());
 
+const scheme = () => screen.getByRole("group", { name: "Карточки схемы" });
+const schemeCards = () => [...scheme().querySelectorAll("article.rc-card")] as HTMLElement[];
+const cardTitles = () => schemeCards().map((item) => item.querySelector(".rc-title")?.textContent);
+const schemeOp = (name: RegExp) => within(scheme()).getByRole("button", { name });
+
 const XH = [
   { type: "Провод", name: "МГТФ 0,12", art: "МГТФ 0,12", qty: 0.3 },
   { type: "Терминал", name: "Контакт XH", art: "SXH-001T-P0.6", qty: 4 },
@@ -67,21 +72,19 @@ const savedRoute = {
   edges: [{ from: "b1", to: "b3", per_unit: 2 }],
 };
 
-it("keeps a linear scheme collapsed, opens it on demand and sends the hand-edited quantity as build_config.route", async () => {
+it("draws the scheme as semi-finished cards and sends the hand-edited quantity as build_config.route", async () => {
   const onBuild = mount();
   expect(await screen.findByText("Схема полуфабрикатов")).toBeInTheDocument();
   expect(screen.getByText("автоматическая")).toBeInTheDocument();
-  // Цепочка свёрнута: названия операций не двоятся, как и раньше.
-  expect(screen.getByText("Резка — МГТФ 0,12")).toBeInTheDocument();
-  expect(screen.queryByRole("list", { name: "Блоки схемы" })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Показать схему" }));
-  const chain = screen.getByRole("list", { name: "Блоки схемы" });
-  expect(within(chain).getAllByRole("listitem")).toHaveLength(3);
-  expect(screen.getByText("3 блока · 3 операции")).toBeInTheDocument();
+  // Резка — «Нарезанные провода», опрессовка А1 — сторона А, опрессовка В1 — готовый кабель.
+  expect(cardTitles()).toEqual(["Нарезанные провода", "Сторона А собрана", "Готовый кабель"]);
+  expect(screen.getByText("3 карточки · 3 операции")).toBeInTheDocument();
   // «Монтаж в разъём» (3 и 5 в списке) без шаблона в сборку не идёт — схема о них говорит
   expect(screen.getByText("Без шаблона, в схему не входят: 3, 5")).toBeInTheDocument();
 
-  fireEvent.change(within(chain).getByLabelText("Штук из «Резка — МГТФ 0,12» на один «Опрессовка терминалов А1»"), { target: { value: "2" } });
+  fireEvent.click(schemeOp(/Опрессовка терминалов А1/));
+  fireEvent.change(within(screen.getByRole("region", { name: "Блок «Опрессовка терминалов А1»" }))
+    .getByLabelText("Штук из «Резка — МГТФ 0,12» на один «Опрессовка терминалов А1»"), { target: { value: "2" } });
   expect(screen.getByText("правлена вручную")).toBeInTheDocument();
   await build();
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
@@ -111,10 +114,11 @@ it("does not send a scheme nobody edited", async () => {
 it("picks up the hand-edited scheme saved with the card, with times from its last build, and sends it back", async () => {
   const onBuild = mount({ card: builtCard(savedRoute) });
   expect(await screen.findByText("правлена вручную")).toBeInTheDocument();
-  expect(within(screen.getByRole("list", { name: "Блоки схемы" })).getAllByRole("button")).toHaveLength(2);
-  const final = screen.getByRole("button", { name: /Жгут готов/ });
-  // операции 2 и 3 — 2 + 3 мин на партию из одной штуки; вход — две штуки резки по 1 мин
-  expect(final).toHaveTextContent("2 оп. · 5 мин/шт · с входами 7");
+  expect(cardTitles()).toEqual(["Нарезанные провода", "Готовый кабель"]);
+  // операции 2 и 3 — 2 + 3 мин на партию из одной штуки; вход — две штуки резки по 1 мин, «2 шт» на связи
+  const final = schemeCards()[1];
+  expect(final.querySelector(".rc-meta")).toHaveTextContent("2 оп. · 5 мин/шт");
+  expect(scheme().querySelector(".rc-qty")).toHaveTextContent("2 шт");
   expect(screen.getByText(/на изделие/)).toHaveTextContent("на изделие 7 мин");
   await build("Пересобрать");
   await waitFor(() => expect(onBuild).toHaveBeenCalled());
@@ -138,15 +142,14 @@ it("shows the server's «Схема полуфабрикатов: …» refusal 
   const banner = await screen.findByRole("alert");
   expect(banner).toHaveClass("error-banner");
   expect(banner).toHaveTextContent("Схема полуфабрикатов: блок «Резка» не доходит до итогового блока");
-  expect(screen.getByRole("list", { name: "Блоки схемы" })).toBeInTheDocument(); // с ошибкой схема раскрыта
+  expect(scheme()).toBeInTheDocument(); // с ошибкой схема раскрыта
 });
 
 it("opens a block with the same operation editor the list has, so its template and times are set in place", async () => {
   mount();
   await screen.findByText("Схема полуфабрикатов");
-  fireEvent.click(screen.getByRole("button", { name: "Показать схему" }));
   expect(screen.getAllByLabelText("Карточка: Резка — МГТФ 0,12")).toHaveLength(1);
-  fireEvent.click(within(screen.getByRole("list", { name: "Блоки схемы" })).getByRole("button", { name: /Резка — МГТФ 0,12/ }));
+  fireEvent.click(schemeOp(/Резка — МГТФ 0,12/));
   const panel = screen.getByRole("region", { name: "Блок «Резка — МГТФ 0,12»" });
   expect(screen.getAllByLabelText("Карточка: Резка — МГТФ 0,12")).toHaveLength(2);
   fireEvent.change(within(panel).getByLabelText("Карточка: Резка — МГТФ 0,12"), { target: { value: "prsA" } });
@@ -191,19 +194,21 @@ const mountUsb = (cardPatch: Partial<ProjectTechcard> = {}) => {
 };
 const opList = () => (within(screen.getByRole("group", { name: "Операции" })).getAllByLabelText(/^Карточка: /) as HTMLSelectElement[])
   .map((select) => select.getAttribute("aria-label")!.replace("Карточка: ", ""));
-const schemeBlocks = () => within(screen.getByRole("list", { name: "Блоки схемы" })).getAllByRole("button").filter((button) => button.classList.contains("route-block"));
+const schemeNames = () => [...scheme().querySelectorAll(".rc-op-name")].map((name) => name.textContent);
 
-it("USB: every block starts with its card code, the replaced card is noted and the В1 mounting stays visible in the final block", async () => {
+it("USB: cards name the operations in Russian, codes stay in the hint, the replaced card is noted and В1 is in the finished cable", async () => {
   mountUsb();
   await screen.findByText("Схема полуфабрикатов");
-  expect(screen.getByText("Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Показать схему" }));
-  const blocks = schemeBlocks();
-  expect(blocks.map((block) => block.querySelector(".route-block-code")?.textContent)).toEqual(["CUT_WIRE+1crimp", "INS_terminal_2.50", "INS_terminal_2.50"]);
-  expect(blocks[0]).toHaveTextContent("вместо CUT_WIRE+2crimp — нет карты");
-  expect(blocks[2].querySelector(".route-block-name")).toHaveTextContent("Монтаж в разъём В1 — I-DS1071-SCB02X5");
-  expect(blocks[2]).toHaveTextContent(`итог: ${USB_NAME}`);
-  expect(screen.getByText("3 блока · 3 операции")).toBeInTheDocument();
+  expect(screen.getAllByText("Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2")).toHaveLength(2); // список и схема
+  expect(cardTitles()).toEqual(["Нарезанные и обжатые провода", "Сторона А собрана", "Готовый кабель"]);
+  expect(scheme().textContent).not.toMatch(/CUT_WIRE|INS_terminal/);
+  const cut = schemeOp(/Резка с обжимом/);
+  expect(cut.getAttribute("title")).toContain("Карта CUT_WIRE+1crimp");
+  expect(cut.getAttribute("title")).toContain("вместо CUT_WIRE+2crimp — нет карты");
+  expect(cut).toHaveTextContent("заменена");
+  expect(schemeCards()[2].querySelector(".rc-op-name")).toHaveTextContent("Монтаж в разъём В1 — I-DS1071-SCB02X5");
+  expect(schemeCards()[2].querySelector(".rc-sub")).toHaveTextContent(USB_NAME);
+  expect(screen.getByText("3 карточки · 3 операции")).toBeInTheDocument();
   // Внутренние имена типов операций на экран не попадают.
   expect(document.body.textContent).not.toMatch(/cutWireCrimp|insTerm/);
 });
@@ -212,10 +217,13 @@ it("USB: «Выше» on a block reorders the operations, the build sends that o
   const { onBuild, view } = mountUsb();
   await screen.findByText("Схема полуфабрикатов");
   fireEvent.click(screen.getByRole("button", { name: "Изменить схему" }));
-  fireEvent.click(screen.getByRole("button", { name: "Выше: блок «Монтаж в разъём В1 — I-DS1071-SCB02X5»" }));
-  // Список операций и схема — в новом порядке; шаблоны операций остались при них.
+  fireEvent.click(schemeOp(/Монтаж в разъём В1/));
+  fireEvent.click(within(screen.getByRole("region", { name: "Блок «Монтаж в разъём В1 — I-DS1071-SCB02X5»" })).getByRole("button", { name: "↑ Выше" }));
+  // Список операций и схема — в новом порядке; шаблоны операций остались при них. Сторона В собирается раньше,
+  // готовый кабель — после стороны А.
   expect(opList()).toEqual(["Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5"]);
-  expect(schemeBlocks().map((block) => block.querySelector(".route-block-name")?.textContent)).toEqual([
+  expect(cardTitles()).toEqual(["Нарезанные и обжатые провода", "Сторона В собрана", "Готовый кабель"]);
+  expect(schemeNames()).toEqual([
     "Резка с обжимом А и В (SXH-001T-P0.6N) — Провод НВ4 0,2", "Монтаж в разъём В1 — I-DS1071-SCB02X5", "Монтаж в разъём А1 — I-DS1071-SCB02X5",
   ]);
   expect(screen.getByText("свой порядок операций")).toBeInTheDocument();

@@ -20,15 +20,15 @@ from app.shared.stored_files import decode_upload, file_response
 
 from .application import (
     AttachUpdCommand, attach_upd_file,
-    AcceptGoodCommand, ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
+    ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand,
     LayOutCommand, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
-    RequestedGood, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand, ShippingPermissionError,
-    UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, accept_good, cancel_shipment, close_shipment,
-    create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project, pack_shipment,
-    pick_shipment, queue_project, register_good, set_project_addressee, set_requested, ship_project, unpick_line,
-    update_documents,
+    RequestedGood, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
+    ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
+    close_shipment, create_shipment, drop_project, edit_shipment_head, lay_out_shipment, mark_shipped, pack_project,
+    pack_shipment, pick_shipment, queue_project, register_good, rollback_shipped, set_project_addressee, set_requested,
+    ship_project, unpick_line, update_documents,
 )
-from .documents import build_delivery_note, build_packing_lists
+from .documents import build_box_labels, build_delivery_note, build_packing_lists, packer_short
 from .domain import (
     ADDRESSEE_REQUISITE_FIELDS, DeliveryTerms, FinishedGood, ProjectAddressee, ProjectAssembly, Shipment,
     ShippingValidationError, UpdType, total_gross,
@@ -68,12 +68,6 @@ class ProjectQueuePayload(BaseModel):
 
 class ProjectDropPayload(BaseModel):
     project: str = Field(min_length=1, max_length=255)
-
-
-class AcceptPayload(BaseModel):
-    version: int = Field(ge=1)
-    quantity: Quantity
-    received_at: date | None = None
 
 
 class ShipmentLinePayload(BaseModel):
@@ -356,18 +350,8 @@ def add_good(
     return {"good": _good_result(good)}
 
 
-@router.post("/goods/{good_id}/accept")
-def receive_good(
-    good_id: UUID, payload: AcceptPayload,
-    principal: Annotated[Principal, Depends(shipping_warehouse_principal)],
-    now: Annotated[datetime, Depends(moscow_now)],
-    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
-) -> dict:
-    good = _run(lambda: accept_good(AcceptGoodCommand(
-        good_id=good_id, expected_version=payload.version, quantity=payload.quantity,
-        received_at=payload.received_at or now.date(), actor=principal.actor, now=now,
-    ), uow_factory()))
-    return {"good": _good_result(good)}
+# «Принять» одной КБ (POST /goods/{good_id}/accept) — в app/workflows/finished_goods_api.py: предел «сдано цехом»
+# читается из производства, поэтому приёмка живёт в межмодульном сценарии вместе с пакетной «Из производства».
 
 
 @router.get("/project-addressee")
@@ -530,6 +514,20 @@ def ship(shipment_id: UUID, payload: VersionPayload, principal: Annotated[Princi
     return {"shipment": _shipment_result(result.shipment), "closed": result.shipment.status.value == "Закрыта", "why": result.why}
 
 
+class UnshipPayload(VersionPayload):
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/shipments/{shipment_id}/unship")
+def unship(shipment_id: UUID, payload: UnshipPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    """Откат «Отгружено»: только руководитель (администратор), с причиной; штуки КБ — снова «Упаковано»."""
+    shipment = _run(lambda: rollback_shipped(RollbackShippedCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now,
+        reason=payload.reason, allowed=principal.full_access and not principal.service,
+    ), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
 @router.put("/shipments/{shipment_id}/lines/{line_id}")
 def change_requested(shipment_id: UUID, line_id: UUID, payload: RequestedPayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
     shipment = _run(lambda: set_requested(SetRequestedCommand(
@@ -553,7 +551,6 @@ def print_documents(
     shipment_id: UUID,
     document: Annotated[str, Query(pattern="^(pl|dn)$")],
     _principal: Annotated[Principal, Depends(shipping_view_principal)],
-    now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:
     """PL (лист на каждый короб) или DN — по актуальным данным отправки; повторная печать = перевыпуск."""
@@ -561,12 +558,34 @@ def print_documents(
         shipment = uow.shipments.get(shipment_id)
         if shipment is None:
             raise HTTPException(status_code=404, detail="Отгрузка не найдена")
-        project = uow.addressees.get(shipment.lines[0].project) if shipment.lines else None
+        # Заказчик DN — как в реестре отгрузок: из заявки, иначе из позиции ГП, иначе получатель.
+        goods = (uow.goods.get(line.finished_good_id) for line in shipment.lines)
+        customer = shipment.customer or next((good.customer for good in goods if good and good.customer), "") or shipment.receiver
+        # «Штамп / подпись кладовщика» — кто упаковал (владелец 13.10.2026), не менеджер отправки.
+        packer = packer_short(uow.shipments.packer(shipment_id))
     try:
-        sheets = build_packing_lists(shipment) if document == "pl" else [build_delivery_note(shipment, project, now)]
+        forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer)]
     except ShippingValidationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return {"sheets": [sheet.to_dict() for sheet in sheets]}
+    return {"forms": [form.to_dict() for form in forms]}
+
+
+@router.get("/shipments/{shipment_id}/labels")
+def print_labels(
+    shipment_id: UUID,
+    _principal: Annotated[Principal, Depends(shipping_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
+) -> dict:
+    """«Печать этикеток»: этикетка на каждый короб по актуальным данным отправки."""
+    with uow_factory() as uow:
+        shipment = uow.shipments.get(shipment_id)
+        if shipment is None:
+            raise HTTPException(status_code=404, detail="Отгрузка не найдена")
+    try:
+        labels = build_box_labels(shipment)
+    except ShippingValidationError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return {"labels": [label.to_dict() for label in labels]}
 
 
 @router.post("/shipments/{shipment_id}/close")

@@ -67,9 +67,13 @@ export interface DataTableProps<T> {
   /** Счётчики чипов — по строкам, прошедшим поиск и фильтры колонок (без самого чипа), как issFilterRender_ в
       SUPPLYMAP. По умолчанию — по всем строкам. */
   presetCountsFollowSearch?: boolean;
+  /** «Все» стоит после остальных чипов, а не перед ними. */
+  allLast?: boolean;
   groupBy?: (row: T) => string;
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
   groupLabel?: (name: string, rows: T[]) => string;
+  /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
+  collapsibleGroups?: boolean;
   bulkActions?: DataBulkAction<T>[];
   /** Раскрытая строка: форма, карточка, история. */
   renderDetail?: (row: T) => ReactNode;
@@ -93,6 +97,9 @@ export interface DataTableProps<T> {
   compactBelow?: number;
   /** Прячет только форму поиска (фильтры/колонки/Excel остаются): поиск есть у раздела выше. */
   hideSearch?: boolean;
+  /** На телефоне (≤ 720 px, `responsive.css`) строки идут карточками «колонка: значение» вместо таблицы, которую
+      пришлось бы листать вбок. `false` — таблица остаётся таблицей и на телефоне (сетки с правкой в ячейках). */
+  phoneCards?: boolean;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -214,8 +221,10 @@ export function DataTable<T>({
   presets = [],
   defaultPreset = "",
   presetCountsFollowSearch = false,
+  allLast = false,
   groupBy,
   groupLabel,
+  collapsibleGroups,
   bulkActions = [],
   renderDetail,
   rowClassName,
@@ -231,9 +240,11 @@ export function DataTable<T>({
   searchPlaceholder,
   compactBelow = 0,
   hideSearch = false,
+  phoneCards = true,
 }: DataTableProps<T>) {
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<Sort>(saved.sort ?? null);
@@ -405,7 +416,7 @@ export function DataTable<T>({
           {visible.map((column, index) => {
             const content = column.render ? column.render(row) : cellContent(column, column.value(row));
             return (
-              <td key={column.key} className={columnClass(column, index, sized)}>
+              <td key={column.key} className={columnClass(column, index, sized)} data-label={column.title}>
                 {column.wrap ? <div className="cell-wrap" style={wrapStyle(column)}>{content}</div> : content}
               </td>
             );
@@ -424,7 +435,7 @@ export function DataTable<T>({
   const activeFilters = filterColumns.filter((column) => (filters[column.key] ?? "") !== "");
 
   return (
-    <section className="data-table" aria-label={label}>
+    <section className={phoneCards ? "data-table dt-cards" : "data-table"} aria-label={label}>
       {!compact && <div className="filters table-toolbar">
         {!hideSearch && <form className="table-search" role="search" onSubmit={(event) => { event.preventDefault(); onSearch?.(query.trim()); }}>
           <input className="search" type="search" aria-label={searchLabel ?? `Поиск: ${label}`} placeholder={searchPlaceholder ?? searchHint(visible)} value={query} onChange={(event) => { setQuery(event.target.value); setLimit(pageSize); }} />
@@ -472,12 +483,13 @@ export function DataTable<T>({
       )}
       {presets.length > 0 && (
         <div className="calendar-chips" role="group" aria-label="Быстрый отбор">
-          <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>
+          {!allLast && <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>}
           {presets.map((item) => (
             <button type="button" key={item.label} className={`calendar-chip${preset === item.label ? " active" : ""}`} aria-pressed={preset === item.label} onClick={() => setPreset(preset === item.label ? "" : item.label)}>
               {item.label} · {counted.filter(item.test).length}
             </button>
           ))}
+          {allLast && <button type="button" className={`calendar-chip${preset ? "" : " active"}`} aria-pressed={!preset} onClick={() => setPreset("")}>Все · {counted.length}</button>}
         </div>
       )}
       {selectable && selectedRows.length > 0 && (
@@ -530,12 +542,19 @@ export function DataTable<T>({
                       })()}
                       {(() => {
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
-                        return <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
+                        const title = <><strong>{(groupLabel ? groupLabel(name, groupRows) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
+                        return collapsibleGroups
+                          ? <button type="button" aria-expanded={!collapsed.has(name)} onClick={() => setCollapsed((current) => {
+                            const next = new Set(current);
+                            if (!next.delete(name)) next.add(name);
+                            return next;
+                          })} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
+                          : title;
                       })()}
                     </td>
                   </tr>
                 )}
-                {groupRows.map(renderRow)}
+                {!(collapsibleGroups && collapsed.has(name)) && groupRows.map(renderRow)}
               </Fragment>
             ))}
             {!shown.length && <tr><td colSpan={span} className="empty">{emptyText}</td></tr>}

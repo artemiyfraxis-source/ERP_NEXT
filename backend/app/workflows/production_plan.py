@@ -7,12 +7,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Iterable, Mapping
+from typing import Collection, Iterable, Mapping
 from uuid import UUID
 
 from app.modules.fulfillment.domain import FulfillmentRequest, FulfillmentStatus
 from app.modules.procurement.domain import ProcurementLine
-from app.modules.production.domain import ProductionStatus, ProductionTask
+from app.modules.production.domain import ProductionStatus, ProductionTask, ProductionValidationError
 from app.modules.production.plan import (
     PlanEvent,
     KitMark,
@@ -45,6 +45,7 @@ from app.modules.production.plan_sheet import (
     sheet_cells,
     sheet_group,
 )
+from app.modules.production.traceability import BoxStatus, ProductionBox
 from app.modules.requests.domain import Request
 from app.modules.shipping.domain import FinishedGood
 from app.modules.techcards.kitsets import Kitset
@@ -147,6 +148,16 @@ def _task_plan(tasks: Iterable[ProductionTask]) -> dict[str, ProjectTaskPlan]:
     return result
 
 
+def project_kits(project: str, assemblies: Iterable[str], cards: Iterable[ProjectTechcard]) -> list[str]:
+    """КБ of a project: the kitset's assemblies, then the КБ of the project's techcards (ladder order of first sight).
+
+    One set for the production plan, the project screens and a manual stage change — a techcard КБ outside the
+    kitset counts everywhere, so the project stage is the same on every screen."""
+    canon = normalize_project_number(project)
+    indexes = [*assemblies, *(card.item_index for card in cards if normalize_project_number(card.project) == canon)]
+    return list(dict.fromkeys(item for item in (str(index or "").strip().upper() for index in indexes) if item))
+
+
 def kit_stage_facts(
     *,
     cards: Iterable[ProjectTechcard],
@@ -154,15 +165,26 @@ def kit_stage_facts(
     fulfillment: Iterable[FulfillmentRequest],
     goods: Iterable[FinishedGood],
     marks: dict[str, KitMark],
+    boxes: Iterable[ProductionBox] = (),
+    inspected: Collection[UUID] = (),
+    worked: Collection[UUID] = (),
 ) -> tuple[dict[str, set[str]], dict[str, KitMark]]:
-    """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, a running task, stock, shipment.
+    """`kitStageFacts_`: which КБ has an issued techcard, a picked kit, tasks placed in the resource plan, work begun,
+    finished production (ОТК), finished goods accepted and packed, gone.
 
-    Shared by the production plan and the project kitset list (SUPPLYMAP portalKitsetList).
+    ``worked`` — ids of tasks that have a work session (any but a cancelled one): someone started work on them.
+    «Распланировано»: the КБ has running tasks and every one of them is placed (handed to a site, or every operation
+    has a planned window); a partly placed КБ stays below. «В работе»: a work session or a «взял» of a share on any
+    live task of the КБ — a launched task alone, or an issued kit, is no longer work (owner 12.10).
+
+    ``boxes`` — production boxes, ``inspected`` — ids of the boxes ОТК inspected: a final-operation box confirmed by
+    the master (the ОТК queue) or inspected means production of the КБ is over. Shared by the production plan and
+    the project kitset list (SUPPLYMAP portalKitsetList).
     """
     marks = dict(marks)
     facts: dict[str, set[str]] = {
-        "tc": set(), "tc_project": set(), "kit": set(), "work": set(),
-        "stock": set(), "shipped": set(),
+        "tc": set(), "tc_project": set(), "kit": set(), "planned": set(), "work": set(),
+        "qc": set(), "stock": set(), "packed": set(), "shipped": set(),
     }
     facts["tc_project"].update(MANUAL_TECHCARD_PROJECTS)
     for card in cards:
@@ -181,28 +203,54 @@ def kit_stage_facts(
         FulfillmentStatus.COMPLETE, FulfillmentStatus.READY, FulfillmentStatus.ISSUED,
         FulfillmentStatus.RETURNED, FulfillmentStatus.DONE,
     }
-    started = {FulfillmentStatus.ISSUED, FulfillmentStatus.RETURNED, FulfillmentStatus.DONE}
     for request in fulfillment:
         if request.status in picked:
             key = kit_key_from_purpose(request.purpose)
             if key:
                 facts["kit"].add(key)
-                # Комплект выдан монтажнику — работа началась (решено агентом 06.10, проект 33МФ.2): ISSUED и дальше = «В работе».
-                if request.status in started:
-                    facts["work"].add(key)
+    tasks = tuple(tasks)
+    worked = frozenset(worked)
+    placed: dict[str, bool] = {}
     for task in tasks:
-        # Выполненное задание тоже значит «работа шла» (Цель 2: статус «Выполнено»).
-        if task.status in (ProductionStatus.RUNNING, ProductionStatus.DONE):
-            facts["work"].add(kit_stage_key(task.project, task.item))
+        key = kit_stage_key(task.project, task.item)
+        if task.status is not ProductionStatus.CANCELLED and (
+            task.id in worked or any(share.started_at is not None for op in task.operations for share in op.shares)
+        ):
+            facts["work"].add(key)
+        if task.status is ProductionStatus.RUNNING:
+            is_placed = bool(task.handed_to) or all(op.planned_start is not None for op in task.operations)
+            placed[key] = placed.get(key, True) and is_placed
+        # Выполненное задание — производство закончено, изделие у ОТК (владелец 12.10: лестница с «ОТК»).
+        elif task.status is ProductionStatus.DONE:
+            facts["qc"].add(kit_stage_key(task.project, task.item))
+    inspected = frozenset(inspected)
+    by_id = {task.id: task for task in tasks if task.status is not ProductionStatus.CANCELLED}
+    for box in boxes:
+        task = by_id.get(box.task_id)
+        if task is None or not (box.status is BoxStatus.CONFIRMED or box.id in inspected):
+            continue
+        try:
+            final = task.final_operation.id
+        except ProductionValidationError:
+            continue
+        # Коробка последней операции в очереди ОТК (подтверждена мастером) или уже проверена ОТК.
+        if box.operation_id == final:
+            facts["qc"].add(kit_stage_key(task.project, task.item))
+    # Регистр ГП (0111): принято / упаковано / отгружено всего по КБ — счётчики, которые двигает только ход журнала ГП.
     for good in goods:
         key = kit_stage_key(good.project, good.item_index)
-        need = good.ordered or good.accepted
-        if good.accepted > 0 and good.accepted >= need:
+        register = good.register
+        need = good.ordered or register.accepted_total
+        if register.accepted_total > 0 and register.accepted_total >= need:
             facts["stock"].add(key)
-        # Этап «Отгружено» — по уехавшему (`sent`), не по отобранному: упакованное ещё на складе (решено агентом 30.09).
-        if good.sent > 0 and good.sent >= need:
+        # «Упаковано» - отобрано в отправки (растёт при «Упаковать»), уехавшее тоже было упаковано.
+        if register.packed_total > 0 and register.packed_total >= need:
+            facts["packed"].add(key)
+        # Этап «Отгружено» — по уехавшему, не по отобранному: упакованное ещё на складе (решено агентом 30.09).
+        if register.shipped_total > 0 and register.shipped_total >= need:
             facts["shipped"].add(key)
 
+    facts["planned"].update(key for key, value in placed.items() if value)
     return facts, marks
 
 
@@ -219,6 +267,9 @@ def build_production_plan(
     today: date,
     kitsets: Iterable[Kitset] = (),
     processed: Mapping[UUID, Decimal] | None = None,
+    boxes: Iterable[ProductionBox] = (),
+    inspected: Collection[UUID] = (),
+    worked: Collection[UUID] = (),
 ) -> tuple[ProductionPlanRow, ...]:
     cards = tuple(cards)
     tasks = tuple(tasks)
@@ -243,9 +294,10 @@ def build_production_plan(
 
     facts, marks = kit_stage_facts(
         cards=cards, tasks=tasks, fulfillment=fulfillment, goods=goods, marks=marks,
+        boxes=boxes, inspected=inspected, worked=worked,
     )
 
-    # КБ проекта — из карточки набора (tcKitsetSyncErp_ → «Позиции проектов») и из карточек техкарт.
+    # КБ проекта — из карточки набора (tcKitsetSyncErp_ → «Позиции проектов») и из карточек техкарт (`project_kits`).
     kit_indexes: dict[str, list[str]] = {}
     for kitset in kitsets:
         kit_indexes.setdefault(normalize_project_number(kitset.project), []).extend(
@@ -259,9 +311,7 @@ def build_production_plan(
         if not (kit_indexes.get(project) or cards_by_project.get(project) or journal.get(project)):
             continue
         project_cards = cards_by_project.get(project, [])
-        item_indexes = list(dict.fromkeys(
-            [*kit_indexes.get(project, []), *(card.item_index for card in project_cards)]
-        ))
+        item_indexes = project_kits(project, kit_indexes.get(project, []), project_cards)
         snapshot = project_snapshots.get(project)
         project_journal = journal.get(project, ProjectJournal(None, None, ()))
         card_deadlines = [card.deadline for card in project_cards if card.deadline]
@@ -304,7 +354,9 @@ def build_production_plan(
             journal=project_journal,
             terminal=is_terminal,
             sheet=cells,
-            group=sheet_group(cells["status"].value if "status" in cells else "", is_terminal),
+            group=sheet_group(
+                stage.status, project_journal.blocker.type if project_journal.blocker else "", is_terminal,
+            ),
             calendar=_safe(
                 "calendar", lambda: sheet_calendar(project_tasks, project_marks, first_day, last_day),
                 SheetCalendar(),

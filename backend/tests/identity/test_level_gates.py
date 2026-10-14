@@ -4,6 +4,7 @@ administrator's tools are theirs alone — and no route keeps a dependency outsi
 
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -53,9 +54,15 @@ def _passes(dependency, principal: Principal) -> bool:
     return True
 
 
+# Gates widened after the levels transfer: today's rule replaces the contract's `after` (the transfer stays as it was).
+WIDENED = {"warehouse_journal": (("warehouse",), "edit")}  # owner 12.10.2026: storekeepers see the lot history
+
+
 @pytest.mark.parametrize("gate", GATES, ids=[gate.key for gate in GATES])
 def test_every_gate_dependency_follows_the_contract(gate):
     dependency = DEPENDENCIES.get(gate.key)
+    if gate.key in WIDENED:
+        gate = replace(gate, after=WIDENED[gate.key])
     for level in ACCESS_LEVELS:
         for permissions in _permission_sets():
             principal = _principal(level, permissions)

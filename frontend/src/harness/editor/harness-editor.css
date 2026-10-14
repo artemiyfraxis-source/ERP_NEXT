@@ -948,3 +948,373 @@
 .harness-root .he-save-state { font-size: 12px; }
 /* Ж-3: «Сохранено» уже стоит в шапке страницы; кнопка в левой панели нужна, только когда есть что сохранять. */
 .harness-root .he-save-state-utility.saved { display: none; }
+
+/* ERP-вид редактора (13.10.2026). Логика и разметка панелей — из TECHMAP-GRAPHER (В. Васильев, с разрешения), вид — ERP:
+   одна строка над полем («Схема Э4 / Чертёж» + вкладки и инструменты открытого вида), плотные кнопки 32 px (под палец —
+   40 px), панели как списки ERP, каталог — плотные строки вместо карточек. Блок идёт последним и перекрывает прежние слои
+   правил вместе с их media-запросами. */
+.harness-root .harness-editor { grid-template-rows: auto minmax(0, 1fr); background: var(--background); }
+.harness-root .he-touch-layer { display: contents; }
+.harness-root .harness-editor .he-header {
+  min-height: 46px; padding: 7px 12px; display: flex; align-items: center; gap: 12px; flex-wrap: nowrap;
+  border-bottom: 1px solid var(--border); background: var(--card); box-shadow: none;
+}
+.harness-root .harness-editor .he-header > .he-save-state { margin-left: auto; }
+
+/* Toolbar: the tabs of the open view and its tools in the same row, after a divider. */
+.harness-root .he-header > .he-toolbar {
+  z-index: 8; flex: 1 1 auto; min-width: 0; height: auto; padding: 0 0 0 12px; display: flex; flex-direction: row;
+  align-items: center; gap: 10px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
+  border: 0; border-left: 1px solid var(--border); background: transparent;
+}
+.harness-root .he-header > .he-toolbar > div:not([hidden]) { display: flex; align-items: center; min-width: max-content; }
+.harness-root .he-toolbar-tabs { min-height: 0; flex: 0 0 auto; display: flex; align-items: center; gap: 2px; border: 0; overflow: visible; }
+.harness-root .he-toolbar-tabs button {
+  height: 30px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted-foreground); font-size: 13px; font-weight: 600; line-height: 30px;
+}
+.harness-root .he-toolbar-tabs button:hover { background: var(--accent); color: var(--foreground); }
+.harness-root .he-toolbar-tabs button.active { border: 0; background: var(--sheet-selected); color: var(--primary); }
+.harness-root .he-toolbar-panel { flex: 0 0 auto; min-width: max-content; padding-left: 10px; border-left: 1px solid var(--border); overflow: visible; }
+.harness-root .he-toolbar-panel .he-toolbar-group { gap: 2px; padding: 0; }
+.harness-root .he-toolbar .he-tool,
+.harness-root .he-toolbar-panel .he-tool {
+  flex: 0 0 auto; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted-foreground);
+}
+.harness-root .he-toolbar .he-tool:hover:not(:disabled) { border-color: transparent; background: var(--accent); color: var(--foreground); }
+.harness-root .harness-editor .he-toolbar .he-tool.active {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); background: var(--sheet-selected); color: var(--primary);
+}
+.harness-root .he-toolbar .he-tool svg { width: 18px; height: 18px; }
+.harness-root .he-toolbar .he-tool-symbol { width: 18px; height: 18px; display: grid; place-items: center; font: 600 16px/1 Arial, sans-serif; }
+/* Buttons with a word (Копировать, Вставить, Вписать…) read as ERP small buttons: icon + caption in one line. */
+.harness-root .he-toolbar .he-tool:has(.he-tool-caption) { width: auto; padding: 0 9px 0 7px; }
+.harness-root .he-toolbar .he-tool-caption { margin: 0; color: var(--foreground); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.harness-root .he-toolbar .he-tool:disabled .he-tool-caption { color: var(--muted-foreground); }
+.harness-root .he-toolbar .he-zoom-tools .he-tool:not(.he-fit-tool) { width: 32px; padding: 0; }
+.harness-root .he-toolbar .he-zoom-tools .he-tool:not(.he-fit-tool) .he-tool-caption { display: none; }
+.harness-root .he-toolbar .he-zoom-select {
+  width: 84px; height: 32px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--control-radius);
+  background: var(--card); color: var(--foreground); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums;
+}
+.harness-root .he-toolbar .he-graphic-angle { height: 32px; display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 13px; }
+.harness-root .he-toolbar .he-graphic-angle select { width: 72px; height: 32px; padding: 0 8px; border-radius: var(--control-radius); font-size: 13px; }
+.harness-root .he-toolbar-panel .he-graphic-snaps label { min-height: 32px; padding: 0 8px; color: var(--foreground); font-size: 13px; }
+.harness-root .he-toolbar-panel .he-graphic-snaps input { width: 15px; height: 15px; }
+.harness-root .he-toolbar-panel .he-real-size label { font-size: 13px; font-weight: 500; }
+
+/* The toolbar left the workspace grid: its row collapses at every width. */
+.harness-root .he-workspace,
+.harness-root .he-workspace-drawing { --toolbar-height: 0px; background: var(--background); }
+
+/* Left panel: an ERP side list — section titles in plain case, documents and switches as 32 px rows. */
+.harness-root .he-utility-panel { background: var(--card); box-shadow: none; }
+.harness-root .he-utility-toggle {
+  min-height: 38px; padding: 0 12px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--card);
+  color: var(--muted-foreground); font-size: 13px; font-weight: 600;
+}
+.harness-root .he-utility-toggle:hover { background: var(--accent); color: var(--foreground); }
+.harness-root .he-utility-toggle > span:first-child { width: 20px; height: 20px; border: 0; border-radius: 5px; background: var(--accent); color: var(--foreground); font-size: 15px; }
+.harness-root .he-utility-content { padding: 10px 12px; gap: 14px; }
+.harness-root .he-utility-section { gap: 2px; padding-bottom: 12px; }
+.harness-root .he-utility-section h3,
+.harness-root .he-copy-visibility-heading h3 {
+  margin: 0 0 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none;
+}
+.harness-root .he-utility-panel .he-document-action,
+.harness-root .he-utility-panel .he-controls-section .ui-control,
+.harness-root .he-utility-panel .he-controls-section .he-control-action {
+  width: 100%; min-height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--foreground); font-size: 13px; font-weight: 500; text-align: left;
+}
+.harness-root .he-utility-panel .he-document-action:hover:not(:disabled),
+.harness-root .he-utility-panel .he-controls-section .ui-control:hover:not(:disabled) { border: 0; background: var(--accent); }
+.harness-root .he-utility-panel .he-document-toggle[aria-pressed="true"],
+.harness-root .he-utility-panel .he-control-action[aria-pressed="true"],
+.harness-root .he-utility-panel .he-controls-section .ui-control[aria-pressed="true"] { border: 0; background: var(--sheet-selected); color: var(--primary); }
+.harness-root .he-doc-icon { width: 20px; height: 20px; flex: 0 0 20px; border-radius: 5px; background: transparent; color: var(--primary); }
+.harness-root .he-controls-section > label,
+.harness-root .he-controls-section .he-thickness-control label { color: var(--muted-foreground); font-size: 12px; }
+.harness-root .he-controls-section > label select { height: 32px; padding: 0 8px; border-radius: var(--control-radius); font-size: 13px; }
+
+/* Right panel: ERP underline tabs. */
+.harness-root .he-inspector-tabs button { height: 38px; color: var(--muted-foreground); font-size: 13px; font-weight: 600; }
+.harness-root .he-inspector-tabs button:hover { color: var(--foreground); }
+.harness-root .he-inspector-tabs button.active { border-bottom-color: var(--primary); color: var(--primary); }
+.harness-root .he-inspector-tabs button span { font-size: 11px; font-variant-numeric: tabular-nums; }
+.harness-root .he-inspector-empty { font-size: 13px; }
+.harness-root .he-inspector-empty strong { color: var(--foreground); font-size: 14px; font-weight: 600; }
+.harness-root .he-inspector-empty-glyph { display: none; }
+.harness-root .he-relations { font-size: 13px; }
+.harness-root .he-material-select { font-size: 13px; font-weight: 500; color: var(--foreground); }
+.harness-root .he-material-group-title { font-size: 12px; font-weight: 600; }
+.harness-root .he-material-group-title span { font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Catalog: a dense list like an ERP table — one 32 px line per item (артикул bold, описание grey), several columns. */
+.harness-root .he-catalog { border-top: 1px solid var(--border); background: var(--card); }
+.harness-root .he-catalog-header { min-height: 42px; padding: 5px 12px; grid-template-columns: auto minmax(160px, 420px) 1fr; gap: 12px; background: var(--card); }
+.harness-root .he-catalog-toggle { height: 32px; padding: 0 6px; gap: 8px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+.harness-root .he-catalog-toggle:hover { background: var(--accent); }
+.harness-root .he-catalog-toggle > span { color: var(--muted-foreground); font-size: 14px; }
+.harness-root .he-catalog-toggle small { min-width: 0; padding: 1px 7px; border-radius: 9px; background: var(--accent); color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.harness-root .he-catalog-search { height: 32px; padding: 0 10px; border-radius: var(--control-radius); background: var(--card); }
+.harness-root .he-catalog-search:focus-within { border-color: var(--primary); }
+.harness-root .he-catalog-search input { height: 30px; font-size: 13px; }
+.harness-root .he-catalog-hint { min-width: 0; overflow: hidden; color: var(--muted-foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.harness-root .he-catalog-content { height: clamp(130px, 22vh, 230px); grid-template-columns: 210px minmax(0, 1fr); border-top: 1px solid var(--border); }
+.harness-root .he-catalog-categories { padding: 4px 0; gap: 0; background: var(--card); }
+.harness-root .he-catalog-categories button {
+  min-height: 30px; padding: 0 12px; overflow: hidden; border-radius: 0; color: var(--foreground); font-size: 13px; font-weight: 500;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.harness-root .he-catalog-categories button:hover { background: var(--accent); color: var(--foreground); }
+.harness-root .he-catalog-categories button.active { background: var(--sheet-selected); color: var(--primary); font-weight: 600; box-shadow: inset 3px 0 0 var(--primary); }
+.harness-root .he-catalog-results {
+  padding: 2px 12px 8px; display: grid; grid-auto-flow: row; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-rows: none; grid-auto-rows: 32px; grid-auto-columns: auto; gap: 0 20px; align-content: start; overflow-x: hidden; overflow-y: auto;
+}
+.harness-root .he-catalog-card {
+  height: 32px; min-height: 0; padding: 0 6px; display: grid; grid-template-columns: 10px minmax(0, 1fr) 18px; gap: 8px;
+  border: 0; border-bottom: 1px solid var(--sheet-line); border-radius: 0; background: transparent; cursor: grab;
+}
+.harness-root .he-catalog-card:hover { border-color: var(--sheet-line); background: var(--sheet-selected); box-shadow: none; }
+.harness-root .he-catalog-card > span:nth-child(2) { display: flex; align-items: baseline; gap: 8px; }
+.harness-root .he-catalog-card strong { flex: 0 0 auto; max-width: 60%; font-size: 13px; font-weight: 600; }
+.harness-root .he-catalog-card small { flex: 1 1 auto; min-width: 0; color: var(--muted-foreground); font-size: 12px; }
+.harness-root .he-catalog-thumbnail { width: 10px; height: 10px; border: 0; border-radius: 3px; background: var(--catalog-accent); font-size: 0; }
+.harness-root .he-catalog-add { color: var(--muted-foreground); font-size: 15px; text-align: center; opacity: 0; }
+.harness-root .he-catalog-card:hover .he-catalog-add,
+.harness-root .he-catalog-card:focus-visible .he-catalog-add { color: var(--primary); opacity: 1; }
+.harness-root .he-catalog-more {
+  grid-column: 1 / -1; justify-self: start; width: auto; min-height: 30px; margin-top: 6px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--card); color: var(--foreground); font-size: 13px; font-weight: 500;
+}
+.harness-root .he-catalog-more:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+.harness-root .he-catalog-empty,
+.harness-root .he-catalog-empty button { font-size: 13px; }
+.harness-root .he-catalog-empty { grid-column: 1 / -1; }
+
+/* Field overlays: ERP chips. */
+.harness-root .he-canvas-status { padding: 4px 8px; border-radius: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.harness-root .he-canvas-status span:first-child { color: var(--foreground); }
+
+/* Narrow windows: the toolbar takes its own line under the view switch; the docks keep their overlay behaviour. */
+@media (max-width: 1100px) {
+  .harness-root .harness-editor .he-header { flex-wrap: wrap; row-gap: 6px; }
+  .harness-root .he-header > .he-toolbar { flex-basis: 100%; order: 2; padding-left: 0; border-left: 0; }
+  .harness-root .he-catalog-content { grid-template-columns: 150px minmax(0, 1fr); }
+  .harness-root .he-catalog-results { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+}
+@media (pointer: coarse) {
+  .harness-root .he-toolbar .he-tool,
+  .harness-root .he-toolbar-panel .he-tool { min-width: 40px; height: 40px; }
+  .harness-root .he-toolbar .he-zoom-select,
+  .harness-root .he-toolbar .he-graphic-angle select { height: 40px; }
+  .harness-root .he-toolbar-tabs button { height: 40px; line-height: 40px; }
+  .harness-root .he-catalog-results { grid-auto-rows: 40px; }
+  .harness-root .he-catalog-card { height: 40px; }
+  .harness-root .he-catalog-categories button { min-height: 40px; }
+}
+
+/* Phone: view only. The header is the view switch and the zoom; the field takes everything else. */
+.harness-root .he-phone-view .he-workspace { --utility-width: 0px; --inspector-width: 0px; --material-width: 0px; grid-template-columns: 0px minmax(0, 1fr) 0px 0px; }
+.harness-root .he-phone-view.harness-editor .he-header { flex-wrap: nowrap; padding: 6px 8px; gap: 8px; }
+.harness-root .he-phone-view .he-header > .he-toolbar-phone { flex: 0 0 auto; margin-left: auto; padding: 0; border-left: 0; overflow: visible; }
+.harness-root .he-phone-view .he-toolbar-phone .he-zoom-tools { display: flex; align-items: center; gap: 4px; }
+.harness-root .he-phone-view .he-toolbar-phone .he-fit-tool .he-tool-caption { display: none; }
+.harness-root .he-phone-view .he-toolbar-phone .he-fit-tool { width: 40px; padding: 0; }
+.harness-root .he-phone-view .he-toolbar-phone .he-zoom-select { width: 76px; }
+.harness-root .he-phone-view .harness-section-navigation button { padding: 0 10px; }
+.harness-root .he-phone-view .he-canvas-status span:last-child { display: none; }
+.harness-root .he-phone-view .he-table-window { max-width: calc(100% - 8px); }
+
+/* ERP-вид форм редактора (13.10.2026): «Настройки чертежа», свойства справа, окна объектов и таблиц. Разметка и логика —
+   из TECHMAP-GRAPHER, вид — как формы ERP: подпись 12 px серым над полем 30 px, текст 13 px, разделы — линией, а не
+   рамкой в рамке; вместо «i» у каждого поля — одна строка пояснений внизу панели (HelpLine). Блок идёт последним. */
+.harness-root .he-utility-content { flex: 1 1 auto; }
+.harness-root .he-utility-panel.closed .help-line-slot { display: none; }
+.harness-root .he-right-panel { grid-template-rows: auto minmax(0, 1fr) auto; }
+
+/* «Настройки чертежа»: подпись и значение в одной строке, ползунок под ними во всю ширину. */
+.harness-root .he-controls-section .he-thickness-control {
+  position: static; margin: 0 -4px; padding: 5px 4px 3px; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 0 8px; border-radius: 6px; font-size: 13px; white-space: nowrap;
+}
+.harness-root .he-controls-section .he-thickness-control:hover,
+.harness-root .he-controls-section .he-thickness-control:focus-within { background: var(--accent); }
+.harness-root .he-controls-section .he-thickness-control label { grid-column: 1; display: block; min-width: 0; overflow: hidden; color: var(--foreground); font-size: 13px; font-weight: 500; text-overflow: ellipsis; }
+.harness-root .he-controls-section .he-thickness-control output { grid-column: 2; min-width: 0; padding: 0; color: var(--foreground); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.harness-root .he-controls-section .he-thickness-control input[type="range"] {
+  grid-column: 1 / -1; width: 100%; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent;
+  box-shadow: none; accent-color: var(--primary); cursor: pointer;
+}
+.harness-root .he-controls-section .he-thickness-control input[type="range"] { -webkit-appearance: none; appearance: none; }
+.harness-root .he-controls-section .he-thickness-control input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--switch-off); }
+.harness-root .he-controls-section .he-thickness-control input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--switch-off); }
+.harness-root .he-controls-section .he-thickness-control input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border: 2px solid var(--card); border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.harness-root .he-controls-section .he-thickness-control input[type="range"]::-moz-range-thumb { width: 10px; height: 10px; border: 2px solid var(--card); border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.harness-root .he-controls-section .he-thickness-control input[type="range"]:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* The editing tip of the field («Как двигать точки») is a row the pointer can rest on; its text goes to the help line. */
+.harness-root .he-utility-content .he-view-options { min-height: 30px; padding: 0 8px; border-radius: 6px; color: var(--muted-foreground); font-size: 12px; cursor: help; }
+.harness-root .he-utility-content .he-view-options::before { content: "Как двигать точки на поле"; }
+.harness-root .he-utility-content .he-view-options:hover { background: var(--accent); color: var(--foreground); }
+.harness-root .he-utility-panel .he-view-options .info-hint { display: none; }
+.harness-root .he-controls-section > label { margin-top: 4px; gap: 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.harness-root .he-controls-section > label select { width: 100%; }
+.harness-root .he-controls-section .he-bundle-editor { margin-bottom: 4px; }
+
+/* Общие поля панелей и окон: подпись над полем, поле 30 px, фокус — цветом ERP. */
+.harness-root :is(.he-property-form, .he-relations, .he-object-popover, .he-covering-properties, .e4-connector-inspector, .he-controls-section) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]), select):not(td *) {
+  box-sizing: border-box; height: 30px; min-height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--card); color: var(--foreground); font-family: inherit; font-size: 13px; line-height: 1.2; font-weight: 400; box-shadow: none;
+}
+.harness-root :is(.he-property-form, .he-relations, .he-object-popover, .he-covering-properties, .e4-connector-inspector, .he-controls-section) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]), select):not(td *):hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); }
+.harness-root :is(.he-property-form, .he-relations, .he-object-popover, .he-covering-properties, .e4-connector-inspector, .he-controls-section) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]), select):not(td *):focus { border-color: var(--primary); outline: 0; box-shadow: 0 0 0 1px var(--primary); }
+.harness-root :is(.he-property-form, .he-relations, .he-object-popover, .e4-connector-inspector) :is(input, select):disabled { background: var(--accent); color: var(--disabled-fg); }
+.harness-root :is(.he-property-form, .he-relations, .he-object-popover, .he-covering-properties) :is(input[type="checkbox"], input[type="radio"]) { width: 15px; height: 15px; min-width: 15px; min-height: 15px; margin: 0; accent-color: var(--primary); }
+.harness-root :is(.he-property-form, .he-object-popover, .he-covering-properties) label,
+.harness-root .he-relations .he-physical-fields label { gap: 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
+.harness-root .ui-section-heading.ui-section-heading { min-height: 24px; color: var(--foreground); font-size: 13px; }
+.harness-root .ui-section-heading strong { font-weight: 600; }
+
+/* Правая панель: разделы «Ветви», «Провода», «Объекты» — строки списка ERP, разделитель — линия. */
+.harness-root .he-right-panel .he-relations { padding: 10px 12px 12px; gap: 8px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.harness-root .he-relations summary { padding: 4px 0; color: var(--foreground); font-size: 13px; font-weight: 600; }
+.harness-root .he-relations small { font-size: 12px; }
+.harness-root .he-relations-actions { gap: 6px; }
+.harness-root .he-relations-actions label { gap: 6px; color: var(--foreground); font-size: 13px; font-weight: 500; }
+.harness-root .he-relations .ui-control,
+.harness-root .he-property-form .ui-control,
+.harness-root .he-object-popover .ui-control { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+.harness-root .ui-control[aria-pressed="true"] { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--sheet-selected); color: var(--primary); }
+.harness-root .he-pipe-table { border-radius: 6px; }
+.harness-root .he-pipe-table th,
+.harness-root .he-pipe-wires th { height: 30px; padding: 0 8px; background: var(--table-head); color: var(--table-head-fg); font-size: 12px; font-weight: 600; }
+.harness-root .he-pipe-table td,
+.harness-root .he-pipe-wires td { height: 30px; padding: 0 8px; border-top: 1px solid var(--sheet-line); font-size: 13px; }
+.harness-root .he-pipe-table tr.is-selected { background: var(--sheet-selected); }
+.harness-root .he-pipe-select,
+.harness-root .he-wire-row { font-family: inherit; font-size: 13px; line-height: 1; font-weight: 600; }
+
+/* Свойства объекта: одна колонка полей, вложенные блоки — разделы с заголовком, без собственной рамки. */
+.harness-root .he-property-form { padding: 12px 12px 16px; gap: 12px; }
+.harness-root .he-property-form > .he-selected-object { padding: 0 0 10px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+.harness-root .he-selected-object strong { font-size: 14px; font-weight: 600; }
+.harness-root .he-selected-object span:last-child { font-size: 12px; }
+.harness-root :is(.he-wire-material, .he-cable-panel, .he-wire-strip-profile, .he-readonly-facts),
+.harness-root .he-property-form > .he-context-fields {
+  margin: 0; padding: 10px 0 0; gap: 8px; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--foreground);
+}
+.harness-root :is(.he-wire-material, .he-wire-strip-profile > header, .he-property-form > .he-context-fields) > strong,
+.harness-root .he-cable-panel > header strong,
+.harness-root .he-wire-strip-profile > legend { float: none; width: 100%; margin: 0 0 2px; padding: 0; color: var(--foreground); font-size: 13px; font-weight: 600; }
+.harness-root .he-wire-material > span { font-size: 13px; font-weight: 600; }
+.harness-root :is(.he-wire-material, .he-cable-panel, .he-wire-strip-profile, .he-wire-strip-empty) small,
+.harness-root .he-cable-panel > p,
+.harness-root .he-cable-panel > header span { color: var(--muted-foreground); font-size: 12px; line-height: 1.45; }
+.harness-root .he-wire-strip-profile .he-field-pair > button,
+.harness-root .he-wire-end-tabs button {
+  min-height: 30px; height: auto; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card);
+  color: var(--foreground); font-size: 12px; font-weight: 500; line-height: 1.3; text-align: left; box-shadow: none; cursor: pointer;
+}
+.harness-root .he-wire-strip-profile .he-field-pair > button.active,
+.harness-root .he-wire-end-tabs button.active { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--sheet-selected); color: var(--primary); }
+.harness-root .he-wire-end-tabs { padding: 0; gap: 6px; border: 0; background: transparent; }
+.harness-root .he-wire-strip-table { font-size: 12px; }
+.harness-root .he-wire-strip-table th,
+.harness-root .he-wire-strip-table td { height: 28px; padding: 0 4px; border-bottom-color: var(--sheet-line); }
+.harness-root .he-wire-strip-identity span { font-size: 13px; font-weight: 600; }
+.harness-root .he-wire-strip-identity small { font-size: 12px; }
+.harness-root .he-wire-strip-clear,
+.harness-root .he-property-form .secondary-action { justify-self: start; min-height: 30px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-size: 13px; font-weight: 500; box-shadow: none; }
+.harness-root .he-wire-strip-empty { padding: 8px 10px; border-color: var(--border); border-radius: 6px; }
+.harness-root .he-wire-length-status { padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+.harness-root .he-wire-length-status strong { font-size: 13px; font-weight: 600; }
+.harness-root .he-wire-length-status small { font-size: 12px; font-weight: 500; }
+.harness-root .he-readonly-facts span { color: var(--muted-foreground); font-size: 12px; }
+.harness-root .he-readonly-facts strong { color: var(--foreground); font-size: 13px; font-weight: 500; }
+.harness-root .he-property-form .he-toggle-field { color: var(--foreground); font-size: 13px; font-weight: 500; }
+.harness-root .he-cable-members span { padding: 2px 8px; background: var(--chip-neutral-bg); color: var(--chip-neutral-fg); font-size: 12px; font-weight: 500; }
+.harness-root .he-color-field { height: 30px; border-radius: 6px; }
+.harness-root .he-color-field code { font-size: 12px; }
+.harness-root .he-terminal-correction-buttons { font-size: 12px; font-weight: 500; }
+.harness-root .he-terminal-correction-buttons button { height: 28px; border-color: var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); font-family: inherit; font-size: 12px; line-height: 1; font-weight: 500; }
+
+/* Слои: строки списка 36 px, кнопки «Видно / Замок» — тихие иконки, подсвеченные при включении. */
+.harness-root .he-layers-panel { padding: 8px 12px; }
+.harness-root .he-panel-note { margin: 0 0 8px; color: var(--muted-foreground); font-size: 12px; }
+.harness-root .he-layer-list { gap: 0; }
+.harness-root .he-layer-row { min-height: 36px; padding: 2px 4px; border: 0; border-bottom: 1px solid var(--sheet-line); border-radius: 0; background: transparent; }
+.harness-root .he-layer-row:hover { background: var(--accent); }
+.harness-root .he-layer-name { color: var(--foreground); font-size: 13px; font-weight: 500; }
+.harness-root .he-layer-visibility,
+.harness-root .he-layer-control,
+.harness-root .he-layer-isolate { height: 28px; border-color: transparent; border-radius: 6px; background: transparent; color: var(--muted-foreground); font-size: 12px; }
+.harness-root .he-layer-visibility:hover,
+.harness-root .he-layer-control:hover,
+.harness-root .he-layer-isolate:hover { border-color: var(--border); background: var(--card); color: var(--foreground); }
+.harness-root .he-layer-visibility.active,
+.harness-root .he-layer-control.active { border-color: transparent; background: var(--sheet-selected); color: var(--primary); }
+.harness-root .he-drag-handle { font-size: 14px; }
+
+/* Окно свойств объекта на поле (правый щелчок): карточка ERP — шапка 13 px, поля в две колонки, строка пояснений внизу. */
+.harness-root .he-object-popover { width: 360px; padding: 0; border-color: var(--border); border-radius: 8px; font-family: inherit; font-size: 13px; line-height: 1.4; box-shadow: 0 8px 28px color-mix(in srgb, var(--foreground) 16%, transparent); }
+.harness-root .he-object-popover > .ui-section-heading { min-height: 40px; margin: 0; padding: 4px 6px 4px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.harness-root .he-object-popover > .ui-section-heading .ui-control { width: 30px; min-height: 30px; padding: 0; border-color: transparent; background: transparent; color: var(--muted-foreground); font-size: 18px; line-height: 1; }
+.harness-root .he-object-popover > .ui-section-heading .ui-control:hover { background: var(--accent); color: var(--foreground); }
+.harness-root .he-object-popover > :not(.ui-section-heading):not(.help-line-slot) { margin-left: 12px; margin-right: 12px; }
+.harness-root .he-object-popover > :not(.ui-section-heading):not(.help-line-slot):first-of-type,
+.harness-root .he-object-popover > .ui-section-heading + * { margin-top: 10px; }
+.harness-root .he-object-popover > .ui-control { margin-top: 10px; margin-right: 0; }
+.harness-root .he-object-popover > .ui-control + .ui-control { margin-left: 6px; }
+.harness-root .he-object-popover > :nth-last-child(2):not(.ui-section-heading) { margin-bottom: 12px; }
+.harness-root .he-object-popover .he-physical-fields,
+.harness-root .he-context-fields { gap: 10px 10px; }
+.harness-root .he-object-popover label > .info-hint { position: static; }
+.harness-root .he-object-popover summary,
+.harness-root .he-covering-actions > summary,
+.harness-root .he-covering-style > summary { padding: 6px 0; color: var(--foreground); font-size: 13px; font-weight: 600; }
+.harness-root .he-context-actions { gap: 6px; margin-top: 8px; padding-top: 8px; }
+.harness-root .he-object-popover .help-line-slot { border-radius: 0 0 8px 8px; }
+.harness-root .he-object-popover .help-line { border-radius: 0 0 8px 8px; }
+.harness-root .he-object-hint { padding: 6px 10px; border-color: var(--border); font-family: inherit; font-size: 13px; line-height: 1.4; }
+.harness-root .he-object-hint span { font-size: 12px; }
+
+/* Оболочка: вкладки «Основное · Оформление · Привязки» — сегменты ERP; цвета — поле и ряд образцов. */
+.harness-root .he-covering-tabs { margin: 0 0 10px; padding: 3px; gap: 2px; border: 0; border-radius: 8px; background: var(--seg-bg); }
+.harness-root .he-covering-tabs .ui-control { min-height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--seg-fg); font-size: 13px; font-weight: 500; }
+.harness-root .he-covering-tabs .ui-control[aria-pressed="true"] { background: var(--card); color: var(--foreground); font-weight: 600; box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 14%, transparent); }
+.harness-root .he-covering-properties label { gap: 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+.harness-root .he-covering-properties .he-context-fields { gap: 10px; margin: 0 0 8px; align-items: start; }
+.harness-root .he-covering-properties input[type="color"],
+.harness-root .he-object-popover input[type="color"] { width: 100%; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); cursor: pointer; }
+.harness-root .he-covering-properties .he-material-colors { gap: 3px; margin-top: 2px; }
+.harness-root .he-covering-properties .he-material-colors button { height: 14px; border-color: color-mix(in srgb, var(--foreground) 22%, transparent); border-radius: 3px; }
+.harness-root .he-covering-footer { gap: 6px; margin-top: 10px; padding-top: 10px; }
+.harness-root .he-covering-anchors .he-physical-fields { padding: 6px 0; border-bottom-color: var(--sheet-line); }
+
+/* Окна таблиц на поле: шапка как у панели ERP — название, строка пояснений, «Закрепить», «Скачать», «×». */
+.harness-root .he-table-window { border-color: var(--border); border-radius: 8px; }
+.harness-root .he-table-window > header { min-height: 40px; padding: 4px 6px 4px 12px; gap: 8px; border-bottom: 1px solid var(--border); background: var(--card); }
+.harness-root .he-table-window > header strong { flex: 0 0 auto; color: var(--foreground); font-size: 14px; font-weight: 600; letter-spacing: 0; }
+.harness-root .he-table-window > header select { flex: 0 0 120px; width: 120px; height: 30px; min-height: 30px; padding: 0 8px; border-radius: 6px; font-size: 13px; }
+.harness-root .he-table-window > header .ui-control { min-height: 30px; padding: 4px 10px; font-size: 13px; }
+.harness-root .he-table-window > header .ui-control[aria-label^="Закрыть"] { width: 30px; padding: 0; border-color: transparent; background: transparent; color: var(--muted-foreground); font-size: 16px; }
+.harness-root .he-table-window > header .ui-control[aria-label^="Закрыть"]:hover { background: var(--accent); color: var(--foreground); }
+.harness-root .he-table-window > header .he-table-window-download { color: var(--foreground); }
+.harness-root .he-table-window-resize { width: 16px; height: 16px; background: transparent; }
+
+/* Список объектов (панель «Показать объекты»). */
+.harness-root .he-material-objects { padding: 8px 12px 12px; gap: 10px; }
+.harness-root .he-material-objects-title { font-size: 14px; font-weight: 600; }
+.harness-root .he-material-group-title { padding: 4px 0; color: var(--muted-foreground); }
+.harness-root .he-material-row { min-height: 32px; padding: 0 2px; border-bottom-color: var(--sheet-line); }
+.harness-root .he-material-select { padding: 4px; font-family: inherit; }
+
+@media (pointer: coarse) {
+  .harness-root :is(.he-property-form, .he-relations, .he-object-popover, .he-covering-properties, .e4-connector-inspector, .he-controls-section) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]), select):not(td *),
+  .harness-root :is(.he-relations, .he-property-form, .he-object-popover, .he-table-window > header) .ui-control { min-height: 40px; height: 40px; }
+  .harness-root .he-controls-section .he-thickness-control input[type="range"] { height: 32px; }
+  .harness-root .he-layer-row { min-height: 44px; }
+}

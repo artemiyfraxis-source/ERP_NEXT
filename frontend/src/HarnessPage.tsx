@@ -5,6 +5,7 @@ import { HarnessHistory } from "./HarnessHistory";
 import { closeHarness, openLibrary } from "./harnessNav";
 import { ExportMenu } from "./harness/export/ExportMenu";
 import type { HarnessExportPort } from "./harness/export/port";
+import { usePhoneView } from "./harness/phone-view";
 import { readFileBase64 } from "./ProjectsPage";
 import { formatMoment } from "./format";
 import { StatusChip } from "./StatusChip";
@@ -42,7 +43,8 @@ const conflictReason = (message: string) => {
 
 /** Чертёж жгута на весь экран: редактор над чертежом из КД позиции, справочники и библиотека компонентов ERP.
  *  Без права «Проекты: правка» — тот же чертёж в режиме просмотра. Чужое сохранение (409) не теряет правки: они
- *  остаются на экране и в копии вкладки, на выбор «Взять их версию» или «Сохранить мою поверх». */
+ *  остаются на экране и в копии вкладки, на выбор «Взять их версию» или «Сохранить мою поверх». На телефоне — только
+ *  просмотр: в шапке остаются «Назад», название, «История версий» и «Выгрузить». */
 export function HarnessPage({ project, index, canEdit, onBack = () => closeHarness(project) }: {
   project: string; index: string; canEdit: boolean; onBack?: () => void;
 }) {
@@ -57,6 +59,8 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
   const [generation, setGeneration] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const phone = usePhoneView();
+  const edit = canEdit && !phone;
   // Порт выгрузки листа: поле чертежа обновляет его при каждой перерисовке сцены, страница читает при нажатии.
   const exportPort = useRef<HarnessExportPort | null>(null);
   const rememberExportPort = useCallback((port: HarnessExportPort | null) => { exportPort.current = port; }, []);
@@ -142,25 +146,25 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
 
   const heading = `${index}${title ? ` ${title}` : ""}`;
   const tone: Tone = state === "conflict" || state === "error" ? "danger" : state === "saving" ? "warning" : "success";
-  return <section className="harness-page" aria-label={`Чертёж жгута ${heading}`}>
+  return <section className={phone ? "harness-page harness-page-phone" : "harness-page"} aria-label={`Чертёж жгута ${heading}`}>
     <header className="harness-page-head">
       <button className="secondary small" onClick={onBack}>← Назад</button>
       <h1>{heading}</h1>
       <span className="muted">Чертёж жгута</span>
-      {canEdit
+      {edit
         ? <span className="harness-save" role="status"><StatusChip tone={tone}>{STATE_TEXT[state]}</StatusChip></span>
-        : <span className="harness-save" role="status" title="Правят сотрудники с правом «Проекты: правка»"><StatusChip tone="neutral">Только просмотр</StatusChip></span>}
+        : <span className="harness-save" role="status" title={canEdit ? "Чертёж правят на компьютере или планшете" : "Правят сотрудники с правом «Проекты: правка»"}><StatusChip tone="neutral">Только просмотр</StatusChip></span>}
       <span className="harness-page-actions">
         {note && <span className="muted harness-page-note">{note}</span>}
-        {canEdit && <button className="secondary small" disabled={!ports || state !== "saved" || Boolean(copy)} onClick={() => void checkpoint()}
+        {edit && <button className="secondary small" disabled={!ports || state !== "saved" || Boolean(copy)} onClick={() => void checkpoint()}
           title="Текущая сохранённая версия останется в истории отдельной строкой">Сохранить версию</button>}
         <button className="secondary small" onClick={() => setHistoryOpen(true)}>История версий</button>
-        <button className="secondary small" onClick={() => openLibrary(project, index)}
-          title="Шаблоны разъёмов жгута: список, редактор, публикация версий">Библиотека компонентов</button>
+        {!phone && <button className="secondary small" onClick={() => openLibrary(project, index)}
+          title="Шаблоны разъёмов жгута: список, редактор, публикация версий">Библиотека компонентов</button>}
         <ExportMenu project={project} index={index} heading={heading} port={() => exportPort.current} version={() => ports?.revision() ?? null} />
-        <a className="secondary small button-link" href={harnessApi.exportUrl(project, index)} download
-          title="Чертёж в формате TECHMAP-GRAPHER (.techmap-project.zip)">Скачать .zip</a>
-        {canEdit && <button className="secondary small" onClick={() => fileRef.current?.click()}
+        {!phone && <a className="secondary small button-link" href={harnessApi.exportUrl(project, index)} download
+          title="Чертёж в формате TECHMAP-GRAPHER (.techmap-project.zip)">Скачать .zip</a>}
+        {edit && <button className="secondary small" onClick={() => fileRef.current?.click()}
           title="Заменить чертёж файлом .techmap-project.zip из TECHMAP-GRAPHER">Загрузить .zip</button>}
       </span>
       <input ref={fileRef} type="file" accept=".zip" hidden data-testid="harness-zip" onChange={(event) => { void importZip(event.target.files?.[0]); event.target.value = ""; }} />
@@ -180,7 +184,7 @@ export function HarnessPage({ project, index, canEdit, onBack = () => closeHarne
             api={ports.api} placements={ports.placements} catalog={catalog} readOnly={!canEdit} onExportPort={rememberExportPort} />
         </Suspense>}
     </div>
-    {historyOpen && <HarnessHistory project={project} index={index} canEdit={canEdit} onClose={() => setHistoryOpen(false)}
+    {historyOpen && <HarnessHistory project={project} index={index} canEdit={edit} onClose={() => setHistoryOpen(false)}
       onRestored={(from, revision) => { setError(""); setNote(`Восстановлена версия ${from} — теперь это версия ${revision}.`); restart(); }} />}
   </section>;
 }

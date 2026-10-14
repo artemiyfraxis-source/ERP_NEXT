@@ -1,5 +1,6 @@
 """Resolve opaque server sessions and enforce CSRF on cookie-authenticated writes; resolve `Bearer erp_…` API tokens
-into service principals (no cookies, no CSRF)."""
+into service principals (no cookies, no CSRF). A session in «Смотреть как сотрудник» reads only: every write is refused
+here, in one place, before any route runs — except the exit from the view and the logout."""
 
 from collections.abc import Callable
 
@@ -18,6 +19,9 @@ CSRF_COOKIE = "erp_csrf"
 HOST_SESSION_COOKIE = "__Host-erp_session"
 HOST_CSRF_COOKIE = "__Host-erp_csrf"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
+VIEW_ONLY_DETAIL = "Режим просмотра: изменения недоступны"
+# The only writes a viewing session makes: «Вернуться к себе» and «Выйти».
+VIEW_AS_WRITES = frozenset({("DELETE", "/api/auth/view-as"), ("POST", "/api/auth/logout")})
 
 
 def cookie_names(secure: bool) -> tuple[str, str]:
@@ -96,6 +100,13 @@ class IdentitySessionMiddleware:
                         {"detail": "Проверка CSRF не пройдена"},
                         status_code=403,
                     )
+                    await response(scope, receive, send)
+                    return
+                if (
+                    resolved.principal.viewer is not None
+                    and (request.method, scope.get("path", "")) not in VIEW_AS_WRITES
+                ):
+                    response = JSONResponse({"detail": VIEW_ONLY_DETAIL}, status_code=403)
                     await response(scope, receive, send)
                     return
         await self.app(scope, receive, send)

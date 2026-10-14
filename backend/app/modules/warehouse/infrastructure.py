@@ -409,16 +409,19 @@ class SqlAlchemyWarehouseRepository:
         warehouse: str | None = None,
         include_zero: bool = False,
     ) -> list[StockLot]:
-        """Every lot under the same filters as `list`, no paging (the source of the group totals). A search first picks
-        the matching ids from the searched columns only (`_matching_ids`, the option read once), then loads those rows."""
+        """Every lot under the same filters as `list`, no paging, in the same id order (the source of the group
+        totals and of the whole-stock reads that must not lose lots past a page). A search first picks the matching ids
+        from the searched columns only (`_matching_ids`, the option read once), then loads those rows."""
         if not str(query or "").strip():
-            rows = self.session.scalars(select(StockLotRow).where(*self._filters(warehouse, include_zero)))
+            rows = self.session.scalars(
+                select(StockLotRow).where(*self._filters(warehouse, include_zero)).order_by(StockLotRow.id)
+            )
             return [_domain(row) for row in rows]
-        ids = self._matching_ids(query, warehouse, include_zero)
+        ids = sorted(self._matching_ids(query, warehouse, include_zero))
         lots: list[StockLot] = []
         for start in range(0, len(ids), 500):
             lots += [_domain(row) for row in self.session.scalars(
-                select(StockLotRow).where(StockLotRow.id.in_(ids[start:start + 500]))
+                select(StockLotRow).where(StockLotRow.id.in_(ids[start:start + 500])).order_by(StockLotRow.id)
             )]
         return lots
 

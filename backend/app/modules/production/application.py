@@ -60,6 +60,13 @@ class ConcurrentProductionUpdate(RuntimeError):
     pass
 
 
+class DuplicateLaunch(ConcurrentProductionUpdate):
+    """Эту КБ одновременно запустил другой запуск (автоплан или «Создать задание»): его задание уже создано."""
+
+    def __init__(self, message: str = "Задание по этой КБ уже создано — обновите"):
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class Operator:
     id: UUID
@@ -103,7 +110,8 @@ class ProductionRepository(Protocol):
     def planned(self, since: datetime) -> Sequence[ProductionTask]: ...
     def lock(self, task_id: UUID) -> None: ...
     def reserve_number(self) -> str: ...
-    def add(self, task: ProductionTask) -> None: ...
+    def last_launch_seqs(self, techcard_ids: Sequence[UUID]) -> dict[UUID, int]: ...
+    def add(self, task: ProductionTask, launch_seq: int | None = None) -> None: ...
     def worked(self, task_ids: Sequence[UUID]) -> set[UUID]: ...
     def delete(self, task_id: UUID) -> None: ...
 
@@ -162,6 +170,9 @@ class LaunchProductionCommand:
     # Техкарта и её ревизия, с которых взяты нормы (план задания, «Обновить нормы из ЭТК»).
     techcard_id: UUID | None = None
     techcard_revision: int | None = None
+    # Последний номер запуска этой КБ, который видел запускающий (автоплан читает его до расчёта); None — читается
+    # при запуске. Задание получает следующий номер; занятый номер — DuplicateLaunch.
+    seen_launch_seq: int | None = None
 
 
 @dataclass(frozen=True)
@@ -267,38 +278,54 @@ def _audit(task: ProductionTask, event_type: str, actor: Actor, now: datetime, d
 
 def launch_production(command: LaunchProductionCommand, uow: UnitOfWork) -> ProductionTask:
     with uow:
-        key = str(command.idempotency_key or "").strip()
-        if not key:
-            raise ProductionValidationError("Idempotency key обязателен")
-        fingerprint = _fingerprint(command)
-        existing = uow.production.by_idempotency_key(key)
-        if existing is not None:
-            if existing.source_fingerprint != fingerprint:
-                raise ProductionValidationError("Idempotency key уже использован для другого задания")
-            if uow.serials.ensure_task(existing.id, existing.number, existing.quantity):
-                uow.commit()
-            return existing
-        task = ProductionTask.create(
-            number=uow.production.reserve_number(),
-            source_idempotency_key=key,
-            source_fingerprint=fingerprint,
-            project=command.project,
-            item=command.item,
-            name=command.name,
-            quantity=command.quantity,
-            fulfillment_request_id=command.fulfillment_request_id,
-            deadline=command.deadline,
-            launched_by=command.actor.name,
-            operations=command.operations,
-            created_at=command.now,
-            techcard_id=command.techcard_id,
-            techcard_revision=command.techcard_revision,
-        )
-        uow.production.add(task)
-        uow.serials.ensure_task(task.id, task.number, task.quantity)
-        _audit(task, "production.launched", command.actor, command.now, {"number": task.number}, uow)
-        uow.commit()
+        task, created = launch_task(command, uow)
+        if created or uow.serials.ensure_task(task.id, task.number, task.quantity):
+            uow.commit()
         return task
+
+
+def launch_task(command: LaunchProductionCommand, uow: UnitOfWork) -> tuple[ProductionTask, bool]:
+    """Запуск задания внутри открытой единицы работы, без коммита: номер ПЗ, ключ идемпотентности, серийники, аудит.
+    Один путь для «Создать задание» и автоплана (он пишет задание и его расписание одним коммитом).
+    Возвращает задание и True, если оно создано сейчас (False — ключ уже запускал это же задание).
+    Задание по техкарте получает следующий номер запуска КБ; два запуска из одного состояния — DuplicateLaunch."""
+    key = str(command.idempotency_key or "").strip()
+    if not key:
+        raise ProductionValidationError("Idempotency key обязателен")
+    fingerprint = _fingerprint(command)
+    existing = uow.production.by_idempotency_key(key)
+    if existing is not None:
+        if existing.source_fingerprint != fingerprint:
+            raise ProductionValidationError("Idempotency key уже использован для другого задания")
+        return existing, False
+    # Номер запуска КБ читается до номера ПЗ: номер ПЗ берётся под замком, и после ожидания замка параллельный
+    # запуск уже был бы виден — а гонку должна поймать уникальность (techcard_id, launch_seq).
+    launch_seq = None
+    if command.techcard_id is not None:
+        seen = command.seen_launch_seq
+        if seen is None:
+            seen = uow.production.last_launch_seqs((command.techcard_id,)).get(command.techcard_id, 0)
+        launch_seq = seen + 1
+    task = ProductionTask.create(
+        number=uow.production.reserve_number(),
+        source_idempotency_key=key,
+        source_fingerprint=fingerprint,
+        project=command.project,
+        item=command.item,
+        name=command.name,
+        quantity=command.quantity,
+        fulfillment_request_id=command.fulfillment_request_id,
+        deadline=command.deadline,
+        launched_by=command.actor.name,
+        operations=command.operations,
+        created_at=command.now,
+        techcard_id=command.techcard_id,
+        techcard_revision=command.techcard_revision,
+    )
+    uow.production.add(task, launch_seq)
+    uow.serials.ensure_task(task.id, task.number, task.quantity)
+    _audit(task, "production.launched", command.actor, command.now, {"number": task.number}, uow)
+    return task, True
 
 
 def _task(command_task_id: UUID, expected_version: int, uow: UnitOfWork) -> ProductionTask:
@@ -849,6 +876,15 @@ def set_production_cancelled(command: SetProductionCancelledCommand, uow: UnitOf
         _audit(updated, "production.cancelled" if command.cancelled else "production.restored", command.actor, command.now, {}, uow)
         uow.commit()
         return updated
+
+
+def cancel_task_in(task: ProductionTask, actor: Actor, now: datetime, uow, details: dict | None = None) -> ProductionTask:
+    """«Отменено» inside the caller's transaction (the caller commits) — the same transition and audit event as
+    `set_production_cancelled`, with the caller's ``details`` (why it was cancelled)."""
+    updated = task.set_cancelled(True)
+    uow.production.add(updated)
+    _audit(updated, "production.cancelled", actor, now, dict(details or {}), uow)
+    return updated
 
 
 def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: UnitOfWork) -> None:

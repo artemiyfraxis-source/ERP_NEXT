@@ -28,8 +28,13 @@ from .modules.fulfillment import api as fulfillment_api
 from .modules.production import api as production_api
 from .modules.production import plan_api as production_plan_api
 from .modules.production import autoplan_api as production_autoplan_api
+from .modules.production import ship_plan_api as production_ship_plan_api
+from .modules.production import leftovers_api as production_leftovers_api
+from .modules.production import downtime_api as production_downtime_api
+from .modules.production import baseline_api as production_baseline_api
 from .modules.shipping import api as shipping_api
 from .modules.references import api as references_api
+from .modules.references import wire_dia_api as references_wire_dia_api
 from .modules.references import import_api as references_import_api
 from .modules.operations import api as operations_api
 from .modules.requests import api as requests_api
@@ -47,6 +52,7 @@ from .modules.purchasing import api_items as purchasing_items_api
 from .modules.purchasing import api_rfq as purchasing_rfq_api
 from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
+from .workflows import finished_goods_api
 
 app = FastAPI(
     title="Fraxis ERP Next",
@@ -86,11 +92,16 @@ app.include_router(fulfillment_api.router)
 app.include_router(production_api.router)
 app.include_router(production_plan_api.router)
 app.include_router(production_autoplan_api.router)
+app.include_router(production_ship_plan_api.router)
+app.include_router(production_leftovers_api.router)
+app.include_router(production_downtime_api.router)
+app.include_router(production_baseline_api.router)
 app.include_router(kitsets_api.router)
 app.include_router(assembly_api.router)
 app.include_router(harness_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
+app.include_router(references_wire_dia_api.router)
 app.include_router(references_import_api.router)
 app.include_router(operations_api.router)
 app.include_router(employee_card_api.router)
@@ -101,6 +112,7 @@ app.include_router(search_api.router)
 for _purchasing in (purchasing_settings_api, purchasing_suppliers_api, purchasing_items_api, purchasing_rfq_api,
                purchasing_internal_projects_api):
     app.include_router(_purchasing.router)
+app.include_router(finished_goods_api.router)
 
 if database_url := os.getenv("ERP_DATABASE_URL"):
     configure_database(app, database_url)

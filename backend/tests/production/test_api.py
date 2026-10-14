@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+import re
 from uuid import UUID
 
 import pytest
@@ -354,10 +355,10 @@ def test_native_production_plan_combines_project_snapshot_techcard_task_and_jour
     row = loaded.json()["rows"][0]
     assert row["project"] == "708К.4"
     assert row["customer"] == "Заказчик"
-    assert row["stage"] == "В работе"
+    assert row["stage"] == "ТК готова"  # задание запущено, но ещё не стоит в ресурсном плане
     assert row["stage_manual"] is False
     assert row["kits"] == [{
-        "item_index": "КБ1", "status": "В работе", "manual": False,
+        "item_index": "КБ1", "status": "ТК готова", "manual": False,
         "tc": True, "kit": False, "skipped": [],
         "review": {
             "value": "не проверена", "text": "ТК выдана", "who": "генератор",
@@ -400,7 +401,6 @@ def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
                 json={"techcard_id": str(card.id), "quantity": 10})
 
     marks = [
-        {"field": "status", "value": "холд, к запус"},
         {"field": "comment", "text": "ждём ответ заказчика"},
         {"field": "kit_arrival", "value": "2026-10-09"},
         {"field": "test_sb", "value": "да"},
@@ -410,20 +410,24 @@ def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
     ]
     saved = [client.post("/api/production/plan/events", json={"project": "708К.4", "kind": "mark", **mark}) for mark in marks]
     bad = client.post("/api/production/plan/events", json={"project": "708К.4", "kind": "mark", "field": "ready", "value": "300"})
+    status_mark = client.post("/api/production/plan/events", json={
+        "project": "708К.4", "kind": "mark", "field": "status", "value": "холд",
+    })
     loaded = client.get("/api/production/plan")
 
     assert [response.status_code for response in saved] == [201] * len(marks), [r.text for r in saved]
-    assert saved[0].json()["event"]["value"] == "ХОЛД, К ЗАПУСК"
-    assert saved[0].json()["event"]["field"] == "status"
+    assert saved[0].json()["event"]["field"] == "comment"
     assert saved[0].json()["event"]["kind"] == "Отметка плана"
     assert bad.status_code == 422
+    assert status_mark.status_code == 422
+    assert "меняйте этап" in status_mark.text
     body = loaded.json()
     assert "ОТГРУЖЕН" in body["shop_statuses"]
     assert (body["calendar_from"], body["calendar_to"]) == ("2026-09-15", "2026-11-21")
     row = body["rows"][0]
     sheet = row["sheet"]
-    assert sheet["status"] == {"value": "ХОЛД, К ЗАПУСК", "auto": "В РАБОТЕ", "manual": True}
-    assert row["group"] == "hold"
+    assert sheet["status"] == {"value": "ТК готова", "auto": "ТК готова", "manual": False}
+    assert row["group"] == "active"
     assert sheet["comment"]["value"] == "ждём ответ заказчика"
     assert sheet["kit_arrival"]["value"] == "2026-10-09" and sheet["kit_arrival"]["manual"] is True
     assert sheet["test_sb"]["value"] == "да"
@@ -436,7 +440,7 @@ def test_production_plan_sheet_columns_and_manual_marks_persist(production_api):
             AuditEventRow.event_type == "production.plan_event_added"))]
     mark_audit = [details for details in audit if details["kind"] == "Отметка плана"]
     assert len(mark_audit) == len(marks)
-    assert {"project": "708К.4", "kind": "Отметка плана", "field": "status", "value": "ХОЛД, К ЗАПУСК"} in mark_audit
+    assert {"project": "708К.4", "kind": "Отметка плана", "field": "test_sb", "value": "да"} in mark_audit
 
 
 def test_production_plan_rejects_note_for_unknown_project(production_api):
@@ -880,3 +884,55 @@ def test_staff_cannot_pass_operator_id(production_api):
 
     assert own.status_code == 200
     assert foreign.status_code == 403 and foreign_execution.status_code == 403
+
+
+def test_terminal_project_status_event_and_stage_kinds_still_work_next_to_refused_status_mark(production_api):
+    client, _operator_id = production_api
+    client.put("/api/production/plan/projects-snapshot", json={"projects": [{
+        "project": "708К.4", "customer": "Заказчик", "status": "Новый", "terminal": False,
+    }]})
+
+    def post(**body):
+        return client.post("/api/production/plan/events", json={"project": "708К.4", **body})
+
+    refused = post(kind="mark", field="status", value="ХОЛД")
+    block = post(kind="block", blocker="ХОЛД", text="ждём")
+    unblock = post(kind="unblock", text="снято")
+    stage = post(kind="stage", value="ТК готова")
+    closed = post(kind="status", value="Отменён")  # last: a stage change on a closed project would reopen it
+
+    assert refused.status_code == 422 and "меняйте этап" in refused.text
+    assert [r.status_code for r in (closed, block, unblock, stage)] == [201] * 4
+    row = client.get("/api/production/plan").json()["rows"][0]
+    assert row["terminal"] is True and row["group"] == "closed"
+
+
+def test_submit_returns_box_code_and_box_search_finds_it(production_api):
+    """Код коробки (13.10): после «Сдать» монтажник видит код для подписи; поиск коробок находит её по коду."""
+    client, operator_id = production_api
+    master = app.dependency_overrides[authenticated_principal]
+    operator = lambda: Principal(
+        actor=Actor(id=operator_id, name="Оператор", department="Производство"),
+        email="operator@example.test", roles=frozenset({"operator"}), permissions={"myops": "edit"},
+    )
+    task = launch_from_card(client, "box-code-api-v1", "180К.11", "КБ1", 5, [("", "Подготовка", 0, 0)]).json()["task"]
+    task = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/assign",
+        json={"version": task["version"], "operator_ids": [str(operator_id)]},
+    ).json()["task"]
+    app.dependency_overrides[authenticated_principal] = operator
+    started = client.post(
+        f"/api/production/tasks/{task['id']}/operations/{task['operations'][0]['id']}/work/start", json={"inputs": []},
+    ).json()["session"]
+    submitted = client.post(f"/api/production/work/{started['id']}/submit", json={"good_quantity": "5"})
+    app.dependency_overrides[authenticated_principal] = master
+    box = submitted.json()["box"]
+    found = client.get("/api/production/boxes", params={"q": box["code"].replace("·", " ").lower()})
+    missing = client.get("/api/production/boxes", params={"q": "999Х.1·КБ1"})
+
+    assert submitted.status_code == 200, submitted.text
+    assert re.fullmatch(r"180К\.11·КБ1·\d\d\.\d\d·ОП01·1", box["code"]), box["code"]
+    assert found.status_code == 200, found.text
+    assert [item["id"] for item in found.json()["boxes"]] == [box["id"]]
+    assert found.json()["boxes"][0]["code"] == box["code"]
+    assert missing.json()["boxes"] == []

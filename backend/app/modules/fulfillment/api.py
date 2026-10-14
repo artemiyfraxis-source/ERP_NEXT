@@ -12,9 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.warehouse.domain import WarehouseValidationError
+from app.shared import article_match
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
+    authenticated_principal,
+    section_allowed,
     fulfillment_admin_principal,
     fulfillment_edit_principal,
     fulfillment_handout_principal,
@@ -27,6 +30,7 @@ from app.workflows import issue_calc
 from app.shared.warehouse_location import SHELF_LETTERS, configured_rack_layout, place_code
 
 from .application import (
+    AbsentCommand,
     BindLotCommand,
     BindProjectLotsCommand,
     CompleteReturnCommand,
@@ -43,6 +47,7 @@ from .application import (
     VersionedFulfillmentCommand,
     bind_lot,
     bind_project_lots,
+    set_absent,
     set_off_book,
     build_issue_print_sheet,
     build_issue_return_sheet,
@@ -211,6 +216,8 @@ def _result(request: FulfillmentRequest) -> dict:
                 "defective_missing": _number(line.defective_missing),
                 "consumed": _number(line.consumed),
                 "off_book": line.off_book,
+                "absent_at": _stamp(line.absent_at),
+                "absent_by": line.absent_by or None,
                 "lot": None if line.lot is None else {
                     "id": str(line.lot.lot_id),
                     "warehouse": line.lot.warehouse,
@@ -313,7 +320,7 @@ def available_lots(
     reserves of any of its КБ) count as available: `available` = ДОСТУПНО + `reserved` (the project's part), the same
     shape as /api/kitsets/lots."""
     with uow_factory() as uow:
-        lots = uow.warehouse.list(limit=5000, query=q, include_zero=False)
+        lots = uow.warehouse.filtered(query=q, include_zero=False)
         held = project_reserve_by_lot(uow, lots, project.strip())
     candidates = [
         lot for lot in lots
@@ -332,6 +339,105 @@ def available_lots(
         "available": _number(free_for_project(lot, held)),
         **({"reserved": _number(held[lot.id])} if held.get(lot.id) else {}),
     } for lot in candidates]}
+
+
+_CANDIDATES_SHOWN = 10
+
+
+@router.get("/projects/{project}/candidates")
+def project_candidates(
+    project: str,
+    _principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Возможно есть» (owner 12.10.2026): for every position of the project's requests, the warehouse lots that may be
+    it — by the position's name first, the КД article only when the name finds nothing; exact before fuzzy
+    (`app.shared.article_match`), `by` says which — in ONE pass over the stock. `available` is what
+    the project's kit can take (ДОСТУПНО + its own reserve), a lot with nothing to take is not offered. Read-only."""
+    project = project.strip()
+    with uow_factory() as uow:
+        positions: dict[tuple[str, str], str] = {}
+        after = None
+        while True:
+            page = list(uow.fulfillment.list(limit=200, after_id=after))
+            for request in page:
+                if project_of(request.purpose) != project:
+                    continue
+                for line in request.lines:
+                    positions.setdefault((line.article, line.name), line.unit)
+            if len(page) < 200:
+                break
+            after = page[-1].id
+        return _candidates(uow, project, positions)
+
+
+class CandidatePosition(BaseModel):
+    article: str = Field(default="", max_length=255)
+    name: str = Field(default="", max_length=512)
+    unit: str = Field(default="", max_length=32)
+
+
+class CandidatesPayload(BaseModel):
+    positions: list[CandidatePosition] = Field(default_factory=list, max_length=1000)
+
+
+def stock_candidates_principal(
+    principal: Annotated[Principal, Depends(authenticated_principal)],
+) -> Principal:
+    """Who may see what the warehouse holds: «Склад» (view) or the kitting desk («Комплектация», edit)."""
+    if principal.service or not (
+        section_allowed(principal, ("warehouse",), "view") or section_allowed(principal, ("fulfillment",), "edit")
+    ):
+        raise HTTPException(status_code=403, detail="Остатки склада вам не открыты")
+    return principal
+
+
+@router.post("/projects/{project}/candidates")
+def positions_candidates(
+    project: str,
+    payload: CandidatesPayload,
+    _principal: Annotated[Principal, Depends(stock_candidates_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«Возможно есть» for the positions the caller names — the project's «Снабжение» lists its spec positions before
+    any kit request exists. The same lots, matcher and answer as the GET; the project's own reserves count as free."""
+    positions: dict[tuple[str, str], str] = {}
+    for item in payload.positions:
+        positions.setdefault((item.article.strip(), item.name.strip()), item.unit.strip())
+    with uow_factory() as uow:
+        return _candidates(uow, project.strip(), positions)
+
+
+def _candidates(uow, project: str, positions: dict[tuple[str, str], str]) -> dict:
+    """One pass over the stock for every (article, name) position: by the name, else by the КД article."""
+    lots = uow.warehouse.filtered(include_zero=False) if positions else []
+    held = project_reserve_by_lot(uow, lots, project)
+    free = [lot for lot in lots if free_for_project(lot, held) > 0]
+    result = []
+    for (article, name), unit in positions.items():
+        found = article_match.candidates(article, name, free)
+        result.append({
+            "article": article,
+            "name": name,
+            "unit": unit,
+            "candidates": [{
+                "id": str(lot.id),
+                "lot_id": str(lot.id),
+                "warehouse": lot.warehouse,
+                "grn": lot.grn,
+                "package": lot.package,
+                "article": lot.article,
+                "name": lot.name,
+                "unit": lot.unit,
+                "storage_location": lot.storage_location,
+                "available": _number(free_for_project(lot, held)),
+                "kind": match.kind,
+                "match": match.label,
+                "by": match.basis,
+            } for match, lot in found[:_CANDIDATES_SHOWN]],
+            "more": max(len(found) - _CANDIDATES_SHOWN, 0),
+        })
+    return {"positions": result}
 
 
 def _print_response(
@@ -471,6 +577,44 @@ def clear_off_book(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
 ) -> dict:
     return _off_book(request_id, line_id, payload, principal, now, uow_factory, False)
+
+
+def _absent(request_id: UUID, line_id: UUID, payload: VersionPayload, principal: Principal, now: datetime,
+            uow_factory: Callable[[], UnitOfWork], absent: bool) -> dict:
+    return _run(lambda: set_absent(AbsentCommand(
+        request_id=request_id,
+        expected_version=payload.version,
+        line_id=line_id,
+        absent=absent,
+        actor=principal.actor,
+        now=now,
+    ), uow_factory()))
+
+
+@router.post("/{request_id}/lines/{line_id}/absent")
+def mark_absent(
+    request_id: UUID,
+    line_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    """«нет на складе»: the storekeeper confirms the part is absent — the line stays open as a shortage, supply is told
+    once, «есть, но не заведено» on it is dropped. A repeat on a marked line changes nothing."""
+    return _absent(request_id, line_id, payload, principal, now, uow_factory, True)
+
+
+@router.delete("/{request_id}/lines/{line_id}/absent")
+def clear_absent(
+    request_id: UUID,
+    line_id: UUID,
+    payload: VersionPayload,
+    principal: Annotated[Principal, Depends(fulfillment_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(fulfillment_uow_factory)],
+) -> dict:
+    return _absent(request_id, line_id, payload, principal, now, uow_factory, False)
 
 
 @router.post("/projects/{project}/bind-lots")

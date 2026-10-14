@@ -1,6 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataColumn } from "./DataTable";
-import { matchWire, parseWireTable, shownWireValue } from "./WireLookup";
 import { CABLE_KIND_LABELS, CoaxCardView, num, spanText } from "./CableStructure";
 import {
   failureText,
@@ -11,6 +10,10 @@ import {
   type CablesResult,
   type TechOperationRecord,
 } from "./api";
+import { CATEGORIES, CATEGORY_CELL, cableCategory, cableGroup, compareCables } from "./cableCategory";
+import { coaxGroupOf, coaxNaming, sortCoax } from "./coaxFamilies";
+import { MakersInput } from "./WireFieldWidgets";
+import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
 /* «Кабели и провода» (owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»). One row per cable:
    a БД.ПРОВ row with the parameters, a coax cable joined with the D1·D2·D3 the ETK generator uses for its name. The
@@ -36,10 +39,10 @@ const MARK = "Марка";
 const TYPE = "Тип провода";
 // The columns a technologist reads per list, in this order; every other БД.ПРОВ column is in «Колонки».
 const SHOWN: Record<CableKind, string[]> = {
-  coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт / производитель"],
+  coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт", "Производители"],
   wire: [TYPE, "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Изоляция", "Цвета", "Темп. от, °C", "Темп. до, °C", "Напряжение, В"],
-  multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт / производитель"],
-  other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В", "Стандарт / производитель"],
+  multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт", "Производители"],
+  other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В", "Стандарт", "Производители"],
 };
 // A new row starts in the list it was added from.
 const NEW_TYPE: Record<CableKind, Record<string, string>> = {
@@ -65,25 +68,24 @@ function draftOf(row: CableRow | null, columns: string[], kind: CableKind): Draf
   };
 }
 
-export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, toolbar }: {
+export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar }: {
   kind: CableKind;
   data: CablesResult;
-  awgRecords: TechOperationRecord[];
   canEdit: boolean;
   onSaved: (message: string) => Promise<void> | void;
   onError: (message: string) => void;
   toolbar?: ReactNode;
 }) {
   const [adding, setAdding] = useState(false);
-  const rows = useMemo(() => data.rows.filter((row) => row.kind === kind), [data.rows, kind]);
-  const wireTable = useMemo(() => parseWireTable(awgRecords), [awgRecords]);
+  const grouped = kind === "multi" || kind === "other";
+  const cells = (row: CableRow): Record<string, string> => ({ "Марка": row.cable, ...(row.record?.fields ?? {}) });
+  // «Кабели»: groups by category and screen, natural order inside (series, cores, section as numbers).
+  const rows = useMemo(() => {
+    const own = data.rows.filter((row) => row.kind === kind);
+    return grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
+  }, [data.rows, kind, grouped]);
+  const coaxGroup = useMemo(() => coaxGroupOf(rows), [rows]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
-  // The generator's Ø by the AWG table for a wire named like this row (WireLookup.matchWire — the same match).
-  const wireDia = (row: CableRow) => {
-    const matched = wireTable.marks.length ? matchWire(row.cable, wireTable.marks, wireTable.rows) : null;
-    const value = matched?.row ? shownWireValue(matched.row.byMark[matched.mark.norm]) : "";
-    return { matched, value };
-  };
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
   const textColumn = (name: string, hidden: boolean): DataColumn<CableRow> => {
@@ -113,21 +115,13 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
         render: (row: CableRow) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
       },
     ] : []),
-    ...(kind === "wire" ? [{
-      key: "__wire_dia", title: "Ø по таблице AWG, мм", numeric: true,
-      value: (row: CableRow) => wireDia(row).value,
-      render: (row: CableRow) => {
-        const { matched, value } = wireDia(row);
-        if (value && matched?.row) return <span title={`Марка ${matched.mark.name}, AWG ${matched.row.awg}${matched.row.gost ? ` · ${matched.row.gost} мм²` : ""} — так подберёт генератор ЭТК`}>{value}</span>;
-        return <span className="muted" title={matched ? `Марка ${matched.mark.name} есть в таблице AWG, сечение не найдено` : "Марки нет в таблице AWG"}>—</span>;
-      },
-    }] : []),
     ...shown.map((name) => textColumn(name, false)),
     ...data.columns.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, true)),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
 
   const detail = (row: CableRow) => <>
+    {kind === "coax" && <CoaxNames row={row} />}
     {row.card && <CoaxCardView card={row.card} exact={Boolean(row.card_exact)} />}
     {canEdit
       ? <CableEditor key={`${row.id}:${JSON.stringify(row.record?.fields ?? {})}:${row.dia ? diaText(row.dia) : ""}:${row.kind}`}
@@ -149,12 +143,23 @@ export function CableTable({ kind, data, awgRecords, canEdit, onSaved, onError, 
       storageKey={`db:cables:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
-      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
-        : kind === "wire" ? [{ label: "Нет в таблице AWG", test: (row) => !wireDia(row).value }] : undefined}
+      collapsibleGroups={kind === "coax"}
+      groupBy={grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
+      presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
       toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />
   </>;
+}
+
+/** Full name and aliases of a coax cable, above its card. */
+function CoaxNames({ row }: { row: CableRow }) {
+  const { fullName, aliases } = coaxNaming(row);
+  if (!fullName && !aliases.length) return null;
+  return <div className="reference-fields cable-card">
+    {fullName && <span><small>Полное название</small>{fullName}</span>}
+    {aliases.length > 0 && <span><small>Другие названия</small>{aliases.join(" · ")}</span>}
+  </div>;
 }
 
 /** Read-only card: every БД.ПРОВ cell of the row and its D1·D2·D3. */
@@ -176,6 +181,7 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
   onCancel?: () => void;
 }) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(row, data.columns, kind));
+  const makerNames = useMemo(() => makerSuggestions(data.rows.map((item) => item.record?.fields[MAKERS] ?? "")), [data.rows]);
   const [busy, setBusy] = useState(false);
   const isCoax = row ? row.kind === "coax" || Boolean(row.dia) : kind === "coax";
   const diaOnly = Boolean(row && !row.record);
@@ -234,9 +240,16 @@ function CableEditor({ row, kind, data, onSaved, onError, onCancel }: {
       {diaOnly && <span className="muted">{row?.dia ? "Кабеля нет в базе проводов, есть только его диаметры." : "Кабеля нет в базе проводов, есть только его карточка."}</span>}
     </div>}
     {!diaOnly && <div className="cable-form">
-      {Object.keys(draft.fields).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name}</small>
+      {Object.keys(draft.fields).filter((name) => name !== MAKERS && name !== CATEGORY_CELL).map((name) => <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{name === STANDARD ? "Стандарт (ГОСТ / ТУ / UL)" : name}</small>
         <input aria-label={`Поле ${name}`} value={draft.fields[name] ?? ""} onChange={(event) => setField(name, event.target.value)} />
       </label>)}
+      {CATEGORY_CELL in draft.fields && <label><small>Категория</small>
+        <select aria-label="Категория" value={draft.fields[CATEGORY_CELL] ?? ""} onChange={(event) => setField(CATEGORY_CELL, event.target.value)}>
+          <option value="">по правилу: {cableCategory({ ...draft.fields, [CATEGORY_CELL]: "" }).category}</option>
+          {CATEGORIES.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>}
+      {MAKERS in draft.fields && <MakersInput value={draft.fields[MAKERS] ?? ""} onChange={(value) => setField(MAKERS, value)} suggestions={makerNames} />}
     </div>}
     <div className="form-actions cable-actions">
       {row?.record && kindSelect(row, draft.kind, (next) => setDraft({ ...draft, kind: next }))}

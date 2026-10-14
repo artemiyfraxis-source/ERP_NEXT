@@ -72,8 +72,13 @@ def database(tmp_path, monkeypatch):
             "ALTER TABLE production_plan_events ADD COLUMN from_value VARCHAR(64) NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE production_plan_events ADD COLUMN reason TEXT NOT NULL DEFAULT ''"))
         connection.execute(text("ALTER TABLE production_operations ADD COLUMN stage_key VARCHAR(128)"))
+        # 0119: код коробки.
+        connection.execute(text("ALTER TABLE production_boxes ADD COLUMN code VARCHAR(64)"))
         Base.metadata.tables["production_operation_inputs"].create(connection)
         connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN off_book BOOLEAN NOT NULL DEFAULT 0"))
+        # 0106: «нет на складе» on a kit line.
+        connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN absent_at DATETIME"))
+        connection.execute(text("ALTER TABLE fulfillment_lines ADD COLUMN absent_by VARCHAR(255)"))
         Base.metadata.tables["fulfillment_kit_reserves"].create(connection)
         # 0089: the project / КБ / kind of a request and the year's number counter.
         connection.execute(text("ALTER TABLE fulfillment_requests ADD COLUMN project_key VARCHAR(128)"))
@@ -84,7 +89,7 @@ def database(tmp_path, monkeypatch):
         Base.metadata.tables["procurement_stock_covers"].create(connection)
         # План задания (Цель 2, миграция после 0088): колонки задания, команда и сдачи площадки.
         for column in ("techcard_id CHAR(32)", "techcard_revision INTEGER", "flow_mode VARCHAR(16) NOT NULL DEFAULT 'mixed'",
-                       "transfer_batch INTEGER", "early_quantity INTEGER"):
+                       "transfer_batch INTEGER", "early_quantity INTEGER", "launch_seq INTEGER"):  # launch_seq — 0113
             connection.execute(text(f"ALTER TABLE production_tasks ADD COLUMN {column}"))
         Base.metadata.tables["production_task_team"].create(connection)
         Base.metadata.tables["production_task_deliveries"].create(connection)

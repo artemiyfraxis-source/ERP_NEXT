@@ -15,6 +15,7 @@ elsewhere on the same route is resolved on its own and still refuses the token. 
 (`require_full_access`) never accept a token."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request, Security
@@ -38,6 +39,11 @@ class Principal:
     # A service principal (an API token): acts with these scopes only, never with the creator's rights.
     service: bool = False
     scopes: frozenset[str] = frozenset()
+    # «Смотреть как сотрудник» (owner 12.10.2026): this principal is the viewed employee for reads — their level,
+    # exceptions and identity; `viewer` is the administrator really at the keyboard. The session middleware refuses
+    # every write of such a request (identity/middleware.py VIEW_ONLY_DETAIL) except the exit and the logout.
+    viewer: Actor | None = None
+    view_as_until: datetime | None = None
 
     @property
     def level(self) -> str:
@@ -186,8 +192,9 @@ warehouse_view_principal = require_section("warehouse", "view")
 warehouse_edit_principal = require_section("warehouse", "edit")
 # Import of an edited stock table (SK-14): the administrator only (SUPPLYMAP portalStock05Bulk, adminOnly).
 warehouse_admin_principal = require_full_access("Импорт таблицы остатков — только администратору.")
-# «Журнал склада» (SK-16): SUPPLYMAP portalStock05Log — portalRealAdmin_.
-warehouse_journal_principal = require_full_access("Журнал склада доступен только администратору.")
+# «Журнал склада» (SK-16) и «История» партии: в SUPPLYMAP только администратор; владелец 12.10.2026 — кладовщику тоже
+# (кто работает со складом, видит историю ГРН).
+warehouse_journal_principal = require_section("warehouse", "edit")
 # Picking reserves, handout writes off: two sections over one request (SUPPLYMAP Issue.gs portalIssueGuard_, owner
 # 02.09.2026). Reading the shared list takes either key; each write takes its own (NAV-SECTIONS).
 fulfillment_view_principal = require_section(("fulfillment", "handout"), "view")
