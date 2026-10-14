@@ -166,10 +166,17 @@ export function etkDrawWires(operation: Row): string {
   return svg(W, yd + 14, body);
 }
 
-/** Разделка коаксиала: ступени от торца, L1–L3 из базы коакса (etkDrawCoax_). */
+/** Разделка коаксиала: ступени от торца, L1–L3 из базы коакса (etkDrawCoax_). Резка с разделкой на станке разделывает
+    оба конца — эскиз каждой стороны со своей подписью (`fields.coaxB`). */
 export function etkDrawCoax(operation: Row): string {
-  const c = obj(obj(operation.fields).coax);
-  if (!Object.keys(c).length) return "";
+  const f = obj(operation.fields);
+  const a = obj(f.coax), b = obj(f.coaxB);
+  if (!Object.keys(a).length) return "";
+  if (!Object.keys(b).length) return coaxSketch(a, "");
+  return coaxSketch(a, "Сторона А") + coaxSketch(b, "Сторона В");
+}
+
+function coaxSketch(c: Row, caption: string): string {
   const L = [num(c.l1), num(c.l2), num(c.l3)];
   if (!(L[0] > 0 && L[1] > L[0] && L[2] > L[1])) {
     return `<div class="tr-none">Размеров разделки нет в базе коакса для ${esc(c.connector || c.cable)}.</div>`;
@@ -190,6 +197,7 @@ export function etkDrawCoax(operation: Row): string {
   body += `<line x1="${x0}" y1="${cy - 84}" x2="${x0}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
   const ds = ["d1", "d2", "d3"].filter((key) => c[key]).map((key) => `${key.toUpperCase()} = ${mm(c[key])}`);
   if (ds.length) body += `<text x="${x0}" y="${cy + 42}" font-size="12" fill="#5f7470">Ø: ${esc(ds.join(" · "))}</text>`;
+  if (caption) body += `<text x="${W - 30}" y="${cy - 30}" text-anchor="end" font-size="12" font-weight="600" fill="#17272b">${esc(caption)}</text>`;
   return svg(W, cy + 52, body);
 }
 

@@ -50,6 +50,7 @@ import {
   wireDiaFromRecords,
   WIRE_DIA_MISSING_,
   WIRE_DIA_OLD_,
+  COAX_MACHINES,
   type CableRec,
   type Comp,
   type Endpoint,
@@ -1253,6 +1254,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <div className="gfield span2"><span className="gfield-label">Экран (на сборку)</span>
           <Seg label="Тип экрана" value={S.coax.shield} options={[["обжим", "Обжим втулки"], ["пайка", "Пайка экрана"]]}
             onChange={(shield) => update((current) => ({ ...current, coax: { ...current.coax, shield } }))} /></div>
+        <div className="gfield span-all"><span className="gfield-label">Разделка</span>
+          <Seg label="Разделка" value={S.coax.stripMode} options={[["machine", "Резка с разделкой на станке"], ["separate", "Резка, затем разделка А и В"]]}
+            onChange={(stripMode) => update((current) => ({ ...current, coax: { ...current.coax, stripMode } }))} /></div>
+        {S.coax.stripMode !== "separate" && <div className="gfield span-all"><span className="gfield-label">Станок</span>
+          <Seg label="Станок" value={gen.coaxMachine_()} options={(["small", "big"] as const).map((key) => [key, COAX_MACHINES[key].label, COAX_MACHINES[key].hint] as const)}
+            onChange={(machine) => update((current) => ({ ...current, coax: { ...current.coax, machine } }))} /></div>}
       </div>
       <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
         <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>

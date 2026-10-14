@@ -158,6 +158,19 @@ describe("etkDraw* sketches", () => {
   it("draws the coax strip steps or says the base has no sizes", () => {
     expect(etkDrawCoax({ fields: { coax: { cable: "RG-174", l1: "3", l2: "5", l3: "9", d1: "0,5" } } })).toContain("L3 = 9 мм");
     expect(etkDrawCoax({ fields: { coax: { connector: "SMA", l1: "3" } } })).toContain("Размеров разделки нет в базе коакса для SMA");
+    expect(etkDrawCoax({ fields: { coax: { cable: "RG-174", l1: "3", l2: "5", l3: "9" } } })).not.toContain("Сторона А");
+  });
+
+  it("draws both ends of a cut with stripping on the machine, each with its side", () => {
+    const drawn = etkDrawCoax({ type: "coaxCut", fields: {
+      coax: { cable: "RG-316", connector: "MMCX", l1: "1,8", l2: "4,5", l3: "10" },
+      coaxB: { cable: "RG-316", connector: "N", l1: "3", l2: "6", l3: "9" },
+    } });
+    expect(drawn.match(/<svg/g)).toHaveLength(2);
+    expect(drawn).toContain("Сторона А");
+    expect(drawn).toContain("Сторона В");
+    expect(drawn).toContain("L3 = 10 мм");
+    expect(drawn).toContain("L3 = 9 мм");
   });
 
   it("draws the crimp only for prsTerm with the crimp height field", () => {
