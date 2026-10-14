@@ -143,8 +143,8 @@ export function groupSheetRows(rows: ProductionPlanRow[], stages: string[], quer
 
 const MARK_LABELS: Record<string, string> = {
   comment: "Комментарий", status: "Статус", ready: "Готовность", in_plan: "В плане", customer_supplied: "Давальческое",
-  kit_checked: "Комплект проверен", kit_present: "Комплект на складе", zkp: "ЗКП", kit_arrival: "Приход комплектующих",
-  tc_ready: "Техкарта выдана", test_sb: "Тест С/Б", kit_picked: "Комплект набран",
+  kit_checked: "Комплект проверен", kit_present: "Комплект на складе", zkp: "Закуплено", kit_arrival: "Приход комплектующих",
+  tc_ready: "Техкарта выдана", test_sb: "Тестовая сборка", kit_picked: "Комплект набран",
 };
 
 /** Текст записи «Отметка плана» в истории проекта: «Статус: ХОЛД», «Отметка 06.10: П», «В плане: расчёт ERP». */
@@ -223,26 +223,28 @@ export type ColumnKey = ProductionPlanSheetField | "project" | "customer" | "day
     `flag` — да/нет-отметка (узкая колонка с ✓ / —); `fold` — очередь скрытия на узком экране (1 — первой). */
 interface Column { key: ColumnKey; label: string; name: string; width: number; left?: boolean; hint?: string; flag?: boolean; fold?: number }
 
-// Порядок — как в листе «ЗАГРУЗ», кроме «Комментария»: он в конце закреплённых колонок и скрывается первым
-// (аудит 10.10, ПП-8) — тогда комментарий виден отметкой в ячейке № с подсказкой. Все показанные колонки
-// закреплены; календарь начинается сразу за ними. На узком экране реже нужные колонки скрыты, чтобы календарь
-// показал пять недель; «Колонки» возвращают любую, порядок сохраняется.
+// Владелец 14.10: «норм сортировку столбцов и без сокращений». Подписи — полные названия (в шапке в 2–3 строки), порядок —
+// проект и его состояние, затем путь комплектующих и сборки по порядку (давальческое → закуплено → приход → на складе →
+// проверен → техкарта → набран → тестовая сборка), сроки — рядом с календарём. «Комментарий» в конце закреплённых колонок и
+// скрывается первым (аудит 10.10, ПП-8) — тогда комментарий виден отметкой в ячейке «Проект» с подсказкой. Все показанные
+// колонки закреплены; календарь начинается сразу за ними. На узком экране реже нужные колонки скрыты, чтобы календарь
+// показал пять недель; «Колонки» возвращают любую, порядок сохраняется. Ширина — по самому длинному слову подписи.
 const COLUMNS: Column[] = [
-  { key: "status", label: "Статус", name: "Статус", width: 104, left: true },
-  { key: "ready", label: "Готов", name: "Готовность, %", width: 56, hint: "выпуск против количества задания, по норме" },
-  { key: "in_plan", label: "План", name: "В плане", width: 38, flag: true, fold: 4, hint: "на проект назначены операции" },
-  { key: "project", label: "№", name: "№ проекта", width: 80, left: true },
+  { key: "project", label: "Проект", name: "Проект", width: 80, left: true },
   { key: "customer", label: "Заказчик", name: "Заказчик", width: 140, left: true },
-  { key: "customer_supplied", label: "Дав.", name: "Давальческое", width: 40, fold: 5, hint: "давальческие комплектующие: НЕТ, ДА или Ч/Т — частично" },
-  { key: "kit_checked", label: "Пров.", name: "Комплект проверен", width: 38, flag: true, fold: 7 },
-  { key: "kit_present", label: "Компл", name: "Комплект на складе", width: 44, flag: true, hint: "все комплектующие на складе" },
-  { key: "zkp", label: "ЗКП", name: "ЗКП", width: 38, flag: true, fold: 3, hint: "авто: на проект есть заявки" },
-  { key: "kit_arrival", label: "Приход", name: "Приход комплектующих", width: 50, hint: "когда придут комплектующие" },
-  { key: "tc_ready", label: "ТК", name: "Техкарта выдана", width: 36, flag: true, hint: "на каждую КБ выдана ТК" },
-  { key: "test_sb", label: "С/Б", name: "Тест С/Б", width: 38, flag: true, fold: 6 },
-  { key: "kit_picked", label: "Набр.", name: "Комплект набран", width: 40, flag: true, hint: "каждая КБ набрана" },
-  { key: "days_left", label: "Дн.", name: "Дней до дедлайна", width: 38, fold: 2 },
+  { key: "status", label: "Статус", name: "Статус", width: 104, left: true },
+  { key: "ready", label: "Готовность, %", name: "Готовность, %", width: 76, fold: 8, hint: "выпуск против количества задания, по норме" },
+  { key: "in_plan", label: "В плане", name: "В плане", width: 48, flag: true, fold: 4, hint: "на проект назначены операции" },
+  { key: "customer_supplied", label: "Давальческое", name: "Давальческое", width: 82, fold: 5, hint: "давальческие комплектующие: НЕТ, ДА или Ч/Т — частично" },
+  { key: "zkp", label: "Закуплено", name: "Закуплено", width: 66, flag: true, fold: 3, hint: "авто: все покупные позиции оплачены — в пути или уже пришли (давальческие не в счёт)" },
+  { key: "kit_arrival", label: "Приход комплектующих", name: "Приход комплектующих", width: 100, hint: "когда придут комплектующие" },
+  { key: "kit_present", label: "Комплект на складе", name: "Комплект на складе", width: 60, flag: true, hint: "все комплектующие на складе" },
+  { key: "kit_checked", label: "Комплект проверен", name: "Комплект проверен", width: 62, flag: true, fold: 7 },
+  { key: "tc_ready", label: "Техкарта выдана", name: "Техкарта выдана", width: 60, flag: true, fold: 9, hint: "на каждую КБ выдана ТК" },
+  { key: "kit_picked", label: "Комплект набран", name: "Комплект набран", width: 60, flag: true, hint: "каждая КБ набрана" },
+  { key: "test_sb", label: "Тестовая сборка", name: "Тестовая сборка", width: 60, flag: true, fold: 6 },
   { key: "deadline", label: "Дедлайн", name: "Дедлайн", width: 58 },
+  { key: "days_left", label: "Дней до дедлайна", name: "Дней до дедлайна", width: 60, fold: 2 },
   { key: "comment", label: "Комментарий", name: "Комментарий", width: 160, left: true, fold: 1 },
 ];
 const FOLD_ORDER = COLUMNS.filter((column) => column.fold).sort((a, b) => a.fold! - b.fold!);
