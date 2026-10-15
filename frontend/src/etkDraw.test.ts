@@ -264,3 +264,33 @@ describe("etkPrint with sketches (etkPrintHtml_)", () => {
     expect(linked).not.toContain("<h2>Схема жгута</h2>");
   });
 });
+
+describe("coax operation sketches (796К.2 КБ1, owner 15.10: «эскизов нет»)", () => {
+  const end = { cable: "RG316", connector: "MMCX-Male RG316", l1: "1,8", l2: "4,5", l3: "10", side: "А", pinType: "пайка" };
+
+  it("draws every coax operation from its own data", () => {
+    const cut = etkFigure({ type: "coaxCut", components: [{ art: "RG316", norm: "20,2", unit: "М." }], fields: { lengthKd: "1010мм", cutTolerance: "±8 мм" } });
+    expect(cut).toContain("L = 1010 мм ±8 мм");
+    expect(cut).toContain("RG316");
+    const tut = etkFigure({ type: "coaxCutTut", components: [{ art: "ТУТ 5/2,5мм, черная", norm: "40", unit: "Шт." }], fields: { lengthKd: "20мм" } });
+    expect(tut).toContain("L = 20 мм");
+    expect(tut).toContain("на партию: 40 шт");
+    const pin = etkFigure({ type: "coaxPin", fields: { coaxEnd: end } });
+    expect(pin).toContain("Сторона А · MMCX-Male RG316");
+    expect(pin).toContain("Центральный контакт: припаять на жилу");
+    expect(pin).toContain("L1 = 1,8 мм · L2 = 4,5 мм · L3 = 10 мм");
+    expect(etkFigure({ type: "coaxHousing", fields: { coaxEnd: { ...end, side: "В", connector: "N-111L" } } })).toContain("Сторона В · N-111L");
+    const parts = { kind: "tube", name: "ТУТ 5/2,5мм, черная", count: 2, cable: "RG316", length: "20" };
+    expect(etkFigure({ type: "coaxInsTut", fields: { coaxParts: parts } })).toContain("Надеть: ТУТ 5/2,5мм, черная × 2");
+    expect(etkFigure({ type: "coaxHeat", fields: { coaxParts: parts } })).toContain("Усадить: ТУТ 5/2,5мм, черная × 2");
+    expect(etkFigure({ type: "coaxShield", fields: { coaxParts: { ...parts, kind: "sleeve", name: "" } } })).toContain("обжать шестигранником");
+    for (const svg of [cut, tut, pin]) expect(svg).not.toMatch(/undefined|NaN/);
+  });
+
+  it("keeps the strip sketch for stripping and draws nothing without data", () => {
+    expect(etkFigure({ type: "coaxStrip", fields: { coax: end } })).toContain("L1 = 1,8 мм");
+    expect(etkFigure({ type: "coaxPin", fields: {} })).toBe("");
+    // Резка без длины — «по КД», а не пустой размер.
+    expect(etkFigure({ type: "coaxCut", fields: {} })).toContain("L = по КД");
+  });
+});

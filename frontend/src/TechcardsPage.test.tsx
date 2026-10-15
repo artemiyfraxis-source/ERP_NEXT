@@ -207,7 +207,7 @@ it("walks the ETK route with ← → like SUPPLYMAP renderEtk_", async () => {
   expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
   expect(screen.getByText(/операция 1 из 2/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "← Назад" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "Далее: Опрессовка →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Далее: Опрессовка терминалов →" }));
   expect(await screen.findByText("Проверить высоту обжима")).toBeInTheDocument();
   expect(screen.queryByText("Отрезать провод")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Далее: — →" })).toBeDisabled();
@@ -363,7 +363,7 @@ it("prints the ETK through the shared print contract (etkPrint_)", async () => {
   const html = written.join("");
   expect(html).toContain("Технологическая карта сборки");
   expect(html).toContain("ТК.P-100.CUT_WIRE_auto");
-  expect(html).toContain("Операция 2. Опрессовка — XS1");
+  expect(html).toContain("Операция 2. Опрессовка терминалов — XS1");
   expect(html).toContain("Автомат резки");
   expect(html).toContain("Первая выдача");
   expect(html).toContain("ГОСТ 3.1407-86");
