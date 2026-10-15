@@ -86,8 +86,9 @@ import { GenDrawingPreview } from "./GenDrawingPreview";
 import { planTwist } from "./twistGroups";
 import {
   addBranch, autoFillPinout, confirmPinout, freeSide, pinFitWarnings, pinoutEnds, pinoutRecord, pinRouted, pinUnits, recolorWire, removeBranch, restorePinout, routingWarnings,
-  setBranchMode, setCableCoreColors, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
+  rememberColor, setBranchMode, setCableCoreColors, setCoreColor, setCoreNet, swapPins, syncRoutes, unassignPin, doublePin, undoublePin,
 } from "./pinoutCheck";
+import { setCustomColors } from "./wireColors";
 import { GEN_STATE_KEY, genSnapshot, restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { GeneratorDraftNote, useGeneratorDraft } from "./useGeneratorDraft";
 import { assignPinJoined, joinSplice, leaveJoin, setTail } from "./tcGenSplices";
@@ -234,6 +235,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const D: GenData = useMemo(() => ({
     ...(refs || EMPTY_REFS), components, assemblyInfo, partQty: Number(kit?.part_qty) || 1, calcOps: kit?.calc_ops || [],
   }), [refs, components, assemblyInfo, kit]);
+  // Свои цвета жил карты (S.colorHex) нужны всем рисовальщикам по названию: схема, чертёж, ЭТК.
+  setCustomColors(S.colorHex);
   const gen = useMemo(() => makeGen(D, S), [D, S]);
 
   // «Ручная сборка»: свой список операций живёт отдельно от формы кабелей — переключение вкладок его не теряет.
@@ -1193,6 +1196,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             </>}
             <button type="button" className="btn-remove" title="Удалить кабель" aria-label={`Удалить кабель ${n + 1}`} onClick={() => update((current) => ({ ...current, wires: current.wires.filter((x) => x.idx !== w.idx) }))}>×</button>
             {cores > 1 && <CableCoreColors label={`кабель ${n + 1}`} colors={gen.coreColors_(w).slice(0, cores)}
+              customs={S.colorHex} onCustom={(name, hex) => update((current) => rememberColor(current, name, hex))}
               onSet={(patch) => update((current) => setCableCoreColors(D, current, w.idx, patch))} />}
             {/* Кабель в оболочке (UL2575…), набранный N проводами по 1 жиле — так сохранены карты до 14.10. Сами не меняем:
                 предлагаем одним щелчком сделать его кабелем на N жил (цвета и контакты жил сохраняются). */}
@@ -1256,6 +1260,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onBranchMode={(extra, mode) => update((current) => setBranchMode(D, current, extra, mode))}
         onRemoveBranch={(extra) => update((current) => removeBranch(D, current, extra))}
         onCoreColor={(idx, unit, color) => update((current) => setCoreColor(D, current, idx, unit, color))}
+        customColors={S.colorHex} onCustomColor={(name, hex) => update((current) => rememberColor(current, name, hex))}
         onCoreNet={(idx, unit, net) => update((current) => setCoreNet(D, current, idx, unit, net))}
         onAssign={(epId, idx, unit, pin) => update((current) => assignPinJoined(D, current, epId, idx, unit, pin))}
         onUnassign={(epId, idx, unit) => update((current) => unassignPin(D, current, epId, idx, unit))}
