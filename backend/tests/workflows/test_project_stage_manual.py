@@ -47,11 +47,13 @@ from app.modules.production.plan import (
     KIT_STAGES,
     PLAN_KINDS,
     PROJECT_TERMINALS,
+    KitMark,
     KitStageNow,
     PlanEvent,
     kit_stage_key,
     plan_stage_change,
     project_stage,
+    project_stage_now,
     summarize_kit_marks,
 )
 from app.modules.production.plan_application import ChangeStageCommand, StageChangeConflict, change_stage
@@ -730,3 +732,25 @@ def test_migration_checks_match_the_model():
     assert accepted.STAGES == KIT_STAGES and accepted.OLD_STAGES == ladder.STAGES
     assert accepted.TERMINALS == PROJECT_TERMINALS and accepted.OLD_TERMINALS == module.TERMINALS
     assert accepted.OLD_CHECKS == {name: ladder.CHECKS.get(name, module.CHECKS[name]) for name in accepted.CHECKS}
+
+
+def test_stock_fact_beats_a_lower_manual_stage():
+    """Owner 15.10.2026 (180К.11): КБ1 set to «ОТК» by hand, then accepted to the warehouse — the stage moves on."""
+    key = kit_stage_key("180К.11", "КБ1")
+    facts = {"kit": {key}, "stock": {key}}
+    marks = {key: KitMark(stage="ОТК")}
+    kit = project_stage("180К.11", ("КБ1",), facts, marks=marks).kits[0]
+    assert (kit.status, kit.manual) == ("Принято складом", False)
+    now = project_stage_now("180К.11", ("КБ1",), facts, marks)[0]
+    assert (now.status, now.floor) == ("Принято складом", "Принято складом")
+    # A manual pick above the warehouse fact still holds.
+    ahead = project_stage("180К.11", ("КБ1",), facts, marks={key: KitMark(stage="Упаковано")}).kits[0]
+    assert (ahead.status, ahead.manual) == ("Упаковано", True)
+
+
+def test_a_manual_stage_does_not_go_below_the_warehouse_fact():
+    kits = (KitStageNow("КБ1", "Принято складом", False, "Принято складом", False, "Принято складом"),)
+    plan = plan_stage_change(kits, "ОТК", "КБ1")
+    assert not plan.changes
+    assert plan.error == "КБ1 по факту склада — «Принято складом»: этап ниже не ставится."
+    assert plan_stage_change(kits, "Упаковано", "КБ1").changes
