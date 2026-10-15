@@ -81,7 +81,12 @@ export type Connection = { wire: string; from: ConnectionEnd; to: ConnectionEnd;
 /** `coreColors[k]` — цвет k-й жилы кабеля (канонические названия палитры wireColors.ts: «красный», «бело-синий»); пусто — как в наименовании. */
 export type WireEntry = { idx: number; compId: string; length: number; qty: number; cores?: number; jacket?: string; coreColors?: string[];
   /** `nets[k]` — цепь k-й жилы (после жил — экраны), как её подписывают на чертеже («GND», «CAN_H»); пусто — без имени. */
-  nets?: string[] };
+  nets?: string[];
+  /** «Термоусадка на срез оболочки» кабеля в оболочке (владелец 15.10: «это настройка провода, а не разъёма»): стороны,
+   *  трубка из состава (пусто — первая ТУТ, иначе ТТК) и длина (пусто — 25 мм). Нет поля — по сторонам формы
+   *  `GenState.jacketShrink` (формы, сохранённые до переноса в строку «Кабели»), иначе выключена. */
+  jacketShrink?: CableJacketShrink };
+export type CableJacketShrink = { A?: boolean; B?: boolean; mat: string; len: string };
 /** Термоусадка на место разделки оболочки (владелец 15.10: «опционально с опциональной длиной, если длина не указывается —
  *  25 мм, тут можно выбрать из состава»): трубка на срез оболочки кабеля стороны. `mat` пуст — первая ТУТ состава (иначе
  *  ТТК), `len` пуст — 25 мм. */
@@ -126,6 +131,8 @@ export type GenState = {
   /** Сростки и свободные концы, нарисованные вручную (tcGenSplices.ts); нет ключа — их нет. */
   splices?: Splice[];
   tails?: WireEnd[];
+  /** Свои цвета жил, придуманные технологом («болотный» → #6b7a3a): название → hex для схемы, чертежа и ЭТК; нет ключа — их нет. */
+  colorHex?: Record<string, string>;
   endpoints: Endpoint[];
   nextEndpointId: number;
   advancedLength: boolean;
@@ -149,7 +156,8 @@ export type GenState = {
   freeStrip: { enabled: boolean; len: string };
   cap: { enabled: boolean; tut: string; len: string };
   wrap: { enabled: boolean; slots: WrapSlot[] };
-  /** «Термоусадка на место разделки» по сторонам; нет ключа — выключена (старые состояния грузятся без него). */
+  /** «Термоусадка на место разделки» по сторонам — форма до переноса в строку «Кабели» (WireEntry.jacketShrink): читается
+   *  запасным значением для кабеля без своего поля и больше не пишется (setCableJacketShrink). */
   jacketShrink?: Partial<Record<Side, JacketShrink>>;
   seal: { enabled: boolean; mat: string; places: string };
   tin: { enabled: boolean; wires: number[] | null; stripLen: string };
@@ -714,16 +722,48 @@ export function makeGen(D: GenData, S: GenState) {
     const all = shrinkCandidates_();
     return all.find((c) => !isGlueSleeve_(c)) || all[0] || null;
   }
-  /** Кабелей в оболочке на изделие, чьи жилы приходят в разъёмы стороны (по трубке на каждый срез оболочки). */
-  const jacketCablesOnSide_ = (side: Side) => cableEnds_(side).reduce((n, x) => n + Math.max(1, Math.round(Number(x.w.qty) || 1)), 0);
-  /** «Термоусадка на место разделки» стороны: трубка, длина отрезка и число отрезков на изделие; выключена или кабеля в
-   *  оболочке на стороне нет — null. */
-  function jacketShrinkOf_(side: Side): { comp: Comp; len: string; count: number } | null {
-    const js = S.jacketShrink?.[side];
-    if (!js?.on) return null;
-    const count = jacketCablesOnSide_(side);
-    const comp = (js.mat ? getCompById(js.mat) : null) || defaultJacketShrinkComp_();
-    return count && comp ? { comp, len: (js.len || "").trim() || JACKET_SHRINK_LEN_MM_, count } : null;
+  /** «Термоусадка на срез оболочки» кабеля: своё поле строки «Кабели», иначе — по сторонам старой формы; не кабель в
+   *  оболочке или нигде не включена — null. */
+  function cableJacketShrink_(w: WireEntry): CableJacketShrink | null {
+    if (!isJacketedCable_(w)) return null;
+    if (w.jacketShrink) return w.jacketShrink;
+    const old = S.jacketShrink;
+    if (!old?.A?.on && !old?.B?.on) return null;
+    const first = old.A?.on ? old.A : old.B!;
+    return { A: !!old.A?.on, B: !!old.B?.on, mat: first.mat || "", len: first.len || "" };
+  }
+  /** Трубки на срез оболочки по сторонам: сторона, трубка, длина отрезка и отрезков на изделие (по трубке на каждый кабель
+   *  стороны). Кабели с одной трубкой и длиной на стороне — одной строкой. */
+  function jacketShrinkItems_(): Array<{ side: Side; comp: Comp; len: string; count: number }> {
+    const out: Array<{ side: Side; comp: Comp; len: string; count: number }> = [];
+    (["A", "B"] as Side[]).forEach((side) => cableEnds_(side).forEach(({ w }) => {
+      const own = w.jacketShrink, old = own ? null : S.jacketShrink?.[side];
+      if (own ? !own[side] : !old?.on) return;
+      const mat = (own ? own.mat : old?.mat) || "", len = ((own ? own.len : old?.len) || "").trim() || JACKET_SHRINK_LEN_MM_;
+      const comp = (mat ? getCompById(mat) : null) || defaultJacketShrinkComp_();
+      if (!comp) return;
+      const count = Math.max(1, Math.round(Number(w.qty) || 1));
+      const same = out.find((x) => x.side === side && x.comp === comp && x.len === len);
+      if (same) same.count += count; else out.push({ side, comp, len, count });
+    }));
+    return out;
+  }
+  /** Трубки состава, занятые другим делом (рукав поверх разъёма, ТУТ на чашки, сростки, колпачки, термоусадка на жгут):
+   *  такую трубку на срез оболочки по умолчанию не ставят. */
+  function busyTubes_(): Set<Comp> {
+    const busy = new Set<Comp>();
+    S.endpoints.forEach((e) => { const sh = shrinkOf_(e); if (sh) busy.add(sh.comp); });
+    if (S.endpoints.some((e) => e.method === "solder" && !e.tutOff)) { const t = bomTut_(); if (t) busy.add(t); }
+    const cap = capTube_(); if (cap) busy.add(cap);
+    const spl = spliceEnds_() ? getCompById(S.spl.tutMat) : null; if (spl) busy.add(spl);
+    if (S.hs.enabled) S.hs.rows.forEach((r) => { const c = getCompById(r.compId); if (c && (parseInt(r.cnt, 10) || 0) > 0) busy.add(c); });
+    return busy;
+  }
+  /** Трубка на срез оболочки для новой формы: свободная ТУТ состава, иначе свободная ТТК; занято всё — null. */
+  function freeJacketShrinkComp_(): Comp | null {
+    const busy = busyTubes_();
+    const free = shrinkCandidates_().filter((c) => !busy.has(c));
+    return free.find((c) => !isGlueSleeve_(c)) || free[0] || null;
   }
   /** Корпус паяльного разъёма: строка «корпус/housing» состава или разъём с корпусом по названию (HOUSING_CONN_RE_). */
   const housingComp_ = () => comps().find((c) => /корпус|housing/i.test(`${c.type || ""} ${c.name || ""}`)) || null;
@@ -759,7 +799,7 @@ export function makeGen(D: GenData, S: GenState) {
   const markComps_ = () => comps().filter((c) => /маркир/i.test(`${c.type || ""} ${c.name || ""}`));
   function harnessSleeveComps_() {
     const solderTut = S.endpoints.some((e) => e.method === "solder" && !e.tutOff) ? bomTut_() : null;
-    const connSleeves = new Set([...S.endpoints.map((e) => shrinkOf_(e)?.comp), ...(["A", "B"] as Side[]).map((side) => jacketShrinkOf_(side)?.comp)].filter(Boolean));
+    const connSleeves = new Set([...S.endpoints.map((e) => shrinkOf_(e)?.comp), ...jacketShrinkItems_().map((x) => x.comp)].filter(Boolean));
     return comps().filter((c) => {
       const s = `${c.type || ""} ${c.name || ""} ${c.art || ""}`;
       return c !== solderTut && !connSleeves.has(c) && /ттк|тут|термоусад|трубк|shrink/i.test(s) && !PROTECT_TUBE_RE_.test(s);
@@ -960,7 +1000,7 @@ export function makeGen(D: GenData, S: GenState) {
     const cap = capTube_();
     const spl = spliceEnds_() ? getCompById(S.spl.tutMat) : null;
     // Трубка на место разделки считается своей операцией — не второй раз как термоусадка на жгут.
-    const jackets = new Set((["A", "B"] as Side[]).map((side) => jacketShrinkOf_(side)?.comp.id).filter(Boolean));
+    const jackets = new Set(jacketShrinkItems_().map((x) => x.comp.id));
     return S.hs.rows.map((row) => {
       const c = getCompById(row.compId);
       if (c && ((cap && c.id === cap.id) || (spl && c.id === spl.id) || jackets.has(c.id))) return null;
@@ -1247,6 +1287,7 @@ export function makeGen(D: GenData, S: GenState) {
   const coaxBomCableComp_ = () => comps().find((x) => /кабель|провод/i.test(x.type || "")) || null;
   const coaxBomCable_ = () => { const c = coaxBomCableComp_(); return c ? (c.art || c.name || "") : ""; };
   const coaxBomTut_ = () => comps().find((x) => /тут/i.test(x.type || "")) || null;
+  const coaxBomSleeve_ = () => comps().find((x) => /втулк/i.test(`${x.type || ""} ${x.name || ""}`)) || null;
   function coaxCableDiaLookup_() {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
     return t[String(coaxBomCable_()).toLowerCase().replace(/[\s-]/g, "")] || null;
@@ -1407,7 +1448,7 @@ export function makeGen(D: GenData, S: GenState) {
       const sh = shrinkOf_(ep);
       if (sh) conn.push({ ep, tag: endKey_(ep), ...sh });
     }));
-    const jacket = (["A", "B"] as Side[]).flatMap((side) => { const js = jacketShrinkOf_(side); return js ? [{ side, ...js }] : []; });
+    const jacket = jacketShrinkItems_();
     const harness = harnessSleeves_();
     const housings = S.endpoints.filter(housingOn_);
     return { conn, jacket, harness, housings };
@@ -1483,11 +1524,13 @@ export function makeGen(D: GenData, S: GenState) {
       ops.splice(last >= 0 ? last + 1 : ops.length, 0, { type: "heatTut", opKey: "heatShr" + side + ord,
         tmplHint: isGlueSleeve_(x.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short", cat: "Усадка", tutCount: 1, label: `Усадка ${tubeKind_(x.comp)} поверх разъёма ${x.tag}` });
     });
+    const perSide: Partial<Record<Side, number>> = {};
     it.jacket.forEach((x) => {
-      const mineSide = (o: OpSpec) => o.side === x.side && (!!o.epId || /^(stripCable|shield|idle|heatShr)/.test(o.opKey));
+      const mineSide = (o: OpSpec) => o.side === x.side && (!!o.epId || /^(stripCable|shield|idle|heatShr|heatJs)/.test(o.opKey));
       let last = -1;
       ops.forEach((o, i) => { if (mineSide(o)) last = i; });
-      ops.splice(last >= 0 ? last + 1 : ops.length, 0, { type: "heatTut", opKey: "heatJs" + x.side,
+      const n = perSide[x.side] = (perSide[x.side] || 0) + 1;
+      ops.splice(last >= 0 ? last + 1 : ops.length, 0, { type: "heatTut", opKey: "heatJs" + x.side + (n > 1 ? n : ""), side: x.side,
         tmplHint: isGlueSleeve_(x.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short", cat: "Усадка", tutCount: x.count,
         label: `Усадка ${tubeKind_(x.comp)} на месте разделки ${sideRu_(x.side)} — ${x.count} шт` });
     });
@@ -1513,7 +1556,7 @@ export function makeGen(D: GenData, S: GenState) {
       const t = bomTut_();
       // Тот же материал уходит и на рукава поверх разъёмов — на пайку остаётся то, что за вычетом их длины.
       const shrinkM = t ? S.endpoints.reduce((sum, e) => { const sh = shrinkOf_(e); return sh && sh.comp === t ? sum + (parseLengthVal_(sh.len) || 0) / 1000 : sum; }, 0)
-        + (["A", "B"] as Side[]).reduce((sum, side) => { const js = jacketShrinkOf_(side); return js && js.comp === t ? sum + (parseLengthVal_(js.len) || 0) * js.count / 1000 : sum; }, 0) : 0;
+        + jacketShrinkItems_().reduce((sum, js) => (js.comp === t ? sum + (parseLengthVal_(js.len) || 0) * js.count / 1000 : sum), 0) : 0;
       const m = t ? Math.max(0, qtyNum(t) - shrinkM) : 0;
       if (m > 0) {
         const auto = String(Math.round(m * 1000 / solderEnds));
@@ -1933,7 +1976,7 @@ export function makeGen(D: GenData, S: GenState) {
         ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
         ...(spec.stripSides ? { stripSides: spec.stripSides } : {}) };
     });
-    const tut = coaxBomTut_(), cable = coaxBomCableComp_();
+    const tut = coaxBomTut_(), cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
     return {
       mode: "coax", tab: "coax",
       assemblyIndex: findKey(/индекс/i),
@@ -1944,6 +1987,7 @@ export function makeGen(D: GenData, S: GenState) {
         tutLength: parseDecimal_(S.coax.tutLen) || 20,
         tutArt: tut?.art || "", tutName: tut?.name || "",
         cableArt: cable?.art || "", cableName: cable?.name || "",
+        sleeveArt: sleeve?.art || "", sleeveName: sleeve?.name || "",
         shieldType: S.coax.shield,
         sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : ""),
         sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : ""),
@@ -2093,7 +2137,14 @@ export function makeGen(D: GenData, S: GenState) {
       tab: S.tab, assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
       bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
       ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
+      ...usedColorHex_(wires),
     };
+  }
+  /** Свои цвета, которые реально стоят на жилах: уходят в карту, чтобы чертёж и ЭТК нарисовали их без формы. */
+  function usedColorHex_(wires: Array<{ coreColors?: string[] }>): { colorHex?: Record<string, string> } {
+    const used = new Set(wires.flatMap((w) => w.coreColors || []).map((c) => c.trim().toLowerCase()));
+    const picked = Object.entries(S.colorHex || {}).filter(([name]) => used.has(name));
+    return picked.length ? { colorHex: Object.fromEntries(picked) } : {};
   }
   function bomWarnings_(cfg: Record<string, unknown>) {
     const w: string[] = [];
@@ -2139,7 +2190,7 @@ export function makeGen(D: GenData, S: GenState) {
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
-    defaultJacketShrinkComp_, jacketShrinkOf_, jacketCablesOnSide_, housingOn_, housingDefault_, sleeveWarning_,
+    defaultJacketShrinkComp_, cableJacketShrink_, jacketShrinkItems_, freeJacketShrinkComp_, housingOn_, housingDefault_, sleeveWarning_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
     markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
       const conn = getCompById(e.connId);
@@ -2256,7 +2307,40 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
   // «Сложная сборка»: терминал разъёма — по совместимости корпуса с терминалами состава (не нашёлся — как раньше).
   if (S.tab === "complex") S = autoPickTerminals(D, S);
   S = applyCalcTin_(D, S);
-  return S;
+  return seedJacketShrink_(D, S);
+}
+
+/** «Термоусадка на срез оболочки» новой формы (владелец 15.10): в составе есть ТУТ/ТТК, не занятая другим делом, —
+ *  включена у каждого кабеля в оболочке на обеих его сторонах. Только засев: сохранённая форма не переключается. */
+export function seedJacketShrink_(D: GenData, S: GenState): GenState {
+  const g = makeGen(D, S);
+  const comp = g.freeJacketShrinkComp_();
+  if (!comp) return S;
+  const mat = comp === g.defaultJacketShrinkComp_() ? "" : comp.id;
+  let changed = false;
+  const wires = S.wires.map((w) => {
+    if (!w.compId || w.jacketShrink || !g.isJacketedCable_(w)) return w;
+    const sides = (["A", "B"] as Side[]).filter((side) => g.cableEnds_(side).some((x) => x.w.idx === w.idx));
+    if (!sides.length) return w;
+    changed = true;
+    return { ...w, jacketShrink: { A: sides.includes("A"), B: sides.includes("B"), mat, len: "" } };
+  });
+  return changed ? { ...S, wires } : S;
+}
+
+/** Правка «Термоусадки на срез оболочки» строки «Кабели». Пишется только поле кабеля: значения старой формы по сторонам
+ *  (`S.jacketShrink`) сначала переносятся во все кабели в оболочке, затем поле формы снимается — ничего не теряется. */
+export function setCableJacketShrink(D: GenData, S: GenState, idx: number, patch: Partial<CableJacketShrink>): GenState {
+  const g = makeGen(D, S);
+  const wires = S.wires.map((w) => {
+    const cur = g.cableJacketShrink_(w);
+    const base: CableJacketShrink = cur || { A: false, B: false, mat: "", len: "" };
+    if (w.idx === idx) return { ...w, jacketShrink: { ...base, ...patch } };
+    return cur && !w.jacketShrink ? { ...w, jacketShrink: cur } : w;
+  });
+  const next: GenState = { ...S, wires };
+  delete next.jacketShrink;
+  return next;
 }
 
 /** Собрана ли карта на «Сложной сборке»: сборка пишет `tab`; конфиг старше — по тому, что пишет только эта вкладка
