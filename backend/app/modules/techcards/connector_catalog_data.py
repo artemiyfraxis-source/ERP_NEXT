@@ -86,21 +86,75 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             note="раскладка по листу JST eEL; с какой стороны показаны номера, лист не пишет — сверить по детали"),
     _family("jst-gvh", "JST GVH", r"^GVHR-0*(\d+)V-S$", 1.25, latch="ramp",
             note="лист JST eGVH не показывает метку контакта 1 со стороны проводов"),
-    _family("jst-gvh-sf", "JST GVH (боковой ввод)", r"^GVHRSF-0*(\d+)V-S$", 1.25, latch="ramp",
-            note="на листе JST eGVH метка контакта 1 есть у корпуса с боковым вводом; сторону проводов лист не показывает"),
+    # GVH side feed — eGVH p. 2 «Housing / Side feed type» (read 16.10.2026): the front view has the wire end up (crimp
+    # barrels at the top), «Circuit No.1 mark» ▽ at the left of the front face; the side view puts the lock hook on the
+    # back face near the wire end. From the wire side, lock up: contact 1 on the LEFT.
+    _family("jst-gvh-sf", "JST GVH (боковой ввод)", r"^GVHRSF-0*(\d+)V-S$", 1.25, latch="ramp", conf="high",
+            src="JST eGVH, Housing (Side feed type)",
+            note="по чертежу JST eGVH: метка ▽ контакта 1 слева на лицевой грани, защёлка на обратной; со стороны проводов защёлкой вверх — контакт 1 слева"),
     # SUH — eSUH «Housing» is drawn as eSH: the wire end with the protrusions at the top, «Circuit No.1» ▽ on the left
     # of that face -> from the wire side, ▽ face up, contact 1 on the RIGHT (as SH).
     _family("jst-suh", "JST SUH", r"^SUHR-0*(\d+)V-S", 0.8, start="TR", latch="mark", conf="high",
             src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа"),
     _family("jst-lbt", "JST LBT (2 силовых + сигнальные)", r"^LBTAR-0*(\d+)V-2K-K", 1.0, latch="ramp",
             note="2 силовых контакта по краям и сигнальные с шагом 1,0 — рисунок условный; метка контакта 1 на лицевой грани (JST eLBT)"),
-    _family("jst-pud", "JST PUD (2 ряда)", r"^PUDP-0*(\d+)V-S$", 2.0, rows=2, order="col", latch="ramp", note=UNCHECKED),
-    _family("jst-pad", "JST PAD (2 ряда)", r"^PADP-0*(\d+)V-1-S$", 2.0, rows=2, order="col", latch="lever", note=UNCHECKED),
-    _family("jst-pnd", "JST PND (2 ряда)", r"^PNDP-0*(\d+)V-Z$", 2.0, rows=2, order="col", latch="lever", note=UNCHECKED),
+    # PUD, ZPD, NSHD (sheets read 16.10.2026 from jst-mfg.com): the housing front view is the lock face with the flanged
+    # wire end up; the «Mark of No. 1 circuit» is a groove on the right end wall (right side view, third angle), next to
+    # the lock face — circuit 1 is the right column, lock-face row (the PUD header side view puts «No. 1 circuit» at the
+    # lock-window face too). From the wire side, lock up: 1 top-LEFT, 2 under it, odd numbers along the lock row.
+    _family("jst-pud", "JST PUD (2 ряда)", r"^PUDP-0*(\d+)V-S$", 2.0, rows=2, order="col", latch="ramp", conf="high",
+            src="JST ePUD, Housing",
+            note="по чертежу JST ePUD: метка контакта 1 на правом торце у грани защёлки; со стороны проводов защёлкой вверх — 1 слева вверху, 2 под ним"),
+    # PAD — ePAD p. 2: ▽ «Mark of No. 1 circuit» on the lever face over the right column (wire end, flange, up); the
+    # header side view has No. 1 at its lock face. From the wire side, lever up: 1 top-LEFT, 2 under it.
+    _family("jst-pad", "JST PAD (2 ряда)", r"^PADP-0*(\d+)V-1-S$", 2.0, rows=2, order="col", latch="lever", conf="high",
+            src="JST ePAD, Housing",
+            note="по чертежу JST ePAD: метка ▽ контакта 1 справа на грани рычага; со стороны проводов рычагом вверх — 1 слева вверху, 2 под ним"),
+    _family("jst-pnd", "JST PND (2 ряда)", r"^PNDP-0*(\d+)V-Z$", 2.0, rows=2, order="col", latch="lever",
+            note="на листе JST ePND у корпуса метки контакта 1 нет (No. 1 только на виде платы снизу) — сверить по детали"),
     _family("jst-sqs", "JST SQS (пиропатрон)", r"^SQSR-0*(\d+)H-1[ABC]-[KMD]$", None, color=BLACK,
             note="лист JST eSQS номеров контактов не показывает"),
-    _family("jst-zpd", "JST ZPD (2 ряда)", r"^ZPDR-0*(\d+)V-(?:S|1-Z)$", 1.5, rows=2, order="col", latch="ramp", note=UNCHECKED),
-    _family("jst-nshd", "JST NSHD (2 ряда)", r"^NSHDR-0*(\d+)V-(?:Z|[12]-Z)$", 1.0, rows=2, order="col", latch="ramp", note=UNCHECKED),
+    _family("jst-zpd", "JST ZPD (2 ряда)", r"^ZPDR-0*(\d+)V-(?:S|1-Z)$", 1.5, rows=2, order="col", latch="ramp", conf="high",
+            src="JST eZPD, Socket housing",
+            note="по чертежу JST eZPD: метка контакта 1 на правом торце у грани защёлки; со стороны проводов защёлкой вверх — 1 слева вверху, 2 под ним"),
+    _family("jst-nshd", "JST NSHD (2 ряда)", r"^NSHDR-0*(\d+)V-(?:Z|[12]-Z)$", 1.0, rows=2, order="col", latch="ramp", conf="high",
+            src="JST eNSHD, Socket housing",
+            note="по чертежу JST eNSHD: метка контакта 1 на правом торце у грани защёлки; со стороны проводов защёлкой вверх — 1 слева вверху, 2 под ним"),
+    # New JST series of «Терминалы» (owner, 16.10.2026: «добавить все серии, что есть в терминалах»), sheets read 16.10.2026.
+    # SHD — eSHD «Housing»: the front view has the thick wire end with the protrusions up (as eSH), ▽ «No.1 mark» at the
+    # LEFT of the front face, Circuit No. 3 next to it along the same row. From the wire side, ▽ face up: 1 top-RIGHT, 2
+    # under it, odd numbers along the ▽ row (the header top view agrees: Circuit No. 1 at the left of its front).
+    _family("jst-shd", "JST SHD (2 ряда)", r"^SHDR-0*(\d+)V-S", 1.0, rows=2, order="col", start="TR", latch="mark", conf="high",
+            src="JST eSHD, Housing",
+            note="по чертежу JST eSHD: метка ▽ контакта 1 слева на лицевой грани; со стороны проводов ▽ сверху — 1 справа вверху, 2 под ним"),
+    # SHL — eSHL «Socket housing»: the wire end with the protrusions (-B) up, ▽ «Mark of No. 1 circuit» at the RIGHT of the
+    # front face. From the wire side, ▽ face up: contact 1 on the LEFT.
+    _family("jst-shl", "JST SHL", r"^SHLP-0*(\d+)V-S", 1.0, latch="mark", conf="high", src="JST eSHL, Socket housing",
+            note="по чертежу JST eSHL: метка ▽ контакта 1 справа на лицевой грани; со стороны проводов ▽ сверху — контакт 1 слева"),
+    # APSH — eAPSH «Housing» (3 circuits only): the front view is the lock face with the flanged wire end up, the «Mark of
+    # No. 1 circuit» sits on the right end (right side view). From the wire side, lock up: contact 1 on the LEFT (as NSH).
+    _family("jst-apsh", "JST APSH", r"^APSHR-0*(\d+)V-S", 1.0, latch="ramp", conf="high", src="JST eAPSH, Housing",
+            note="по чертежу JST eAPSH: метка контакта 1 на правом торце, защёлка на лицевой грани; со стороны проводов защёлкой вверх — контакт 1 слева"),
+    # NV — eNV «Housing»: the end view next to the side view is the wire end (box-contact entries; the lever runs from the
+    # wire end to its hook at the mating end in the side view), lever up, «Mark of No. 1 circuit» notch under the RIGHT
+    # cavity. From the wire side, lever up: contact 1 on the RIGHT.
+    _family("jst-nv", "JST NV", r"^NVR-0*(\d+)", 5.0, start="TR", latch="lever", conf="high", src="JST eNV, Housing",
+            note="по чертежу JST eNV: с торца проводов рычагом вверх метка контакта 1 под правым гнездом — контакт 1 справа"),
+    # VB — eVB «Housing»: VBR-N, and VBR-N(M) with N contacts on M positions of 5.08 mm (a position left empty); the
+    # sheet shows no circuit-1 mark and does not say which position is empty, so the picture is by contact count.
+    _family("jst-vb", "JST VB", r"^VBR-(\d+)(?:\(\d+\))?$", 5.08,
+            note="на листе JST eVB метки контакта 1 нет; у VBR-N(M) одна позиция пустая — рисунок по числу контактов, сверить по детали"),
+    # GHD — eGHD «Housing» (tin-plated product sheet): the wire end up, «Circuit No.1 mark» at the LEFT of the front face
+    # (the lock face), as the header's ▽ on its front. From the wire side, mark up: 1 top-RIGHT, 2 under it.
+    _family("jst-ghd", "JST GHD (2 ряда)", r"^GHDR-0*(\d+)V-S", 1.25, rows=2, order="col", start="TR", latch="mark", conf="high",
+            src="JST eGHD, Housing",
+            note="по чертежу JST eGHD: метка контакта 1 слева на лицевой грани; со стороны проводов меткой вверх — 1 справа вверху, 2 под ним"),
+    _family("jst-znd", "JST ZND (2 ряда)", r"^ZNDP-0*(\d+)V-A-S$", 1.5, rows=2, order="col", latch="lever",
+            note="на листе JST eZND у корпуса ZNDP метки контакта 1 нет — сверить по детали"),
+    # JWPF — eJWPF «Housing»: tab (T) and receptacle (R) housings, 2–4 contacts in one row, 6 and 8 in two; the sheet
+    # prints no contact numbers.
+    _family("jst-jwpf", "JST JWPF", r"^0?(\d)[TR]-JWPF-VSLE-[SD]$", 2.0, rows_by={6: 2, 8: 2}, order="col", latch="lever",
+            note="лист JST eJWPF номеров контактов не показывает — сверить по детали"),
     # SHJ — eSHJ «Socket housing»: front view (wire end up) has «Mark of No. 1 circuit» ▽ at the RIGHT of the face ->
     # from the wire side, ▽ face up, contact 1 on the LEFT.
     _family("jst-shj", "JST SHJ", r"^SHJP-0*(\d+)V-S", 1.0, latch="mark", conf="high", src="JST eSHJ, Socket housing",
@@ -112,8 +166,13 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             conf="high", src="JST eRA, Housing",
             note="по чертежу JST eRA: на лицевой грани ▽ и нечётные номера 1, 3, 5; со стороны проводов этой гранью вверх — контакт 1 справа вверху"),
     # Hirose
-    _family("hirose-df13-2r", "Hirose DF13 (2 ряда)", r"^DF13-(\d+)DS-1[.,]25C", 1.25, rows=2, order="col", latch="ramp",
-            note=UNCHECKED),
+    # DF13 DS, DF20 — catalogues (Double Row Socket, read again 16.10.2026): the top view is the mating face with NO.1 at
+    # the left of the front-face row and NO.2 behind it; the front view has the «Contact No.1 mark» ▽ at the left of the
+    # front face. From the wire side (the bottom view keeps left and right), ▽ face up: 1 top-LEFT, 2 under it — the
+    # face cue is the ▽, as DF11 (the lock was drawn as a ramp before; on DF13 the locks sit on the back face).
+    _family("hirose-df13-2r", "Hirose DF13 (2 ряда)", r"^DF13-(\d+)DS-1[.,]25C", 1.25, rows=2, order="col", latch="mark",
+            conf="high", src="Hirose DF13, каталог, Double Row Socket",
+            note="по каталогу Hirose DF13: метка ▽ контакта 1 слева на лицевой грани, № 2 за № 1; ▽ сверху — 1 слева вверху, 2 под ним"),
     # DF19 — catalogue 01.01.2024 «Single Row Socket (Cable Type)»: the face view has the cable end up (p. 2 «Cable
     # Type»: the cable leaves the socket away from the vertical header) and the «Contact No. 1 Indicator» ▽ at the right
     # of the mating edge; the view under it is the mating end. From the wire side, ▽ face up: contact 1 on the LEFT.
@@ -121,8 +180,11 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("hirose-df19", "Hirose DF19", r"^DF19G?-(\d+)S-1C", 1.0, latch="mark", conf="high",
             src="Hirose DF19, каталог 01.01.2024, Single Row Socket (Cable Type)",
             note="по каталогу Hirose DF19: метка ▽ контакта 1 на грани у стыковочного торца; со стороны проводов ▽ сверху — контакт 1 слева"),
-    _family("hirose-df20", "Hirose DF20 (2 ряда)", r"^DF20A-(\d+)DS-1C", 1.0, rows=2, order="col", latch="ramp", note=UNCHECKED),
-    _family("hirose-df61", "Hirose DF61", r"^DF61-(\d+)S-2[.,]2C", 2.2, latch="lever", note=UNCHECKED),
+    _family("hirose-df20", "Hirose DF20 (2 ряда)", r"^DF20A-(\d+)DS-1C", 1.0, rows=2, order="col", latch="mark", conf="high",
+            src="Hirose DF20, каталог, Double Row Socket",
+            note="по каталогу Hirose DF20: метка ▽ контакта 1 слева на лицевой грани, Contact No.2 за № 1; ▽ сверху — 1 слева вверху, 2 под ним"),
+    _family("hirose-df61", "Hirose DF61", r"^DF61-(\d+)S-2[.,]2C", 2.2, latch="lever",
+            note="в каталоге Hirose DF61 у корпуса номеров и метки контакта 1 нет — сверить по детали"),
     # DF1B — catalogue 01.07.2020 (third angle). The sockets' front view has the mating end UP: the top view shows the
     # square pin entries with lead-in chamfers and the anti-mis-insertion bosses, the in-line socket's lock hook sits
     # near that end and engages the plug's lever inside its 7 mm shroud. The wire end is the bottom view, where the
@@ -321,6 +383,8 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "jst-el": "ELR-03V", "jst-el-n": "ELR-04NV", "jst-gvh": "GVHR-03V-S", "jst-gvh-sf": "GVHRSF-04V-S", "jst-suh": "SUHR-04V-S", "jst-lbt": "LBTAR-05V-2K-K",
     "jst-pud": "PUDP-10V-S", "jst-pad": "PADP-10V-1-S", "jst-pnd": "PNDP-10V-Z", "jst-sqs": "SQSR-02H-1A-K",
     "jst-zpd": "ZPDR-10V-S", "jst-nshd": "NSHDR-16V-Z", "jst-shj": "SHJP-06V-S", "jst-ra": "RA-1011",
+    "jst-shd": "SHDR-20V-S-B", "jst-shl": "SHLP-06V-S-B", "jst-apsh": "APSHR-03V-S", "jst-nv": "NVR-03", "jst-vb": "VBR-3",
+    "jst-ghd": "GHDR-20V-S-1(F)", "jst-znd": "ZNDP-16V-A-S", "jst-jwpf": "04R-JWPF-VSLE-S",
     "hirose-df13-2r": "DF13-10DS-1.25C", "hirose-df19": "DF19-8S-1C", "hirose-df20": "DF20A-10DS-1C", "hirose-df61": "DF61-2S-2.2C",
     "hirose-df1b": "DF1B-4S-2.5R", "hirose-df1b-2r": "DF1B-18DS-2.5RC", "hirose-df1b-es": "DF1B-4ES-2.5RC",
     "hirose-df1b-des": "DF1B-10DES-2.5RC", "hirose-df1b-p": "DF1B-5EP-2.5RC",
@@ -581,6 +645,47 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
          (("Корпус", "jst-shj", "SHJP-{:02d}V-S(HF)", (2, 6)),),
          ((TOP_SMT, "BM{:02d}B-SHJS-TB(HF)", (6,)), (SIDE_SMT, "SM{:02d}B-SHJH-TF(HF)", (2, 6))),
          (("SSHJ-003T-P0.2", "AWG 32–28"),)),
+    # Series named in «Терминалы» that had no housing table (16.10.2026).
+    _jst("jst-shd", "JST SHD", "eSHD", WTB, ("SHD", "SHDR", "SHDP"),
+         (("Корпус, 2 ряда, с выступами", "jst-shd", "SHDR-{:02d}V-S-B", (20, 30, 40, 50)),),
+         ((TOP_SMT, "BM{:02d}B-SRDS-G-TF", (20, 30, 40, 50)), (SIDE_SMT, "SM{:02d}B-SRDS-G-TF", (20, 30, 40, 50))),
+         (("SSH-003GA-P0.2", "AWG 32–28"),), note="1,0 мм в ряду, 2 ряда; контакты как у SH"),
+    _jst("jst-shl", "JST SHL", "eSHL", WTB, ("SHL", "SHLP"),
+         (("Корпус с выступами", "jst-shl", "SHLP-{:02d}V-S-B", (2, 5, 6, 7, 8, 10, 11, 12, 14, 16, 20, 22, 26, 30)),),
+         ((SIDE_SMT, "SM{:02d}B-SHLS-TF", (2, 5, 6, 7, 8, 10, 11, 12, 14, 16, 20, 22, 26, 30)),
+          (SIDE_SMT + ", смещённая", "SM{:02d}B-SHLS-1-TF", (8, 20))),
+         (("SSHL-003T-P0.2", "AWG 32–28"),)),
+    _jst("jst-apsh", "JST APSH", "eAPSH", WTB, ("APSH",),
+         (("Корпус", "jst-apsh", ("APSHR-03V-S",)),),
+         ((TOP_SMT, "BM{:02d}B-APSHSS-ETFT", (3,)),),
+         (("SSH-003T-P0.2-H", "AWG 32–28"),), note="только 3 контакта; цвет в номере: S натуральный, K чёрный, E синий, TR красный, L жёлтый"),
+    _jst("jst-nv", "JST NV", "eNV", WTB, ("NV", "NVR"),
+         (("Корпус", "jst-nv", "NVR-{:02d}", (2, 3, 4)),),
+         ((TOP, "B{:02d}P-NV", (2, 3, 4)),),
+         (("SVH-21T-P1.1", "AWG 22–18"), ("SVH-41T-P1.1", "AWG 20–16")), note="шаг 5,0 мм; синий корпус — NVR-0N-E"),
+    _jst("jst-vb", "JST VB", "eVB", WTB, ("VB",),
+         (("Корпус", "jst-vb", ("VBR-2", "VBR-3")),
+          ("Корпус с пустой позицией, N конт. на M позициях", "jst-vb",
+           ("VBR-2(3)", "VBR-3(4)", "VBR-4(5)", "VBR-5(6)", "VBR-6(7)", "VBR-7(8)", "VBR-8(9)", "VBR-9(10)", "VBR-12(13)"))),
+         (), (("SVH-21T-P1.1", "AWG 22–18"),),
+         note="шаг позиций 5,08 мм; вилки на плату B{N}P-VB-2 и B{N}P{M}-VB-2 (с пустой позицией)"),
+    _series("jst-ghd", "JST GHD", "JST", WTB, ("GHD", "GHDR"),
+            (("Корпус, 2 ряда", "jst-ghd", "GHDR-{:02d}V-S-1(F)", _even(10, 40)),),
+            (("JST eGHD, лист каталога (копия tlcelectronics.com)", "https://www.tlcelectronics.com/pub/media/wysiwyg/Datasheets/eGHD1.pdf"),),
+            headers=((TOP_SMT, "BM{:02d}B-GHDS-TF", _even(10, 40)), (SIDE_SMT, "SM{:02d}B-GHDS-A-TF", _even(10, 40))),
+            contacts=(("SGHD-002T-C0.2A", "AWG 30–26"), ("SGHD-003T-C0.2A", "AWG 32–28")),
+            note="1,25 мм в ряду, 2 ряда; лист jst-mfg.com/eGHD не публикуется — прочитана копия листа JST", range_src="JST eGHD"),
+    _series("jst-znd", "JST ZND", "JST", WTB, ("ZND", "ZNDP"),
+            (("Корпус, 2 ряда", "jst-znd", "ZNDP-{:02d}V-A-S", _even(4, 36)),),
+            (("JST eZND-WB (jst.co.uk)", "https://www.jst.co.uk/downloads/series/eZND-WB_(22-04-18).pdf"),),
+            contacts=(("SZND-002T-P0.5", "AWG 28–24"),), note="1,5 мм в ряду, 2 ряда", range_src="JST eZND-WB"),
+    _jst("jst-wp", "JST JWPF", "eJWPF", AUTO, ("JWPF", "WP (JWPF)"),
+         (("Корпус под штыри (Tab), 1 ряд", "jst-jwpf", "{:02d}T-JWPF-VSLE-S", (2, 3, 4)),
+          ("Корпус под штыри (Tab), 2 ряда", "jst-jwpf", "{:02d}T-JWPF-VSLE-D", (6, 8)),
+          ("Корпус под гнёзда, 1 ряд", "jst-jwpf", "{:02d}R-JWPF-VSLE-S", (2, 3, 4)),
+          ("Корпус под гнёзда, 2 ряда", "jst-jwpf", "{:02d}R-JWPF-VSLE-D", (6, 8))),
+         (), (("SWPT-001T-P025", "штырь (Tab), AWG 26–22"), ("SWPR-001T-P025", "гнездо, AWG 26–22")),
+         note="герметичный провод — провод; шаг 2,0 мм"),
     _series("jst-ra", "JST RA", "JST", WTB, ("RA",),
             (("Корпус, 2 ряда", "jst-ra", "RA-{:02d}11", (10, 16, 20, 26, 30, 34, 40, 50, 60)),),
             (("JST eRA (копия листа на LCSC)", LCSC.format("68d757359fc6485c9fc0b479f24e115d", "C566594")),),

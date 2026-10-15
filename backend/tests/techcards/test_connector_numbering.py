@@ -64,6 +64,30 @@ CASES = [
     # Hirose DF19 (catalogue 01.01.2024): ▽ face up
     ("DF19-8S-1C", "hirose-df19", ROW8, "mark", "high", "Single Row Socket (Cable Type)"),
     ("DF19G-8S-1C(06)", "hirose-df19", ROW8, "mark", "high", "Single Row Socket (Cable Type)"),
+    # Сверка 16.10.2026 — drawings read from jst-mfg.com, connfly.com and the copies of the Molex / Hirose documents.
+    ("51047-0400", "molex-picoblade-plug", [[1, 2, 3, 4]], "mark", "high", "510470000-SD"),
+    ("43645-0400", "molex-microfit-1r", [[4, 3, 2, 1]], "lever", "high", "436450000-SD"),
+    ("43020-0800", "molex-microfit-plug", [[5, 6, 7, 8], [1, 2, 3, 4]], "lever", "high", "MX01 F-126"),
+    ("43640-0300", "molex-microfit-plug-1r", [[1, 2, 3]], "lever", "high", "SD-43640-001"),
+    ("DF13-10DS-1.25C", "hirose-df13-2r", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", "high", "Double Row Socket"),
+    ("DF20A-10DS-1C", "hirose-df20", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", "high", "Double Row Socket"),
+    ("CZHR-04V-S", "jst-cz", [[1, 2, 3, 4]], "ramp", "high", "eCZ-F"),
+    ("GVHRSF-04V-S", "jst-gvh-sf", [[1, 2, 3, 4]], "ramp", "high", "eGVH"),
+    ("PUDP-10V-S", "jst-pud", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "ramp", "high", "ePUD"),
+    ("PADP-10V-1-S", "jst-pad", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "lever", "high", "ePAD"),
+    ("ZPDR-10V-S", "jst-zpd", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "ramp", "high", "eZPD"),
+    ("NSHDR-16V-Z", "jst-nshd", [[1, 3, 5, 7, 9, 11, 13, 15], [2, 4, 6, 8, 10, 12, 14, 16]], "ramp", "high", "eNSHD"),
+    ("I-DS1066-SCW004", "connfly-ds1066", [[1, 2, 3, 4]], "windows", "high", "C-DS1066"),
+    ("PNDP-10V-Z", "jst-pnd", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "lever", "low", ""),
+    # Series of «Терминалы» added 16.10.2026
+    ("SHDR-20V-S-B", "jst-shd", [[19, 17, 15, 13, 11, 9, 7, 5, 3, 1], [20, 18, 16, 14, 12, 10, 8, 6, 4, 2]], "mark", "high", "eSHD"),
+    ("SHLP-06V-S-B", "jst-shl", [[1, 2, 3, 4, 5, 6]], "mark", "high", "eSHL"),
+    ("APSHR-03V-S", "jst-apsh", [[1, 2, 3]], "ramp", "high", "eAPSH"),
+    ("NVR-03", "jst-nv", [[3, 2, 1]], "lever", "high", "eNV"),
+    ("GHDR-10V-S-1(F)", "jst-ghd", [[9, 7, 5, 3, 1], [10, 8, 6, 4, 2]], "mark", "high", "eGHD"),
+    ("VBR-3(4)", "jst-vb", [[1, 2, 3]], "none", "low", ""),
+    ("ZNDP-08V-A-S", "jst-znd", [[1, 3, 5, 7], [2, 4, 6, 8]], "lever", "low", ""),
+    ("06R-JWPF-VSLE-D", "jst-jwpf", [[1, 3, 5], [2, 4, 6]], "lever", "low", ""),
 ]
 
 
@@ -90,6 +114,8 @@ def _mirror(grid):
     ("105307-1204", "200277-1104"),  # Nano-Fit receptacle ↔ wire-to-wire plug
     ("105308-1208", "201444-1108"),
     ("2145260600", "2145252060"),  # Micro-Lock Plus 1.25 wire-to-wire pair
+    ("43025-0800", "43020-0800"),  # Micro-Fit 3.0 receptacle ↔ wire-to-wire plug, 2 rows
+    ("43645-0300", "43640-0300"),  # and 1 row
 ])
 def test_mated_pairs_are_mirror_images_from_their_wire_sides(receptacle, plug):
     # Face to face with the lock on the same side, the two wire sides read the cavities in opposite directions.
@@ -200,3 +226,53 @@ def test_sm_and_ds1071_series_name_their_crimp_contacts():
     assert "SMR" in sm["contacts"][0]["wire"] and "SMP" in sm["contacts"][1]["wire"]
     assert {h["article"] for v in sm["variants"] for h in v["housings"]} >= {"SMR-02V-B", "SMR-04V-B", "SMP-02V-BC"}
     assert [c["article"] for c in series["connfly-ds1071"]["contacts"]] == ["T-DS1071-SC600"]
+
+
+def test_series_named_in_terminals_have_housing_tables():
+    # Owner, 16.10.2026: «добавить все серии, что есть в терминалах». The JST series «Терминалы» names (GHDR, SHDR,
+    # SHLP, APSH, NVR, VB, ZNDP, JWPF) now have their housing tables from the JST sheets.
+    records = [
+        {"terManufacturer": "JST", "terComponent": "GHD, GH, NSH, SHL", "terSeries": "GHDR, GHR, NSHR, SHLP",
+         "terType": "Female", "terArticle": "SSHL-003T-P0.2"},
+        {"terManufacturer": "JST", "terComponent": "SHD, SH, APSH, LBT", "terSeries": "SHDP, SHR, APSH, LBT",
+         "terType": "Female", "terArticle": "SSH-003T-P0.2"},
+        {"terManufacturer": "JST", "terComponent": "VH, NV, VB", "terSeries": "VHR, NV, NVR, VB", "terType": "Female",
+         "terArticle": "SVH-41T-P1.1"},
+        {"terManufacturer": "JST", "terComponent": "ZE, ZND", "terSeries": "ZER, ZNDP", "terType": "Female",
+         "terArticle": "SZE-002T-P0.3"},
+        {"terManufacturer": "JST", "terComponent": "WP (JWPF)", "terSeries": "JWPF", "terType": "Female",
+         "terArticle": "SWPR-001T-P025"},
+    ]
+    series = {item["id"]: item for item in connector_series(records)}
+    expected = {
+        "jst-ghd": ("SSHL-003T-P0.2", list(range(10, 41, 2)), True),
+        "jst-shl": ("SSHL-003T-P0.2", [2, 5, 6, 7, 8, 10, 11, 12, 14, 16, 20, 22, 26, 30], True),
+        "jst-shd": ("SSH-003T-P0.2", [20, 30, 40, 50], True),
+        "jst-apsh": ("SSH-003T-P0.2", [3], True),
+        "jst-nv": ("SVH-41T-P1.1", [2, 3, 4], True),
+        "jst-vb": ("SVH-41T-P1.1", [2, 3, 4, 5, 6, 7, 8, 9, 12], False),
+        "jst-znd": ("SZE-002T-P0.3", list(range(4, 37, 2)), False),
+        "jst-wp": ("SWPR-001T-P025", [2, 3, 4, 6, 8], False),
+    }
+    for series_id, (terminal, counts, checked) in expected.items():
+        item = series[series_id]
+        assert item["maker"] == "JST" and item["housing_count"] and item["range_checked"], series_id
+        assert item["counts"] == counts and item["checked"] is checked, series_id
+        assert terminal in [t["article"] for t in item["terminals"]], series_id
+        assert item["sources"] and item["sources"][0]["url"].startswith("https://"), series_id
+    assert series["jst-wp"]["category"] == "Автомобильные" and series["jst-nv"]["pitch"] == 5.0
+    assert [h["article"] for h in series["jst-ghd"]["variants"][0]["housings"]][0] == "GHDR-10V-S-1(F)"
+    assert series["jst-ghd"]["variants"][0]["housings"][0]["headers"][0]["article"] == "BM10B-GHDS-TF"
+    vb = [h["article"] for v in series["jst-vb"]["variants"] for h in v["housings"]]
+    assert vb[:3] == ["VBR-2", "VBR-3", "VBR-2(3)"] and housing_of("VBR-12(13)")["n"] == 12
+    connectors = connector_series()
+    assert find_in_series("SHDR-30V-S-B", connectors)["series"] == "jst-shd"
+    assert find_in_series("03T-JWPF-VSLE-S", connectors)["series"] == "jst-wp"
+
+
+def test_series_without_housings_say_why():
+    series = {item["id"]: item for item in connector_series()}
+    for series_id in ("te-matenlok", "te-mcp28", "te-mqs", "molex-ctx50", "hsm-phu", "jr-servo", "flat-quick"):
+        item = series[series_id]
+        assert item["variants"] == [] and item["note"], series_id
+    assert "чертежи TE недоступны" in series["te-matenlok"]["note"] and "автопроизводителей" in series["te-mcp28"]["note"]

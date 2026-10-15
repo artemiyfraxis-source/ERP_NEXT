@@ -86,12 +86,13 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # header sheet agrees (▽ at the right, lock window on the same face). From the wire side, lever up: contact 1 LEFT.
     _jst("jst-ze", "ZE", r"^ZER-0*(\d+)V", 1.5, "lever", conf="high", src="JST eZE, Socket housing",
          note="по чертежу JST eZE: рычаг замка сверху, контакт 1 слева (метка на торце корпуса)"),
-    # CZ — JST eCZ-F p. 4 draws the CZH crimp housing (CZHR) WITHOUT a circuit-1 mark (only the IDC socket CZ and the
-    # B-CZHK header carry «No.1 circuit»). Matching the CZH profile in the «When mating with CZH» side view (p. 2) to the
-    # header (p. 5) hints at contact 1 on the RIGHT with the lock up, but the IDC socket's own views don't confirm it —
-    # left as is until checked on a part.
-    _jst("jst-cz", "CZ", r"^CZHR-0*(\d+)V", 1.5, "ramp",
-         note="на чертеже JST eCZ-F у корпуса CZHR метки контакта 1 нет — сверить по детали"),
+    # CZ — JST eCZ-F p. 4 (read 16.10.2026 from jst-mfg.com): the CZH crimp housing (CZHR) is drawn without a circuit-1
+    # mark, but the sheet states the CZH housing is interchangeable with the CZ IDC socket on the same header, and the CZ
+    # socket drawn right above it has «No.1 circuit» ▽ at the LEFT of its front face (wire end up, IDC slots at the top).
+    # Both side views put the lock on the back face, so the two housings sit on the header the same way: circuit 1 at the
+    # left of the front view; from the wire side, lock (back face) up, contact 1 on the LEFT (as before).
+    _jst("jst-cz", "CZ", r"^CZHR-0*(\d+)V", 1.5, "ramp", conf="high", src="JST eCZ-F, CZ Socket + CZH Housing",
+         note="по чертежу JST eCZ-F: CZH взаимозаменяем с розеткой CZ, у неё метка ▽ контакта 1 слева на лицевой грани; со стороны проводов защёлкой вверх — контакт 1 слева"),
     # PNI — JST ePNI-WB «Socket housing» (p. 2): front view = lock-lever face, wire end up, «No. 1 circuit» points at the
     # rightmost cavity -> from the wire side, lever up, contact 1 on the LEFT. B = A + 3.7; 6.45 thick without the
     # lever's release tab (0.8 more), 10.05 long; the tab is 3.0 wide.
@@ -118,10 +119,13 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "molex-picoblade", "title": "Molex PicoBlade", "pattern": r"^51021-?0?(\d{1,2})00$", "pitch": 1.25, "rows": 1, "order": "row", "start": "TR", "latch": "windows", "color": IVORY, "conf": "high",
      "src": "Molex 510210000-SD", "note": "по чертежу Molex 510210000-SD: на торце проводов метка «1» у контакта 1; окнами вниз (выступы защёлки вверх) — контакт 1 справа",
      "body": {"extra": 3.0, "h": 3.2, "len": 3.95, "win": (0.9, 1.4)}},
-    # PicoBlade 51047 (wire-to-wire plug housing): split from 51021 — its drawing SD-51047 has the «CKT. NO1» mark on the
-    # wire-end view, but which face carries the lock windows is not readable from it, so the side is not checked.
-    {"id": "molex-picoblade-plug", "title": "Molex PicoBlade", "pattern": r"^51047-?0?(\d{1,2})00$", "pitch": 1.25, "rows": 1, "order": "row", "start": "TR", "latch": "friction", "color": IVORY, "conf": "medium",
-     "note": "вилка 51047: по чертежу Molex SD-51047 метка контакта 1 на торце проводов, грань окон защёлки не определена — сверить по метке на детали"},
+    # PicoBlade 51047 (wire-to-wire plug housing) — Molex 510470000-SD rev. B (third angle; static.chipdip.ru copy, read
+    # 16.10.2026): the top view (mating shroud with the pins) and the bottom view (wire end) both have CIRCUIT 1 at the
+    # RIGHT; the bottom view puts the «CIRCUIT 1 INDICATOR MARK» notch on the back-face edge at that corner. From the wire
+    # side with the mark (back) face up the view turns over: contact 1 on the LEFT, under the mark. Was TR with no face
+    # cue (mirrored against the mark).
+    {"id": "molex-picoblade-plug", "title": "Molex PicoBlade", "pattern": r"^51047-?0?(\d{1,2})00$", "pitch": 1.25, "rows": 1, "order": "row", "start": "TL", "latch": "mark", "color": IVORY, "conf": "high",
+     "src": "Molex 510470000-SD", "note": "по чертежу Molex 510470000-SD: метка CIRCUIT 1 на торце проводов у контакта 1; меткой вверх — контакт 1 слева"},
     # Mini-Fit Jr. 5557 dual row — Molex SD-5557-003 (third angle): the view above the front view (wire end) has the latch
     # at the bottom, circuits 1…n in the far row and n+1…2n in the latch row, 1 and n+1 on the left. Turned latch up: 1
     # bottom-right, rows right to left (as before). A = B + 5.4 (B = (cols−1)·4.2), 11.6 across the rows at the wire end,
@@ -135,7 +139,11 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "molex-microfit", "title": "Molex Micro-Fit 3.0", "pattern": r"^43025-?(\d{2})0\d$", "pitch": 3.0, "rows": 2, "order": "row", "start": "BR", "latch": "lever", "color": BLACK, "conf": "high",
      "src": "Molex SDA-43025", "note": "по чертежу Molex SDA-43025: защёлка сверху, контакт 1 внизу справа",
      "body": {"extra": 3.85, "h": 6.86, "len": 14.0, "lock_w": 3.86, "lock_h": 1.4, "win": (2.2, 2.2)}},
-    {"id": "molex-microfit-1r", "title": "Molex Micro-Fit 3.0 (1 ряд)", "pattern": r"^43645-?0?(\d{1,2})00$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
+    # Micro-Fit 43645 — Molex 436450000-SD (replaces SDA-43645; third angle): the front view is the latch face with the
+    # wire end up, the view under it (mating towers, latch at its top edge) has CIRCUIT #1 at the left, and the rear view
+    # carries the FIRST CIRCUIT IDENTIFIER rib on that side. From the wire side, latch up: contact 1 on the RIGHT.
+    {"id": "molex-microfit-1r", "title": "Molex Micro-Fit 3.0 (1 ряд)", "pattern": r"^43645-?0?(\d{1,2})00$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": BLACK, "conf": "high",
+     "src": "Molex 436450000-SD (SDA-43645)", "note": "по чертежу Molex 436450000-SD: со стыковки защёлкой вверх CIRCUIT #1 слева; со стороны проводов защёлкой вверх — контакт 1 справа"},
     {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "pattern": r"^22-?55-?2(\d{2})1$", "pitch": 2.54, "rows": 2, "order": "col", "start": "TR", "latch": "friction", "color": BLACK, "conf": "low"},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "pattern": r"^1740(?:47|45|46|44)-\d$", "fixed": 20, "pitch": 2.5, "rows": 2, "order": "col", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
     # DS1071 — Connfly C-DS1071-XXXXX-B (connfly.com/static/upload/file/pdf/DS1071.pdf): the female housing is drawn
@@ -149,10 +157,12 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "connfly-ds1069", "title": "Connfly DS1069 (аналог JST XH)", "pattern": r"^I-DS1069-SC[BW]0*(\d+)", "pitch": 2.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "conf": "high", "model": "frame",
      "src": "Connfly DS1069 + JST eXH", "note": "по чертежу Connfly DS1069 (метка Circuit No.1) и JST eXH: защёлка сверху, контакт 1 слева",
      "body": {"extra": 4.8, "h": 4.1, "len": 7.8, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}, "color_by": ((r"-SCB", BLACK),)},
-    # DS1066 — Connfly 2.0 mm female housing «Гнездо на провод N конт. шаг 2,0» (warehouse lots I-DS1066-SCW02/03, type
-    # «Соединитель»; pitch from the lot name). No maker drawing is read, so the numbering stays unchecked.
-    {"id": "connfly-ds1066", "title": "Connfly DS1066 (шаг 2,0)", "pattern": r"^I-DS1066-SC[BWE]0*(\d+)", "pitch": 2.0, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": IVORY, "erp_only": True, "conf": "low",
-     "color_by": ((r"-SCB", BLACK),), "note": "корпус Connfly DS1066: чертёж производителя не сверен — контакт 1 по ответной вилке"},
+    # DS1066 — Connfly C-DS1066-XXXXXXX-C sheet 2 «Female Housing» (connfly.com, read 16.10.2026; PH type): the front view
+    # (wire end up) shows the face with the contact-lance windows and «Pin1» at its LEFT — exactly as JST ePH. From the
+    # wire side, windows down: contact 1 on the LEFT. Was TR with no face cue.
+    {"id": "connfly-ds1066", "title": "Connfly DS1066 (шаг 2,0)", "pattern": r"^I-DS1066-SC[BWE]0*(\d+)", "pitch": 2.0, "rows": 1, "order": "row", "start": "TL", "latch": "windows", "color": IVORY, "erp_only": True, "conf": "high",
+     "src": "Connfly C-DS1066, Female Housing", "color_by": ((r"-SCB", BLACK),),
+     "note": "по чертежу Connfly DS1066: Pin1 слева на грани с окнами фиксаторов (как JST PH); окнами вниз — контакт 1 слева"},
     # Amass XT / QS8: the Amass product specifications (XT60, XT60H 2021V1) show the faces without numbers or «+»/«−»,
     # so the contacts stay unlabelled and unchecked.
     {"id": "amass-xt", "title": "Amass XT", "pattern": r"^XT-?(30|60|90)", "fixed": 2, "rows": 1, "order": "row", "start": "TR", "latch": "none", "color": "#f2c200", "cavity": "round", "labels": ("", ""), "conf": "low",
@@ -183,8 +193,15 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "jst-phd", "title": "JST PHD (2 ряда)", "pattern": r"^PHDR-(\d+)VS", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "mark", "color": IVORY, "erp_only": True, "conf": "high",
      "src": "JST ePHD, Socket housing", "note": "по чертежу JST ePHD: метка ▽ и цифры на грани нечётного ряда; ▽ сверху — контакт 1 слева вверху, 2 под ним",
      "body": {"extra": 3.9, "h": 5.0, "len": 7.3, "win": (1.0, 1.4)}},
-    {"id": "molex-microfit-plug", "title": "Molex Micro-Fit 3.0 (вилка)", "pattern": r"^43020-?(\d{2})0\d$", "pitch": 3.0, "rows": 2, "order": "row", "start": "BL", "latch": "lever", "color": BLACK, "erp_only": True, "conf": "low"},
-    {"id": "molex-microfit-plug-1r", "title": "Molex Micro-Fit 3.0 (вилка, 1 ряд)", "pattern": r"^43640-?0?(\d{1,2})0\d$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TL", "latch": "lever", "color": BLACK, "erp_only": True, "conf": "low"},
+    # Micro-Fit plugs — 43020: catalogue sheet MX01 F-126 (third angle): the view above the front view is the mating end
+    # with the latch ramp at its top (back face, side view) and CIRCUIT 1 bottom-right; the front face moulds «1» at the
+    # right. From the wire side, ramp up: 1 bottom-LEFT, the far row 1…n left to right (the mirror of 43025, as a mated
+    # pair). 43640: SD-43640-001 — the front view (mating end down, ramp on the front face) has the LAST CIRCUIT «3» at the
+    # left, the rear view the FIRST CIRCUIT «1»; from the wire side, ramp up: contact 1 on the LEFT (mirror of 43645).
+    {"id": "molex-microfit-plug", "title": "Molex Micro-Fit 3.0 (вилка)", "pattern": r"^43020-?(\d{2})0\d$", "pitch": 3.0, "rows": 2, "order": "row", "start": "BL", "latch": "lever", "color": BLACK, "erp_only": True, "conf": "high",
+     "src": "Molex 43020, лист каталога MX01 F-126", "note": "по листу Molex 43020: со стыковки упором защёлки вверх CIRCUIT 1 внизу справа; со стороны проводов — 1 внизу слева"},
+    {"id": "molex-microfit-plug-1r", "title": "Molex Micro-Fit 3.0 (вилка, 1 ряд)", "pattern": r"^43640-?0?(\d{1,2})0\d$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TL", "latch": "lever", "color": BLACK, "erp_only": True, "conf": "high",
+     "src": "Molex SD-43640-001", "note": "по чертежу Molex SD-43640-001: на лицевой грани с упором защёлки последний контакт слева, «1» справа; со стороны проводов упором вверх — контакт 1 слева"},
     {"id": "molex-clikmate", "title": "Molex CLIK-Mate 1,5", "pattern": r"^502578-?0?(\d{1,2})00$", "pitch": 1.5, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
     {"id": "molex-picoclasp", "title": "Molex Pico-Clasp (2 ряда)", "pattern": r"^501189-?(\d{2})10$", "pitch": 1.0, "rows": 2, "order": "col", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
     {"id": "molex-picoclasp-1r", "title": "Molex Pico-Clasp", "pattern": r"^501330-?0?(\d{1,2})00$", "pitch": 1.0, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
@@ -212,7 +229,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "jae-fix", "title": "JAE FI-X", "pattern": r"^FI-X(\d+)H", "pitch": 1.0, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": "#b9c0c6", "erp_only": True, "conf": "low",
      "note": "на чертеже JAE SJ111287 (FI-X30HL-B) номеров контактов нет — сверить по детали"},
     # D-Sub: two staggered rows; the standard numbering is mirrored between the socket and the pin side.
-    {"id": "dsub", "title": "D-Sub", "pattern": r"^I?-?DS1033-0?(\d+)([FM])|^D-?SUB-?0?(\d+)([FM])|^D[BE]-?0?(9|15|25)([FMPS])", "kind": "dsub", "count_groups": (1, 3, 5), "gender_groups": (2, 4, 6), "pitch": 2.77, "color": "#c9ccd0", "erp_only": True, "conf": "low", "note": "по стандарту D-Sub, чертёж производителя не сверен"},
+    {"id": "dsub", "title": "D-Sub", "pattern": r"^I?-?DS1033-0?(\d+)([FM])|^D-?SUB-?0?(\d+)([FM])|^D[BE]-?0?(9|15|25)([FMPS])", "kind": "dsub", "count_groups": (1, 3, 5), "gender_groups": (2, 4, 6), "pitch": 2.77, "color": "#c9ccd0", "erp_only": True, "conf": "low", "note": "по стандарту D-Sub; на чертеже Connfly C-DS1033 номеров контактов нет — сверить по цифрам на изоляторе"},
     {"id": "deutsch-dt", "title": "Deutsch DT", "pattern": r"^DT0([46])-(\d+)([PS])", "kind": "dt", "count_group": 2, "pitch": 4.0, "rows": 2, "order": "row", "start": "TL", "snake": True, "latch": "lever", "color": "#8d9297", "cavity": "round", "erp_only": True, "conf": "low", "note": "нумерация по кругу; сверить с цифрами на корпусе"},
     {"id": "te-superseal", "title": "TE Superseal 1.5", "pattern": r"^(28210[4-8]|28208[0789]|282090)-1$", "table": {"282104": 2, "282105": 3, "282106": 4, "282107": 5, "282108": 6, "282080": 2, "282087": 3, "282088": 4, "282089": 5, "282090": 6}, "pitch": 3.5, "rows": 1, "order": "row", "start": "TL", "latch": "lever", "color": BLACK, "cavity": "round", "erp_only": True, "conf": "low"},
     {"id": "aviation-gx", "title": "Авиационный GX", "pattern": r"^GX(12|16|20)M?-(\d+)", "kind": "round", "count_group": 2, "round_auto": True, "color": "#b9c0c6", "erp_only": True, "conf": "low",

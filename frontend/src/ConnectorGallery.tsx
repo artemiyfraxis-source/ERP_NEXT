@@ -142,7 +142,9 @@ function SeriesView({ series, match, onBack }: { series: ConnectorSeries; match:
       {missing(series) > 0 && <button type="button" className="order-chip tone-warn conn-jump"
         onClick={() => document.getElementById("conn-contacts")?.scrollIntoView?.({ block: "start" })}>
         контактов нет в «Терминалы»: {missing(series)} ↓</button>}
-      {series.housing_count > 0 && <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>}
+      {series.housing_count > 0
+        ? <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>
+        : series.note && <span className="muted">{series.note}</span>}
     </div>
     {match?.series === series.id && !match.article && <div className="warning-inline">
       Такого корпуса нет в {series.range_checked ? "каталоге серии" : "известных ERP"} — ниже он нарисован по правилу серии.

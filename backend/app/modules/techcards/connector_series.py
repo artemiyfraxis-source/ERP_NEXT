@@ -119,34 +119,45 @@ GROUPS: tuple[dict[str, Any], ...] = (
 
 # Series known only from БД.ТЕР «Series» / «Product Name» (and the shop's data): no housing table in the ERP, so the card
 # shows the terminals and the picture of the closest shape (`pic` = a family whose sample is drawn), never a made-up
-# model number. (id, title, maker, category, pic, terminal keys).
-_LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...]], ...] = (
+# model number; `note` says why the housings are not there (16.10.2026: te.com and molex.com do not answer from the
+# shop's network either; the automotive contact systems go into the carmakers' own housings).
+# (id, title, maker, category, pic, terminal keys, note).
+NO_TE = "чертежи TE недоступны (сайт TE закрыт), таблицы корпусов нет"
+CAR_SYSTEM = "система контактов для корпусов автопроизводителей — своей таблицы корпусов у серии нет"
+_LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...], str], ...] = (
     # CTX50 terminals 34905 (349052447, 349056447) go into the Mini50 sealed receptacle housing 34967 (Molex part sheet of
     # 349052447; 349672001 = 2 positions per element14, 349671001 = 10 positions, polarization A per Arrow): the digit after
     # 34967 is not the position count, so no count can be read from the number and no table is made up; the closest shape.
-    ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",)),
-    ("jst-wp", "JST WP (JWPF)", "JST", AUTO, "te-superseal", ("WP (JWPF)",)),
-    ("hsm-phu", "Hsuan Mao PHU / MHU / MX", "Hsuan Mao", WTB, "jst-ph", ("PHU/MHU/MX", "HC (PAP)")),
-    ("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, "connfly-ds1071", ("JR/Futaba servo connector contact",)),
-    ("te-matenlok", "TE MATE-N-LOK", "TE", WTW, "molex-minifit-jr", ("MATE-N-LOK",)),
-    ("te-multilock-070", "TE Multilock 070", "TE", AUTO, "te-multilock-040", ("AMP MULTILOCK 070",)),
-    ("te-mcon12", "TE MCON 1.2", "TE", AUTO, "te-superseal", ("MCON 1.2 LL (Locking-Lance)", "MCON 1.2mm")),
-    ("te-mcp15", "TE MCP 1.5K", "TE", AUTO, "te-superseal", ("AMP MCP 1.5K", "AMP MCP 1.5K (Automation Ready)")),
-    ("te-mcp28", "TE MCP 2.8K", "TE", AUTO, "te-superseal", ("AMP MCP 2.8K", "AMP MCP 2.8 (HDSCS/Timer)", "AMP MCP 2.8mm", "MCP")),
-    ("te-microtimer", "TE Micro Timer", "TE", AUTO, "te-superseal", ("AMP TIMER, Micro Timer II", "AMP TIMER, Micro-Timer III")),
-    ("te-jpt", "TE Junior Power Timer", "TE", AUTO, "te-superseal", ("Junior Power Timer", "AMP TIMER (receptacle)")),
-    ("te-mqs", "TE MQS", "TE", AUTO, "te-superseal", ("MQS",)),
-    ("te-ampseal", "TE AMPSEAL", "TE", AUTO, "te-superseal", ("AMPSEAL",)),
-    ("te-superseal-10", "TE Superseal 1.0", "TE", AUTO, "te-superseal", ("AMP SUPERSEAL 1.0",)),
-    ("te-amp-1528", "TE AMP 1.5/2.8", "TE", AUTO, "te-superseal", ("AMP 1.5/2.8 Connector System (RECPT AND TAB)",)),
-    ("te-din72585", "TE Round 2,5 (DIN 72585)", "TE", AUTO, "te-superseal", ("AMP Round Connector System 2,5mm (DIN 72585)",)),
-    ("sumitomo-ts", "Sumitomo TS Sealed", "Sumitomo", AUTO, "te-superseal", ("TS Sealed Series (0,64мм/025)",)),
-    ("te-amplimite", "TE AMPLIMITE HD-20", "TE", IFACE, "dsub", ("AMPLIMITE HD-20 (HDP-20)",)),
-    ("te-intercontec", "TE Intercontec", "TE", ROUND, "aviation-gx", ("Intercontec circular contact", "Intercontec circular contact socket")),
+    ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",),
+     "в номере Mini50 34967 нет числа контактов, чертёж Molex недоступен"),
+    ("hsm-phu", "Hsuan Mao PHU / MHU / MX", "Hsuan Mao", WTB, "jst-ph", ("PHU/MHU/MX", "HC (PAP)"),
+     "каталога Hsuan Mao с номерами корпусов нет"),
+    ("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, "connfly-ds1071", ("JR/Futaba servo connector contact",),
+     "у сервоконнектора нет производителя и чертежа корпуса"),
+    ("te-matenlok", "TE MATE-N-LOK", "TE", WTW, "molex-minifit-jr", ("MATE-N-LOK",), NO_TE),
+    ("te-multilock-070", "TE Multilock 070", "TE", AUTO, "te-multilock-040", ("AMP MULTILOCK 070",), NO_TE),
+    ("te-mcon12", "TE MCON 1.2", "TE", AUTO, "te-superseal", ("MCON 1.2 LL (Locking-Lance)", "MCON 1.2mm"), CAR_SYSTEM),
+    ("te-mcp15", "TE MCP 1.5K", "TE", AUTO, "te-superseal", ("AMP MCP 1.5K", "AMP MCP 1.5K (Automation Ready)"), CAR_SYSTEM),
+    ("te-mcp28", "TE MCP 2.8K", "TE", AUTO, "te-superseal", ("AMP MCP 2.8K", "AMP MCP 2.8 (HDSCS/Timer)", "AMP MCP 2.8mm", "MCP"),
+     CAR_SYSTEM),
+    ("te-microtimer", "TE Micro Timer", "TE", AUTO, "te-superseal", ("AMP TIMER, Micro Timer II", "AMP TIMER, Micro-Timer III"),
+     CAR_SYSTEM),
+    ("te-jpt", "TE Junior Power Timer", "TE", AUTO, "te-superseal", ("Junior Power Timer", "AMP TIMER (receptacle)"), CAR_SYSTEM),
+    ("te-mqs", "TE MQS", "TE", AUTO, "te-superseal", ("MQS",), CAR_SYSTEM),
+    ("te-ampseal", "TE AMPSEAL", "TE", AUTO, "te-superseal", ("AMPSEAL",), NO_TE),
+    ("te-superseal-10", "TE Superseal 1.0", "TE", AUTO, "te-superseal", ("AMP SUPERSEAL 1.0",), NO_TE),
+    ("te-amp-1528", "TE AMP 1.5/2.8", "TE", AUTO, "te-superseal", ("AMP 1.5/2.8 Connector System (RECPT AND TAB)",), CAR_SYSTEM),
+    ("te-din72585", "TE Round 2,5 (DIN 72585)", "TE", AUTO, "te-superseal", ("AMP Round Connector System 2,5mm (DIN 72585)",),
+     NO_TE),
+    ("sumitomo-ts", "Sumitomo TS Sealed", "Sumitomo", AUTO, "te-superseal", ("TS Sealed Series (0,64мм/025)",), CAR_SYSTEM),
+    ("te-amplimite", "TE AMPLIMITE HD-20", "TE", IFACE, "dsub", ("AMPLIMITE HD-20 (HDP-20)",), NO_TE),
+    ("te-intercontec", "TE Intercontec", "TE", ROUND, "aviation-gx", ("Intercontec circular contact", "Intercontec circular contact socket"),
+     NO_TE),
     ("flat-quick", "Плоские клеммы быстрого соединения", "", LUGS, "lug",
      ("РПИ-М", "РППИ-М", "РПИ-П", "РПИ-М(н)", "FDD", "Fully Insulated Female Disconnect", "FLVDDF", "InsulKrimp Quick Disconnect",
       "TAB, FASTIN-FASTON", "Контакт штыревой 6,3", "Клемма гнездовая с замком", "Контакт гнездовой",
-      "Контакт гнездовой серии 2,8мм", "Контакт гнездовой серии 2,8мм (с фиксирующим усиком)")),
+      "Контакт гнездовой серии 2,8мм", "Контакт гнездовой серии 2,8мм (с фиксирующим усиком)"),
+     "клеммы без корпуса"),
 )
 
 # ВЧ (coax) series from БД.КОАКС «Тип/Серия»: the part before «-male / -female / -plug». (id, title, category, bases).
@@ -284,12 +295,13 @@ def _rf_catalog(bases: tuple[str, ...], coax_records: list[Mapping[str, Any]]) -
 
 
 def _bare(series_id: str, title: str, maker: str, category: str, *, terminals: list[dict[str, Any]] | None = None,
-          catalog: list[dict[str, str]] | None = None, pic: str | None = None) -> dict[str, Any]:
-    """A series with no housing table in the ERP: only terminals / БД.КОАКС articles and the picture of the closest shape."""
+          catalog: list[dict[str, str]] | None = None, pic: str | None = None, note: str = "") -> dict[str, Any]:
+    """A series with no housing table in the ERP: only terminals / БД.КОАКС articles and the picture of the closest shape;
+    `note` — why the housings are not there."""
     terminals = terminals or []
     return _summary({
         "id": series_id, "title": title, "maker": maker, "category": category, "variants": [], "range_checked": False,
-        "range_src": "", "datasheet": "", "note": "", "terminals": terminals, "wire": wire_range(terminals),
+        "range_src": "", "datasheet": "", "note": note, "terminals": terminals, "wire": wire_range(terminals),
         "catalog": catalog or [], "pic": pic,
     })
 
@@ -410,9 +422,9 @@ def connector_series(
     for series in by_id.values():
         result.append(_summary(series))
     ids |= set(by_id)
-    for series_id, title, maker, category, pic, keys in _LOOSE:
+    for series_id, title, maker, category, pic, keys, note in _LOOSE:
         if series_id not in ids:
-            result.append(_bare(series_id, title, maker, category, terminals=terminals_for(keys, records), pic=pic))
+            result.append(_bare(series_id, title, maker, category, terminals=terminals_for(keys, records), pic=pic, note=note))
     for series_id, title, category, bases in _RF:
         result.append(_bare(series_id, title, "", category, catalog=_rf_catalog(bases, coax), pic="dc-barrel"))
     return sorted(result, key=_order)
