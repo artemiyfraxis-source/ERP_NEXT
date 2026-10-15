@@ -140,6 +140,20 @@ def test_upd_without_number_leaves_the_cell_blank_and_no_upd_says_so(shipping_ap
     assert _print(client, none["id"], "dn")[0]["upd"] == "без УПД"
 
 
+def test_part_number_skips_an_article_that_is_only_project_and_kb(shipping_api):
+    client = shipping_api
+    plain = client.post("/api/shipping/goods", json={
+        "project": "591К.3", "item_index": "КБ1", "customer": "Заказчик", "article": "591К.3 КБ1", "name": "Жгут КБ1",
+        "ordered": "5", "unit": "шт",
+    }).json()["good"]
+    plain = client.post(f"/api/shipping/goods/{plain['id']}/accept", json={"version": plain["version"], "quantity": "5"}).json()["good"]
+    shipment = _shipment(client, [{"good_id": plain["id"], "quantity": "5"}])
+
+    # «КБ1 591К.3 КБ1» не повторяется — в «Чертежный номер/Артикул» только «КБ1».
+    assert [row["part"] for row in _print(client, shipment["id"], "pl")[0]["rows"]] == ["КБ1"]
+    assert [row["part"] for row in _print(client, shipment["id"], "dn")[0]["rows"]] == ["КБ1"]
+
+
 def test_person_short_is_surname_and_initials_from_the_employee_card():
     assert person_short("Гусев Алексей Андреевич") == "Гусев А.А."
     assert person_short("  Безменов   никита ") == "Безменов Н."
