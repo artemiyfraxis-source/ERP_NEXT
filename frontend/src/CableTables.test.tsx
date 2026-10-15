@@ -181,7 +181,7 @@ it("shows each cable in its own list with the parameters of that list", async ()
 
   fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
   expect(await screen.findByText("КСПВГ 4x0,20")).toBeInTheDocument();
-  expect(screen.getByText("КСПВ / КСПВГ")).toBeInTheDocument(); // owner 15.10.2026: groups by mark family
+  expect(screen.getByText("КСПВГ")).toBeInTheDocument(); // owner 15.10.2026: one group per mark, not «КСПВ / КСПВГ»
   expect(screen.getByRole("columnheader", { name: "Число жил" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /^Прочие кабели/ }));

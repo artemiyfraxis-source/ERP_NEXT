@@ -87,7 +87,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   const [adding, setAdding] = useState(false);
   const grouped = kind === "multi" || kind === "other";
   const cells = (row: CableRow): Record<string, string> => ({ "Марка": row.cable, ...(row.record?.fields ?? {}) });
-  // «Многожильные» (owner 15.10.2026): groups by mark family (ПВВС, КДВВГ / КДВЭВГ, F/UTP Cat5e…), cores and section
+  // «Многожильные» (owner 15.10.2026): groups by mark (ПВВС, КДВВГ, КДВЭВГ, F/UTP Cat5e…; each mark its own group), cores and section
   // as numbers inside; «Прочие» — by category and screen, natural order inside.
   const rows = useMemo(() => {
     const own = data.rows.filter((row) => row.kind === kind);
