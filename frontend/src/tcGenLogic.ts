@@ -1782,8 +1782,25 @@ export function makeGen(D: GenData, S: GenState) {
     if (seal) { const h = ops.findIndex((o) => o.type === "insHousing"); ops.splice(h >= 0 ? h : ops.length, 0, seal); }
     if (S.twist.enabled && getTwistSelectionCount() > 0) {
       const twistOp: OpSpec = { type: "twist", opKey: "twist", label: "Свивка", cat: "Свивка" };
+      // Сторона А собрана, потом свивка, потом сторона В. «Свивка после опресовки» (владелец 15.10): свивают обжатые
+      // провода — опрессовка В идёт до свивки, монтаж В (разъём, пайка) — после неё. Опрессовки В, что стояли после
+      // первого монтажа В (В2 после В1), уходят к ней вместе с разделкой своего конца.
       const firstB = ops.findIndex((o) => o.side === "B" && o.epId);
-      if (firstB >= 0) ops.splice(firstB, 0, twistOp); else ops.push(twistOp);
+      const mountB = ops.findIndex((o, i) => i >= firstB && o.side === "B" && o.epId && o.type !== "prsTerm");
+      if (firstB < 0) ops.push(twistOp);
+      else if (mountB < 0) {
+        // У стороны В только обжим (терминалы без колодки) — свивка сразу после последней опрессовки.
+        const lastPrs = ops.reduce((last, o, i) => (o.type === "prsTerm" ? i : last), -1);
+        ops.splice(Math.max(firstB, lastPrs + 1), 0, twistOp);
+      } else {
+        const lateCrimps = new Set(ops.filter((o, i) => i > mountB && o.side === "B" && o.type === "prsTerm").map((o) => o.ord));
+        const late = (o: OpSpec, i: number) => i > mountB && o.side === "B" && lateCrimps.has(o.ord) && !solderStrips.has(o.opKey)
+          && (o.type === "prsTerm" || o.type === "stripCable" || o.type === "endCap");
+        const moved = ops.filter(late);
+        const rest = ops.filter((o, i) => !late(o, i));
+        rest.splice(mountB, 0, ...moved, twistOp);
+        ops.splice(0, ops.length, ...rest);
+      }
     }
     const tinOn = endpointsOnSide_("B").length === 0 && S.tin.enabled;
     const tinLeft = tinWireIndices_().map((i) => activeWires[i].idx).filter((idx) => !tinAtCut.has(idx));
