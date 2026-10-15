@@ -143,10 +143,13 @@ def test_jst_gh_xh_ph_zh_and_microfit_follow_the_maker_drawings():
 
 
 def test_series_without_a_checked_drawing_keep_the_warning():
-    for article in ("51047-0400", "43645-0400", "43020-0400", "43640-0400", "22-55-2081", "DS1033-09F"):
+    # 16.10.2026: PicoBlade 51047 and Micro-Fit 43645 / 43020 / 43640 were read from the Molex drawings (see
+    # test_connector_numbering); SL 22-55 (molex.com closed, only part sheets) and D-Sub (the Connfly drawing has no
+    # numbers) stay unchecked.
+    for article in ("22-55-2081", "DS1033-09F"):
         assert housing_of(article)["conf"] != "high", article
     # Searched for a maker drawing on 04.10 and found none that fixes the side: the note says what is missing.
-    for article in ("51047-0400", "XT60H-M", "QS8-S-M", "LP-12-C04PE", "GX12M-4"):
+    for article in ("XT60H-M", "QS8-S-M", "LP-12-C04PE", "GX12M-4", "DS1033-09F"):
         assert housing_of(article)["conf"] != "high" and housing_of(article)["note"], article
 
 
@@ -198,11 +201,14 @@ def test_connfly_ds1069_and_hirose_follow_the_maker_drawings():
 
 
 def test_series_whose_drawing_has_no_contact_one_say_so():
-    # CZHR, FI-X and Connfly DS1071 have no circuit-1 mark on any maker drawing reachable — the warning stays.
-    for article in ("CZHR-04V-S", "FI-X30HL", "I-DS1071-SCB02X5"):
+    # FI-X and Connfly DS1071 have no circuit-1 mark on any maker drawing reachable — the warning stays.
+    for article in ("FI-X30HL", "I-DS1071-SCB02X5"):
         layout = housing_of(article)
         assert layout["conf"] == "low" and not layout["src"] and "чертеже" in layout["note"], article
-    assert housing_of("CZHR-04V-S")["grid"] == [[1, 2, 3, 4]]  # unchanged until checked on a part
+    # CZHR: no mark of its own, but eCZ-F makes it interchangeable with the CZ IDC socket, whose ▽ is on the left of the
+    # front face (lock on the back face) — wire side, lock up: 1 left, as drawn before.
+    cz = housing_of("CZHR-04V-S")
+    assert (cz["grid"], cz["latch"], cz["conf"]) == ([[1, 2, 3, 4]], "ramp", "high") and "eCZ-F" in cz["src"]
 
 
 def test_eh_pa_vh_phd_picoblade_minifit_and_usb_follow_the_maker_drawings():
@@ -239,4 +245,6 @@ def test_picoblade_plug_51047_is_split_from_the_checked_receptacle():
     plug, receptacle = housing_of("Molex 510470300"), housing_of("Molex 510210300")
     assert plug["family"] == "molex-picoblade-plug" and receptacle["family"] == "molex-picoblade"
     assert plug["title"] == receptacle["title"] == "Molex PicoBlade" and plug["n"] == 3
-    assert plug["conf"] == "medium" and receptacle["conf"] == "high"
+    assert plug["conf"] == receptacle["conf"] == "high"
+    # 510470000-SD: CIRCUIT 1 INDICATOR MARK on the wire end at contact 1 — mark face up, 1 on the LEFT (was TR, no cue).
+    assert (plug["grid"], plug["latch"], plug["src"]) == ([[1, 2, 3]], "mark", "Molex 510470000-SD")
