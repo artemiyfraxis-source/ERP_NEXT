@@ -31,6 +31,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MIRROR = ROOT / "data" / "reference-mirror"
 HOOKUPS = ROOT / "data" / "cables" / "hookup-wires.json"  # T1: the sourced база монтажных проводов
 NOW = datetime(2026, 10, 12, 12, 0)
+SERIES_1210 = SERIES[:12]  # the base of 12.10.2026 — the old-table comparison below is pinned on these
+MOVED_SERIES = ("UL1015", "UL3135", "UL758", "НВМ", "МНВ-4", "ПГВА", "ПуГВнг(А)-LS", "Силиконовый провод", "AGR2",
+                "Кабель высоковольтный")
 
 
 def _migration_gauges() -> tuple:
@@ -62,15 +65,18 @@ def test_one_row_per_size_one_column_per_series_of_the_base():
         _wire("UL1061 28AWG", "UL1061", g28, "0,89"),
         _wire("МС16-13 0,08", "МС16-13", g28, "0,72"),  # parse_hookup's series («МС16-13») → the base key
         _wire("МГТФ 0,07", "МГТФ", g007, "0,75"),
-        _wire("UL1015 28AWG", "UL1015", g28, "1,2"),  # moved into монтажные by hand: not a series of the base
+        _wire("UL1015 28AWG", "UL1015", g28, "1,2"),  # a series since 15.10.2026 («Прочие кабели» closed)
         _wire("ПуГВнг(А)-LS 1х4,0", "ПуГВнг(А)-LS", g12, "4,5"),
+        _wire("M22759/16 28AWG", "M22759/16", g28, "0,9"),  # no series: no column
     ])
     assert list(rows[0]) == list(COLUMNS) == ["По старой таблице", "AWG", "ГОСТ", "Ø жилы", *SERIES]
+    # the 12 series of 12.10, then the ones moved from «Прочие кабели» on 15.10 — appended, the old columns keep their place
     assert SERIES == ("UL1061", "UL1571", "UL1007", "UL3239", "НВ-4", "ПВАМ", "МГТФ", "МГШВ", "МС 16-13", "МС 15-11",
-                      "МК 26-13", "ПуГВ")
-    assert _filled(rows[0]) == {"AWG": "28", "ГОСТ": "0,08", "Ø жилы": "0,32", "UL1061": "0,89", "МС 16-13": "0,72"}
+                      "МК 26-13", "ПуГВ", *MOVED_SERIES)
+    assert _filled(rows[0]) == {"AWG": "28", "ГОСТ": "0,08", "Ø жилы": "0,32", "UL1061": "0,89", "МС 16-13": "0,72",
+                                "UL1015": "1,2"}
     assert _filled(rows[1]) == {"ГОСТ": "0,07", "МГТФ": "0,75"} and rows[1]["AWG"] == ""
-    assert _filled(rows[2]) == {"AWG": "12", "ГОСТ": "4", "Ø жилы": "2,05"}
+    assert _filled(rows[2]) == {"AWG": "12", "ГОСТ": "4", "Ø жилы": "2,05", "ПуГВнг(А)-LS": "4,5"}
 
 
 def test_wires_of_one_series_and_size_with_different_diameters_give_the_largest():
@@ -85,8 +91,10 @@ def test_a_size_the_base_has_no_diameter_for_keeps_the_old_number_flagged():
     old = [{"AWG": "12", "ГОСТ": "4", "Ø жилы": "2,05", "ПВАМ": "4,2", "МС": "—", "UL1015": "3,9"},
            {"AWG": "22", "ГОСТ": "0,35", "Ø жилы": "0,64", "ПВАМ": "—", "МГТФ": "1,2", "МС": "1,3"}]
     rows = wire_dia_rows([g12, g22, g007], [_wire("МГТФ 0,35", "МГТФ", g22, "1,19")], old)
-    assert _filled(rows[0]) == {"По старой таблице": "ПВАМ", "AWG": "12", "ГОСТ": "4", "Ø жилы": "2,05", "ПВАМ": "4,2"}
-    # the base wins (МГТФ 1,19, not 1,2); the old «МС» column stood for both МС series; UL1015 has no column
+    # UL1015 is a series since 15.10.2026: the old column of the same name fills it, flagged
+    assert _filled(rows[0]) == {"По старой таблице": "ПВАМ, UL1015", "AWG": "12", "ГОСТ": "4", "Ø жилы": "2,05",
+                                "ПВАМ": "4,2", "UL1015": "3,9"}
+    # the base wins (МГТФ 1,19, not 1,2); the old «МС» column stood for both МС series
     assert _filled(rows[1]) == {"По старой таблице": "МС 16-13, МС 15-11", "AWG": "22", "ГОСТ": "0,35", "Ø жилы": "0,64",
                                 "МГТФ": "1,19", "МС 16-13": "1,3", "МС 15-11": "1,3"}
     assert rows[2][OLD_COLUMN] == ""  # a ГОСТ-only size was never in the AWG table
@@ -122,14 +130,14 @@ def real_base(sessions):  # noqa: F811
                            base_rows=wire_dia_rows(gauges, hookups))
 
 
-def _differences(old_rows, new_rows) -> list[tuple[str, str, str, str]]:
+def _differences(old_rows, new_rows, series_list=SERIES_1210) -> list[tuple[str, str, str, str]]:
     """(series, size, old Ø, new Ø) for every size and series where the old table and the view disagree."""
     old_by_awg = {row["AWG"]: row for row in old_rows}
     result = []
     for row in new_rows:
         size = f"{row['AWG']} AWG" if row["AWG"] else f"{row['ГОСТ']} мм²"
         old = old_by_awg.get(row["AWG"]) if row["AWG"] else None
-        for series in SERIES:
+        for series in series_list:
             column = old_column(series, old or {})
             before = (old or {}).get(column, "—") if column else "—"
             if before != row[series]:
@@ -222,6 +230,8 @@ def test_the_generator_never_loses_a_diameter_the_old_table_had(real_base):
     flagged: dict[str, list[str]] = {}
     for row in real_base.rows:
         for series in filter(None, row[OLD_COLUMN].split(", ")):
+            if series not in SERIES_1210:
+                continue  # the series moved from «Прочие кабели» — pinned in their own test
             flagged.setdefault(series, []).append(row["AWG"])
             base = next(item for item in real_base.base_rows if item["ГОСТ"] == row["ГОСТ"])
             assert base[series] == "—"  # flagged only where the base has nothing
@@ -310,3 +320,22 @@ def test_the_build_does_not_touch_wire_lengths_or_the_twist_diameter_of_a_config
     built, _stamp = techcard_build.with_technology(config, real_base.factory)
     assert [{k: v for k, v in wire.items() if k not in ("outerDiameter", "conductorDiameter")} for wire in built["wires"]] == config["wires"]
     assert built["twist"] == config["twist"]
+
+
+def test_the_series_moved_from_other_cables_get_their_columns(real_base):
+    """Owner 15.10.2026: «Прочие кабели» closed — their single-core series give the generator a Ø now: the base's own
+    (mirror БД.ПРОВ rows), else the old СПР.КАБ column of the same name (UL1015, ПГВА), flagged."""
+    base = {row["AWG"] or row["ГОСТ"]: {s: row[s] for s in MOVED_SERIES if row[s] != "—"} for row in real_base.base_rows}
+    assert {size: cells for size, cells in base.items() if cells} == {
+        "30": {"Силиконовый провод": "0,8"}, "28": {"UL758": "0,9", "Силиконовый провод": "1,2"},
+        "26": {"UL1015": "2,1", "Силиконовый провод": "1,5"}, "24": {"Силиконовый провод": "1,6"},
+        "22": {"UL3135": "1,7", "НВМ": "1,6"}, "20": {"ПГВА": "2,3", "Силиконовый провод": "1,8"},
+        "18": {"Силиконовый провод": "2,3", "Кабель высоковольтный": "8"}, "17": {"ПуГВнг(А)-LS": "2,5"},
+        "16": {"Силиконовый провод": "3"}, "12": {"UL758": "3,94", "Силиконовый провод": "4,5"},
+        "10": {"Силиконовый провод": "5,4"}, "8": {"Силиконовый провод": "6"},
+    }
+    view = {row["AWG"]: row for row in real_base.rows if row["AWG"]}
+    flagged = {awg for awg, row in view.items() if "UL1015" in row[OLD_COLUMN].split(", ")}
+    assert flagged == {"30", "28", "24", "22", "20", "18", "17", "16", "14", "12", "10"}  # 26 AWG is the base's own
+    assert (view["22"]["UL1015"], view["26"]["UL1015"], view["10"]["ПГВА"]) == ("1,8", "2,1", "5")
+    assert "Силиконовый провод" not in view["26"][OLD_COLUMN]  # the old «Силикон» column is another name: not used

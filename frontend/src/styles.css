@@ -588,7 +588,6 @@ table.ship-lines td:first-child { width: 1%; }
 .cable-card { padding: 4px 0; }
 .cable-card small { font-size: 11px; text-transform: none; }
 /* Structured cable reference (10.10.2026): the coax card a tester reads at the VNA, «разобрать позже». */
-.db-later { align-self: center; padding: 3px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--tone-warn); font-size: 12px; }
 .hookup-form select { min-width: 0; }
 /* Wire form in short sections (12.10.2026): small heading, dense grid, list fields as swatches / chips. */
 .form-section { display: grid; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--sheet-line); }

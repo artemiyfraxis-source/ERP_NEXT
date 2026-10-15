@@ -1,5 +1,6 @@
-"""«Оболочки» (owner 12.10.2026): the БД.МАТ rows that cover a harness — shrink tube, braid, corrugated tube — split into
-ТУТ / ТТК / Оплётки / Гофра (everything else that covers goes to «Прочее»), parsed into per-group fields and sorted.
+"""«Оболочки» (owner 12.10.2026, 15.10.2026): the БД.МАТ rows that cover a harness — shrink tube, cambric, corrugated
+tube, braid, tape — split into ТУТ / ТТК / Кембрик / Гофра / Оплётки / Ленты (a covering of no kind — «Прочее»), parsed
+into per-group fields and sorted inside a group by size as a number, then by name (owner 15.10: «нормально отсортировать»).
 
 Pure functions over a record's `fields` (the sheet header is the key). Nothing is guessed: a value comes from a sheet
 column first, then from the name/series text, else it stays empty. The override «Раздел оболочек» (a column the record
@@ -14,23 +15,23 @@ from typing import Any
 
 OVERRIDE_FIELD = "Раздел оболочек"
 
-TUT, TTK, BRAID, CORRUGATED, OTHER = "tut", "ttk", "braid", "corrugated", "other"
-GROUP_ORDER = (TUT, TTK, BRAID, CORRUGATED, OTHER)
+TUT, TTK, CAMBRIC, CORRUGATED, BRAID, TAPE, OTHER = "tut", "ttk", "cambric", "corrugated", "braid", "tape", "other"
+GROUP_ORDER = (TUT, TTK, CAMBRIC, CORRUGATED, BRAID, TAPE, OTHER)
 GROUP_TITLES = {
-    TUT: "ТУТ — термоусадочная трубка", TTK: "ТТК — термоусадочная трубка с клеем",
-    BRAID: "Оплётки", CORRUGATED: "Гофра", OTHER: "Прочее",
+    TUT: "ТУТ — термоусадочная трубка", TTK: "ТТК — термоусадочная трубка с клеем", CAMBRIC: "Кембрик — трубка ПВХ",
+    CORRUGATED: "Гофра", BRAID: "Оплётки", TAPE: "Ленты", OTHER: "Прочее",
 }
 # What a person types in the override cell → group id (also the short names the screen offers).
 OVERRIDE_NAMES = {
     "тут": TUT, "ттк": TTK, "оплётки": BRAID, "оплётка": BRAID, "оплетки": BRAID, "оплетка": BRAID,
-    "гофра": CORRUGATED, "прочее": OTHER,
+    "гофра": CORRUGATED, "кембрик": CAMBRIC, "ленты": TAPE, "лента": TAPE, "прочее": OTHER,
 }
-OVERRIDE_CHOICES = ("ТУТ", "ТТК", "Оплётки", "Гофра", "Прочее")
+OVERRIDE_CHOICES = ("ТУТ", "ТТК", "Кембрик", "Гофра", "Оплётки", "Ленты", "Прочее")
 
 # БД.МАТ «Группа» → group of the covering; None-less: groups missing here are not coverings (стяжка, клей, тройник…).
 GROUP_MAP = {
     "тут": TUT, "ттк": TTK, "оплётка": BRAID, "оплетка": BRAID, "плетёнка": BRAID, "плетенка": BRAID,
-    "гофра": CORRUGATED, "лента": OTHER, "кембрик": OTHER,
+    "гофра": CORRUGATED, "лента": TAPE, "кембрик": CAMBRIC,
 }
 
 _NUM = r"\d+(?:[.,]\d+)?"
@@ -38,6 +39,9 @@ _GLUE = re.compile(r"клеев|с\s+клеем|adhesive|dual[\s-]*wall|glue|\b�
 _SHRINK = re.compile(r"термоусад|\bтут(?:нг)?\b|heat[\s-]*shrink|shrink", re.IGNORECASE)
 _BRAID = re.compile(r"оплёт|оплет|плётк|плетён|плетенк|braid|sleeving|нейлон|(?<![A-Za-z])PET(?![A-Za-z])|ПЭТ", re.IGNORECASE)
 _CORRUGATED = re.compile(r"гофр|corrug|(?<![A-Za-z])split", re.IGNORECASE)
+_CAMBRIC = re.compile(r"кембрик", re.IGNORECASE)
+_TAPE = re.compile(r"изолент|(?<![а-яё])лент[аы]?(?![а-яё])|\btape\b", re.IGNORECASE)
+_WIDTH = re.compile(rf"(?<![\d.,/])({_NUM})\s*(?:мм)?\s*[хx×]", re.IGNORECASE)
 _SPLIT_NO = re.compile(r"неразрез|не\s+разрез|solid|closed", re.IGNORECASE)
 _SPLIT_YES = re.compile(r"разрез|split|slit", re.IGNORECASE)
 _PAIR = re.compile(rf"(?<![\d.,])({_NUM})\s*/\s*({_NUM})(?![\d]|:)")
@@ -96,7 +100,8 @@ def classify(fields: Mapping[str, Any]) -> tuple[str | None, str]:
         return group, "по группе"
     if sheet_group:
         return None, ""
-    for group, pattern in ((TTK, _GLUE), (TUT, _SHRINK), (BRAID, _BRAID), (CORRUGATED, _CORRUGATED)):
+    for group, pattern in ((TTK, _GLUE), (TUT, _SHRINK), (CAMBRIC, _CAMBRIC), (BRAID, _BRAID), (CORRUGATED, _CORRUGATED),
+                           (TAPE, _TAPE)):
         if pattern.search(text):
             if group == TUT and (glued in ("да", "yes", "true", "+")):
                 group = TTK
@@ -119,6 +124,7 @@ class Parsed:
     inner_mm: float | None = None       # гофра
     outer_mm: float | None = None
     split: bool | None = None
+    width_mm: float | None = None       # ленты: ширина
     material: str = ""
     material_short: str = ""
     temp_min_c: float | None = None
@@ -222,6 +228,14 @@ def parse(fields: Mapping[str, Any], group: str) -> Parsed:
         parsed.inner_mm, parsed.outer_mm = inner, outer
         text = f"{name} {parsed.series}"
         parsed.split = False if _SPLIT_NO.search(text) else True if _SPLIT_YES.search(text) else None
+    elif group == TAPE:
+        width = before
+        if width is None:
+            size = _SIZE_MM.search(name) or _WIDTH.search(name)
+            width = _f(size.group(1)) if size else None
+            if width is not None:
+                parsed.notes.append("ширина из названия")
+        parsed.width_mm = width
     else:
         parsed.before_mm, parsed.after_mm = before, after
     return parsed
@@ -229,8 +243,10 @@ def parse(fields: Mapping[str, Any], group: str) -> Parsed:
 
 def diameter(parsed: Parsed, group: str) -> float | None:
     """The size a group is ordered by."""
-    if group in (TUT, TTK, OTHER):
+    if group in (TUT, TTK, CAMBRIC, OTHER):
         return parsed.before_mm
+    if group == TAPE:
+        return parsed.width_mm
     if group == BRAID:
         return parsed.nominal_mm if parsed.nominal_mm is not None else parsed.min_mm
     return parsed.inner_mm
@@ -241,13 +257,14 @@ def _natural(text: str) -> list[tuple[int, Any]]:
 
 
 def sort_key(group: str, parsed: Parsed, name: str):
-    """Series (empty last), then Ø as a number (unknown last), then the name."""
+    """Size as a number (Ø, a tape's width; unknown last), then the name with numbers as numbers (owner 15.10.2026: the
+    series is a column, not the order)."""
     size = diameter(parsed, group)
-    return (not parsed.series_family, _natural(parsed.series_family), size is None, size or 0.0, _natural(name))
+    return (size is None, size or 0.0, _natural(name))
 
 
 def build(records: list[tuple[str, Mapping[str, Any]]]) -> dict[str, Any]:
-    """[(record id, fields)] → `{counts, rows}`; rows of the covering groups only, in group → series → Ø order."""
+    """[(record id, fields)] → `{counts, rows}`; rows of the covering groups only, in group → size → name order."""
     rows: list[tuple[str, Parsed, dict[str, Any]]] = []
     for record_id, fields in records:
         group, source = classify(fields)

@@ -64,14 +64,20 @@ def _cores(fields: Mapping[str, str]) -> int | None:
 
 
 # The база монтажных проводов (owner 12.10.2026: «UL1061 UL1571 UL1007 UL3239 НВ-4 600 ПВАМ МГТФ МГШВ МС 16-13
-# МС 15-11 МК 26-13 ПУГВ … остальные марки туда не заноси»): series key → the start of a mark that names it. Spaces
+# МС 15-11 МК 26-13 ПУГВ … остальные марки туда не заноси»); 15.10.2026: «Прочие кабели» closed — every single-core
+# series it held moves here (UL1015 … Кабель высоковольтный). Series key → the start of a mark that names it. Spaces
 # and hyphens inside a series name are free («МС16-13» = «МС 16-13»), the next character must not continue the name
-# (МГТФЭ, ПуГВнг(А)-LS, UL10610 are other wires), a mark is matched from its start (МНВ-4 is not НВ-4).
+# (МГТФЭ, ПуГВнг(А)-LS for ПуГВ, UL10610 are other wires), a mark is matched from its start (МНВ-4 is not НВ-4).
+# The order is the column order of «Ø изоляции по маркам» (`wire_dia`): new series go to the end.
 HOOKUP_SERIES = (
     ("UL1061", r"UL[\s-]*1061"), ("UL1571", r"UL[\s-]*1571"), ("UL1007", r"UL[\s-]*1007"), ("UL3239", r"UL[\s-]*3239"),
     ("НВ-4", r"НВ[\s-]*4"), ("ПВАМ", r"ПВАМ"), ("МГТФ", r"МГТФ"), ("МГШВ", r"МГШВ"),
     ("МС 16-13", r"МС[\s-]*16[\s-]*13"), ("МС 15-11", r"МС[\s-]*15[\s-]*11"), ("МК 26-13", r"МК[\s-]*26[\s-]*13"),
     ("ПуГВ", r"ПУГВ"),
+    ("UL1015", r"UL[\s-]*1015"), ("UL3135", r"UL[\s-]*3135"), ("UL758", r"UL[\s-]*758"), ("НВМ", r"НВМ"),
+    ("МНВ-4", r"МНВ[\s-]*4"), ("ПГВА", r"ПГВА"), ("ПуГВнг(А)-LS", r"ПУГВНГ\s*\(\s*А\s*\)[\s-]*LS"),
+    ("Силиконовый провод", r"СИЛИКОНОВЫЙ[\s-]+ПРОВОД"), ("AGR2", r"AGR[\s-]*2"),
+    ("Кабель высоковольтный", r"КАБЕЛЬ[\s-]+ВЫСОКОВОЛЬТНЫЙ"),
 )
 _HOOKUP_PATTERNS = tuple(
     (key, re.compile(rf"^(?:ПРОВОД\s+)?{pattern}(?![0-9A-ZА-ЯЁ(])")) for key, pattern in HOOKUP_SERIES
@@ -83,7 +89,8 @@ NOT_HOOKUP_REASON = "марка не из базы монтажных"
 
 def hookup_series(mark: str) -> str | None:
     """The series key of a mark from the база монтажных проводов, or None: «МС16-13 0,08» → «МС 16-13», «НВ-4 600
-    0,20» → «НВ-4», «ПуГВ 1,0» → «ПуГВ»; «ПуГВнг(А)-LS 1х1,0», «МНВ-4 0,12», «UL1015 26AWG», «НВМ 0,35» → None."""
+    0,20» → «НВ-4», «ПуГВ 1,0» → «ПуГВ», «ПуГВнг(А)-LS 1х1,0» → «ПуГВнг(А)-LS», «МНВ-4 0,12» → «МНВ-4»; «МГТФЭ 0,2»,
+    «UL10610 28AWG», «M22759/16 22AWG» → None."""
     text = " ".join(str(mark or "").split()).upper().replace("Ё", "Е")
     for candidate in (text, text.translate(_LATIN_TWINS)):
         for key, pattern in _HOOKUP_PATTERNS:
@@ -139,7 +146,7 @@ def auto_kind(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | s
 
 
 def left_hookups(fields: Mapping[str, str], mark: str, dia_keys: frozenset[str] | set[str]) -> bool:
-    """A row the shape rule calls монтажный that the база монтажных sends to прочие (UL1015, AGR2, силиконовый…)."""
+    """A row the shape rule calls монтажный that the база монтажных sends to прочие (a single-core mark of no series)."""
     return shape_kind(fields, mark, dia_keys)[0] == CableKind.WIRE and auto_kind(fields, mark, dia_keys)[0] == CableKind.OTHER
 
 

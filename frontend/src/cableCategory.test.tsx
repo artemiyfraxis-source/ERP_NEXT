@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
 import { CableTable } from "./CableTables";
-import { cableCategory, cableGroup, cableSeries, compareCables, screenSplit } from "./cableCategory";
+import { cableCategory, cableFamily, cableGroup, cableSeries, compareByFamily, compareCables, screenSplit } from "./cableCategory";
 import type { CablesResult } from "./api";
 
 it.each([
@@ -47,17 +47,67 @@ it("sorts naturally: category, screen, series, cores as a number, section as a n
   expect(cableSeries("UL2464 24AWG 4C")).toBe("UL2464");
 });
 
-it("renders the «Кабели» table in groups of category and screen", () => {
+it("renders «Прочие кабели» in groups of category and screen", () => {
+  const row = (mark: string, fields: Record<string, string>) => ({
+    id: mark, kind: "other" as const, auto_kind: "other" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
+    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Тип провода": "многожильный", ...fields } },
+  });
+  const data = {
+    columns: ["Марка", "Тип провода", "Число жил", "Экран", "Категория"], counts: { coax: 0, wire: 0, multi: 0, other: 3 }, gauges: [],
+    rows: [row("LiYCY 4x0,5", { "Экран": "оплётка" }), row("Cat5e U/UTP", { "Экран": "нет" }), row("Нестандартный", { "Экран": "", "Категория": "Силовые" })],
+  } as unknown as CablesResult;
+  render(<CableTable kind="other" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
+  expect(screen.getByText("Витая пара / Ethernet · без экрана")).toBeInTheDocument();
+  expect(screen.getByText("Контрольные / управления · экранированный")).toBeInTheDocument();
+  expect(screen.getByText("Силовые · без экрана")).toBeInTheDocument();
+});
+
+// Owner 15.10.2026: «нормальная сортировка по маркам — ПВВС, КДЭВГ, CAT5e, CAT6 и т.д.» — the marks of production.
+it.each([
+  ["ПВВС 4×0,35", {}, "ПВВС"], ["ПВС 3x1,5", {}, "ПВС"], ["ШВВП 2x0,75", {}, "ШВВП"], ["H05RN-F 3x0,75", {}, "H05RN-F"],
+  ["КДЭВГ 9х0,14", {}, "КДВВГ / КДЭВГ"], ["КДВВГ 6x0,14", {}, "КДВВГ / КДЭВГ"], ["КСПВГ 4x0,20", {}, "КСПВ / КСПВГ"],
+  ["КСПЭВ 4х0,50", {}, "КСПЭВ / КСПЭВГ"], ["КСПЭВГ 4x0,35", {}, "КСПЭВ / КСПЭВГ"], ["RVVP 16x0,3", {}, "РВВП"],
+  ["ШТЛЭн-4", {}, "ШТЛЭн / ШТСПЭн"], ["ШТСПЭн 2х2-А", {}, "ШТЛЭн / ШТСПЭн"], ["МКШ 2x0,75", {}, "МКШ"],
+  ["FLEXICORE LiYCY 4x0,5", {}, "LiYCY"], ["FLEXICORE® 100 нг(А)-LS 3G2,5", {}, "FLEXICORE"],
+  ["PAAR-TRONIC-CY 4x2x0,5", {}, "PAAR-TRONIC-CY"], ["CCC-9GG", {}, "UL2464 (CCC / CCCU)"], ["CCCU-4G-26", {}, "UL2464 (CCC / CCCU)"],
+  ["U/UTP 4х2х0,52мм Cat 5e", {}, "U/UTP Cat5e"], ["ParLan Patch U/UTP Cat5e 2x2x0,48", {}, "U/UTP Cat5e"],
+  ["Cat5e", { "Экран": "" }, "U/UTP Cat5e"], ["U/UTP Cat 5 25 пар 24 AWG", {}, "U/UTP Cat5"],
+  ["CAT5e FTP 4PR 24AWG", {}, "F/UTP Cat5e"], ["FTP-4P-Cat.5e-SOLID-GY", {}, "F/UTP Cat5e"], ["F/UTP Cat 5e PE 4х2х0,52", {}, "F/UTP Cat5e"],
+  ["F/UTP 24AWG черный", { "Тип провода": "витая пара (LAN)", "Производители": "генерик Cat5e F/UTP" }, "F/UTP Cat5e"],
+  ["Cat5 C5-F/U-26/7FRPVC-BK Teldor", {}, "F/UTP Cat5"], ["Cat5 RC5-LB1", { "Экран": "оплётка луж. медь" }, "S/UTP Cat5"],
+  ["SFTP-4P-Cat.5e", {}, "SF/UTP Cat5e"], ["SSTP-4P-Cat.7-PATCH-IN-LSZH", {}, "S/FTP Cat7"], ["U/UTP Cat6 4x2x0,57", {}, "U/UTP Cat6"],
+  ["DS1057-16-30", {}, "Шлейфы плоские"], ["6XV1830-0EH10", {}, "PROFIBUS"], ["TSK1160", { "Тип провода": "USB-кабель" }, "USB"],
+  ["SDI мультикор RGB5s-15 First Cable", {}, "Мультикор SDI / RGB"], ["UL2725 28AWG", {}, "UL2725"],
+])("puts %s into the family of its mark", (mark, fields, family) => {
+  expect(cableFamily({ "Марка": mark, "Тип провода": "многожильный", ...fields }).family).toBe(family);
+});
+
+it("lets the cell «Семейство» win and orders families, then cores and section as numbers", () => {
+  expect(cableFamily({ "Марка": "КСПВГ 4x0,20", "Семейство": "Сигнальные" })).toMatchObject({ family: "Сигнальные", manual: true });
+  const cable = (mark: string, cores: string, section: string) => ({ "Марка": mark, "Тип провода": "", "Число жил": cores, "Сечение, мм2": section });
+  const rows = [
+    cable("U/UTP Cat6 4x2x0,57", "8", "0,25"), cable("F/UTP Cat5e 4x2x0,52", "8", "0,2"), cable("U/UTP Cat5e 4x2x0,52", "8", "0,2"),
+    cable("КСПВГ 10x0,20", "10", "0,2"), cable("КСПВГ 4x0,50", "4", "0,5"), cable("КСПВГ 4x0,20", "4", "0,2"),
+    cable("ПВС 3x1,5", "3", "1,5"), cable("ПВС 2x0,75", "2", "0,75"), cable("Неведомый 2x1", "2", "1"),
+  ];
+  expect([...rows].sort(compareByFamily).map((row) => row["Марка"])).toEqual([
+    "ПВС 2x0,75", "ПВС 3x1,5", "КСПВГ 4x0,20", "КСПВГ 4x0,50", "КСПВГ 10x0,20",
+    "U/UTP Cat5e 4x2x0,52", "F/UTP Cat5e 4x2x0,52", "U/UTP Cat6 4x2x0,57", "Неведомый 2x1",
+  ]);
+});
+
+it("renders «Многожильные кабели» in groups of the mark family with the screen as a column", () => {
   const row = (mark: string, fields: Record<string, string>) => ({
     id: mark, kind: "multi" as const, auto_kind: "multi" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
     record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Тип провода": "многожильный", ...fields } },
   });
   const data = {
-    columns: ["Марка", "Тип провода", "Число жил", "Экран", "Категория"], counts: { coax: 0, wire: 0, multi: 3, other: 0 }, gauges: [],
-    rows: [row("LiYCY 4x0,5", { "Экран": "оплётка" }), row("Cat5e U/UTP", { "Экран": "нет" }), row("Нестандартный", { "Экран": "", "Категория": "Силовые" })],
+    columns: ["Марка", "Тип провода", "Число жил", "Экран"], counts: { coax: 0, wire: 0, multi: 3, other: 0 }, gauges: [],
+    rows: [row("LiYCY 4x0,5", { "Экран": "оплётка" }), row("U/UTP Cat5e 4x2x0,52", { "Экран": "нет" }), row("КДЭВГ 9х0,14", { "Экран": "фольга" })],
   } as unknown as CablesResult;
   render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
-  expect(screen.getByText("Витая пара / Ethernet · без экрана")).toBeInTheDocument();
-  expect(screen.getByText("Контрольные / управления · экранированный")).toBeInTheDocument();
-  expect(screen.getByText("Силовые · без экрана")).toBeInTheDocument();
+  const groups = screen.getAllByRole("row").filter((item) => item.classList.contains("group-row")).map((item) => item.textContent);
+  expect(groups).toEqual(["КДВВГ / КДЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
+  expect(screen.getByRole("columnheader", { name: "Экран" })).toBeInTheDocument();
+  expect(screen.queryByText("Разобрать позже")).toBeNull();
 });

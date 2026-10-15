@@ -11,7 +11,7 @@ import {
   type CablesResult,
   type TechOperationRecord,
 } from "./api";
-import { CATEGORIES, CATEGORY_CELL, cableCategory, cableGroup, compareCables } from "./cableCategory";
+import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, cableGroup, compareByFamily, compareCables } from "./cableCategory";
 import { coaxGroupOf, coaxNaming, sortCoax } from "./coaxFamilies";
 import { cellFailure, ownCellEdit } from "./CustomColumn";
 import { MakersInput } from "./WireFieldWidgets";
@@ -87,10 +87,12 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   const [adding, setAdding] = useState(false);
   const grouped = kind === "multi" || kind === "other";
   const cells = (row: CableRow): Record<string, string> => ({ "Марка": row.cable, ...(row.record?.fields ?? {}) });
-  // «Кабели»: groups by category and screen, natural order inside (series, cores, section as numbers).
+  // «Многожильные» (owner 15.10.2026): groups by mark family (ПВВС, КДВВГ / КДЭВГ, F/UTP Cat5e…), cores and section
+  // as numbers inside; «Прочие» — by category and screen, natural order inside.
   const rows = useMemo(() => {
     const own = data.rows.filter((row) => row.kind === kind);
-    return grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
+    return kind === "multi" ? own.sort((a, b) => compareByFamily(cells(a), cells(b)))
+      : grouped ? own.sort((a, b) => compareCables(cells(a), cells(b))) : kind === "coax" ? sortCoax(own) : own;
   }, [data.rows, kind, grouped]);
   const coaxGroup = useMemo(() => coaxGroupOf(rows), [rows]);
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
@@ -177,11 +179,11 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}
-      groupBy={grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
+      groupBy={kind === "multi" ? (row) => cableFamily(cells(row)).family : grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
       presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
         : rows.some((row) => !field(row, "Наружный диаметр, мм").trim()) ? [{ label: "Без Ø", test: (row) => !field(row, "Наружный диаметр, мм").trim() }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}
-      toolbar={<>{toolbar}{kind === "multi" && <span className="db-later">Разобрать позже</span>}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
+      toolbar={<>{toolbar}{canEdit && !adding && <button type="button" className="secondary small" onClick={() => setAdding(true)}>+ Запись</button>}</>}
     />
   </>;
 }
