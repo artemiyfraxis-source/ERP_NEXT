@@ -235,10 +235,14 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       } catch (reason) { throw cellFailure(reason); }
     },
   } : undefined;
-  const columns: DataColumn<CableRow>[] = [
-    { key: "cable", title: "Марка провода", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
+  const base: DataColumn<CableRow>[] = [
+    { key: "cable", title: "Марка провода", value: (row) => row.cable, render: (row) => <>
+      <strong>{row.cable}</strong>
+      {!row.hookup && <> <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span></>}
+    </> },
+    // The series is the group header (owner 16.10: «серию исключить») — kept in «Колонки», hidden.
     {
-      key: "series", title: "Серия", value: (row) => row.hookup?.series ?? "",
+      key: "series", title: "Серия", hidden: true, value: (row) => row.hookup?.series ?? "",
       render: (row) => row.hookup ? row.hookup.series : <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span>,
     },
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
@@ -261,6 +265,11 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     })),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
+  // The materials right after «Ø наружный» (owner 16.10: «материалы после наружного диаметра»).
+  const materials = base.filter((column) => column.key === CORE_MATERIAL || column.key === JACKET_MATERIAL);
+  const rest = base.filter((column) => !materials.includes(column));
+  const outer = rest.findIndex((column) => column.key === "outer");
+  const columns = [...rest.slice(0, outer + 1), ...materials, ...rest.slice(outer + 1)];
   const detail = (row: CableRow) => canEdit
     ? <HookupEditor key={`${row.id}:${JSON.stringify(row.hookup ?? null)}:${JSON.stringify(row.record?.fields ?? {})}:${row.kind}`}
       row={row} columns={data.columns} gauges={gauges} onSaved={onSaved} onError={onError} kindSelect={kindSelect} seriesColors={seriesColors} makerNames={makerNames} />
@@ -276,7 +285,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       rows={rows}
       columns={columns}
       rowKey={(row) => row.id}
-      storageKey="db:cables:wire-structured:3"
+      storageKey="db:cables:wire-structured:4"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       exportName="Монтажные провода"
