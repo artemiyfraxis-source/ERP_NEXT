@@ -45,6 +45,7 @@ import {
   terFromFields,
   twistPitchForZ0_,
   twistZ0_,
+  setCableJacketShrink,
   setWireCores,
   updateEndpoint,
   updateWire,
@@ -62,7 +63,8 @@ import {
   type Tab,
   type Tmpl,
   type WrapKind,
-  type JacketShrink,
+  type CableJacketShrink,
+  type WireEntry,
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
 import { schemeArt } from "./routeCards";
@@ -567,7 +569,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [termPairsKey]);
   // Экран кабеля — не отдельный провод резки: на эскизах маршрута его нет.
-  const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList.filter((u) => !u.shield), pinHousings, pinFree);
+  // Кабель в оболочке (жил > 1) — одним кабелем с жилами веером, а не N проводами (владелец 15.10).
+  const artCables = gen.activeWires_().filter((w) => gen.isJacketedCable_(w) && gen.wireCores_(w) > 1)
+    .map((w) => ({ idx: w.idx, mark: compLabel(w.compId), cores: gen.wireCores_(w) }));
+  const routeArt = schemeArt(routeSpecs, pinEnds, pinUnitList.filter((u) => !u.shield), pinHousings, pinFree, artCables);
   // Автозаполнение (владелец 12.10): распиновка пустая, а число контактов каждого разъёма известно из базы разъёмов —
   // провода встают по порядку сами (одна сторона — 1…N, две — пин-в-пин). Один раз на набор разъёмов и проводов:
   // очищенную вручную распиновку не перезаполняет; не помещается — не трогает, предупреждение под схемой.
@@ -1057,30 +1062,31 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     {note.text && <small className={note.explicit ? "opt-note" : "opt-note tone-danger"}>{note.text}{note.warn && <><br /><span className="tone-danger">⚠ {note.warn}</span></>}</small>}
   </Toggle>;
 
-  // «Термоусадка на место разделки» (владелец 15.10): по стороне — трубка из состава и длина (пусто — 25 мм).
-  const jsSides = (["A", "B"] as Side[]).filter((side) => gen.endpointsOnSide_(side).length > 0 && gen.jacketCablesOnSide_(side) > 0);
-  const setJs = (side: Side, patch: Partial<JacketShrink>) => update((current) => ({ ...current,
-    jacketShrink: { ...current.jacketShrink, [side]: { on: false, mat: "", len: "", ...current.jacketShrink?.[side], ...patch } } }));
   const sleeveWarning = typical ? gen.sleeveWarning_() : "";
-  const jacketShrinkToggle = jsSides.length > 0 && <Toggle key="jacketShrink" checked={jsSides.some((side) => !!S.jacketShrink?.[side]?.on)} title="Термоусадка на место разделки"
-    hint="трубка на срез оболочки: надевается до обжима, усаживается после монтажа стороны"
-    onChange={(on) => update((current) => ({ ...current, jacketShrink: { ...current.jacketShrink,
-      ...Object.fromEntries(jsSides.map((side) => [side, { mat: "", len: "", ...current.jacketShrink?.[side], on }])) } }))}>
-    {jsSides.map((side) => {
-      const js = S.jacketShrink?.[side], n = gen.jacketCablesOnSide_(side);
-      return <div className="opt-grid" key={side}>
-        <Chip checked={!!js?.on} onChange={(on) => setJs(side, { on })}>Сторона {sideRu_(side)}</Chip>
-        <Field label={`Трубка из состава · ${n} ${plural(n, "кабель", "кабеля", "кабелей")} на изделие`} className="span2">{selectComps(gen.shrinkCandidates_(), js?.mat || gen.defaultJacketShrinkComp_()?.id || "", (id) => setJs(side, { mat: id }),
-          `Трубка на место разделки ${sideRu_(side)}`, "— нет ТУТ/ТТК в составе —")}</Field>
-        <Field label="Длина"><UnitInput unit="мм" aria-label={`Длина трубки на место разделки ${sideRu_(side)}`} value={js?.len ?? ""} placeholder={JACKET_SHRINK_LEN_MM_}
-          onChange={(event) => setJs(side, { len: event.target.value })} /></Field>
-      </div>;
-    })}
-  </Toggle>;
+
+  /** «Термоусадка на срез оболочки» строки «Кабели» (владелец 15.10: «это настройка провода, а не разъёма»): стороны, где
+   *  кабель заведён в разъём, трубка из состава и длина (пусто — 25 мм). */
+  function cableJacketShrinkRow(w: WireEntry, n: number) {
+    if (!gen.isJacketedCable_(w)) return null;
+    const sides = (["A", "B"] as Side[]).filter((side) => gen.cableEnds_(side).some((x) => x.w.idx === w.idx));
+    if (!sides.length) return null;
+    const js = gen.cableJacketShrink_(w);
+    const on = sides.some((side) => !!js?.[side]);
+    const set = (patch: Partial<CableJacketShrink>) => update((current) => setCableJacketShrink(D, current, w.idx, patch));
+    return <div className="cable-js" role="group" aria-label={`Термоусадка на срез оболочки, кабель ${n + 1}`}>
+      <span className="cable-js-cap">Термоусадка на срез оболочки</span>
+      {sides.map((side) => <Chip key={side} checked={!!js?.[side]} onChange={(value) => set({ [side]: value })}>{sideRu_(side)}</Chip>)}
+      {on && <>
+        <Field label="Трубка" className="cable-js-tube">{selectComps(gen.shrinkCandidates_(), js?.mat || gen.defaultJacketShrinkComp_()?.id || "", (id) => set({ mat: id }),
+          `Трубка на срез оболочки, кабель ${n + 1}`, "— нет ТУТ/ТТК в составе —")}</Field>
+        <Field label="Длина" className="cable-js-len"><UnitInput unit="мм" aria-label={`Длина трубки на срез оболочки, кабель ${n + 1}`} value={js?.len ?? ""}
+          placeholder={JACKET_SHRINK_LEN_MM_} onChange={(event) => set({ len: event.target.value })} /></Field>
+      </>}
+    </div>;
+  }
 
   // Обработка — по смыслу: концы провода, жгут целиком, автомат при резке. Пустая группа не показывается.
   const ends = [
-    jacketShrinkToggle,
     <Toggle key="free" checked={S.freeStrip.enabled} title="Зачистка свободных концов" hint="без стороны В, без лужения"
       onChange={(on) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, enabled: on } }))}>
       <Field label="Длина зачистки" className="short"><UnitInput unit="мм" value={S.freeStrip.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, len: event.target.value } }))} /></Field>
@@ -1194,6 +1200,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             <button type="button" className="btn-remove" title="Удалить кабель" aria-label={`Удалить кабель ${n + 1}`} onClick={() => update((current) => ({ ...current, wires: current.wires.filter((x) => x.idx !== w.idx) }))}>×</button>
             {cores > 1 && <CableCoreColors label={`кабель ${n + 1}`} colors={gen.coreColors_(w).slice(0, cores)}
               onSet={(patch) => update((current) => setCableCoreColors(D, current, w.idx, patch))} />}
+            {cableJacketShrinkRow(w, n)}
             {/* Кабель в оболочке (UL2575…), набранный N проводами по 1 жиле — так сохранены карты до 14.10. Сами не меняем:
                 предлагаем одним щелчком сделать его кабелем на N жил (цвета и контакты жил сохраняются). */}
             {(() => {
