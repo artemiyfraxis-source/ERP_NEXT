@@ -200,7 +200,7 @@ describe("coax column order (owner 15.10: «сначала конструкти�
     "Марка кабеля", "D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм", "Наружный диаметр, мм",
     "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки", "Волновое сопротивление, Ом",
     "Диапазон частот", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены",
-    "Тип провода", "Карточка",
+    "Карточка",
   ];
   const withColumns = (columns: string[], own: string[]) => {
     mockApi();
@@ -234,14 +234,17 @@ describe("coax column order (owner 15.10: «сначала конструкти�
   });
 
   it("keeps the coax materials off the multicore list; its supply columns stay apart", async () => {
-    withColumns([...BASE, ...OWN], OWN);
+    withColumns([...BASE, ...OWN, "Материал изоляции жилы"], [...OWN, "Материал изоляции жилы"]);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
     await screen.findByText("КСПВГ 4x0,20");
     const shown = heads();
-    expect(shown.filter((name) => name.startsWith("Материал"))).toEqual([]); // owner 15.10: «для каждой группы свои требования»
-    expect(shown).toEqual(expect.arrayContaining(["Экран", "Изоляция", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"]));
+    // owner 15.10: «у многожильных нужно материал жилы, материал изоляции жилы, материал экрана если есть, материал оболочки»
+    expect(shown.filter((name) => name.startsWith("Материал"))).toEqual(["Материал жилы", "Материал изоляции жилы", "Материал экрана", "Материал оболочки"]);
+    expect(shown).not.toContain("Изоляция");
+    expect(shown).not.toContain("Экран");
+    expect(shown).toEqual(expect.arrayContaining(["Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"]));
   });
 
   it("gives the range of the VNA span, else DC up to the rated maximum, never the cut-off", () => {
@@ -456,7 +459,7 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     expect(cellOf("RG316", "Карточка")).not.toHaveClass("dt-editable");
     expect(cellOf("RG316", "Стандарт")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: the server would refuse it
     expect(cellOf("RG316", "Поставщик")).not.toHaveClass("dt-editable");
-    expect(cellOf("RG58", "Тип провода")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
+    expect(cellOf("RG58", "Стандарт")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
     expect(cellOf("RG58", "D1 жила, мм")).toHaveClass("dt-editable");
     unmount();
 

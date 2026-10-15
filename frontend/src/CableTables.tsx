@@ -48,20 +48,25 @@ const RANGE = "__range";
 const CARD = "__card";
 export const COAX_MATERIALS = ["Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки"];
 // The owner's own БД.ПРОВ columns among the listed ones (added by the fills, not in the base header).
-const OWN_LISTED = new Set([...COAX_MATERIALS, "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
+// Multicore (owner 15.10.2026: «изоляция слишком обобщённо, тут нет диэлектрика»): core, core insulation, screen if any,
+// jacket — instead of the old «Изоляция» / «Экран» text cells, which stay in «Колонки», hidden.
+export const MULTI_MATERIALS = ["Материал жилы", "Материал изоляции жилы", "Материал экрана", "Материал оболочки"];
+const OWN_LISTED = new Set([...COAX_MATERIALS, ...MULTI_MATERIALS, "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
 const SUPPLY = ["Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"];
 const SHOWN: Record<CableKind, string[]> = {
   coax: ["Наружный диаметр, мм", ...COAX_MATERIALS, "Волновое сопротивление, Ом", RANGE, "Стандарт", "Производители",
-    "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены", TYPE, CARD],
-  wire: [TYPE, "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Материал жилы", "Изоляция", "Цвета",
+    "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены", CARD],
+  wire: ["Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Материал жилы", "Изоляция", "Цвета",
     "Темп. от, °C", "Темп. до, °C", "Напряжение, В", ...SUPPLY],
-  multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт", "Производители", ...SUPPLY],
-  other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В",
+  multi: ["Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", ...MULTI_MATERIALS, "Стандарт", "Производители", ...SUPPLY],
+  other: ["Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", ...MULTI_MATERIALS, "Волновое сопротивление, Ом", "Напряжение, В",
     "Стандарт", "Производители", ...SUPPLY],
 };
 // Each list has its own set (owner 15.10.2026: «для каждой группы свои требования»): an own column listed for another
 // list — the coax materials on the multicore list — stays in «Колонки», hidden, instead of a column of dashes.
-const LISTED_ANYWHERE = new Set(Object.values(SHOWN).flat());
+// «Тип провода» is not listed (owner 15.10: «тут мне тип не нужен»): the list and the group already say it; it stays
+// in «Колонки» and in the card.
+const LISTED_ANYWHERE = new Set([...Object.values(SHOWN).flat(), TYPE, "Изоляция", "Экран"]);
 // A new row starts in the list it was added from.
 const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   coax: { [TYPE]: "коаксиальный", "Число жил": "1" },
@@ -200,7 +205,7 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       onEdited={() => onSaved("")}
       // A saved layout keeps its order and hidden set: the coax order of 15.10 (materials, one range, the supplier
       // columns) starts from a new key, so a layout saved before it does not hide the new order.
-      storageKey={kind === "coax" ? "db:cables:coax:3" : `db:cables:${kind}:2`}
+      storageKey={kind === "coax" ? "db:cables:coax:4" : `db:cables:${kind}:3`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}

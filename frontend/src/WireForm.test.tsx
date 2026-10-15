@@ -105,9 +105,9 @@ it("shows the stranding of the wire in its own column and form field, not in the
   expect(screen.queryByText("7×0,16")).toBeNull();
 });
 
-it("puts «Скрутка» under «Основное» of the wire form and as a table column", () => {
+it("puts «Структура жилы» under «Основное» of the wire form and as a table column", () => {
   open();
   expect(screen.getAllByText("7×0,16").length).toBeGreaterThan(0);
   const main = screen.getByRole("heading", { name: "Основное" }).closest("section") as HTMLElement;
-  expect(within(main).getByLabelText("Скрутка: проволок × Ø, мм")).toHaveValue("7×0,16");
+  expect(within(main).getByLabelText("Структура жилы: проволок × Ø, мм")).toHaveValue("7×0,16");
 });
