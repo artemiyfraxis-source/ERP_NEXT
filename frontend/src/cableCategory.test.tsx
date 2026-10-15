@@ -65,11 +65,11 @@ it("renders «Прочие кабели» in groups of category and screen", () 
 // Owner 15.10.2026: «нормальная сортировка по маркам — ПВВС, КДЭВГ, CAT5e, CAT6 и т.д.» — the marks of production.
 it.each([
   ["ПВВС 4×0,35", {}, "ПВВС"], ["ПВС 3x1,5", {}, "ПВС"], ["ШВВП 2x0,75", {}, "ШВВП"], ["H05RN-F 3x0,75", {}, "H05RN-F"],
-  ["КДЭВГ 9х0,14", {}, "КДВВГ / КДВЭВГ"], ["КДВВГ 6x0,14", {}, "КДВВГ / КДВЭВГ"], ["КДВЭВГ 4х0,50", {}, "КДВВГ / КДВЭВГ"], ["КСПВГ 4x0,20", {}, "КСПВ / КСПВГ"],
-  ["КСПЭВ 4х0,50", {}, "КСПЭВ / КСПЭВГ"], ["КСПЭВГ 4x0,35", {}, "КСПЭВ / КСПЭВГ"], ["RVVP 16x0,3", {}, "РВВП"],
-  ["ШТЛЭн-4", {}, "ШТЛЭн / ШТСПЭн"], ["ШТСПЭн 2х2-А", {}, "ШТЛЭн / ШТСПЭн"], ["МКШ 2x0,75", {}, "МКШ"],
+  ["КДЭВГ 9х0,14", {}, "КДЭВГ"], ["КДВВГ 6x0,14", {}, "КДВВГ"], ["КДВЭВГ 4х0,50", {}, "КДВЭВГ"], ["КСПВГ 4x0,20", {}, "КСПВГ"],
+  ["КСПЭВ 4х0,50", {}, "КСПЭВ"], ["КСПЭВГ 4x0,35", {}, "КСПЭВГ"], ["RVVP 16x0,3", {}, "РВВП"],
+  ["ШТЛЭн-4", {}, "ШТЛЭн"], ["ШТСПЭн 2х2-А", {}, "ШТСПЭн"], ["МКШ 2x0,75", {}, "МКШ"],
   ["FLEXICORE LiYCY 4x0,5", {}, "LiYCY"], ["FLEXICORE® 100 нг(А)-LS 3G2,5", {}, "FLEXICORE"],
-  ["PAAR-TRONIC-CY 4x2x0,5", {}, "PAAR-TRONIC-CY"], ["CCC-9GG", {}, "UL2464 (CCC / CCCU)"], ["CCCU-4G-26", {}, "UL2464 (CCC / CCCU)"],
+  ["PAAR-TRONIC-CY 4x2x0,5", {}, "PAAR-TRONIC-CY"], ["CCC-9GG", {}, "UL2464 CCC"], ["CCCU-4G-26", {}, "UL2464 CCCU"],
   ["U/UTP 4х2х0,52мм Cat 5e", {}, "U/UTP Cat5e"], ["ParLan Patch U/UTP Cat5e 2x2x0,48", {}, "U/UTP Cat5e"],
   ["Cat5e", { "Экран": "" }, "U/UTP Cat5e"], ["U/UTP Cat 5 25 пар 24 AWG", {}, "U/UTP Cat5"],
   ["CAT5e FTP 4PR 24AWG", {}, "F/UTP Cat5e"], ["FTP-4P-Cat.5e-SOLID-GY", {}, "F/UTP Cat5e"], ["F/UTP Cat 5e PE 4х2х0,52", {}, "F/UTP Cat5e"],
@@ -107,7 +107,7 @@ it("renders «Многожильные кабели» in groups of the mark fami
   } as unknown as CablesResult;
   render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
   const groups = screen.getAllByRole("row").filter((item) => item.classList.contains("group-row")).map((item) => item.textContent);
-  expect(groups).toEqual(["КДВВГ / КДВЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
+  expect(groups).toEqual(["КДЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
   expect(screen.getByRole("columnheader", { name: "Экран" })).toBeInTheDocument();
   expect(screen.queryByText("Разобрать позже")).toBeNull();
 });
