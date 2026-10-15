@@ -1436,7 +1436,7 @@ export interface CablesResult {
 }
 
 /** «Оболочки»: БД.МАТ rows that cover a harness, grouped and parsed by the server (`coverings.py`). */
-export type CoveringGroup = "tut" | "ttk" | "braid" | "corrugated" | "other";
+export type CoveringGroup = "tut" | "ttk" | "cambric" | "corrugated" | "braid" | "tape" | "other";
 export interface CoveringRow {
   id: string;
   name: string;
@@ -1458,6 +1458,8 @@ export interface CoveringRow {
   inner_mm: number | null;
   outer_mm: number | null;
   split: boolean | null;
+  /** Ленты: ширина, мм. */
+  width_mm?: number | null;
   material: string;
   material_short: string;
   temp_min_c: number | null;

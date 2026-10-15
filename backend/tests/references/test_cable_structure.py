@@ -274,7 +274,7 @@ def test_api_cables_carry_structure_sizes_and_cards(tmp_path, sessions, structur
     listed = structure_api.get("/api/references/cables").json()
     pvam = next(row for row in listed["rows"] if row["cable"] == "ПВАМ 0,50")
     assert pvam["hookup"] is None and pvam["hookup_suggestion"]["gauge_id"] == created.json()["id"]
-    agr = next(row for row in listed["rows"] if row["cable"] == "AGR2 Core 0,3")
+    agr = next(row for row in listed["rows"] if row["cable"] == "FLRY-B 0,35")
     assert (agr["kind"], agr["reason"]) == ("other", "марка не из базы монтажных") and "hookup_problem" not in agr
     rg316 = next(row for row in listed["rows"] if row["cable"] == "RG316")
     assert rg316["card"]["name"] == "RG-316" and rg316["card"]["markers"][-1]["peak"]
@@ -317,6 +317,6 @@ def test_structure_hookups_is_idempotent_and_lists_what_it_left(tmp_path, uow):
     again = structure_hookups(ACTOR, NOW, factory)
 
     assert dry["created"] == first["created"] == 2
-    assert first["left"] == []  # AGR2 Core is not in the база монтажных (owner 12.10.2026): «прочие»
+    assert first["left"] == []  # FLRY-B is in no series of the база монтажных: «прочие»
     assert (again["created"], again["structured_before"]) == (0, 2)
     assert sorted(cable_catalog(factory()).hookups) == ["ul106128awg", "пвам0,50"]

@@ -22,6 +22,7 @@ WANTED = {"tut": ("before_mm", "after_mm", "ratio", "material", "temp_min_c", "c
           "ttk": ("before_mm", "after_mm", "ratio", "material", "temp_min_c", "color"),
           "braid": ("nominal_mm", "min_mm", "material", "temp_min_c", "color"),
           "corrugated": ("inner_mm", "outer_mm", "split", "material", "temp_min_c"),
+          "cambric": ("before_mm", "material", "color"), "tape": ("width_mm", "material", "color"),
           "other": ()}
 
 
@@ -41,7 +42,7 @@ def load_rows(source: Path | None) -> list[tuple[str, dict[str, str]]]:
 
 def report(records: list[tuple[str, dict[str, str]]]) -> str:
     result = build(records)
-    lines = [f"Всего в БД.МАТ: {len(records)}; оболочек: {len(result['rows'])}; не оболочки (остаются в «Материалах»): {len(records) - len(result['rows'])}"]
+    lines = [f"Всего в БД.МАТ: {len(records)}; оболочек: {len(result['rows'])}; не оболочки: {len(records) - len(result['rows'])}"]
     for group in GROUP_ORDER:
         rows = [row for row in result["rows"] if row["group"] == group]
         lines.append(f"\n{GROUP_TITLES[group]} · {len(rows)}")

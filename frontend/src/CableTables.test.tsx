@@ -85,6 +85,7 @@ function mockApi(calls: Call[] = [], rows: CableRow[] = ROWS) {
       cables: { coax: 47, wire: 52, multi: 9, other: 56 }, gauges: 24,
     });
     if (path === "/api/references/cables") return json({ columns: [...COLUMNS, "Цвета"], counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows, gauges: GAUGES });
+    if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: [] });
     if (path.endsWith("/hookup")) return json({ hookup: rows[4].hookup_suggestion, record: rows[4].record });
     if (path.startsWith("/api/references/wire-gauges")) return json(GAUGES[0]);
     if (path === "/api/references/cables/diameters") return json(dia("d-new", "x", "", "", ""));
@@ -118,9 +119,10 @@ it("groups the tabs by what the shop picks from and shows a count on every chip"
   }));
   expect(groups).toEqual([
     { title: "Техкарты", tabs: ["Операции", "Оборудование"] },
-    { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы"] },
+    { title: "Разъёмы и контакты", tabs: ["Разъёмы", "Коаксиальные разъёмы", "Терминалы", "Уплотнители и заглушки", "Гильзы и втулки"] },
     { title: "Кабели и провода", tabs: ["Коаксиальные кабели", "Монтажные провода", "Многожильные кабели", "Прочие кабели"] },
-    { title: "Материалы", tabs: ["Оболочки", "Материалы"] },
+    // owner 15.10.2026: «Материалы» расформированы; the old key opens «Оболочки»
+    { title: "Материалы", tabs: ["Оболочки", "Крепёж и тройники", "Расходники"] },
     { title: "Соответствия", tabs: ["Домен → поставщик", "Изготовитель → страна", "Сечения AWG ↔ мм²"] },
   ]);
   const chip = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) });
@@ -179,7 +181,7 @@ it("shows each cable in its own list with the parameters of that list", async ()
 
   fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
   expect(await screen.findByText("КСПВГ 4x0,20")).toBeInTheDocument();
-  expect(screen.getByText("Разобрать позже")).toBeInTheDocument();
+  expect(screen.getByText("КСПВ / КСПВГ")).toBeInTheDocument(); // owner 15.10.2026: groups by mark family
   expect(screen.getByRole("columnheader", { name: "Число жил" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /^Прочие кабели/ }));

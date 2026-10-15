@@ -16,6 +16,9 @@ import { TerminalCard, type TerminalRow } from "./TerminalCard";
 import { CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
+import {
+  MATERIAL_FALLBACK, MATERIAL_GROUP_FIELD, MATERIAL_TABS, isMaterialTab, materialCounts, materialRows, type MaterialTab,
+} from "./materialSections";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, fieldTitle, headerLabel, valueLabel } from "./referenceLabels";
 import {
@@ -39,7 +42,7 @@ import {
 
 type MapTab = "suppliers" | "countries";
 type CableTab = "cab_coax" | "cab_wire" | "cab_multi" | "cab_other";
-export type DbTab = "templates" | "connectors" | "gauges" | "cov" | TechOperationTab | MapTab | CableTab;
+export type DbTab = "templates" | "connectors" | "gauges" | "cov" | TechOperationTab | MapTab | CableTab | MaterialTab;
 type TabDef = { id: DbTab; label: string; base?: string };
 
 const EMPTY_MAPS: ReferenceMaps = { suppliers: [], countries: [], gost_awg: [] };
@@ -56,6 +59,9 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "connectors", label: "Разъёмы" },
     { id: "coax", label: "Коаксиальные разъёмы", base: "coax" },
     { id: "ter", label: "Терминалы", base: "ter" },
+    // Owner 15.10.2026: «Материалы» расформированы — уплотнители, заглушки, гильзы и втулки идут на концы проводов.
+    { id: "mat_seal", label: MATERIAL_TABS.mat_seal.label },
+    { id: "mat_sleeve", label: MATERIAL_TABS.mat_sleeve.label },
   ] },
   // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»; 10.10.2026: сечения — отдельной
   // таблицей, у монтажных жила из неё, многожильные — в отдельную вкладку. БД.ПРОВ, the coax D1·D2·D3 table and the coax
@@ -69,10 +75,12 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "cab_other", label: "Прочие кабели" },
   ] },
   // БД.МАТ is a working base in SUPPLYMAP (PortalRef.gs REF_BASES_ tiles, filled from purchases), not import.
-  // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой.
+  // Owner 12.10.2026: оболочки (ТУТ, ТТК, оплётки, гофра) — отдельной таблицей из строк БД.МАТ, с разбором и сортировкой;
+  // 15.10.2026: вкладку «Материалы» расформировать — каждая строка БД.МАТ в одной вкладке по назначению (materialSections.ts).
   { title: "Материалы", tabs: [
     { id: "cov", label: "Оболочки" },
-    { id: "mat", label: "Материалы", base: "mat" },
+    { id: "mat_fix", label: MATERIAL_TABS.mat_fix.label },
+    { id: "mat_use", label: MATERIAL_TABS.mat_use.label },
   ] },
   { title: "Соответствия", tabs: [
     { id: "suppliers", label: "Домен → поставщик" },
@@ -82,8 +90,8 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
 ];
 const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_other: "other" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
-// D1 · D2 · D3» → коаксиальные кабели.
-const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire" };
+// D1 · D2 · D3» → коаксиальные кабели; «Материалы» (15.10.2026) → «Оболочки», куда ушла бóльшая часть строк.
+const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire", mat: "cov" };
 const MAP_TABS: Record<MapTab, { keyLabel: string; valueLabel: string }> = {
   suppliers: { keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
   countries: { keyLabel: "Изготовитель", valueLabel: "Страна" },
@@ -167,6 +175,11 @@ function isCableTab(tab: DbTab): tab is CableTab {
   return tab in CABLE_TABS;
 }
 
+/** «Прочие кабели» is a to-sort list (owner 15.10.2026: «закрыть»): its tab shows only while it has rows or is open. */
+export function visibleTabs<T extends { id: DbTab }>(tabs: T[], counts: (tab: T) => number | null, active: DbTab): T[] {
+  return tabs.filter((tab) => tab.id !== "cab_other" || tab.id === active || counts(tab) !== 0);
+}
+
 function savedTab(): string {
   try { return window.localStorage.getItem(TAB_STORAGE) ?? ""; } catch { return ""; }
 }
@@ -203,12 +216,17 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [opCount, setOpCount] = useState<number | null>(null);
   const [connectorCount, setConnectorCount] = useState<number | null>(null);
   const [coveringCount, setCoveringCount] = useState<number | null>(null);
+  // БД.МАТ split into tabs: the ids «Оболочки» holds (the server's classifier) and the counts per tab.
+  const [coverIds, setCoverIds] = useState<Set<string> | null>(null);
+  const [matCounts, setMatCounts] = useState<Record<MaterialTab | "cov", number> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [stockLog, setStockLog] = useState(false);
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string> } | null>(null);
-  const techTab = !isMapTab(tab) && !isCableTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
+  const matTab = isMaterialTab(tab) ? tab : null;
+  const techTab: TechOperationTab | null = matTab ? "mat"
+    : !isMapTab(tab) && !isCableTab(tab) && !isMaterialTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" ? tab : null;
   const cableKind = isCableTab(tab) ? CABLE_TABS[tab] : null;
   const viewOnly = VIEW_ONLY_TABS.includes(tab);
   // ID-3: the `erpref` section decides (PortalRef.gs portalSectionEditGuard_), not the role.
@@ -234,6 +252,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       if (next === "ob") {
         void referencesApi.techOperations("op", "", 5000).then((ops) => setObOps(ops.records)).catch(() => setObOps([]));
       }
+      if (next === "mat") void loadMaterialIndex();
       if (next === "coax") {
         const cables = await referencesApi.techOperations("kab_coax", "", 5000).catch(() => ({ records: [] as TechOperationRecord[] }));
         setCableDia(Object.fromEntries(cables.records.map((record) => [cableKey(Object.values(record.fields)[0] ?? ""), record.fields])));
@@ -243,6 +262,20 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       setError(reason instanceof Error ? reason.message : "Не удалось загрузить базу техопераций");
     } finally {
       setTechReady(next);
+    }
+  }
+
+  /** «Оболочки» ids and the per-tab counts of БД.МАТ (a failed call leaves the tabs without numbers). */
+  async function loadMaterialIndex() {
+    try {
+      const [covered, mat] = await Promise.all([referencesApi.coverings(), referencesApi.techOperations("mat", "", 5000)]);
+      const ids = new Set(covered.rows.map((row) => row.id));
+      setCoverIds(ids);
+      setCoveringCount(covered.rows.length);
+      setMatCounts(materialCounts(mat.records, ids));
+    } catch {
+      setCoverIds((current) => current ?? new Set());
+      setMatCounts(null);
     }
   }
 
@@ -270,6 +303,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     if (canRefs) {
       referencesApi.maps().then(applyMaps).catch((reason) => setError(reason instanceof Error ? reason.message : "Не удалось загрузить справочники"));
       loadBases();
+      if (!isMaterialTab(tab)) void loadMaterialIndex();
     }
     if (canTemplates) {
       // «Операции»: one card per operation code — templates plus БД.ОП codes without one (as the tab builds them).
@@ -293,7 +327,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     if (isMapTab(def.id)) return canRefs ? maps[def.id].length : null;
     if (def.id === "templates") return opCount;
     if (def.id === "connectors") return connectorCount;
-    if (def.id === "cov") return coveringCount;
+    if (def.id === "cov") return coveringCount ?? matCounts?.cov ?? null;
+    if (isMaterialTab(def.id)) return matCounts?.[def.id] ?? null;
     if (isCableTab(def.id)) return (cables?.counts ?? bases.cables)?.[CABLE_TABS[def.id]] ?? null;
     if (def.id === "gauges") return cables?.gauges?.length ?? bases.gauges ?? null;
     if (def.id === tab && techTab) return tech.records.length;
@@ -355,6 +390,11 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns
     .filter((key) => key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
     .map((key) => [key, record.fields[key]]));
+  // «Материалы» по назначению: столбцы, пустые во всей вкладке (у стяжек — «Размер до», «Коэф. усадки»…), скрыты по
+  // умолчанию — они остаются в «Колонках».
+  const filledInTab = useMemo(() => new Set(matTab && coverIds ? materialRows(tech.records, coverIds, matTab)
+    .flatMap((record) => Object.entries(record.fields).filter(([, value]) => String(value ?? "").trim()).map(([key]) => key)) : []),
+  [tech.records, matTab, coverIds]);
   const sheetColumns: DataColumn<TechOperationRecord>[] = [
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
     ...fieldColumns.map((field, index): DataColumn<TechOperationRecord> => {
@@ -398,7 +438,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         edit: canEdit && inCell ? (own ? ownCellEdit<TechOperationRecord>(field, (record) => record) : fieldCellEdit<TechOperationRecord>(field, (record) => record)) : undefined,
         remove: own ? techRemoval.removeOf(field) : undefined,
         // «Группа» материалов — заголовок группы строк, колонкой не повторяется (она в «Колонках»).
-        hidden: !own && ((techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))) || (techTab === "mat" && field === "Группа")),
+        hidden: !own && ((techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))) || (techTab === "mat" && field === "Группа")
+          || (Boolean(matTab) && index > 0 && !filledInTab.has(field))),
         // An article of digits (Molex 39000038) is a code, not a number: no «39 000 038», as the warehouse writes it.
         numeric: !/артикул/i.test(fieldTitle(field)) && values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };
@@ -414,20 +455,25 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const presetFields: Array<[string, string | undefined]> = techTab === "ter"
     ? [["Без высоты обжима", fieldOf("высота обжима проводника", "tercrimpheight")], ["Без аппликатора", fieldOf("аппликатор", "terapplicator")]]
     : techTab === "mat" ? [["Без производителя", fieldOf("производитель")], ["Без поставщика", fieldOf("поставщик")]] : [];
-  const techPresets: DataPreset<TechOperationRecord>[] = presetFields
-    .filter((item): item is [string, string] => Boolean(item[1]))
-    .map(([label, field]) => ({ label, test: emptyIn(field) }))
-    .filter((preset) => tech.records.some(preset.test)); // пустой отбор — шум
+  // «Расходники» take every row whose «Группа» names no tab — «Без группы» finds the empty ones to sort out.
+  if (matTab === MATERIAL_FALLBACK) presetFields.unshift([NO_GROUP, MATERIAL_GROUP_FIELD]);
   // Порядок по умолчанию: материалы — по группам листа (ТУТ, лента, стяжка…), внутри — по названию с числами как числа;
   // терминалы — по производителю (сервер уже ставит их по производителю и серии), группа — производитель.
   const makerField = techTab === "ter" ? fieldOf("производитель", "termanufacturer") : undefined;
   const techGroup = techTab === "mat" ? (record: TechOperationRecord) => String(record.fields["Группа"] ?? "").trim() || NO_GROUP
     : makerField ? (record: TechOperationRecord) => String(record.fields[makerField] ?? "").trim() || NO_MAKER : undefined;
-  const techRows = useMemo(() => techTab !== "mat" ? tech.records : [...tech.records].sort((a, b) => {
+  const techRows = useMemo(() => techTab !== "mat" ? tech.records : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
     const ga = String(a.fields["Группа"] ?? "").trim();
     const gb = String(b.fields["Группа"] ?? "").trim();
     return Number(!ga) - Number(!gb) || natural(ga, gb) || natural(String(a.fields["Наименование"] ?? a.display_text), String(b.fields["Наименование"] ?? b.display_text));
-  }), [tech.records, techTab]);
+  }), [tech.records, techTab, matTab, coverIds]);
+  const techPresets: DataPreset<TechOperationRecord>[] = presetFields
+    .filter((item): item is [string, string] => Boolean(item[1]))
+    .map(([label, field]) => ({ label, test: emptyIn(field) }))
+    .filter((preset) => techRows.some(preset.test)); // пустой отбор — шум
+  useEffect(() => {
+    if (techTab === "mat" && techReady === "mat" && coverIds) setMatCounts(materialCounts(tech.records, coverIds));
+  }, [tech.records, coverIds]); // eslint-disable-line react-hooks/exhaustive-deps
   function openTerminal(id: string) {
     setTerminalId(id);
     try {
@@ -459,7 +505,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     <nav className="db-tabs" aria-label="Вкладки базы данных">
       {groups.map((group) => <div className="db-tab-group" key={group.title}>
         <span className="db-tab-group-title">{group.title}</span>
-        <div className="db-tab-row">{group.tabs.map((def) => {
+        <div className="db-tab-row">{visibleTabs(group.tabs, count, tab).map((def) => {
           const n = count(def);
           const active = tab === def.id && !stockLog;
           return <button key={def.id} type="button" className={active ? "db-tab active" : "db-tab"} aria-pressed={active} onClick={() => { setTab(def.id); setStockLog(false); }}>
@@ -523,7 +569,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
           <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         </> : undefined}
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
-      /> : techReady !== techTab ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
+      /> : techReady !== techTab || (matTab && !coverIds) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}
         cableOf={cableOf}
         canEdit={canEdit}
@@ -536,7 +582,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
           <AddColumnButton tab="coax" onAdded={async (name) => { await loadTech("coax"); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />
         </> : undefined}
       /> : <div className="eq-split"><div className="eq-list"><DataTable
-        key={techTab}
+        key={tab}
         label={current?.label ?? "База"}
         rows={techRows}
         columns={techColumns}
@@ -544,7 +590,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         groupBy={techGroup}
         onEdited={() => loadTech(techTab)}
         rowKey={(record) => record.id}
-        storageKey={`db:${techTab}`}
+        storageKey={`db:${tab}`}
         exportName={current?.label}
         emptyText={viewOnly ? "Таблица не загружена из зеркала SUPPLYMAP." : "Записей нет."}
         // Правка — по строке целиком (столбец одинаковых «Править» делал строки выше и шумел); «Терминалы» — строка

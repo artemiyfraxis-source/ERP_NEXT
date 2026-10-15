@@ -80,7 +80,7 @@ it("«База данных»: the record card shows «Со склада», the 
     return json({ items: [], records: [] });
   });
 
-  render(<ReferencesPage principal={admin} initialTab="mat" />);
+  render(<ReferencesPage principal={admin} initialTab="mat_use" />);
 
   fireEvent.click(await screen.findByText("Контакт SXH"));
   const card = await screen.findByRole("region", { name: "Со склада" });

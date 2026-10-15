@@ -30,7 +30,15 @@ const MAT = [
   rec("m2", "mat", { Наименование: "ТУТ 10/5", Группа: "ТУТ", Производитель: "Raychem", Цвет: "чёрный", Закупок: "1", Поставщик: "chipdip.ru" }),
   rec("m3", "mat", { Наименование: "ТУТ 2/1", Группа: "ТУТ", Производитель: "Raychem", Цвет: "красный", Закупок: "0", Поставщик: "chipdip.ru" }),
   rec("m4", "mat", { Наименование: "Изолента", Группа: "лента", Производитель: "3M", Цвет: "", Закупок: "0", Поставщик: "" }),
+  rec("m5", "mat", { Наименование: "Стяжка 3x60", Группа: "стяжка", Производитель: "КВТ", Цвет: "чёрный", Закупок: "1", Поставщик: "vseinstrumenti.ru" }),
+  rec("m6", "mat", { Наименование: "Хомут 3x300мм", Группа: "хомут", Производитель: "КВТ", Цвет: "чёрный", Закупок: "1", Поставщик: "" }),
+  rec("m7", "mat", { Наименование: "Клей БФ-4", Группа: "клей/герметик", Производитель: "", Цвет: "", Закупок: "1", Поставщик: "" }),
+  rec("m8", "mat", { Наименование: "Нечто без группы", Группа: "", Производитель: "", Цвет: "", Закупок: "0", Поставщик: "" }),
+  rec("m9", "mat", { Наименование: "Нечто новое", Группа: "что-то новое", Производитель: "", Цвет: "", Закупок: "0", Поставщик: "" }),
+  rec("m10", "mat", { Наименование: "Уплотнитель MCP", Группа: "уплотнитель", Производитель: "TE", Цвет: "", Закупок: "1", Поставщик: "" }),
 ];
+// «Оболочки» — the server's classifier: the shrink tubes and the tape.
+const COVERED = ["m2", "m3", "m4"];
 
 type Call = { path: string; method: string; body: unknown };
 
@@ -45,6 +53,7 @@ function mockDb({ ter = TER, mat = MAT, terOwn = [] as string[], matOwn = [] as 
     if (path === "/api/references/crimp-codes") return json({ owners: {}, codes: [], missing: [] });
     if (path.startsWith("/api/references/tech-operations?tab=ter")) return json({ metadata: null, columns: [...TER_COLUMNS, ...terOwn], custom_columns: terOwn, records: ter });
     if (path.startsWith("/api/references/tech-operations?tab=mat")) return json({ metadata: null, columns: [...MAT_COLUMNS, ...matOwn], custom_columns: matOwn, records: mat });
+    if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: COVERED.map((id) => ({ id })) });
     if (path.startsWith("/api/references/tech-operations/") && method === "PATCH") return json(ter[0]);
     if (path === "/api/references/tech-operations/columns/remove") return json({ tab: "ter", name: "Полка", records: 3 });
     throw new Error(`Unexpected request: ${method} ${path}`);
@@ -148,27 +157,43 @@ it("Терминалы: a viewer gets no editable cells, no «+ Столбец»
   expect(screen.queryByRole("button", { name: /^Удалить столбец/ })).toBeNull();
 });
 
-it("Материалы: grouped by the sheet's group, names in natural order; the name, group and purchases are not cells to edit; chips «Без …»", async () => {
+it("«Материалы» расформированы: «Крепёж и тройники» — by the sheet's group, natural order; the name, group and purchases are not cells to edit; chips «Без …»", async () => {
   const calls = mockDb();
-  render(<ReferencesPage principal={admin} initialTab="mat" />);
-  await screen.findByText("Изолента");
+  render(<ReferencesPage principal={admin} initialTab="mat_fix" />);
+  await screen.findByText("Стяжка 100 мм");
   const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
-  expect(groups).toEqual(["лента · 1", "стяжка · 1", "ТУТ · 2"]);
-  const names = screen.getAllByRole("row").filter((row) => !row.classList.contains("group-row")).map((row) => row.textContent ?? "").filter((text) => text.startsWith("ТУТ "));
-  expect(names[0]).toMatch(/^ТУТ 2\/1/); // 2/1 до 10/5: числа как числа
+  expect(groups).toEqual(["стяжка · 2", "хомут · 1"]);
+  const names = screen.getAllByRole("row").filter((row) => !row.classList.contains("group-row")).map((row) => row.textContent ?? "").filter((text) => text.startsWith("Стяжка "));
+  expect(names[0]).toMatch(/^Стяжка 3x60/); // 3x60 до 100 мм: числа как числа
+  // the coverings and the other purposes are in their own tabs
+  for (const elsewhere of ["ТУТ 2/1", "Изолента", "Клей БФ-4", "Уплотнитель MCP"]) expect(screen.queryByText(elsewhere)).toBeNull();
 
   expect(headers()).not.toContain("Группа"); // группа — заголовок группы строк, не колонка
-  for (const fixed of ["Наименование", "Закупок"]) expect(cellOf("ТУТ 2/1", fixed)).not.toHaveClass("dt-editable");
+  for (const fixed of ["Наименование", "Закупок"]) expect(cellOf("Стяжка 3x60", fixed)).not.toHaveClass("dt-editable");
   expect(screen.getByRole("button", { name: "+ Столбец" })).toBeInTheDocument();
-  typeInCell(cellOf("ТУТ 2/1", "Цвет"), "белый");
-  await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({ edits: [{ field: "Цвет", old: "красный", value: "белый" }] }));
+  typeInCell(cellOf("Стяжка 3x60", "Цвет"), "белый");
+  await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({ edits: [{ field: "Цвет", old: "чёрный", value: "белый" }] }));
 
   fireEvent.click(screen.getByRole("button", { name: /^Без производителя · 1/ }));
   expect(screen.getByText("Стяжка 100 мм")).toBeInTheDocument();
-  expect(screen.queryByText("Изолента")).toBeNull();
+  expect(screen.queryByText("Хомут 3x300мм")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /^Без поставщика · 2/ }));
-  expect(screen.getByText("Изолента")).toBeInTheDocument();
-  expect(screen.queryByText("ТУТ 2/1")).toBeNull();
+  expect(screen.getByText("Хомут 3x300мм")).toBeInTheDocument();
+  expect(screen.queryByText("Стяжка 3x60")).toBeNull();
+});
+
+it("«Расходники» take the groups no tab names, «Без группы» finds the empty ones; every БД.МАТ row is counted in one tab", async () => {
+  mockDb();
+  render(<ReferencesPage principal={admin} initialTab="mat_use" />);
+  await screen.findByText("Клей БФ-4");
+  expect(screen.getByText("Нечто новое")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /^Без группы · 1/ }));
+  expect(screen.getByText("Нечто без группы")).toBeInTheDocument();
+  expect(screen.queryByText("Клей БФ-4")).toBeNull();
+  const nav = screen.getByRole("navigation", { name: "Вкладки базы данных" });
+  const count = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name}`) }).querySelector(".db-tab-count")?.textContent;
+  await waitFor(() => expect(count("Оболочки")).toBe("3"));
+  expect([count("Крепёж и тройники"), count("Расходники"), count("Уплотнители и заглушки"), count("Гильзы и втулки")]).toEqual(["3", "3", "1", "0"]);
 });
 
 it("Домен → поставщик: sorted by domain with new empty rows last; a column pasted from Excel fills every row before one save", async () => {

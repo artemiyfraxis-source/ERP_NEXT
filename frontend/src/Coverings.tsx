@@ -3,19 +3,22 @@ import { DataTable, type DataCellEdit, type DataColumn, type DataPreset } from "
 import { fieldCellEdit } from "./CustomColumn";
 import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type TechOperationRecord } from "./api";
 
-/* «База данных» → «Оболочки» (owner 12.10.2026): термоусадка без клея и с клеем, оплётки, гофра — each its own table with
-   the fields of its kind, grouped by series, sizes in a series by Ø as a number (the server sorts, `coverings.py`).
-   «Прочее» (ленты, кембрик) is collapsed under a toggle. Nothing is deleted: a row moves between groups through
+/* «База данных» → «Оболочки» (owner 12.10.2026, 15.10.2026): термоусадка без клея и с клеем, кембрик, гофра, оплётки,
+   ленты — each its own table with the fields of its kind, in a kind by size as a number, then by name (the server sorts,
+   `coverings.py`); the series is a column. «Прочее» shows only when a row is moved there. Nothing is deleted: a row moves between groups through
    the «Раздел» cell, «Авто» returns it to the classifier. Cells that are a БД.МАТ column of the row (производитель, цвет,
    материал, Ø до/после, усадка, ссылка) are edited in place through the record's own edit (old value checked); a value the
    parser took from the name shows in the cell, the editor opens on the column itself (empty — fill it). */
 
-const SHOWN: CoveringGroup[] = ["tut", "ttk", "braid", "corrugated"];
+// The owner's order (15.10.2026): термоусадка, кембрик, гофра, оплётки, ленты; «Прочее» — only when not empty.
+export const SHOWN: CoveringGroup[] = ["tut", "ttk", "cambric", "corrugated", "braid", "tape"];
 const CHOICES: Array<{ value: string; label: string }> = [
-  { value: "", label: "Авто" }, { value: "ТУТ", label: "ТУТ" }, { value: "ТТК", label: "ТТК" },
-  { value: "Оплётки", label: "Оплётки" }, { value: "Гофра", label: "Гофра" }, { value: "Прочее", label: "Прочее" },
+  { value: "", label: "Авто" }, { value: "ТУТ", label: "ТУТ" }, { value: "ТТК", label: "ТТК" }, { value: "Кембрик", label: "Кембрик" },
+  { value: "Гофра", label: "Гофра" }, { value: "Оплётки", label: "Оплётки" }, { value: "Ленты", label: "Ленты" }, { value: "Прочее", label: "Прочее" },
 ];
-const NO_SERIES = "Без серии";
+const CHOICE_OF: Record<CoveringGroup, string> = {
+  tut: "ТУТ", ttk: "ТТК", cambric: "Кембрик", corrugated: "Гофра", braid: "Оплётки", tape: "Ленты", other: "Прочее",
+};
 
 const mm = (value: number | null) => value === null ? "" : String(value).replace(".", ",");
 const signed = (value: number) => value > 0 ? `+${value}` : String(value).replace("-", "−");
@@ -44,6 +47,7 @@ function columnsFor(group: CoveringGroup, rows: CoveringRow[], raw: RawEdit): Da
   };
   const colour: DataColumn<CoveringRow> = { key: "color", title: "Цвет", value: (row) => row.color, render: (row) => orDash(row.color), edit: raw("Цвет") };
   const maker: DataColumn<CoveringRow> = { key: "maker", title: "Производитель", value: (row) => row.maker, render: (row) => clip(row.maker), edit: raw("Производитель") };
+  const series: DataColumn<CoveringRow> = { key: "series", title: "Серия", value: (row) => row.series, render: (row) => clip(row.series), edit: raw("Серия") };
   const link: DataColumn<CoveringRow> = {
     key: "datasheet", title: "Ссылка", value: (row) => row.datasheet, edit: raw("Ссылка на datasheet"),
     render: (row) => row.datasheet ? <a href={row.datasheet} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>datasheet</a> : dash,
@@ -58,42 +62,44 @@ function columnsFor(group: CoveringGroup, rows: CoveringRow[], raw: RawEdit): Da
     { key: "ratio", title: "Усадка", value: (row) => row.ratio, render: (row) => orDash(row.ratio), edit: raw("Коэф. усадки") },
     { ...number("wall", "Стенка, мм", (row) => row.wall_mm), hidden: !filled((row) => row.wall_mm) },
     ...(group === "ttk" ? [{ key: "adhesive", title: "Клей", value: (row: CoveringRow) => row.adhesive, render: (row: CoveringRow) => orDash(row.adhesive) }] : []),
-    material, temp, colour, maker, link,
+    series, material, temp, colour, maker, link,
   ];
+  if (group === "cambric") return [name, number("before", "Ø, мм", (row) => row.before_mm, BEFORE), series, material, temp, colour, maker, link];
+  if (group === "tape") return [name, number("width", "Ширина, мм", (row) => row.width_mm ?? null), series, material, temp, colour, maker, link];
   if (group === "braid") return [
     name,
     number("nominal", "Ø номинал, мм", (row) => row.nominal_mm),
     { key: "range", title: "Диапазон Ø, мм", value: (row) => row.min_mm, numeric: true, render: (row) => orDash(rangeText(row.min_mm, row.max_mm)) },
     material,
     { key: "density", title: "Плотность", value: (row) => row.density, render: (row) => orDash(row.density), hidden: !filled((row) => row.density) },
-    temp, colour, maker, link,
+    series, temp, colour, maker, link,
   ];
   if (group === "corrugated") return [
     name,
     number("inner", "Ø внутр., мм", (row) => row.inner_mm, BEFORE),
     number("outer", "Ø наружн., мм", (row) => row.outer_mm, AFTER),
     { key: "split", title: "Разрезная", value: (row) => row.split === null ? "" : row.split ? "да" : "нет", render: (row) => row.split === null ? dash : row.split ? "да" : "нет" },
-    material, temp, colour, maker, link,
+    series, material, temp, colour, maker, link,
   ];
-  return [name, maker, material, temp, colour, link];
+  return [name, series, maker, material, temp, colour, link];
 }
 
 const BEFORE = "Размер до, мм";
 const AFTER = "Размер после, мм";
 // «Без Ø» — строки, у которых размер не нашёлся ни в колонке, ни в названии (их генератор не подберёт по диаметру).
 const sizeOf: Record<CoveringGroup, (row: CoveringRow) => number | null> = {
-  tut: (row) => row.before_mm, ttk: (row) => row.before_mm, other: (row) => row.before_mm,
-  braid: (row) => row.nominal_mm ?? row.min_mm, corrugated: (row) => row.inner_mm,
+  tut: (row) => row.before_mm, ttk: (row) => row.before_mm, cambric: (row) => row.before_mm, other: (row) => row.before_mm,
+  braid: (row) => row.nominal_mm ?? row.min_mm, corrugated: (row) => row.inner_mm, tape: (row) => row.width_mm ?? null,
 };
 // Чип без строк не показывается: пустой отбор — шум.
 const presetsFor = (group: CoveringGroup, rows: CoveringRow[]): DataPreset<CoveringRow>[] => ([
-  { label: "Без Ø", test: (row) => sizeOf[group](row) === null },
+  { label: group === "tape" ? "Без ширины" : "Без Ø", test: (row) => sizeOf[group](row) === null },
   { label: "Без производителя", test: (row) => !row.maker.trim() },
 ] as DataPreset<CoveringRow>[]).filter((preset) => rows.some(preset.test));
 
 function GroupChooser({ row, busy, onChange }: { row: CoveringRow; busy: boolean; onChange: (group: string) => void }) {
   const manual = row.group_source === "вручную";
-  const current = manual ? CHOICES.find((choice) => choice.label.toLocaleLowerCase("ru-RU") === ({ tut: "тут", ttk: "ттк", braid: "оплётки", corrugated: "гофра", other: "прочее" })[row.group])?.value ?? "" : "";
+  const current = manual ? CHOICE_OF[row.group] : "";
   return <div className="reference-fields cable-card">
     <label><small>Раздел</small>
       <select aria-label="Раздел оболочек" value={current} disabled={busy} onChange={(event) => onChange(event.target.value)}>
@@ -111,7 +117,6 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
-  const [showOther, setShowOther] = useState(false);
 
   async function load() {
     try {
@@ -164,8 +169,7 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
         rowLabel={(row) => row.name}
         presets={presetsFor(group, data.rows.filter((row) => row.group === group))}
         onEdited={load}
-        storageKey={`db:coverings:${group}`}
-        groupBy={(row) => row.series_family || NO_SERIES}
+        storageKey={`db:coverings:${group}:2`}
         hideSearch
         exportName={data.titles[group]}
         renderDetail={canEdit ? (row) => <GroupChooser key={`${row.id}:${row.group_source}`} row={row} busy={busy} onChange={(value) => void move(row, value)} /> : undefined}
@@ -179,14 +183,9 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
       <form className="table-search" role="search" onSubmit={(event) => event.preventDefault()}>
         <input type="search" className="search" aria-label="Поиск по оболочкам" placeholder="Наименование, серия, производитель, материал" value={query} onChange={(event) => setQuery(event.target.value)} />
       </form>
-      <span className="muted">Сортировка: серия, затем Ø</span>
+      <span className="muted">Сортировка: размер, затем наименование</span>
     </div>
     {SHOWN.map(section)}
-    <div className="cov-other">
-      <button type="button" className="secondary small" aria-expanded={showOther} onClick={() => setShowOther(!showOther)}>
-        {showOther ? "Скрыть прочее" : "Показать прочее"} · {data.counts.other}
-      </button>
-      {showOther && section("other")}
-    </div>
+    {data.counts.other > 0 && section("other")}
   </div>;
 }
