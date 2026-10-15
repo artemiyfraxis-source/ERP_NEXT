@@ -390,6 +390,11 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const editValues = (record: TechOperationRecord) => Object.fromEntries(fieldColumns
     .filter((key) => key in record.fields && !(coaxTab && CABLE_DIAMETERS.includes(key)))
     .map((key) => [key, record.fields[key]]));
+  // «Материалы» по назначению: столбцы, пустые во всей вкладке (у стяжек — «Размер до», «Коэф. усадки»…), скрыты по
+  // умолчанию — они остаются в «Колонках».
+  const filledInTab = useMemo(() => new Set(matTab && coverIds ? materialRows(tech.records, coverIds, matTab)
+    .flatMap((record) => Object.entries(record.fields).filter(([, value]) => String(value ?? "").trim()).map(([key]) => key)) : []),
+  [tech.records, matTab, coverIds]);
   const sheetColumns: DataColumn<TechOperationRecord>[] = [
     // Short cells (Ø, AWG, мм) stay narrow so a wide sheet like СПР.КАБ fits; long text wraps; numbers sort as numbers.
     ...fieldColumns.map((field, index): DataColumn<TechOperationRecord> => {
@@ -433,7 +438,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         edit: canEdit && inCell ? (own ? ownCellEdit<TechOperationRecord>(field, (record) => record) : fieldCellEdit<TechOperationRecord>(field, (record) => record)) : undefined,
         remove: own ? techRemoval.removeOf(field) : undefined,
         // «Группа» материалов — заголовок группы строк, колонкой не повторяется (она в «Колонках»).
-        hidden: !own && ((techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))) || (techTab === "mat" && field === "Группа")),
+        hidden: !own && ((techTab === "ter" && TER_RARE.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))) || (techTab === "mat" && field === "Группа")
+          || (Boolean(matTab) && index > 0 && !filledInTab.has(field))),
         // An article of digits (Molex 39000038) is a code, not a number: no «39 000 038», as the warehouse writes it.
         numeric: !/артикул/i.test(fieldTitle(field)) && values.length > 0 && values.every((value) => /^-?\d[\d\s]*([.,]\d+)?$/.test(value)),
       };

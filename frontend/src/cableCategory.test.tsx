@@ -65,7 +65,7 @@ it("renders «Прочие кабели» in groups of category and screen", () 
 // Owner 15.10.2026: «нормальная сортировка по маркам — ПВВС, КДЭВГ, CAT5e, CAT6 и т.д.» — the marks of production.
 it.each([
   ["ПВВС 4×0,35", {}, "ПВВС"], ["ПВС 3x1,5", {}, "ПВС"], ["ШВВП 2x0,75", {}, "ШВВП"], ["H05RN-F 3x0,75", {}, "H05RN-F"],
-  ["КДЭВГ 9х0,14", {}, "КДВВГ / КДЭВГ"], ["КДВВГ 6x0,14", {}, "КДВВГ / КДЭВГ"], ["КСПВГ 4x0,20", {}, "КСПВ / КСПВГ"],
+  ["КДЭВГ 9х0,14", {}, "КДВВГ / КДВЭВГ"], ["КДВВГ 6x0,14", {}, "КДВВГ / КДВЭВГ"], ["КДВЭВГ 4х0,50", {}, "КДВВГ / КДВЭВГ"], ["КСПВГ 4x0,20", {}, "КСПВ / КСПВГ"],
   ["КСПЭВ 4х0,50", {}, "КСПЭВ / КСПЭВГ"], ["КСПЭВГ 4x0,35", {}, "КСПЭВ / КСПЭВГ"], ["RVVP 16x0,3", {}, "РВВП"],
   ["ШТЛЭн-4", {}, "ШТЛЭн / ШТСПЭн"], ["ШТСПЭн 2х2-А", {}, "ШТЛЭн / ШТСПЭн"], ["МКШ 2x0,75", {}, "МКШ"],
   ["FLEXICORE LiYCY 4x0,5", {}, "LiYCY"], ["FLEXICORE® 100 нг(А)-LS 3G2,5", {}, "FLEXICORE"],
@@ -107,7 +107,7 @@ it("renders «Многожильные кабели» in groups of the mark fami
   } as unknown as CablesResult;
   render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
   const groups = screen.getAllByRole("row").filter((item) => item.classList.contains("group-row")).map((item) => item.textContent);
-  expect(groups).toEqual(["КДВВГ / КДЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
+  expect(groups).toEqual(["КДВВГ / КДВЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
   expect(screen.getByRole("columnheader", { name: "Экран" })).toBeInTheDocument();
   expect(screen.queryByText("Разобрать позже")).toBeNull();
 });
