@@ -7,6 +7,7 @@ import {
 } from "./api";
 import { connectorFace, connectorFaceUnits, connectorSummary, type ConnectorHousing } from "./connectorArt";
 import { connectorModel } from "./connectorModel";
+import { searchRows } from "./searchText";
 
 /* «База данных → Разъёмы» по сериям (владелец, 10.10.2026: «идти по сериям: серия GHR, внутри все доступные разъёмы
    и их модели»). Список серий → серия: все корпуса по каталогу производителя (модель + вид со стороны проводов),
@@ -208,12 +209,15 @@ export function ConnectorGallery() {
       .catch((reason) => { setSeries([]); setError(failureText(reason, "База разъёмов не загрузилась")); });
   }, []);
 
-  const query = article.trim().toUpperCase().replace(/\s+/g, "");
-  const shown = useMemo(() => (series ?? []).filter((item) => !query
-    || `${item.title} ${item.maker}`.toUpperCase().replace(/\s+/g, "").includes(query)
-    || item.variants.some((variant) => variant.housings.some((h) => h.article.toUpperCase().includes(query)))
-    || item.terminals.some((t) => t.article.toUpperCase().replace(/\s+/g, "").includes(query))
-    || item.catalog.some((c) => c.article.toUpperCase().replace(/\s+/g, "").includes(query))), [series, query]);
+  // Серия, производитель, артикулы корпусов, терминалов и каталога — по правилам поиска баз (searchText.ts): «ghr 04»,
+  // «GHR-04V-S» и «ghr04vs» находят одну серию.
+  const shown = useMemo(() => searchRows(series ?? [], (item) => [
+    item.title, item.maker,
+    ...item.variants.flatMap((variant) => variant.housings.map((h) => h.article)),
+    ...item.terminals.map((t) => t.article),
+    ...item.catalog.map((c) => c.article),
+    ...(item.contacts ?? []).map((c) => c.article),
+  ], article), [series, article]);
   // Sections in the order the server sends them (fixed category order); counts follow the search.
   const sections = useMemo(() => {
     // Inside a section the server sends the series by maker, then pitch; a maker label only where makers differ.

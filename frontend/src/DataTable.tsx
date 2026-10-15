@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
+import { matchesSearch, searchRows } from "./searchText";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
    portalSaveUserCols): поиск по всем словам, фильтр по значениям колонки, сортировка по заголовку,
@@ -118,6 +119,8 @@ export interface DataTableProps<T> {
   toolbar?: ReactNode;
   /** Поиск сразу по всем записям на сервере (строки на экране — только страница): «Найти» или Enter в том же поле. */
   onSearch?: (query: string) => void;
+  /** Что ещё строки ищет поиск, кроме колонок: скрытые опознаватели записи (полное имя, артикул BAG, синонимы). */
+  searchText?: (row: T) => CellValue[];
   searchLabel?: string;
   searchPlaceholder?: string;
   /** Пока строк меньше — без строки поиска/фильтров/колонок и без «Показано N из N»: маленькой таблице они
@@ -209,12 +212,9 @@ function cleanSaved(raw: unknown): Saved {
   return saved;
 }
 
-/** Все слова запроса — хотя бы в одной ячейке строки (SUPPLYMAP stock05Match_). */
+/** Все слова запроса — хотя бы в одной ячейке строки (SUPPLYMAP stock05Match_); правила сравнения — searchText.ts. */
 export function matchesWords(values: CellValue[], query: string) {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return true;
-  const text = values.map((value) => String(value ?? "").toLowerCase()).join(" ");
-  return words.every((word) => text.includes(word));
+  return matchesSearch(values, query);
 }
 
 function numberOf(value: CellValue) {
@@ -362,6 +362,7 @@ export function DataTable<T>({
   pageSize = 200,
   toolbar,
   onSearch,
+  searchText,
   searchLabel,
   searchPlaceholder,
   compactBelow = 0,
@@ -441,14 +442,14 @@ export function DataTable<T>({
   const visible = arranged.filter((column) => !hidden.includes(column.key));
   const activePreset = presets.find((item) => item.label === preset);
 
-  const searched = useMemo(() => rows.filter((row) => {
+  const searched = useMemo(() => searchRows(rows.filter((row) => {
     for (const [key, wanted] of Object.entries(filters)) {
       if (!wanted) continue;
       const column = columns.find((item) => item.key === key);
       if (column && String(column.value(row) ?? "") !== wanted) return false;
     }
-    return matchesWords(columns.map((column) => column.value(row)), query);
-  }), [rows, columns, filters, query]);
+    return true;
+  }), (row) => [...columns.map((column) => column.value(row)), ...(searchText?.(row) ?? [])], query), [rows, columns, filters, query, searchText]);
   const counted = presetCountsFollowSearch ? searched : rows;
 
   const filtered = useMemo(() => {

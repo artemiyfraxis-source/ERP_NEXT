@@ -19,6 +19,7 @@ from .cable_structure import (
     ALIAS_KINDS, LAYERS, PARAMS, CoaxAlias, CoaxAttenuation, CoaxCard, CoaxConnector, CoaxLayer, CoaxMarker, CoaxNames,
     HookupWire, WireGauge, same_card,
 )
+from .search_text import search_rows, search_words
 from .domain import (
     EDITABLE_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry, StockLinkEvent,
     TechOperationRecord, TechOperationTab,
@@ -119,9 +120,15 @@ class SqlAlchemyTechOperationRepository:
     def list(self, *, tab: TechOperationTab | None, query: str, limit: int) -> list[TechOperationRecord]:
         statement = select(TechOperationRecordRow)
         if tab is not None: statement = statement.where(TechOperationRecordRow.tab == tab.value)
-        normalized = " ".join(str(query or "").casefold().split())
-        if normalized: statement = statement.where(func.lower(TechOperationRecordRow.normalized_search).contains(normalized))
-        rows = self.session.scalars(statement.order_by(TechOperationRecordRow.tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id).limit(limit))
+        statement = statement.order_by(TechOperationRecordRow.tab, TechOperationRecordRow.sort_key, TechOperationRecordRow.id)
+        words = search_words(query)
+        if not words:
+            return [self._domain(row) for row in self.session.scalars(statement.limit(limit))]
+        # Поиск по правилам таблиц на экране (search_text.py): «rg 58» находит «RG-58», «MГТФ 0.35» — «МГТФ 0,35». Ключ
+        # не хранится (normalized_search в строках прода — прежнего вида), поэтому слова сверяются здесь: по имени, полям
+        # записи и normalized_search — в нём и поисковый текст импорта (синонимы листа), которого нет в полях.
+        rows = search_rows(self.session.scalars(statement), lambda row: (row.display_text, *(row.fields or {}).values()),
+                           words, limit, extra=lambda row: (row.normalized_search,))
         return [self._domain(row) for row in rows]
     def counts(self) -> dict[TechOperationTab, int]:
         rows = self.session.execute(select(TechOperationRecordRow.tab, func.count()).group_by(TechOperationRecordRow.tab))
