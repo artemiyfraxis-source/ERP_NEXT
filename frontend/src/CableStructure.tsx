@@ -161,6 +161,10 @@ function WireColors({ text }: { text: string }) {
 }
 
 const UNPARSED = "Не разобраны";
+// A wire's own set (owner 15.10.2026: «для каждой группы свои требования»): the core material, the standard, the maker
+// and the supply columns; the coax materials (dielectric, screen, jacket) stay in «Колонки», hidden.
+const WIRE_SHOWN = new Set(["Материал жилы", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
+const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал экрана", "Материал оболочки"]);
 type Shared = { insulation?: string; voltage?: string; temp?: string };
 
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
@@ -245,7 +249,8 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
     { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
     ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
-      key: name, title: name, value: (row) => field(row, name), hidden: !own.includes(name), render: (row) => clip(field(row, name)),
+      key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
+      render: (row) => clip(field(row, name)),
       // «Тип провода» решает, в каком списке провод: меняется в окне провода.
       edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : name === TYPE ? undefined : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
@@ -267,7 +272,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       rows={rows}
       columns={columns}
       rowKey={(row) => row.id}
-      storageKey="db:cables:wire-structured"
+      storageKey="db:cables:wire-structured:2"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       exportName="Монтажные провода"
