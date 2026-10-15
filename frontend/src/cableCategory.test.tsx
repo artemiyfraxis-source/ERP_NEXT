@@ -96,18 +96,20 @@ it("lets the cell «Семейство» win and orders families, then cores and
   ]);
 });
 
-it("renders «Многожильные кабели» in groups of the mark family with the screen as a column", () => {
+it("renders «Многожильные кабели» in groups of the mark family with the screen material as a column", () => {
   const row = (mark: string, fields: Record<string, string>) => ({
     id: mark, kind: "multi" as const, auto_kind: "multi" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
     record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Тип провода": "многожильный", ...fields } },
   });
   const data = {
-    columns: ["Марка", "Тип провода", "Число жил", "Экран"], counts: { coax: 0, wire: 0, multi: 3, other: 0 }, gauges: [],
-    rows: [row("LiYCY 4x0,5", { "Экран": "оплётка" }), row("U/UTP Cat5e 4x2x0,52", { "Экран": "нет" }), row("КДЭВГ 9х0,14", { "Экран": "фольга" })],
+    columns: ["Марка", "Тип провода", "Число жил", "Экран", "Материал экрана"], custom_columns: ["Материал экрана"],
+    counts: { coax: 0, wire: 0, multi: 3, other: 0 }, gauges: [],
+    rows: [row("LiYCY 4x0,5", { "Материал экрана": "медь лужёная" }), row("U/UTP Cat5e 4x2x0,52", { "Экран": "нет" }), row("КДЭВГ 9х0,14", { "Материал экрана": "алюминий" })],
   } as unknown as CablesResult;
   render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
   const groups = screen.getAllByRole("row").filter((item) => item.classList.contains("group-row")).map((item) => item.textContent);
   expect(groups).toEqual(["КДЭВГ · 1", "LiYCY · 1", "U/UTP Cat5e · 1"]);
-  expect(screen.getByRole("columnheader", { name: "Экран" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Материал экрана" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Экран" })).toBeNull(); // owner 15.10: the old text cell is in «Колонки»
   expect(screen.queryByText("Разобрать позже")).toBeNull();
 });

@@ -161,6 +161,11 @@ function WireColors({ text }: { text: string }) {
 }
 
 const UNPARSED = "Не разобраны";
+// A wire's own set (owner 15.10.2026: «у монтажных мне надо материал жилы и материал оболочки»): the core and jacket
+// materials, the standard, the maker and the supply columns; the structured «Изоляция» and the other lists' materials
+// (dielectric, core insulation, screen) stay in «Колонки», hidden.
+const WIRE_SHOWN = new Set(["Материал жилы", "Материал оболочки", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
+const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал изоляции жилы", "Материал экрана"]);
 type Shared = { insulation?: string; voltage?: string; temp?: string };
 
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
@@ -237,15 +242,16 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
     { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
-    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
+    { key: "strands", title: "Структура жилы", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
       edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
-    { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
+    { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
     { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
     { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
     ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
-      key: name, title: name, value: (row) => field(row, name), hidden: !own.includes(name), render: (row) => clip(field(row, name)),
+      key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
+      render: (row) => clip(field(row, name)),
       // «Тип провода» решает, в каком списке провод: меняется в окне провода.
       edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : name === TYPE ? undefined : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
@@ -267,7 +273,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       rows={rows}
       columns={columns}
       rowKey={(row) => row.id}
-      storageKey="db:cables:wire-structured"
+      storageKey="db:cables:wire-structured:3"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       exportName="Монтажные провода"
@@ -296,7 +302,7 @@ const COLORS = "Цвета";
 const STRANDS = "Жила: проволок × диаметр, мм";
 // Short labels of the form; the cell keeps its column name.
 const CELL_LABELS: Record<string, string> = {
-  [STRANDS]: "Скрутка: проволок × Ø, мм", "Цена посл., ₽/м без НДС": "Цена посл., ₽/м", "Ссылка на datasheet": "Datasheet",
+  [STRANDS]: "Структура жилы: проволок × Ø, мм", "Цена посл., ₽/м без НДС": "Цена посл., ₽/м", "Ссылка на datasheet": "Datasheet",
   "Источник данных": "Источник", "Волновое сопротивление, Ом": "Волновое, Ом", [STANDARD]: "Стандарт (ГОСТ / ТУ / UL)",
   "Сечение, мм2": "Сечение, мм²",
 };

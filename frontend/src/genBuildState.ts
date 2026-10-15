@@ -76,7 +76,7 @@ export function restoreFromSnapshot(components: Comp[], seed: GenState, snap: Ge
   let wires: WireEntry[] = [];
   S.wires.forEach((w) => {
     if (w.compId && known.has(w.compId) && !idMap.has(w.compId)) gone.add(w.idx);
-    else wires.push({ ...w, compId: map(w.compId) });
+    else wires.push({ ...w, compId: map(w.compId), ...(w.jacketShrink ? { jacketShrink: { ...w.jacketShrink, mat: map(w.jacketShrink.mat) || "" } } : {}) });
   });
   let nextWireIdx = Math.max(S.nextWireIdx || 0, ...S.wires.map((w) => w.idx + 1), 0);
   seed.wires.filter((w) => w.compId && addedIds.has(w.compId)).forEach((w) => { wires.push({ ...w, idx: nextWireIdx }); nextWireIdx += 1; });

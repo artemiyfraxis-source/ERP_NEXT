@@ -299,7 +299,10 @@ export function opsMinutes(ops: readonly RouteOp[], quantity: number): number | 
 /* ── Рисунки карточек генератора ──────────────────────────────────────────────────────────────────────────────── */
 
 /** Нарезанный провод: «А1:1 → В1:1», цвет жилы и концы после резки (медь, наконечник, лужение). */
-export type WireThumb = { key: string; label: string; title: string; color: string; left: WireBlankEnd; right: WireBlankEnd };
+export type WireThumb = { key: string; label: string; title: string; color: string; left: WireBlankEnd; right: WireBlankEnd;
+  /** Кабель в оболочке (владелец 15.10: «визуал полуфабриката неправильный» — четыре провода вместо кабеля): один кабель,
+   *  жилы веером из оболочки с концами `left`/`right`; `label` — марка, `sub` — «4 жилы · А1 → В1». */
+  cable?: { cores: Array<{ color: string; label: string }>; sub: string } };
 /** Торец разъёма стороны: корпус из базы разъёмов (нет — подпись), цвета проводов по контактам. */
 export type FaceThumb = { key: string; label: string; housing: ConnectorHousing | null; byPin: Record<number, string> | null };
 export type TubeThumb = { key: string; label: string; count: number };
@@ -325,10 +328,14 @@ export const GEN_SPACING: Spacing = { gapX: 16, gapY: 40, margin: 4 };
 
 /** Высота рисунка карточки генератора, px: провода и трубки — по строке (не больше ART_ROWS и строка «и ещё»),
     торцы разъёмов — полоса 72 px; у готового изделия — оба торца с кабелем между ними. */
+/** Строка кабеля в оболочке на рисунке карточки, px (жилы веером — выше строки провода). */
+export const CABLE_ROW = 38;
 export function genArtHeight(stage: GenStage, art: GenArt, final: boolean): number {
   const rows = (count: number, row: number) => (count ? Math.min(count, ART_ROWS) * row + (count > ART_ROWS ? 16 : 0) + 8 : 0);
-  if (stage === "wires") return rows(art.wires.length, 22);
-  if (CRIMP_STAGES.has(stage) && !final) return rows(crimpWires(stage, art).length, 22);
+  const wireRows = (list: WireThumb[]) => (list.length
+    ? list.slice(0, ART_ROWS).reduce((h, w) => h + (w.cable ? CABLE_ROW : 22), 0) + (list.length > ART_ROWS ? 16 : 0) + 8 : 0);
+  if (stage === "wires") return wireRows(art.wires);
+  if (CRIMP_STAGES.has(stage) && !final) return wireRows(crimpWires(stage, art));
   if (stage === "tubes") return rows(art.tubes.length, 22);
   if (final) return art.faces.A.length || art.faces.B.length ? 72 : 0;
   return art.faces[stage === "B" ? "B" : "A"].length ? 72 : 0;
@@ -355,15 +362,21 @@ export function cutEnds(cut: { type: string; side?: "A" | "B"; both?: boolean; s
 
 const CUT_TYPES = new Set(["cutWire", "cutWireStrip", "cutWireCrimp"]);
 
+/** Кабель в оболочке на рисунке: строка «Кабели» (`idx`), марка и жил в одном кабеле. */
+export type ArtCable = { idx: number; mark: string; cores: number };
+
+const coresWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "жила" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "жилы" : "жил");
+
 /** Рисунки карточек генератора из формы: провода — по распиновке (контакты разъёмов сторон, цвет жилы, длина) с
-    концами по их операции резки; обжатые — те же провода с наконечниками после ручной опрессовки; трубки — операции
+    концами по их операции резки; жилы кабеля в оболочке (`cables`, жил > 1) — одним кабелем на штуку; обжатые — те же провода с наконечниками после ручной опрессовки; трубки — операции
     резки ТУТ; торцы — разъёмы сторон из базы разъёмов с цветами
     проводов по контактам. Сторона без разъёма — «своб. конец». */
 export function schemeArt(specs: readonly OpSpec[], ends: readonly PinoutEnd[], units: readonly PinUnit[],
-  housings: Record<string, ConnectorHousing | null>, free: FreeSide | null): GenArt {
+  housings: Record<string, ConnectorHousing | null>, free: FreeSide | null, cables: readonly ArtCable[] = []): GenArt {
   const keyOf = new Map(ends.map((end) => [end.id, end.key]));
+  const sideOf = new Map(ends.map((end) => [end.id, end.side]));
   const cuts = specs.filter((spec) => CUT_TYPES.has(spec.type));
-  const wires = units.map((unit): WireThumb => {
+  const single = units.map((unit): WireThumb => {
     const at = Object.entries(unit.at).map(([id, pin]) => `${keyOf.get(id) ?? "?"}:${pin ?? "?"}`);
     const label = !at.length ? unit.name || "провод"
       : free ? (free.side === "B" ? `${at[0]} → своб. конец` : `своб. конец → ${at[0]}`) : at.join(" → ");
@@ -374,13 +387,36 @@ export function schemeArt(specs: readonly OpSpec[], ends: readonly PinoutEnd[], 
       ...cutEnds(cut ? { type: cut.type, side: cut.side, both: !!cut.crimpEpIdB, strip: cut.strip, tin: cut.tin } : null),
     };
   });
+  // Жилы одного кабеля в оболочке — одна строка: штука кабеля k — жилы k·N … k·N+N−1 строки «Кабели».
+  const cableOf = new Map(cables.filter((c) => c.cores > 1).map((c) => [c.idx, c]));
+  const items: Array<{ thumb: WireThumb; units: PinUnit[] }> = [];
+  const pieces = new Map<string, { thumb: WireThumb; units: PinUnit[] }>();
+  units.forEach((unit, index) => {
+    const cable = cableOf.get(unit.idx);
+    if (!cable) { items.push({ thumb: single[index], units: [unit] }); return; }
+    const piece = `${unit.idx}:${Math.floor(unit.unit / cable.cores)}`;
+    const core = { color: unit.color ?? "#6b7c86", label: `${unit.num}${unit.colorName ? ` ${unit.colorName}` : ""} · ${single[index].label}` };
+    const have = pieces.get(piece);
+    if (have) { have.units.push(unit); have.thumb.cable!.cores.push(core); return; }
+    const item = { thumb: { ...single[index], key: `cable-${piece}`, label: cable.mark || unit.name || "кабель", cable: { cores: [core], sub: "" } }, units: [unit] };
+    pieces.set(piece, item);
+    items.push(item);
+  });
+  pieces.forEach(({ thumb, units: own }) => {
+    const n = own.length;
+    const keysOn = (side: "A" | "B") => [...new Set(own.flatMap((u) => Object.keys(u.at).filter((id) => sideOf.get(id) === side).map((id) => keyOf.get(id) ?? "?")))].join(", ");
+    const a = keysOn("A"), b = keysOn("B");
+    const route = a && b ? `${a} → ${b}` : a ? (free ? `${a} → своб. концы` : a) : b ? (free ? `своб. концы → ${b}` : b) : "";
+    thumb.cable!.sub = `${n} ${coresWord(n)}${route ? ` · ${route}` : ""}`;
+    thumb.title = [`${thumb.label} · ${n} ${coresWord(n)}${own[0].length ? ` · ${own[0].length} мм` : ""}`, ...thumb.cable!.cores.map((c) => c.label)].join("\n");
+  });
+  const wires = items.map((item) => item.thumb);
   // Обжатые провода: конец, заведённый в разъём с ручной опрессовкой, — с наконечником; в карточке — провода, у которых
   // руками обжат хотя бы один конец (обжатые только станком резки идут к стороне прямо из нарезанных).
-  const sideOf = new Map(ends.map((end) => [end.id, end.side]));
   const handCrimped = new Set(specs.filter((spec) => spec.type === "prsTerm" && spec.epId).map((spec) => spec.epId!));
-  const crimpedOn = (sides: readonly ("A" | "B")[]) => wires.flatMap((wire, index): WireThumb[] => {
+  const crimpedOn = (sides: readonly ("A" | "B")[]) => items.flatMap(({ thumb: wire, units: own }): WireThumb[] => {
     const at = (side: "A" | "B") => sides.includes(side)
-      && Object.keys(units[index].at).some((id) => sideOf.get(id) === side && handCrimped.has(id));
+      && own.some((unit) => Object.keys(unit.at).some((id) => sideOf.get(id) === side && handCrimped.has(id)));
     const left: WireBlankEnd = at("A") ? "terminal" : wire.left, right: WireBlankEnd = at("B") ? "terminal" : wire.right;
     return left === wire.left && right === wire.right ? [] : [{ ...wire, left, right }];
   });
