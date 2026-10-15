@@ -233,6 +233,17 @@ describe("coax column order (owner 15.10: «сначала конструкти�
     expect(heads()).toEqual(ORDER);
   });
 
+  it("keeps the coax materials off the multicore list; its supply columns stay apart", async () => {
+    withColumns([...BASE, ...OWN], OWN);
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
+    await screen.findByText("КСПВГ 4x0,20");
+    const shown = heads();
+    expect(shown.filter((name) => name.startsWith("Материал"))).toEqual([]); // owner 15.10: «для каждой группы свои требования»
+    expect(shown).toEqual(expect.arrayContaining(["Экран", "Изоляция", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"]));
+  });
+
   it("gives the range of the VNA span, else DC up to the rated maximum, never the cut-off", () => {
     const card = ROWS[0].card!;
     expect(rangeText(card)).toBe("10 МГц – 3 ГГц");

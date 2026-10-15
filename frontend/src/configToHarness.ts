@@ -13,6 +13,7 @@ import { buildHarnessDocument, resolveConnectorSources, wireColorHex, wireSectio
 import type { ConnectorHousing } from "./connectorArt";
 import type { ComponentTemplateApi } from "./harness/component-library/component-template-api";
 import { coreColor } from "./pinoutCheck";
+import { setCustomColors } from "./wireColors";
 import { parseDecimal_, type Side } from "./tcGenLogic";
 import { planTwist } from "./twistGroups";
 import { configDrawingProblem } from "./GenDrawing";
@@ -113,6 +114,7 @@ function connectionsPlan(config: Obj): GeneratorDrawingPlan {
 
 /** План чертежа по конфигурации сборки; не из чего строить — ошибка с причиной (та же, что под кнопкой). */
 export function planFromConfig(config: Record<string, unknown>): GeneratorDrawingPlan {
+  setCustomColors(config.colorHex as Record<string, string> | undefined);
   const problem = configDrawingProblem(config);
   if (problem) throw new Error(`${problem}.`);
   return list(config.connections).length ? connectionsPlan(config) : coaxPlan(config);

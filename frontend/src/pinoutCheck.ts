@@ -6,18 +6,30 @@
  * следующем открытии.
  */
 import { wireColorKnown } from "./connectorArt";
-import { PALETTE, canonicalColor } from "./wireColors";
+import { PALETTE, canonicalColor, customHex, setCustomColors, splitPair } from "./wireColors";
 import { doubledPinsOf_, endJoined, formatCorePins_, makeGen, NO_WIRES, parseCorePins_, parsePinList_, sideRu_, updateWire, type Branch, type Connection, type Endpoint, type Gen, type GenData, type GenState, type Side } from "./tcGenLogic";
 
 /** Цвет жилы по названию палитры: одноцветная или двухцветная («бело-синий» — основной белый, полоса синяя). */
 export function coreColor(text: string | undefined): { name: string; baseName: string; hex: string; stripe: string | null } | null {
   const name = text ? canonicalColor(text) : null;
-  if (!name) return null;
+  if (!name) {
+    const own = text ? customHex(text) : null;
+    return own ? { name: text!.trim(), baseName: text!.trim(), hex: own, stripe: null } : null;
+  }
   const single = PALETTE.find((color) => color.name === name);
   if (single) return { name, baseName: single.name, hex: single.hex, stripe: null };
-  const [head, tail] = name.split("-");
-  const first = PALETTE.find((color) => color.stem === head), second = PALETTE.find((color) => color.name === tail);
-  return first && second ? { name, baseName: first.name, hex: first.hex, stripe: second.hex } : null;
+  const both = splitPair(name);
+  return both ? { name, baseName: both[0].name, hex: both[0].hex, stripe: both[1].hex } : null;
+}
+
+/** Свой цвет жилы («болотный» #6b7a3a): имя и hex запоминаются в карте (`GenState.colorHex`) и в рисовальщиках. Имя палитры
+ *  или не-hex — состояние не меняется. Сам цвет на жилу ставит `setCoreColor` по этому имени. */
+export function rememberColor(S: GenState, name: string, hex: string): GenState {
+  const key = name.trim().toLowerCase();
+  if (!key || canonicalColor(key) || !/^#[0-9a-f]{6}$/i.test(hex)) return S;
+  const colorHex = { ...(S.colorHex || {}), [key]: hex.toLowerCase() };
+  setCustomColors(colorHex);
+  return { ...S, colorHex };
 }
 
 /** Жил в проводе: кабелей × жил в кабеле — каждая жила отдельно разводится по контактам и красится (владелец 12.10:
@@ -249,6 +261,11 @@ export function restorePinout(D: GenData, S: GenState, config: unknown): GenStat
   const gen0 = makeGen(D, S);
   const keys = new Map(S.endpoints.map((ep) => [endKey(gen0, ep), ep.id]));
   let next: GenState = S;
+  // Свои цвета жил карты (build_config.colorHex) — до цветов жил: без них setCoreColor такое название отбросит.
+  const hexes = (config as { colorHex?: unknown }).colorHex;
+  if (hexes && typeof hexes === "object" && !Array.isArray(hexes)) {
+    for (const [name, hex] of Object.entries(hexes as Record<string, unknown>)) if (typeof hex === "string") next = rememberColor(next, name, hex);
+  }
   (Array.isArray(saved.branches) ? saved.branches : []).forEach((b) => {
     const main = gen0.activeWires_()[b.pos], from = keys.get(b.from), to = keys.get(b.to);
     if (main && from && to) next = addBranch(D, next, { epId: from, idx: main.idx, pin: b.pin }, to, b.toPin, b.mode);
