@@ -13,6 +13,7 @@ import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
 import { PageWindow } from "./PageWindow";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
+import { NO_SERIES, seriesCaption, sortBySeries, terminalGroups } from "./terminalSeries";
 import { CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
@@ -28,6 +29,7 @@ import {
   type BasesResult,
   type CableKind,
   type CablesResult,
+  type ConnectorSeries,
   type Principal,
   type ReferenceMaps,
   type ReferencePair,
@@ -165,7 +167,9 @@ const OWN_COLUMN_TABS: TechOperationTab[] = ["ter", "mat"];
 const BOOLEAN = /^(true|false)$/i;
 const natural = (a: string, b: string) => a.localeCompare(b, "ru", { numeric: true, sensitivity: "base" });
 const NO_GROUP = "Без группы";
-const NO_MAKER = "Производитель не указан";
+// Поиск таблиц записей — и по тому, что не колонка: полное имя записи, все поля, карточка контакта (артикул BAG).
+const recordSearchText = (record: TechOperationRecord) => [record.display_text, ...Object.values(record.fields),
+  ...Object.values((record as TerminalRow).card ?? {})];
 
 function isMapTab(tab: DbTab): tab is MapTab {
   return tab in MAP_TABS;
@@ -204,6 +208,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const [obOps, setObOps] = useState<TechOperationRecord[]>([]);
   // БД.ТЕР «Аппликатор»: code → the БД.ОБ record that owns it (a link to its card); the card to open after the jump.
   const [toolOwners, setToolOwners] = useState<Record<string, string>>({});
+  // «Терминалы» по сериям: серии каталога разъёмов с их артикулами БД.ТЕР (как «Разъёмы»); без доступа — пусто.
+  const [terSeries, setTerSeries] = useState<ConnectorSeries[]>([]);
   const [focusTool, setFocusTool] = useState("");
   // «Терминалы»: the contact card open beside the list; the pick lives in `?terminal=` (a reload reopens it).
   const [terminalId, setTerminalId] = useState(() => {
@@ -245,7 +251,13 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   async function loadTech(next: TechOperationTab) {
     setError("");
     try {
-      setTech(await referencesApi.techOperations(next, "", 5000));
+      // «Терминалы»: серии приходят вместе со строками — группы не перестраиваются на глазах.
+      const [records, series] = await Promise.all([
+        referencesApi.techOperations(next, "", 5000),
+        next === "ter" ? techcardsApi.connectorSeries().then((result) => result.series, () => [] as ConnectorSeries[]) : Promise.resolve(null),
+      ]);
+      setTech(records);
+      if (series) setTerSeries(series);
       if (next === "ter") {
         void referencesApi.crimpCodes().then((result) => setToolOwners(result.owners)).catch(() => setToolOwners({}));
       }
@@ -458,15 +470,17 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   // «Расходники» take every row whose «Группа» names no tab — «Без группы» finds the empty ones to sort out.
   if (matTab === MATERIAL_FALLBACK) presetFields.unshift([NO_GROUP, MATERIAL_GROUP_FIELD]);
   // Порядок по умолчанию: материалы — по группам листа (ТУТ, лента, стяжка…), внутри — по названию с числами как числа;
-  // терминалы — по производителю (сервер уже ставит их по производителю и серии), группа — производитель.
-  const makerField = techTab === "ter" ? fieldOf("производитель", "termanufacturer") : undefined;
+  // терминалы — по серии разъёмов (владелец 16.10.2026: «группировку по серии, а не по производителю»; terminalSeries.ts),
+  // группы по имени (производитель, серия), «Без серии» в конце, внутри — по артикулу.
+  const terGroups = useMemo(() => techTab === "ter" ? terminalGroups(tech.records as TerminalRow[], terSeries) : null, [techTab, tech.records, terSeries]);
   const techGroup = techTab === "mat" ? (record: TechOperationRecord) => String(record.fields["Группа"] ?? "").trim() || NO_GROUP
-    : makerField ? (record: TechOperationRecord) => String(record.fields[makerField] ?? "").trim() || NO_MAKER : undefined;
-  const techRows = useMemo(() => techTab !== "mat" ? tech.records : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
+    : terGroups ? (record: TechOperationRecord) => terGroups.get(record.id)?.name ?? NO_SERIES : undefined;
+  const techGroupLabel = terGroups ? (name: string, rows: TechOperationRecord[]) => seriesCaption(name, rows as TerminalRow[]) : undefined;
+  const techRows = useMemo(() => techTab !== "mat" ? (terGroups ? sortBySeries(tech.records as TerminalRow[], terGroups) : tech.records) : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
     const ga = String(a.fields["Группа"] ?? "").trim();
     const gb = String(b.fields["Группа"] ?? "").trim();
     return Number(!ga) - Number(!gb) || natural(ga, gb) || natural(String(a.fields["Наименование"] ?? a.display_text), String(b.fields["Наименование"] ?? b.display_text));
-  }), [tech.records, techTab, matTab, coverIds]);
+  }), [tech.records, techTab, matTab, coverIds, terGroups]);
   const techPresets: DataPreset<TechOperationRecord>[] = presetFields
     .filter((item): item is [string, string] => Boolean(item[1]))
     .map(([label, field]) => ({ label, test: emptyIn(field) }))
@@ -588,6 +602,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         columns={techColumns}
         presets={techPresets}
         groupBy={techGroup}
+        groupLabel={techGroupLabel}
+        searchText={recordSearchText}
         onEdited={() => loadTech(techTab)}
         rowKey={(record) => record.id}
         storageKey={`db:${tab}`}

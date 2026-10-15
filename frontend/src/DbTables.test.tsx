@@ -51,6 +51,11 @@ function mockDb({ ter = TER, mat = MAT, terOwn = [] as string[], matOwn = [] as 
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
     if (path === "/api/references/bases") return json({ bases: [] });
     if (path === "/api/references/crimp-codes") return json({ owners: {}, codes: [], missing: [] });
+    // Серии каталога разъёмов с их артикулами БД.ТЕР — по ним «Терминалы» группируются (артикул в базе без дефисов).
+    if (path === "/api/techcards/connector-series") return json({ match: null, series: [
+      { id: "molex-microfit", title: "Molex Micro-Fit 3.0", maker: "Molex", terminals: [{ article: "43031-0001" }] },
+      { id: "molex-minifit", title: "Molex Mini-Fit Jr.", maker: "Molex", terminals: [{ article: "39-00-0038" }] },
+    ] });
     if (path.startsWith("/api/references/tech-operations?tab=ter")) return json({ metadata: null, columns: [...TER_COLUMNS, ...terOwn], custom_columns: terOwn, records: ter });
     if (path.startsWith("/api/references/tech-operations?tab=mat")) return json({ metadata: null, columns: [...MAT_COLUMNS, ...matOwn], custom_columns: matOwn, records: mat });
     if (path === "/api/references/coverings") return json({ counts: {}, titles: {}, rows: COVERED.map((id) => ({ id })) });
@@ -98,12 +103,12 @@ it("Терминалы: plain cells are edited in place with the old value; the 
   expect(await screen.findByRole("button", { name: "Править запись" })).toBeInTheDocument();
 });
 
-it("Терминалы: grouped by maker, chips «Без высоты обжима» and «Без аппликатора»", async () => {
+it("Терминалы: grouped by connector series (catalogue, else the row's «Series»), chips «Без высоты обжима» and «Без аппликатора»", async () => {
   mockDb();
   render(<ReferencesPage principal={admin} initialTab="ter" />);
   await screen.findByText("39000038");
   const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
-  expect(groups).toEqual(["Molex · 2", "КВТ · 1"]);
+  expect(groups).toEqual(["Molex Micro-Fit 3.0 · 1", "Molex Mini-Fit Jr. · 1", "КВТ НВИ · 1"]);
 
   fireEvent.click(screen.getByRole("button", { name: /^Без высоты обжима · 2/ }));
   expect(screen.queryByText("430310001")).toBeNull();
@@ -247,4 +252,17 @@ it("Сечения AWG ↔ мм²: Ø жилы is written in the cell with the s
   await waitFor(() => expect(saved).toEqual([{ awg: "", section_mm2: "0,12", conductor_d_mm: "0,39", strands: "" }]));
   fireEvent.click(screen.getByRole("button", { name: /^Без Ø жилы · 1/ }));
   expect(screen.queryByText("22")).toBeNull();
+});
+
+it("Терминалы: поиск не смотрит на дефисы, регистр, двойники кириллицы и латиницы и десятичную запятую", async () => {
+  mockDb();
+  render(<ReferencesPage principal={admin} initialTab="ter" />);
+  await screen.findByText("39000038");
+  const search = screen.getByRole("searchbox");
+  fireEvent.change(search, { target: { value: " 39-00-0038 " } });
+  expect(screen.getByText("39000038")).toBeInTheDocument();
+  expect(screen.queryByText("430310001")).toBeNull();
+  fireEvent.change(search, { target: { value: "hви 1,5 kbt" } }); // латинские H, K, B; запятая вместо точки
+  expect(screen.getByText("НВИ 1.5-3")).toBeInTheDocument();
+  expect(screen.queryByText("39000038")).toBeNull();
 });

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataCellEdit, type DataColumn, type DataPreset } from "./DataTable";
 import { fieldCellEdit } from "./CustomColumn";
+import { searchRows, searchWords } from "./searchText";
 import { failureText, referencesApi, type CoveringGroup, type CoveringRow, type CoveringsResult, type TechOperationRecord } from "./api";
 
 /* «База данных» → «Оболочки» (owner 12.10.2026, 15.10.2026): термоусадка без клея и с клеем, кембрик, гофра, оплётки,
@@ -110,6 +111,12 @@ function GroupChooser({ row, busy, onChange }: { row: CoveringRow; busy: boolean
   </div>;
 }
 
+/** Значения строки оболочки для поиска: все поля, кроме служебных (id, раздел). */
+function coveringText(row: CoveringRow): unknown[] {
+  return Object.entries(row).flatMap(([key, value]) => key === "id" || key === "group" || key === "auto_group" ? []
+    : Array.isArray(value) ? value : value !== null && typeof value === "object" ? [] : [value]);
+}
+
 export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount?: (count: number) => void }) {
   const [data, setData] = useState<CoveringsResult | null>(null);
   // The БД.МАТ rows behind the coverings: a cell edit sends the column's old value as the record has it.
@@ -147,11 +154,10 @@ export function CoveringsTable({ canEdit, onCount }: { canEdit: boolean; onCount
     }
   }
 
-  const words = query.trim().toLocaleLowerCase("ru-RU").split(/\s+/).filter(Boolean);
-  const visible = useMemo(() => (data?.rows ?? []).filter((row) => {
-    const text = [row.name, row.series, row.maker, row.material, row.color].join(" ").toLocaleLowerCase("ru-RU");
-    return words.every((word) => text.includes(word));
-  }), [data, query]); // eslint-disable-line react-hooks/exhaustive-deps
+  const words = searchWords(query);
+  // Поиск — по всем значениям строки (наименование, серия, производитель, материал, цвет, размеры, примечания), по
+  // правилам searchText.ts: «тут 3.0» находит «ТУТ 3,0/1,5».
+  const visible = useMemo(() => searchRows(data?.rows ?? [], coveringText, query), [data, query]);
 
   if (error && !data) return <div className="error-banner" role="alert">{error}</div>;
   if (!data) return <div className="empty">Загрузка…</div>;
