@@ -161,10 +161,11 @@ function WireColors({ text }: { text: string }) {
 }
 
 const UNPARSED = "Не разобраны";
-// A wire's own set (owner 15.10.2026: «для каждой группы свои требования»): the core material, the standard, the maker
-// and the supply columns; the coax materials (dielectric, screen, jacket) stay in «Колонки», hidden.
-const WIRE_SHOWN = new Set(["Материал жилы", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
-const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал изоляции жилы", "Материал экрана", "Материал оболочки"]);
+// A wire's own set (owner 15.10.2026: «у монтажных мне надо материал жилы и материал оболочки»): the core and jacket
+// materials, the standard, the maker and the supply columns; the structured «Изоляция» and the other lists' materials
+// (dielectric, core insulation, screen) stay in «Колонки», hidden.
+const WIRE_SHOWN = new Set(["Материал жилы", "Материал оболочки", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
+const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал изоляции жилы", "Материал экрана"]);
 type Shared = { insulation?: string; voltage?: string; temp?: string };
 
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
@@ -244,7 +245,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
       edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
-    { key: "insulation", title: "Изоляция", value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
+    { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
     { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
     { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
@@ -272,7 +273,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       rows={rows}
       columns={columns}
       rowKey={(row) => row.id}
-      storageKey="db:cables:wire-structured:2"
+      storageKey="db:cables:wire-structured:3"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
       exportName="Монтажные провода"
