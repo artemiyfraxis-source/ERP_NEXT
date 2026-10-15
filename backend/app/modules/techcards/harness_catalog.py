@@ -209,7 +209,7 @@ def _wires(rows: Iterable[Mapping[str, Any]], out: _Collector) -> None:
             awg=awg, conductor=_text(fields, "Жила: проволок × диаметр, мм"),
             colors=_text(fields, "Цвета"),
             outerDiameterMm=_measure(out, fields, "Наружный диаметр, мм", entity_type=entity, key=mark, sheet=sheet),
-            insulation=_text(fields, "Изоляция"), shield=_text(fields, "Экран"),
+            insulation=_text(fields, "Материал оболочки"), shield=_text(fields, "Экран"),
             impedanceOhm=_measure(out, fields, "Волновое сопротивление, Ом", entity_type=entity, key=mark, sheet=sheet),
         ), sheet)
 

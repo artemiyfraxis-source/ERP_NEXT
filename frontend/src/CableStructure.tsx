@@ -166,7 +166,9 @@ const UNPARSED = "Не разобраны";
 // (dielectric, core insulation, screen) stay in «Колонки», hidden.
 const WIRE_SHOWN = new Set(["Материал жилы", "Материал оболочки", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
 const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал изоляции жилы", "Материал экрана"]);
-type Shared = { insulation?: string; voltage?: string; temp?: string };
+const CORE_MATERIAL = "Материал жилы";
+const JACKET_MATERIAL = "Материал оболочки";
+type Shared = { jacket?: string; voltage?: string; temp?: string };
 
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {
   data: CablesResult;
@@ -195,13 +197,13 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     const result = new Map<string, Shared>();
     for (const [series, list] of bySeries) {
       if (list.length < 2) continue;
-      const same = (pick: (wire: HookupWire) => string) => {
-        const values = new Set(list.map((row) => pick(row.hookup as HookupWire)));
+      const same = (pick: (wire: HookupWire, row: CableRow) => string) => {
+        const values = new Set(list.map((row) => pick(row.hookup as HookupWire, row).trim()));
         const [only] = [...values];
         return values.size === 1 && only ? only : undefined;
       };
       result.set(series, {
-        insulation: same((wire) => wire.insulation),
+        jacket: same((_wire, row) => row.record?.fields[JACKET_MATERIAL] ?? ""),
         voltage: same((wire) => wire.voltage_v === null ? "" : String(wire.voltage_v)),
         temp: same((wire) => range(wire.temp_min_c, wire.temp_max_c)),
       });
@@ -215,7 +217,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   // The table itself appends « · N» — the number of sizes in the group.
   const groupLabel = (name: string) => {
     const own = name === UNPARSED ? undefined : shared.get(name);
-    return [name, own?.insulation, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
+    return [name, own?.jacket, own?.voltage && `${own.voltage} В`, own?.temp && `${own.temp} °C`].filter(Boolean).join(" · ");
   };
   const gaugeOf = (row: CableRow) => row.hookup ? byId.get(row.hookup.gauge_id) ?? null : null;
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
@@ -245,13 +247,14 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "strands", title: "Структура жилы", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
       edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
-    { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
+    { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
     { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
     { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
     { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
     ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
-      render: (row) => clip(field(row, name)),
+      // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
+      render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : clip(field(row, name)),
       // «Тип провода» решает, в каком списке провод: меняется в окне провода.
       edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : name === TYPE ? undefined : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
@@ -306,7 +309,7 @@ const CELL_LABELS: Record<string, string> = {
   "Источник данных": "Источник", "Волновое сопротивление, Ом": "Волновое, Ом", [STANDARD]: "Стандарт (ГОСТ / ТУ / UL)",
   "Сечение, мм2": "Сечение, мм²",
 };
-const SECTION_CELLS = [[MARK, TYPE, "Число жил", STRANDS], ["Ток, А"], ["Экран", "Волновое сопротивление, Ом", "Масса, г/м"],
+const SECTION_CELLS = [[MARK, TYPE, "Число жил", STRANDS], [CORE_MATERIAL, JACKET_MATERIAL, "Ток, А"], ["Экран", "Волновое сопротивление, Ом", "Масса, г/м"],
   ["Поставщик", "Цена посл., ₽/м без НДС", "Закупок", "Ссылка на datasheet", "Источник данных"]];
 
 function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSelect, seriesColors, makerNames }: {
@@ -362,6 +365,10 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
     <input aria-label={label} inputMode={decimal ? "decimal" : undefined} value={wire[name]} onChange={(event) => setWire({ ...wire, [name]: event.target.value })} />
   </label>;
   const setCell = (name: string, value: string) => setFields({ ...fields, [name]: value });
+  // The materials are own БД.ПРОВ columns: a wire without a value has no such cell yet, the form still offers it.
+  const material = (name: string) => (name in fields || columns.includes(name)) && <label key={name}><small>{name}</small>
+    <input aria-label={name} value={fields[name] ?? ""} onChange={(event) => setCell(name, event.target.value)} />
+  </label>;
   const cell = (name: string) => name in fields && <label key={name} className={name === MARK || name === TYPE ? "wide" : undefined}><small>{CELL_LABELS[name] ?? name}</small>
     <input aria-label={CELL_LABELS[name] ?? name} value={fields[name] ?? ""} onChange={(event) => setCell(name, event.target.value)} />
   </label>;
@@ -385,9 +392,10 @@ function HookupEditor({ row, columns, gauges, onSaved, onError, onCancel, kindSe
         {input("outer_d_mm", "Ø наружный, мм", true)}
       </div>
     </section>
-    <section className="form-section"><h4>Изоляция и режим</h4>
+    <section className="form-section"><h4>Материалы и режим</h4>
       <div className="cable-form">
-        {input("insulation", "Изоляция")}
+        {material(CORE_MATERIAL)}
+        {material(JACKET_MATERIAL)}
         {input("voltage_v", "Напряжение, В", true)}
         {input("temp_min_c", "Темп. от, °C", true)}
         {input("temp_max_c", "Темп. до, °C", true)}
