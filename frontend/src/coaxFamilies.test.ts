@@ -1,49 +1,46 @@
 import { describe, expect, it } from "vitest";
 import type { CableRow } from "./api";
-import { coaxGroupName, coaxGroupOf, coaxNaming, compareCoaxMarks, sortCoax } from "./coaxFamilies";
+import { coaxGroupOf, coaxNaming, coaxPlace, sortCoax } from "./coaxFamilies";
 
 const row = (cable: string, extra: Partial<CableRow> = {}): CableRow => ({
   id: cable, kind: "coax", auto_kind: "coax", reason: "", manual: false, cable, record: null, dia: null, dia_hint: null, ...extra,
 });
 
-// The 51 coax marks of the shop's base (14.10.2026), in the order the owner reads a catalogue.
-const CATALOGUE = [
-  "RG58", "RG-58 A/U", "RG-58 C/U", "RG59", "RG59 B/U", "RG-6", "RG6/U", "RG-141", "RG142", "RG174", "RG174 A/U", "RG178",
-  "RG-213", "RG213 C/U", "RG-223", "RG316", "RG316-D", "RG-400", "RG-401", "RG402", "RG405",
-  "LMR-100", "LMR-195", "LMR-200", "LMR240", "LMR-400", "LMR-400 LSZH", "LMR400 UF",
-  "5D-FB", "5D-FB Cu", "8D-FB", "8D-FB Cu", "10D-FB", "10D-FB PE",
-  "RF 0.81", "RF 1.13", "RF 1.37", "RG1.37", "RF 1.47",
-  "SR-086-50", "SR-141-50", "Sucoform 141 Cu FEP", "UT-047", "MULTIFLEX 86", "SS405",
-  "РК50-1,5-21", "РК50-2-11", "РК50-4-11", "КВСФ-75",
-  "1/2 Baltic Signal BSF-50-12 LSZH",
-  "MFC-240 UF",
+// A slice of the shop's coax base (16.10.2026), in the order the owner wants it: groups by the head of the mark.
+const MARKS = [
+  "D-FB:5D-FB", "D-FB:5D-FB Cu", "D-FB:8D-FB", "D-FB:10D-FB",
+  "LMR:LMR-100", "LMR:LMR-195", "LMR:LMR-400", "LMR:LMR-400 UF",
+  "RF:RF 0.81", "RF:RF 1.13", "RF:RF 1.37",
+  "RG:RG1.37", "RG:RG-6", "RG:RG-6/U", "RG:RG-11", "RG:RG58", "RG:RG-58 A/U", "RG:RG-58 C/U", "RG:RG-59", "RG:RG-142",
+  "RG:RG-174", "RG:RG-179B/U", "RG:RG-316", "RG:RG-316D",
+  "SAT:SAT-703", "SAT:SAT-703B",
+  "SF:SF-047", "SF:SF-047 SPC FEP", "SF:SF-141", "SF:SF-141 100 Ом", "SF:SF-141 FEP",
+  "РК:РК50-2-22", "РК:РК50-9-32-С", "РК:РК50-12-331-С",
+  "Фидеры:1/2″", "Фидеры:1/2 Baltic Signal BSF-50-12 LSZH", "Фидеры:7/8″",
+  "Прочие:GNS-360B", "Прочие:TZC500-97",
 ];
+const CATALOGUE = MARKS.map((item) => item.split(":")[1]);
+const GROUPS = MARKS.map((item) => item.split(":")[0]);
 
-describe("coax catalogue order", () => {
-  it("orders the shop's 51 marks like a catalogue, whatever order they come in", () => {
-    expect(CATALOGUE).toHaveLength(51);
-    const shuffled = [...CATALOGUE].sort().reverse();
-    expect(shuffled.sort(compareCoaxMarks)).toEqual(CATALOGUE);
+describe("coax catalogue order (owner 16.10: groups by the head of the mark — RG, SF, SAT…)", () => {
+  it("groups by the head and orders inside by the mark's numbers, base before variants, whatever order rows come in", () => {
+    const rows = [...CATALOGUE].sort().reverse().map((cable) => row(cable));
+    expect(sortCoax(rows).map((item) => item.cable)).toEqual(CATALOGUE);
+    expect(CATALOGUE.map((cable) => coaxGroupOf(rows)(row(cable)))).toEqual(GROUPS);
   });
 
-  it("groups by series in a fixed order", () => {
-    const groups = [...new Set(CATALOGUE.map(coaxGroupName))];
-    expect(groups).toEqual(["RG", "LMR", "D-FB", "Тонкие RF", "Полужёсткие и гибкие", "Отечественные", "Фидеры", "Прочие"]);
-    expect(coaxGroupName("RG1.37")).toBe("Тонкие RF"); // a micro-coax, not RG-1
-    expect(coaxGroupName("")).toBe("Без марки");
+  it("a head only one mark has goes to «Прочие»; RG-6 before RG-58 by number", () => {
+    const rows = [row("RG-58"), row("RG-6"), row("LDF4-50A"), row("RG-142")];
+    expect(rows.map(coaxGroupOf(rows))).toEqual(["RG", "RG", "Прочие", "RG"]);
+    expect(sortCoax(rows).map((item) => item.cable)).toEqual(["RG-6", "RG-58", "RG-142", "LDF4-50A"]);
+    expect(coaxPlace("")).toEqual({ head: "Без марки", numbers: [], variant: "" });
+    expect(coaxPlace("РК50-12-331-С")).toEqual({ head: "РК", numbers: [50, 12, 331], variant: "С" });
   });
 
-  it("reads one mark however it is spelled, base mark before its variants", () => {
-    expect(compareCoaxMarks("RG-58", "RG58")).not.toBe(0); // the spelling breaks the tie, the place is the same
-    expect(["RG-174 A/U", "rg 174", "RG-58 C/U"].sort(compareCoaxMarks)).toEqual(["RG-58 C/U", "rg 174", "RG-174 A/U"]);
-    expect(["LMR400 UF", "LMR-400 LSZH", "LMR-400", "LMR-195"].sort(compareCoaxMarks)).toEqual(["LMR-195", "LMR-400", "LMR-400 LSZH", "LMR400 UF"]);
-  });
-
-  it("sorts rows without touching the input and labels each row with its group", () => {
-    const input = [row("LMR-195"), row("RG316"), row("RG-6"), row("RG-58 A/U"), row("RG58")];
-    expect(sortCoax(input).map((item) => item.cable)).toEqual(["RG58", "RG-58 A/U", "RG-6", "RG316", "LMR-195"]);
+  it("sorts without touching the input", () => {
+    const input = [row("LMR-195"), row("RG-6")];
+    sortCoax(input);
     expect(input[0].cable).toBe("LMR-195");
-    expect(input.map(coaxGroupOf(input))).toEqual(["LMR", "RG", "RG", "RG", "RG"]);
   });
 
   it("reads full name and aliases off the card", () => {
