@@ -41,7 +41,7 @@ function stub(shipments: unknown[] = [], goods: unknown[] = [good], addressees: 
     if (url === "/api/shipping/upd-files") return json({ shipment: { ...shipment, version: 2 } });
     if (url === "/api/shipping/project-addressees") return json({ addressees });
     if (url === "/api/shipping/project-addressee" && method === "PUT") return json({ addressee: { ...card, ...JSON.parse(String(init?.body)), version: 3 } });
-    if (/^\/api\/shipping\/shipments\/s\d+\/print/.test(url)) return json({ forms: [{ kind: "pl", title: "УПАКОВОЧНАЯ ВЕДОМОСТЬ", head: [{ label: "Номер документа", value: "PL1", side: "" }], columns: ["GRN"], rows: [["КБ1"]], blank_rows: 0, sign_label: "Штамп / подпись кладовщика:", sign_name: "" }] });
+    if (/^\/api\/shipping\/shipments\/s\d+\/print/.test(url)) return json({ forms: [{ kind: "pl", title: "PL1-1", number: ["PL", "1", "-", "1"], place: "1", places: "1", package: "Короб", dims: "", net: "", gross: "", seal: "", rows: [{ part: "КБ1", name: "", quantity: "1", unit: "шт", batch: "", pl: "", boxes: "" }], packed_at: "", shipped_at: "", packer: "" }] });
     if (url === "/api/shipping/shipments/s1/labels") return json({ labels: [{ shipper: "ООО «ЗЭП ФРАКСИС»", consignee: "Получатель", address: "Москва", project: "591К.3", pl_number: "PL1", place: "Упаковка 1/1", items: [{ item_index: "КБ1", quantity: "6", unit: "шт" }], net: "11", dims: "32x25x21" }] });
     if (url === "/api/shipping/shipments/s1/ship") return json({ shipment, closed: true, why: "" });
     if (url === "/api/shipping/shipments/s2/unship") return json({ shipment: { ...shippedOne, status: "Упакована", shipped_at: null } });

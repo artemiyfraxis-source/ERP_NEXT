@@ -56,7 +56,7 @@ def test_paper_and_empty_type_still_need_the_file():
 def test_delivery_note_says_without_upd():
     form = build_delivery_note(_packed(UpdType.NONE), "Заказчик")
 
-    assert {label: value for label, value, _side in form.head}["УПД №:"] == "без УПД"
+    assert (form.upd, form.upd_edo, form.upd_paper) == ("без УПД", False, False)
 
 
 def _stocked(client, item_index="КБ1", quantity="6", **accept) -> dict:
