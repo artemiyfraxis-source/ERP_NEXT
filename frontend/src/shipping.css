@@ -9,3 +9,15 @@
 .ship-dispatch h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); }
 /* № и дата УПД, срок отправки — короткие значения: три узких поля, не на всю ширину. */
 @media (min-width: 1200px) { .ship-form.ship-pack-docs { grid-template-columns: repeat(3, minmax(0, 240px)); } }
+/* «Отправки» (владелец 15.10): строка — одна линия; длинное обрезается «…», целиком — в подсказке. */
+.ship-clip { display: block; max-width: var(--ship-clip, 240px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ship-clip-projects { --ship-clip: clamp(140px, 13vw, 360px); }
+.ship-clip-where { --ship-clip: clamp(160px, 16vw, 440px); }
+.ship-status { display: inline-flex; gap: 8px; align-items: center; white-space: nowrap; }
+.ship-status-day, .ship-due { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ship-status-day { color: var(--muted-foreground); font-size: 12px; }
+.ship-step { font-weight: 600; white-space: nowrap; }
+.ship-due-late { font-weight: 600; }
+.ship-docs-cell { white-space: nowrap; color: var(--muted-foreground); }
+.ship-docs-cell .ship-doc-link { min-height: 0; padding: 0; color: var(--foreground); vertical-align: baseline; }
+.ship-upd-link { color: var(--primary); white-space: nowrap; }

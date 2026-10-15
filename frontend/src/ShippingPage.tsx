@@ -6,9 +6,10 @@ import {
 import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, type DataColumn } from "./DataTable";
 import { fetchBoxLabels, openBoxLabels, openShippingForms } from "./shippingPrint";
-import { formatDate } from "./format";
+import { formatDate, formatDayMonth } from "./format";
 import { StatusChip as SharedChip } from "./StatusChip";
 import { isoDay } from "./Gantt";
+import { daysUntil } from "./productionGraph";
 import { GoodsStateBar, goodsPieces, sumPieces } from "./FinishedGoodsStates";
 import { DispatchFields, changedDispatch, dispatchDraft, readFile, type DispatchDraft } from "./DispatchCard";
 import "./shipping.css";
@@ -47,9 +48,57 @@ const STATUS_HINT: Record<string, string> = {
 function StatusChip({ status }: { status: string }) {
   return <SharedChip status={status} title={STATUS_HINT[status]} />;
 }
-function Due({ day, late }: { day: string | null; late: boolean }) {
+/** Срок одной строкой: «16.10.2026 · просрочено на 3 дн.» (владелец 15.10: красная дата без слов не читается). Срок раньше
+ *  заведения отправки — почти наверняка опечатка в дате (16.01 вместо 16.10): подсказка просит её проверить. */
+export function Due({ day, late, since }: { day: string | null; late: boolean; since?: string | null }) {
   if (!day) return <span className="muted">—</span>;
-  return <span className={late ? "tone-danger" : undefined}>{formatDate(day)}{late && <small className="tone-danger">просрочена</small>}</span>;
+  const behind = late ? Math.max(1, -daysUntil(day)) : 0;
+  const odd = late && Boolean(since) && day < String(since).slice(0, 10);
+  const title = odd ? `Просрочено на ${behind} дн.: срок раньше даты заведения ${formatDate(String(since).slice(0, 10))} — похоже на опечатку в дате` : undefined;
+  return <span className={late ? "ship-due tone-danger" : "ship-due"} title={title}>{formatDate(day)}
+    {late && <span className="ship-due-late">{odd ? " · проверьте дату" : ` · просрочено на ${behind} дн.`}</span>}</span>;
+}
+
+const TERMS_LABEL: Record<string, string> = { "САМОВЫВОЗ": "Самовывоз", "ДОСТАВКА ТК": "Доставка ТК" };
+const sameWords = (text: string) => text.toLowerCase().replace(/[«»"'“”]/g, "").replace(/\s+/g, " ").trim();
+
+/** «Кому · куда» без повторов (владелец 15.10: «самовывоз / самовывоз», «Самовывоз · САМОВЫВОЗ · Самовывоз»): получатель,
+ *  адрес, условия, ТК — каждое слово один раз; из двух написаний остаётся то, что с заглавной. */
+export function destination(shipment: Pick<Shipment, "receiver" | "shipping_point" | "terms" | "carrier">): string {
+  const parts: string[] = [];
+  const terms = shipment.terms ? TERMS_LABEL[shipment.terms] ?? shipment.terms : "";
+  for (const raw of [shipment.receiver, shipment.shipping_point, terms, shipment.carrier]) {
+    const text = String(raw ?? "").trim();
+    if (!text) continue;
+    const twin = parts.findIndex((part) => sameWords(part) === sameWords(text));
+    if (twin < 0) parts.push(text);
+    else if (parts[twin] === parts[twin].toLowerCase() && text !== text.toLowerCase()) parts[twin] = text;
+  }
+  return parts.join(" · ");
+}
+
+/** УПД без файла отгрузить нельзя, кроме ЭДО и «Без УПД» (сервер, `mark_shipped`). */
+const needsUpdFile = (shipment: Shipment) => !["ЭДО", "БЕЗ УПД"].includes(shipment.upd_type ?? "") && !shipment.upd_url;
+
+export interface NextStep { text: string; tone: "ok" | "warn" | "info"; why: string }
+
+/** Что кладовщику сделать с отправкой сейчас — видно в списке, не открывая строку (владелец 15.10). Порядок — как
+ *  сервер: набрать → PL и DN → файл УПД (бумажная) → отгрузить → для закрытия № и файл УПД, трек для доставки ТК. */
+export function nextStep(shipment: Shipment): NextStep | null {
+  if (ACTIVE.includes(shipment.status)) {
+    if (!shipment.lines.some((line) => num(line.picked) > 0)) return { text: "Набрать со склада", tone: "info", why: "В отправке ещё ничего не набрано" };
+    if (!shipment.pl_number) return { text: "Сформировать PL и DN", tone: "info", why: "Набрано, отгрузочные документы не сформированы" };
+    if (needsUpdFile(shipment)) return { text: "Загрузить УПД", tone: "warn", why: "Без файла УПД отгрузить нельзя (кроме ЭДО и «Без УПД»)" };
+    return { text: "Отгрузить", tone: "ok", why: "Упакована, PL и DN готовы — распечатайте и отгрузите" };
+  }
+  if (shipment.status !== "Отгружена") return null;
+  const missing: string[] = [];
+  if (!withoutUpd(shipment) && !shipment.upd_number) missing.push("№ УПД");
+  if (!withoutUpd(shipment) && !shipment.upd_url) missing.push("файл УПД");
+  if (shipment.terms === "ДОСТАВКА ТК" && !shipment.track_number) missing.push("трек-номер");
+  return missing.length
+    ? { text: `Внести: ${missing.join(", ")}`, tone: "warn", why: "Без этого отправку не закрыть" }
+    : { text: "Закрыть", tone: "ok", why: "Уехала, документы на месте" };
 }
 
 /** Почему отгруженная отправка не закрылась: «Нельзя закрыть: не хватает — файл УПД» → «Не закрыта — не хватает: файл УПД». */
@@ -326,7 +375,7 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
       {canManage && <div className="ship-form ship-pack-docs">
         <label>№ УПД<input aria-label={`№ УПД проекта ${row.project}`} value={docs.upd_number} onChange={(event) => setDocs({ ...docs, upd_number: event.target.value })} /></label>
         <label>Дата УПД<input aria-label={`Дата УПД проекта ${row.project}`} type="date" value={docs.upd_date} onChange={(event) => setDocs({ ...docs, upd_date: event.target.value })} /></label>
-        <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" value={docs.deadline} onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>
+        <label>Отгрузить до<input aria-label={`Отгрузить до: проект ${row.project}`} type="date" min={today()} value={docs.deadline} onChange={(event) => setDocs({ ...docs, deadline: event.target.value })} /></label>
       </div>}
       <details className="ship-more"><summary>Ещё: контакт, доставка, план{canManage ? ", реквизиты" : ""} <span className="muted">· {filled.length ? filled.join(" · ") : "не заполнены"}</span></summary>
         <div className="ship-form">
@@ -334,7 +383,7 @@ function ShipPanel({ row, addressees, canManage, canEdit, busy, mutate }: Contex
             <input aria-label={`${label} проекта ${row.project}`} disabled={!editCard} placeholder={editCard ? placeholder : ""} value={more[key]} onChange={(event) => setMore({ ...more, [key]: event.target.value })} /></label>)}
           <label>Условия доставки<select aria-label={`Условия доставки проекта ${row.project}`} disabled={!editCard} value={more.terms} onChange={(event) => setMore({ ...more, terms: event.target.value })}>
             <option value="">не выбрано</option><option value="САМОВЫВОЗ">Самовывоз</option><option value="ДОСТАВКА ТК">Доставка ТК</option></select></label>
-          <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
+          <label>Плановая дата проекта<input aria-label={`Плановая дата проекта ${row.project}`} type="date" min={today()} value={plan.plan_date} onChange={(event) => setPlan({ ...plan, plan_date: event.target.value })} onBlur={(event) => saveRequisite("plan_date", event.target.value)} /></label>
           <label className="ship-span2">Комментарий проекта<input aria-label={`Комментарий проекта ${row.project}`} placeholder="попадёт в новые отправки" value={plan.note} onChange={(event) => setPlan({ ...plan, note: event.target.value })} onBlur={(event) => saveRequisite("note", event.target.value.trim())} /></label>
           {canManage && REQUISITE_FIELDS.map(([key, label, placeholder]) => <label key={key}>{label}
             <input aria-label={`${label} проекта ${row.project}`} placeholder={placeholder} value={requisites[key] ?? ""} onChange={(event) => setRequisites({ ...requisites, [key]: event.target.value })} onBlur={(event) => saveRequisite(key, event.target.value.trim())} /></label>)}
@@ -385,26 +434,62 @@ function projectsOf(shipment: Shipment) {
 const sumOf = (shipment: Shipment, key: "picked" | "requested") => round2(shipment.lines.reduce((sum, line) => sum + num(line[key]), 0));
 const noUpd = (shipment: Shipment) => ["Отгружена", "Закрыта"].includes(shipment.status) && !withoutUpd(shipment) && (!shipment.upd_number || !shipment.upd_url);
 
+/** Печать PL / DN по номеру прямо из строки списка (во «Отправках» и в «Журнале»). */
+function useShipmentPrint() {
+  const [error, setError] = useState("");
+  const open = async (shipment: Shipment, document: "pl" | "dn") => {
+    setError("");
+    try { openShippingForms((await shippingApi.print(shipment.id, document)).forms); }
+    catch (reason) { setError(failureText(reason, "Не удалось подготовить печать")); }
+  };
+  /** `short` — подпись «DN» вместо номера: № DN повторяет № PL, в списке отправок хватает одного. */
+  const link = (shipment: Shipment, document: "pl" | "dn", short = false) => {
+    const number = document === "pl" ? shipment.pl_number : shipment.dn_number;
+    const kind = document === "pl" ? "PL" : "DN";
+    return number ? <button type="button" className="link-button ship-doc-link" title={`Печать ${kind} ${number}`} aria-label={short ? `Печать ${number}` : undefined}
+      onClick={(event) => { event.stopPropagation(); void open(shipment, document); }}>{short ? kind : number}</button> : <span className="muted">—</span>;
+  };
+  return { error, link };
+}
+
+/** «ЭДО № 474», «Бумага № 12» — ссылкой, когда файл приложен; бумажная без файла — «нет файла». */
+function UpdCell({ shipment }: { shipment: Shipment }) {
+  if (withoutUpd(shipment)) return <span className="muted">Без УПД</span>;
+  const label = [updLabel(shipment.upd_type), shipment.upd_number ? `№ ${shipment.upd_number}` : ""].filter(Boolean).join(" ");
+  if (shipment.upd_url) return <a className="ship-upd-link" href={shipment.upd_url} target="_blank" rel="noreferrer" title="Открыть файл УПД" onClick={(event) => event.stopPropagation()}>{label || "УПД"}</a>;
+  if (needsUpdFile(shipment) || noUpd(shipment)) return <span className="tone-danger">{label ? `${label} · нет файла` : "нет файла"}</span>;
+  return label ? <>{label}</> : <span className="muted">—</span>;
+}
+
 function ShipmentsTab({ goods, shipments, canManage, canWarehouse, canEdit, canUnship, busy, mutate }: Context) {
   const rows = useMemo(() => shipmentRows(shipments), [shipments]);
   const [creating, setCreating] = useState(false);
+  const print = useShipmentPrint();
+  // Строка — одна линия (владелец 15.10): статус с датой в одну строку, «Что сделать» — следующий шаг без раскрытия строки.
   const columns: DataColumn<Shipment>[] = [
-    { key: "number", title: "№ отправки", value: (row) => row.number, render: (row) => <><strong>{row.number}</strong><small>{formatDate(row.created_at.slice(0, 10))}</small></> },
-    { key: "status", title: "Статус", value: (row) => row.status, filter: true,
-      render: (row) => <><StatusChip status={row.status} />{row.shipped_at ? <small>отгружена {formatDate(row.shipped_at)}</small> : row.packed_at && <small>упакована {formatDate(row.packed_at)}</small>}</> },
+    { key: "number", title: "№ отправки", value: (row) => row.number, render: (row) => <strong title={`Заведена ${formatDate(row.created_at.slice(0, 10))}`}>{row.number}</strong> },
+    { key: "status", title: "Статус", value: (row) => row.status, filter: true, render: (row) => {
+      const [word, day] = row.shipped_at ? ["отгружена", row.shipped_at] : row.packed_at ? ["упакована", row.packed_at] : ["", null];
+      return <span className="ship-status"><StatusChip status={row.status} />{day && <span className="ship-status-day" title={`${word} ${formatDate(day)}`}>{formatDayMonth(day)}</span>}</span>;
+    } },
+    { key: "step", title: "Что сделать", value: (row) => nextStep(row)?.text ?? "", filter: true, hint: "Следующий шаг по отправке",
+      render: (row) => { const step = nextStep(row); return step ? <span className={`ship-step tone-${step.tone}`} title={step.why}>{step.text}</span> : <span className="muted">—</span>; } },
     { key: "customer", title: "Заказчик", value: (row) => row.customer || row.receiver, filter: true, hidden: true },
-    { key: "projects", title: "Проект · КБ", value: (row) => projectsOf(row), wrap: true },
+    { key: "projects", title: "Проект · КБ", value: (row) => projectsOf(row), render: (row) => <span className="ship-clip ship-clip-projects" title={projectsOf(row)}>{projectsOf(row)}</span> },
     { key: "picked", title: "Упаковано, шт", value: (row) => sumOf(row, "picked"), numeric: true, hint: "Набрано в отправку из заказанного",
       render: (row) => { const picked = sumOf(row, "picked"); const asked = sumOf(row, "requested"); return picked < asked ? <span className="tone-warn">{picked} из {asked}</span> : picked; } },
-    { key: "point", title: "Куда", value: (row) => `${row.shipping_point} ${row.receiver}`, wrap: true,
-      render: (row) => <>{row.shipping_point || <span className="tone-danger">адрес не указан</span>}<small>{[row.receiver, row.terms, row.carrier].filter(Boolean).join(" · ")}</small></> },
-    { key: "deadline", title: "Срок", value: (row) => row.deadline ?? "", render: (row) => <Due day={row.deadline} late={overdue(row)} /> },
-    { key: "docs", title: "PL · DN", value: (row) => row.pl_number ? `${row.pl_number} · ${row.dn_number}` : "",
-      render: (row) => row.pl_number ? `${row.pl_number} · ${row.dn_number}` : <span className="muted">—</span> },
-    { key: "upd", title: "УПД", value: (row) => withoutUpd(row) ? "Без УПД" : row.upd_number,
-      render: (row) => withoutUpd(row) ? <span className="muted">Без УПД</span> : noUpd(row) ? <span className="tone-danger">{row.upd_number ? `${row.upd_number} · нет файла` : "нет"}</span> : row.upd_number || <span className="muted">—</span> },
+    { key: "point", title: "Кому · куда", value: (row) => destination(row), hint: "Получатель, адрес, условия и ТК — без повторов",
+      render: (row) => row.shipping_point.trim()
+        ? <span className="ship-clip ship-clip-where" title={destination(row)}>{destination(row)}</span>
+        : <span className="ship-clip ship-clip-where"><span className="tone-danger">адрес не указан</span>{row.receiver ? ` · ${row.receiver}` : ""}</span> },
+    { key: "deadline", title: "Срок", value: (row) => row.deadline ?? "", render: (row) => <Due day={row.deadline} late={overdue(row)} since={row.created_at} /> },
+    { key: "docs", title: "PL · DN", value: (row) => row.pl_number ? `${row.pl_number} · ${row.dn_number}` : "", hint: "Щелчок по номеру — печать",
+      render: (row) => row.pl_number ? <span className="ship-docs-cell">{print.link(row, "pl")} · {print.link(row, "dn", true)}</span> : <span className="muted">—</span> },
+    { key: "upd", title: "УПД", value: (row) => withoutUpd(row) ? "Без УПД" : [updLabel(row.upd_type), row.upd_number].filter(Boolean).join(" "),
+      render: (row) => <UpdCell shipment={row} /> },
   ];
   return <>
+    {print.error && <div className="error-banner" role="alert">{print.error}</div>}
     {creating && <CreateShipment goods={goods} busy={busy} mutate={mutate} onDone={() => setCreating(false)} />}
     <DataTable label="Отправки" storageKey="shipping-shipments-v3" rows={rows} columns={columns} rowKey={(row) => row.id}
       groupBy={phaseName}
@@ -504,14 +589,14 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
   return <article className={`ship-card${shipment.status === "Отменена" ? " cancelled" : ""}`}>
     <div className="ship-card-head">
       <strong>{shipment.number}</strong><StatusChip status={shipment.status} />
-      <span>{shipment.receiver || shipment.customer} · {shipment.shipping_point || <span className="tone-danger">адрес не указан</span>}</span>
-      {(shipment.terms || shipment.carrier) && <span className="muted">{[shipment.terms, shipment.carrier].filter(Boolean).join(" · ")}</span>}
-      {shipment.deadline && <span className={late ? "tone-danger" : undefined}>план {formatDate(shipment.deadline)}{late ? " · просрочена" : ""}</span>}
+      <span>{shipment.shipping_point.trim() ? destination({ ...shipment, receiver: shipment.receiver || shipment.customer })
+        : <><span className="tone-danger">адрес не указан</span>{` · ${shipment.receiver || shipment.customer}`}</>}</span>
+      {shipment.deadline && <span>срок <Due day={shipment.deadline} late={late} since={shipment.created_at} /></span>}
       {shipment.pl_number && <span className="muted">{shipment.pl_number} · {shipment.dn_number}</span>}
       {shipment.places > 0 && <span className="muted">мест {shipment.places}{shipment.weight ? ` · ${shipment.weight} кг` : ""}</span>}
       {shipment.shipped_at ? <span className="muted">отгружена {formatDate(shipment.shipped_at)}</span> : shipment.packed_at && <span className="muted">упакована {formatDate(shipment.packed_at)}</span>}
       {withoutUpd(shipment) ? <span className="muted">Без УПД</span>
-        : shipment.upd_url ? <a href={shipment.upd_url} target="_blank" rel="noreferrer">УПД{shipment.upd_number ? ` № ${shipment.upd_number}` : ""}</a> : <span className="tone-danger">файла УПД нет</span>}
+        : shipment.upd_url ? <a href={shipment.upd_url} target="_blank" rel="noreferrer">УПД{shipment.upd_number ? ` № ${shipment.upd_number}` : ""}</a> : <span className={needsUpdFile(shipment) || shipment.status === "Отгружена" ? "tone-danger" : "muted"} title={needsUpdFile(shipment) ? "Без файла не отгрузить" : "Файл понадобится, чтобы закрыть отправку"}>файла УПД нет</span>}
       {shipment.note && <span className="ship-note" title="Комментарий отправки">{shipment.note}</span>}
     </div>
     <div className="table-scroll"><table className="ship-lines">
@@ -525,7 +610,8 @@ function ShipmentDetail({ shipment, canManage, canWarehouse, canEdit, canUnship,
     </table></div>
     {printError && <div className="error-banner" role="alert">{printError}</div>}
     <div className="ship-actions">
-      {canWarehouse && got && ACTIVE.includes(shipment.status) && <button type="button" className="primary" disabled={disabled} onClick={ship}>Отгрузить</button>}
+      {canWarehouse && got && ACTIVE.includes(shipment.status) && <button type="button" className="primary" disabled={disabled || needsUpdFile(shipment)}
+        title={needsUpdFile(shipment) ? "Сначала загрузите файл УПД (без файла отгружают только ЭДО и «Без УПД»)" : undefined} onClick={ship}>Отгрузить</button>}
       {canWarehouse && shipment.status === "Отгружена" && <button type="button" className="primary" disabled={disabled} onClick={() => void action("close", `Отгрузка закрыта: ${shipment.number}`)}>Закрыть</button>}
       {canWarehouse && shipment.status === "Новая" && <button type="button" className="secondary" disabled={disabled} onClick={() => void action("pick", "Заявка набрана из доступного остатка")}>Набрать со склада</button>}
       {shipment.pl_number && got && <><button type="button" className="secondary" onClick={() => void print("pl")}>Печать PL</button><button type="button" className="secondary" onClick={() => void print("dn")}>Печать DN</button><button type="button" className="secondary" onClick={() => void printLabels()}>Печать этикеток</button></>}
@@ -673,16 +759,7 @@ export function journalRows(shipments: Shipment[]): JournalRow[] {
 
 function JournalTab({ shipments }: { shipments: Shipment[] }) {
   const rows = useMemo(() => journalRows(shipments), [shipments]);
-  const [error, setError] = useState("");
-  const open = async (shipment: Shipment, document: "pl" | "dn") => {
-    setError("");
-    try { openShippingForms((await shippingApi.print(shipment.id, document)).forms); }
-    catch (reason) { setError(failureText(reason, "Не удалось подготовить печать")); }
-  };
-  const docLink = (shipment: Shipment, document: "pl" | "dn") => {
-    const number = document === "pl" ? shipment.pl_number : shipment.dn_number;
-    return number ? <button type="button" className="link-button ship-doc-link" title="Открыть печатную форму" onClick={() => void open(shipment, document)}>{number}</button> : <span className="muted">—</span>;
-  };
+  const { error, link: docLink } = useShipmentPrint();
   const day = (value: string | null | undefined) => value ? formatDate(value) : "";
   const columns: DataColumn<JournalRow>[] = [
     { key: "date", title: "Дата", value: (row) => row.date, render: (row) => formatDate(row.date) },

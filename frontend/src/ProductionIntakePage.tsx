@@ -5,6 +5,7 @@ import { DispatchCard } from "./DispatchCard";
 import { FinishedGoodsHandoff } from "./FinishedGoodsHandoff";
 import { formatDayMonth } from "./format";
 import { isoDay } from "./Gantt";
+import { daysUntil } from "./productionGraph";
 import { canAct } from "./navigation";
 import { intakeApi, type IntakeRow } from "./productionIntakeApi";
 import "./productionIntake.css";
@@ -52,6 +53,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [day, setDay] = useState(today);
   const [location, setLocation] = useState("");
+  const [places, setPlaces] = useState<Record<string, string>>({});
   const [card, setCard] = useState<string | null>(null);
   // Ключ повтора живёт до успеха: повтор после обрыва связи вернёт уже сделанную приёмку, а не примет второй раз.
   const acceptKey = useRef(crypto.randomUUID());
@@ -75,7 +77,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   }
   useEffect(() => { void reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const amount = (row: IntakeRow) => qty[keyOf(row)] ?? row.remaining;
+  // Одно намерение — одно поле (владелец 15.10): у неотмеченной строки количество пустое («до 20»), отметка ставит «всё
+  // сданное», ввод количества строку отмечает, пустое поле — снимает.
+  const amount = (row: IntakeRow) => qty[keyOf(row)] ?? (picked[keyOf(row)] ? row.remaining : "");
   const acceptable = rows.filter((row) => num(row.remaining) > 0);
   const chosen = acceptable.filter((row) => picked[keyOf(row)] && num(amount(row)) > 0);
   const total = round2(chosen.reduce((sum, row) => sum + num(amount(row)), 0));
@@ -90,6 +94,13 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     setPicked((current) => ({ ...current, [keyOf(row)]: on }));
     setRowErrors((current) => ({ ...current, [keyOf(row)]: "" }));
   };
+  /** Отметка строки флажком: количество — снова «всё сданное». */
+  const tick = (rowsToTick: IntakeRow[], on: boolean) => {
+    const keys = rowsToTick.map(keyOf);
+    setPicked((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, on])) }));
+    setQty((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !keys.includes(key))));
+    setRowErrors((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, ""])) }));
+  };
 
   async function submit() {
     if (busy) return;
@@ -97,13 +108,17 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     for (const row of chosen) if (num(amount(row)) > num(row.remaining)) over[keyOf(row)] = `больше сданного: можно ${row.remaining}`;
     setRowErrors(over);
     if (Object.keys(over).length) return;
-    const lines = chosen.map((row) => ({ project: row.project, item_index: row.item_index, quantity: String(amount(row)).replace(",", ".") }));
+    // Место строки заменяет общее «Место хранения» (сервер: непустое место строки важнее места пакета).
+    const lines = chosen.map((row) => {
+      const place = (places[keyOf(row)] ?? "").trim();
+      return { project: row.project, item_index: row.item_index, quantity: String(amount(row)).replace(",", "."), ...(place ? { location: place } : {}) };
+    });
     setBusy("accept"); setError(""); setNotice("");
     try {
       await intakeApi.accept(lines, day || null, location, acceptKey.current);
       acceptKey.current = crypto.randomUUID();
       setNotice(`Принято на склад: ${total} шт`);
-      setPicked({}); setQty({});
+      setPicked({}); setQty({}); setPlaces({});
       await reload();
     } catch (reason) {
       // Пакет — все строки или ни одной: сервер называет строку («591К.3 КБ1: сдано цехом …»), показываем её там.
@@ -132,9 +147,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         if (!(num(row.remaining) > 0)) return dash;
         const problem = rowErrors[key];
         return <span className="intake-take"><span className="ship-take">
-          <input type="checkbox" aria-label={`Принять ${row.project} ${row.item_index}`} checked={Boolean(picked[key])} onChange={(event) => pick(row, event.target.checked)} />
+          <input type="checkbox" aria-label={`Принять ${row.project} ${row.item_index}`} checked={Boolean(picked[key])} onChange={(event) => tick([row], event.target.checked)} />
           <input className={problem ? "ship-qty invalid" : "ship-qty"} aria-label={`Сколько принять ${row.project} ${row.item_index}`} aria-invalid={problem ? true : undefined}
-            type="number" min="0" step="any" value={amount(row)}
+            type="number" min="0" step="any" value={amount(row)} placeholder={`до ${row.remaining}`}
             onChange={(event) => { setQty({ ...qty, [key]: event.target.value }); pick(row, num(event.target.value) > 0); }} />
           </span>
           {problem && <small className="tone-danger ship-row-error" role="alert">{problem}</small>}
@@ -142,8 +157,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       } }] : []),
     { key: "project", title: "Проект", value: (row) => row.project, hidden: true },
     { key: "kb", title: "КБ", value: (row) => row.item_index, render: (row) => <strong>{row.item_index}</strong> },
-    { key: "name", title: "Наименование", value: (row) => row.name, wrap: true, maxWidth: 190 },
-    { key: "stage", title: "Этап", value: (row) => row.stage, wrap: true, maxWidth: 100, render: (row) => row.stage || dash },
+    // Строка — одна линия (владелец 15.10): длинное наименование обрезается «…», целиком — в подсказке.
+    { key: "name", title: "Наименование", value: (row) => row.name, render: (row) => <span className="intake-clip intake-name" title={row.name}>{row.name}</span> },
+    { key: "stage", title: "Этап", value: (row) => row.stage, render: (row) => row.stage ? <span className="intake-clip intake-stage" title={row.stage}>{row.stage}</span> : dash },
     { key: "needed", title: "Заказано", value: (row) => num(row.needed), numeric: true },
     { key: "launched", title: "Запущено", value: (row) => num(row.launched), numeric: true, render: (row) => count(row.launched) },
     { key: "delivered", title: "Сдано цехом", value: (row) => num(row.delivered), numeric: true, render: (row) => <span title={tasksText(row)}>{count(row.delivered)}</span> },
@@ -152,23 +168,52 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       render: (row) => num(row.remaining) > 0 ? <strong className="tone-ok">{row.remaining}</strong> : dash },
     { key: "packed", title: "Упаковано", value: (row) => num(row.packed), numeric: true, render: (row) => count(row.packed) },
     { key: "sent", title: "Отгружено", value: (row) => num(row.sent), numeric: true, render: (row) => count(row.sent) },
-    { key: "location", title: "Место хранения", value: (row) => row.location, wrap: true, maxWidth: 110, render: (row) => row.location || dash },
+    // Место — своё у отмеченной строки (пусто — общее из шапки); у остальных — где КБ лежит сейчас.
+    { key: "location", title: "Место хранения", value: (row) => row.location, render: (row) => {
+      const key = keyOf(row);
+      if (canWarehouse && picked[key] && num(row.remaining) > 0) {
+        return <input className="intake-place" type="text" autoComplete="off" maxLength={255} aria-label={`Место хранения ${row.project} ${row.item_index}`}
+          placeholder={location.trim() || row.location || "ячейка"} value={places[key] ?? ""} onChange={(event) => setPlaces({ ...places, [key]: event.target.value })} />;
+      }
+      return row.location ? <span className="intake-clip intake-stage" title={row.location}>{row.location}</span> : dash;
+    } },
     { key: "grn", title: "ГРН", value: (row) => row.grn ?? "", render: (row) => row.grn ? <span className="goods-grn">{row.grn}</span> : dash },
-    { key: "tasks", title: "Задания", value: (row) => row.tasks.map((task) => task.number).join(", "), wrap: true, maxWidth: 90,
-      render: (row) => row.tasks.length ? <span className="muted" title={tasksText(row)}>{row.tasks.map((task) => task.number).join(", ")}</span> : dash },
+    // Задания — по умолчанию в подсказке «Сдано цехом» (колонку можно включить в «Колонках»): на 16" таблица без прокрутки вбок.
+    { key: "tasks", title: "Задания", hidden: true, value: (row) => row.tasks.map((task) => task.number).join(", "),
+      render: (row) => row.tasks.length ? <span className="intake-clip intake-stage muted" title={tasksText(row)}>{row.tasks.map((task) => task.number).join(", ")}</span> : dash },
   ];
+  // Колонка, где у всех строк вкладки пусто, не показывается (владелец 15.10: «почти все числа — прочерки»).
+  // Место хранения у склада остаётся: туда пишут место отмеченной строки.
+  const OPTIONAL: Record<string, (row: IntakeRow) => boolean> = {
+    launched: (row) => num(row.launched) > 0, accepted: (row) => num(row.accepted) > 0, packed: (row) => num(row.packed) > 0,
+    sent: (row) => num(row.sent) > 0, grn: (row) => Boolean(row.grn), tasks: (row) => row.tasks.length > 0, stage: (row) => Boolean(row.stage),
+    ...(canWarehouse ? {} : { location: (row: IntakeRow) => Boolean(row.location) }),
+  };
+  const visibleColumns = columns.filter((column) => !OPTIONAL[column.key] || shown.some(OPTIONAL[column.key]));
 
   const toolbar = canWarehouse ? <span className="ship-accept-bar">
     <label className="ship-inline">Дата приёмки<input type="date" aria-label="Дата приёмки" value={day} max={today()} onChange={(event) => setDay(event.target.value)} /></label>
-    <label className="ship-inline">Место хранения<input className="intake-location" type="text" aria-label="Место хранения" value={location} maxLength={255} placeholder="ячейка" onChange={(event) => setLocation(event.target.value)} /></label>
+    <label className="ship-inline">Место хранения<input className="intake-location" type="text" aria-label="Место хранения" title="Для всех отмеченных строк; своё место строки — в колонке «Место хранения»"
+      value={location} maxLength={255} placeholder="для отмеченных" onChange={(event) => setLocation(event.target.value)} /></label>
     <button type="button" className="primary" disabled={!chosen.length || Boolean(busy)} onClick={() => void submit()}>
       {busy === "accept" ? "Принимаем…" : `Принять на склад · ${total} шт`}</button>
   </span> : undefined;
 
-  const groupLabel = (project: string) => {
+  const groupLabel = (project: string, groupRows: IntakeRow[]) => {
     const first = head[project];
-    const title = [project, first?.customer, first?.deadline ? `срок ${formatDayMonth(first.deadline)}` : ""].filter(Boolean).join(" · ");
+    const title = [project, first?.customer].filter(Boolean).join(" · ");
+    const left = first?.deadline ? daysUntil(first.deadline) : null;
+    const ready = groupRows.filter((row) => num(row.remaining) > 0);
+    const all = ready.length > 0 && ready.every((row) => picked[keyOf(row)]);
+    const some = ready.some((row) => picked[keyOf(row)]);
+    const pieces = round2(ready.reduce((sum, row) => sum + num(row.remaining), 0));
     return <span className="intake-group">{title}
+      {first?.deadline && <span className={left !== null && left < 0 ? "intake-due tone-danger" : left !== null && left <= 3 ? "intake-due tone-warn" : "intake-due"}>
+        срок {formatDayMonth(first.deadline)}{left !== null && left < 0 ? ` · просрочен на ${-left} дн.` : left === 0 ? " · сегодня" : ""}</span>}
+      {canWarehouse && ready.length > 0 && <label className="intake-all">
+        <input type="checkbox" aria-label={`Отметить все КБ проекта ${project}`} checked={all}
+          ref={(input) => { if (input) input.indeterminate = some && !all; }} onChange={(event) => tick(ready, event.target.checked)} />
+        все к приёмке: {ready.length} КБ · {pieces} шт</label>}
       <button type="button" className="secondary small" onClick={(event) => { event.stopPropagation(); setCard(project); }}>Данные отправки</button></span>;
   };
 
@@ -180,7 +225,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       <div className="seg-tabs" role="tablist" aria-label="Что показать">{SEGMENTS.map(([key, label]) =>
         <button key={key} type="button" role="tab" aria-selected={segment === key} className={segment === key ? "on" : undefined} onClick={() => { segmentChosen.current = true; setSegment(key); }}>
           {label}<span className="page-count"> {rows.filter((row) => inSegment(row, key)).length}</span></button>)}</div>
-      <DataTable label="Приёмка с производства" storageKey="production-intake" rows={shown} columns={columns} rowKey={keyOf}
+      <DataTable label="Приёмка с производства" storageKey="production-intake" rows={shown} columns={visibleColumns} rowKey={keyOf}
         groupBy={(row) => row.project} groupLabel={groupLabel} toolbar={toolbar} exportName="Приёмка с производства"
         searchPlaceholder="Проект, КБ, наименование или задание"
         rowClassName={(row) => num(row.remaining) > 0 ? (picked[keyOf(row)] ? "ship-row-picked" : "") : "ship-line-off"}
