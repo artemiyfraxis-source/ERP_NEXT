@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { PALETTE } from "./wireColors";
+import { PaletteGroups } from "./ColorPalette";
 import { techcardsApi } from "./api";
 import { connectorFace, connectorFaceUnits, isDark, type ConnectorHousing, type FaceHit } from "./connectorArt";
 import { plural, type AutoFill, type FreeSide, type PinoutEnd, type PinUnit } from "./pinoutCheck";
@@ -296,7 +297,7 @@ const Swatch = ({ color, stripe = null, ask = false }: { color: string | null; s
 
 /** Цвет жилы с палитры магазина (wireColors.ts): один цвет — щелчок по кружку; два цвета — основной и полоса, название
  *  вида «бело-синий». «Сбросить цвет» возвращает цвет из наименования кабеля. */
-function CoreColorPopover({ unit, at, onPick, onClose }: { unit: PinUnit; at?: ColorAnchor; onPick: (color: string | null) => void; onClose: () => void }) {
+function CoreColorPopover({ unit, at, customs, onCustom, onPick, onClose }: { unit: PinUnit; at?: ColorAnchor; customs?: Record<string, string>; onCustom?: (name: string, hex: string) => void; onPick: (color: string | null) => void; onClose: () => void }) {
   const [two, setTwo] = useState(!!unit.stripe);
   const [first, setFirst] = useState(unit.baseName ?? "");
   const [second, setSecond] = useState("");
@@ -319,8 +320,7 @@ function CoreColorPopover({ unit, at, onPick, onClose }: { unit: PinUnit; at?: C
   };
   const row = (title: string, value: string, set: (name: string) => void) => <div className="pin-color-row" role="group" aria-label={title}>
     <small>{title}</small>
-    <div className="swatch-row">{PALETTE.map((color) => <button type="button" key={color.name} className="swatch" aria-pressed={value === color.name} aria-label={`${title}: ${color.name}`}
-      title={color.name} style={{ background: color.hex }} onClick={() => set(color.name)} />)}</div>
+    <PaletteGroups label={title} value={value} onPick={set} />
   </div>;
   // У ячейки схемы внизу экрана окно не помещается под ней — встаёт над ячейкой.
   const [flip, setFlip] = useState<number | null>(null);
@@ -330,12 +330,14 @@ function CoreColorPopover({ unit, at, onPick, onClose }: { unit: PinUnit; at?: C
     setFlip(at.top + h > window.innerHeight - 8 && at.above - h - 4 >= 8 ? at.above - h - 4 : null);
   }, [at]);
   const pop = <div className={at ? "pin-color-pop is-anchored" : "pin-color-pop"} role="dialog" aria-label={`Цвет жилы ${unit.num}`} ref={box}
-    style={at ? { left: Math.max(8, Math.min(at.left, window.innerWidth - 356)), top: flip ?? at.top } : undefined}>
+    style={at ? { left: Math.max(8, Math.min(at.left, window.innerWidth - 456)), top: flip ?? at.top } : undefined}>
     <label className="pin-color-two"><input type="checkbox" checked={two} onChange={(event) => setTwo(event.target.checked)} /> Два цвета</label>
     {two ? <>
       {row("Основной", first, (name) => { setFirst(name); if (second) apply(name, second); })}
       {row("Полоса", second, (name) => { setSecond(name); if (first) apply(first, name); })}
-    </> : row("Цвет", unit.stripe ? "" : unit.baseName ?? "", (name) => { onPick(name); onClose(); })}
+    </> : <div className="pin-color-row" role="group" aria-label="Цвет">
+      <PaletteGroups label="Цвет" value={unit.stripe ? "" : unit.baseName ?? ""} customs={customs} onCustom={onCustom} onPick={(name) => { onPick(name); onClose(); }} />
+    </div>}
     <div className="pin-color-foot">
       <span className="muted">{unit.colorName || "как в наименовании кабеля"}</span>
       <button type="button" className="btn-link" onClick={() => { onPick(null); onClose(); }}>Сбросить цвет</button>
@@ -352,7 +354,7 @@ type PaletteAt = { key: string; place: "chip" | "hand" | "scheme"; at?: ColorAnc
 /** Палитра проводов, рука и схема: щелчок по проводу берёт его, щелчок по контакту ставит; щелчок по занятому
  *  контакту берёт его провод — следующий щелчок по контакту того же разъёма меняет их местами (свободный — перенос).
  *  Перетаскивание провода или занятого контакта делает то же. Esc или повторный щелчок — отпустить. */
-export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, joins = {}, scheme, drawing, onJoin, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor, onCoreNet, onDouble, onUndouble }: {
+export function PinoutBoard({ ends, links, units, housings, free, wireOptions, warnings, branches = [], complex = false, joins = {}, scheme, drawing, onJoin, onAssign, onUnassign, onSwap, onRecolor, onAutoFill, onBranch, onBranchMode, onRemoveBranch, onCoreColor, customColors, onCustomColor, onCoreNet, onDouble, onUndouble }: {
   ends: PinoutEnd[];
   links: Connection[];
   units: PinUnit[];
@@ -377,6 +379,9 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
   onRemoveBranch?: (extra: number) => void;
   /** Цвет жилы с палитры: кабель, жила, название цвета (null — сбросить). */
   onCoreColor?: (idx: number, unit: number, color: string | null) => void;
+  /** Свои цвета карты (название → hex) и «Свой цвет…» окна: запомнить название и hex (цвет на жилу ставит onCoreColor). */
+  customColors?: Record<string, string>;
+  onCustomColor?: (name: string, hex: string) => void;
   /** Цепь жилы или экрана: кабель, жила, имя ("" — снять). */
   onCoreNet?: (idx: number, unit: number, net: string) => void;
   /** Двойной обжим в контакте: второй провод в занятый контакт; «Убрать второй провод» — в контакте остаётся `keep`. */
@@ -394,7 +399,7 @@ export function PinoutBoard({ ends, links, units, housings, free, wireOptions, w
     setPalette((current) => (current && current.key === key && current.place === place ? null : { key, place, at }));
   const closeColor = useCallback(() => setPalette(null), []);
   const colorPop = (u: PinUnit, place: PaletteAt["place"]) => palette?.key === u.key && palette.place === place
-    ? <CoreColorPopover unit={u} at={palette.at} onClose={closeColor} onPick={(color) => onCoreColor?.(u.idx, u.unit, color)} /> : null;
+    ? <CoreColorPopover unit={u} at={palette.at} customs={customColors} onCustom={onCustomColor} onClose={closeColor} onPick={(color) => onCoreColor?.(u.idx, u.unit, color)} /> : null;
   const [branch, setBranch] = useState<{ from: PinHand; toEp: string; toPin: number; mode: Branch["mode"] } | null>(null);
   /** Провод с палитры — на контакт, где уже есть другой провод: поставить вместо или вторым (двойной обжим). */
   const [busy, setBusy] = useState<{ key: string; epId: string; pin: number } | null>(null);

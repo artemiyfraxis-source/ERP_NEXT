@@ -2,6 +2,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { wireColorKnown } from "./connectorArt";
 import { coreColor, SHIELD_COLOR } from "./pinoutCheck";
+import { setCustomColors } from "./wireColors";
 import { drawnWire, LinkSchemeSvg, schemeLayout, type LinkScheme, type SchemeAnchor, type SchemeConnector, type SchemeSide, type SchemeWire } from "./PinoutLinks";
 import { pinCountFromArt } from "./terminalPick";
 import { parseCorePins_ } from "./tcGenLogic";
@@ -168,6 +169,7 @@ function fromConnections(document: Obj, config: Obj): LinkScheme | null {
 /** Схема связей документа ЭТК; данных нет (старая ЭТК, ручная сборка, КОАКС) — null. */
 export function etkLinkScheme(document: unknown): LinkScheme | null {
   const doc = obj(document), config = obj(doc.build_config);
+  setCustomColors(config.colorHex as Record<string, string> | undefined);
   try {
     const scheme = fromPinout(doc, config) ?? fromConnections(doc, config);
     return scheme && scheme.connectors.length ? scheme : null;

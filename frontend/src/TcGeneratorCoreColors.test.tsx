@@ -72,6 +72,7 @@ it("«Цвета жил»: core 3 white shows on the chip and in the scheme row;
   await waitFor(() => expect(fill(3)).toBeTruthy());
   fireEvent.click(open);
   const pop = screen.getByRole("dialog", { name: "Цвета жил кабель 1" });
+  fireEvent.click(within(pop).getByRole("button", { name: "Выбрать жилу 3" }));
   fireEvent.click(within(pop).getByRole("button", { name: "Жила 3: белый" }));
   expect(dot("1.3")).toHaveAttribute("title", "белый");
   expect(within(palette()).getAllByRole("button", { name: /^1\.3/ })[0]).toHaveTextContent("белый");
@@ -97,8 +98,31 @@ it("a БД.ПРОВ record with colours is the default; a pick overrides it, a r
   expect(screen.getByLabelText("Кол-во кабеля 1")).toHaveValue(1);
   fireEvent.click(open);
   const pop = screen.getByRole("dialog", { name: "Цвета жил кабель 1" });
+  fireEvent.click(within(pop).getByRole("button", { name: "Выбрать жилу 2" }));
   fireEvent.click(within(pop).getByRole("button", { name: "Жила 2: красный" }));
   expect(dot("1.2")).toHaveAttribute("title", "красный");
   fireEvent.click(within(pop).getByRole("button", { name: "Сбросить цвет жилы 2" }));
   expect(dot("1.2")).toHaveAttribute("title", "коричневый");
+});
+
+it("15.10 more colours: «тёмно-синий» from the palette and a custom «болотный» are saved and painted in the scheme row", async () => {
+  render(<TcGenerator card={card} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("UL2575 26AWG")} />);
+  const open = await screen.findByRole("button", { name: "Цвета жил: кабель 1" });
+  await waitFor(() => expect(fill(3)).toBeTruthy());
+  fireEvent.click(open);
+  const pop = screen.getByRole("dialog", { name: "Цвета жил кабель 1" });
+  fireEvent.click(within(pop).getByRole("button", { name: "Жила 1: тёмно-синий" }));
+  expect(dot("1.1")).toHaveAttribute("title", "тёмно-синий");
+  expect(fill(1)).toBe("#1b3a8a");
+  fireEvent.click(within(pop).getByRole("button", { name: "Выбрать жилу 2" }));
+  fireEvent.click(within(pop).getByRole("button", { name: "Свой цвет…" }));
+  fireEvent.change(within(pop).getByLabelText("Название цвета"), { target: { value: "Болотный" } });
+  fireEvent.change(within(pop).getByLabelText("Цвет (hex)"), { target: { value: "#6b7a3b" } });
+  fireEvent.click(within(pop).getByRole("button", { name: "Добавить" }));
+  expect(dot("1.2")).toHaveAttribute("title", "болотный");
+  expect(fill(2)).toBe("#6b7a3b");
+  // Свой цвет остаётся в палитре карты: его можно поставить и на другую жилу.
+  fireEvent.click(within(pop).getByRole("button", { name: "Выбрать жилу 4" }));
+  fireEvent.click(within(pop).getByRole("button", { name: "Жила 4: болотный" }));
+  expect(fill(4)).toBe("#6b7a3b");
 });
