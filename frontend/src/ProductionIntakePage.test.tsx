@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductionIntakePage } from "./ProductionIntakePage";
+import { isoDay } from "./Gantt";
 
 const principal = {
   user: { id: "u1", email: "k@example.test", name: "Кладовщик", department: "Склад" },
@@ -62,6 +63,49 @@ describe("Приёмка с производства", () => {
     expect(calls.filter((call) => call.url === "/api/shipping/intake")).toHaveLength(2); // перезагрузка после успеха
   });
 
+  it("одно намерение — одно поле: неотмеченная строка без количества, флажок ставит всё сданное, пустое поле снимает отметку", async () => {
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("Жгут");
+    const amount = screen.getByLabelText("Сколько принять 591К.3 КБ1");
+    expect(amount).toHaveValue(null);
+    expect(amount).toHaveAttribute("placeholder", "до 20");
+    fireEvent.click(screen.getByLabelText("Принять 591К.3 КБ1"));
+    expect(amount).toHaveValue(20);
+    expect(screen.getByRole("button", { name: "Принять на склад · 20 шт" })).toBeEnabled();
+    fireEvent.change(amount, { target: { value: "" } });
+    expect(screen.getByLabelText("Принять 591К.3 КБ1")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Принять на склад · 0 шт" })).toBeDisabled();
+  });
+
+  it("«все к приёмке» отмечает все КБ проекта разом; своё место строки уходит в строке, общее — в пакете", async () => {
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("Жгут");
+    expect(screen.getByText(/все к приёмке: 2 КБ · 30 шт/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Отметить все КБ проекта 591К.3"));
+    expect(screen.getByLabelText("Принять 591К.3 КБ1")).toBeChecked();
+    expect(screen.getByLabelText("Принять 591К.3 КБ2")).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Место хранения"), { target: { value: "Стеллаж 3" } });
+    fireEvent.change(screen.getByLabelText("Место хранения 591К.3 КБ2"), { target: { value: "Полка 1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Принять на склад · 30 шт" }));
+    await screen.findByText("Принято на склад: 30 шт");
+    expect(calls.find((call) => call.method === "POST")!.body).toMatchObject({
+      lines: [{ project: "591К.3", item_index: "КБ1", quantity: "20" }, { project: "591К.3", item_index: "КБ2", quantity: "10", location: "Полка 1" }],
+      location: "Стеллаж 3",
+    });
+  });
+
+  it("пустые колонки не показываются; просроченный срок проекта виден в заголовке", async () => {
+    const past = isoDay(new Date(Date.now() - 8 * 86_400_000));
+    intakeRows = [row({ deadline: past })];
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("Жгут");
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+    expect(headers.some((text) => text?.includes("Упаковано"))).toBe(false);
+    expect(headers.some((text) => text?.includes("Отгружено"))).toBe(false);
+    expect(headers.some((text) => text?.includes("Принято"))).toBe(true);
+    expect(screen.getByText(/просрочен на 8 дн\./)).toHaveClass("tone-danger");
+  });
+
   it("строка сверх лимита: ошибка у строки и запрос не уходит", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
@@ -81,7 +125,8 @@ describe("Приёмка с производства", () => {
   it("«Все» показывает и КБ, которые цех ещё не сдал; заголовок проекта с заказчиком и сроком", async () => {
     render(<ProductionIntakePage principal={principal} />);
     await screen.findByText("Жгут");
-    expect(screen.getByText(/591К\.3 · Заказчик · срок 25\.10/)).toBeInTheDocument();
+    expect(screen.getByText(/^591К\.3 · Заказчик/)).toBeInTheDocument();
+    expect(screen.getByText(/^срок 25\.10/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
     expect(await screen.findByText("Шлейф")).toBeInTheDocument();
   });

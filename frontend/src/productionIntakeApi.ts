@@ -32,7 +32,8 @@ export type UpdType = "ЭДО" | "БУМАГА" | "БЕЗ УПД";
 /** Данные отправки проекта: карточка получателя + плановая дата и комментарий. */
 export type DispatchData = Omit<ProjectAddressee, "upd_type"> & { upd_type: UpdType | null; plan_date: string | null; note: string };
 
-export interface AcceptLine { project: string; item_index: string; quantity: string }
+/** `location` строки заменяет общее место пакета; пусто — общее (или прежнее место КБ). */
+export interface AcceptLine { project: string; item_index: string; quantity: string; location?: string }
 
 export const intakeApi = {
   rows: () => api<{ rows: IntakeRow[] }>("/api/shipping/intake"),

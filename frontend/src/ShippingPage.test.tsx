@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ShippingPage } from "./ShippingPage";
+import { ShippingPage, destination, nextStep } from "./ShippingPage";
+import { isoDay } from "./Gantt";
 import { capturePrintFrames } from "./testPrintFrames";
 
 const principal = {
@@ -172,7 +173,8 @@ describe("ShippingPage", () => {
     await loaded();
     tab(/^Отправки/);
     expect(await screen.findByText("Собирается", { selector: ".group-row strong" })).toBeInTheDocument();
-    expect(screen.getByText("просрочена")).toBeInTheDocument();
+    // Срок 01.09 раньше заведения 22.09 — похоже на опечатку: дата красная и просит её проверить.
+    expect(screen.getByText("· проверьте дату")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Отгружена · 1" }));
     expect(screen.getByText("Отгружена", { selector: ".group-row strong" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "В работе · 1" }));
@@ -394,6 +396,55 @@ describe("ShippingPage", () => {
     fireEvent.change(select, { target: { value: "БЕЗ УПД" } });
     fireEvent.click(screen.getByRole("button", { name: "Сохранить документы" }));
     await waitFor(() => expect(sent("/api/shipping/shipments/s1/documents", "PUT")).toMatchObject({ upd_type: "БЕЗ УПД" }));
+  });
+
+  it("«Отправки»: in one line — next step, receiver and place without repeats, overdue days, УПД with its type and number", async () => {
+    const daysAgo = (days: number) => isoDay(new Date(Date.now() - days * 86_400_000));
+    const packed = {
+      ...shipment, status: "Упакована", created_at: `${daysAgo(10)}T09:00:00`, deadline: daysAgo(3), upd_number: "474",
+      receiver: "самовывоз", shipping_point: "самовывоз", terms: "САМОВЫВОЗ", carrier: "Самовывоз",
+    };
+    const paper = { ...shipment, id: "s3", number: "ОТГ-20260922-03", status: "Упакована", upd_type: "БУМАГА", upd_url: "", deadline: null,
+      receiver: "ООО \"МЕГАТРОН\"", shipping_point: "Самовывоз", terms: "САМОВЫВОЗ", carrier: "Самовывоз" };
+    stub([packed, paper]);
+    render(<ShippingPage principal={{ ...principal, permissions: { shipping: "edit" as const, shipping_goods: "edit" as const } }} />);
+    await loaded();
+    tab(/^Отправки/);
+    const row = (number: string) => within(screen.getByText(number).closest("tr")!);
+    expect(row("ОТГ-20260922-01").getByText("Отгрузить")).toHaveAttribute("title", expect.stringContaining("PL и DN готовы"));
+    expect(row("ОТГ-20260922-01").getByText("Самовывоз")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-01").getByText("· просрочено на 3 дн.")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-01").getByText("ЭДО № 474")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-03").getByText("Загрузить УПД")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-03").getByText("ООО \"МЕГАТРОН\" · Самовывоз")).toBeInTheDocument();
+    expect(row("ОТГ-20260922-03").getByText("Бумага · нет файла")).toBeInTheDocument();
+    // Печать PL — прямо из строки, строка при этом не раскрывается.
+    const printed = capturePrintFrames();
+    fireEvent.click(row("ОТГ-20260922-01").getByRole("button", { name: "PL591К.3-1" }));
+    await waitFor(() => expect(printed.print).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "Отгрузить" })).not.toBeInTheDocument();
+    // Бумажная УПД без файла: «Отгрузить» в карточке выключено, пока файл не приложен.
+    fireEvent.click(screen.getByText("ОТГ-20260922-03"));
+    expect(screen.getByRole("button", { name: "Отгрузить" })).toBeDisabled();
+  });
+
+  it("names the next step of a shipment the way the server gates it", () => {
+    const line = shipment.lines[0];
+    const step = (over: Record<string, unknown>) => nextStep({ ...shipment, ...over } as never)?.text ?? null;
+    expect(step({ status: "Новая", lines: [{ ...line, picked: "0" }] })).toBe("Набрать со склада");
+    expect(step({ status: "Собрана", pl_number: "" })).toBe("Сформировать PL и DN");
+    expect(step({ status: "Упакована", upd_type: "БУМАГА", upd_url: "" })).toBe("Загрузить УПД");
+    expect(step({ status: "Упакована", upd_type: "БЕЗ УПД" })).toBe("Отгрузить");
+    expect(step({ status: "Отгружена", upd_type: "ЭДО", upd_number: "", upd_url: "", terms: "ДОСТАВКА ТК", track_number: "" })).toBe("Внести: № УПД, файл УПД, трек-номер");
+    expect(step({ status: "Отгружена", upd_type: "БЕЗ УПД", terms: "САМОВЫВОЗ" })).toBe("Закрыть");
+    expect(step({ status: "Закрыта" })).toBeNull();
+    expect(step({ status: "Отменена" })).toBeNull();
+  });
+
+  it("joins receiver, address, terms and carrier once each", () => {
+    expect(destination({ receiver: "самовывоз", shipping_point: "самовывоз", terms: "САМОВЫВОЗ", carrier: "" })).toBe("Самовывоз");
+    expect(destination({ receiver: "ООО «Север»", shipping_point: "г. Тула, ул. Оружейная, 12", terms: "ДОСТАВКА ТК", carrier: "СДЭК" }))
+      .toBe("ООО «Север» · г. Тула, ул. Оружейная, 12 · Доставка ТК · СДЭК");
   });
 
   it("saves the project planned date and comment from the project card", async () => {
