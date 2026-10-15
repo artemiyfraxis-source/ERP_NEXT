@@ -242,7 +242,7 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
     { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
     { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
-    { key: "strands", title: "Скрутка", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
+    { key: "strands", title: "Структура жилы", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
       edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
     { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => sharedOf(row)?.insulation ? null : clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
@@ -302,7 +302,7 @@ const COLORS = "Цвета";
 const STRANDS = "Жила: проволок × диаметр, мм";
 // Short labels of the form; the cell keeps its column name.
 const CELL_LABELS: Record<string, string> = {
-  [STRANDS]: "Скрутка: проволок × Ø, мм", "Цена посл., ₽/м без НДС": "Цена посл., ₽/м", "Ссылка на datasheet": "Datasheet",
+  [STRANDS]: "Структура жилы: проволок × Ø, мм", "Цена посл., ₽/м без НДС": "Цена посл., ₽/м", "Ссылка на datasheet": "Datasheet",
   "Источник данных": "Источник", "Волновое сопротивление, Ом": "Волновое, Ом", [STANDARD]: "Стандарт (ГОСТ / ТУ / UL)",
   "Сечение, мм2": "Сечение, мм²",
 };
