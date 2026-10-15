@@ -1,7 +1,7 @@
 import { PageWindow } from "./PageWindow";
 import { useMemo, useState, type ReactNode } from "react";
 import { DataTable, type DataCellEdit, type DataColumn } from "./DataTable";
-import { CABLE_KIND_LABELS, CoaxCardView, num, spanText } from "./CableStructure";
+import { CABLE_KIND_LABELS, CoaxCardView, kindColumn, num, spanText } from "./CableStructure";
 import {
   failureText,
   referencesApi,
@@ -14,7 +14,7 @@ import {
 } from "./api";
 import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, cableGroup, compareByFamily, compareCables } from "./cableCategory";
 import { coaxGroupOf, coaxNaming, sortCoax } from "./coaxFamilies";
-import { cellFailure, ownCellEdit } from "./CustomColumn";
+import { cellFailure, fieldCellEdit, ownCellEdit } from "./CustomColumn";
 import { MakersInput } from "./WireFieldWidgets";
 import { MAKERS, STANDARD, makerSuggestions } from "./wireMakers";
 
@@ -83,9 +83,9 @@ const cardState = (row: CableRow) => !row.card ? "нет карточки"
 const NUMBER = /^-?\d[\d\s]*([.,]\d+)?$/;
 const cableKey = (value: string) => String(value || "").toLowerCase().replace(/[\s-]/g, "");
 const diaText = (dia: CableDiameters) => DIAMETERS.map((name) => dia[name] || "—").join(" · ");
-// Cells not written from the table: the mark renames the cable (its D-row and links follow it) and the category is a
-// choice list — both stay in the record's own editor.
-const NOT_IN_CELL = new Set([MARK, CATEGORY_CELL]);
+// The mark is not written from the table: it renames the cable (its D-row and links follow it) and its cell opens the
+// record's window; the category is a choice in its cell.
+const NOT_IN_CELL = new Set([MARK]);
 
 type Draft = { fields: Record<string, string>; dia: Record<Diameter, string>; kind: CableKind };
 
@@ -142,12 +142,20 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
 
   // Rows stay one line high like a sheet: long text (insulation, screen, sources) is cut, full text on hover.
   const own = data.custom_columns ?? [];
+  // «Категория» — the editor's choice list in the cell: empty — by the rule (named per row), else one of the categories.
+  const categoryEdit: DataCellEdit<CableRow> | undefined = canEdit ? {
+    ...(own.includes(CATEGORY_CELL) ? ownCellEdit<CableRow>(CATEGORY_CELL, (row) => row.record) : fieldCellEdit<CableRow>(CATEGORY_CELL, (row) => row.record)),
+    options: (row) => [
+      { value: "", label: `по правилу: ${cableCategory({ ...cells(row), [CATEGORY_CELL]: "" }).category}` },
+      ...CATEGORIES.map((name) => ({ value: name, label: name })),
+    ],
+  } : undefined;
   const textColumn = (name: string, hidden: boolean): DataColumn<CableRow> => {
     const values = rows.map((row) => field(row, name)).filter((value) => value && value !== "—");
     const long = values.some((value) => value.length > 28);
     return {
       key: name, title: name, value: (row) => field(row, name), hidden,
-      edit: canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldEdit(name),
+      edit: name === CATEGORY_CELL ? categoryEdit : canEdit && own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldEdit(name),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
       render: long ? (row) => <span className="cable-clip" title={field(row, name)}>{field(row, name)}</span> : undefined,
       numeric: values.length > 0 && values.every((value) => NUMBER.test(value)),
@@ -156,9 +164,9 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
   // An own column not added yet (the materials before the fill) is not drawn empty; base БД.ПРОВ columns always are.
   const shown = SHOWN[kind].filter((name) => !OWN_LISTED.has(name) || data.columns.includes(name));
   const computed: Record<string, DataColumn<CableRow>> = kind === "coax" ? {
-    [RANGE]: { key: RANGE, title: "Диапазон частот", value: (row) => rangeText(row.card), render: (row) => rangeText(row.card) || <span className="cell-empty">—</span> },
+    [RANGE]: { key: RANGE, title: "Диапазон частот", computed: true, value: (row) => rangeText(row.card), render: (row) => rangeText(row.card) || <span className="cell-empty">—</span> },
     [CARD]: {
-      key: CARD, title: "Карточка", value: cardState,
+      key: CARD, title: "Карточка", computed: true, value: cardState,
       render: (row) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
     },
   } : {};
@@ -173,12 +181,13 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
     ...shown.map((name) => computed[name] ?? textColumn(name, false)),
     // The card's own frequencies stay in «Колонки»; the table shows the one range above.
     ...(kind === "coax" ? [
-      { key: "__span", title: "Диапазон VNA", hidden: true, value: (row: CableRow) => row.card ? spanText(row.card) : "" },
-      { key: "__op", title: "Рабочая частота, ГГц", numeric: true, hidden: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) || <span className="cell-empty">—</span> },
-      { key: "__fc", title: "Частота среза, ГГц", numeric: true, hidden: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) || <span className="cell-empty">—</span> },
+      { key: "__span", title: "Диапазон VNA", hidden: true, computed: true, value: (row: CableRow) => row.card ? spanText(row.card) : "" },
+      { key: "__op", title: "Рабочая частота, ГГц", numeric: true, hidden: true, computed: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) || <span className="cell-empty">—</span> },
+      { key: "__fc", title: "Частота среза, ГГц", numeric: true, hidden: true, computed: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) || <span className="cell-empty">—</span> },
     ] : []),
     ...data.columns.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, !own.includes(name) || LISTED_ANYWHERE.has(name))),
-    { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
+    kindColumn(canEdit, onSaved),
+    { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
 
   const detail = (row: CableRow) => <>
@@ -210,6 +219,9 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}
       groupBy={kind === "multi" ? (row) => cableFamily(cells(row)).family : grouped ? (row) => cableGroup(cells(row)).label : kind === "coax" ? coaxGroup : undefined}
+      // Each group sorts its own rows (owner 16.10: «у каждой группы своя»); every row of the list at once, no page.
+      groupSort
+      pageSize={Infinity}
       presets={kind === "coax" ? [{ label: "Без D1–D3", test: (row) => !row.dia }, { label: "Без карточки", test: (row) => !row.card }]
         : rows.some((row) => !field(row, "Наружный диаметр, мм").trim()) ? [{ label: "Без Ø", test: (row) => !field(row, "Наружный диаметр, мм").trim() }] : undefined}
       emptyText={kind === "coax" ? "Коаксиальных кабелей нет — загрузите зеркало БД.ПРОВ и СПР.КАБ или добавьте запись." : "Записей нет."}

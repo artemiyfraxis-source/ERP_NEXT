@@ -15,8 +15,10 @@ export const cellFailure = (reason: unknown) => new Error(reason instanceof ApiE
   : failureText(reason, "Не записано"));
 
 /** Правка ячейки поля записи прямо в таблице — путь окна записи: одно поле со старым значением (сервер откажет, если
-    запись поменяли). `anyRow` — ячейка правится и у записи без этого поля (свой столбец: строка из зеркала его не несёт). */
-export function fieldCellEdit<T>(name: string, recordOf: (row: T) => TechOperationRecord | null | undefined, anyRow = false): DataCellEdit<T> {
+    запись поменяли). `anyRow` — ячейка правится и у записи без этого поля (свой столбец: строка из зеркала его не несёт).
+    `clean` — как окно приводит введённое (цвета — по палитре). */
+export function fieldCellEdit<T>(name: string, recordOf: (row: T) => TechOperationRecord | null | undefined, anyRow = false,
+  clean: (value: string) => string = (value) => value): DataCellEdit<T> {
   return {
     enabled: (row) => {
       const record = recordOf(row);
@@ -27,7 +29,7 @@ export function fieldCellEdit<T>(name: string, recordOf: (row: T) => TechOperati
       const record = recordOf(row);
       if (!record) throw new Error("Нет записи для правки");
       try {
-        await referencesApi.editRecord(record.id, [{ field: name, old: record.fields[name] ?? "", value }]);
+        await referencesApi.editRecord(record.id, [{ field: name, old: record.fields[name] ?? "", value: clean(value) }]);
       } catch (reason) { throw cellFailure(reason); }
     },
   };

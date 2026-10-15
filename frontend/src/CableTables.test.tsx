@@ -1,8 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
-import { HookupWireTable } from "./CableStructure";
-import { rangeText } from "./CableTables";
+import { HookupWireTable, parseTempRange } from "./CableStructure";
+import { CableTable, rangeText } from "./CableTables";
+import { normalizeColors } from "./wireColors";
+import { CATEGORIES } from "./cableCategory";
 import type { CableRow, Principal } from "./api";
 
 /* «База данных» → «Кабели и провода» (owner 04.10.2026): coax / hookup / other cables, D1–D3 edited in the coax tab,
@@ -559,7 +561,159 @@ describe("«Монтажные провода» and the other cable lists across
   const cellIn = (mark: string, column: string) =>
     screen.getByText(mark, { selector: "td.key strong" }).closest("tr")!.querySelectorAll("td")[headerIndex(column)] as HTMLElement;
 
-  it("writes the outer Ø of a parsed wire in the cell with the wire's old values; series stays in the window", async () => {
+  describe("every cell of a parsed wire like a sheet (owner 16.10: «редактирование везде сделать как в экселе»)", () => {
+    const old = { series: "UL1061", gauge_id: "g22", insulation: "ПВХ", outer_d_mm: "1,3", voltage_v: "300", temp_min_c: "-10", temp_max_c: "80" };
+    const hookupPut = (calls: Call[]) => calls.find((call) => call.method === "PUT" && call.path.endsWith("/hookup"));
+    async function open() {
+      const calls = mockApi();
+      render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
+      await screen.findByText("UL1061 22AWG", { selector: "td.key strong" });
+      return calls;
+    }
+
+    it("picks the size from «Сечения AWG ↔ мм²» in the cell and writes it with the wire's old values", async () => {
+      const calls = await open();
+      const cell = cellIn("UL1061 22AWG", "Сечение, мм²");
+      fireEvent.click(cell);
+      fireEvent.keyDown(cell, { key: "Enter" });
+      const select = within(cell).getByRole("combobox", { name: "Сечение, мм²: UL1061 22AWG" });
+      expect(within(select).getAllByRole("option").map((option) => option.textContent))
+        .toEqual(["0,07 мм²", "22 AWG · 0,35 мм² · жила Ø 0,64 мм", "20 AWG · 0,5 мм² · жила Ø 0,81 мм"]);
+      expect(select).toHaveValue("g22");
+      fireEvent.keyDown(select, { key: "ArrowDown" });
+      fireEvent.change(select, { target: { value: "g20" } });
+      expect(hookupPut(calls)).toBeUndefined(); // an arrow only moves the pick
+      fireEvent.keyDown(select, { key: "Enter" });
+      await waitFor(() => expect(hookupPut(calls)?.body).toEqual({ ...old, gauge_id: "g20", old }));
+      expect(cellIn("UL1061 22AWG", "Ø жилы, мм")).toHaveClass("dt-computed"); // by the size, not a cell of its own
+      expect(cellIn("ПВАМ 0,50", "Сечение, мм²")).not.toHaveClass("dt-editable"); // not parsed — its window sets it up
+    });
+
+    it("pastes «20» into AWG as the size row of 20 AWG", async () => {
+      const calls = await open();
+      const cell = cellIn("UL1061 22AWG", "AWG");
+      fireEvent.click(cell);
+      fireEvent.paste(cell, { clipboardData: { getData: () => "20" } });
+      await waitFor(() => expect(hookupPut(calls)?.body).toEqual({ ...old, gauge_id: "g20", old }));
+    });
+
+    it("types the temperature as «−60 … +200» into the pair; a text that is no range is refused in the cell", async () => {
+      const calls = await open();
+      const cell = cellIn("UL1061 22AWG", "Температура, °C");
+      fireEvent.click(cell);
+      fireEvent.keyDown(cell, { key: "ж" });
+      const input = within(cell).getByRole("textbox");
+      fireEvent.change(input, { target: { value: "жарко" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(await within(cell).findByRole("alert")).toHaveTextContent("Температура — «от … до», например −60 … +200");
+      expect(hookupPut(calls)).toBeUndefined();
+      fireEvent.change(input, { target: { value: "−60 … +200" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(hookupPut(calls)?.body).toEqual({ ...old, temp_min_c: "-60", temp_max_c: "200", old }));
+    });
+
+    it("writes the colours typed as text by the palette, «Тип провода» as text and moves the wire from its «Вкладка» cell", async () => {
+      const calls = await open();
+      const colors = cellIn("UL1061 22AWG", "Цвета");
+      fireEvent.click(colors);
+      fireEvent.keyDown(colors, { key: "Enter" });
+      const input = within(colors).getByRole("textbox");
+      expect(input).toHaveValue("чёрный");
+      fireEvent.change(input, { target: { value: "чёрный; красный" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body)
+        .toEqual({ edits: [{ field: "Цвета", old: "чёрный", value: normalizeColors("чёрный; красный") }] }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Тип провода" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Вкладка" }));
+      expect(cellIn("UL1061 22AWG", "Тип провода")).toHaveClass("dt-editable");
+      const tab = cellIn("UL1061 22AWG", "Вкладка");
+      expect(tab).toHaveTextContent("Монтажные провода");
+      fireEvent.doubleClick(tab);
+      const select = within(tab).getByRole("combobox");
+      fireEvent.pointerDown(select);
+      fireEvent.change(select, { target: { value: "multi" } });
+      await waitFor(() => expect(calls.find((call) => call.path.endsWith("/kind"))).toEqual({
+        path: "/api/references/cables/w-ul/kind", method: "PUT", body: { kind: "multi" },
+      }));
+      expect(await screen.findByText("«UL1061 22AWG» перенесён во вкладку «Многожильные кабели»")).toBeInTheDocument();
+    });
+  });
+
+  it("shows every multi-core cable at once with every group open, and sorts one group by its own choice", () => {
+    // owner 16.10: «раскрыть до конца … выключить ограничение на 300 шт» and «у каждой группы своя [сортировка]»
+    const many: CableRow[] = Array.from({ length: 380 }, (_, index) => {
+      const family = index % 2 ? "КСПВГ" : "МКЭШ";
+      const mark = `${family} ${index + 2}x0,5`;
+      return { id: `m${index}`, kind: "multi", auto_kind: "multi", reason: "жил", manual: false, cable: mark, dia: null, dia_hint: null,
+        record: wire(`m${index}`, { "Марка": mark, "Тип провода": "многожильный", "Число жил": String(index + 2), "Наружный диаметр, мм": String((index % 7) + 3) }) };
+    });
+    const data = { columns: COLUMNS, counts: { coax: 0, wire: 0, multi: many.length, other: 0 }, rows: many, gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
+    const { unmount } = render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
+    expect(document.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(380);
+    expect(screen.getByText("Показано 380 из 380")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
+    const sections = () => {
+      const result: Array<{ name: string; diameters: string[] }> = [];
+      const head = screen.getAllByRole("columnheader").findIndex((cell) => cell.textContent === "Наружный диаметр, мм");
+      for (const line of document.querySelectorAll("tbody tr")) {
+        if (line.classList.contains("group-row")) result.push({ name: line.querySelector("strong")?.textContent ?? "", diameters: [] });
+        else result[result.length - 1].diameters.push(line.querySelectorAll("td")[head].textContent ?? "");
+      }
+      return result;
+    };
+    const before = sections();
+    expect(before).toHaveLength(2);
+    expect(before.map((group) => group.diameters.length)).toEqual([190, 190]); // both groups open to the end
+    fireEvent.change(screen.getByRole("combobox", { name: `Сортировка группы «${before[0].name}»` }), { target: { value: "Наружный диаметр, мм:-" } });
+    const after = sections();
+    expect(after.map((group) => group.name)).toEqual(before.map((group) => group.name));
+    expect(after[0].diameters).toEqual([...before[0].diameters].sort((a, b) => Number(b) - Number(a)));
+    expect(after[1].diameters).toEqual(before[1].diameters);
+    unmount();
+    render(<CableTable kind="multi" data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} />);
+    expect(sections()[0].diameters).toEqual(after[0].diameters); // remembered with the list's layout
+  });
+
+  it("picks «Категория» of a cable in its cell from the editor's list, the rule's choice first", async () => {
+    const calls = mockApi();
+    const row: CableRow = { id: "w-x", kind: "other", auto_kind: "other", reason: "тип не указан", manual: false, cable: "ПВ-3 1,5", dia: null, dia_hint: null,
+      record: wire("w-x", { "Марка": "ПВ-3 1,5", "Категория": "" }) };
+    const data = { columns: ["Марка", "Категория"], counts: { coax: 0, wire: 0, multi: 0, other: 1 }, rows: [row], gauges: [] } as unknown as Parameters<typeof CableTable>[0]["data"];
+    const onSaved = vi.fn();
+    render(<CableTable kind="other" data={data} canEdit onSaved={onSaved} onError={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
+    const shown = screen.getByRole("checkbox", { name: "Категория" }) as HTMLInputElement;
+    if (!shown.checked) fireEvent.click(shown);
+    const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === "Категория");
+    const cell = screen.getByText("ПВ-3 1,5", { selector: "td.key strong" }).closest("tr")!.querySelectorAll("td")[index] as HTMLElement;
+    fireEvent.doubleClick(cell);
+    const select = within(cell).getByRole("combobox", { name: "Категория: ПВ-3 1,5" });
+    const options = within(select).getAllByRole("option").map((option) => option.textContent ?? "");
+    expect(options[0]).toMatch(/^по правилу: /);
+    expect(options.slice(1)).toEqual([...CATEGORIES]);
+    fireEvent.pointerDown(select);
+    fireEvent.change(select, { target: { value: CATEGORIES[1] } });
+    await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body)
+      .toEqual({ edits: [{ field: "Категория", old: "", value: CATEGORIES[1] }] }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith("")); // the list is read again
+  });
+
+  it("parses a temperature range the way the shop writes it", () => {
+    expect(parseTempRange("−60 … +200")).toEqual({ min: "-60", max: "200" });
+    expect(parseTempRange("от -40 до +85 °C")).toEqual({ min: "-40", max: "85" });
+    expect(parseTempRange("-60...200")).toEqual({ min: "-60", max: "200" });
+    expect(parseTempRange("-60 - 200")).toEqual({ min: "-60", max: "200" });
+    expect(parseTempRange("-55–125")).toEqual({ min: "-55", max: "125" });
+    expect(parseTempRange("… +80")).toEqual({ min: "", max: "80" });
+    expect(parseTempRange("-10,5 … 70")).toEqual({ min: "-10,5", max: "70" });
+    expect(parseTempRange("  ")).toEqual({ min: "", max: "" });
+    expect(() => parseTempRange("200")).toThrow("например −60 … +200");
+    expect(() => parseTempRange("+200 … -60")).toThrow("«от» больше «до»");
+  });
+
+  it("writes the outer Ø of a parsed wire in the cell with the wire's old values", async () => {
     const calls = mockApi();
     render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
     await screen.findByText("UL1061 22AWG", { selector: "td.key strong" });
