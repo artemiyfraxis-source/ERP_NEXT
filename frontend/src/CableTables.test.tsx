@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { HookupWireTable } from "./CableStructure";
+import { rangeText } from "./CableTables";
 import type { CableRow, Principal } from "./api";
 
 /* «База данных» → «Кабели и провода» (owner 04.10.2026): coax / hookup / other cables, D1–D3 edited in the coax tab,
@@ -160,7 +161,10 @@ it("shows each cable in its own list with the parameters of that list", async ()
   expect(screen.queryByText("UL1061 22AWG")).toBeNull();
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
 
-  expect(screen.getByRole("columnheader", { name: "Диапазон VNA" })).toBeInTheDocument();
+  // one frequency column; the VNA span, the rated maximum and the cut-off stay in «Колонки»
+  expect(screen.getByRole("columnheader", { name: "Диапазон частот" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Диапазон VNA" })).toBeNull();
+  expect(screen.queryByRole("columnheader", { name: "Частота среза, ГГц" })).toBeNull();
   expect(screen.getAllByText("10 МГц – 3 ГГц").length).toBeGreaterThan(0);
 
   // hook-up wires: the conductor comes from the size table; an unparsed wire says so
@@ -187,6 +191,55 @@ it("shows each cable in its own list with the parameters of that list", async ()
   fireEvent.click(screen.getByRole("button", { name: /^Прочие кабели/ }));
   expect(await screen.findByText("Проволока")).toBeInTheDocument();
   expect(screen.queryByText("КСПВГ 4x0,20")).toBeNull();
+});
+
+describe("coax column order (owner 15.10: «сначала конструктивные характеристики — диаметры, потом материал…»)", () => {
+  const OWN = ["Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены", "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки"];
+  const BASE = [...COLUMNS, "Изоляция", "Экран", "Стандарт", "Производители", "Поставщик", "Цвета", "Источник данных"];
+  const ORDER = [
+    "Марка кабеля", "D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм", "Наружный диаметр, мм",
+    "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки", "Волновое сопротивление, Ом",
+    "Диапазон частот", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены",
+    "Тип провода", "Карточка",
+  ];
+  const withColumns = (columns: string[], own: string[]) => {
+    mockApi();
+    const answer = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => String(input) === "/api/references/cables"
+      ? json({ columns, custom_columns: own, counts: { coax: 3, wire: 3, multi: 1, other: 1 }, rows: ROWS, gauges: GAUGES })
+      : answer(input, init));
+  };
+  const heads = () => screen.getAllByRole("columnheader").map((head) => head.textContent ?? "").filter(Boolean);
+
+  it("shows construction, materials, impedance, one range, standard, maker, then supplier, article and price apart", async () => {
+    withColumns([...BASE, ...OWN], OWN);
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(heads()).toEqual(ORDER); // «Изоляция», «Экран» and the card's frequencies are kept in «Колонки», hidden
+  });
+
+  it("does not draw the material columns before they are added", async () => {
+    withColumns([...BASE, "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"], ["Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(heads()).toEqual(ORDER.filter((name) => !name.startsWith("Материал")));
+  });
+
+  it("ignores a coax layout saved before the new order", async () => {
+    window.localStorage.setItem("erp-table:db:cables:coax:2", JSON.stringify({ order: ["__card", "cable"], hidden: ["D1", "Стандарт"] }));
+    withColumns([...BASE, ...OWN], OWN);
+    render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
+    await screen.findByText("RG316");
+    expect(heads()).toEqual(ORDER);
+  });
+
+  it("gives the range of the VNA span, else DC up to the rated maximum, never the cut-off", () => {
+    const card = ROWS[0].card!;
+    expect(rangeText(card)).toBe("10 МГц – 3 ГГц");
+    expect(rangeText({ ...card, span_to_ghz: null, max_operating_ghz: 6 })).toBe("DC – 6 ГГц");
+    expect(rangeText({ ...card, span_to_ghz: null, max_operating_ghz: null, fc_ghz: 65.3 })).toBe("");
+    expect(rangeText(null)).toBe("");
+  });
 });
 
 it("lists coax cables like a catalogue: series groups in order, base mark before its variants, groups collapse", async () => {
@@ -343,12 +396,12 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     return input;
   };
 
-  it("shows «Поставщик» before «Производители» and writes a БД.ПРОВ cell with its old value, then reads the list again", async () => {
+  it("shows «Производители», then «Поставщик» (owner 15.10) and writes a БД.ПРОВ cell with its old value, then reads the list again", async () => {
     const calls = mockApi();
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
-    expect(heads.indexOf("Поставщик")).toBe(heads.indexOf("Производители") - 1);
+    expect(heads.indexOf("Поставщик")).toBe(heads.indexOf("Производители") + 1);
 
     type(cellOf("RG316", "Волновое сопротивление, Ом"), "75");
     await waitFor(() => expect(calls.find((call) => call.method === "PATCH")).toMatchObject({
@@ -390,8 +443,8 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     await screen.findByText("RG316");
     expect(cellOf("RG316", "Марка кабеля")).not.toHaveClass("dt-editable");
     expect(cellOf("RG316", "Карточка")).not.toHaveClass("dt-editable");
-    expect(cellOf("RG316", "Изоляция")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: the server would refuse it
-    expect(cellOf("RG316", "Экран")).not.toHaveClass("dt-editable");
+    expect(cellOf("RG316", "Стандарт")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: the server would refuse it
+    expect(cellOf("RG316", "Поставщик")).not.toHaveClass("dt-editable");
     expect(cellOf("RG58", "Тип провода")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
     expect(cellOf("RG58", "D1 жила, мм")).toHaveClass("dt-editable");
     unmount();
