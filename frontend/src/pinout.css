@@ -152,7 +152,15 @@
 .tcgen .pin-color-dot:hover .pin-swatch { box-shadow: 0 0 0 2px var(--primary); }
 .tcgen .pin-color-dot:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .pin-color-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 6px; width: 340px; max-width: 80vw; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); font-size: 12.5px; }
+.pin-color-pop.is-anchored { position: fixed; z-index: 1000; }
 .pin-color-pop .pin-color-row { display: grid; gap: 4px; }
+/* «Цвет» у провода в руке — рядом с «Цепь»: кружок и название цвета, щелчок — та же палитра. */
+.tcgen .pin-hand-core { position: relative; display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
+.tcgen .pin-hand-core-btn { display: inline-flex; align-items: center; gap: 6px; min-width: 112px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--card); color: var(--foreground); font-size: 12.5px; cursor: pointer; }
+.tcgen .pin-hand-core-btn:hover, .tcgen .pin-hand-core-btn[aria-expanded="true"] { border-color: var(--primary); }
+.tcgen .pin-hand-core-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.tcgen .pin-hand-core .pin-color-pop { color: var(--foreground); }
 .pin-color-pop .swatch { width: 24px; height: 24px; }
 .pin-color-pop .pin-color-two { display: flex; align-items: center; gap: 6px; font-weight: 500; }
 .pin-color-pop .pin-color-two input { width: auto; margin: 0; }
@@ -160,6 +168,9 @@
 .pin-color-pop .pin-color-foot .muted { margin-right: auto; }
 /* «Цвета жил» под строкой многожильного кабеля в «Кабели»: жилы цветом и названием, окно — по жиле или типовым порядком. */
 .tcgen .wire-row > .cable-colors { position: relative; grid-column: 1 / -1; margin-top: -2px; }
+/* Кабель в оболочке, набранный N проводами по 1 жиле (карты до 14.10): подсказка и «Это один кабель на N жил». */
+.tcgen .wire-row > .cable-regroup { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: -2px; padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--tone-warn) 45%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--tone-warn) 8%, var(--card)); font-size: 12.5px; }
 .cable-colors-btn { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-height: 28px; padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--card); color: var(--foreground); font-size: 12.5px; text-align: left; cursor: pointer; }
 .cable-colors-btn:hover, .cable-colors-btn[aria-expanded="true"] { border-color: var(--primary); }
@@ -176,6 +187,8 @@
 .cable-colors-pop .swatch { width: 20px; height: 20px; }
 .cable-colors-presets { display: flex; flex-wrap: wrap; gap: 6px; }
 @media (pointer: coarse) { .pin-color-pop .swatch, .tcgen .pin-color-dot { width: 40px; height: 40px; } .cable-colors-btn { min-height: 40px; }
+  /* Кружок под палец шире — место под него на чипе тоже, чтобы он не наезжал на номер провода. */
+  .tcgen .pin-chip-wire .pin-swatch.is-spacer { width: 30px; }
   /* Планшет: палитра жилы в одну строку, «×» — под палец. */
   .pin-color-pop.cable-colors-pop { width: 980px; }
   .cable-colors-row { grid-template-columns: 20px 14px 112px minmax(0, 1fr) 40px; }

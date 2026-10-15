@@ -40,4 +40,8 @@
 .pin-links .pin-links-net-hit:hover { fill: var(--accent); opacity: .6; }
 .pin-links .pin-links-net-hit:focus-visible { stroke: var(--primary); stroke-width: 1.5; }
 .pin-links .pin-links-net text, .pin-links .pin-links-net .pin-links-cell { pointer-events: none; }
+/* «Цвет» в таблице схемы (только генератор): щелчок открывает палитру жилы этого контакта. */
+.pin-links .pin-links-color-hit { fill: transparent; cursor: pointer; outline: none; }
+.pin-links .pin-links-color-hit:hover { fill: var(--accent); opacity: .5; }
+.pin-links .pin-links-color-hit:focus-visible { stroke: var(--primary); stroke-width: 1.5; }
 .pin-links .pin-links-net-input { box-sizing: border-box; width: 100%; height: 100%; margin: 0; padding: 0 3px; border: 1px solid var(--primary); border-radius: 3px; background: var(--card); color: var(--foreground); font: inherit; font-size: 11px; }
