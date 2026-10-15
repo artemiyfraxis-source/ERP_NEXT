@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { PrintSheet } from "./api";
-import { buildPrintDocumentHtml, buildPrintSheetHtml, openPrintHtml, openPrintSheet, printStoredDocument } from "./print";
+import { applyPrintStyles, buildPrintDocumentHtml, buildPrintSheetHtml, openPrintHtml, openPrintSheet, printStoredDocument } from "./print";
 
 const sheet: PrintSheet = {
   title: "ЗАЯВКА НА ВЫДАЧУ REQ.26.001",
@@ -75,4 +75,22 @@ it("prints synchronously inside the call: the frame exists as soon as openPrintH
   openPrintHtml("<p>x</p>");
   expect(document.body.querySelectorAll("iframe")).toHaveLength(1);
   document.body.querySelector("iframe")!.remove();
+});
+
+it("lays the form's styles on through CSSOM, which the site's CSP does not block (owner 15.10: PL printed as bare text)", () => {
+  // The CSP dropped the <style> and the style attribute: the element keeps the attribute text, its style is empty.
+  const element = { getAttribute: () => "width: 22%", style: { cssText: "" } };
+  const adopted: { css: string }[] = [];
+  class Sheet { css = ""; replaceSync(css: string) { this.css = css; } }
+  const doc = {
+    adoptedStyleSheets: [] as unknown[],
+    defaultView: { CSSStyleSheet: Sheet },
+    querySelectorAll: () => [element],
+  };
+  Object.defineProperty(doc, "adoptedStyleSheets", { get: () => adopted, set: (value: { css: string }[]) => { adopted.splice(0, adopted.length, ...value); } });
+
+  applyPrintStyles(doc as unknown as Document, "<html><head><style>td { border: 1px solid #000; }</style><style>@page { size: A4; }</style></head></html>");
+
+  expect(adopted.map((sheet) => sheet.css)).toEqual(["td { border: 1px solid #000; }\n@page { size: A4; }"]);
+  expect(element.style.cssText).toBe("width: 22%");
 });

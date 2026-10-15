@@ -137,8 +137,17 @@ def _number(text: str) -> tuple[str, ...]:
     return (match.group(1), match.group(2), "-", match.group(3)) if match else (text, "", "", "")
 
 
-def _part(item: PackedItem | None, item_index: str) -> str:
-    return " ".join(part for part in (item_index, item.article if item else "") if part)
+def _part(item: PackedItem | None, item_index: str, projects: tuple[str, ...] = ()) -> str:
+    """«КБ1 FRX.2600204»; артикул, который сам — «КБ1» или «проект + КБ» («533К.11КБ1»), не повторяется: «КБ1»."""
+    article = item.article if item else ""
+    fold = lambda text: "".join(text.split()).casefold()  # noqa: E731
+    if fold(article) in {fold(item_index), *(fold(project + item_index) for project in projects)}:
+        article = ""
+    return " ".join(part for part in (item_index, article) if part)
+
+
+def _projects(shipment: Shipment) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(line.project for line in shipment.lines if line.project))
 
 
 def _prepare(shipment: Shipment) -> tuple[list[PackedItem], tuple[ShipmentBox, ...]]:
@@ -160,7 +169,7 @@ def build_packing_lists(shipment: Shipment, packer: str = "") -> list[PackingLis
         for entry in box.items:
             item = by_index.get(entry.item_index)
             rows.append(FormRow(
-                part=_part(item, entry.item_index), name=item.name if item else "", quantity=_qty(entry.quantity),
+                part=_part(item, entry.item_index, _projects(shipment)), name=item.name if item else "", quantity=_qty(entry.quantity),
                 unit=(item.unit if item else "") or "шт", batch=(item.grn if item else "") or "",
             ))
         forms.append(PackingList(
@@ -189,7 +198,7 @@ def build_delivery_note(
     """DN одна на отправку: строка на каждую КБ (сумма по всем коробам) с местами, где она лежит; итог — число мест."""
     packed, boxes = _prepare(shipment)
     rows = tuple(FormRow(
-        part=_part(item, item.item_index), name=item.name, quantity=_qty(item.quantity), unit=item.unit or "шт",
+        part=_part(item, item.item_index, _projects(shipment)), name=item.name, quantity=_qty(item.quantity), unit=item.unit or "шт",
         pl=shipment.pl_number,
         boxes=_places([box.place for box in boxes if any(entry.item_index == item.item_index for entry in box.items)]),
     ) for item in packed)
