@@ -1,6 +1,6 @@
 ---
 name: coax-data-sources
-description: "Owner's reference sources for coax cable/connector data and supplier articles — gsm-repiteri.ru, Амел, kroks.ru, vegatel.ru; resellers are suppliers, not makers"
+description: "Owner's three main coax suppliers (АМЭЛ, Kroks, gsm-repiteri) and reference sources for coax cable/connector data and supplier articles — gsm-repiteri.ru, Амел, kroks.ru, vegatel.ru; resellers are suppliers, not makers"
 metadata:
   node_type: memory
   type: project
@@ -17,5 +17,12 @@ gsm-repiteri.ru, «Амел», kroks.ru, vegatel.ru («оттуда кстати
 - Connectors without a maker article must not carry the site's number in the name («а зачем мне номера?») — they are
   named by type / angle / mount / cable (PR #412).
 
-**How to apply:** enrich from these four first; fill only empty cells, write to prod per [[prod-reference-write]].
+- 15.10.2026 the owner named the THREE main coax-cable suppliers — АМЭЛ (amel.ru: жёсткие / полужёсткие / гибкие),
+  Kroks (kroks.ru/shop/cable-rf) and gsm-repiteri.ru (cable, cable-75-om, cable-vegatel) — and said «всё остальное
+  можно сносить». The coax-cable catalogue was reloaded from them (PR db-amel-coax-1015, 141 rows); cables outside the
+  three were deleted unless a БД.КОАКС connector, a stock lot or a kit references them (15 kept). Deleted rows are
+  in docs/data «Коакс кабели — удалено 15.10.csv».
+
+**How to apply:** coax cables come only from АМЭЛ / Kroks / gsm-repiteri; a new cable from elsewhere is an exception
+to flag, not to add silently. Enrich from these first; fill only empty cells, write to prod per [[prod-reference-write]].
 [[module-reference-db]]
