@@ -9,6 +9,7 @@ import {
   type CableKind,
   type CableRow,
   type CablesResult,
+  type CoaxCard,
   type TechOperationRecord,
 } from "./api";
 import { CATEGORIES, CATEGORY_CELL, cableCategory, cableFamily, cableGroup, compareByFamily, compareCables } from "./cableCategory";
@@ -40,9 +41,17 @@ const DIA_TITLES: Record<Diameter, string> = { D1: "D1 жила, мм", D2: "D2 
 const MARK = "Марка";
 const TYPE = "Тип провода";
 // The columns a technologist reads per list, in this order; every other БД.ПРОВ column is in «Колонки».
+// Coax (owner 15.10.2026): construction first — diameters, then the materials core → dielectric → screen → jacket, then
+// impedance, the frequency range, standard, maker, and the supplier, its article and price as separate columns. The
+// old text cells «Изоляция» / «Экран» stay in «Колонки», hidden. `__range` / `__card` — the computed columns.
+const RANGE = "__range";
+const CARD = "__card";
+export const COAX_MATERIALS = ["Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки"];
+// The owner's own БД.ПРОВ columns among the listed ones (added by the fills, not in the base header).
+const OWN_LISTED = new Set([...COAX_MATERIALS, "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
 const SHOWN: Record<CableKind, string[]> = {
-  // «Поставщик» (where the shop buys it) before «Производители» (owner 14.10: «тут больше надо не производитель, а поставщик»).
-  coax: ["Наружный диаметр, мм", "Волновое сопротивление, Ом", "Изоляция", "Экран", TYPE, "Стандарт", "Поставщик", "Производители"],
+  coax: ["Наружный диаметр, мм", ...COAX_MATERIALS, "Волновое сопротивление, Ом", RANGE, "Стандарт", "Производители",
+    "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены", TYPE, CARD],
   wire: [TYPE, "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Жила: проволок × диаметр, мм", "Изоляция", "Цвета", "Темп. от, °C", "Темп. до, °C", "Напряжение, В"],
   multi: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Стандарт", "Производители"],
   other: [TYPE, "Число жил", "Сечение, мм2", "AWG", "Наружный диаметр, мм", "Экран", "Изоляция", "Волновое сопротивление, Ом", "Напряжение, В", "Стандарт", "Производители"],
@@ -54,6 +63,10 @@ const NEW_TYPE: Record<CableKind, Record<string, string>> = {
   multi: { [TYPE]: "многожильный" },
   other: {},
 };
+/** One frequency column (owner 15.10.2026: «мне нужен один — с диапазоном»): the VNA span, else DC up to the rated
+    maximum operating frequency; never the cut-off. */
+export const rangeText = (card: CoaxCard | null | undefined): string => !card ? ""
+  : card.span_to_ghz !== null ? spanText(card) : card.max_operating_ghz !== null ? `DC – ${num(card.max_operating_ghz)} ГГц` : "";
 const cardState = (row: CableRow) => !row.card ? "нет карточки"
   : `${row.card.verified ? `проверено${row.card.confidence ? `, ${row.card.confidence}` : ""}` : "не проверено"}${row.card_exact ? "" : ` · как у ${row.card.name}`}`;
 const NUMBER = /^-?\d[\d\s]*([.,]\d+)?$/;
@@ -129,7 +142,15 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       numeric: values.length > 0 && values.every((value) => NUMBER.test(value)),
     };
   };
-  const shown = SHOWN[kind];
+  // An own column not added yet (the materials before the fill) is not drawn empty; base БД.ПРОВ columns always are.
+  const shown = SHOWN[kind].filter((name) => !OWN_LISTED.has(name) || data.columns.includes(name));
+  const computed: Record<string, DataColumn<CableRow>> = kind === "coax" ? {
+    [RANGE]: { key: RANGE, title: "Диапазон частот", value: (row) => rangeText(row.card), render: (row) => rangeText(row.card) || <span className="cell-empty">—</span> },
+    [CARD]: {
+      key: CARD, title: "Карточка", value: cardState,
+      render: (row) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
+    },
+  } : {};
   const columns: DataColumn<CableRow>[] = [
     { key: "cable", title: kind === "wire" ? "Марка провода" : "Марка кабеля", value: (row) => row.cable, render: (row) => <strong>{row.cable}</strong> },
     ...(kind === "coax" ? DIAMETERS.map((name): DataColumn<CableRow> => ({
@@ -138,16 +159,13 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
         ? row.dia[name] || <span className="muted">—</span>
         : <span className="tone-warn" title={`Нет D1–D3 — генератор возьмёт диаметры из записи разъёма${row.dia_hint ? `; похожий кабель: ${row.dia_hint.cable}` : ""}`}>—</span>,
     })) : []),
+    ...shown.map((name) => computed[name] ?? textColumn(name, false)),
+    // The card's own frequencies stay in «Колонки»; the table shows the one range above.
     ...(kind === "coax" ? [
-      { key: "__span", title: "Диапазон VNA", value: (row: CableRow) => row.card ? spanText(row.card) : "" },
-      { key: "__op", title: "Рабочая частота, ГГц", numeric: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) || <span className="cell-empty">—</span> },
-      { key: "__fc", title: "Частота среза, ГГц", numeric: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) || <span className="cell-empty">—</span> },
-      {
-        key: "__card", title: "Карточка", value: cardState,
-        render: (row: CableRow) => <span className={!row.card ? "muted" : row.card.verified && row.card.confidence !== "низкая" ? "tone-ok" : "tone-warn"}>{cardState(row)}</span>,
-      },
+      { key: "__span", title: "Диапазон VNA", hidden: true, value: (row: CableRow) => row.card ? spanText(row.card) : "" },
+      { key: "__op", title: "Рабочая частота, ГГц", numeric: true, hidden: true, value: (row: CableRow) => row.card?.max_operating_ghz ?? "", render: (row: CableRow) => num(row.card?.max_operating_ghz) || <span className="cell-empty">—</span> },
+      { key: "__fc", title: "Частота среза, ГГц", numeric: true, hidden: true, value: (row: CableRow) => row.card?.fc_ghz ?? "", render: (row: CableRow) => num(row.card?.fc_ghz) || <span className="cell-empty">—</span> },
     ] : []),
-    ...shown.map((name) => textColumn(name, false)),
     ...data.columns.filter((name) => name !== MARK && !shown.includes(name)).map((name) => textColumn(name, !own.includes(name))),
     { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
@@ -174,8 +192,9 @@ export function CableTable({ kind, data, canEdit, onSaved, onError, toolbar, rem
       rowKey={(row) => row.id}
       rowLabel={(row) => row.cable}
       onEdited={() => onSaved("")}
-      // The saved column set lists every hidden column, «Поставщик» among them until 14.10: coax starts from a new key.
-      storageKey={kind === "coax" ? "db:cables:coax:2" : `db:cables:${kind}`}
+      // A saved layout keeps its order and hidden set: the coax order of 15.10 (materials, one range, the supplier
+      // columns) starts from a new key, so a layout saved before it does not hide the new order.
+      storageKey={kind === "coax" ? "db:cables:coax:3" : `db:cables:${kind}`}
       exportName={CABLE_KIND_LABELS[kind]}
       renderDetail={detail}
       collapsibleGroups={kind === "coax"}
