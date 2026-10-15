@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, failureText, type FulfillmentCandidate, type FulfillmentLine, type FulfillmentLot, type FulfillmentRequest } from "./api";
 import { matchesWords } from "./DataTable";
-import { fifoOrder, fifoPick } from "./FulfillmentPage";
+import { closedLine, fifoOrder, fifoPick, positionKey } from "./FulfillmentPage";
 import { matchText } from "./stockCandidates";
 
 /* Комплектация: «ГРН на все КБ» и «Есть, не заведено» (owner 05.10.2026). One position of a project is closed for every
@@ -77,6 +77,30 @@ export function bulkBanner(result: BulkResult, unit: string, offBook: boolean) {
   return `Назначено: ${parts.join("; ")}${short > 0 ? `; не хватает ${short}` : ""}`;
 }
 
+/** The search box of a lot picker opens filled with the position's name (its article when the name is empty): the list is
+    already narrowed to that item, the person erases or edits it. «Возможно есть» lots stay on the list whatever it says. */
+export const searchSeed = (name: string, article: string) => name.trim() || article.trim();
+
+/** «Нет на складе» for a position: every still open, unmarked line of it in the КБ of the position. */
+export function absentTargets(position: BulkPosition) {
+  const key = positionKey(position.article, position.name);
+  return position.kbs.flatMap((kb) => (kb.request.lines ?? [])
+    .filter((line) => positionKey(line.article, line.name) === key && !closedLine(line) && absentMark(line) === null)
+    .map((line) => ({ request: kb.request, line })));
+}
+
+/** One «Нет на складе» call per КБ line, the same endpoint as the per-КБ button; a request's version moves on after
+    each call, so the next line of the same request takes the version the server returned. */
+export async function absentPosition(position: BulkPosition) {
+  const versions = new Map<string, number>();
+  const targets = absentTargets(position);
+  for (const { request, line } of targets) {
+    const result = await bulkApi.absent(request.id, line.id, versions.get(request.id) ?? request.version, true);
+    versions.set(request.id, result.request?.version ?? (versions.get(request.id) ?? request.version) + 1);
+  }
+  return { message: `Отмечено «нет на складе»: ${position.name || position.article}, строк ${targets.length}` };
+}
+
 /** One call of (a) for a position; a 409 says the requests moved on. Result is shaped for the page's mutate. */
 export async function bindPosition(project: string, position: BulkPosition, lotIds: string[], offBook: boolean, offBookQuantity: string | null = null) {
   const versions = Object.fromEntries(position.kbs.map((kb) => [kb.request.id, kb.request.version]));
@@ -105,7 +129,7 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
 }) {
   const [lots, setLots] = useState<FulfillmentLot[] | null>(null);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState(suggested.length ? "" : position.name);
+  const [query, setQuery] = useState(searchSeed(position.name, position.article));
   const [chosen, setChosen] = useState<string[]>([]);
   const [attempt, setAttempt] = useState(0);
 

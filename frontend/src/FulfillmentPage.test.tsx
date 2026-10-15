@@ -875,6 +875,46 @@ it("shows a failed lot load honestly and retries it", async () => {
   expect(await screen.findByRole("checkbox", { name: "ГРН FRX.26.0000001" })).toBeInTheDocument();
 });
 
+it("opens the whole-order lot picker with the position's name in the search; «возможно есть» lots stay, the rest is filtered", async () => {
+  const jst = { ...projectLots[0], id: "lot-jst", grn: "FRX.26.0000009", article: "XHP-4@JST", name: "XHP-4@JST" };
+  const other = { ...projectLots[1], id: "lot-other", grn: "FRX.26.0000008", article: "ZZZ", name: "Прочее" };
+  const named = (item: typeof kb1) => ({ ...item, status: "Недоукомплектован", lines: [{ ...item.lines[0], name: "XHP-4" }] });
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [named(kb1), named(kb2)], next_cursor: null });
+    if (path.startsWith("/api/issues/lots")) return json({ lots: [jst, other] });
+    if (path.endsWith("/candidates")) return json({ positions: [{ article: "CON-001", name: "XHP-4", unit: "шт", candidates: [candidateOf(jst, "fuzzy")], more: 0 }] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<FulfillmentPage principal={principal} mode="pick" />);
+  fireEvent.click(await screen.findByRole("button", { name: /^728К\.2/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "ГРН на все КБ" }));
+  const search = await screen.findByRole("searchbox", { name: "Поиск партий для XHP-4" });
+  expect(search).toHaveValue("XHP-4");
+  expect(screen.getByRole("checkbox", { name: "ГРН FRX.26.0000009" })).toBeInTheDocument();
+  expect(screen.queryByRole("checkbox", { name: "ГРН FRX.26.0000008" })).not.toBeInTheDocument();
+  fireEvent.change(search, { target: { value: "" } });
+  expect(screen.getByRole("checkbox", { name: "ГРН FRX.26.0000008" })).toBeInTheDocument();
+});
+
+it("«Нет на складе» on the whole-order row marks every КБ line of the position through the per-КБ endpoint", async () => {
+  const calls: Array<[string, unknown]> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [kb1, kb2], next_cursor: null });
+    if (path.startsWith("/api/issues/lots")) return json({ lots: [] });
+    if (path.endsWith("/absent")) { calls.push([`${init?.method} ${path}`, JSON.parse(String(init?.body))]); return json({ request: kb1 }); }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "Нет на складе: Разъём" }));
+  expect(await screen.findByText("Отмечено «нет на складе»: Разъём, строк 2")).toBeInTheDocument();
+  expect(calls).toEqual([
+    [`POST /api/issues/k1/lines/${kb1.lines[0].id}/absent`, { version: 3 }],
+    ["POST /api/issues/k2/lines/line-2/absent", { version: 5 }],
+  ]);
+});
+
 function mockOffBookBulk(sent: unknown[]) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
