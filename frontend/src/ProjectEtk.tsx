@@ -16,8 +16,8 @@ import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { ETK_PART_SOURCE, etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, etkSemiSource, formatMinutes } from "./etkRoute";
-import { defectArt, defectGroupCode } from "./etkDefectArt";
-import { ETK_TOOLING_SECTIONS, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
+import { ETK_TOOLING_SECTIONS, etkOperationName, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
@@ -341,7 +341,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
       {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
         <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small className={NOT_SET.test(step.tolerance) ? "tone-danger" : undefined}>Допуск: {step.tolerance}</small>}</li>
       )}</ol> : null}</EtkSection> : null}
-    {operation.card?.defects && <DefectsView text={operation.card.defects} code={operation.code || ""} number={next()} />}
+    {operation.card?.defects && <DefectsView text={operation.card.defects} code={defectOperationCode(operation.code || "", operation.type)} number={next()} />}
     {(figure || sketch) && <EtkSection label="Эскиз" number={next()}>
       <div className="etk-fig-row">
         {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
@@ -420,7 +420,7 @@ function opCode(operation: EtkOperation): string {
 function etkTitle(operation: EtkOperation): string {
   const title = String(operation.title || "").split("|").map((part) => part.trim()).filter(Boolean).at(-1) || "";
   const category = opCode(operation) ? recordCategory(opCode(operation)) : "";
-  return operation.card?.name || title || (category && category !== "Прочее" ? category : "") || "Операция";
+  return etkOperationName(operation.card?.name || "", operation.type) || title || (category && category !== "Прочее" ? category : "") || "Операция";
 }
 
 function toolSub(tool: EtkTool): string {

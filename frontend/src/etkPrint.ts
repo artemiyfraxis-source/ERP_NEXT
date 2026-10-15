@@ -9,7 +9,7 @@ import {
   ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, solderMode, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkOperationName, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
 import { ETK_PART_SOURCE, etkRouteLine, etkRouteOf, etkSemiSource } from "./etkRoute";
 import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
@@ -37,7 +37,7 @@ function object(value: unknown): Row {
 
 /** SUPPLYMAP etkUnwrap_ keeps the text; the safety heading stays in print (only the screen folds it). */
 export function etkOperationTitle(operation: Row): string {
-  return text(object(operation.card).name) || text(operation.title) || text(operation.type) || text(operation.code);
+  return etkOperationName(text(object(operation.card).name), operation.type) || text(operation.title) || text(operation.type) || text(operation.code);
 }
 
 function head(kit: Row, revision: number, code: string): PrintBlock[] {

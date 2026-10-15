@@ -10,7 +10,7 @@ from uuid import UUID
 
 from .application import UnitOfWork
 from .connector_housings import attach_housings
-from .etk_builder import attach_route
+from .etk_builder import attach_route, fill_generator_chain
 from .etk_parts import EtkLot, EtkLots, attach_parts
 from .harness import application as harness
 from .harness.application import HarnessNotFound
@@ -73,7 +73,7 @@ def card_view(
         "deadline": card.deadline.isoformat() if card.deadline else None,
         "status": card.status.value,
         "revision": card.revision,
-        "document": attach_route(attach_housings(attach_parts(card.document, identify, lots))),
+        "document": attach_route(attach_housings(attach_parts(fill_generator_chain(card.document), identify, lots))),
         "manual_operation_keys": list(card.manual_operation_keys),
         "created_at": card.created_at.isoformat(),
         "updated_at": card.updated_at.isoformat(),

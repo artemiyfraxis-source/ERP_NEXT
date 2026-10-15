@@ -12,8 +12,8 @@ const PLAST = "#efe6cf", PLAST_E = "#8a7d5c";
 const TUBE = "#3b4147";
 const RED = "#d93025", GREEN = "#188038", MUTED = "#5f7470";
 
-type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "tin" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "assembly" | "mold" | "weld" | "other"
-  | MarkCtx;
+type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "coaxAsm" | "coaxCrimp" | "tin" | "crimp" | "lug" | "solder" | "shrink" | "mark"
+  | "assembly" | "mold" | "weld" | "other" | MarkCtx;
 /** Маркировка по видам меток (etk_marking, владелец 12.10): своя группа дефектов на вид — свои рисунки. */
 type MarkCtx = "markFlag" | "markHeat" | "markPvc" | "markTag" | "markRing" | "markPrint";
 /** Заголовок группы дефектов маркировки (backend/data/etk-marking.json `title`) → вид. «Прочие метки» — общие рисунки. */
@@ -348,6 +348,192 @@ const MARK_SCENES: Record<string, () => Scene> = {
     ok: ins(4, 112, 34, 14) + text(58, 37.5, "X1-3", "#fff", 9, "middle", 700),
     ng: ins(4, 112, 34, 14) + text(58, 37.5, "X1-3", "#a9b4ba", 9, "middle", 700) + path("M44,36 q7,-6 14,0 t14,0", "none", "#c3cbd0", 2.4) +
       mark(58, 34, 18, 10) + text(58, 62, "стёрлась", RED),
+  }),
+};
+
+// ── коаксиальный кабель (резка, разделка, корпус, втулка экрана; владелец 15.10 о ТК КБ1 796К.2: «картинки говно» —
+// резка и разделка коакса рисовались серым проводом с голой медью, втулка — открытым терминалом) ──────────────
+const JACKET = "#2b3136";
+/** Кабель в оболочке x1..x2 (сбоку). */
+function jacket(x1: number, x2: number, y = 34, h = 18): string {
+  return rect(x1, y - h / 2, x2 - x1, h, JACKET, ` rx="2.5" stroke="${E}" stroke-width=".7"`) +
+    rect(x1 + 2, y - h / 2 + 2, Math.max(0, x2 - x1 - 4), 2.4, "#fff", ` rx="1" opacity=".18"`);
+}
+/** Торец коаксиала: оболочка, оплётка, диэлектрик, жила из 7 проволок; splay — проволоки разошлись. */
+function coaxFace(cx: number, cy: number, r: number, o: { splay?: boolean; burr?: boolean; ragged?: boolean } = {}): string {
+  const outer = o.ragged
+    ? path(Array.from({ length: 18 }, (_, i) => {
+      const a = (i / 18) * 2 * Math.PI, rr = r * (i % 2 ? 1.12 : 0.94) + (i % 5 === 0 ? 2.2 : 0);
+      return `${i ? "L" : "M"}${(cx + rr * Math.cos(a)).toFixed(1)},${(cy + rr * Math.sin(a)).toFixed(1)}`;
+    }).join(" ") + " z", JACKET, E, 0.6)
+    : circle(cx, cy, r, JACKET, E, 0.6);
+  const core = r * 0.2, strand = core / 3;
+  const strands = [[0, 0], ...Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)])]
+    .map(([dx, dy], i) => {
+      const spread = o.splay && i ? 2.6 + (i % 3) * 0.6 : 1;
+      return circle(cx + dx * strand * 2 * spread, cy + dy * strand * 2 * spread, strand, CU, CU_LO, 0.4);
+    }).join("");
+  return outer + `<circle cx="${cx}" cy="${cy}" r="${r * 0.8}" fill="#b9c0c5" stroke="#8d9297" stroke-width=".6"/>` +
+    circle(cx, cy, r * 0.62, "#f4f4f2", E, 0.5) + strands +
+    (o.burr ? path(`M${cx + core},${cy - 1.5} L${cx + r * 0.55},${cy - 4} L${cx + core},${cy + 1.5} z`, CU, CU_LO, 0.5) : "");
+}
+/** Разделанный конец (кабель слева, торец справа): оболочка до a, оплётка до b, диэлектрик до c, жила до d. */
+function coaxEnd(a = 40, b = 58, c = 80, d = 104): string {
+  return jacket(4, a) + braid(a, b, 34, 14) + ins(b, c, 34, 9, "#f4f4f2") + cond(c, d, 34, 4);
+}
+/** Корпус коаксиального разъёма сбоку (металл) x1..x2 с хвостовиком до x3. */
+function coaxBody(x1: number, x2: number, x3: number, y = 34): string {
+  return path(`M${x1},${y - 14} L${x2},${y - 14} L${x2},${y - 8} L${x3},${y - 8} L${x3},${y + 8} L${x2},${y + 8} L${x2},${y + 14} L${x1},${y + 14} z`, TIN, TIN_LO, 0.8) +
+    line(x1 + 2, y - 11, x2 - 2, y - 11, "#fff", 1.2, ' opacity=".7"') + line(x1 + (x2 - x1) * 0.45, y - 14, x1 + (x2 - x1) * 0.45, y + 14, TIN_LO, 0.6);
+}
+/** Шестигранная втулка экрана сбоку x1..x2. */
+function hexSleeve(x1: number, x2: number, y = 34): string {
+  return path(`M${x1 + 3},${y - 11} L${x2 - 3},${y - 11} L${x2},${y} L${x2 - 3},${y + 11} L${x1 + 3},${y + 11} L${x1},${y} z`, TIN, TIN_LO, 0.8) +
+    line(x1 + 2, y - 4, x2 - 2, y - 4, TIN_LO, 0.5) + line(x1 + 2, y + 4, x2 - 2, y + 4, TIN_LO, 0.5);
+}
+/** Сечение обжатой втулки: шестигранник вокруг оплётки, диэлектрика и жилы. */
+function hexSection(cx: number, cy: number, r: number, mode: "ok" | "loose" | "flash"): string {
+  const hex = (rr: number) => Array.from({ length: 6 }, (_, i) => {
+    const a = (i * Math.PI) / 3 + Math.PI / 6;
+    return `${i ? "L" : "M"}${(cx + rr * Math.cos(a)).toFixed(1)},${(cy + rr * Math.sin(a)).toFixed(1)}`;
+  }).join(" ") + " z";
+  const inner = circle(cx, cy, r * 0.62, "#b9c0c5", "#8d9297", 0.5) + circle(cx, cy, r * 0.42, "#f4f4f2", E, 0.5) + circle(cx, cy, r * 0.1, CU, CU_LO, 0.4);
+  if (mode === "loose") return circle(cx, cy, r * 0.98, TIN, TIN_LO, 0.8) + circle(cx, cy, r * 0.8, "#fff", "none", 0) + inner;
+  let out = path(hex(r), TIN, TIN_LO, 0.9) + circle(cx, cy, r * 0.66, "#8d9297", "none", 0) + inner;
+  if (mode === "flash") out += path(`M${cx + r * 0.86},${cy - 3} L${cx + r * 0.86 + 9},${cy - 1.5} L${cx + r * 0.86 + 9},${cy + 1.5} L${cx + r * 0.86},${cy + 3} z`, TIN, RED, 0.9) +
+    path(`M${cx - r * 0.86},${cy - 3} L${cx - r * 0.86 - 9},${cy - 1.5} L${cx - r * 0.86 - 9},${cy + 1.5} L${cx - r * 0.86},${cy + 3} z`, TIN, RED, 0.9);
+  return out;
+}
+/** Обрезанная трубка ТУТ сбоку x1..x2: торец справа ровный, рваный или косой. */
+function tubeCut(x1: number, x2: number, end: "flat" | "ragged" | "skew" = "flat", y = 34, h = 18): string {
+  if (end === "skew") return path(`M${x1},${y - h / 2} L${x2},${y - h / 2} L${x2 - 12},${y + h / 2} L${x1},${y + h / 2} z`, TUBE, E, 0.7);
+  if (end === "ragged") return path(`M${x1},${y - h / 2} L${x2},${y - h / 2} L${x2 - 4},${y - 5} L${x2 + 3},${y - 2} L${x2 - 3},${y + 1} L${x2 + 2},${y + 4} L${x2 - 2},${y + h / 2} L${x1},${y + h / 2} z`, TUBE, E, 0.7);
+  return tube(x1, x2, y, h);
+}
+
+/** Крупный план разделанного конца коаксиала (жила, диэлектрик, оплётка). */
+const STRIP_VIEW = "36 12 76 47";
+
+const COAX_SCENES: Record<string, () => Scene> = {
+  // Резка коаксиального кабеля: сбоку кабель, рядом торец.
+  cxJacketNick: () => ({
+    ok: jacket(6, 110) + text(58, 58, "оболочка целая", GREEN),
+    ng: jacket(6, 110) + path("M46,25 L54,36 L62,25 z", "#b9c0c5", RED, 1) + path("M72,28 l12,3 M74,32 l10,3", "none", "#fff", 0.9) + mark(56, 31, 12, 10) + text(58, 58, "до оплётки", RED),
+  }),
+  cxJacketCrush: () => ({
+    ok: jacket(4, 66) + coaxFace(92, 34, 14) + text(58, 60, "сечение круглое", GREEN),
+    ng: path("M4,25 L22,25 Q32,30 42,30 Q52,30 66,25 L66,43 Q52,38 42,38 Q32,38 22,43 L4,43 z", JACKET, E, 0.7) + mark(40, 34, 14, 9) +
+      `<ellipse cx="92" cy="34" rx="18" ry="8" fill="${JACKET}"/><ellipse cx="92" cy="34" rx="14" ry="5.5" fill="#b9c0c5"/><ellipse cx="92" cy="34" rx="10" ry="3.6" fill="#f4f4f2"/>` +
+      circle(92, 34, 1.6, CU, CU_LO, 0.4) + text(92, 60, "сплющено", RED),
+  }),
+  cxFaceRagged: () => ({
+    ok: jacket(6, 64) + coaxFace(90, 34, 17) + text(58, 64, "торец ровный", GREEN),
+    ng: jacket(6, 60) + path("M60,25 L66,27 L61,30 L67,33 L61,36 L66,40 L60,43", JACKET, E, 0.6) + coaxFace(90, 34, 17, { ragged: true }) + mark(90, 34, 21, 21) + text(40, 64, "рваный край", RED),
+  }),
+  cxSkew: () => ({
+    ok: jacket(8, 90) + line(90, 25, 90, 43, "#b9c0c5", 2) + line(96, 18, 96, 50, GREEN, 0.8, ' stroke-dasharray="3 2"') + text(96, 60, "90°", GREEN),
+    ng: path("M8,25 L96,25 L84,43 L8,43 z", JACKET, E, 0.7) + line(96, 25, 84, 43, "#b9c0c5", 2) + line(91, 31, 89, 34, CU, 2) +
+      line(98, 18, 98, 50, MUTED, 0.6, ' stroke-dasharray="3 2"') + mark(90, 34, 9, 11) + text(96, 60, "≠ 90°", RED),
+  }),
+  cxPulled: () => ({
+    ok: jacket(8, 94) + line(94, 32, 94, 36, CU, 2.4) + text(52, 60, "жила заподлицо", GREEN),
+    ng: jacket(8, 94) + path("M94,32 L106,29 M94,34 L110,35 M94,36 L102,40", "none", CU, 1.3) + mark(102, 34, 10, 9) + text(52, 60, "проволоки торчат", RED),
+  }),
+  cxFaceSplay: () => ({
+    ok: coaxFace(58, 32, 24) + text(58, 66, "повив жилы целый", GREEN),
+    ng: coaxFace(58, 32, 24, { splay: true }) + mark(58, 32, 11, 11) + text(58, 66, "проволоки разошлись", RED),
+  }),
+  cxBurr: () => ({
+    ok: coaxFace(58, 32, 24) + text(58, 66, "кромки гладкие", GREEN),
+    ng: coaxFace(58, 32, 24, { burr: true }) + mark(65, 30, 9, 7) + text(58, 66, "острая кромка", RED),
+  }),
+  cxLength: () => ({
+    ok: jacket(8, 106) + dim(8, 106, 54, "L по КД", GREEN),
+    ng: jacket(8, 84) + rect(84, 25, 22, 18, "none", ` rx="2.5" stroke="${RED}" stroke-dasharray="3 2"`) + dim(8, 84, 54, "L ≠ КД", RED),
+  }),
+  // Разделка коаксиала: всё на разделанном конце — жила, диэлектрик, оплётка, оболочка.
+  cxCoreNick: () => ({
+    view: STRIP_VIEW,
+    ok: coaxEnd(),
+    ng: coaxEnd() + path("M88,31 L91,35 L94,31 z", "#fdf3f2", RED, 0.9) + path("M98,33 l7,-7", "none", CU, 1.2) + mark(93, 32, 10, 8),
+  }),
+  cxCoreSplay: () => ({
+    view: STRIP_VIEW,
+    ok: coaxEnd(),
+    ng: coaxEnd(40, 58, 80, 80) + path("M80,33 C88,26 98,25 108,27 M80,34 C90,32 100,33 110,33 M80,35 C88,41 98,43 108,41", "none", CU, 1.2) + mark(95, 34, 15, 11),
+  }),
+  cxDielCut: () => ({
+    view: STRIP_VIEW,
+    ok: coaxEnd(),
+    ng: coaxEnd() + path("M64,29.5 l3,5 M70,29.5 l2,4 M66,38.5 l3,-3", "none", RED, 1) + mark(68, 34, 9, 8),
+  }),
+  cxDielDeform: () => ({
+    view: STRIP_VIEW,
+    ok: coaxEnd() + dim(58, 80, 20, "Ø по КД", GREEN),
+    ng: jacket(4, 40) + braid(40, 58, 34, 14) + path("M58,29.5 Q69,33 80,31 L80,37 Q69,35 58,38.5 z", "#f4f4f2", E, 0.7) + cond(80, 104, 34, 4) + mark(69, 34, 11, 7) + dim(58, 80, 20, "сужен", RED),
+  }),
+  cxBraidResidue: () => ({
+    view: STRIP_VIEW,
+    ok: coaxEnd(),
+    ng: coaxEnd() + path("M58,30 L70,31 M58,38 L74,36.5 M60,31 L82,33.5", "none", "#8d9297", 1) + mark(70, 34, 13, 7),
+  }),
+  cxBraidCut: () => ({
+    view: STRIP_VIEW,
+    ok: coaxEnd(),
+    ng: coaxEnd() + rect(44, 27, 3, 14, "#fff") + rect(50, 27, 2.5, 14, "#fff") + path("M47,27 l2,-5 M52,41 l2,5", "none", "#8d9297", 1) + mark(49, 34, 8, 11),
+  }),
+  // Резка ТУТ.
+  tubeRagged: () => ({
+    ok: tubeCut(10, 92) + text(58, 60, "торец ровный", GREEN),
+    ng: tubeCut(10, 88, "ragged") + mark(89, 34, 8, 11) + text(52, 60, "рваный край", RED),
+  }),
+  tubeSlit: () => ({
+    ok: tubeCut(10, 92),
+    ng: tubeCut(10, 92) + path("M92,30 L76,31.5", "none", "#fff", 1.4) + path("M92,30 L76,31.5", "none", RED, 0.6) + mark(84, 31, 11, 6) + text(52, 60, "надрез вдоль трубки", RED),
+  }),
+  tubeSkew: () => ({
+    ok: tubeCut(10, 92) + line(96, 20, 96, 48, GREEN, 0.8, ' stroke-dasharray="3 2"') + text(96, 60, "90°", GREEN),
+    ng: tubeCut(10, 96, "skew") + line(98, 20, 98, 48, MUTED, 0.6, ' stroke-dasharray="3 2"') + mark(90, 34, 8, 11) + text(96, 60, "≠ 90°", RED),
+  }),
+  tubeLength: () => ({
+    ok: tubeCut(20, 96) + dim(20, 96, 54, "L по КД", GREEN),
+    ng: tubeCut(20, 78) + rect(78, 25, 18, 18, "none", ` rx="3" stroke="${RED}" stroke-dasharray="3 2"`) + dim(20, 78, 54, "L ≠ КД", RED),
+  }),
+  // Надеть / усадить ТУТ.
+  tubeOrder: () => {
+    const marked = (x: number, label: string) => tube(x, x + 24, 34, 18, label === "1" ? TUBE : "#c5221f") + text(x + 12, 37, label, "#fff", 8, "middle", 700);
+    return {
+      ok: jacket(4, 112, 34, 12) + marked(30, "1") + marked(64, "2") + text(58, 62, "порядок по КД", GREEN),
+      ng: jacket(4, 112, 34, 12) + marked(30, "2") + marked(64, "1") + mark(58, 34, 34, 14) + text(58, 62, "по КД: 1, 2", RED),
+    };
+  },
+  shrinkJacketMelt: () => ({
+    ok: jacket(4, 112, 34, 12) + tube(36, 80, 34, 16) + text(58, 60, "оболочка целая", GREEN),
+    ng: jacket(4, 112, 34, 12) + tube(36, 80, 34, 16) + path("M80,28 Q86,22 94,27 Q98,34 94,41 Q86,46 80,40 z", "#5a4a3c", E, 0.6) + circle(88, 31, 1.4, "#c9b184", "none", 0) + mark(88, 34, 12, 12) + text(58, 60, "оболочка оплавлена", RED),
+  }),
+  // Корпус коаксиального разъёма и втулка экрана.
+  cxSeat: () => {
+    const body = coaxBody(30, 84, 100) + rect(30, 27, 16, 14, "#f4f4f2", ` stroke="${E}" stroke-width=".5"`) + jacket(100, 114, 34, 12);
+    return {
+      ok: body + rect(20, 32.5, 22, 3, TIN, ` stroke="${TIN_LO}" stroke-width=".5"`) + line(20, 18, 20, 50, GREEN, 0.8, ' stroke-dasharray="3 2"') + text(58, 62, "контакт на месте", GREEN),
+      ng: body + rect(30, 32.5, 12, 3, TIN, ` stroke="${TIN_LO}" stroke-width=".5"`) + line(20, 18, 20, 50, MUTED, 0.6, ' stroke-dasharray="3 2"') + dim(20, 30, 20, "", RED) + mark(26, 34, 9, 8) + text(58, 62, "контакт утоплен", RED),
+    };
+  },
+  cxSleeveHairs: () => ({
+    ok: coaxBody(4, 34, 48) + hexSleeve(36, 76) + jacket(76, 112, 34, 14),
+    ng: coaxBody(4, 34, 48) + hexSleeve(36, 76) + jacket(76, 112, 34, 14) + path("M76,24 l6,-7 M78,25 l9,-4 M76,44 l7,6 M77,43 l9,3", "none", "#8d9297", 1) + mark(80, 34, 9, 15),
+  }),
+  cxHexLoose: () => ({
+    ok: hexSection(42, 34, 20, "ok") + vdim(70, 17, 51, "HEX по КД", GREEN),
+    ng: hexSection(42, 32, 20, "loose") + path("M66,16 A26,26 0 0 1 70,38", "none", RED, 1.2) + path("M70,38 l-4,-2 l5,-3 z", RED, RED, 0.5) + text(58, 64, "проворачивается", RED),
+  }),
+  cxHexFlash: () => ({
+    ok: hexSection(58, 33, 20, "ok"),
+    ng: hexSection(58, 33, 20, "flash") + mark(83, 33, 8, 6) + mark(33, 33, 8, 6) + text(58, 64, "облой, «уши»", RED),
+  }),
+  cxBodyDent: () => ({
+    ok: coaxBody(10, 60, 76) + hexSleeve(62, 92) + jacket(92, 114, 34, 14),
+    ng: coaxBody(10, 60, 76) + path("M26,20 Q32,27 38,20", "#8d969c", E, 0.7) + path("M24,48 Q31,41 38,48", "#8d969c", E, 0.7) + hexSleeve(62, 92) + jacket(92, 114, 34, 14) + mark(31, 34, 12, 16) + text(58, 64, "корпус смят", RED),
   }),
 };
 
@@ -797,6 +983,7 @@ const SCENES: Record<string, () => Scene> = {
     };
   },
   ...MARK_SCENES,
+  ...COAX_SCENES,
   generic: () => ({ ok: "", ng: "" }),
 };
 
@@ -828,6 +1015,37 @@ const RULES: Rule[] = [
   ["printText", /не соответств/i, ["markPrint"]],
   ["printBlur", /нечитаем|стира/i, ["markPrint"]],
   ["insDamage", /поврежд/i, ["markPrint"]],
+  // Коакс: резка и разделка — на коаксиальном кабеле, не на проводе.
+  ["cxBraidCut", /пряд|проволок[а-яё]* экрана/i, ["coax"]],
+  ["cxBraidResidue", /остатки экрана|волоск[а-яё]* оплет/i, ["coax"]],
+  ["braidHairs", /(срез|распушение) оплет|бахром/i, ["coax"]],
+  ["cxCoreNick", /обрыв|надрез[а-яё]* (жил|центр)/i, ["coax"]],
+  ["cxCoreSplay", /скручивание или распушение|деформаци[а-яё]* повива/i, ["coax"]],
+  ["cxDielCut", /порезы, надрывы, трещины|трещин[а-яё]* диэлектр/i, ["coax"]],
+  ["cxDielDeform", /смятие или вытягивание|диаметр[а-яё]* диэлектр/i, ["coax"]],
+  ["cxJacketCrush", /смят|сплющ|вмятин|прокус/i, ["coax"]],
+  ["cxSkew", /косой/i, ["coax"]],
+  ["cxFaceRagged", /задир|рван/i, ["coax"]],
+  ["cxPulled", /вытягив/i, ["coax"]],
+  ["cxFaceSplay", /деформация скрутки|раскрутк|распуш/i, ["coax"]],
+  ["cxBurr", /заусен/i, ["coax"]],
+  ["cxLength", /длина вне допуска|длин[а-яё]* отрезк/i, ["coax"]],
+  ["cxJacketNick", /надрез|царап|потерт|порез/i, ["coax"]],
+  // Резка ТУТ — на трубке.
+  ["tubeSlit", /продольн|микротрещ/i, ["tube"]],
+  ["tubeRagged", /рван|заусен|бахром/i, ["tube"]],
+  ["tubeSkew", /косой/i, ["tube"]],
+  ["tubeLength", /длин/i, ["tube"]],
+  // Надеть / усадить ТУТ.
+  ["tubeOrder", /порядок трубок|неверный порядок/i, ["shrink"]],
+  ["shrinkJacketMelt", /оболочк[а-яё]*.*(расплав|оплав)|(расплав|оплав|термическ)[а-яё]*.*оболочк/i, ["shrink"]],
+  // Корпус коаксиального разъёма и втулка экрана.
+  ["cxSeat", /недосад|не встал|неполн[а-яё]* посадк/i, ["coaxAsm"]],
+  ["cxBent", /изгиб пина|деформ[а-яё]* .*пин/i, ["coaxAsm"]],
+  ["cxSleeveHairs", /волоск|торчащ/i, ["coaxCrimp"]],
+  ["cxHexLoose", /недожим|проворач/i, ["coaxCrimp"]],
+  ["cxHexFlash", /пережим|облой|«уш/i, ["coaxCrimp"]],
+  ["cxBodyDent", /деформац[а-яё]* .*корпус/i, ["coaxCrimp"]],
   ["tnWick", /затекан|wicking|капилляр|зазор/i, ["tin"]],
   ["tnExcess", /избыт|наплыв|сосульк|капл/i, ["tin"]],
   ["tnLack", /недостат|непропай|открыт[а-яё]* мед|несмачив|раковин|пор[ыа]/i, ["tin"]],
@@ -940,8 +1158,10 @@ export function defectContext(code: string): Ctx {
   const group = /^MARK:(\w+)$/.exec(String(code || ""));
   if (group && (Object.values(MARK_GROUPS) as string[]).includes(group[1])) return group[1] as MarkCtx;
   const c = String(code || "").toUpperCase();
+  if (/^PRS_SLEEVE/.test(c) && /COAX/.test(c)) return "coaxCrimp";
   if (/^PRS_(НШВИ|HKИ|НКИ|ТМЛ|SLEEVE|CAP|COPPER)/.test(c) || /НШВИ|ТМЛ|НВИ/.test(c)) return "lug";
   if (/COAX/.test(c) && /^(STRIP|CUT)/.test(c)) return "coax";
+  if (/COAX/.test(c) && /^INS/.test(c)) return "coaxAsm";
   if (/^CUT_(TUT|ГОФРА|ПМЛ|NEYLON)/.test(c)) return "tube";
   if (/^CUT/.test(c)) return /\+\d?(STRIP|CRIMP)/.test(c) ? (/CRIMP/.test(c) ? "crimp" : "strip") : "cut";
   if (/^STRIP|^PREP/.test(c)) return "strip";
@@ -955,6 +1175,12 @@ export function defectContext(code: string): Ctx {
   if (/^US_WELD/.test(c)) return "weld";
   if (/^(INS|SEAL|TWIST)/.test(c)) return "assembly";
   return "other";
+}
+
+/** Код карты для рисунков дефектов с учётом вида операции генератора: резка и разделка вкладки «Коакс» идут по общим
+ *  картам провода (CUT_WIRE_auto), а режут коаксиальный кабель — рисунки коакса, не провода (владелец 15.10). */
+export function defectOperationCode(code: string, type: unknown = ""): string {
+  return /^coax(Cut|Strip)$/.test(String(type || "")) && !/COAX/i.test(code) ? `${code}+COAX` : code;
 }
 
 /** Код для рисунков группы дефектов комбинированной операции: группа «Лужение — …» из карты SDR_tin

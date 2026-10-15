@@ -206,6 +206,8 @@ def _result_name(
     """The semi-finished product an operation hands on, as one short Russian sentence: the subject first («Провода»,
     «Сторона А»), then what was done, then the parts. Every technical fact (article, side, count) stays."""
     operation_type = str(op.get("type") or "")
+    if operation_type.startswith("coax"):
+        return _coax_result_name(op, config, previous)
     kind = _kind(op)
     wires = _wires(op, config)
     endpoint = _endpoint(op)
@@ -253,6 +255,107 @@ def _result_name(
         "insWrap": "надета оплётка" if op.get("wrapKind") == "braid" else "намотана защитная лента",
     }
     return f"{previous}; {labels[operation_type]}" if previous and operation_type in labels else previous
+
+
+def _coax(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    value = config.get("coax")
+    return value if isinstance(value, Mapping) else {}
+
+
+def _coax_end(op: Mapping[str, Any], config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The connector end of a coax operation (`config.coax.sideA` / `sideB` by the operation's side)."""
+    side = _coax(config).get("sideB" if op.get("side") == "B" else "sideA")
+    return side if isinstance(side, Mapping) else {}
+
+
+def _coax_units(op: Mapping[str, Any]) -> Decimal:
+    """Pieces per item a coax operation handles (`units`: two TUT pieces, two shield sleeves…); at least one."""
+    return max(Decimal(1), _number(op.get("units"), Decimal(1)))
+
+
+def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], previous: str) -> str:
+    """The semi-finished cable a coax operation (generator tab «Коакс») hands on (владелец 15.10: «нет результата»):
+    the cut cable with its length, then every operation adds what was done to which end and with which part, the way
+    the wire chain does («…; сторона А разделана под MMCX-Male»); the same on both ends one after another is one part
+    («центральные контакты припаяны с двух сторон»). TUT pieces are a side product of their own."""
+    operation_type = str(op.get("type") or "")
+    coax = _coax(config)
+    cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
+    tut =str(coax.get("tutArt") or coax.get("tutName") or "").strip()
+    sleeve = str(coax.get("sleeveArt") or coax.get("sleeveName") or "").strip()
+    many = _coax_units(op) > 1
+    if operation_type == "coaxCut":
+        length = _format(coax.get("cableLength"))
+        name = f"Кабель {cable or 'коаксиальный'} нарезан" + (f": {length} мм" if length != "0" else "")
+        sides = [side for side in ("A", "B") if side in _list(op.get("stripSides"))]
+        if sides:
+            name += "; концы А и В разделаны" if len(sides) == 2 else f"; конец {_side_label({'side': sides[0]})} разделан"
+        return name
+    if operation_type == "coaxCutTut":
+        count = int(_coax_units(op))
+        length = _format(coax.get("tutLength"))
+        return (f"Трубка {tut or 'ТУТ'} нарезана: {_count_text(count, 'отрезок', 'отрезка', 'отрезков')}"
+                + (f" по {length} мм" if length != "0" else ""))
+    if operation_type in COAX_END_PHRASES:
+        # Сторона В сразу после того же на стороне А — одной частью «… с двух сторон», а не двумя длинными.
+        done = _coax_end_phrase(operation_type, config, "B" if op.get("side") == "B" else "A")
+        if op.get("side") == "B" and previous.endswith(_coax_end_phrase(operation_type, config, "A")):
+            head = previous[: -len(_coax_end_phrase(operation_type, config, "A"))]
+            return head + _coax_both_phrase(operation_type, config) if head else f"Кабель {cable or 'коаксиальный'}: {_coax_both_phrase(operation_type, config)}"
+    else:
+        done = {
+            "coaxInsTut": ("надеты трубки" if many else "надета трубка") + (f" {tut}" if tut else ""),
+            "coaxInsSleeve": ("надеты втулки экрана" if many else "надета втулка экрана") + (f" {sleeve}" if sleeve else ""),
+            "coaxShield": "втулки экрана обжаты" if many else "втулка экрана обжата",
+            "coaxHeat": "трубки усажены" if many else "трубка усажена",
+        }.get(operation_type, "")
+    if not done:
+        return previous
+    return f"{previous}; {done}" if previous else f"Кабель {cable or 'коаксиальный'}: {done}"
+
+
+# What an end operation of a coax cable does, said of one end; both ends one after another merge into one part.
+COAX_END_PHRASES = {
+    "coaxStrip": ("{where} разделана под {connector}", "{where} разделана", "концы разделаны: А — под {a}, В — под {b}",
+                  "концы А и В разделаны"),
+    "coaxPin": ("{where}: {contact} центральный контакт", "{where}: {contact} центральный контакт",
+                "центральные контакты {contacts} с двух сторон", "центральные контакты {contacts} с двух сторон"),
+    "coaxHousing": ("{where}: установлен корпус разъёма", "{where}: установлен корпус разъёма",
+                    "корпуса разъёмов установлены с двух сторон", "корпуса разъёмов установлены с двух сторон"),
+    "coaxSolderShield": ("{where}: экран припаян к корпусу", "{where}: экран припаян к корпусу",
+                         "экран припаян к корпусам с двух сторон", "экран припаян к корпусам с двух сторон"),
+    "coaxCapCrimp": ("{where}: крышка разъёма обжата", "{where}: крышка разъёма обжата",
+                     "крышки разъёмов обжаты с двух сторон", "крышки разъёмов обжаты с двух сторон"),
+    "coaxCapScrew": ("{where}: крышка разъёма завёрнута", "{where}: крышка разъёма завёрнута",
+                     "крышки разъёмов завёрнуты с двух сторон", "крышки разъёмов завёрнуты с двух сторон"),
+}
+
+
+def _coax_connector(config: Mapping[str, Any], side: str) -> str:
+    end = _coax(config).get("sideB" if side == "B" else "sideA")
+    end = end if isinstance(end, Mapping) else {}
+    return str(end.get("article") or end.get("connName") or "").strip()
+
+
+def _coax_contact(config: Mapping[str, Any], side: str) -> str:
+    end = _coax(config).get("sideB" if side == "B" else "sideA")
+    pin_type = str(end.get("pinType") or "").lower() if isinstance(end, Mapping) else ""
+    return "обжат" if "обжим" in pin_type else "припаян"
+
+
+def _coax_end_phrase(operation_type: str, config: Mapping[str, Any], side: str) -> str:
+    named, bare, _, _ = COAX_END_PHRASES[operation_type]
+    connector = _coax_connector(config, side)
+    return (named if connector else bare).format(
+        where=f"сторона {_side_label({'side': side})}", connector=connector, contact=_coax_contact(config, side))
+
+
+def _coax_both_phrase(operation_type: str, config: Mapping[str, Any]) -> str:
+    _, _, named, bare = COAX_END_PHRASES[operation_type]
+    a, b = _coax_connector(config, "A"), _coax_connector(config, "B")
+    contacts = {_coax_contact(config, "A"), _coax_contact(config, "B")}
+    contact = "припаяны" if contacts == {"припаян"} else "обжаты" if contacts == {"обжат"} else "припаяны / обжаты"
+    return (named if a and b else bare).format(a=a, b=b, contacts=contact)
 
 
 def _group_cut_components(wires: Sequence[Mapping[str, Any]], quantity: Decimal) -> list[dict[str, str]]:
@@ -534,7 +637,15 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
             "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
             "norm": _format(piece_minutes(wire) * units(wire) * quantity + setup_per_wire, 2),
         } for wire in wires]
-    twist = config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
+    if operation_type.startswith("coax"):
+        # Коакс (владелец 15.10, «0,06 мин» на партию): время на партию, как у провода — штука × units × партия + подготовка;
+        # резка кабеля и ТУТ «Погонной» карты — по узлам станка от своей длины.
+        coax = _coax(config)
+        length = {"coaxCut": coax.get("cableLength"), "coaxCutTut": coax.get("tutLength")}.get(operation_type)
+        linear = linear_seconds(op.get("linearTiming"), _decimal(length) / 1000) if length is not None else None
+        piece = linear / 60 if linear is not None else operation_minutes
+        return [{"name": result_name, "norm": _format(piece * _coax_units(op) * quantity + setup_minutes, 2)}]
+    twist =config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
     config_wires = config.get("wires") if isinstance(config.get("wires"), list) else []
     twist_count = Decimal(1)
     if twist.get("mode") == "pairs" and isinstance(twist.get("pairs"), list):
@@ -649,6 +760,38 @@ def _coax_strip_sizes(config: Mapping[str, Any], side_name: str) -> dict[str, An
         key: side.get(key) or "" for key in ("d1", "d2", "d3", "l1", "l2", "l3", "lPlus", "lMinus")}}
 
 
+COAX_END_TYPES = frozenset({"coaxPin", "coaxHousing", "coaxSolderShield", "coaxCapCrimp", "coaxCapScrew"})
+
+
+def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    """What the sketch of a coax operation draws (etkDraw, владелец 15.10 «эскизов нет»): an end operation — the strip
+    sizes and connector of its end (`coaxEnd`); TUT cut — the piece length (`lengthKd`, also the «[L КД]» of the card);
+    putting on / shrinking TUT and sleeves — the part and how many per item (`coaxParts`). Cut and strip keep theirs."""
+    operation_type = str(op.get("type") or "")
+    coax = _coax(config)
+    if operation_type in COAX_END_TYPES:
+        end = _coax_end(op, config)
+        return {"coaxEnd": {**_coax_strip_sizes(config, "B" if op.get("side") == "B" else "A"),
+                            "side": _side_label(op), "pinType": str(end.get("pinType") or "")}}
+    if operation_type == "coaxCutTut":
+        length = _format(coax.get("tutLength"))
+        return {"lengthKd": f"{length}мм"} if length != "0" else {}
+    parts = {
+        "coaxInsTut": ("tube", coax.get("tutArt") or coax.get("tutName"), coax.get("tutLength")),
+        "coaxHeat": ("tube", coax.get("tutArt") or coax.get("tutName"), coax.get("tutLength")),
+        "coaxInsSleeve": ("sleeve", coax.get("sleeveArt") or coax.get("sleeveName"), ""),
+        "coaxShield": ("sleeve", coax.get("sleeveArt") or coax.get("sleeveName"), ""),
+    }.get(operation_type)
+    if not parts:
+        return {}
+    kind, name, length = parts
+    length_text = _format(length) if length else "0"
+    return {"coaxParts": {
+        "kind": kind, "name": str(name or "").strip(), "count": int(_coax_units(op)),
+        "cable": str(coax.get("cableArt") or coax.get("cableName") or ""), "length": "" if length_text == "0" else length_text,
+    }}
+
+
 def _coax_machine(op: Mapping[str, Any]) -> dict[str, str]:
     """The rotary machine the technologist chose for cutting coax with stripping (generator, owner 14.10): model,
     inventory number and name from БД.ОБ; {} — no choice (the card's equipment stays as it is)."""
@@ -740,6 +883,7 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
             side_b = _coax_strip_sizes(config, "B")
             if side_b["connector"]:
                 fields["coaxB"] = side_b
+    fields.update(coax_sketch_fields(op, config))
     machine = _coax_machine(op)
     if machine:
         fields["machine"] = machine
@@ -870,7 +1014,8 @@ def _placeholder_map(
         "wire_qty": wire_data.get("qty") or "", "length": wire_data.get("length") or "",
         "semifinished": previous, "result": result, "op_num": op.get("opNum") or "",
         "t_prep": op.get("tPrep") or "", "t_op": op.get("tOp") or "", "t_machine": op.get("tMachine") or "",
-        "tolerance": fields.get("cutTolerance") or "", "length_kd": fields.get("lengthKd") or "",
+        # «[L КД] мм» в шаблоне: число без своей единицы, иначе «20мм мм».
+        "tolerance": fields.get("cutTolerance") or "", "length_kd": re.sub(r"\s*мм$", "", str(fields.get("lengthKd") or "")),
     }
     for suffix, side in (("a", side_a), ("b", side_b)):
         for field in ("termName", "termArt", "termQty", "connName", "connArt", "connQty"):
@@ -971,6 +1116,9 @@ def _resolve_card(
                 tolerance = f"{fields.get('pullForce')} Н".strip()
         if re.search(r"тестовый\s*рез", text.casefold()) and not tolerance:
             tolerance = str(fields.get("cutTolerance") or "")
+        if tolerance.strip() == "мм":
+            # «[L КД] мм» без длины в генераторе — единица без числа не допуск.
+            tolerance = "по КД"
         steps.append({"number": step.number, "kind": step.kind, "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance})
     tooling = []
     applicator_set = False
@@ -1149,7 +1297,7 @@ def _advances_chain(op: Mapping[str, Any]) -> bool:
     """Whether the operation's result becomes the semi-finished product the next operation takes. TUT pieces and the
     side work on them (cut / put on wires / end caps / folding / stripping) do not move the product name on."""
     operation_type = op.get("type")
-    return operation_type not in {"cutTut", "endCap", "foldCore", "stripCable"} and not (
+    return operation_type not in {"cutTut", "coaxCutTut", "endCap", "foldCore", "stripCable"} and not (
         operation_type == "insTut" and not op.get("harness")
     )
 
@@ -1677,6 +1825,106 @@ def _build_manual(
     return document
 
 
+@dataclass(frozen=True)
+class _ChainLink:
+    """One generator operation's place in the semi-finished chain: the product it takes (`previous`), the one it
+    hands on (`result`, `single` — the one-piece row name, the product itself after the last operation) and its input
+    rows (`semis`)."""
+
+    previous: str
+    result: str
+    single: str
+    is_last: bool
+    semis: list[dict[str, str]]
+
+
+TUT_CUT_TYPES = frozenset({"cutTut", "coaxCutTut"})
+
+
+def _tut_pieces(op: Mapping[str, Any], config: Mapping[str, Any]) -> Decimal:
+    """TUT pieces a TUT cut makes for the batch: «Резка ТУТ» — `tutCount` per item, coax — `units` per item."""
+    per_item = _coax_units(op) if op.get("type") == "coaxCutTut" else _decimal(op.get("tutCount"))
+    return per_item * _part_quantity(config)
+
+
+def _generator_chain(
+    operations: Sequence[Mapping[str, Any]], config: Mapping[str, Any], codes: Sequence[str],
+) -> list[_ChainLink]:
+    """SUPPLYMAP etkSemis_/etkResult_ chain over the generator operations in order: every operation takes what the
+    last chain-advancing one handed on; TUT pieces cut aside come in as a second input of the operation that puts them
+    on. `codes` — the operation cards' codes (a cut — `CUT_…` — takes no semi-finished product)."""
+    links: list[_ChainLink] = []
+    previous_result = ""
+    previous_norm = ""
+    tut_cuts: list[dict[str, Any]] = []
+    tut_on_wires = False
+    for index, (op, code) in enumerate(zip(operations, codes), start=1):
+        result = _result_name(op, config, previous_result)
+        if op.get("type") in TUT_CUT_TYPES:
+            tut_cuts.append({"name": result, "norm": _tut_pieces(op, config)})
+        auxiliary = None
+        if op.get("type") in {"insTut", "endCap", "coaxInsTut"}:
+            auxiliary = {"name": "; ".join(item["name"] for item in tut_cuts), "norm": _format(sum((item["norm"] for item in tut_cuts), Decimal(0)))}
+            tut_cuts = []
+        tut_on = False
+        if op.get("type") == "insTut" and not op.get("harness"):
+            tut_on_wires = True
+        elif tut_on_wires and _kind(op):
+            tut_on, tut_on_wires = True, False
+        semis = [] if code.startswith("CUT_") else _semis_rows(op, config, previous_result, previous_norm, auxiliary, tut_on)
+        is_last = index == len(operations)
+        links.append(_ChainLink(previous_result, result, _single_name(config, result, is_last), is_last, semis))
+        if _advances_chain(op):
+            previous_result = result
+            previous_norm = _output_norm(op, config)
+    return links
+
+
+def fill_generator_chain(document: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """A stored generator ETK whose operations lack the semi-finished chain — coax ETKs built before 15.10 had no
+    «Результат», no input from the previous operation and no sketch data (владелец: «нет результата в ТК КБ1») — gets
+    them replayed from its own `build_config` on read, so the issued card needs no new revision. Only what is missing
+    is filled: an operation with its result, input or sketch data (hand-edited or newer) keeps them; times stay as
+    issued (they are what production planned by — «Пересобрать» recounts them). A config that no longer lines up with
+    the operations (count or types differ) or cannot be replayed leaves the document as it is."""
+    if not isinstance(document, Mapping):
+        return document
+    config = document.get("build_config")
+    operations = _list(document.get("operations"))
+    if not isinstance(config, Mapping) or config.get("mode") == MANUAL_MODE or config.get("source") == "SUPPLYMAP":
+        return document
+    raw = [item for item in _list(config.get("ops")) if isinstance(item, Mapping)]
+    if not raw or len(raw) != len(operations) or any(
+        not isinstance(stored, Mapping) or str(stored.get("type") or "") != str(op.get("type") or "")
+        for stored, op in zip(operations, raw)
+    ):
+        return document
+    coax = [str(op.get("type") or "").startswith("coax") for op in raw]
+    if not any(coax):
+        return document
+    try:
+        chain = _generator_chain(raw, config, [str(item.get("code") or "") for item in operations])
+        filled: list[Any] = []
+        changed = False
+        for stored, op, link, is_coax in zip(operations, raw, chain, coax):
+            item = dict(stored)
+            if is_coax and not _list(item.get("result")):
+                item["result"] = _result_rows(op, config, link.result, link.is_last, link.single)
+                item["time"] = [{**row, "name": row.get("name") or link.single} if isinstance(row, Mapping) else row
+                                for row in _list(item.get("time"))]
+            if is_coax and not _list(item.get("semis")) and link.semis:
+                item["semis"] = link.semis
+            fields = item.get("fields") if isinstance(item.get("fields"), Mapping) else {}
+            extra = {key: value for key, value in coax_sketch_fields(op, config).items() if key not in fields} if is_coax else {}
+            if extra:
+                item["fields"] = {**fields, **extra}
+            changed = changed or item != stored
+            filled.append(item)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError, InvalidOperation):
+        return document
+    return {**document, "operations": filled} if changed else document
+
+
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str,
@@ -1696,38 +1944,16 @@ def build_etk(
     operations = [deepcopy(item) for item in raw_operations if isinstance(item, Mapping)]
     warnings: list[str] = []
     built: list[dict[str, Any]] = []
-    previous_result = ""
-    previous_norm = ""
-    tut_cuts: list[dict[str, Any]] = []
-    tut_on_wires = False
-
-    for index, op in enumerate(operations, start=1):
-        card = cards_by_id.get(str(op.get("templateId") or ""))
-        code = card.code if card else str(op.get("opNum") or "")
+    found = [cards_by_id.get(str(op.get("templateId") or "")) for op in operations]
+    codes = [card.code if card else str(op.get("opNum") or "") for op, card in zip(operations, found)]
+    for index, (op, card, code, link) in enumerate(zip(operations, found, codes, _generator_chain(operations, config, codes)), start=1):
         if card is None:
             warnings.append(_card_warning(op, index, code))
-        result = _result_name(op, config, previous_result)
-        if op.get("type") == "cutTut":
-            tut_cuts.append({"name": result, "norm": _decimal(op.get("tutCount")) * _part_quantity(config)})
-        auxiliary = None
-        if op.get("type") in {"insTut", "endCap"}:
-            auxiliary = {"name": "; ".join(item["name"] for item in tut_cuts), "norm": _format(sum((item["norm"] for item in tut_cuts), Decimal(0)))}
-            tut_cuts = []
-        tut_on = False
-        if op.get("type") == "insTut" and not op.get("harness"):
-            tut_on_wires = True
-        elif tut_on_wires and _kind(op):
-            tut_on, tut_on_wires = True, False
-        semis = [] if code.startswith("CUT_") else _semis_rows(op, config, previous_result, previous_norm, auxiliary, tut_on)
-        is_last = index == len(operations)
         built.append(_typed_operation(
             op, config, position=index, code=code, card=card, cards_by_code=cards_by_code,
-            previous=previous_result, result=result, single=_single_name(config, result, is_last), is_last=is_last,
-            semis=semis, connector=_typed_connector(op, index), warnings=warnings,
+            previous=link.previous, result=link.result, single=link.single, is_last=link.is_last,
+            semis=link.semis, connector=_typed_connector(op, index), warnings=warnings,
         ))
-        if _advances_chain(op):
-            previous_result = result
-            previous_norm = _output_norm(op, config)
 
     connections = _connections(config)
     document = {

@@ -219,6 +219,175 @@ function coaxSketch(c: Row, caption: string): string {
   return svg(W, cy + 52, body);
 }
 
+// ── Коакс по операциям (владелец 15.10, ТК КБ1 796К.2: «эскизов нет»): резка кабеля и ТУТ, пайка контакта, корпус,
+// надеть ТУТ / втулки, обжать втулку экрана, усадить ТУТ. Рисуются из данных операции (длина реза, размеры разделки
+// L1–L3 стороны, ТУТ и втулки), без картинок технолога; выданным ЭТК данные добавляет чтение (etk_builder.fill_generator_chain).
+const CX = { jacket: "#222", diel: "#fbfbf8", cu: "#e08a2c", metal: "#d4d9dd", metalEdge: "#8d969c", tube: "#3b4147", ink: "#17272b", muted: "#5f7470" };
+
+const caption = (x: number, y: number, value: string, anchor = "start", weight = 400, fill = CX.muted) =>
+  `<text x="${x}" y="${y}" font-size="12" fill="${fill}" text-anchor="${anchor}" font-weight="${weight}">${esc(value)}</text>`;
+
+/** Кабель в оболочке x1..x2 с подписью марки. */
+function coaxJacket(x1: number, x2: number, cy: number, label = "", h = 30): string {
+  return `<rect x="${x1}" y="${cy - h / 2}" width="${x2 - x1}" height="${h}" rx="3" fill="${CX.jacket}"/>` +
+    `<rect x="${x1 + 3}" y="${cy - h / 2 + 3}" width="${Math.max(0, x2 - x1 - 6)}" height="4" rx="2" fill="#fff" opacity=".18"/>` +
+    (label ? `<text x="${(x1 + x2) / 2}" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(label)}</text>` : "");
+}
+
+/** Торец коаксиала: оболочка, оплётка, диэлектрик, жила — вид с торца. */
+function coaxFace(cx: number, cy: number, r = 26): string {
+  return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${CX.jacket}"/>` +
+    `<circle cx="${cx}" cy="${cy}" r="${r * 0.8}" fill="url(#etkBraid)" stroke="${CX.metalEdge}"/>` +
+    `<circle cx="${cx}" cy="${cy}" r="${r * 0.64}" fill="${CX.diel}" stroke="${CX.ink}" stroke-width=".8"/>` +
+    `<circle cx="${cx}" cy="${cy}" r="${r * 0.16}" fill="${CX.cu}" stroke="${CX.ink}" stroke-width=".6"/>`;
+}
+
+/** Трубка (ТУТ) или втулка x1..x2 поверх кабеля. */
+function coaxSleeve(x1: number, x2: number, cy: number, h: number, kind: "tube" | "sleeve"): string {
+  const fill = kind === "tube" ? CX.tube : CX.metal, edge = kind === "tube" ? CX.ink : CX.metalEdge;
+  return `<rect x="${x1}" y="${cy - h / 2}" width="${x2 - x1}" height="${h}" rx="${kind === "tube" ? 5 : 2}" fill="${fill}" stroke="${edge}" stroke-width=".9"/>` +
+    `<rect x="${x1 + 3}" y="${cy - h / 2 + 3}" width="${x2 - x1 - 6}" height="4" rx="2" fill="#fff" opacity="${kind === "tube" ? ".2" : ".7"}"/>`;
+}
+
+/** Корпус разъёма сбоку x1..x2 (металл), хвостовик справа до x3. */
+function coaxBody(x1: number, x2: number, x3: number, cy: number): string {
+  return `<path d="M${x1},${cy - 24} L${x2},${cy - 24} L${x2},${cy - 14} L${x3},${cy - 14} L${x3},${cy + 14} L${x2},${cy + 14} L${x2},${cy + 24} L${x1},${cy + 24} z" fill="${CX.metal}" stroke="${CX.metalEdge}" stroke-width="1"/>` +
+    `<rect x="${x1 + 4}" y="${cy - 20}" width="${x2 - x1 - 8}" height="5" rx="2" fill="#fff" opacity=".7"/>` +
+    [0.3, 0.55].map((f) => `<line x1="${x1 + (x2 - x1) * f}" y1="${cy - 24}" x2="${x1 + (x2 - x1) * f}" y2="${cy + 24}" stroke="${CX.metalEdge}" stroke-width=".8"/>`).join("");
+}
+
+function sideCaption(end: Row): string {
+  return [str(end.side) ? `Сторона ${str(end.side)}` : "", str(end.connector)].filter(Boolean).join(" · ");
+}
+
+/** Резка коаксиального кабеля: мерный отрезок с длиной и допуском, торец — вид с торца (рез 90°, слои не смяты). */
+function coaxCutSketch(operation: Row): string {
+  const f = obj(operation.fields), cable = str(list(operation.components)[0]?.art);
+  const tolerance = etkTolerance(f.cutTolerance), length = mm(str(f.lengthKd).replace(/мм$/, "")) || "по КД";
+  const cy = 46;
+  const body = coaxJacket(40, 470, cy, cable) +
+    [40, 470].map((x) => `<line x1="${x}" y1="${cy - 26}" x2="${x}" y2="${cy + 52}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`).join("") +
+    dim(40, 470, cy + 46, `L = ${length}${tolerance ? ` ${tolerance}` : ""}`) +
+    coaxFace(556, cy) + caption(556, cy + 46, "торец: рез 90°", "middle") + caption(556, cy + 62, "слои не смяты", "middle");
+  return svg(640, cy + 74, body);
+}
+
+/** Резка ТУТ: отрезок трубки с длиной, сколько отрезков на партию. */
+function coaxTutSketch(operation: Row): string {
+  const f = obj(operation.fields), part = list(operation.components)[0] || {};
+  const length = mm(str(f.lengthKd).replace(/мм$/, "")) || "по КД", cy = 44;
+  const amount = str(part.norm) ? `на партию: ${str(part.norm)} ${str(part.unit).replace(/\.$/, "").toLowerCase()}` : "";
+  const body = coaxSleeve(160, 440, cy, 30, "tube") +
+    `<text x="300" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(str(part.art) || "ТУТ")}</text>` +
+    [160, 440].map((x) => `<line x1="${x}" y1="${cy - 24}" x2="${x}" y2="${cy + 46}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`).join("") +
+    dim(160, 440, cy + 40, `L = ${length}`) +
+    `<circle cx="540" cy="${cy}" r="22" fill="${CX.tube}"/><circle cx="540" cy="${cy}" r="16" fill="#fff" stroke="${CX.ink}" stroke-width=".6"/>` +
+    caption(540, cy + 40, "сечение круглое", "middle") + (amount ? caption(300, cy + 66, amount, "middle") : "");
+  return svg(640, cy + (amount ? 76 : 56), body);
+}
+
+/** Конец кабеля с разделкой L1–L3 (жила с x0, диэлектрик, оплётка, оболочка) — основа пайки контакта и корпуса. */
+function coaxEndGeometry(c: Row, x0: number, span: number) {
+  const L = [num(c.l1), num(c.l2), num(c.l3)];
+  const ok = L[0] > 0 && L[1] > L[0] && L[2] > L[1];
+  const [l1, l2, l3] = ok ? L : [1, 2.4, 4];
+  const X = (v: number) => x0 + (v * span) / l3;
+  return { ok, x1: X(l1), x2: X(l2), x3: X(l3) };
+}
+
+function coaxEndBase(c: Row, x0: number, span: number, cy: number, braidOver = false): string {
+  const g = coaxEndGeometry(c, x0, span);
+  return coaxJacket(g.x3, 610, cy, str(c.cable)) +
+    (braidOver ? "" : `<rect x="${g.x2}" y="${cy - 14}" width="${g.x3 - g.x2}" height="28" fill="url(#etkBraid)" stroke="${CX.metalEdge}"/>`) +
+    `<rect x="${g.x1}" y="${cy - 11}" width="${g.x2 - g.x1}" height="22" fill="${CX.diel}" stroke="${CX.ink}" stroke-width=".8"/>` +
+    `<rect x="${x0}" y="${cy - 4}" width="${g.x1 - x0}" height="8" fill="${CX.cu}" stroke="${CX.ink}" stroke-width=".6"/>`;
+}
+
+/** Центральный контакт на жиле: хвостовик с отверстием под пайку (припой), буртик и рабочая часть влево. */
+function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean): string {
+  return `<rect x="${x0 - 70}" y="${cy - 3}" width="44" height="6" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
+    `<path d="M${x0 - 70},${cy - 3} L${x0 - 80},${cy} L${x0 - 70},${cy + 3} z" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
+    `<rect x="${x0 - 26}" y="${cy - 8}" width="6" height="16" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
+    `<rect x="${x0 - 20}" y="${cy - 7}" width="${xEnd - x0 + 20}" height="14" rx="1" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
+    (solder ? `<rect x="${x0 - 16}" y="${cy - 3.5}" width="${xEnd - x0 + 12}" height="7" fill="#c9ced3"/><rect x="${x0 - 16}" y="${cy - 1.5}" width="${xEnd - x0 + 12}" height="3" fill="${CX.cu}" opacity=".45"/>` : "");
+}
+
+/** Операции конца коаксиала: пайка (обжим) центрального контакта, корпус разъёма, пайка экрана, крышка. */
+function coaxEndSketch(operation: Row): string {
+  const end = obj(obj(operation.fields).coaxEnd), type = str(operation.type), cy = 70, x0 = 150, span = 300;
+  const g = coaxEndGeometry(end, x0, span), xPin = x0 + (g.x1 - x0) * 0.8;
+  const crimp = /обжим/i.test(str(end.pinType));
+  let body = caption(20, 18, sideCaption(end), "start", 600, CX.ink);
+  if (type === "coaxPin") {
+    body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp) +
+      `<line x1="${xPin}" y1="${cy + 10}" x2="${xPin}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+      `<line x1="${g.x1}" y1="${cy + 12}" x2="${g.x1}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+      caption(x0 - 80, cy - 22, `Центральный контакт: ${crimp ? "обжать" : "припаять"} на жилу`) +
+      caption(g.x1 + 6, cy + 32, "зазор до диэлектрика — по КД");
+    if (g.ok) body += caption(x0, cy + 56, `L1 = ${mm(end.l1)} · L2 = ${mm(end.l2)} · L3 = ${mm(end.l3)}`);
+    return svg(640, cy + (g.ok ? 66 : 46), body);
+  }
+  // Корпус: пин в изоляторе, оплётка расправлена по хвостовику; пайка экрана / крышка — тот же вид с подписью.
+  const tail = g.x3 + 16;
+  body += coaxEndBase(end, x0, span, cy, true) + coaxBody(x0 - 90, g.x2, tail, cy) +
+    `<path d="M${g.x2},${cy - 14} L${g.x3 + 24},${cy - 17} L${g.x3 + 24},${cy + 17} L${g.x2},${cy + 14} z" fill="url(#etkBraid)" stroke="${CX.metalEdge}"/>`;
+  const what: Record<string, string> = {
+    coaxHousing: "Корпус надвинуть до упора: контакт зафиксирован в изоляторе",
+    coaxSolderShield: "Экран припаять к корпусу по окружности",
+    coaxCapCrimp: "Крышку надеть и обжать", coaxCapScrew: "Крышку завернуть до упора",
+  };
+  body += caption(x0 - 90, cy - 32, what[type] || "Монтаж разъёма") +
+    caption(g.x2, cy + 38, "оплётка расправлена по хвостовику, внутрь не завёрнута");
+  return svg(640, cy + 48, body);
+}
+
+/** Надеть ТУТ / втулки экрана, обжать втулку, усадить ТУТ. */
+function coaxPartsSketch(operation: Row): string {
+  const p = obj(obj(operation.fields).coaxParts), type = str(operation.type), cy = 62;
+  const kind = str(p.kind) === "sleeve" ? "sleeve" : "tube", count = Math.max(1, num(p.count) || 1);
+  const name = str(p.name) || (kind === "tube" ? "ТУТ" : "втулка экрана");
+  const what = `${name}${count > 1 ? ` × ${count}` : ""}`;
+  if (type === "coaxInsTut" || type === "coaxInsSleeve") {
+    const h = kind === "tube" ? 38 : 36, w = kind === "tube" ? 70 : 34;
+    let body = coaxJacket(40, 600, cy, str(p.cable));
+    const xs = count > 1 ? [150, 600 - 110 - w] : [150];
+    xs.forEach((x) => { body += coaxSleeve(x, x + w, cy, h, kind); });
+    body += `<line x1="50" y1="${cy + 34}" x2="140" y2="${cy + 34}" stroke="${CX.ink}" stroke-width="1" marker-end="url(#etkA)"/>` +
+      (count > 1 ? `<line x1="590" y1="${cy + 34}" x2="${600 - 100}" y2="${cy + 34}" stroke="${CX.ink}" stroke-width="1" marker-end="url(#etkA)"/>` : "") +
+      caption(40, 18, `Надеть: ${what}`, "start", 600, CX.ink) +
+      caption(320, cy + 52, "до монтажа корпусов, отодвинуть от концов", "middle");
+    return svg(640, cy + 62, body);
+  }
+  // Обжать втулку / усадить ТУТ — у корпуса разъёма: корпус слева, хвостовик с оплёткой, втулка, кабель.
+  const bx = 60, tail = 260;
+  let body = coaxJacket(tail - 20, 600, cy, str(p.cable)) + coaxBody(bx, 200, tail, cy) +
+    `<rect x="200" y="${cy - 16}" width="${tail - 200 + 8}" height="32" fill="url(#etkBraid)" stroke="${CX.metalEdge}"/>`;
+  if (type === "coaxShield") {
+    body += `<path d="M196,${cy - 19} L${tail + 14},${cy - 19} L${tail + 20},${cy} L${tail + 14},${cy + 19} L196,${cy + 19} L190,${cy} z" fill="${CX.metal}" stroke="${CX.metalEdge}" stroke-width="1"/>` +
+      `<line x1="196" y1="${cy - 7}" x2="${tail + 16}" y2="${cy - 7}" stroke="${CX.metalEdge}"/><line x1="196" y1="${cy + 7}" x2="${tail + 16}" y2="${cy + 7}" stroke="${CX.metalEdge}"/>` +
+      `<line x1="${(196 + tail) / 2}" y1="${cy - 44}" x2="${(196 + tail) / 2}" y2="${cy - 22}" stroke="${CX.ink}" marker-end="url(#etkA)"/>` +
+      `<line x1="${(196 + tail) / 2}" y1="${cy + 44}" x2="${(196 + tail) / 2}" y2="${cy + 22}" stroke="${CX.ink}" marker-end="url(#etkA)"/>` +
+      caption(20, 14, `Втулку экрана${count > 1 ? " (с каждой стороны)" : ""} надвинуть до упора в корпус и обжать шестигранником`, "start", 600, CX.ink) +
+      caption(300, cy + 40, "волоски оплётки не выступают из-под втулки");
+    return svg(640, cy + 52, body);
+  }
+  body += `<rect x="186" y="${cy - 21}" width="${tail + 120 - 186}" height="42" rx="6" fill="${CX.tube}" opacity=".92" stroke="${CX.ink}"/>` +
+    `<text x="${(186 + tail + 120) / 2}" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(name)}</text>` +
+    dim(tail, tail + 120, cy - 30, "на оболочку — по КД") +
+    caption(20, 14, `Усадить: ${what}`, "start", 600, CX.ink) + caption(186, cy + 40, "заходит на корпус по КД; без складок и пузырей");
+  return svg(640, cy + 50, body);
+}
+
+/** Эскиз операции коакса без разделки (её рисует etkDrawCoax): по виду операции и её данным. */
+export function etkDrawCoaxOp(operation: Row): string {
+  const type = str(operation.type), f = obj(operation.fields);
+  if (type === "coaxCut" && !Object.keys(obj(f.coax)).length) return coaxCutSketch(operation);
+  if (type === "coaxCutTut") return coaxTutSketch(operation);
+  if (Object.keys(obj(f.coaxEnd)).length) return coaxEndSketch(operation);
+  if (Object.keys(obj(f.coaxParts)).length) return coaxPartsSketch(operation);
+  return "";
+}
+
 /** Опрессовка: обжатый открытый контакт сбоку, высота обжима и отрыв из БД.ТЕР (etkDrawCrimp_). */
 export function etkDrawCrimp(operation: Row): string {
   const f = obj(operation.fields);
@@ -412,7 +581,7 @@ export function etkDrawTwist(operation: Row): string {
 
 /** Эскиз операции — первый подходящий, в порядке renderEtk_/etkPrintHtml_. */
 export function etkFigure(operation: Row): string {
-  return etkDrawWires(operation) || etkDrawCoax(operation) || (operation.type !== "prsTerm" ? etkDrawPinout(operation) : "") ||
+  return etkDrawWires(operation) || etkDrawCoax(operation) || etkDrawCoaxOp(operation) || (operation.type !== "prsTerm" ? etkDrawPinout(operation) : "") ||
     etkDrawCrimp(operation) || etkDrawTwist(operation);
 }
 

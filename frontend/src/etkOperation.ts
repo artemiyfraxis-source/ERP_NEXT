@@ -2,6 +2,8 @@
 // режим пайки (жало и температура — в шаблонах они только в тексте шагов) и типовые дефекты, разобранные из
 // текста в список (рисунки «Норма | Брак» — etkDefectArt.ts). Считается при показе и печати, поэтому выданные ТК перевыпускать не нужно.
 
+import { opTypeName } from "./tcGenLogic";
+
 type Row = Record<string, unknown>;
 
 function obj(value: unknown): Row {
@@ -154,6 +156,17 @@ export function parseDefects(raw: unknown): Defects {
     }
   }
   return { intro, groups: groups.filter((item) => item.items.length) };
+}
+
+/** Название операции ЭТК: имя карты, а когда оно только начало названия вида операции генератора («Резка» у резки
+ *  кабеля и резки ТУТ, «Монтаж» у ТУТ и втулки экрана, «Пайка» центрального контакта) — полное название вида, иначе
+ *  в маршруте коакса две «Резки» и две «Монтаж» подряд (владелец 15.10, ТК КБ1 796К.2). Считается при показе — выданные
+ *  ЭТК перевыпускать не нужно. */
+export function etkOperationName(cardName: string, type: unknown): string {
+  const name = cardName.trim();
+  const full = opTypeName(str(type));
+  if (!name || full === "Операция") return name;
+  return full.length > name.length && full.toLowerCase().startsWith(`${name.toLowerCase()} `) ? full : name;
 }
 
 /** Категория карточки по префиксу кода (SUPPLYMAP PortalApp.html TC_REC_CATS_ / tcRecCat_). */

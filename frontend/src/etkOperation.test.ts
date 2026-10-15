@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { parseDefects, solderMode, toolingSections } from "./etkOperation";
+import { etkOperationName, parseDefects, solderMode, toolingSections } from "./etkOperation";
+
+describe("etkOperationName", () => {
+  it("names a coax operation by its kind where the card says only the first word (796К.2 КБ1, owner 15.10)", () => {
+    expect(etkOperationName("Резка", "coaxCut")).toBe("Резка кабеля");
+    expect(etkOperationName("Резка", "coaxCutTut")).toBe("Резка ТУТ");
+    expect(etkOperationName("Монтаж", "coaxInsTut")).toBe("Монтаж ТУТ");
+    expect(etkOperationName("Монтаж", "coaxInsSleeve")).toBe("Монтаж втулки экрана");
+    expect(etkOperationName("Пайка", "coaxPin")).toBe("Пайка центрального контакта");
+    expect(etkOperationName("Опрессовка", "coaxShield")).toBe("Опрессовка втулки экрана");
+    expect(etkOperationName("Усадка", "coaxHeat")).toBe("Усадка ТУТ");
+    // Своё имя карты — как есть; без имени — пусто (дальше заголовок шаблона).
+    expect(etkOperationName("Монтаж корпуса", "coaxHousing")).toBe("Монтаж корпуса");
+    expect(etkOperationName("Автомат резка + опрессовка", "cutWireCrimp")).toBe("Автомат резка + опрессовка");
+    expect(etkOperationName("Резка", "")).toBe("Резка");
+    expect(etkOperationName("", "coaxCut")).toBe("");
+  });
+});
 
 const tooling = (equipment: string, parameters = "") => [
   { section: "Расходники", name: "Припой Sn63Pb37", parameters: "от 190 °С до 270 °С" },
