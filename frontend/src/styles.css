@@ -1540,6 +1540,13 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .wire-row.cores { grid-template-columns: minmax(0, 1fr) 76px 64px 100px 28px; }
 .tcgen .wire-row.adv.cores { grid-template-columns: minmax(0, 1fr) 112px 76px 64px 100px 28px; }
 .tcgen .wire-row.head { margin-bottom: -3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
+/* «Термоусадка на срез оболочки» под строкой кабеля в оболочке: стороны чипами, трубка и длина — в одну строку. */
+.tcgen .wire-row > .cable-js { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: -2px; font-size: 12.5px; }
+.tcgen .cable-js-cap { color: var(--muted-foreground); font-weight: 600; }
+.tcgen .cable-js .gfield { display: flex; align-items: center; gap: 6px; }
+.tcgen .cable-js .gfield-label { margin: 0; white-space: nowrap; }
+.tcgen .cable-js-tube select { width: 200px; }
+.tcgen .cable-js-len .gunit { width: 96px; }
 
 /* Сторона — разъёмы строками внутри секции (без рамки в рамке); пустая сторона — одна строка. */
 .tcgen .ep-side { container-type: inline-size; }
@@ -3681,6 +3688,8 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 /* Холст маршрута (RouteCanvas, владелец 12.10): карточки полуфабрикатов со связями — «Схема полуфабрикатов» генератора
    и «Маршрут КБn» позиции с чертежом. Карточка: вид маленьким ярлыком, название, «N … · шт · мин», рисунок. */
 :root { --rc-dot: color-mix(in srgb, var(--muted-foreground) 22%, transparent); --rc-link: #8a94a6; --rc-tube: #3b4248; --rc-final-fg: #00756a; }
+/* Кабель в оболочке на рисунке полуфабриката — цвета рисунка провода (harness/wire-blank-artwork.ts). */
+:root { --rc-jacket: #5b6670; --rc-outline: #303438; --rc-metal: #929699; --rc-copper: #c88954; --rc-tin: #a5adb2; }
 .rc { display: grid; gap: 8px; min-width: 0; }
 .rc-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .rc-tools-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
@@ -3727,6 +3736,18 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rc-tube rect { fill: var(--rc-tube); }
 .rc-tube line { stroke: var(--panel-soft); stroke-width: 1; opacity: .5; }
 .rc-row-label { overflow: hidden; font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+/* Кабель в оболочке на рисунке полуфабриката: одна строка — оболочка, жилы веером; подпись — марка и «4 жилы · А1 → В1». */
+.rc-row.is-cable { grid-template-columns: 128px minmax(0, 1fr); height: 36px; }
+.rc-row.is-cable .rc-row-label { display: grid; line-height: 1.25; }
+.rc-row.is-cable .rc-row-label b, .rc-row.is-cable .rc-row-label small { overflow: hidden; text-overflow: ellipsis; }
+.rc-row.is-cable .rc-row-label small { color: var(--muted-foreground); font-size: 11px; }
+.rc-cable-art { display: block; width: 128px; height: 32px; }
+.rc-jacket { fill: var(--rc-jacket); stroke: var(--rc-outline); stroke-width: 1; }
+.rc-core { fill: none; stroke-width: 2.4; stroke-linecap: round; }
+.rc-core-edge { fill: none; stroke: var(--rc-outline); stroke-width: 3.6; stroke-linecap: round; }
+.rc-core-cu { stroke: var(--rc-copper); stroke-width: 3; stroke-linecap: round; }
+.rc-core-tin { stroke: var(--rc-tin); stroke-width: 3; stroke-linecap: round; }
+.rc-core-term { fill: var(--rc-metal); stroke: var(--rc-outline); stroke-width: .8; }
 .rc-more { color: var(--muted-foreground); font-size: 12px; line-height: 16px; }
 .rc-faces { display: flex; align-items: flex-end; justify-content: center; gap: 12px; width: 100%; }
 .rc-face-cell { display: grid; justify-items: center; gap: 2px; min-width: 0; margin: 0; }

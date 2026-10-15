@@ -1038,6 +1038,170 @@
    "notes": "Стиль 3239 разрешён UL на 3–30 кВ DC (у других производителей до 50 кВ); толщина изоляции и Ø растут с напряжением. Здесь — исполнение 3 кВ DC. Сечения в мм² у CnC Tech (24 AWG 0,22; 22 AWG 0,33…) округлены, в файле — площадь AWG по ASTM B258. В БД.ПРОВ и СПР.КАБ этой марки нет."
   },
   {
+   "key": "UL3135",
+   "aliases": [
+    "UL3135",
+    "UL 3135"
+   ],
+   "standard": {
+    "value": "UL 758; AWM Style 3135 (600 В)",
+    "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+   },
+   "conductor_material": {
+    "value": "медь лужёная",
+    "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+   },
+   "insulation_material": {
+    "value": "силиконовая резина",
+    "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+   },
+   "voltage_v": {
+    "value": 600,
+    "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+   },
+   "temp_min_c": {
+    "value": -60,
+    "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+   },
+   "temp_max_c": {
+    "value": 200,
+    "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+   },
+   "colors": {
+    "value": [
+     "чёрный",
+     "синий",
+     "коричневый",
+     "красный",
+     "белый",
+     "серый",
+     "фиолетовый",
+     "зелёный",
+     "жёлто-зелёный"
+    ],
+    "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+   },
+   "sizes": [
+    {
+     "mark": "UL3135 24AWG",
+     "awg": "24",
+     "section_mm2": 0.205,
+     "strands": {
+      "value": "1×0,5",
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 2.1,
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     }
+    },
+    {
+     "mark": "UL3135 22AWG",
+     "awg": "22",
+     "section_mm2": 0.326,
+     "strands": {
+      "value": "60×0,08",
+      "source": "prodiel.ru, «Провод гибкий в силиконе 22 AWG 0,3 мм²», код 11317 — prodiel.ru/provod-gibkiy-medniy-luzheniy-awg-22-035-mm-kv-zheltiy-305-m (строка БД.ПРОВ, 14.10.2026)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": {
+      "value": 0.45,
+      "source": "prodiel.ru, «Провод гибкий в силиконе 22 AWG 0,3 мм²», код 11317 — prodiel.ru/provod-gibkiy-medniy-luzheniy-awg-22-035-mm-kv-zheltiy-305-m (строка БД.ПРОВ, 14.10.2026)"
+     },
+     "outer_dia_mm": {
+      "value": 1.7,
+      "source": "prodiel.ru, «Провод гибкий в силиконе 22 AWG 0,3 мм²», код 11317 — prodiel.ru/provod-gibkiy-medniy-luzheniy-awg-22-035-mm-kv-zheltiy-305-m (строка БД.ПРОВ, 14.10.2026)"
+     },
+     "colors": {
+      "value": [
+       "жёлтый",
+       "красный",
+       "оранжевый",
+       "чёрный"
+      ],
+      "source": "prodiel.ru, «Провод гибкий в силиконе 22 AWG 0,3 мм²», код 11317 — prodiel.ru/provod-gibkiy-medniy-luzheniy-awg-22-035-mm-kv-zheltiy-305-m (строка БД.ПРОВ, 14.10.2026)"
+     }
+    },
+    {
+     "mark": "UL3135 20AWG",
+     "awg": "20",
+     "section_mm2": 0.518,
+     "strands": {
+      "value": "5×0,4",
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 2.6,
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     }
+    },
+    {
+     "mark": "UL3135 18AWG",
+     "awg": "18",
+     "section_mm2": 0.823,
+     "strands": {
+      "value": "7×0,4",
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 2.9,
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     }
+    },
+    {
+     "mark": "UL3135 16AWG",
+     "awg": "16",
+     "section_mm2": 1.309,
+     "strands": {
+      "value": "11×0,4",
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 3.3,
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     }
+    },
+    {
+     "mark": "UL3135 14AWG",
+     "awg": "14",
+     "section_mm2": 2.081,
+     "strands": {
+      "value": "17×0,4",
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 3.6,
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     }
+    },
+    {
+     "mark": "UL3135 12AWG",
+     "awg": "12",
+     "section_mm2": 3.309,
+     "strands": {
+      "value": "27×0,4",
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     },
+     "conductor_dia_mm": null,
+     "insulation_thickness_mm": null,
+     "outer_dia_mm": {
+      "value": 4.1,
+      "source": "HELUKABEL, «SINGLE CORE UL Style 3135» (silicone single core, tinned wire, 600 V, 200 °C), арт. 47021…47075 — assets-cdn.helukabel.com/suppliers/Helukabel/documents/db/HELUKABEL_M47021_EN_GB.pdf (табл. 24–12 AWG)"
+     }
+    }
+   ]
+  },
+  {
    "key": "НВ-4 (600 В)",
    "aliases": [
     "НВ-4",
