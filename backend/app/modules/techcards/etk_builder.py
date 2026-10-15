@@ -466,6 +466,18 @@ def _output_norm(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     return ""
 
 
+def linear_seconds(timing: object, length_m: Decimal) -> Decimal | None:
+    """Время резки одной штуки «Погонной» операции по узлам станка (расчётный лист цеха, владелец 15.10.2026):
+    подача L / «Скорость проката» (м/с) + «Скорость работы инструмента» × «Кол-во операций инструмента». None — узлов
+    нет или подача не > 0: время, как раньше, из «Время операции». Ручные работы сюда не входят (лист их не прибавляет)."""
+    if not isinstance(timing, Mapping):
+        return None
+    roll = _decimal(timing.get("rollSpeed"))
+    if roll <= 0:
+        return None
+    return length_m / roll + _decimal(timing.get("toolSeconds")) * _decimal(timing.get("toolOps"))
+
+
 def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) -> list[dict[str, str]]:
     operation_type = str(op.get("type") or "")
     kind = _kind(op)
@@ -479,9 +491,15 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
             return [{"name": result_name, "norm": _format(operation_minutes * sum(map(units, wires)) * quantity + setup_minutes, 2)}]
         setup_per_wire = setup_minutes / len(wires)
         terminal = _cut_terminal(op) if operation_type == "cutWireCrimp" or kind else ""
+
+        def piece_minutes(wire: Mapping[str, Any]) -> Decimal:
+            linear = None if kind else linear_seconds(op.get("linearTiming"), _decimal(wire.get("length")) / 1000)
+            if linear is not None:
+                return linear / 60
+            return operation_minutes or Decimal(1)
         return [{
             "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
-            "norm": _format((operation_minutes * units(wire) * quantity if operation_minutes else units(wire) * quantity) + setup_per_wire, 2),
+            "norm": _format(piece_minutes(wire) * units(wire) * quantity + setup_per_wire, 2),
         } for wire in wires]
     twist = config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
     config_wires = config.get("wires") if isinstance(config.get("wires"), list) else []
