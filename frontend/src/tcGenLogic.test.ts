@@ -1,5 +1,7 @@
 ﻿import { describe, expect, it } from "vitest";
 import { savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { genCards } from "./routeCards";
+import { deriveRoute, type RouteOp } from "./routeLogic";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -208,6 +210,27 @@ describe("коакс: резка с разделкой на роторном с�
     expect(ops.slice(0, 4).map((op) => op.label)).toEqual(["Резка кабеля", "Разделка коаксиала (А)", "Разделка коаксиала (B)", "Резка ТУТ ×2"]);
     expect(ops.slice(0, 3).map((op) => op.tmplHint)).toEqual(["CUT_WIRE_auto", "STRIP_COAX_auto", "STRIP_COAX_auto"]);
     expect(ops.some((op) => op.machine)).toBe(false);
+  });
+
+  it("796К.2 КБ1: the ПФ scheme follows the order of work, the tubes go where «Монтаж ТУТ» takes them", () => {
+    // MMCX-Male RG316 → N-Male, ТУТ, втулка экрана (обжим), пайка А и В, корпуса А и В, опрессовка, усадка.
+    const D = coaxData();
+    const S = initState(D);
+    const specs = opsOf(D, { ...S, coax: { ...S.coax, stripMode: "separate" } });
+    const ops: RouteOp[] = specs.map((spec, index) => ({ position: index + 1, key: spec.opKey, type: spec.type, code: spec.tmplHint || "",
+      label: spec.label, minutes: null, ...(spec.side ? { side: spec.side } : {}) }));
+    expect(ops.map((op) => op.key)).toEqual(["coaxCut", "coaxStripA", "coaxStripB", "coaxCutTut", "coaxPinA", "coaxPinB", "coaxInsTut",
+      "coaxInsSleeve", "coaxHousingA", "coaxHousingB", "coaxShield", "coaxHeat"]);
+    const { cards, links } = genCards(deriveRoute(ops), ops);
+    expect(cards.map((card) => [card.title, card.ops.map((op) => op.position)])).toEqual([
+      ["Нарезанный и разделанный кабель", [1, 2, 3]], ["Нарезанные трубки", [4]],
+      ["Кабель с центральным контактом, сторона А", [5]], ["Кабель с центральным контактом, сторона В", [6]],
+      ["Сторона А собрана", [7, 8, 9]], ["Сторона В собрана", [10]], ["Готовый кабель", [11, 12]],
+    ]);
+    // Каждый ПФ идёт после предыдущего по номерам операций — номера ПФ совпадают с порядком работы.
+    const firsts = cards.map((card) => card.ops[0].position);
+    expect(firsts).toEqual([...firsts].sort((a, b) => a - b));
+    expect(links.map((link) => `${link.from}>${link.to}`)).toEqual(["wires>crimpedA", "tubes>A", "crimpedA>crimpedB", "crimpedB>A", "A>B", "B>final"]);
   });
 });
 

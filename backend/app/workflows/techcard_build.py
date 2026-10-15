@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+from decimal import Decimal
 import re
 from typing import Any, Iterable, Mapping
 
 from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
-from app.modules.references.cable_structure import HookupWire, WireGauge, decimal_or_none, gauge_gost_awg
+from app.modules.references.cable_structure import HookupWire, WireGauge, decimal_or_none, gauge_gost_awg, section_key
+from app.modules.references.cables import hookup_series_rest
 from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map
+from app.modules.references.wire_dia import outer_by_series
 from app.modules.references.technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION, TerminalRecord, fold_wire_section, matching_terminal_records, resolve_terminal,
     terminal_record_for_section, wire_section,
@@ -26,7 +29,10 @@ def with_technology(
     with references_factory() as references_uow:
         metadata = references_uow.tech_operations.metadata()
         if not metadata or metadata["schema_version"] != TECH_SNAPSHOT_SCHEMA_VERSION:
-            return dict(config), None
+            # The wire Ø come from the cable bases, not from the snapshot: the ETK gets them even without it.
+            return enrich_wire_diameters(config, references_uow.cable_structure.hookups(), references_uow.cable_structure.gauges(), [
+                record.fields for record in references_uow.tech_operations.list(tab=TechOperationTab.WIRE, query="", limit=10_000)
+            ]), None
         records = references_uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)
         # ГОСТ section → AWG from «Сечения AWG ↔ мм²» of the база монтажных проводов (the old СПР.КАБ AWG table is
         # retired, owner 12.10.2026); the stored map only when the sizes table is empty.
@@ -64,27 +70,70 @@ def enrich_wire_diameters(
 ) -> dict[str, Any]:
     """Copy of the config whose wires carry `outerDiameter` / `conductorDiameter` (mm, numbers) of their БД.ПРОВ
     record: the outer Ø from the монтажный провод (else the БД.ПРОВ cell «Наружный диаметр, мм»), the conductor Ø
-    from the «Сечения AWG ↔ мм²» row of that wire. A wire without a record, or a record without the value, gets no
-    key (the ETK shows «—»). The record is found by the wire's article, then its name, ignoring case, spaces, hyphens."""
+    from the «Сечения AWG ↔ мм²» row of that wire (a БД.ПРОВ cable without a монтажный record — by its «AWG», else its
+    «Сечение, мм2»). The record is found by the wire's article, then its name, ignoring case, spaces, hyphens; a
+    BOM name with more words after the mark («UL1007 24AWG красный») — by its longest leading words (two at least)
+    that are a mark. A wire of a series of the база монтажных without its own record is read as the generator reads
+    it (`tcGenLogic` «Ø изоляции по маркам»): the series in the name, its AWG («24AWG») or section («0,2») → the size
+    row, the Ø of that series and size. Nothing found — no key (the ETK shows «—»), never a number from nowhere."""
     enriched = deepcopy(dict(config))
+    gauges = list(gauges)
+    hookups = list(hookups)
     by_gauge = {gauge.id: gauge for gauge in gauges}
+    by_awg = {gauge.awg: gauge for gauge in gauges if gauge.awg}
+    by_section = {section_key(gauge.section_mm2): gauge for gauge in gauges}
     by_mark = {wire.mark_key: wire for wire in hookups}
+    series_outer = outer_by_series(hookups)
     prov = {cable_key(row.get("Марка")): row for row in prov_rows if cable_key(row.get("Марка"))}
 
+    def known(label: object) -> str:
+        words = str(label or "").split()
+        for count in range(len(words), 1, -1):
+            key = cable_key(" ".join(words[:count]))
+            if key in by_mark or key in prov:
+                return key
+        key = cable_key(label)
+        return key if key in by_mark or key in prov else ""
+
+    def row_gauge(row: Mapping[str, Any]) -> WireGauge | None:
+        awg = re.match(r"\s*(\d+)", str(row.get("AWG") or ""))
+        section = decimal_or_none(row.get("Сечение, мм2"))
+        return ((by_awg.get(str(int(awg.group(1)))) if awg else None)
+                or (by_section.get(section_key(section)) if section is not None and section > 0 else None))
+
+    def by_record(key: str) -> dict[str, float | None]:
+        record, row = by_mark.get(key), prov.get(key)
+        outer = _millimetres(record.outer_d_mm) if record is not None else None
+        if outer is None and row is not None:
+            outer = _millimetres(row.get("Наружный диаметр, мм"))
+        gauge = by_gauge.get(record.gauge_id) if record is not None else row_gauge(row) if row is not None else None
+        return {"outerDiameter": outer, "conductorDiameter": _millimetres(gauge.conductor_d_mm) if gauge else None}
+
+    def by_series(label: object) -> dict[str, float | None]:
+        found = hookup_series_rest(str(label or ""))
+        if found is None:
+            return {}
+        series, rest = found
+        awg = re.search(r"(\d+)\s*AWG", str(label or "").upper())
+        if awg:
+            candidates = [by_awg.get(str(int(awg.group(1))))]
+        else:
+            # «ПуГВ 1х0,75»: the number before «х» counts the cores, not the section.
+            numbers = re.findall(r"\d+(?:[.,]\d+)?", re.sub(r"\d+\s*[ХX×*]\s*(?=\d)", " ", rest))
+            candidates = [by_section.get(section_key(Decimal(number.replace(",", ".")))) for number in numbers]
+        sizes = [gauge for gauge in candidates if gauge is not None]
+        gauge = next((item for item in sizes if (series, item.id) in series_outer), sizes[0] if sizes else None)
+        if gauge is None:
+            return {}
+        return {"outerDiameter": _millimetres(series_outer.get((series, gauge.id))),
+                "conductorDiameter": _millimetres(gauge.conductor_d_mm)}
+
     def diameters(wire: Mapping[str, Any]) -> dict[str, float]:
-        for label in (wire.get("art"), wire.get("name")):
-            key = cable_key(label)
-            record, row = by_mark.get(key), prov.get(key)
-            if not key or (record is None and row is None):
-                continue
-            outer = _millimetres(record.outer_d_mm) if record is not None else None
-            if outer is None and row is not None:
-                outer = _millimetres(row.get("Наружный диаметр, мм"))
-            gauge = by_gauge.get(record.gauge_id) if record is not None else None
-            conductor = _millimetres(gauge.conductor_d_mm) if gauge is not None else None
-            found = {"outerDiameter": outer, "conductorDiameter": conductor}
-            return {name: value for name, value in found.items() if value is not None}
-        return {}
+        labels = (wire.get("art"), wire.get("name"))
+        found = next((by_record(key) for key in map(known, labels) if key), None)
+        if found is None:
+            found = next((item for item in map(by_series, labels) if item), {})
+        return {name: value for name, value in found.items() if value is not None}
 
     lists = [enriched.get("wires")] + [op.get("wires") for op in enriched.get("ops") or [] if isinstance(op, dict)]
     for wires in lists:

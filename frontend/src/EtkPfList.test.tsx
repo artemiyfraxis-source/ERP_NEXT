@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EtkRoute, EtkRouteBlock, Principal, ProjectTechcard } from "./api";
 import { EtkSheet, focusOperations } from "./ProjectEtk";
-import { pfPayload } from "./EtkPfList";
+import { etkCutCable, pfPayload } from "./EtkPfList";
 import { etkPfGroups } from "./etkRoute";
 import { mergeBlocks, placeOp, splitBlock, type Route } from "./routeLogic";
 
@@ -280,5 +280,41 @@ describe("task mode by ПФ", () => {
     expect(screen.queryByLabelText("Операции задания")).toBeNull();
     expect(focusOperations(operations, { positions: [2] })).toEqual([]);
     expect(focusOperations(operations, { positions: [2, 9, 2, 1] })).toEqual([2, 1]);
+  });
+});
+
+describe("кабель в оболочке в списке ПФ (рисунок схемы ПФ генератора)", () => {
+  // 545К.9 КБ1: UL2527 28AWG на 4 жилы — резка на роторе снимает оболочку с обоих концов.
+  const cut = { position: 1, code: "CUT_COAX+2strip", type: "cutWireStrip", title: "Резка с разделкой", result: [{ name: "UL2527 28AWG 400мм", norm: "50", unit: "шт" }],
+    fields: { strip: { a: true, b: true, lenA: "20", lenB: "20" }, wires: [{ name: "UL2527 28AWG", art: "UL2527 28AWG", qty: 1, length: 400, pins: [] }] } };
+  const config = { wires: [{ name: "UL2527 28AWG", art: "UL2527 28AWG", qty: 1, length: 400, cores: 4, coreColors: ["красный", "белый", "зелёный", "чёрный"] }] };
+
+  it("takes the cores and their colours from the build config and the ends from the cut", () => {
+    const cable = etkCutCable(cut, config)!;
+    expect(cable.title).toBe("UL2527 28AWG · 4 жилы");
+    expect([cable.left, cable.right]).toEqual(["copper", "copper"]);
+    expect(cable.cable!.cores.map((core) => core.label)).toEqual(["красный", "белый", "зелёный", "чёрный"]);
+    expect(new Set(cable.cable!.cores.map((core) => core.color)).size).toBe(4);
+    // Одиночный провод и не резка — рисунок как был.
+    expect(etkCutCable(cut, { wires: [{ ...config.wires[0], cores: 1 }] })).toBeNull();
+    expect(etkCutCable({ ...cut, type: "prsTerm" }, config)).toBeNull();
+    // Жилы, записанные в самой операции, тоже читаются.
+    expect(etkCutCable({ ...cut, fields: { ...cut.fields, wires: [{ ...cut.fields.wires[0], cores: 2 }] } }, {})!.cable!.cores).toHaveLength(2);
+  });
+
+  it("draws the cut of a jacketed cable as one cable with its cores fanned out, a single wire as before", async () => {
+    mockFetch();
+    const one: EtkRoute = { source: "generated", final: "cut", blocks: [block("cut", "Нарезанные провода", [1], { final: true })], edges: [] };
+    const card = (wires: unknown[]) => ({ ...techcard(one), document: { kit: { part_quantity: "50", name: "Кабель" }, operations: [cut], route: one, build_config: { wires } } }) as unknown as ProjectTechcard;
+    const { unmount } = render(<EtkSheet card={card(config.wires)} principal={editor} onChange={() => undefined} />);
+    const thumb = await screen.findByRole("button", { name: "Эскиз операции 01" });
+    expect(thumb).toHaveAttribute("title", "UL2527 28AWG · 4 жилы");
+    expect(thumb.querySelector(".rc-cable-art .rc-jacket")).not.toBeNull();
+    expect(thumb.querySelectorAll(".rc-core")).toHaveLength(8); // 4 жилы × 2 конца
+    unmount();
+    render(<EtkSheet card={card([{ ...config.wires[0], cores: 1 }])} principal={editor} onChange={() => undefined} />);
+    const single = await screen.findByRole("button", { name: "Эскиз операции 01" });
+    expect(single.querySelector(".rc-cable-art")).toBeNull();
+    expect(single.querySelector("svg.etk-svg")).not.toBeNull();
   });
 });

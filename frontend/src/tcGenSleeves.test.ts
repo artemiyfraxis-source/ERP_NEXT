@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
+import { opStages } from "./routeCards";
+import type { RouteOp } from "./routeLogic";
 import { initState, makeGen, setCableJacketShrink, updateEndpoint, type Comp, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 // Владелец 15.10: «на многожильном должна быть разделка — это вроде есть, но жилы не зачищаются; так же вопрос по
@@ -186,4 +188,24 @@ it("crimp only, both sides: tubes on before both crimps", () => {
   const ops = makeGen(D, S).getActiveOps();
   const on = keysOf(ops).indexOf("insSleeves");
   for (const side of ["A", "B"] as const) expect(on).toBeLessThan(at(ops, (o) => o.type === "prsTerm" && o.side === side));
+});
+
+it("the shrink of a sleeve over a connector carries its side: the ПФ scheme keeps it in that side, the config hands it on", () => {
+  // Без стороны «Усадка ТУТ поверх разъёма А1» уходила в ПФ следующей стороны (как усадка на месте разделки до #448), а две
+  // усадки сторон А и В давали операциям ЭТК один ключ — сборка отказывала «уникальные код и сторону».
+  const D = ownerBom();
+  let S = setCableJacketShrink(D, initState(D), 0, { A: false, B: false });
+  S = updateEndpoint(D, S, S.endpoints[0].id, { shrinkOn: true, shrinkLen: "15" });
+  S = updateEndpoint(D, S, S.endpoints[1].id, { shrinkOn: true, shrinkLen: "15" });
+  const ops = makeGen(D, S).getActiveOps();
+  expect(ops.filter((o) => /^heatShr/.test(o.opKey)).map((o) => [o.opKey, o.side, o.ord])).toEqual([["heatShrA1", "A", 1], ["heatShrB1", "B", 1]]);
+  const route: RouteOp[] = ops.map((o, i) => ({ position: i + 1, key: o.opKey, type: o.type, code: o.tmplHint || "", label: o.label,
+    minutes: null, ...(o.side ? { side: o.side } : {}) }));
+  const stages = opStages(route);
+  expect(stages.get(keysOf(ops).indexOf("heatShrA1") + 1)).toBe("A");
+  expect(stages.get(keysOf(ops).indexOf("heatShrB1") + 1)).toBe("B");
+  const cfg = makeGen(D, S).buildConfig() as { ops: Array<{ opKey: string; side?: string }> };
+  expect(cfg.ops.filter((o) => /^heat(Shr|Js)/.test(o.opKey)).map((o) => [o.opKey, o.side])).toEqual([["heatShrA1", "A"], ["heatShrB1", "B"]]);
+  // Остальные операции стороны без разъёма сторону в конфигурацию по-прежнему не кладут (ключи выданных ЭТК прежние).
+  expect(cfg.ops.find((o) => o.opKey === "stripCoresB1")?.side).toBeUndefined();
 });

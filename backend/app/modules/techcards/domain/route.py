@@ -20,9 +20,11 @@ from typing import Any, Mapping, Sequence
 
 
 PREFIX = "Схема полуфабрикатов"
-TUT_CUT = "cutTut"
-TUT_TAKERS = frozenset({"insTut", "endCap"})
-SOURCE_TYPES = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut", "coaxCutTut"})
+# Tube pieces wait for the operation that puts them on: «Надеть ТУТ», the cap of a free end, the coax «Монтаж ТУТ»
+# (796К.2 КБ1, 15.10: the coax tubes went into «Пайка центрального контакта А» although «Монтаж ТУТ» takes them).
+TUT_CUTS = frozenset({"cutTut", "coaxCutTut"})
+TUT_TAKERS = frozenset({"insTut", "endCap", "coaxInsTut"})
+SOURCE_TYPES = frozenset({"cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"})
 
 
 class RouteError(ValueError):
@@ -116,7 +118,7 @@ def derive_route(ops: Sequence[RouteOp], final_name: str = "") -> Route:
         key = f"b{op.position}"
         final = op.position == last
         blocks.append(Block(key, (final_name or op.name) if final else op.name, (op.position,), final))
-        if op.type == TUT_CUT:
+        if op.type in TUT_CUTS:
             tut.append(key)
             continue
         if op.type in SOURCE_TYPES or op.code.upper().startswith("CUT_"):

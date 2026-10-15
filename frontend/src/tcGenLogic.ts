@@ -1521,7 +1521,8 @@ export function makeGen(D: GenData, S: GenState) {
       const own = (o: OpSpec) => o.epId === x.ep.id || ["stripCable", "shield", "idle"].some((k) => o.opKey === k + side + ord);
       let last = -1;
       ops.forEach((o, i) => { if (own(o)) last = i; });
-      ops.splice(last >= 0 ? last + 1 : ops.length, 0, { type: "heatTut", opKey: "heatShr" + side + ord,
+      // Сторона — у усадки, как у усадки на месте разделки: без неё схема ПФ клала её в ПФ следующей стороны.
+      ops.splice(last >= 0 ? last + 1 : ops.length, 0, { type: "heatTut", opKey: "heatShr" + side + ord, side, ord,
         tmplHint: isGlueSleeve_(x.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short", cat: "Усадка", tutCount: 1, label: `Усадка ${tubeKind_(x.comp)} поверх разъёма ${x.tag}` });
     });
     const perSide: Partial<Record<Side, number>> = {};
@@ -2173,6 +2174,9 @@ export function makeGen(D: GenData, S: GenState) {
       if (spec.tin) op.tin = true;
       if (spec.type === "splice" || spec.type === "insHousing") op.units = spec.units || 1;
       if (spec.type === "seal") { op.sealArt = spec.sealArt; op.sealName = spec.sealName; op.sealQty = spec.sealQty; op.sealPlaces = spec.sealPlaces; }
+      // Усадка трубки стороны (поверх разъёма, на месте разделки) — со своей стороной: ПФ на сервере и ключ операции ЭТК
+      // (две усадки сторон А и В иначе совпадали и сборка ЭТК отказывала).
+      if (spec.type === "heatTut" && spec.side && /^heat(Shr|Js)/.test(spec.opKey)) op.side = spec.side;
       if (spec.crimpEpId) { op.side = spec.side; op.ep = epSnap(epById_(spec.crimpEpId)); }
       // Обжим обеих сторон: `ep` — сторона А, `epB` — сторона В (etk_builder: терминалы обеих сторон в комплектующих).
       if (spec.crimpEpIdB) op.epB = epSnap(epById_(spec.crimpEpIdB));

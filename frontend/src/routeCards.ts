@@ -157,6 +157,10 @@ const COAX_STRIPS = new Set(["coaxStrip"]);
 const COAX_CUT_STRIP = /^CUT_COAX\+\d*STRIP/;
 /** Обжим концов руками: терминалы и наконечники (и двойной обжим — та же операция), сростки. */
 const END_CRIMPS = new Set(["prsTerm", "splice"]);
+/** Пайка центрального контакта коаксиала — двойник обжима терминала: перед монтажом корпуса своей стороны это подготовка
+    конца (796К.2 КБ1, 15.10: пайка А, пайка В, потом корпуса — пайка В в «Стороне В собрана» ломала порядок работы).
+    Угловой контакт, паянный внутри корпуса (после него у стороны ничего), — сборка самой стороны. */
+const CONTACT_SOLDERS = new Set(["coaxPin"]);
 
 /** Операция готовит конец провода (владелец 13.10: «а почему тут нет полуфабриката обжатых проводов»): зачистка и
     разделка кабеля под разъём, складывание жилы, лужение, обжим терминала / наконечника, сростки с их трубкой и
@@ -184,12 +188,16 @@ function cutStage(op: RouteOp): GenStage | null {
     изделие (лужение свободных концов в конце — тоже). Зеркало backend `techcards/domain/pf_split.py` `op_stages`. */
 export function opStages(ops: readonly RouteOp[]): Map<number, GenStage> {
   const sorted = [...ops].sort((a, b) => a.position - b.position);
-  const sided = sorted.filter((op) => op.side && !cutStage(op) && !wireEndPrep(op)).map((op) => op.position);
+  const assembly = (op: RouteOp) => !!op.side && !cutStage(op) && !wireEndPrep(op) && !CONTACT_SOLDERS.has(op.type);
+  const pins = new Set(sorted.filter((op) => CONTACT_SOLDERS.has(op.type) && op.side
+    && sorted.some((other) => other.position > op.position && other.side === op.side && assembly(other))).map((op) => op.position));
+  const endPrep = (op: RouteOp) => wireEndPrep(op) || pins.has(op.position);
+  const sided = sorted.filter((op) => op.side && !cutStage(op) && !endPrep(op)).map((op) => op.position);
   const firstSide = Math.min(Infinity, ...sided), lastSide = Math.max(-Infinity, ...sided);
-  const prep = sorted.filter((op) => !cutStage(op) && wireEndPrep(op) && op.position < lastSide);
+  const prep = sorted.filter((op) => !cutStage(op) && endPrep(op) && op.position < lastSide);
   const crimped = new Map<number, GenStage>();
   const group = (own: RouteOp[], stage: GenStage) => {
-    if (own.some((op) => END_CRIMPS.has(op.type))) own.forEach((op) => crimped.set(op.position, stage));
+    if (own.some((op) => END_CRIMPS.has(op.type) || pins.has(op.position))) own.forEach((op) => crimped.set(op.position, stage));
   };
   group(prep.filter((op) => op.side === "A"), "crimpedA");
   group(prep.filter((op) => op.side === "B"), "crimpedB");
@@ -225,6 +233,9 @@ function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
   }
   if (stage === "tubes") return "Нарезанные трубки";
   if (CRIMP_STAGES.has(stage) && !final) {
+    if (ops.length && ops.every((op) => CONTACT_SOLDERS.has(op.type))) {
+      return `Кабель с центральным контактом${stage === "crimpedA" ? ", сторона А" : stage === "crimpedB" ? ", сторона В" : ""}`;
+    }
     if (!ops.some((op) => op.type === "prsTerm")) return "Провода со сростками";
     return stage === "crimpedA" ? "Обжатые провода, сторона А" : stage === "crimpedB" ? "Обжатые провода, сторона В" : "Обжатые провода";
   }
@@ -365,7 +376,7 @@ const CUT_TYPES = new Set(["cutWire", "cutWireStrip", "cutWireCrimp"]);
 /** Кабель в оболочке на рисунке: строка «Кабели» (`idx`), марка и жил в одном кабеле. */
 export type ArtCable = { idx: number; mark: string; cores: number };
 
-const coresWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "жила" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "жилы" : "жил");
+export const coresWord = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "жила" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "жилы" : "жил");
 
 /** Рисунки карточек генератора из формы: провода — по распиновке (контакты разъёмов сторон, цвет жилы, длина) с
     концами по их операции резки; жилы кабеля в оболочке (`cables`, жил > 1) — одним кабелем на штуку; обжатые — те же провода с наконечниками после ручной опрессовки; трубки — операции

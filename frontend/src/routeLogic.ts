@@ -27,9 +27,11 @@ export type BlockTotals = {
   opCount: number;          // операций в блоке и во всех блоках до него
 };
 
-const TUT_CUT = "cutTut";
-const TUT_TAKERS = new Set(["insTut", "endCap"]);
-const SOURCE_TYPES = new Set(["cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut", "coaxCutTut"]);
+/** Отрезки трубок ждут операцию, которая их надевает: «Надеть ТУТ», заделку свободного конца, «Монтаж ТУТ» коаксиала
+    (796К.2 КБ1, 15.10: трубки коакса уходили в «Пайку центрального контакта А»). Зеркало backend `domain/route.py`. */
+const TUT_CUTS = new Set(["cutTut", "coaxCutTut"]);
+const TUT_TAKERS = new Set(["insTut", "endCap", "coaxInsTut"]);
+const SOURCE_TYPES = new Set(["cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"]);
 
 /** «0,3333» — штук на стрелке: запятая, до четырёх знаков, без хвостовых нулей (минуты — `formatMinutes` из etkRoute). */
 export function formatPerUnit(value: number): string {
@@ -66,7 +68,7 @@ export function deriveRoute(ops: RouteOp[]): Route {
   for (const op of ops) {
     const key = `b${op.position}`;
     blocks.push({ key, name: "", ops: [op.position], final: op.position === lastPosition, components: [] });
-    if (op.type === TUT_CUT) { tut.push(key); continue; }
+    if (TUT_CUTS.has(op.type)) { tut.push(key); continue; }
     if (SOURCE_TYPES.has(op.type) || op.code.toUpperCase().startsWith("CUT_")) { heads.push(key); continue; }
     const inputs = heads.concat(TUT_TAKERS.has(op.type) ? tut : []);
     if (TUT_TAKERS.has(op.type)) tut = [];
