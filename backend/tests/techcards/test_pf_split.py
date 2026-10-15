@@ -135,6 +135,39 @@ def test_crimps_of_both_sides_first_are_a_pf_per_side_in_etk_order():
     ]
 
 
+# The owner's jacketed cable 15.10 (TC-BLS-5-BLS-5-400-RLB) as the saved config hands it over: the generator's config
+# carries `side` only for connector operations — core stripping and the shrink on the jacket cut come without it.
+JACKETED_CABLE = [
+    RouteOp(1, "cutWireStrip", "CUT_COAX+2strip", "Кабель", key="cutWire"),
+    RouteOp(2, "cutTut", "CUT_TUT_short", "ТУТ", key="cutJs1"),
+    RouteOp(3, "insTut", "INS_TUT", "Трубки надеты", key="insSleeves"),
+    RouteOp(4, "prsTerm", "PRS_TERMINAL_auto", "Терминалы А", side="A", key="prsTermA1"),
+    RouteOp(5, "stripCable", "STRIP_WIRE", "Жилы В зачищены", key="stripCoresB1"),
+    RouteOp(6, "prsTerm", "PRS_TERMINAL_auto", "Терминалы В", side="B", key="prsTermB1"),
+    RouteOp(7, "insTerm", "INS_terminal_2,54-6,3", "Сторона А", side="A", key="insTermA1"),
+    RouteOp(8, "heatTut", "HEAT_TYT_short", "Усадка А", key="heatJsA"),
+    RouteOp(9, "insTerm", "INS_terminal_2,54-6,3", "Сторона В", side="B", key="insTermB1"),
+    RouteOp(10, "heatTut", "HEAT_TYT_short", "Усадка В", key="heatJsB"),
+]
+
+
+def test_a_jacketed_cable_crimped_on_both_sides_first_keeps_each_side_op_in_its_side_by_the_op_key():
+    # Owner 15.10: «Обжатые провода, сторона В» held «Усадка ТУТ на месте разделки А» — the shrink had no side.
+    assert op_stages(JACKETED_CABLE) == {1: "wires", 2: "tubes", 3: "crimpedA", 4: "crimpedA", 5: "crimpedB", 6: "crimpedB",
+                                         7: "A", 8: "A", 9: "B", 10: "B"}
+    route = generator_split(JACKETED_CABLE, "Кабель TC-BLS-5-BLS-5-400-RLB")
+
+    assert [(block.key, block.ops, block.name) for block in route.blocks] == [
+        ("wires", (1,), "Нарезанные провода"), ("tubes", (2,), "Нарезанные трубки"),
+        ("crimpedA", (3, 4), "Обжатые провода, сторона А"), ("crimpedB", (5, 6), "Обжатые провода, сторона В"),
+        ("A", (7, 8), "Сторона А собрана"), ("B", (9, 10), "Кабель TC-BLS-5-BLS-5-400-RLB"),
+    ]
+    # An explicit side still wins over the key.
+    flipped = [RouteOp(op.position, op.type, op.code, op.name, side="B" if op.key == "heatJsA" else op.side, key=op.key)
+               for op in JACKETED_CABLE]
+    assert op_stages(flipped)[8] == "B"
+
+
 def test_connectors_crimped_and_mounted_one_by_one_give_a_crimp_pf_and_an_assembly_pf_per_side():
     # The generator's НВ4 harness: splices, then per connector crimp + mount (А1…А4), marking, В1, В2.
     ops = [
