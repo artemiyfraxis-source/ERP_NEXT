@@ -151,7 +151,7 @@
 .tcgen .pin-color-dot { position: absolute; left: 4px; top: 50%; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; transform: translateY(-50%); cursor: pointer; }
 .tcgen .pin-color-dot:hover .pin-swatch { box-shadow: 0 0 0 2px var(--primary); }
 .tcgen .pin-color-dot:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.pin-color-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 6px; width: 340px; max-width: 80vw; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); font-size: 12.5px; }
+.pin-color-pop { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 6px; width: 440px; max-width: 80vw; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); font-size: 12.5px; }
 .pin-color-pop.is-anchored { position: fixed; z-index: 1000; }
 .pin-color-pop .pin-color-row { display: grid; gap: 4px; }
 /* «Цвет» у провода в руке — рядом с «Цепь»: кружок и название цвета, щелчок — та же палитра. */
@@ -180,7 +180,10 @@
 .cable-colors-core .pin-num, .cable-colors-row .pin-num { font-weight: 700; font-variant-numeric: tabular-nums; }
 .pin-color-pop.cable-colors-pop { width: 640px; max-width: calc(100vw - 32px); gap: 8px; }
 .cable-colors-list { display: grid; gap: 4px; max-height: 420px; overflow-y: auto; }
-.cable-colors-row { display: grid; grid-template-columns: 20px 14px 112px minmax(0, 1fr) 20px; align-items: center; gap: 8px; }
+.cable-colors-row { display: grid; grid-template-columns: 20px 14px minmax(0, 1fr) 20px; align-items: center; gap: 8px; padding: 1px 4px; border-radius: 4px; }
+.cable-colors-row.is-active { background: var(--accent); }
+.cable-colors-name { text-align: left; background: none; border: 0; padding: 2px 0; cursor: pointer; font: inherit; color: inherit; }
+.cable-colors-name:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .cable-colors-row .pin-num { text-align: right; }
 .cable-colors-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cable-colors-row .swatch-row { gap: 4px; }
@@ -190,6 +193,16 @@
   /* Кружок под палец шире — место под него на чипе тоже, чтобы он не наезжал на номер провода. */
   .tcgen .pin-chip-wire .pin-swatch.is-spacer { width: 30px; }
   /* Планшет: палитра жилы в одну строку, «×» — под палец. */
-  .pin-color-pop.cable-colors-pop { width: 980px; }
-  .cable-colors-row { grid-template-columns: 20px 14px 112px minmax(0, 1fr) 40px; }
+  .pin-color-pop.cable-colors-pop { width: 720px; }
+  .cable-colors-row { grid-template-columns: 20px 14px minmax(0, 1fr) 40px; }
   .cable-colors-row .btn-link { min-width: 40px; min-height: 40px; } }
+
+/* Палитра жилы рядами (ColorPalette.tsx, владелец 15.10): основные · тёмные · светлые · металл/натуральный/прозрачный · свои. */
+.palette-groups { display: grid; gap: 4px; }
+.palette-group { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 6px; }
+.palette-group > small { color: var(--muted-foreground); line-height: 1.15; }
+.palette-group .swatch { width: 20px; height: 20px; }
+.palette-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 2px; }
+.palette-custom input[type="text"] { height: 28px; width: 150px; }
+.palette-custom input[type="color"] { width: 36px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; cursor: pointer; }
+@media (pointer: coarse) { .palette-group .swatch { width: 40px; height: 40px; } .palette-custom input[type="color"] { width: 48px; height: 40px; } }
