@@ -316,6 +316,8 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
         rows.extend({"art": art, "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."}
                     for art, row in terminals.items())
         return rows
+    if operation_type.startswith("coax"):
+        return _coax_components(op, config)
     if operation_type == "cutTut":
         count = _decimal(op.get("tutCount")) * quantity
         return [{"art": str(op.get("tutArt") or ""), "name": str(op.get("tutName") or op.get("tutArt") or ""), "norm": _format(count), "unit": "Шт."}]
@@ -333,6 +335,37 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
         return [{"art": str(endpoint.get("termArt") or endpoint.get("termName") or ""), "name": str(endpoint.get("termName") or ""), "norm": _format(_term_count(op, config) * quantity), "unit": "Шт."}]
     if kind in {"ins", "sdr"}:
         return [{"art": str(endpoint.get("connArt") or endpoint.get("connName") or ""), "name": str(endpoint.get("connName") or ""), "norm": _format(quantity), "unit": "Шт."}]
+    return []
+
+
+def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Вход коаксиальной операции (генератор, вкладка «Коакс»; владелец 15.10 «не появилось кол-во»): у вкладки нет
+    `wires`, всё — в `config.coax`. Резка — кабель в метрах (длина реза уже с припуском L+ разъёмов), резка ТУТ — отрезки,
+    пайка контакта — разъём своей стороны (один раз: корпус собирается из того же комплекта), втулка — по одной на
+    сторону с обжимом. Нет артикула или длины (старая конфигурация) — без строки, как раньше."""
+    operation_type = str(op.get("type") or "")
+    coax = config.get("coax") if isinstance(config.get("coax"), Mapping) else {}
+    quantity = _part_quantity(config)
+    units = _number(op.get("units"), Decimal(1))
+
+    def row(art_key: str, name_key: str, norm: Decimal, unit: str) -> list[dict[str, str]]:
+        art = str(coax.get(art_key) or "").strip()
+        if not art or norm <= 0:
+            return []
+        return [{"art": art, "name": str(coax.get(name_key) or ""), "norm": _format(norm), "unit": unit}]
+
+    if operation_type == "coaxCut":
+        return row("cableArt", "cableName", _decimal(coax.get("cableLength")) * quantity / 1000, "М.")
+    if operation_type == "coaxCutTut":
+        return row("tutArt", "tutName", units * quantity, "Шт.")
+    if operation_type == "coaxInsSleeve":
+        return row("sleeveArt", "sleeveName", units * quantity, "Шт.")
+    if operation_type == "coaxPin":
+        side = coax.get("sideB" if op.get("side") == "B" else "sideA")
+        article = str(side.get("article") or "").strip() if isinstance(side, Mapping) else ""
+        if not article:
+            return []
+        return [{"art": article, "name": str(side.get("connName") or ""), "norm": _format(quantity), "unit": "Шт."}]
     return []
 
 
@@ -689,6 +722,13 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
             if names:
                 pairs.append(f"{index + 1}) {' + '.join(names)}")
         fields["twist"] = {"pitch": twist.get("pitch") or "", "pairs": "\n".join(pairs), "count": len(pairs) or 1}
+    if operation_type == "coaxCut":
+        # Длина реза кабеля (с припуском) — в «Общие» шапки, допуск — по ней же, как у провода.
+        coax_data = config.get("coax") if isinstance(config.get("coax"), Mapping) else {}
+        length = _format(coax_data.get("cableLength"))
+        if length != "0":
+            fields["lengthKd"] = f"{length}мм"
+            fields["cutTolerance"] = _cut_tolerance(op, {"length": length.replace(",", ".")})
     if operation_type == "coaxStrip":
         # SUPPLYMAP TcBuild.gs etkFields_: размеры разделки стороны (L1–L3, D1–D3 из БД.КОАКС) для эскиза etkDrawCoax_.
         fields["coax"] = _coax_strip_sizes(config, "B" if op.get("side") == "B" else "A")
