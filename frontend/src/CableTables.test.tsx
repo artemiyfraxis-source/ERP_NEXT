@@ -200,7 +200,7 @@ describe("coax column order (owner 15.10: «сначала конструкти�
     "Марка кабеля", "D1 жила, мм", "D2 диэлектрик, мм", "D3 оплётка, мм", "Наружный диаметр, мм",
     "Материал жилы", "Материал диэлектрика", "Материал экрана", "Материал оболочки", "Волновое сопротивление, Ом",
     "Диапазон частот", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены",
-    "Тип провода", "Карточка",
+    "Карточка",
   ];
   const withColumns = (columns: string[], own: string[]) => {
     mockApi();
@@ -456,7 +456,7 @@ describe("coax cells edited right in the table (owner 14.10: «ещё бы ка�
     expect(cellOf("RG316", "Карточка")).not.toHaveClass("dt-editable");
     expect(cellOf("RG316", "Стандарт")).not.toHaveClass("dt-editable"); // the БД.ПРОВ row has no such cell: the server would refuse it
     expect(cellOf("RG316", "Поставщик")).not.toHaveClass("dt-editable");
-    expect(cellOf("RG58", "Тип провода")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
+    expect(cellOf("RG58", "Стандарт")).not.toHaveClass("dt-editable"); // a D-table-only cable has no БД.ПРОВ row
     expect(cellOf("RG58", "D1 жила, мм")).toHaveClass("dt-editable");
     unmount();
 
