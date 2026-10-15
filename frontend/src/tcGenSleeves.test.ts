@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { initState, makeGen, updateEndpoint, type Comp, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { initState, makeGen, setCableJacketShrink, updateEndpoint, type Comp, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 
 // Владелец 15.10: «на многожильном должна быть разделка — это вроде есть, но жилы не зачищаются; так же вопрос по
 // термоусадке на место зачистки: она вешается опционально с опциональной длиной, если длина не указывается — 25 мм»;
@@ -65,10 +65,13 @@ it("rotor on, a solder end: the jacket and the cores under the solder strip", ()
 
 it("heat-shrink on the jacket cut: 25 mm by default, cut ×cables, put on before any crimp with the other tubes, shrunk per side", () => {
   const D = ownerBom();
-  const base = initState(D);
-  expect(base.jacketShrink).toBeUndefined();
+  const seeded = initState(D);
+  // Новая форма: свободная ТУТ в составе — включена у кабеля на обеих сторонах (поле строки «Кабели», не формы).
+  expect(seeded.jacketShrink).toBeUndefined();
+  expect(seeded.wires[0].jacketShrink).toEqual({ A: true, B: true, mat: "", len: "" });
+  const base = setCableJacketShrink(D, seeded, 0, { A: false, B: false });
   expect(makeGen(D, base).getActiveOps().some((o) => /Js|Sleeves/.test(o.opKey))).toBe(false);
-  const S: GenState = { ...base, jacketShrink: { A: { on: true, mat: "", len: "" }, B: { on: true, mat: "", len: "" } } };
+  const S: GenState = seeded;
   const g = makeGen(D, S);
   const ops = g.getActiveOps();
   expect(ops.find((o) => o.opKey === "cutJs1")).toMatchObject({ type: "cutTut", tutArt: "ТУТ 6/3мм", tutCount: 2, tutSegs: [{ len: "25", count: 2 }],
@@ -84,7 +87,7 @@ it("heat-shrink on the jacket cut: 25 mm by default, cut ×cables, put on before
   expect(keysOf(ops).indexOf("heatJsB")).toBe(lastAt(ops, (o) => o.side === "B" && !!o.epId) + 1);
   expect(ops.find((o) => o.opKey === "heatJsA")).toMatchObject({ type: "heatTut", tutCount: 1, label: "Усадка ТУТ на месте разделки А — 1 шт" });
   // Своя длина; та же трубка не считается ещё раз термоусадкой на жгут.
-  const own: GenState = { ...S, jacketShrink: { A: { on: true, mat: "h1", len: "30" } } };
+  const own = setCableJacketShrink(D, S, 0, { B: false, mat: "h1", len: "30" });
   expect(makeGen(D, own).getActiveOps().find((o) => o.opKey === "cutJs1")!.tutSegs).toEqual([{ len: "30", count: 1 }]);
   expect(g.harnessSleeveComps_()).toEqual([]);
   expect(makeGen(D, base).harnessSleeveComps_().map((c) => c.id)).toEqual(["h1"]);
@@ -92,7 +95,7 @@ it("heat-shrink on the jacket cut: 25 mm by default, cut ×cables, put on before
 
 it("one put-on for both sides: connector sleeves, jacket tubes and the harness heat-shrink together, before the first crimp", () => {
   const D = ownerBom();
-  let S: GenState = { ...initState(D), jacketShrink: { B: { on: true, mat: "", len: "" } } };
+  let S = setCableJacketShrink(D, initState(D), 0, { A: false });
   S = updateEndpoint(D, S, S.endpoints[0].id, { shrinkOn: true, shrinkLen: "15" });
   const ops = makeGen(D, S).getActiveOps();
   expect(ops.filter((o) => o.type === "insTut").map((o) => o.opKey)).toEqual(["insSleeves"]);
@@ -161,7 +164,7 @@ it("«Сборка корпуса после пайки»: on by default for D-S
 
 it("crimp only, both sides: tubes on before both crimps", () => {
   const D = ownerBom();
-  const S: GenState = { ...initState(D), jacketShrink: { A: { on: true, mat: "", len: "" }, B: { on: true, mat: "", len: "" } } };
+  const S = initState(D);
   const ops = makeGen(D, S).getActiveOps();
   const on = keysOf(ops).indexOf("insSleeves");
   for (const side of ["A", "B"] as const) expect(on).toBeLessThan(at(ops, (o) => o.type === "prsTerm" && o.side === side));
