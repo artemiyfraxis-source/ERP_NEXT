@@ -1,73 +1,84 @@
 import type { CableRow } from "./api";
 
-/* «Коаксиальные кабели» read like a catalogue (owner 14.10.2026: «сортировку улучшить, сейчас хлам»): groups in a fixed
-   order — RG, LMR, D-FB, thin RF, semi-rigid and flexible, Russian marks, feeders, the rest — and inside a group by size,
-   the base mark before its variants (A/U, C/U, Cu, LSZH, UF…). Spellings are normalised only for this order
-   (RG58 = RG-58); the marks themselves stay as written. A column header sort still overrides it. */
+/* «Коаксиальные кабели» grouped by the head of the mark (owner 16.10.2026: «нормальную сортировку по марке, взять за
+   головную например RG, SF, SAT итд»): the letters a mark starts with — RG, SF, SR, SAT, LMR, MFC, LCF, РК … — and
+   «D-FB» for 5D-FB / 8D-FB / 10D-FB. Marks that start with an inch size (1/2″, 7/8 Baltic Signal …) are «Фидеры»; a head
+   only one mark has goes to «Прочие», so the list is not cut into single rows. Groups in alphabet order (Latin, then
+   Cyrillic), «Фидеры» and «Прочие» last; inside a group by the numbers of the mark (RG-6, RG-11, RG-58, RG-142 …), the
+   base mark before its variants (A/U, C/U, FEP, UF…). Spellings are normalised only for this order (RG58 = RG-58);
+   the marks themselves stay as written. A column header sort still overrides it. */
 
 export const NO_FAMILY = "Без марки";
+export const FEEDERS = "Фидеры";
+export const OTHERS = "Прочие";
 
-const GROUPS = ["RG", "LMR", "D-FB", "Тонкие RF", "Полужёсткие и гибкие", "Отечественные", "Фидеры", "Прочие", NO_FAMILY] as const;
-export type CoaxGroup = (typeof GROUPS)[number];
-
-/** RG by number, but the everyday RG-58 / RG-59 / RG-6 first, as a catalogue lists them. */
-const RG_FIRST = [58, 59, 6];
-// Semi-rigid and flexible series, in the order the shop reads them.
-const SEMI = [/^SR[-\s]?(\d+)/i, /^SUCOFORM\s*(\d+)?/i, /^UT[-\s]?(\d+)/i, /^MULTIFLEX\s*(\d+)?/i, /^SS[-\s]?(\d+)/i];
-
-type Place = { group: number; series: number; size: number; size2: number; variant: string };
+type Place = { head: string; numbers: number[]; variant: string };
 
 const decimal = (text: string) => Number(text.replace(",", "."));
-const variantOf = (rest: string) => rest.replace(/^[-\s/]+/, "").trim();
-
-/** Where a mark stands in the catalogue: group, series inside it, size, and the variant suffix ("" — the base mark). */
-export function coaxPlace(mark: string): Place {
-  const name = String(mark ?? "").trim().replace(/\s+/g, " ");
-  const place = (group: CoaxGroup, size = 0, rest = "", series = 0, size2 = 0): Place =>
-    ({ group: GROUPS.indexOf(group), series, size, size2, variant: variantOf(rest) });
-  let match: RegExpMatchArray | null;
-  if (!name) return place(NO_FAMILY);
-  // «RG1.37» is a thin micro-coax like RF 1.37, not RG-1.
-  if ((match = name.match(/^RG[-\s]?(\d+[.,]\d+)(.*)$/i))) return place("Тонкие RF", decimal(match[1]), match[2]);
-  if ((match = name.match(/^RG[-\s]?(\d+)(.*)$/i))) {
-    const number = Number(match[1]);
-    const first = RG_FIRST.indexOf(number);
-    return place("RG", first >= 0 ? first : RG_FIRST.length + number, match[2]);
-  }
-  if ((match = name.match(/^LMR[-\s]?(\d+)(.*)$/i))) return place("LMR", Number(match[1]), match[2]);
-  if ((match = name.match(/^(\d+)\s*D[-\s]?FB(.*)$/i))) return place("D-FB", Number(match[1]), match[2]);
-  if ((match = name.match(/^RF[-\s]?(\d+[.,]\d+)(.*)$/i))) return place("Тонкие RF", decimal(match[1]), match[2]);
-  for (const [series, pattern] of SEMI.entries()) {
-    if ((match = name.match(pattern))) return place("Полужёсткие и гибкие", Number(match[1] ?? 0), name.slice(match[0].length), series);
-  }
-  // РК50-1,5-21: by the size (the second number), then the impedance; other Russian marks (КВСФ-75) after them.
-  if ((match = name.match(/^РК\s*-?\s*(\d+)\s*-\s*(\d+(?:[.,]\d+)?)(.*)$/i))) return place("Отечественные", decimal(match[2]), match[3], 0, Number(match[1]));
-  if (/^[А-ЯЁ]/i.test(name)) return place("Отечественные", 0, "", 1);
-  if ((match = name.match(/^(\d+)\/(\d+)\s*(?:"|″|'')?(.*)$/))) return place("Фидеры", Number(match[1]) / Number(match[2]), match[3]);
-  return place("Прочие");
-}
-
-/** The group a mark is shown under. */
-export const coaxGroupName = (mark: string): CoaxGroup => GROUPS[coaxPlace(mark).group];
-
 const text = (a: string, b: string) => a.localeCompare(b, "ru", { numeric: true, sensitivity: "base" });
 
-/** Catalogue order of two marks: group, series, size, base before variants, variants A–Я, then the spelling. */
-export function compareCoaxMarks(a: string, b: string): number {
-  const left = coaxPlace(a);
-  const right = coaxPlace(b);
-  return left.group - right.group || left.series - right.series || left.size - right.size || left.size2 - right.size2
-    || Number(left.variant !== "") - Number(right.variant !== "") || text(left.variant, right.variant) || text(a, b);
+/** The head of a mark, its numbers in order and the variant suffix after them ("" — the base mark). */
+export function coaxPlace(mark: string): Place {
+  const name = String(mark ?? "").trim().replace(/\s+/g, " ");
+  if (!name) return { head: NO_FAMILY, numbers: [], variant: "" };
+  let match: RegExpMatchArray | null;
+  // «1/2″», «7/8 Baltic Signal …»: an inch size first.
+  if ((match = name.match(/^(\d+)\/(\d+)\s*(?:"|″|'')?(.*)$/))) {
+    return { head: FEEDERS, numbers: [Number(match[1]) / Number(match[2])], variant: match[3].trim() };
+  }
+  // «5D-FB Cu»: the size before the letters.
+  if ((match = name.match(/^(\d+)\s*D[-\s]?FB(.*)$/i))) return { head: "D-FB", numbers: [Number(match[1])], variant: variantOf(match[2]) };
+  match = name.match(/^([A-Za-zА-Яа-яЁё]+)(.*)$/);
+  if (!match) return { head: OTHERS, numbers: [], variant: name };
+  const head = match[1].toUpperCase();
+  const rest = match[2];
+  // The numbers of the mark: «RG-58 C/U» → 58; «RF 1.37» → 1.37; «РК50-2-22» → 50, 2, 22; «SF-141 100 Ом» → 141.
+  const body = rest.match(/^[-\s]*(\d+(?:[.,]\d+)?(?:-\d+(?:[.,]\d+)?)*)(.*)$/);
+  if (!body) return { head, numbers: [], variant: variantOf(rest) };
+  return { head, numbers: body[1].split("-").map(decimal), variant: variantOf(body[2]) };
 }
 
-/** Group label per row (the rows are not needed any more: kept for the table's `groupBy` wiring). */
-export function coaxGroupOf(_rows?: CableRow[]): (row: CableRow) => string {
-  return (row) => coaxGroupName(row.cable);
+const variantOf = (rest: string) => rest.replace(/^[-\s/]+/, "").trim();
+
+/** Order of two marks inside one group: by their numbers, the base mark before its variants, then the spelling. */
+function compareInGroup(a: string, b: string): number {
+  const left = coaxPlace(a);
+  const right = coaxPlace(b);
+  for (let index = 0; index < Math.max(left.numbers.length, right.numbers.length); index += 1) {
+    const difference = (left.numbers[index] ?? -1) - (right.numbers[index] ?? -1);
+    if (difference) return difference;
+  }
+  return Number(left.variant !== "") - Number(right.variant !== "") || text(left.variant, right.variant) || text(a, b);
+}
+
+const LAST = [FEEDERS, OTHERS, NO_FAMILY];
+const latin = (name: string) => /^[A-Z]/.test(name);
+function compareGroups(a: string, b: string): number {
+  return LAST.indexOf(a) - LAST.indexOf(b) || Number(!latin(a)) - Number(!latin(b)) || text(a, b);
+}
+
+/** Group label per row: the head of the mark, «Прочие» for a head only one mark of the list has. */
+export function coaxGroupOf(rows: CableRow[]): (row: CableRow) => string {
+  const counts = new Map<string, number>();
+  for (const item of rows) {
+    const head = coaxPlace(item.cable).head;
+    counts.set(head, (counts.get(head) ?? 0) + 1);
+  }
+  return (row) => {
+    const head = coaxPlace(row.cable).head;
+    return LAST.includes(head) || (counts.get(head) ?? 0) > 1 ? head : OTHERS;
+  };
+}
+
+/** Catalogue order of two marks within a list: group, then the mark's numbers and variant. */
+export function compareCoaxRows(rows: CableRow[]): (a: CableRow, b: CableRow) => number {
+  const group = coaxGroupOf(rows);
+  return (a, b) => compareGroups(group(a), group(b)) || compareInGroup(a.cable, b.cable);
 }
 
 /** Rows in catalogue order, without touching the input. */
 export function sortCoax(rows: CableRow[]): CableRow[] {
-  return [...rows].sort((a, b) => compareCoaxMarks(a.cable, b.cable));
+  return [...rows].sort(compareCoaxRows(rows));
 }
 
 type Naming = { full_name?: string; aliases?: Array<{ alias: string }> };

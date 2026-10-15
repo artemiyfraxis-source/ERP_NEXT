@@ -262,8 +262,9 @@ it("lists coax cables like a catalogue: series groups in order, base mark before
   mockApi([], [lmr, ...ROWS]);
   render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
   const rg = await screen.findByRole("button", { name: /RG · 3/ });
-  const lmrGroup = screen.getByRole("button", { name: /LMR · 1/ });
-  expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy(); // RG first, LMR after
+  // owner 16.10: groups by the head of the mark; a head only one mark has is «Прочие», last
+  const lmrGroup = screen.getByRole("button", { name: /Прочие · 1/ });
+  expect(rg.compareDocumentPosition(lmrGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   const marks = screen.getAllByRole("row").map((line) => line.querySelector("td.key")?.textContent).filter(Boolean);
   expect(marks).toEqual(["RG58", "RG-58 A/U", "RG316", "LMR-195"]); // RG58 = RG-58: the base mark, then its A/U
   expect(rg).toHaveAttribute("aria-expanded", "true");
