@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { addBranch, autoFillPinout, coreColor, pinoutRecord, pinUnits, restorePinout, setCoreColor } from "./pinoutCheck";
+import { addBranch, autoFillPinout, coreColor, pinoutRecord, pinUnits, rememberColor, restorePinout, setCoreColor } from "./pinoutCheck";
+import { setCustomColors } from "./wireColors";
 import { initState, makeGen, type GenData } from "./tcGenLogic";
 
 const D: GenData = {
@@ -47,6 +48,27 @@ it("core colours go to build_config wires and survive a reload with the pinout r
   expect(record.cores).toEqual([{ pos: 0, unit: 0, color: "синий" }, { pos: 0, unit: 3, color: "бело-синий" }]);
   const back = restorePinout(D, cable(), JSON.parse(JSON.stringify({ pinout: record })));
   expect(back.wires[0].coreColors).toEqual(["синий", "", "", "бело-синий"]);
+});
+
+it("a custom colour (15.10) goes to build_config with its hex, survives a reload and is painted on the unit", () => {
+  const idx = cable().wires[0].idx;
+  const S = setCoreColor(D, rememberColor(cable(), "Болотный", "#6B7A3A"), idx, 1, "болотный");
+  expect(S.colorHex).toEqual({ болотный: "#6b7a3a" });
+  expect(units(S)[1]).toMatchObject({ colorName: "болотный", color: "#6b7a3a", stripe: null });
+  expect(rememberColor(S, "красный", "#000000")).toBe(S); // palette names are not redefined
+  expect(rememberColor(S, "бурый", "коричневый")).toBe(S); // not a hex
+  const filled = autoFillPinout(D, S, { a1: 8, b1: 8 }).state;
+  const config = JSON.parse(JSON.stringify(makeGen(D, filled).buildConfig())) as { wires: Array<{ coreColors?: string[] }>; colorHex?: Record<string, string> };
+  expect(config.wires[0].coreColors).toEqual(["", "болотный", "", ""]);
+  expect(config.colorHex).toEqual({ болотный: "#6b7a3a" });
+  const record = pinoutRecord(makeGen(D, filled), filled)!;
+  setCustomColors(null);
+  const back = restorePinout(D, cable(), { pinout: record, colorHex: config.colorHex });
+  expect(back.wires[0].coreColors).toEqual(["", "болотный", "", ""]);
+  expect(back.colorHex).toEqual({ болотный: "#6b7a3a" });
+  // Не использован ни на одной жиле — в карту не уходит.
+  const unused = makeGen(D, rememberColor(cable(), "лазурный", "#007ba7")).buildConfig() as { colorHex?: unknown };
+  expect(unused.colorHex).toBeUndefined();
 });
 
 it("a branch keeps the colour of the core it was taken from", () => {

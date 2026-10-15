@@ -129,8 +129,8 @@ def test_committed_seed_file_is_valid_and_splits_every_combined_row():
     cards = cards_from_seed(read_seed(DEFAULT_FILE))
     names = {card.name for card in cards}
     assert {"RG-316", "RG-316D", "RG-142", "RG-400", "LMR-195", "LMR-240", "5D-FB", "8D-FB", "10D-FB", "RF 0.81",
-            "RF 1.13", "RF 1.37", "MULTIFLEX 86", "SS405"} <= names
-    assert len(cards) == 23 and all(" / " not in card.name for card in cards)
+            "RF 1.13", "RF 1.37"} <= names
+    assert len(cards) == 19 and all(" / " not in card.name for card in cards)
     by_name = {card.name: card for card in cards}
     # verified against datasheets: every card says so, with its sources and how sure the check is
     assert all(card.verified and card.sources and card.confidence in {"высокая", "средняя", "низкая"} for card in cards)

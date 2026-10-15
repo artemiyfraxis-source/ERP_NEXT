@@ -131,6 +131,8 @@ export type GenState = {
   /** Сростки и свободные концы, нарисованные вручную (tcGenSplices.ts); нет ключа — их нет. */
   splices?: Splice[];
   tails?: WireEnd[];
+  /** Свои цвета жил, придуманные технологом («болотный» → #6b7a3a): название → hex для схемы, чертежа и ЭТК; нет ключа — их нет. */
+  colorHex?: Record<string, string>;
   endpoints: Endpoint[];
   nextEndpointId: number;
   advancedLength: boolean;
@@ -1285,6 +1287,7 @@ export function makeGen(D: GenData, S: GenState) {
   const coaxBomCableComp_ = () => comps().find((x) => /кабель|провод/i.test(x.type || "")) || null;
   const coaxBomCable_ = () => { const c = coaxBomCableComp_(); return c ? (c.art || c.name || "") : ""; };
   const coaxBomTut_ = () => comps().find((x) => /тут/i.test(x.type || "")) || null;
+  const coaxBomSleeve_ = () => comps().find((x) => /втулк/i.test(`${x.type || ""} ${x.name || ""}`)) || null;
   function coaxCableDiaLookup_() {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
     return t[String(coaxBomCable_()).toLowerCase().replace(/[\s-]/g, "")] || null;
@@ -1973,7 +1976,7 @@ export function makeGen(D: GenData, S: GenState) {
         ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
         ...(spec.stripSides ? { stripSides: spec.stripSides } : {}) };
     });
-    const tut = coaxBomTut_(), cable = coaxBomCableComp_();
+    const tut = coaxBomTut_(), cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
     return {
       mode: "coax", tab: "coax",
       assemblyIndex: findKey(/индекс/i),
@@ -1984,6 +1987,7 @@ export function makeGen(D: GenData, S: GenState) {
         tutLength: parseDecimal_(S.coax.tutLen) || 20,
         tutArt: tut?.art || "", tutName: tut?.name || "",
         cableArt: cable?.art || "", cableName: cable?.name || "",
+        sleeveArt: sleeve?.art || "", sleeveName: sleeve?.name || "",
         shieldType: S.coax.shield,
         sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : ""),
         sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : ""),
@@ -2133,7 +2137,14 @@ export function makeGen(D: GenData, S: GenState) {
       tab: S.tab, assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
       bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
       ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
+      ...usedColorHex_(wires),
     };
+  }
+  /** Свои цвета, которые реально стоят на жилах: уходят в карту, чтобы чертёж и ЭТК нарисовали их без формы. */
+  function usedColorHex_(wires: Array<{ coreColors?: string[] }>): { colorHex?: Record<string, string> } {
+    const used = new Set(wires.flatMap((w) => w.coreColors || []).map((c) => c.trim().toLowerCase()));
+    const picked = Object.entries(S.colorHex || {}).filter(([name]) => used.has(name));
+    return picked.length ? { colorHex: Object.fromEntries(picked) } : {};
   }
   function bomWarnings_(cfg: Record<string, unknown>) {
     const w: string[] = [];
