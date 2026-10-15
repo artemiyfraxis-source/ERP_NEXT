@@ -32,17 +32,30 @@ function mixed(): { D: GenData; S: GenState } {
   return { D, S };
 }
 
-it("rotor on: the cut strips the jacket AND the cores — both sizes in the strip data and in the name", () => {
+it("rotor on: the cut strips the jacket only, the cores — own STRIP_WIRE op at each connector before its crimp", () => {
+  // Владелец 15.10 (вторая правка): «жилы у многожильного не могут разделываться на станке, они либо разделываются
+  // отдельно перед обжимом, либо на ОТП».
   const D = ownerBom();
   const S = initState(D);
   expect(S.rotor).toBe(true);
-  const cut = makeGen(D, S).getActiveOps().find((o) => o.type === "cutWireStrip")!;
-  expect(cut.label).toBe("Резка с разделкой на роторе (2 ст.: оболочка 20 мм, жилы 3,5 мм) — UL2575 26AWG");
-  expect(cut.strip).toEqual({ a: true, lenA: "20", b: true, lenB: "20", coreA: "3.5", coreB: "3.5" });
-  // «Разделка» строки «Кабели» — длина оболочки; своя зачистка у разъёма — длина жил.
+  const ops = makeGen(D, S).getActiveOps();
+  const cut = ops.find((o) => o.type === "cutWireStrip")!;
+  expect(cut.label).toBe("Резка с разделкой на роторе (2 ст.: оболочка 20 мм) — UL2575 26AWG");
+  expect(cut.strip).toEqual({ a: true, lenA: "20", b: true, lenB: "20" });
+  const cores = ops.filter((o) => o.opKey.startsWith("stripCores"));
+  expect(cores.map((o) => [o.label, o.type, o.tmplHint, o.side, o.strip])).toEqual([
+    ["Зачистка жил под обжим А1 (3,5 мм) — 4 шт", "stripCable", "STRIP_WIRE", "A", { a: true, lenA: "3.5", b: false, lenB: "" }],
+    ["Зачистка жил под обжим В1 (3,5 мм) — 4 шт", "stripCable", "STRIP_WIRE", "B", { a: false, lenA: "", b: true, lenB: "3.5" }],
+  ]);
+  for (const side of ["A", "B"]) {
+    expect(at(ops, (o) => o.opKey === "stripCores" + side + "1")).toBe(at(ops, (o) => o.opKey === "prsTerm" + side + "1") - 1);
+  }
+  // «Разделка» строки «Кабели» — длина оболочки в резке; своя зачистка у разъёма — длина жил в их операции.
   const own = updateEndpoint(D, { ...S, wires: [{ ...S.wires[0], jacket: "25" }] }, S.endpoints[1].id, { stripLen: "4" });
-  expect(makeGen(D, own).getActiveOps().find((o) => o.type === "cutWireStrip")!.strip).toEqual({ a: true, lenA: "25", b: true, lenB: "25", coreA: "3.5", coreB: "4" });
-  expect(makeGen(D, own).getActiveOps().find((o) => o.type === "cutWireStrip")!.label).toContain("(2 ст.: оболочка 25 мм, жилы А 3,5 мм, В 4 мм)");
+  const ownOps = makeGen(D, own).getActiveOps();
+  expect(ownOps.find((o) => o.type === "cutWireStrip")!.strip).toEqual({ a: true, lenA: "25", b: true, lenB: "25" });
+  expect(ownOps.find((o) => o.type === "cutWireStrip")!.label).toContain("(2 ст.: оболочка 25 мм)");
+  expect(ownOps.find((o) => o.opKey === "stripCoresB1")!.label).toBe("Зачистка жил под обжим В1 (4 мм) — 4 шт");
 });
 
 it("rotor off: «Разделка кабеля» at the connector strips the cores too, with the terminal's strip length", () => {
@@ -57,10 +70,15 @@ it("rotor off: «Разделка кабеля» at the connector strips the cor
   expect(makeGen(D, S).getActiveOps().find((o) => /^cutWire/.test(o.type))!.type).toBe("cutWire");
 });
 
-it("rotor on, a solder end: the jacket and the cores under the solder strip", () => {
+it("rotor on, a solder end: the cut strips the jacket, the cores under the solder strip — own op right before the soldering", () => {
   const { D, S } = mixed();
-  const cut = makeGen(D, S).getActiveOps().find((o) => o.type === "cutWireStrip")!;
-  expect(cut.strip).toEqual({ a: true, lenA: "20", b: true, lenB: "20", coreA: "3.5", coreB: "5" });
+  const ops = makeGen(D, S).getActiveOps();
+  expect(ops.find((o) => o.type === "cutWireStrip")!.strip).toEqual({ a: true, lenA: "20", b: true, lenB: "20" });
+  const solderStrip = ops.find((o) => o.opKey === "stripCoresB1")!;
+  expect(solderStrip.label).toMatch(/^Зачистка жил под пайку В1 \(5 мм\)/);
+  expect(at(ops, (o) => o.opKey === "stripCoresB1")).toBe(at(ops, (o) => o.type === "solderConn") - 1);
+  // ТУТ на провод надевают до зачистки под пайку, как до разделки кабеля у разъёма.
+  expect(at(ops, (o) => o.opKey === "insTut")).toBe(at(ops, (o) => o.opKey === "stripCoresB1") - 1);
 });
 
 it("heat-shrink on the jacket cut: 25 mm by default, cut ×cables, put on before any crimp with the other tubes, shrunk per side", () => {

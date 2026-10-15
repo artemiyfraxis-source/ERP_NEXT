@@ -1526,7 +1526,7 @@ export function makeGen(D: GenData, S: GenState) {
     });
     const perSide: Partial<Record<Side, number>> = {};
     it.jacket.forEach((x) => {
-      const mineSide = (o: OpSpec) => o.side === x.side && (!!o.epId || /^(stripCable|shield|idle|heatShr|heatJs)/.test(o.opKey));
+      const mineSide = (o: OpSpec) => o.side === x.side && (!!o.epId || /^(stripCable|stripCores|shield|idle|heatShr|heatJs)/.test(o.opKey));
       let last = -1;
       ops.forEach((o, i) => { if (mineSide(o)) last = i; });
       const n = perSide[x.side] = (perSide[x.side] || 0) + 1;
@@ -1534,6 +1534,26 @@ export function makeGen(D: GenData, S: GenState) {
         tmplHint: isGlueSleeve_(x.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short", cat: "Усадка", tutCount: x.count,
         label: `Усадка ${tubeKind_(x.comp)} на месте разделки ${sideRu_(x.side)} — ${x.count} шт` });
     });
+  }
+  /** Кабель в оболочке (владелец 15.10: «на многожильном проводе обжим сначала с двух сторон а потом монтаж»): когда
+   *  все кабели формы — многожильные в оболочке и руками обжимаются обе стороны, опрессовка всех разъёмов обеих сторон
+   *  (с разделкой, скруткой экрана и изоляцией незадействованных жил своего конца) идёт до первого монтажа; монтаж А,
+   *  потом В. Пайка — не обжим, стоит где стояла. Одиночные провода — как были: обжим А, монтаж А, обжим В, монтаж В
+   *  (владелец 14.10). */
+  function multicoreCrimpsFirst_(ops: OpSpec[]) {
+    const wires = activeWires_();
+    if (!wires.length || !wires.every((w) => isJacketedCable_(w) && wireCores_(w) > 1)) return;
+    const crimps = ops.filter((o) => o.type === "prsTerm" && o.epId);
+    if (!(["A", "B"] as Side[]).every((side) => crimps.some((o) => o.side === side))) return;
+    const crimpEnds = new Set(crimps.map((o) => `${o.side}${o.ord}`));
+    const prep = (o: OpSpec) => o.type === "prsTerm" || (!!o.side && crimpEnds.has(`${o.side}${o.ord}`) && /^(stripCable|stripCores|shield|idle)/.test(o.opKey));
+    const firstMount = ops.findIndex((o) => !!o.epId && o.type !== "prsTerm");
+    if (firstMount < 0) return;
+    const late = ops.filter((o, i) => i > firstMount && prep(o));
+    if (!late.length) return;
+    const rest = ops.filter((o, i) => !(i > firstMount && prep(o)));
+    rest.splice(firstMount, 0, ...late);
+    ops.splice(0, ops.length, ...rest);
   }
   function autoOps(): OpSpec[] {
     if (S.tab === "coax") return getActiveOpsCoax_();
@@ -1575,7 +1595,7 @@ export function makeGen(D: GenData, S: GenState) {
       const splLen = (S.spl.strip || "").trim() || "—";
       const tinIdx = tinWireIndices_();
       const stripOf = (w: WireEntry) => {
-        let a = "", b = "", coreA = "", coreB = "";
+        let a = "", b = "";
         if (splAtCut) (["A", "B"] as Side[]).forEach((side) => {
           const eps = endpointsOnSide_(side);
           if (!eps.length || eps.some((e) => routedWireIdxs_(e).includes(w.idx))) return;
@@ -1583,14 +1603,14 @@ export function makeGen(D: GenData, S: GenState) {
         });
         S.endpoints.forEach((e) => {
           if (!routedWireIdxs_(e).includes(w.idx)) return;
-          let len: string | null = null, core = "";
+          let len: string | null = null;
           if (crimpSides.includes(e.side)) len = epStripLen_(e);
-          // Ротор снимает оболочку и зачищает жилы одним проходом (владелец 15.10: «разделка есть, но жилы не зачищаются»):
-          // оболочка — «Разделка» строки «Кабели», жилы — под обжим (зачистка терминала) или под пайку. RJ — без зачистки
-          // жил (врезной контакт), складывание жилы — по своему правилу ниже.
+          // Ротор снимает только оболочку — «Разделка» строки «Кабели» (владелец 15.10: «жилы у многожильного не могут
+          // разделываться на станке, они либо разделываются отдельно перед обжимом, либо на ОТП»): жилы зачищает своя
+          // операция у разъёма (coreStripOp_). RJ — без зачистки жил (врезной контакт), складывание жилы — по своему
+          // правилу ниже.
           else if (S.rotor && isJacketedCable_(w) && (e.method === "solder" || (!isRjEndpoint_(e) && !(e.fold && isComplex_())))) {
             len = w.jacket || JACKET_STRIP_MM_;
-            core = e.method === "solder" ? (e.solderStrip || "").trim() || DEFAULT_LEN_MM_ : epStripLen_(e);
           }
           // «Без зачистки (ОТП)» — конец приходит на обжим уже зачищенным: его зачищает резка (владелец 14.10: «обжим с одной
           // и ОТП с другой» → «резка с обжимом А и зачисткой В»). Без ОТП конец под ручной обжим резка не трогает — его
@@ -1605,7 +1625,7 @@ export function makeGen(D: GenData, S: GenState) {
             len = epStripLen_(e);
           }
           if (len === null) return;
-          if (e.side === "A") { a = len; coreA = core; } else { b = len; coreB = core; }
+          if (e.side === "A") a = len; else b = len;
         });
         // Лужёный свободный конец зачищают под лужение: его длина главнее «Зачистки свободных концов» (тот блок — без
         // лужения); пустая длина свободной зачистки больше не прячет длину под лужение (719К.2 КБ1 «B ?», 04.10).
@@ -1613,21 +1633,21 @@ export function makeGen(D: GenData, S: GenState) {
         const freeLen = S.freeStrip.enabled ? (S.freeStrip.len || "").trim() : "";
         if (!b && tinned) b = (S.tin.stripLen || "").trim() || freeLen || "—";
         if (!b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = freeLen || "—";
-        return { a, b, coreA, coreB };
+        return { a, b };
       };
       // Сторона, которую обжимает станок: её первый разъём (терминал на стороне один — crimpCutBlock_) и заведённые в
       // неё провода. Провод, не заведённый в разъём этой стороны, на ней не обжимается.
       const crimpEpOf = (side: Side) => (crimpSides.includes(side) ? endpointsOnSide_(side)[0] || null : null);
       const crimpSets = (["A", "B"] as Side[]).map((side) => new Set(crimpEpOf(side) ? endpointsOnSide_(side).flatMap(routedWireIdxs_) : []));
       const rotor = S.rotor;
-      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; coreA: string; coreB: string; crimp: Side[]; tin: boolean; rot: boolean }> = {};
+      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; crimp: Side[]; tin: boolean; rot: boolean }> = {};
       activeWires.forEach((w) => {
         const s = stripOf(w);
         const crimp = (["A", "B"] as Side[]).filter((_, i) => crimpSets[i].has(w.idx));
         const tin = crimp.length > 0 && tinAtCut.has(w.idx);
         const rot = rotor && isJacketedCable_(w);
-        const sig = `${s.a}|${s.b}|${s.coreA}|${s.coreB}|${crimp.join("")}${tin ? "T" : ""}|${rot ? "R" : ""}`;
-        (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, coreA: s.coreA, coreB: s.coreB, crimp, tin, rot })).wires.push(w);
+        const sig = `${s.a}|${s.b}|${crimp.join("")}${tin ? "T" : ""}|${rot ? "R" : ""}`;
+        (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, crimp, tin, rot })).wires.push(w);
       });
       let ci = 0;
       Object.keys(groups).forEach((sig) => {
@@ -1635,8 +1655,7 @@ export function makeGen(D: GenData, S: GenState) {
         const hasA = g.a !== "", hasB = g.b !== "", n = (hasA ? 1 : 0) + (hasB ? 1 : 0);
         const key = ci === 0 ? "cutWire" : "cutWire" + ci; ci++;
         const dashless = (s: string) => (s === "—" ? "" : s);
-        const strip = { a: hasA, lenA: dashless(g.a), b: hasB, lenB: dashless(g.b),
-          ...(g.coreA ? { coreA: dashless(g.coreA) } : {}), ...(g.coreB ? { coreB: dashless(g.coreB) } : {}) };
+        const strip = { a: hasA, lenA: dashless(g.a), b: hasB, lenB: dashless(g.b) };
         if (g.crimp.length === 2) {
           // Обе стороны на станке с двумя аппликаторами: ручной опрессовки у этих концов нет. Терминалы сторон могут
           // различаться — в названии оба. Карты CUT_WIRE+2crimp нет в библиотеке — норма и карта односторонней резки.
@@ -1656,7 +1675,8 @@ export function makeGen(D: GenData, S: GenState) {
         } else if (n === 0) {
           ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), wireIdxs: ws.map((w) => w.idx), tmplHint: "CUT_WIRE_auto", cat: "Резка" });
         } else {
-          const sizes = g.coreA || g.coreB ? `: ${jacketCoreText_({ a: g.a, b: g.b }, { a: g.coreA, b: g.coreB })}` : "";
+          // Ротор — только оболочка: её длина в названии (жилы зачищает своя операция у разъёма).
+          const sizes = g.rot ? `: ${jacketCoreText_({ a: g.a, b: g.b }, { a: "", b: "" })}` : "";
           ops.push({ type: "cutWireStrip", opKey: key, label: cutLabel(ws, `Резка с разделкой${g.rot ? " на роторе" : ""} (${n} ст.${sizes})`),
             wireIdxs: ws.map((w) => w.idx), tmplHint: `${g.rot ? "CUT_COAX" : "CUT_WIRE"}+${n}strip`, strip });
         }
@@ -1686,10 +1706,12 @@ export function makeGen(D: GenData, S: GenState) {
       const cableOps = (how: string) => {
         const out: OpSpec[] = [];
         if (mine.length && !S.rotor && (conn || ep.method === "crimp")) {
-          // Разделка у разъёма — оболочка и зачистка жил под обжим или пайку (владелец 15.10: «жилы не зачищаются»); у RJ
-          // жилы не зачищают — врезной контакт.
+          // Разделка у разъёма — оболочка и зачистка жил под обжим или пайку (владелец 15.10: «жилы у многожильного не
+          // могут разделываться на станке, они либо разделываются отдельно перед обжимом, либо на ОТП»): с «Без зачистки
+          // (ОТП)» жилы зачищает ОТП при обжиме — здесь только оболочка; у RJ жилы не зачищают — врезной контакт.
           const jacket = mine[0].w.jacket || JACKET_STRIP_MM_;
-          const core = isRjEndpoint_(ep) ? "" : ep.method === "solder" ? (ep.solderStrip || "").trim() || DEFAULT_LEN_MM_ : epStripLen_(ep);
+          const core = isRjEndpoint_(ep) || (ep.method === "crimp" && ep.otp) ? ""
+            : ep.method === "solder" ? (ep.solderStrip || "").trim() || DEFAULT_LEN_MM_ : epStripLen_(ep);
           const key = side === "A" ? "a" : "b";
           const sizes = jacketCoreText_({ a: jacket, b: "" }, { a: core, b: "" });
           out.push({ type: "stripCable", opKey: "stripCable" + side + ord, side, ord, label: `Разделка кабеля ${how} ${tags} (${sizes}) — ${count(mine)} конц.`,
@@ -1715,12 +1737,37 @@ export function makeGen(D: GenData, S: GenState) {
           out.push({ type: "endCap", opKey: "idle" + side + ord, side, ord, tmplHint: "INS_END_CAP", cat: "Подготовка", tutCount: idle,
             label: `Обрезка и изоляция незадействованных жил ${tags} — ${idle} шт` });
         }
+        const cores = coreStrip(how);
+        if (cores) out.push(cores);
         return out;
+      };
+      /** Зачистка жил кабеля в оболочке после ротора (владелец 15.10: «жилы у многожильного не могут разделываться на
+       *  станке, они либо разделываются отдельно перед обжимом, либо на ОТП»): своя операция у каждого разъёма, перед
+       *  обжимом или пайкой, карта STRIP_WIRE (та же, что у зачистки концов под сростки). Нет — «Без зачистки (ОТП)» (жилы
+       *  зачищает ОТП при обжиме), обжим на станке резки, RJ (врезной контакт), сложенная жила (своя зачистка при резке). */
+      const coreStrip = (how: string): OpSpec | null => {
+        if (!S.rotor) return null;
+        let len: string;
+        if (ep.method === "solder") {
+          if (!conn) return null;
+          len = (ep.solderStrip || "").trim() || DEFAULT_LEN_MM_;
+        } else {
+          if (!term || ep.otp || crimpSides.includes(side) || isRjEndpoint_(ep) || (ep.fold && isComplex_())) return null;
+          len = epStripLen_(ep);
+        }
+        const routed = routedWireIdxs_(ep);
+        const n = activeWires_().filter((w) => isJacketedCable_(w) && routed.includes(w.idx)).reduce((s, w) => s + endUnits_(ep, w), 0);
+        if (!n) return null;
+        const mm = len === "—" ? "" : len;
+        const key = side === "A" ? "a" : "b";
+        return { type: "stripCable", opKey: "stripCores" + side + ord, side, ord, tmplHint: "STRIP_WIRE", cat: "Разделка", tutCount: n,
+          label: `Зачистка жил ${how} ${tag} (${mm ? mm.replace(".", ",") : "?"} мм) — ${n} шт`,
+          strip: { a: key === "a", lenA: key === "a" ? mm : "", b: key === "b", lenB: key === "b" ? mm : "" } };
       };
       if (ep.method === "solder") {
         if (!conn) return;
         const own = cableOps("под пайку");
-        own.forEach((o) => { if (o.opKey.startsWith("stripCable")) solderStrips.add(o.opKey); });
+        own.forEach((o) => { if (/^strip(Cable|Cores)/.test(o.opKey)) solderStrips.add(o.opKey); });
         ops.push(...own);
         ops.push({ type: "solderConn", opKey: endpointOpKey_(side, ord, "solder"), side, ord, epId: ep.id,
           label: `Пайка разъёма ${tag} — ${conn.art || conn.name}`, tmplHint: ep.sdrTmpl || detectSolderConn_(conn.art) || undefined });
@@ -1746,6 +1793,7 @@ export function makeGen(D: GenData, S: GenState) {
         }
       }
     }));
+    multicoreCrimpsFirst_(ops);
 
     // ТУТ «на пайку» надевается прямо перед пайкой — после обжима и монтажа другой стороны, с той стороны, где паяют
     // (владелец 12.10.2026: «обычно сначала обжим, вставляем, потом одеть трубки и паять»). Режется она по-прежнему с проводами.

@@ -83,17 +83,20 @@ it("default ON: a free ТУТ in the BOM and a jacketed multicore cable — both
   expect(initState(data([DB9, UL, TUT])).wires[0].jacketShrink).toBeUndefined();
 });
 
-it("owner's BOM: ops order and labels — cut, tube cut with its norm, put on both sides, crimp/mount A, shrink A, crimp/mount B, shrink B", () => {
+it("owner's BOM: ops order and labels — cut, tube cut with its norm, put on both sides, crimp A and B, mount A, shrink A, mount B, shrink B", () => {
   const D = ownerBom();
   const ops = makeGen(D, ownerForm(D)).getActiveOps();
+  // Кабель в оболочке — обжим обеих сторон до монтажа, ротор снимает только оболочку, жилы В — своя зачистка, на А —
+  // «Без зачистки (ОТП)» (владелец 15.10, tcGenMulticoreCrimpOrder.test.ts).
   expect(ops.map((o) => o.label)).toEqual([
-    "Резка с разделкой на роторе (2 ст.: оболочка 20 мм, жилы 3,2 мм) — UL2527 28AWG",
+    "Резка с разделкой на роторе (2 ст.: оболочка 20 мм) — UL2527 28AWG",
     "Резка ТУТ на место разделки А, В — 2×25 мм",
     "Надеть трубки (стороны А и В): ТУТ 6/3мм черная на место разделки А, В — 2 шт",
     "Опрессовка терминалов А1",
+    "Зачистка жил под обжим В1 (3,2 мм) — 4 шт",
+    "Опрессовка терминалов В1",
     "Монтаж в разъём А1 — I-DS1071-SCB01X5",
     "Усадка ТУТ на месте разделки А — 1 шт",
-    "Опрессовка терминалов В1",
     "Монтаж в разъём В1 — I-DS1071-SCB01X5",
     "Усадка ТУТ на месте разделки В — 1 шт",
   ]);

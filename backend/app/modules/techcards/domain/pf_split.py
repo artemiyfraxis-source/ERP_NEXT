@@ -34,10 +34,19 @@ _COAX_CUT_STRIP = re.compile(r"^CUT_COAX\+\d*STRIP")
 # Crimping the ends by hand: terminals and lugs (a double crimp is the same operation), splices.
 END_CRIMPS = frozenset({"prsTerm", "splice"})
 _SIDES = {"A": SIDE_A, "А": SIDE_A, "B": SIDE_B, "В": SIDE_B}
+# Generator operations of a side that carry no connector, so the saved config has no `side` for them: the cable end
+# stripping, core stripping after the rotor, screen twisting and capping of idle cores, the shrink on the jacket cut
+# (its side is in the opKey, the generator's scheme reads it from the operation itself). Without it «Усадка ТУТ на месте
+# разделки А» went to the next side's ПФ (owner 15.10: «Обжатые провода, сторона В» held it).
+_SIDE_KEY = re.compile(r"^(?:stripCable|stripCores|shield|idle|heatJs)([AB])")
 
 
 def _side(op: RouteOp) -> str:
-    return _SIDES.get(op.side.strip().upper(), "")
+    side = _SIDES.get(op.side.strip().upper(), "")
+    if side:
+        return side
+    by_key = _SIDE_KEY.match(op.key)
+    return _SIDES[by_key.group(1)] if by_key else ""
 
 
 def _cut_stage(op: RouteOp) -> str:
