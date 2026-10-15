@@ -1169,6 +1169,17 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             <button type="button" className="btn-remove" title="Удалить кабель" aria-label={`Удалить кабель ${n + 1}`} onClick={() => update((current) => ({ ...current, wires: current.wires.filter((x) => x.idx !== w.idx) }))}>×</button>
             {cores > 1 && <CableCoreColors label={`кабель ${n + 1}`} colors={gen.coreColors_(w).slice(0, cores)}
               onSet={(patch) => update((current) => setCableCoreColors(D, current, w.idx, patch))} />}
+            {/* Кабель в оболочке (UL2575…), набранный N проводами по 1 жиле — так сохранены карты до 14.10. Сами не меняем:
+                предлагаем одним щелчком сделать его кабелем на N жил (цвета и контакты жил сохраняются). */}
+            {(() => {
+              const pieces = Math.round(Number(w.qty) || 1);
+              if (cores > 1 || pieces < 2 || !gen.isJacketedCable_(w)) return null;
+              return <div className="cable-regroup">
+                <span>{`${compLabel(w.compId)} — кабель в оболочке, а здесь ${pieces} отдельных ${plural(pieces, "провод", "провода", "проводов")} по 1 жиле.`}</span>
+                <button type="button" className="secondary small" onClick={() => update((current) => setWireCores(current, w.idx, pieces, 1))}>
+                  {`Это один кабель на ${pieces} ${plural(pieces, "жилу", "жилы", "жил")}`}</button>
+              </div>;
+            })()}
           </div>;
         })}
       </div>
