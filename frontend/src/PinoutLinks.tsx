@@ -55,6 +55,8 @@ export type SchemeWire = {
   key: string; num: string; name: string; color: string | null; stripe: string | null;
   /** Длина, мм (0 — не задана). */
   length: number; shield?: boolean; net?: string;
+  /** Цвет, выбранный на жиле («красный»); пусто — из наименования. */
+  colorName?: string;
   at: Record<string, number | null>;
   a: SchemeAnchor[]; b: SchemeAnchor[];
 };
@@ -100,7 +102,7 @@ export function pinoutScheme(ends: PinoutEnd[], units: PinUnit[], housings: Reco
     })),
     wires: units.map((u) => {
       const w = drawn.get(u.key);
-      return { key: u.key, num: u.num, name: u.name, color: u.color, stripe: u.stripe, length: u.length, shield: u.shield, net: u.net, at: u.at,
+      return { key: u.key, num: u.num, name: u.name, color: u.color, stripe: u.stripe, length: u.length, shield: u.shield, net: u.net, colorName: u.colorName, at: u.at,
         a: w ? w.a : [], b: w ? w.b : [] };
     }),
     splices: (S.splices || []).map((s, i) => ({ id: s.id, label: `С${i + 1}` })),
@@ -279,7 +281,8 @@ function NetEditor({ x, y, width, wire, options, onDone }: { x: number; y: numbe
 
 /** Рисунок схемы связей — SVG по раскладке (экран и печать ЭТК). `onNet` — только в генераторе: ячейка «Цепь» правится по щелчку
  *  (цепь принадлежит проводу, поэтому видна на обоих разъёмах); в ЭТК схема только для чтения. */
-export function LinkSchemeSvg({ scheme: M, layout: L, onNet }: { scheme: LinkScheme; layout: SchemeLayout; onNet?: (wireKey: string, net: string) => void }) {
+export function LinkSchemeSvg({ scheme: M, layout: L, onNet, onColor }: { scheme: LinkScheme; layout: SchemeLayout; onNet?: (wireKey: string, net: string) => void;
+  onColor?: ColorOpen }) {
   const TABLE_W = L.tableW;
   const [editing, setEditing] = useState<string | null>(null);
   const nets = [...new Set(M.wires.map((w) => (w.net || "").trim()).filter(Boolean))];
@@ -308,7 +311,22 @@ export function LinkSchemeSvg({ scheme: M, layout: L, onNet }: { scheme: LinkSch
             {i > 0 && <line x1={b.x} x2={b.x + TABLE_W} y1={y} y2={y} className="pin-links-rule" />}
             {cols.map((c) => {
               const cx = b.x + c.x;
-              if (c.key === "color") return here.length ? <ColorChip key={c.key} units={here} x={cx + (c.width - (here.length > 1 ? 26 : 12)) / 2} y={y + 4} /> : null;
+              if (c.key === "color") {
+                if (!here.length) return null;
+                const chip = <ColorChip units={here} x={cx + (c.width - (here.length > 1 ? 26 : 12)) / 2} y={y + 4} />;
+                // Генератор: щелчок по «Цвет» открывает палитру жилы этого контакта (у экрана цвета нет); в ЭТК — только чтение.
+                const core = onColor ? here.find((u) => !u.shield) : undefined;
+                if (!core) return <g key={c.key}>{chip}</g>;
+                const open = (el: Element) => { const r = el.getBoundingClientRect(); onColor?.(core.key, { left: r.left, top: r.bottom + 4, above: r.top }); };
+                return <g key={c.key} className="pin-links-color">
+                  {chip}
+                  <rect x={cx} y={y} width={c.width} height={ROW} className="pin-links-color-hit" role="button" tabIndex={0} data-color-opener
+                    aria-label={`Цвет, ${b.end.key} контакт ${pin}: ${core.colorName || "не задан"}. Изменить`}
+                    onClick={(event) => open(event.currentTarget)}
+                    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(event.currentTarget); } }}>
+                    <title>{core.colorName ? `${core.colorName} — изменить цвет жилы` : "выбрать цвет жилы"}</title></rect>
+                </g>;
+              }
               if (c.key === "num") return <text key={c.key} x={cx + c.width / 2} y={y + 14} textAnchor="middle" className="pin-links-num">{pin}</text>;
               const value = cells[c.key];
               const target = c.key === "net" && onNet && here.length ? here[0] : null;
@@ -395,7 +413,8 @@ function useRoom() {
 
 /** Схема связей и переключатель «Схема связей | Чертёж». `drawing` — чертёж по той же форме (рисуется, только пока открыта
  *  его вкладка). `titled={false}` — без заголовка «Схема связей» (его несёт блок ЭТК). Разъёмов нет — ничего не рисует. */
-export function LinkSchemeView({ scheme, drawing, titled = true, onNet }: { scheme: LinkScheme; drawing?: () => ReactNode; titled?: boolean; onNet?: (wireKey: string, net: string) => void }) {
+export function LinkSchemeView({ scheme, drawing, titled = true, onNet, onColor }: { scheme: LinkScheme; drawing?: () => ReactNode; titled?: boolean;
+  onNet?: (wireKey: string, net: string) => void; onColor?: ColorOpen }) {
   const [view, setView] = useState<SchemeView>("scheme");
   const room = useRoom();
   if (!scheme.connectors.length) return null;
@@ -410,14 +429,17 @@ export function LinkSchemeView({ scheme, drawing, titled = true, onNet }: { sche
       <span className="muted">{schemeCounts(L)}</span>
     </div>
     {shown === "drawing" ? drawing!() : <div className="pin-links-scroll" ref={room.ref}>
-      <LinkSchemeSvg scheme={scheme} layout={L} onNet={onNet} />
+      <LinkSchemeSvg scheme={scheme} layout={L} onNet={onNet} onColor={onColor} />
       {!L.wires.length && <small className="muted pin-links-empty">Линии появятся, когда провод встанет на контакт.</small>}
     </div>}
   </div>;
 }
 
 /** Схема связей генератора под торцами разъёмов: форма → модель (`pinoutScheme`) → рисунок. */
-export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing, onNet }: {
+/** Ячейка «Цвет» в генераторе: ключ жилы и где открыть палитру (координаты экрана). */
+export type ColorOpen = (wireKey: string, at: { left: number; top: number; above: number }) => void;
+
+export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing, onNet, onColor }: {
   ends: PinoutEnd[];
   units: PinUnit[];
   housings: Record<string, ConnectorHousing | null>;
@@ -426,6 +448,7 @@ export function PinoutLinks({ ends, units, housings, joins, info = {}, drawing, 
   drawing?: () => ReactNode;
   /** Цепь провода из ячейки таблицы: ключ провода (`PinUnit.key`), имя ("" — снять). */
   onNet?: (wireKey: string, net: string) => void;
+  onColor?: ColorOpen;
 }) {
-  return <LinkSchemeView scheme={pinoutScheme(ends, units, housings, joins, info)} drawing={drawing} onNet={onNet} />;
+  return <LinkSchemeView scheme={pinoutScheme(ends, units, housings, joins, info)} drawing={drawing} onNet={onNet} onColor={onColor} />;
 }

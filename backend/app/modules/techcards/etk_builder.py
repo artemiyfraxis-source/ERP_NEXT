@@ -668,9 +668,13 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         fields["cutTolerance"] = _cut_tolerance(op, wire_data)
         first_length = str(wire_data.get("length") or "").split("\n", 1)[0]
         fields["lengthKd"] = f"{first_length}мм" if first_length else ""
-    strip = config.get("strip") if operation_type == "cutWire" else op.get("strip") if operation_type in {"cutWireStrip", "cutWireCrimp"} else None
+    strip = config.get("strip") if operation_type == "cutWire" else op.get("strip") if operation_type in {"cutWireStrip", "cutWireCrimp", "stripCable"} else None
     if isinstance(strip, Mapping):
         fields["strip"] = {"a": bool(strip.get("a")), "b": bool(strip.get("b")), "lenA": strip.get("lenA") or "", "lenB": strip.get("lenB") or ""}
+        # Кабель в оболочке (владелец 15.10): кроме оболочки (lenA/lenB) зачищаются жилы — под обжим или пайку.
+        for key in ("coreA", "coreB"):
+            if key in strip:
+                fields["strip"][key] = str(strip.get(key) or "")
         if operation_type == "cutWireCrimp" and op.get("tin"):
             # Свободный конец станок зачищает и лудит: без своей длины у операции — длина зачистки под лужение.
             end = "a" if op.get("side") == "B" else "b"

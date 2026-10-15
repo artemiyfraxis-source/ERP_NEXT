@@ -31,6 +31,19 @@ describe("etkParams (шапка: Сторона А | Общие | Сторона
       "Длина по КД": "300мм", "Допуск реза": "±5 мм", "Внешний диаметр": "—", "Сечение жилы": "30 AWG", "Время": "4 с на шт. · подгот. 60 мин" });
   });
 
+  it("jacketed cable on the rotor and at the connector: the jacket and the cores, two lines per side (owner 15.10)", () => {
+    const strip = { a: true, b: true, lenA: "20", lenB: "20", coreA: "3,5", coreB: "" };
+    const rotor = etkParams({ type: "cutWireStrip", code: "CUT_COAX+2strip", fields: { strip, wires: [{ name: "UL2575 26AWG", length: "400" }] } });
+    expect(find(rotor.sides[0].items)).toEqual({ "Разделка оболочки": "20 мм", "Зачистка жил": "3,5 мм" });
+    expect(find(rotor.sides[1].items)).toEqual({ "Разделка оболочки": "20 мм", "Зачистка жил": "не задано" });
+    const byHand = etkParams({ type: "stripCable", code: "STRIP_CABLE", side: "A", fields: { strip: { a: true, b: false, lenA: "20", lenB: "", coreA: "3,5" } } });
+    expect(byHand.sides.map((side) => [side.title, find(side.items)])).toEqual([["Сторона А", { "Разделка оболочки": "20 мм", "Зачистка жил": "3,5 мм" }]]);
+    // Эскиз резки: у конца — оболочка и жилы.
+    const svg = etkDrawWires({ type: "cutWireStrip", code: "CUT_COAX+2strip", fields: { strip, wires: [{ name: "UL2575 26AWG", length: "400" }] } });
+    expect(svg).toContain("A 20 мм, жилы 3,5 мм");
+    expect(svg).toContain("B 20 мм, жилы ?");
+  });
+
   it("one-side crimp: side В has only the strip length, a free end without strip has no column", () => {
     const fields = { applicator: "A19", strip: { a: true, b: true, lenA: "1,2", lenB: "3" },
       crimpEnds: [{ ends: ["A"], art: "SSH-003T-P0.2-H", wire: "W", section: "28 AWG", applicator: "A19", crimpHeight: "0,43 – 0,47", pullForce: "", strip: "1,2" }] };
@@ -157,8 +170,29 @@ describe("etkDraw* sketches", () => {
 
   it("draws the coax strip steps or says the base has no sizes", () => {
     expect(etkDrawCoax({ fields: { coax: { cable: "RG-174", l1: "3", l2: "5", l3: "9", d1: "0,5" } } })).toContain("L3 = 9 мм");
-    expect(etkDrawCoax({ fields: { coax: { connector: "SMA", l1: "3" } } })).toContain("Размеров разделки нет в базе коакса для SMA");
+    expect(etkDrawCoax({ fields: { coax: { connector: "SMA", l2: "5" } } })).toContain("Размеров разделки нет в базе коакса для SMA");
     expect(etkDrawCoax({ fields: { coax: { cable: "RG-174", l1: "3", l2: "5", l3: "9" } } })).not.toContain("Сторона А");
+  });
+
+  it("draws any combination of L1–L3 and leaves out the absent layers and their dimensions", () => {
+    const draw = (l: Record<string, string>) => etkDrawCoax({ fields: { coax: { cable: "RG-316", ...l } } });
+    const bands = (svg: string) => [...svg.matchAll(/data-band="(\w+)"/g)].map((m) => m[1]).sort();
+    const full = draw({ l1: "3", l2: "6", l3: "9" });
+    expect(bands(full)).toEqual(["braid", "conductor", "dielectric", "jacket"]);
+    ["L1 = 3 мм", "L2 = 6 мм", "L3 = 9 мм"].forEach((t) => expect(full).toContain(t));
+    const clamp = draw({ l1: "3", l2: "6", l3: "" });
+    expect(bands(clamp)).toEqual(["braid", "conductor", "jacket"]);
+    expect(clamp).toContain("L2 = 6 мм");
+    expect(clamp).not.toContain("L3 =");
+    const twist = draw({ l1: "3", l2: "", l3: "9" });
+    expect(bands(twist)).toEqual(["conductor", "dielectric", "jacket"]);
+    expect(twist).toContain("L3 = 9 мм");
+    expect(twist).not.toContain("L2 =");
+    const only = draw({ l1: "3" });
+    expect(bands(only)).toEqual(["conductor", "jacket"]);
+    expect(only).toContain("L1 = 3 мм");
+    expect(only).not.toMatch(/L[23] =/);
+    expect(draw({ l1: "", l2: "6" })).toContain("Размеров разделки нет");
   });
 
   it("draws both ends of a cut with stripping on the machine, each with its side", () => {
