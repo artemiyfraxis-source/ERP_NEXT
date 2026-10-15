@@ -180,25 +180,39 @@ export function etkDrawCoax(operation: Row): string {
   return coaxSketch(a, "Сторона А") + coaxSketch(b, "Сторона В");
 }
 
+/** Ступени по тому, какие из L1–L3 заданы (пустая L — «такой ступени нет», не 0 мм): L1+L2+L3 — жила, диэлектрик, оплётка;
+    L1+L2 (зажимной/F) — жила и оплётка, отогнутая на оболочку, до L2; L1+L3 (твист-он BNC, top-hat, semi-rigid) — жила и
+    диэлектрик до L3, оплётка заподлицо; только L1 — одна жила. */
 function coaxSketch(c: Row, caption: string): string {
   const L = [num(c.l1), num(c.l2), num(c.l3)];
-  if (!(L[0] > 0 && L[1] > L[0] && L[2] > L[1])) {
+  const has = L.map((v) => v > 0);
+  const present = [0, 1, 2].filter((i) => has[i]);
+  const ordered = present.every((i, n) => n === 0 || L[i] > L[present[n - 1]]);
+  if (!has[0] || !ordered) {
     return `<div class="tr-none">Размеров разделки нет в базе коакса для ${esc(c.connector || c.cable)}.</div>`;
   }
-  const W = 640, x0 = 40, span = 400, k = span / L[2], cy = 104;
-  const xs = [x0, x0 + L[0] * k, x0 + L[1] * k, x0 + L[2] * k];
-  const h = [8, 22, 28, 36];
-  let body = `<rect x="${xs[3]}" y="${cy - h[3] / 2}" width="${W - 30 - xs[3]}" height="${h[3]}" rx="4" fill="#222"/>` +
-    `<text x="${(xs[3] + W - 30) / 2}" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(c.cable || "кабель")}</text>` +
-    `<rect x="${xs[2]}" y="${cy - h[2] / 2}" width="${xs[3] - xs[2]}" height="${h[2]}" fill="url(#etkBraid)" stroke="#8d9297"/>` +
-    `<rect x="${xs[1]}" y="${cy - h[1] / 2}" width="${xs[2] - xs[1]}" height="${h[1]}" fill="#fbfbf8" stroke="#17272b" stroke-width=".8"/>` +
-    `<rect x="${xs[0]}" y="${cy - h[0] / 2}" width="${xs[1] - xs[0]}" height="${h[0]}" fill="#e08a2c" stroke="#17272b" stroke-width=".8"/>`;
-  [1, 2, 3].forEach((i) => {
-    const y = cy - 30 - (i - 1) * 24;
-    body += `<line x1="${xs[i]}" y1="${y - 4}" x2="${xs[i]}" y2="${cy - h[i] / 2}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-      dim(x0, xs[i], y, `L${i} = ${mm(c[`l${i}`])}`);
+  const end = L[present[present.length - 1]];
+  const W = 640, x0 = 40, span = 400, k = span / end, cy = 104;
+  const X = (v: number) => x0 + v * k;
+  const xe = X(end);
+  const band = (name: string, from: number, to: number, hh: number, fill: string, stroke: string, sw = ".8") =>
+    `<rect data-band="${name}" x="${from}" y="${cy - hh / 2}" width="${to - from}" height="${hh}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+  let body = `<rect data-band="jacket" x="${xe}" y="${cy - 18}" width="${W - 30 - xe}" height="36" rx="4" fill="#222"/>` +
+    `<text x="${(xe + W - 30) / 2}" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(c.cable || "кабель")}</text>`;
+  if (has[1] && has[2]) {
+    body += band("braid", X(L[1]), xe, 28, "url(#etkBraid)", "#8d9297", "1") + band("dielectric", X(L[0]), X(L[1]), 22, "#fbfbf8", "#17272b");
+  } else if (has[1]) {
+    body += band("braid", X(L[0]), xe, 28, "url(#etkBraid)", "#8d9297", "1");
+  } else if (has[2]) {
+    body += band("dielectric", X(L[0]), xe, 22, "#fbfbf8", "#17272b");
+  }
+  body += band("conductor", x0, X(L[0]), 8, "#e08a2c", "#17272b");
+  present.forEach((i, n) => {
+    const y = cy - 30 - n * 24, x = X(L[i]), top = i === 0 ? 8 : i === 1 && !has[2] ? 28 : i === 1 ? 22 : has[1] ? 28 : 22;
+    body += `<line x1="${x}" y1="${y - 4}" x2="${x}" y2="${cy - (i === 2 || present.length === 1 ? 18 : top / 2)}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+      dim(x0, x, y, `L${i + 1} = ${mm(c[`l${i + 1}`])}`);
   });
-  body += `<line x1="${x0}" y1="${cy - 84}" x2="${x0}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
+  body += `<line x1="${x0}" y1="${cy - 30 - (present.length - 1) * 24 - 4}" x2="${x0}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
   const ds = ["d1", "d2", "d3"].filter((key) => c[key]).map((key) => `${key.toUpperCase()} = ${mm(c[key])}`);
   if (ds.length) body += `<text x="${x0}" y="${cy + 42}" font-size="12" fill="#5f7470">Ø: ${esc(ds.join(" · "))}</text>`;
   if (caption) body += `<text x="${W - 30}" y="${cy - 30}" text-anchor="end" font-size="12" font-weight="600" fill="#17272b">${esc(caption)}</text>`;
