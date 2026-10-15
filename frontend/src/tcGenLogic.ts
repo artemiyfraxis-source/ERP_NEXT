@@ -1249,6 +1249,7 @@ export function makeGen(D: GenData, S: GenState) {
   const coaxBomCableComp_ = () => comps().find((x) => /кабель|провод/i.test(x.type || "")) || null;
   const coaxBomCable_ = () => { const c = coaxBomCableComp_(); return c ? (c.art || c.name || "") : ""; };
   const coaxBomTut_ = () => comps().find((x) => /тут/i.test(x.type || "")) || null;
+  const coaxBomSleeve_ = () => comps().find((x) => /втулк/i.test(`${x.type || ""} ${x.name || ""}`)) || null;
   function coaxCableDiaLookup_() {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
     return t[String(coaxBomCable_()).toLowerCase().replace(/[\s-]/g, "")] || null;
@@ -1935,7 +1936,7 @@ export function makeGen(D: GenData, S: GenState) {
         ...(machine ? { machine: { model: machine.model, inventory: machine.inventory, name: machine.name } } : {}),
         ...(spec.stripSides ? { stripSides: spec.stripSides } : {}) };
     });
-    const tut = coaxBomTut_(), cable = coaxBomCableComp_();
+    const tut = coaxBomTut_(), cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
     return {
       mode: "coax", tab: "coax",
       assemblyIndex: findKey(/индекс/i),
@@ -1946,6 +1947,7 @@ export function makeGen(D: GenData, S: GenState) {
         tutLength: parseDecimal_(S.coax.tutLen) || 20,
         tutArt: tut?.art || "", tutName: tut?.name || "",
         cableArt: cable?.art || "", cableName: cable?.name || "",
+        sleeveArt: sleeve?.art || "", sleeveName: sleeve?.name || "",
         shieldType: S.coax.shield,
         sideA: mkSide(recA, S.coax.sideA ? S.coax.sideA.art : "", S.coax.pinA, S.coax.sideA ? S.coax.sideA.name : ""),
         sideB: mkSide(recB, S.coax.sideB ? S.coax.sideB.art : "", sideB ? S.coax.pinB : "", S.coax.sideB ? S.coax.sideB.name : ""),
