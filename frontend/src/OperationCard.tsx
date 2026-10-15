@@ -3,7 +3,7 @@
 // оснастка, дефекты) и параметры строки БД.ОП, каждая часть по своему праву (erptctpl / erpref).
 import { useMemo, useState, type ReactNode } from "react";
 import { referencesApi, type OperationCardDetail, type OperationRecordEdit, type TechOperationRecord } from "./api";
-import { changedFields, groupOpFields, hasValue, normBasis, timeUnit, typeForBasis, type OpField, type OpGroup } from "./opFields";
+import { changedFields, groupOpFields, hasValue, linearPiece, normBasis, OP_TYPES, opTypeHint, timeUnit, type OpField, type OpGroup } from "./opFields";
 import { DefectsView, ToolingBySection, editDraft } from "./ProjectEtk";
 import { SAFETY_HEAD, TcCardEditForm } from "./TcCardEditForm";
 
@@ -18,29 +18,50 @@ function seconds(value: string | undefined, type: string, own = false) {
 function ParamRow({ field, draft, onChange }: { field: OpField; draft?: Fields; onChange?: (key: string, value: string) => void }) {
   const editing = Boolean(draft && onChange);
   const value = draft ? (draft[field.key] ?? "") : field.value;
+  const typeHint = field.opType ? opTypeHint(value) : "";
+  const hint = (typeHint || field.hint) ? <p className="op-hint">{typeHint || field.hint}</p> : null;
   if (!editing) {
-    const shown = field.basis
-      ? (normBasis(value) === "meter" ? "на метр" : normBasis(value) === "operation" ? "на операцию" : "")
-      : value;
-    return <div className="op-row"><dt>{field.label}</dt><dd>{hasValue(shown) ? <>{shown}{field.unit && !field.basis ? <small> {field.unit}</small> : null}</> : <span className="cell-empty">—</span>}</dd></div>;
+    return <div className={`op-row${field.opType ? " op-type" : ""}`}><dt>{field.label}</dt><dd>{hasValue(value) ? <>{field.opType ? <b>{value}</b> : value}{field.unit ? <small> {field.unit}</small> : null}</> : <span className="cell-empty">—</span>}</dd>{hint}</div>;
   }
   const label = `${field.label}`;
   if (field.readOnly) return <div className="op-row"><dt>{field.label}</dt><dd><b>{value}</b></dd></div>;
-  return <div className="op-row">
+  // Слово листа, которого нет в списке, остаётся выбранным — сохранение его не теряет.
+  const types = [...OP_TYPES.map((item) => item.value), ...(value && !OP_TYPES.some((item) => item.value === value) ? [value] : [])];
+  return <div className={`op-row${field.opType ? " op-type" : ""}`}>
     <dt><label htmlFor={`op-${field.key}`}>{field.label}</label></dt>
-    <dd>{field.basis
-      ? <select id={`op-${field.key}`} aria-label={label} value={normBasis(value)} onChange={(event) => onChange!(field.key, typeForBasis(value, event.target.value as "meter" | "operation" | ""))}>
-        <option value="">не задано</option><option value="operation">на операцию</option><option value="meter">на метр</option>
+    <dd>{field.opType
+      ? <select id={`op-${field.key}`} aria-label={label} value={value} onChange={(event) => onChange!(field.key, event.target.value)}>
+        <option value="">не задано</option>{types.map((type) => <option key={type} value={type}>{type}</option>)}
       </select>
       : <><input id={`op-${field.key}`} aria-label={label} value={value} onChange={(event) => onChange!(field.key, event.target.value)} />{field.unit && <small>{field.unit}</small>}</>}</dd>
+    {hint}
   </div>;
 }
 
-function ParamGroup({ group, draft, onChange }: { group: OpGroup; draft?: Fields; onChange?: (key: string, value: string) => void }) {
+function ParamGroup({ group, draft, onChange, children }: { group: OpGroup; draft?: Fields; onChange?: (key: string, value: string) => void; children?: ReactNode }) {
   const main = ["ident", "equip", "norms"].includes(group.id);
-  const rows = draft ? group.fields : group.fields.filter((field) => main || hasValue(field.value));
+  const rows = draft ? group.fields : group.fields.filter((field) => main || field.keep || hasValue(field.value));
   if (!rows.length) return null;
-  return <div className="op-group"><h5>{group.title}</h5><dl>{rows.map((field) => <ParamRow key={field.key} field={field} draft={draft} onChange={onChange} />)}</dl></div>;
+  const manual = rows.some((field) => field.label.startsWith("Ручные"));
+  return <div className="op-group" role={group.title ? "group" : undefined} aria-label={group.title || undefined}>{group.title && <h5>{group.title}</h5>}<dl>{rows.map((field) => <ParamRow key={field.key} field={field} draft={draft} onChange={onChange} />)}</dl>
+    {children}
+    {group.note && manual && <p className="op-hint">{group.note}</p>}
+  </div>;
+}
+
+const seconds2 = (value: number) => value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** «Погонная» операция: время на штуку по узлам станка при длине L — то же, что ЭТК посчитает для резки провода. */
+function LinearCalc({ fields }: { fields: Fields }) {
+  const [length, setLength] = useState("100");
+  const lengthMm = Number(length.replace(",", ".")) || 0;
+  const piece = linearPiece(fields, lengthMm);
+  if (!piece) return <p className="op-calc">Скорость проката не задана — время ЭТК для резки берётся из «Время операции».</p>;
+  return <div className="op-calc" aria-live="polite">
+    <span>На 1 шт при <label htmlFor="op-calc-l">L</label> = <input id="op-calc-l" type="number" inputMode="decimal" min={0} step={10} value={length} onChange={(event) => setLength(event.target.value)} /> мм:{" "}
+      <b>{seconds2(piece.total)} с</b> (подача {seconds2(piece.feed)} с + инструмент {seconds2(piece.tool)} с)</span>
+    <small>Для резки провода ЭТК считает время по узлам станка, «Время операции» не применяется.</small>
+  </div>;
 }
 
 /** «Параметры операции»: строка БД.ОП по группам; `draft` — режим правки. Исходные данные расчёта — свёрнуты. */
@@ -53,9 +74,12 @@ function OpParams({ fields, draft, onChange, hideName }: { fields: Fields; draft
   const main = groups.filter((group) => group.id !== "raw");
   const raw = groups.find((group) => group.id === "raw");
   const rawCount = raw?.fields.filter((field) => hasValue(field.value)).length ?? 0;
+  const linearType = groups.flatMap((group) => group.fields).find((field) => field.opType)?.value ?? "";
   return <section className="tr-block op-params" aria-label="Параметры операции">
     <h4>Параметры операции</h4>
-    <div className="op-groups">{main.map((group) => <ParamGroup key={group.id} group={group} draft={draft} onChange={onChange} />)}</div>
+    <div className="op-groups">{main.map((group) => <ParamGroup key={group.id} group={group} draft={draft} onChange={onChange}>
+      {group.id === "nodes" && normBasis(linearType) === "meter" && <LinearCalc fields={draft ?? fields} />}
+    </ParamGroup>)}</div>
     {raw && (draft || rawCount > 0) && <details className="op-raw">
       <summary>{raw.title}<span>{rawCount}</span></summary>
       <div className="op-groups"><ParamGroup group={{ ...raw, title: "" }} draft={draft} onChange={onChange} /></div>

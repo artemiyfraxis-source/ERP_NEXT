@@ -44,6 +44,7 @@ def with_technology(
         )]
     enriched = enrich_terminal_norms(config, (TerminalRecord.from_fields(record.fields) for record in records), gost_awg)
     enriched = enrich_marking(enriched, equipment, operation_records)
+    enriched = enrich_linear_timing(enriched, operation_records)
     enriched = enrich_wire_diameters(enriched, hookups, gauges, prov_rows)
     return enriched, {
         "schema_version": metadata["schema_version"],
@@ -139,6 +140,50 @@ def enrich_marking(
     }
     for op in ops:
         op["markKit"] = deepcopy(kit)
+    return enriched
+
+
+# «Погонная» операция БД.ОП (владелец 15.10.2026): время резки считается по узлам станка, как в расчётном листе цеха —
+# на штуку L / «Скорость проката» + «Скорость работы инструмента» × «Кол-во операций инструмента». «Скорость проката»
+# подписана в листе «сек/м», но делится на неё длина, т. е. это подача в м/с; ключ БД не переименовывается.
+_LINEAR_COLUMNS = {
+    "rollSpeed": "скорость проката", "toolSeconds": "скорость работы инструмента", "toolOps": "кол-во операций инструмента",
+}
+
+
+def _column(fields: Mapping[str, Any], prefix: str) -> str:
+    for key, value in fields.items():
+        if str(key).strip().lower().startswith(prefix):
+            return str(value or "").strip()
+    return ""
+
+
+def operation_linear_timing(fields: Mapping[str, Any]) -> dict[str, str] | None:
+    """Узлы станка строки БД.ОП, по которым ЭТК считает время резки; None — тип не «Погонный» или подача не задана
+    (> 0): тогда время, как раньше, из «Время операции»."""
+    if not _column(fields, "тип операции").lower().startswith("погон"):
+        return None
+    timing = {name: _column(fields, prefix) for name, prefix in _LINEAR_COLUMNS.items()}
+    roll = decimal_or_none(timing["rollSpeed"])
+    return timing if roll is not None and roll > 0 else None
+
+
+def enrich_linear_timing(config: Mapping[str, Any], operations: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Copy of the config whose operations of a «Погонная» БД.ОП record (by `opNum`) carry `linearTiming` — the
+    record's node speeds; an operation whose record lost them drops the key."""
+    enriched = deepcopy(dict(config))
+    timings: dict[str, dict[str, str] | None] = {}
+    for fields in operations:
+        code = str(fields.get("opNumber") or fields.get("Номер") or "").strip()
+        if code and code not in timings:
+            timings[code] = operation_linear_timing(fields)
+    for op in enriched.get("ops") or []:
+        if not isinstance(op, dict):
+            continue
+        op.pop("linearTiming", None)
+        timing = timings.get(str(op.get("opNum") or "").strip())
+        if timing:
+            op["linearTiming"] = timing
     return enriched
 
 

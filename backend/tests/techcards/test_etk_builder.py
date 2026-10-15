@@ -743,3 +743,53 @@ def test_wire_diameters_from_the_wire_record_reach_the_etk_and_a_wire_without_on
     # No record at all: nothing is invented.
     none = built("НЕТ-В-БАЗЕ")
     assert "outerDiameter" not in none and "conductorDiameter" not in none
+
+
+def _linear_record(kind: str = "Погонный", roll: str = "3") -> dict:
+    """Строка БД.ОП CUT_WIRE+1crimp, как на листе: узлы станка 3 / 0,2 / 5, «Время операции» 4 с."""
+    return {"opNumber": "CUT_WIRE+1crimp", "Номер": "CUT_WIRE+1crimp", "Время Операции": "4,00", "Тип операции": kind,
+            "Скорость проката, сек/м": roll, "Скорость работы инструмента": "0,2", "Кол-во операций инструмента": "5",
+            "Время ручных работ для взятия полуфабриката": "7"}
+
+
+def _linear_time(record: dict, length: int = 100) -> str:
+    from app.workflows.techcard_build import enrich_linear_timing
+
+    wire = {"name": "Провод", "art": "ПВ3", "qty": 1, "length": length}
+    config = {
+        "assemblyName": "Жгут", "partQty": 600, "wires": [dict(wire)],
+        "ops": [{"type": "cutWireCrimp", "templateId": "cut-wire-1crimp-автомат-резка-опрессовка", "opNum": "CUT_WIRE+1crimp",
+                 "side": "A", "tPrep": 0, "tOp": 4, "wires": [dict(wire)],
+                 "ep": {"connArt": "XHP-2", "termArt": "SXH-001T-P0.6", "termName": "Терминал"}}],
+    }
+    config = enrich_linear_timing(config, [record])
+    return build_etk(config, CARDS, operation_library_commit="x")["operations"][0]["time"][0]["norm"]
+
+
+def test_linear_operation_time_comes_from_machine_nodes_for_the_wire_length():
+    from decimal import Decimal
+    from app.modules.techcards.etk_builder import linear_seconds
+
+    # L = 0,1 м: 0,1 / 3 + 0,2 × 5 = 1,0333 с на штуку; ручные работы в машинное время не входят.
+    seconds = linear_seconds({"rollSpeed": "3", "toolSeconds": "0,2", "toolOps": "5"}, Decimal("0.1"))
+    assert seconds is not None and round(seconds, 4) == Decimal("1.0333")
+    # Партия 600: 1,0333 × 600 / 60 = 10,33 мин вместо 4 с × 600 = 40 мин по «Время операции».
+    assert _linear_time(_linear_record()) == "10,33"
+    assert _linear_time(_linear_record(), length=1000) == "13,33"
+
+
+def test_linear_operation_without_roll_speed_and_static_operation_keep_the_operation_norm():
+    assert _linear_time(_linear_record(roll="0")) == "40"
+    assert _linear_time(_linear_record(roll="")) == "40"
+    assert _linear_time(_linear_record(kind="Статичный")) == "40"
+    assert _linear_time(_linear_record(kind="Переменный")) == "40"
+
+
+def test_linear_timing_is_dropped_when_the_record_lost_its_node_speeds():
+    from app.workflows.techcard_build import enrich_linear_timing
+
+    config = {"ops": [{"type": "cutWire", "opNum": "CUT_WIRE+1crimp", "linearTiming": {"rollSpeed": "3"}}, {"type": "twist"}]}
+    assert "linearTiming" not in enrich_linear_timing(config, [_linear_record(kind="Статичный")])["ops"][0]
+    timed = enrich_linear_timing(config, [_linear_record()])["ops"]
+    assert timed[0]["linearTiming"] == {"rollSpeed": "3", "toolSeconds": "0,2", "toolOps": "5"}
+    assert "linearTiming" not in timed[1]

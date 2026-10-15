@@ -640,14 +640,40 @@ it("one «Править» edits the template and the parameters; an unchanged t
   expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
   expect(screen.getByText("Исходные данные расчёта (ERP не использует)")).toBeInTheDocument();
   expect(screen.getByText("Цвет")).toBeInTheDocument();
-  expect(screen.getByText("на метр")).toBeInTheDocument();
+  expect(screen.getByText("Погонный")).toBeInTheDocument();
+  expect(screen.getByText("по длине провода")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Править" }));
-  fireEvent.change(screen.getByLabelText("Норма на"), { target: { value: "operation" } });
+  fireEvent.change(screen.getByLabelText("Тип операции"), { target: { value: "Статичный" } });
+  expect(screen.getByText("фиксированное на штуку")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(patches).toHaveLength(1));
   expect(patches[0].edits).toEqual([{ field: "Тип операции", old: "Погонный", value: "Статичный" }]);
   await waitFor(() => expect(screen.queryByRole("button", { name: "Сохранить" })).toBeNull());
   expect(calls.some((call) => call.startsWith("PUT"))).toBe(false);
+});
+
+it("a «Погонная» operation shows its machine nodes and the piece time for the wire length L", async () => {
+  const crimp = { id: "o3", tab: "op", display_text: "Автомат резка + опрессовка", source_sheet: "БД.ОП", fields: {
+    opNumber: "CUT_WIRE+1crimp", opName: "Автомат резка + опрессовка", tOp: "4,00", "Номер": "CUT_WIRE+1crimp", "Название": "Автомат резка + опрессовка",
+    "Машина": "BZW-2.0", "Тип операции": "Погонный", "Время Операции": "4,00", "Расход на настройку м; шт;": "2", "Уд.Цена ЧЛ, сек": "0,42",
+    "Время ручных работ для взятия полуфабриката": "", "Скорость проката, сек/м": "3", "Скорость работы инструмента": "0,2", "Кол-во операций инструмента": "5",
+  } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: [crimp] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  fireEvent.click(await screen.findByText("CUT_WIRE+1crimp"));
+  const nodes = await screen.findByRole("group", { name: "Узлы станка и ручные работы" });
+  expect(within(nodes).getByText("Скорость проката")).toBeInTheDocument();
+  expect(within(nodes).getByText("Расход на настройку")).toBeInTheDocument();
+  expect(within(nodes).getByText("м/с (подача)")).toBeInTheDocument();
+  expect(nodes).toHaveTextContent("На 1 шт при L = мм: 1,03 с (подача 0,03 с + инструмент 1,00 с)");
+  fireEvent.change(within(nodes).getByLabelText("L"), { target: { value: "1000" } });
+  expect(nodes).toHaveTextContent("1,33 с (подача 0,33 с + инструмент 1,00 с)");
+  expect(nodes).toHaveTextContent("«Время операции» не применяется");
 });
 
 it("«Операции»: «+ Столбец» of БД.ОП — the own column stands after the code, is edited in the cell of a БД.ОП row and offers «Удалить»", async () => {
