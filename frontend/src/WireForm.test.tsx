@@ -44,7 +44,7 @@ const wireRow = (mark: string, fields: Record<string, string>) => ({
   hookup: { series: "ПВАМ", gauge_id: "g1", insulation: "", outer_d_mm: 2, voltage_v: 48, temp_min_c: -50, temp_max_c: 65 },
 });
 const data = {
-  columns: Object.keys(FIELDS), counts: { coax: 0, wire: 2, multi: 0, other: 0 }, gauges: [gauge],
+  columns: [...Object.keys(FIELDS), "Материал жилы", "Материал оболочки"], counts: { coax: 0, wire: 2, multi: 0, other: 0 }, gauges: [gauge],
   rows: [wireRow("ПВАМ 0,50", FIELDS), wireRow("ПВАМ 0,75", sibling)],
 } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
 
@@ -58,12 +58,21 @@ function open() {
 
 it("shows the sections, the standard as one field and the makers as chips", () => {
   open();
-  for (const title of ["Основное", "Изоляция и режим", "Доп. параметры", "Закупка и источник"]) expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+  for (const title of ["Основное", "Материалы и режим", "Доп. параметры", "Закупка и источник"]) expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
   expect(screen.getByLabelText("Стандарт (ГОСТ / ТУ / UL)")).toHaveValue("ТУ 16-505");
   const makers = screen.getByRole("group", { name: "Производители" });
   expect(within(makers).getByText("Cabeus")).toBeInTheDocument();
   expect(within(makers).getByText("ParLan")).toBeInTheDocument();
   expect(screen.queryByLabelText("Стандарт / производитель")).toBeNull();
+});
+
+it("asks the core and jacket materials instead of the rudimentary «Изоляция» (owner 15.10)", async () => {
+  const edit = open();
+  expect(screen.queryByLabelText("Изоляция")).toBeNull();
+  expect(screen.getByLabelText("Материал жилы")).toHaveValue("");
+  fireEvent.change(screen.getByLabelText("Материал оболочки"), { target: { value: "ПВХ" } });
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledWith("ПВАМ 0,50", [{ field: "Материал оболочки", old: "", value: "ПВХ" }]));
 });
 
 it("adds and removes makers and saves them as a comma-joined cell", async () => {

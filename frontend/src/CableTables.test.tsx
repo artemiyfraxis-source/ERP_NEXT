@@ -371,19 +371,20 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   const gauge = (id: string, section: number) => ({ id, awg: "", section_mm2: section, conductor_d_mm: null, strands: "", label: `${section} мм²`, wires: 1 });
   const wire = (series: string, mark: string, gauge_id: string, colors: string, voltage: number) => ({
     id: mark, kind: "wire" as const, auto_kind: "wire" as const, reason: "", manual: false, cable: mark, dia: null, dia_hint: null,
-    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Цвета": colors } },
-    hookup: { series, gauge_id, insulation: "ПВХ-пластикат", outer_d_mm: 2, voltage_v: voltage, temp_min_c: -50, temp_max_c: 65 },
+    record: { id: mark, tab: "prov" as const, display_text: mark, source_sheet: "БД.ПРОВ", fields: { "Марка": mark, "Цвета": colors, "Материал оболочки": "ПВХ-пластикат" } },
+    hookup: { series, gauge_id, insulation: "ПВХ", outer_d_mm: 2, voltage_v: voltage, temp_min_c: -50, temp_max_c: 65 },
   });
   const data = {
-    columns: ["Марка", "Цвета"], counts: { coax: 0, wire: 4, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
+    columns: ["Марка", "Цвета", "Материал оболочки"], counts: { coax: 0, wire: 4, multi: 0, other: 0 }, gauges: [gauge("s10", 10), gauge("s16", 16), gauge("s25", 2.5), gauge("s4", 4)],
     rows: [wire("ПуГВ", "ПуГВ 10", "s10", "синий", 450), wire("ПуГВ", "ПуГВ 16", "s16", "", 450), wire("ПуГВ", "ПуГВ 2,5", "s25", "белый, жёлто-зелёный", 450), wire("ПуГВ", "ПуГВ 4", "s4", "красный", 450)],
   } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
   render(<HookupWireTable data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} kindSelect={() => null} />);
 
-  // one header: series, what all sizes share, the number of sizes
+  // one header: series, the jacket material (not the rudimentary «Изоляция»), what all sizes share, the number of sizes
   expect(screen.getByText("ПуГВ · ПВХ-пластикат · 450 В · −50 … +65 °C")).toBeInTheDocument();
   // not repeated in the rows
   expect(screen.queryAllByText("450")).toHaveLength(0);
+  expect(screen.queryAllByText("ПВХ-пластикат", { selector: "td *" })).toHaveLength(0);
   // 2,5 · 4 · 10 · 16, not the text order 10 · 16 · 2,5 · 4
   const marks = [...document.querySelectorAll("tbody tr:not(.group-row) strong")].map((node) => node.textContent);
   expect(marks).toEqual(["ПуГВ 2,5", "ПуГВ 4", "ПуГВ 10", "ПуГВ 16"]);
