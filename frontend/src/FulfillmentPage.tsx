@@ -15,10 +15,10 @@ import { canAct, hasFullAccess } from "./navigation";
 import { DataTable, matchesWords, type DataColumn } from "./DataTable";
 import { openPrintSheet } from "./print";
 import { StatusChip } from "./StatusChip";
-import { BulkLotsPanel, CANDIDATE_LEGEND, OffBookQtyPopover, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
+import { BulkLotsPanel, absentPosition, absentTargets, searchSeed, CANDIDATE_LEGEND, OffBookQtyPopover, absentMark, bindPosition, bulkApi, candidateTone, isOffBook, matchText, type BulkPosition } from "./FulfillmentBulkLots";
 
 /** One position of a project card: article + name, the same key for the groups and for the candidates. */
-const positionKey = (article: string, name: string) => `${article}|${name}`.trim().toLocaleLowerCase("ru");
+export const positionKey = (article: string, name: string) => `${article}|${name}`.trim().toLocaleLowerCase("ru");
 
 /* NAV-1: one request, two sections (SUPPLYMAP ISS_MODES_, owner 02.09.2026): «Запросы на комплектацию» picks and
    only reserves, «Выдача со списанием» hands the kit out and writes it off. «Готов к выдаче» is the joint and reads as
@@ -104,7 +104,7 @@ function picked(line: FulfillmentLine) {
 }
 
 /** A line is closed by a lot that covers it, or by «есть, не заведено» (the part is there, not entered yet). */
-function closedLine(line: FulfillmentLine) {
+export function closedLine(line: FulfillmentLine) {
   return isOffBook(line) || (Boolean(line.lot) && picked(line) >= Number(line.requirement));
 }
 
@@ -554,6 +554,8 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
       .catch(() => { if (alive) setMaybe(new Map()); });
     return () => { alive = false; };
   }, [project, versionKey, canBulk]);
+  // «Нет на складе» is offered while some КБ line of the position is still unmarked (a marked one is lifted per КБ).
+  const absentable = (position: (typeof positions)[number]) => absentTargets(bulkOf(position)).length > 0;
   // Both actions go through the page's mutate: one busy lock, the banner, the reload; a 409 reloads and says so.
   const runBulk = (operation: () => Promise<{ message: string }>) => void cardProps.mutate(`project:${project}`, operation);
   // «Выдать…» (owner 06.10.2026): the whole order or the КБ ticked, in one call; the chooser closes once it went through.
@@ -643,7 +645,9 @@ function ProjectPanel({ project, requests, cancelled = [], onClose, busyId, ...c
                   onClick={(event) => { const anchor = event.currentTarget; setOffBookAt((at) => at?.key === key ? null : { key, anchor }); }}>Есть, не заведено</button>
                 {offBookAt?.key === key && <OffBookQtyPopover anchor={offBookAt.anchor} name={position.name} unit={position.unit} max={position.remaining}
                   scope={`по ${bulkOf(position).kbs.length} КБ`} busy={Boolean(busyId)} onCancel={() => setOffBookAt(null)}
-                  onConfirm={(quantity) => { const chosen = bulkOf(position); setOffBookAt(null); runBulk(() => bindPosition(project, chosen, [], true, quantity)); }} />}
+                  onConfirm={(quantity) => { const chosen = bulkOf(position); setOffBookAt(null); runBulk(() => bindPosition(project, chosen, [], true, quantity)); }} />}{" "}
+                {absentable(position) && <button type="button" className="secondary small" disabled={Boolean(busyId)} aria-label={`Нет на складе: ${position.name}`} title="Детали физически нет на складе: строки останутся недобором, снабжение получит уведомление"
+                  onClick={() => runBulk(() => absentPosition(bulkOf(position)))}>Нет на складе</button>}
               </>}</td>}
             </tr>
             {open && bulkKey === key && <tr className="detail"><td colSpan={7}>
@@ -959,7 +963,7 @@ function LotPicker({ line, lots, busy, onPick }: {
   busy: boolean;
   onPick: (lotId: string) => void;
 }) {
-  const [query, setQuery] = useState(line.name);
+  const [query, setQuery] = useState(searchSeed(line.name, line.article));
   const found = lots.filter((lot) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query));
   const need = Number(line.requirement);
   return <div className="lot-picker">
