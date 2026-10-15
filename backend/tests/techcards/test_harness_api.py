@@ -291,6 +291,13 @@ def test_derive_builds_manual_config_in_route_blocks_with_kd_keys_and_saves_noth
     final_ops = [config["ops"][position - 1]["origin"] for position in final["ops"]]
     assert final_ops[-1] == "harness:op3:assembly"
     assert ops["harness:r1:cutWireStrip.AB"]["seq"] < ops["harness:x1:prsTerm.A@r1"]["seq"] < ops["harness:x1:insTerm.A@r1"]["seq"]
+    # Свивка — после опрессовки, до пайки и монтажа в разъём (владелец 15.10.2026: «свивка после опрессовки»).
+    twist_block = block_of("harness:p1:twist")
+    in_block = [op for op in config["ops"] if owner[op["seq"]] == twist_block]
+    twist = ops["harness:p1:twist"]["seq"]
+    assert any(op["type"] == "prsTerm" for op in in_block)
+    assert all(op["seq"] < twist for op in in_block if op["type"] == "prsTerm")
+    assert all(op["seq"] > twist for op in in_block if op["type"] in {"solderConn", "insTerm"})
     # The drawing's data rides along.
     assert ops["harness:x4:prsTerm.A"]["kdData"][0]["wire_id"] == "w9"
 
