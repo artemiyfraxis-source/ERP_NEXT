@@ -1,11 +1,12 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import { dimensionLabelBoxes, indexLabelBoxes, openEndLabelBoxes, orderByPartners, placeDrawingLabels, type LabelBox } from "./drawingLayout";
+import { dimensionLabelBoxes, dimensionLineBoxes, indexLabelBoxes, openEndLabelBoxes, orderByPartners, placeDrawingLabels, type LabelBox } from "./drawingLayout";
 import { buildHarnessDocument, planFromGenerator, type ConnectorSource, type GeneratorDrawingPlan } from "./generatorToHarness";
 import { segmentDimensionKey } from "./harness/editor/drawing-dimensions";
 import { designToScene } from "./harness/editor/HarnessDesignEditor";
 import { physicalNodePoint } from "./harness/editor/physical-ports";
 import { D, harness } from "./tcGenRealHarness.fixture";
+import { initState, updateEndpoint, type GenData, type GenState, type TerRec } from "./tcGenLogic";
 
 // Чертёж заказчика «Жгут НВ4» (tcGenRealHarness.fixture.ts): 4 разъёма А, 2 разъёма В, 4 сростка с хвостами по 60 мм.
 const freeSources = (plan: GeneratorDrawingPlan) =>
@@ -84,7 +85,7 @@ it("a wire label is moved off the dimension text («N мм») it would otherwise
   let proven = 0;
   for (const segment of doc.physicalTopology!.segments) {
     const base = withDimension(segment.id);
-    const dimBoxes = dimensionLabelBoxes(designToScene(base, "drawing"));
+    const dimBoxes = [...dimensionLabelBoxes(designToScene(base, "drawing")), ...dimensionLineBoxes(designToScene(base, "drawing"))];
     if (!dimBoxes.length) continue;
     // Подписи, посчитанные без знания о размере (как раньше), и с ним.
     const placed = placeDrawingLabels(base, sideOf);
@@ -93,4 +94,35 @@ it("a wire label is moved off the dimension text («N мм») it would otherwise
     proven++;
   }
   expect(proven).toBeGreaterThan(0);
+});
+
+// Прямой жгут А → В с одним размером «N мм» над стволом: подписи проводов не лежат ни на тексте размера, ни на его линии
+// и выносных (рамки — те, что рисует поле), при любой длине, числе проводов и длине подписи.
+const ter = (article: string): TerRec => ({ article, step: "", strip: "", lPlus: "", lMinus: "", applicator: "", awgFrom: "", awgTo: "", mm2From: "", mm2To: "" });
+const COLOURS = ["красный", "чёрный", "белый", "зелёный", "синий", "жёлтый", "серый", "коричневый", "оранжевый", "фиолетовый", "розовый", "голубой"];
+const straight = (wires: number, length: number) => {
+  const components = [
+    ...COLOURS.slice(0, wires).map((c, i) => ({ id: `w${i}`, type: "Провод", name: `МГТФ 0,12 ${c}`, art: `МГТФ 0,12 ${c}`, qty: 0.3 })),
+    { id: "ca", type: "Соед", name: "Колодка PH", art: "PHR-12", qty: 1 }, { id: "cb", type: "Соед", name: "Колодка XH", art: "XHP-12", qty: 1 },
+    { id: "ta", type: "Терминал", name: "Контакт PH", art: "SPH-002T-P0.5S", qty: wires }, { id: "tb", type: "Терминал", name: "Контакт XH", art: "SXH-001T-P0.6", qty: wires },
+  ];
+  const data: GenData = { components, assemblyInfo: { "Индекс": "КБ1" }, templates: [], ops: [], terRecords: [ter("SPH-002T-P0.5S")], coaxRecords: [], wireDia: null, coaxCableDia: null, calcOps: [] };
+  const seeded = initState(data);
+  let S: GenState = { ...seeded, drawingLength: length, sharedLengthText: String(length), twist: { ...seeded.twist, enabled: false, pairs: [] } };
+  const pins = Object.fromEntries(S.wires.filter((w) => w.compId.startsWith("w")).map((w, i) => [w.idx, String(i + 1)]));
+  S = updateEndpoint(data, S, "a1", { pins });
+  S = updateEndpoint(data, S, "b1", { pins });
+  const plan = planFromGenerator(data, S);
+  return buildHarnessDocument(plan, freeSources(plan)).document;
+};
+const hits = (a: Omit<LabelBox, "id">, b: Omit<LabelBox, "id">) =>
+  Math.min(a.x + a.width, b.x + b.width) > Math.max(a.x, b.x) && Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y);
+
+it.each([[2, 300], [4, 300], [4, 40], [8, 1500], [12, 120]])("a straight harness of %i wires, %i мм: no wire label touches the dimension text or line", (wires, length) => {
+  const doc = straight(wires, length);
+  const scene = designToScene(doc, "drawing");
+  const text = dimensionLabelBoxes(scene), lines = dimensionLineBoxes(scene), labels = indexLabelBoxes(scene).filter((l) => l.id.includes(":gen-w"));
+  expect(text).toHaveLength(1);
+  expect(labels).toHaveLength(wires);
+  expect(labels.filter((l) => [...text, ...lines].some((d) => hits(l, d))).map((l) => l.id)).toEqual([]);
 });

@@ -242,6 +242,22 @@ export function dimensionLabelBoxes(scene: readonly EditorSceneObject[]): LabelB
   });
 }
 
+/** Сама линия размера со стрелками и выносными: тонкие рамки вдоль неё (шаг 6 px) — подпись провода не должна ложиться ни на
+ *  текст «300 мм» (рамка из dimensionLabelBoxes), ни на линию, ни на её выносные. */
+export function dimensionLineBoxes(scene: readonly EditorSceneObject[], half = 3): LabelBox[] {
+  return scene.flatMap((object) => {
+    const points = object.points ?? [];
+    if (object.kind !== "dimension" || object.metadata?.boundDimension !== "true" || points.length < 4) return [];
+    return points.slice(1).flatMap((end, i) => {
+      const start = points[i]!, length = Math.hypot(end.x - start.x, end.y - start.y), steps = Math.max(1, Math.ceil(length / 6));
+      return Array.from({ length: steps + 1 }, (_, k) => ({
+        id: `dimension-line:${object.id}:${i}:${k}`, x: start.x + ((end.x - start.x) * k) / steps - half, y: start.y + ((end.y - start.y) * k) / steps - half,
+        width: half * 2, height: half * 2,
+      }));
+    });
+  });
+}
+
 /** Рамки подписей позиций на чертеже (object-index): так их рисует поле (13 px, поля по 4 px). */
 export function indexLabelBoxes(scene: readonly EditorSceneObject[]): LabelBox[] {
   return scene.filter((object) => object.kind === "object-index").map((object) => ({
@@ -299,7 +315,7 @@ const LEADER_ANGLE = Math.cos((9 * Math.PI) / 180);
 export function placeDrawingLabels(document: HarnessDesignDocument, sideOf: (connectorId: string) => Side | null): HarnessDesignDocument {
   const scene = designToScene(document, "drawing");
   const owners = new Map(scene.filter((o) => o.kind !== "object-index").map((o) => [o.id, o]));
-  const taken: Omit<LabelBox, "id">[] = [...openEndLabelBoxes(scene), ...dimensionLabelBoxes(scene)];
+  const taken: Omit<LabelBox, "id">[] = [...openEndLabelBoxes(scene), ...dimensionLabelBoxes(scene), ...dimensionLineBoxes(scene)];
   // Узел ствола или сросток — с запасом: подписи не толпятся у точки, где сходятся провода.
   scene.filter((o) => o.kind === "physical-node").forEach((o) => {
     const room = o.metadata?.nodeRole === "junction" ? NODE_ROOM : 2;
