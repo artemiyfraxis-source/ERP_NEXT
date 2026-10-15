@@ -176,11 +176,12 @@ it("shows each cable in its own list with the parameters of that list", async ()
     const index = screen.getAllByRole("columnheader").findIndex((head) => head.textContent === header);
     return row.querySelectorAll("td")[index];
   };
-  expect(cell("UL1061 22AWG", "Серия")).toHaveTextContent(/^UL1061$/);
+  // «Серия» is the group header (owner 16.10), hidden; the materials follow «Ø наружный».
+  expect(screen.queryByRole("columnheader", { name: "Серия" })).toBeNull();
   expect(cell("UL1061 22AWG", "Сечение, мм²")).toHaveTextContent(/^0,35$/); // the size row, not the БД.ПРОВ 0,33
   expect(cell("UL1061 22AWG", "Ø жилы, мм")).toHaveTextContent(/^0,64$/);
   expect(cell("UL1061 22AWG", "Температура, °C")).toHaveTextContent("−10 … +80");
-  expect(cell("AGR2 Core 0,3", "Серия")).toHaveTextContent("не разобран");
+  expect(cell("AGR2 Core 0,3", "Марка провода")).toHaveTextContent("не разобран");
   expect(screen.getByRole("button", { name: /Не разобраны · 2/ })).toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
@@ -380,6 +381,10 @@ it("groups the hook-up wires by series with the shared values in the header, siz
   } as unknown as Parameters<typeof HookupWireTable>[0]["data"];
   render(<HookupWireTable data={data} canEdit={false} onSaved={() => undefined} onError={() => undefined} kindSelect={() => null} />);
 
+  // no «Серия» column (the group header says it); the materials right after «Ø наружный» (owner 16.10)
+  const heads = screen.getAllByRole("columnheader").map((head) => head.textContent);
+  expect(heads).not.toContain("Серия");
+  expect(heads[heads.indexOf("Ø наружный, мм") + 1]).toBe("Материал оболочки");
   // one header: series, the jacket material (not the rudimentary «Изоляция»), what all sizes share, the number of sizes
   expect(screen.getByText("ПуГВ · ПВХ-пластикат · 450 В · −50 … +65 °C")).toBeInTheDocument();
   // not repeated in the rows
@@ -557,7 +562,6 @@ describe("«Монтажные провода» and the other cable lists across
     const calls = mockApi();
     render(<ReferencesPage principal={admin} initialTab="cab_wire" />);
     await screen.findByText("UL1061 22AWG", { selector: "td.key strong" });
-    expect(cellIn("UL1061 22AWG", "Серия")).not.toHaveClass("dt-editable");
     expect(cellIn("ПВАМ 0,50", "Ø наружный, мм")).not.toHaveClass("dt-editable"); // не разобран — правка в окне провода
     const cell = cellIn("UL1061 22AWG", "Ø наружный, мм");
     fireEvent.click(cell);
