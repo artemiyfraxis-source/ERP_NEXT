@@ -597,8 +597,11 @@ def print_documents(
         customer = shipment.customer or next((good.customer for good in goods if good and good.customer), "") or shipment.receiver
         # «Штамп / подпись кладовщика» — кто упаковал (владелец 13.10.2026), не менеджер отправки.
         packer = packer_short(uow.shipments.packer(shipment_id))
+        # Реквизиты формы 04.1 (заказ, договор, счёт, кто платит, адрес заказчика, время работы) — карточка проекта.
+        project = next((line.project for line in shipment.lines if line.project), "")
+        card = uow.addressees.get(project) if project else None
     try:
-        forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer)]
+        forms = build_packing_lists(shipment, packer) if document == "pl" else [build_delivery_note(shipment, customer, packer, card)]
     except ShippingValidationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     return {"forms": [form.to_dict() for form in forms]}

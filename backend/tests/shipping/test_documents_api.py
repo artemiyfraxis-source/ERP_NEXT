@@ -13,10 +13,6 @@ def _stocked(client, *, item_index="КБ1", ordered="40", accepted="6", project=
     return good
 
 
-def _head(form):
-    return {row["label"]: row["value"] for row in form["head"]}
-
-
 def _shipment(client, lines, **extra):
     body = {"receiver": "Получатель", "shipping_point": "Москва", "terms": "ДОСТАВКА ТК", "upd_type": "ЭДО", "lines": lines}
     body.update(extra)
@@ -98,10 +94,12 @@ def test_boxes_are_checked_pack_the_shipment_and_print_pl_per_box_and_one_dn(shi
     assert packed["places"] == 2 and packed["weight"] == "14" and packed["tk_note"] == "Не кантовать"
     assert [box["gross"] for box in packed["boxes"]] == ["12,5", "1,5"]
     assert len(pl) == 2
-    assert pl[0]["rows"] == [["ГП.26.0000001", "КБ1", "Жгут КБ1", "10", "шт"]]
-    assert _head(pl[1])["Упаковка №"] == "BXN 2/2"
-    assert [row[1] for row in dn[0]["rows"]] == ["КБ1", "КБ2"]
-    assert _head(dn[0])["Кол-во упаковок:"] == "2"
+    assert [(row["part"], row["quantity"], row["batch"]) for row in pl[0]["rows"]] == [("КБ1 A-КБ1", "10", "ГП.26.0000001")]
+    assert (pl[1]["place"], pl[1]["places"], pl[1]["package"]) == ("2", "2", "Пакет")
+    assert [(row["part"], row["boxes"]) for row in dn[0]["rows"]] == [("КБ1 A-КБ1", "BXN 1"), ("КБ2 A-КБ2", "BXN 2")]
+    assert (dn[0]["places"], dn[0]["gross"], dn[0]["tk_note"]) == ("2", "14", "Не кантовать")
+    # Реквизиты формы 04.1 — из карточки проекта.
+    assert (dn[0]["po"], dn[0]["hours"]) == ("PO-7", "9-18")
 
     # Перевыпуск: номера сохраняются, короба заменяются.
     again = client.put(url, json={"version": packed["version"], "boxes": [
@@ -121,7 +119,7 @@ def test_print_needs_documents_and_defaults_to_one_box(shipping_api):
     assert refused.status_code == 409
     assert refused.json()["detail"] == "Сначала сформируйте отгрузочные документы"
     assert default.status_code == 200
-    assert _head(default.json()["forms"][0])["Упаковка №"] == "BXN 1/1"
+    assert (default.json()["forms"][0]["place"], default.json()["forms"][0]["places"]) == ("1", "1")
 
 
 def test_project_pack_takes_marked_quantity_up_to_stock_with_project_addressee(shipping_api):

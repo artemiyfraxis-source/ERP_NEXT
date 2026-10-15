@@ -564,17 +564,70 @@ export interface PrintSheet {
   sign: string;
 }
 
-/** Лист PL/DN отгрузки по образцу владельца: шапка «подпись | значение | реквизиты», позиции, пустые строки. */
-export interface ShippingForm {
-  kind: "pl" | "dn";
-  title: string;
-  head: { label: string; value: string; side: string }[];
-  columns: string[];
-  rows: string[][];
-  blank_rows: number;
-  sign_label: string;
-  sign_name: string;
+/** Строка раздела «Описание» PL/DN (shipping/documents.py `FormRow`): у PL — номер этикетки, у DN — PL и места. */
+export interface ShippingFormRow {
+  part: string;
+  name: string;
+  quantity: string;
+  unit: string;
+  batch: string;
+  pl: string;
+  boxes: string;
 }
+
+/** PL одного короба — форма 04.2 (shipping/documents.py `PackingList`); пустое поле — клетка для руки. */
+export interface PackingListForm {
+  kind: "pl";
+  title: string;
+  /** «PL | 533К.10 | - | 1». */
+  number: string[];
+  place: string;
+  places: string;
+  package: string;
+  dims: string;
+  net: string;
+  gross: string;
+  seal: string;
+  rows: ShippingFormRow[];
+  packed_at: string;
+  shipped_at: string;
+  packer: string;
+}
+
+/** DN отправки — форма 04.1 (shipping/documents.py `DeliveryNote`); реквизиты заказа — из карточки проекта. */
+export interface DeliveryNoteForm {
+  kind: "dn";
+  title: string;
+  number: string[];
+  date: string;
+  customer: string;
+  po: string;
+  contract: string;
+  spec: string;
+  invoice: string;
+  terms: string;
+  pays: string;
+  customer_address: string;
+  shipping_address: string;
+  hours: string;
+  contact: string;
+  phone: string;
+  carrier: string;
+  track: string;
+  tk_note: string;
+  rows: ShippingFormRow[];
+  upd_edo: boolean;
+  upd_paper: boolean;
+  paper_box: string;
+  note: string;
+  places: string;
+  gross: string;
+  upd: string;
+  shipped_at: string;
+  packer: string;
+}
+
+export type ShippingForm = PackingListForm | DeliveryNoteForm;
 
 export interface FulfillmentRequest {
   id: string;
