@@ -168,6 +168,87 @@ def test_a_jacketed_cable_crimped_on_both_sides_first_keeps_each_side_op_in_its_
     assert op_stages(flipped)[8] == "B"
 
 
+def test_the_shrink_of_a_sleeve_over_a_connector_stays_in_its_side_by_the_op_key():
+    # «Термоусадка поверх разъёма» of a config saved before 16.10 comes without a side, like the jacket-cut shrink did:
+    # «Усадка ТУТ поверх разъёма А1» went to the ПФ of side B.
+    ops = [
+        RouteOp(1, "cutWire", "CUT_WIRE_auto", "Провод", key="cutWire"),
+        RouteOp(2, "cutTut", "CUT_TUT_short", "ТУТ", key="cutShr1"),
+        RouteOp(3, "insTut", "INS_TUT", "Трубки надеты", key="insSleeves"),
+        RouteOp(4, "prsTerm", "PRS_TERMINAL_auto", "Терминалы А", side="A", key="prsTermA1"),
+        RouteOp(5, "insTerm", "INS_terminal_2,54-6,3", "Сторона А", side="A", key="insTermA1"),
+        RouteOp(6, "heatTut", "HEAT_TYT_short", "Усадка А1", key="heatShrA1"),
+        RouteOp(7, "prsTerm", "PRS_TERMINAL_auto", "Терминалы В", side="B", key="prsTermB1"),
+        RouteOp(8, "insTerm", "INS_terminal_2,54-6,3", "Сторона В", side="B", key="insTermB1"),
+        RouteOp(9, "heatTut", "HEAT_TYT_short", "Усадка В1", key="heatShrB1"),
+    ]
+    assert op_stages(ops) == {1: "wires", 2: "tubes", 3: "crimpedA", 4: "crimpedA", 5: "A", 6: "A", 7: "crimpedB",
+                              8: "B", 9: "B"}
+    assert [(block.key, block.ops) for block in generator_split(ops, "Кабель").blocks] == [
+        ("wires", (1,)), ("tubes", (2,)), ("crimpedA", (3, 4)), ("A", (5, 6)), ("crimpedB", (7,)), ("B", (8, 9)),
+    ]
+
+
+# 796К.2 КБ1 (owner 15.10) as the generator's «КОАКС» tab builds it: MMCX-Male RG316 → N-Male RG316, ТУТ, втулка экрана
+# под обжим, разделка отдельно. The ПФ numbering did not follow the work: «Пайка центрального контакта — В» (06) sat in
+# «Сторона В собрана», done after 07–09 of side A; «Откуда» of 05 listed the tubes, which 07 «Монтаж ТУТ» takes.
+COAX_796 = [
+    RouteOp(1, "coaxCut", "CUT_WIRE_auto", "Кабель", key="coaxCut"),
+    RouteOp(2, "coaxStrip", "STRIP_COAX_auto", "Разделка А", side="A", key="coaxStripA"),
+    RouteOp(3, "coaxStrip", "STRIP_COAX_auto", "Разделка В", side="B", key="coaxStripB"),
+    RouteOp(4, "coaxCutTut", "CUT_TUT_short", "ТУТ", key="coaxCutTut"),
+    RouteOp(5, "coaxPin", "SDR_COAX_pin", "Пайка А", side="A", key="coaxPinA"),
+    RouteOp(6, "coaxPin", "SDR_COAX_pin", "Пайка В", side="B", key="coaxPinB"),
+    RouteOp(7, "coaxInsTut", "INS_TUT", "ТУТ надеты", key="coaxInsTut"),
+    RouteOp(8, "coaxInsSleeve", "INS_SLEEVE_coax", "Втулка", key="coaxInsSleeve"),
+    RouteOp(9, "coaxHousing", "INS_housing_COAX", "Корпус А", side="A", key="coaxHousingA"),
+    RouteOp(10, "coaxHousing", "INS_housing_COAX", "Корпус В", side="B", key="coaxHousingB"),
+    RouteOp(11, "coaxShield", "PRS_SLEEVE_coax", "Опрессовка втулки", key="coaxShield"),
+    RouteOp(12, "coaxHeat", "HEAT_TYT_short", "Усадка", key="coaxHeat"),
+]
+
+
+def test_coax_796k2_pf_follow_the_order_of_work_and_the_tubes_go_to_their_mount():
+    route = generator_split(COAX_796, "Кабельная сборка MMCX-Male to N-Male RG316 1m")
+
+    assert [(block.key, block.ops, block.name) for block in route.blocks] == [
+        ("wires", (1, 2, 3), "Нарезанный и разделанный кабель"), ("tubes", (4,), "Нарезанные трубки"),
+        ("crimpedA", (5,), "Кабель с центральным контактом, сторона А"),
+        ("crimpedB", (6,), "Кабель с центральным контактом, сторона В"),
+        ("A", (7, 8, 9), "Сторона А собрана"), ("B", (10,), "Сторона В собрана"),
+        ("final", (11, 12), "Кабельная сборка MMCX-Male to N-Male RG316 1m"),
+    ]
+    # ПФ by their first operation are the work order: every ПФ starts after the one before ends.
+    firsts = [block.ops[0] for block in route.blocks]
+    assert firsts == sorted(firsts) and all(prev.ops[-1] < block.ops[0] for prev, block in zip(route.blocks, route.blocks[1:]))
+    assert sorted((edge.source, edge.target) for edge in route.edges) == [
+        ("A", "B"), ("B", "final"), ("crimpedA", "crimpedB"), ("crimpedB", "A"), ("tubes", "A"), ("wires", "crimpedA"),
+    ]
+    # The scheme of an ETK built before: tubes into 05 — the proposal takes them to «Монтаж ТУТ» all the same.
+    old = parse_route({
+        "blocks": [{"key": "w", "ops": [1, 2, 3]}, {"key": "t", "ops": [4]}, {"key": "a", "ops": [5, 7, 8, 9]},
+                   {"key": "b", "ops": [6, 10]}, {"key": "f", "ops": [11, 12], "final": True}],
+        "edges": [{"from": "w", "to": "a"}, {"from": "t", "to": "a", "per_unit": 2}, {"from": "a", "to": "b"},
+                  {"from": "b", "to": "f"}],
+    }, COAX_796, manual=True)
+    proposed = generator_split(COAX_796, "", old)
+    assert {(edge.source, edge.target): edge.per_unit for edge in proposed.edges}[("tubes", "A")] == Decimal(2)
+    assert ("tubes", "crimpedA") not in {(edge.source, edge.target) for edge in proposed.edges}
+
+
+def test_an_angled_coax_pin_soldered_inside_its_housing_is_the_side_itself():
+    # Угловой В: пайка В внутри корпуса после втулки, своего корпуса у В нет — пайка В и есть сборка стороны В.
+    ops = [
+        RouteOp(1, "coaxCut", "CUT_COAX+2strip", "Кабель", key="coaxCutStrip"),
+        RouteOp(2, "coaxPin", "SDR_COAX_pin", "Пайка А", side="A", key="coaxPinA"),
+        RouteOp(3, "coaxInsSleeve", "INS_SLEEVE_coax", "Втулка", key="coaxInsSleeve"),
+        RouteOp(4, "coaxPin", "SDR_COAX_pin_R/A", "Пайка В", side="B", key="coaxPinB"),
+        RouteOp(5, "coaxHousing", "INS_housing_COAX", "Корпус А", side="A", key="coaxHousingA"),
+        RouteOp(6, "coaxShield", "PRS_SLEEVE_coax", "Опрессовка", key="coaxShield"),
+    ]
+    assert op_stages(ops) == {1: "wires", 2: "crimpedA", 3: "B", 4: "B", 5: "A", 6: "final"}
+
+
 def test_connectors_crimped_and_mounted_one_by_one_give_a_crimp_pf_and_an_assembly_pf_per_side():
     # The generator's НВ4 harness: splices, then per connector crimp + mount (А1…А4), marking, В1, В2.
     ops = [

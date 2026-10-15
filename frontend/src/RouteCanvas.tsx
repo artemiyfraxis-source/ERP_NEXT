@@ -270,8 +270,9 @@ function wireSvg(wire: WireThumb): string {
 }
 
 /** Кабель в оболочке: оболочка посередине, жилы веером из неё к обоим концам в своих цветах; конец жилы — как у провода
-    (срез, медь, олово, наконечник). Белая жила видна по тёмному контуру. */
-function CableArt({ wire }: { wire: WireThumb }) {
+    (срез, медь, олово, наконечник). Белая жила видна по тёмному контуру. Тот же рисунок — у резки кабеля в списке ПФ ЭТК
+    (EtkPfList). */
+export function CableArt({ wire }: { wire: WireThumb }) {
   const cores = wire.cable?.cores ?? [];
   const n = Math.max(1, cores.length), W = 160, H = 40, mid = H / 2, jacketL = 50, jacketR = W - 50;
   const ys = cores.map((_, k) => (n === 1 ? mid : 4 + (k * (H - 8)) / (n - 1)));

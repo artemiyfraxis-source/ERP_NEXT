@@ -762,6 +762,102 @@ def test_wire_diameters_from_the_wire_record_reach_the_etk_and_a_wire_without_on
     assert "outerDiameter" not in none and "conductorDiameter" not in none
 
 
+def test_wire_diameters_of_a_bom_name_with_a_colour_a_series_wire_and_a_multicore_cable():
+    from app.modules.references.cable_structure import HookupWire, WireGauge
+    from app.workflows.techcard_build import enrich_wire_diameters
+
+    g24 = WireGauge.create(awg="24", section_mm2="0.2", conductor_d_mm="0.51")
+    g28 = WireGauge.create(awg="28", section_mm2="0.08", conductor_d_mm="0.32")
+    g035 = WireGauge.create(awg="22", section_mm2="0.35", conductor_d_mm="0.64")
+    hookups = [HookupWire.create(mark="UL1007 24AWG", series="UL1007", gauge_id=g24.id, outer_d_mm="1.4"),
+               HookupWire.create(mark="ПВАМ 0,35 белый", series="ПВАМ", gauge_id=g035.id, outer_d_mm="1.4")]
+    prov = [{"Марка": "UL2464 4x28AWG", "Наружный диаметр, мм": "4,2", "AWG": "28"},
+            {"Марка": "КСПВГ 4x0,08", "Наружный диаметр, мм": "3,1", "Сечение, мм2": "0,08"}]
+
+    def found(art: str, name: str = "") -> tuple:
+        wire = {"name": name or art, "art": art, "qty": 1, "length": 100}
+        out = enrich_wire_diameters(_diameter_config(wire), hookups, [g24, g28, g035], prov)["wires"][0]
+        return out.get("outerDiameter"), out.get("conductorDiameter")
+
+    # BOM name with a colour after the mark: the longest leading words that are a mark.
+    assert found("UL1007 24AWG красный") == (1.4, 0.51)
+    # A series wire without its own record: series + size as the generator reads «Ø изоляции по маркам».
+    assert found("Провод ПВАМ 0,35 красный") == (1.4, 0.64)
+    assert found("ПВАМ-0,35") == (1.4, 0.64)
+    # A multicore cable of БД.ПРОВ: its outer Ø, the core Ø by its AWG or its section.
+    assert found("UL2464 4x28AWG") == (4.2, 0.32)
+    assert found("КСПВГ 4x0,08 серый") == (3.1, 0.32)
+    # One word that only starts like a mark is not that mark; a size the series lacks gives nothing.
+    assert found("UL1007") == (None, None)
+    assert found("UL1007 18AWG") == (None, None)
+
+
+def test_wire_diameters_reach_the_etk_without_a_technology_snapshot():
+    from app.workflows.techcard_build import with_technology
+
+    class Rows:
+        def __init__(self, items=()):
+            self.items = list(items)
+
+        def metadata(self):
+            return None
+
+        def list(self, **_kwargs):
+            return self.items
+
+    from app.modules.references.cable_structure import HookupWire, WireGauge
+    gauge = WireGauge.create(awg="24", section_mm2="0.2", conductor_d_mm="0.51")
+
+    class Cables:
+        def gauges(self):
+            return [gauge]
+
+        def hookups(self):
+            return [HookupWire.create(mark="UL1007 24AWG", series="UL1007", gauge_id=gauge.id, outer_d_mm="1.4")]
+
+    class Uow:
+        tech_operations = Rows()
+        cable_structure = Cables()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    config, stamp = with_technology(_diameter_config({"name": "UL1007 24AWG", "art": "UL1007 24AWG", "qty": 1, "length": 100}), Uow)
+    assert stamp is None
+    assert (config["wires"][0]["outerDiameter"], config["ops"][0]["wires"][0]["conductorDiameter"]) == (1.4, 0.51)
+
+
+def test_shrinks_of_tubes_on_both_sides_get_their_own_words_and_distinct_etk_keys():
+    # 545К.9 КБ1 (15.10): a jacketed cable with «Термоусадка на место разделки» on A and B and a sleeve over a connector
+    # on both sides — a config without `side` on the shrinks gave four «HEAT_TYT_short — на пайке» and the build was
+    # refused («Операции ЭТК должны иметь уникальные код и сторону»).
+    wire = {"name": "UL2527 28AWG", "art": "UL2527 28AWG", "qty": 1, "length": 400, "cores": 4}
+    tube = {"tutArt": "ТУТ 6/3мм", "tutName": "ТУТ 6/3мм", "tPrep": 0, "tOp": 5}
+    ops = [
+        {"type": "cutWireStrip", "opKey": "cutWire", "templateId": "cut-coax-2strip-резка-с-разделкой", "tPrep": 0, "tOp": 5,
+         "wires": [dict(wire)], "strip": {"a": True, "b": True, "lenA": "20", "lenB": "20"}},
+        {"type": "cutTut", "opKey": "cutShr1", "templateId": "cut-tut-short-резка", "tutCount": 2, **tube},
+        {"type": "cutTut", "opKey": "cutJs1", "templateId": "cut-tut-short-резка", "tutCount": 2, **tube},
+        {"type": "cutTut", "opKey": "cutShr2", "templateId": "cut-tut-short-резка", "tutCount": 1, **tube},
+        {"type": "heatTut", "opKey": "heatShrA1", "templateId": "heat-tyt-short-усадка", "tutCount": 1, **tube},
+        {"type": "heatTut", "opKey": "heatJsA", "templateId": "heat-tyt-short-усадка", "tutCount": 1, **tube},
+        {"type": "heatTut", "opKey": "heatShrB1", "templateId": "heat-tyt-short-усадка", "tutCount": 1, **tube},
+        {"type": "heatTut", "opKey": "heatJsB", "side": "B", "templateId": "heat-tyt-short-усадка", "tutCount": 1, **tube},
+    ]
+    built = build_etk({"assemblyName": "Кабель", "partQty": 10, "wires": [dict(wire)], "ops": ops}, CARDS,
+                      operation_library_commit=LIBRARY["sourceCommit"])["operations"]
+    keys = [(item["code"], item["connector"], item["side"]) for item in built]
+    assert len(set(keys)) == len(keys)
+    assert [item["connector"] for item in built[1:]] == [
+        "ТУТ 6/3мм поверх разъёма", "ТУТ 6/3мм на место разделки", "ТУТ 6/3мм поверх разъёма · 4",
+        "поверх разъёма А1", "на месте разделки А", "поверх разъёма В1", "на месте разделки В",
+    ]
+    assert built[-1]["side"] == "B"
+
+
 def _linear_record(kind: str = "Погонный", roll: str = "3") -> dict:
     """Строка БД.ОП CUT_WIRE+1crimp, как на листе: узлы станка 3 / 0,2 / 5, «Время операции» 4 с."""
     return {"opNumber": "CUT_WIRE+1crimp", "Номер": "CUT_WIRE+1crimp", "Время Операции": "4,00", "Тип операции": kind,

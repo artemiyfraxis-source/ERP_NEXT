@@ -1,10 +1,16 @@
 import { useState, type DragEvent } from "react";
 import { techcardsApi, failureText, type ProjectTechcard } from "./api";
-import { etkFigure } from "./etkDraw";
+import { wireColorKnown } from "./connectorArt";
+import { etkCutEnds, etkFigure, type CutEndKind } from "./etkDraw";
 import { etkPfGroups, etkRouteOf, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
+import type { WireBlankEnd } from "./harness/WireBlankCatalog";
 import { proposePf } from "./pfPropose";
+import { coreColor } from "./pinoutCheck";
+import { CableArt } from "./RouteCanvas";
+import { coresWord, type WireThumb } from "./routeCards";
 import { mergeBlocks, placeOp, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
+import { setCustomColors } from "./wireColors";
 import "./EtkPfList.css";
 
 /* Список операций ЭТК по ПФ (владелец + Василий 13.10): ЭТК режется на полуфабрикаты, ПФ — блок схемы `document.route`.
@@ -33,6 +39,38 @@ function rowQty(row: EtkPfRow): string {
 
 function rowName(row: EtkPfRow): string {
   return row.art || row.name || "—";
+}
+
+type Row = Record<string, unknown>;
+const rowsOf = (value: unknown): Row[] => (Array.isArray(value) ? value.filter((item): item is Row => !!item && typeof item === "object") : []);
+const END_ART: Record<CutEndKind, WireBlankEnd> = { none: "cut", strip: "copper", tin: "tin", crimp: "terminal" };
+
+/** Кабель в оболочке (жил > 1) в операции резки — рисунком схемы ПФ генератора (RouteCanvas.CableArt): оболочка
+ *  посередине, жилы веером в своих цветах, концы — как отдаёт резка. Жилы и их цвета — у провода в конфигурации сборки
+ *  (`build_config.wires`: `cores`, `coreColors`), поэтому выданные ЭТК перевыпускать не нужно. Одиночные провода — null
+ *  (эскиз резки как был). */
+export function etkCutCable(operation: Row, config: Row): WireThumb | null {
+  if (!/^cutWire/.test(String(operation.type ?? ""))) return null;
+  const fields = (operation.fields && typeof operation.fields === "object" ? operation.fields : {}) as Row;
+  const own = rowsOf(config.wires);
+  const same = (a: Row, b: Row) => String(a.art ?? "") === String(b.art ?? "") && String(a.name ?? "") === String(b.name ?? "");
+  for (const wire of rowsOf(fields.wires)) {
+    const source = own.find((item) => same(item, wire)) ?? {};
+    const cores = Math.round(Number(wire.cores ?? source.cores) || 0);
+    if (cores <= 1) continue;
+    setCustomColors(config.colorHex as Record<string, string> | undefined);
+    const names = (Array.isArray(wire.coreColors) ? wire.coreColors : Array.isArray(source.coreColors) ? source.coreColors : []) as unknown[];
+    const label = String(wire.art || wire.name || "кабель");
+    const base = wireColorKnown(wire.name || wire.art) ?? "#6b7c86";
+    const colors = Array.from({ length: cores }, (_, k) => coreColor(String(names[k] ?? ""))?.hex ?? base);
+    const ends = etkCutEnds(operation);
+    return {
+      key: label, label, title: `${label} · ${cores} ${coresWord(cores)}`,
+      color: base, left: END_ART[ends.a.kind], right: END_ART[ends.b.kind],
+      cable: { cores: colors.map((color, k) => ({ color, label: String(names[k] ?? "") })), sub: "" },
+    };
+  }
+  return null;
 }
 
 function samePositions(a: number[], b: number[]): boolean {
@@ -75,6 +113,8 @@ export function EtkPfList<T extends EtkPfListOperation>({ card, list, selected, 
   const route = draft ?? saved;
   if (!route) return null;
   const kit = (card.document?.kit && typeof card.document.kit === "object" ? card.document.kit : {}) as Record<string, unknown>;
+  const config = (card.document?.build_config && typeof card.document.build_config === "object" ? card.document.build_config : {}) as Row;
+  const cableOf = (operation: T) => etkCutCable(operation as Row, config);
   const batch = Number(String(kit.part_quantity ?? "").replace(",", ".")) || 1;
   const groups = etkPfGroups(route, list, batch);
   const editing = draft !== null;
@@ -143,7 +183,7 @@ export function EtkPfList<T extends EtkPfListOperation>({ card, list, selected, 
       {info && <span role="status">{info}</span>}
     </div>}
     {groups.map((group) => <PfGroup key={group.key} group={group} list={list} selected={selected} onPick={onPick}
-      editing={editing} groups={groups} title={title} sub={sub} sketch={sketch} numberOf={numberOf}
+      editing={editing} groups={groups} title={title} sub={sub} sketch={sketch} cableOf={cableOf} numberOf={numberOf}
       mergeTarget={editing ? mergeTarget(route, group.key) : null}
       onMerge={(target) => edit(mergeBlocks(route, group.key, target, true))}
       onPlace={(position, to, at) => edit(placeOp(route, position, to, at))}
@@ -171,11 +211,11 @@ function mergeTarget(route: Route, key: string): string | null {
   return out.length === 1 ? out[0].to : null;
 }
 
-function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, editing, groups, title, sub, sketch, numberOf, mergeTarget: target, onMerge, onPlace,
+function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, editing, groups, title, sub, sketch, cableOf, numberOf, mergeTarget: target, onMerge, onPlace,
   onDragStart, onDragEnd, onDrop, allowDrop, dragging }: {
   group: EtkPfGroup; list: T[]; selected: number; onPick: (index: number) => void; editing: boolean; groups: EtkPfGroup[];
   title: (operation: T) => string; sub: (operation: T) => string;
-  sketch: (operation: T) => string; numberOf: (position: number) => string;
+  sketch: (operation: T) => string; cableOf: (operation: T) => WireThumb | null; numberOf: (position: number) => string;
   mergeTarget: string | null; onMerge: (target: string) => void;
   onPlace: (position: number, to: string | null, at: number) => void;
   onDragStart: (position: number) => void; onDragEnd: () => void;
@@ -186,10 +226,13 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
   const parts = group.components.slice(0, SHOWN_PARTS);
   const more = group.components.length - parts.length;
   const output = group.output[0];
-  const thumbs = group.ops.map((position) => {
+  type Thumb = { position: number; figure: string; image: string; cable: WireThumb | null };
+  const thumbs = group.ops.map((position): Thumb | null => {
     const operation = list[position - 1];
-    return operation ? { position, figure: etkFigure(operation as Record<string, unknown>), image: sketch(operation) } : null;
-  }).filter((item): item is { position: number; figure: string; image: string } => !!item && Boolean(item.figure || item.image));
+    if (!operation) return null;
+    const image = sketch(operation), cable = image ? null : cableOf(operation);
+    return { position, figure: image || cable ? "" : etkFigure(operation as Record<string, unknown>), image, cable };
+  }).filter((item): item is Thumb => !!item && Boolean(item.figure || item.image || item.cable));
   const into = target ? groups.find((item) => item.key === target) : undefined;
   return <section className={`etk-pf-group${group.ops.includes(selected + 1) ? " on" : ""}`} aria-label={`${label} · ${first ? title(first) : ""}`}
     onDragOver={allowDrop} onDrop={(event) => onDrop(event, group.key, group.ops.length)}>
@@ -241,8 +284,10 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
     </div>}
     {thumbs.length > 0 && <div className="etk-pf-thumbs">{thumbs.map((thumb) =>
       <button type="button" key={thumb.position} className="etk-pf-thumb" aria-label={`Эскиз операции ${numberOf(thumb.position)}`}
-        onClick={() => onPick(thumb.position - 1)}>
-        {thumb.image ? <img src={thumb.image} alt="" /> : <span dangerouslySetInnerHTML={{ __html: thumb.figure }} />}
+        title={thumb.cable?.title} onClick={() => onPick(thumb.position - 1)}>
+        {thumb.image ? <img src={thumb.image} alt="" />
+          : thumb.cable ? <span aria-hidden="true"><CableArt wire={thumb.cable} /></span>
+          : <span dangerouslySetInnerHTML={{ __html: thumb.figure }} />}
       </button>)}</div>}
     {editing && into && <button type="button" className="secondary small etk-pf-merge" onClick={() => onMerge(into.key)}>Объединить с ПФ-{into.number}</button>}
   </section>;

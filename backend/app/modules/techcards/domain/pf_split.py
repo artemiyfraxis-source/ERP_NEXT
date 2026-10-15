@@ -33,12 +33,18 @@ COAX_STRIPS = frozenset({"coaxStrip"})
 _COAX_CUT_STRIP = re.compile(r"^CUT_COAX\+\d*STRIP")
 # Crimping the ends by hand: terminals and lugs (a double crimp is the same operation), splices.
 END_CRIMPS = frozenset({"prsTerm", "splice"})
+# The coax centre contact soldered on the cable end — the coax twin of a crimped terminal. When its side is assembled
+# later (the housing) it is that side's end preparation: 796К.2 КБ1 (15.10) solders pins A and B one after the other
+# before the housings, and pin B in «Сторона В собрана» put that ПФ after ops 7–9 of side A in the work. An angled pin
+# soldered inside the housing (no later operation of its side) is the side's assembly itself.
+CONTACT_SOLDERS = frozenset({"coaxPin"})
 _SIDES = {"A": SIDE_A, "А": SIDE_A, "B": SIDE_B, "В": SIDE_B}
-# Generator operations of a side that carry no connector, so the saved config has no `side` for them: the cable end
-# stripping, core stripping after the rotor, screen twisting and capping of idle cores, the shrink on the jacket cut
-# (its side is in the opKey, the generator's scheme reads it from the operation itself). Without it «Усадка ТУТ на месте
-# разделки А» went to the next side's ПФ (owner 15.10: «Обжатые провода, сторона В» held it).
-_SIDE_KEY = re.compile(r"^(?:stripCable|stripCores|shield|idle|heatJs)([AB])")
+# Generator operations of a side that carry no connector, so a config saved before 16.10 has no `side` for them: the
+# cable end stripping, core stripping after the rotor, screen twisting and capping of idle cores, the shrink on the
+# jacket cut and the shrink of the sleeve over a connector (their side is in the opKey). Without it «Усадка ТУТ на месте
+# разделки А» went to the next side's ПФ (owner 15.10: «Обжатые провода, сторона В» held it), and so did «Усадка ТУТ
+# поверх разъёма А1».
+_SIDE_KEY = re.compile(r"^(?:stripCable|stripCores|shield|idle|heatJs|heatShr)([AB])")
 
 
 def _side(op: RouteOp) -> str:
@@ -73,18 +79,29 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     """The stage of every operation (by its ETK position): wire and cable cuts and coax stripping — cut wires, TUT and heat-shrink cuts —
     cut tubes; the end preparation of a side before the last side operation — the crimp of that side (`crimpedA` /
     `crimpedB`, placed right before the side: cut, crimp A, side A, crimp B, side B — owner 14.10) when some of it is
-    a hand crimp (all crimped on the cutting machine — no card of its own, stripping and tinning stay with the side);
+    a hand crimp or a coax centre contact soldered before its housing (all crimped on the cutting machine — no card of
+    its own, stripping and tinning stay with the side);
     the end preparation without a side before the first side — the shared crimped wires (`crimped`) when there are
     splices in it, else it prepares the next crimp or side; a side operation — its side; an operation without a side
     (twisting, marking, wrapping) prepares the next crimp or side, and after the last side — the finished product."""
     ordered = sorted(ops, key=lambda op: op.position)
-    sided = [op.position for op in ordered if _side(op) and not _cut_stage(op) and not _wire_end_prep(op)]
+
+    def assembly(op: RouteOp) -> bool:
+        return bool(_side(op)) and not _cut_stage(op) and not _wire_end_prep(op) and op.type not in CONTACT_SOLDERS
+
+    pins = {op.position for op in ordered if op.type in CONTACT_SOLDERS and _side(op) and any(
+        other.position > op.position and _side(other) == _side(op) and assembly(other) for other in ordered)}
+
+    def end_prep(op: RouteOp) -> bool:
+        return _wire_end_prep(op) or op.position in pins
+
+    sided = [op.position for op in ordered if _side(op) and not _cut_stage(op) and not end_prep(op)]
     first_side, last_side = min(sided, default=0), max(sided, default=0)
-    prep = [op for op in ordered if not _cut_stage(op) and _wire_end_prep(op) and op.position < last_side]
+    prep = [op for op in ordered if not _cut_stage(op) and end_prep(op) and op.position < last_side]
     crimped: dict[int, str] = {}
     for side, stage in ((SIDE_A, CRIMPED_A), (SIDE_B, CRIMPED_B)):
         own = [op for op in prep if _side(op) == side]
-        if any(op.type in END_CRIMPS for op in own):
+        if any(op.type in END_CRIMPS or op.position in pins for op in own):
             crimped.update((op.position, stage) for op in own)
     shared = [op for op in prep if not _side(op) and op.position < first_side]
     if any(op.type in END_CRIMPS for op in shared):
@@ -113,6 +130,8 @@ def _title(stage: str, ops: Sequence[RouteOp]) -> str:
     if stage == TUBES:
         return "Нарезанные трубки"
     if stage in CRIMP_STAGES:
+        if ops and all(op.type in CONTACT_SOLDERS for op in ops):
+            return "Кабель с центральным контактом" + {CRIMPED_A: ", сторона А", CRIMPED_B: ", сторона В"}.get(stage, "")
         if not any(op.type == "prsTerm" for op in ops):
             return "Провода со сростками"
         return "Обжатые провода" + {CRIMPED_A: ", сторона А", CRIMPED_B: ", сторона В"}.get(stage, "")
@@ -127,6 +146,23 @@ def _op_links(route: Route) -> list[tuple[int, int, Decimal]]:
     links += [(by_key[edge.source].ops[-1], by_key[edge.target].ops[0], edge.per_unit)
               for edge in route.edges if by_key[edge.source].ops and by_key[edge.target].ops]
     return links
+
+
+def _tubes_where_used(links: list[tuple[int, int, Decimal]], ops: Sequence[RouteOp], final_name: str,
+                      stages: dict[int, str]) -> list[tuple[int, int, Decimal]]:
+    """The links of a stored scheme with every tube cut going where its pieces are put on, as the derived scheme takes
+    them («Надеть ТУТ», the cap of a free end, the coax «Монтаж ТУТ»), its pieces per unit kept. A scheme derived
+    before 16.10 sent the coax tubes into the first operation after the cut (796К.2 КБ1: «Пайка центрального контакта
+    А», although «Монтаж ТУТ» takes them)."""
+    taken: dict[int, list[int]] = {}
+    for source, target, _per_unit in _op_links(derive_route(ops, final_name)):
+        if stages.get(source) == TUBES:
+            taken.setdefault(source, []).append(target)
+    result: list[tuple[int, int, Decimal]] = []
+    for source, target, per_unit in links:
+        targets = taken.get(source, []) if stages.get(source) == TUBES else []
+        result.extend((source, end, per_unit) for end in targets or [target])
+    return result
 
 
 def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route | None = None) -> Route:
@@ -152,7 +188,7 @@ def generator_split(ops: Sequence[RouteOp], final_name: str = "", current: Route
             rank[crimp] = rank[side] - 0.5
     order = sorted(members, key=lambda stage: (rank[stage], STAGES.index(stage)))
     links: dict[tuple[str, str], Decimal] = {}
-    for source, target, per_unit in _op_links(base):
+    for source, target, per_unit in _tubes_where_used(_op_links(base), ops, final_name, stages):
         start, end = stages.get(source), stages.get(target)
         if start and end and start != end and rank[start] < rank[end]:
             links[(start, end)] = max(links.get((start, end), Decimal(0)), per_unit)

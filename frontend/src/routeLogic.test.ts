@@ -18,6 +18,11 @@ it("derives the chain of a wire harness and the side branch of TUT pieces like t
   expect(arrows(deriveRoute([op(1, "cutWire"), { ...op(2, "other"), code: "CUT_X" }, op(3, "sdr")]))).toEqual(["b1>b3", "b2>b3"]);
 });
 
+it("takes the coax tubes into «Монтаж ТУТ», not into the solder of the first pin (796К.2 КБ1)", () => {
+  const coax = deriveRoute([op(1, "coaxCut"), { ...op(2, "coaxCutTut"), code: "CUT_TUT_short" }, op(3, "coaxPin"), op(4, "coaxPin"), op(5, "coaxInsTut"), op(6, "coaxHousing")]);
+  expect(arrows(coax)).toEqual(["b1>b3", "b2>b5", "b3>b4", "b4>b5", "b5>b6"]);
+});
+
 it("computes block time, inputs and the rolled-up time per piece the way the backend does", () => {
   // build_etk: блок b1 — 10,54 мин на партию 5 → 2,108 мин/шт
   const route = deriveRoute([op(1, "cutWire", "Резка", 10.54), op(2, "prsTerm", "Опрессовка", 5)]);

@@ -154,12 +154,37 @@ def _combined_wire_data(wires: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+# Tubes put on before the crimp (generator 15.10): the sleeve over a connector (cutShr<n> / heatShr<side><ord>) and
+# the tube on the jacket cut (cutJs<n> / heatJs<side>[n]). Their own words in the ETK title instead of «на пайке», and
+# the shrinks of two sides or two connectors no longer share one ETK key (it refused the build: «уникальные код и
+# сторону»).
+_SLEEVE_KEY = re.compile(r"^(cutShr|cutJs|heatShr|heatJs)([AB]?)(\d*)$")
+
+
+def _sleeve_suffix(op: Mapping[str, Any]) -> str:
+    match = _SLEEVE_KEY.match(str(op.get("opKey") or ""))
+    if not match:
+        return ""
+    kind, side, number = match.groups()
+    tube = str(op.get("tutArt") or "ТУТ")
+    letter = {"A": "А", "B": "В"}.get(side, "")
+    if kind == "cutShr":
+        return f"{tube} поверх разъёма"
+    if kind == "cutJs":
+        return f"{tube} на место разделки"
+    if kind == "heatShr":
+        return f"поверх разъёма {letter}{number}".rstrip()
+    return f"на месте разделки {letter}{f' ({number})' if number else ''}".rstrip()
+
+
 def _suffix(op: Mapping[str, Any]) -> str:
     operation_type = op.get("type")
     if operation_type == "cutWireStrip":
         return "разделка"
     if operation_type == "cutWireCrimp":
         return "обжим + лужение" if op.get("tin") else "обжим А и В" if _endpoint_b(op) else "обжим"
+    if operation_type in ("cutTut", "heatTut") and _sleeve_suffix(op):
+        return _sleeve_suffix(op)
     if operation_type == "cutTut":
         return str(op.get("tutArt") or "ТУТ")
     if operation_type == "insTut":
@@ -1700,6 +1725,23 @@ def _etk_key(operation: Mapping[str, Any]) -> tuple[str, str, str]:
     return code, connector, side
 
 
+def _distinct_typed_keys(built: list[dict[str, Any]]) -> None:
+    """Generator operations of one card, connector words and side (two cuts of one tube at different lengths, the same
+    shrink on two connectors of a side) would share the ETK key and the build would be refused: the second and later
+    ones get their ETK number on the connector. The first keeps its key, so a unique operation never changes."""
+    taken: set[tuple[str, str, str]] = set()
+    for operation in built:
+        key = _etk_key(operation)
+        if key in taken:
+            code, connector, side = key
+            connector = f"{connector} · {operation['position']}" if connector else str(operation["position"])
+            while (code, connector, side) in taken:
+                connector = f"{connector} · {operation['position']}"
+            operation["connector"] = connector
+            key = (code, connector, side)
+        taken.add(key)
+
+
 def _distinct_generator_keys(items: Sequence[_ManualOp], built: list[dict[str, Any]], seqs: Sequence[str]) -> None:
     """Generator operations of one card, connector and side in a manual scheme — a scheme from the harness drawing has
     them per route block (X1 crimped in two blocks, a strip cut per block) — would share the ETK key. Only those get a
@@ -1954,6 +1996,7 @@ def build_etk(
             previous=link.previous, result=link.result, single=link.single, is_last=link.is_last,
             semis=link.semis, connector=_typed_connector(op, index), warnings=warnings,
         ))
+    _distinct_typed_keys(built)
 
     connections = _connections(config)
     document = {

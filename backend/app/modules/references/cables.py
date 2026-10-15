@@ -91,11 +91,19 @@ def hookup_series(mark: str) -> str | None:
     """The series key of a mark from the база монтажных проводов, or None: «МС16-13 0,08» → «МС 16-13», «НВ-4 600
     0,20» → «НВ-4», «ПуГВ 1,0» → «ПуГВ», «ПуГВнг(А)-LS 1х1,0» → «ПуГВнг(А)-LS», «МНВ-4 0,12» → «МНВ-4»; «МГТФЭ 0,2»,
     «UL10610 28AWG», «M22759/16 22AWG» → None."""
+    found = hookup_series_rest(mark)
+    return found[0] if found else None
+
+
+def hookup_series_rest(mark: str) -> tuple[str, str] | None:
+    """The series key and what follows the series name in the mark («Провод МС 16-13 0,08 красный» → («МС 16-13»,
+    « 0,08 КРАСНЫЙ»), upper case) — where the size of the wire is written; None — not a series of the база."""
     text = " ".join(str(mark or "").split()).upper().replace("Ё", "Е")
     for candidate in (text, text.translate(_LATIN_TWINS)):
         for key, pattern in _HOOKUP_PATTERNS:
-            if pattern.match(candidate):
-                return key
+            match = pattern.match(candidate)
+            if match:
+                return key, candidate[match.end():]
     return None
 
 
