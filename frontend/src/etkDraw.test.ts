@@ -170,8 +170,29 @@ describe("etkDraw* sketches", () => {
 
   it("draws the coax strip steps or says the base has no sizes", () => {
     expect(etkDrawCoax({ fields: { coax: { cable: "RG-174", l1: "3", l2: "5", l3: "9", d1: "0,5" } } })).toContain("L3 = 9 мм");
-    expect(etkDrawCoax({ fields: { coax: { connector: "SMA", l1: "3" } } })).toContain("Размеров разделки нет в базе коакса для SMA");
+    expect(etkDrawCoax({ fields: { coax: { connector: "SMA", l2: "5" } } })).toContain("Размеров разделки нет в базе коакса для SMA");
     expect(etkDrawCoax({ fields: { coax: { cable: "RG-174", l1: "3", l2: "5", l3: "9" } } })).not.toContain("Сторона А");
+  });
+
+  it("draws any combination of L1–L3 and leaves out the absent layers and their dimensions", () => {
+    const draw = (l: Record<string, string>) => etkDrawCoax({ fields: { coax: { cable: "RG-316", ...l } } });
+    const bands = (svg: string) => [...svg.matchAll(/data-band="(\w+)"/g)].map((m) => m[1]).sort();
+    const full = draw({ l1: "3", l2: "6", l3: "9" });
+    expect(bands(full)).toEqual(["braid", "conductor", "dielectric", "jacket"]);
+    ["L1 = 3 мм", "L2 = 6 мм", "L3 = 9 мм"].forEach((t) => expect(full).toContain(t));
+    const clamp = draw({ l1: "3", l2: "6", l3: "" });
+    expect(bands(clamp)).toEqual(["braid", "conductor", "jacket"]);
+    expect(clamp).toContain("L2 = 6 мм");
+    expect(clamp).not.toContain("L3 =");
+    const twist = draw({ l1: "3", l2: "", l3: "9" });
+    expect(bands(twist)).toEqual(["conductor", "dielectric", "jacket"]);
+    expect(twist).toContain("L3 = 9 мм");
+    expect(twist).not.toContain("L2 =");
+    const only = draw({ l1: "3" });
+    expect(bands(only)).toEqual(["conductor", "jacket"]);
+    expect(only).toContain("L1 = 3 мм");
+    expect(only).not.toMatch(/L[23] =/);
+    expect(draw({ l1: "", l2: "6" })).toContain("Размеров разделки нет");
   });
 
   it("draws both ends of a cut with stripping on the machine, each with its side", () => {
