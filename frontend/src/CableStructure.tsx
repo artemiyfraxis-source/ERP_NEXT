@@ -34,6 +34,53 @@ const freq = (mhz: number | null): string =>
 const signed = (value: number | null) => value === null ? "" : value > 0 ? `+${value}` : String(value).replace("-", "−");
 const range = (low: number | null, high: number | null) =>
   low === null && high === null ? "" : `${low === null ? "…" : signed(low)} … ${high === null ? "…" : signed(high)}`;
+const TEMP_NUMBER = /^[+-]?\d+(?:[.,]\d+)?$/;
+/** Temperature typed into one cell as the table shows it — «−60 … +200», also «-60...200», «от -60 до +200», «-60 – 200»,
+    «… +80» (no lower bound) — into the pair the wire's window has; an empty text clears both. A text that is not a
+    range is refused with the way to write it. */
+export function parseTempRange(text: string): { min: string; max: string } {
+  const plain = text.replace(/−/g, "-").replace(/°\s*[CС]?/gi, "").replace(/^\s*от\s*/i, "").trim();
+  if (!plain) return { min: "", max: "" };
+  const parts = plain.split(/\s*(?:…|\.{2,}|до|–|—|;|\/)\s*/i);
+  let [low, high] = parts.length === 2 ? parts : ["", ""];
+  if (parts.length !== 2) {
+    const dashed = plain.match(/^([+-]?\d+(?:[.,]\d+)?)\s*-\s*([+-]?\d+(?:[.,]\d+)?)$/) ?? plain.match(/^(\S+)\s+(\S+)$/);
+    if (!dashed) throw new Error("Температура — «от … до», например −60 … +200");
+    [low, high] = [dashed[1], dashed[2]];
+  }
+  const bound = (value: string) => {
+    const clean = value.trim();
+    if (!clean || clean === "…") return "";
+    if (!TEMP_NUMBER.test(clean)) throw new Error("Температура — «от … до», например −60 … +200");
+    return clean.replace(/^\+/, "");
+  };
+  const min = bound(low);
+  const max = bound(high);
+  if (min && max && Number(min.replace(",", ".")) > Number(max.replace(",", "."))) throw new Error("Температура «от» больше «до»");
+  return { min, max };
+}
+
+const KIND_ORDER: CableKind[] = ["coax", "wire", "multi", "other"];
+/** «Вкладка» of a БД.ПРОВ row as a cell — the choice of the row window's «Вкладка» (`kindSelect`): the row moves to that
+    list by the same server path, «по правилу» marks where the rule would put it. Hidden in «Колонки» by default. */
+export function kindColumn(canEdit: boolean, onSaved: (message: string) => Promise<void> | void): DataColumn<CableRow> {
+  return {
+    key: "__kind", title: "Вкладка", hidden: true, value: (row) => CABLE_KIND_LABELS[row.kind],
+    edit: canEdit ? {
+      enabled: (row) => Boolean(row.record),
+      value: (row) => row.kind,
+      options: (row) => KIND_ORDER.map((kind) => ({
+        value: kind, label: `${CABLE_KIND_LABELS[kind]}${kind === row.auto_kind && row.manual ? " (по правилу)" : ""}`,
+      })),
+      save: async (row, value) => {
+        const kind = value as CableKind;
+        try { await referencesApi.moveCable(row.record!.id, kind); } catch (reason) { throw cellFailure(reason); }
+        await onSaved(`«${row.cable}» перенесён во вкладку «${CABLE_KIND_LABELS[kind]}»`);
+      },
+    } : undefined,
+  };
+}
+
 export const spanText = (card: CoaxCard): string =>
   card.span_to_ghz === null ? "" : `${freq(card.span_from_mhz)} – ${num(card.span_to_ghz)} ГГц`;
 
@@ -223,16 +270,39 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
   const field = (row: CableRow, name: string) => row.record?.fields[name] ?? "";
   const clip = (text: string) => <span className="cable-clip" title={text}>{text}</span>;
   const own = data.custom_columns ?? [];
-  // Ø, изоляция и напряжение — значения разобранного провода: ячейка пишет их тем же путём, что окно провода (со старыми
-  // значениями — сервер откажет, если провод поменяли). Серия и жила — выбор, температура — пара: в окне провода.
-  const hookupEdit = (key: "outer_d_mm" | "insulation" | "voltage_v"): DataCellEdit<CableRow> | undefined => canEdit ? {
-    enabled: (row) => Boolean(row.hookup && row.record),
+  // Every value of a parsed wire is written from its cell the way the wire's window writes it: the whole structure with
+  // the old values (the server refuses it when the wire changed meanwhile). The size is a pick from «Сечения AWG ↔ мм²»,
+  // the temperature is typed as «−60 … +200». A wire not parsed yet is set up in its window.
+  const writeHookup = async (row: CableRow, change: Partial<HookupPayload>) => {
+    const old = hookupPayload(row.hookup);
+    try {
+      await referencesApi.saveHookup(row.record!.id, { ...old, ...change, old });
+    } catch (reason) { throw cellFailure(reason); }
+  };
+  const parsed = (row: CableRow) => Boolean(row.hookup && row.record);
+  const hookupEdit = (key: "series" | "outer_d_mm" | "insulation" | "voltage_v"): DataCellEdit<CableRow> | undefined => canEdit ? {
+    enabled: parsed,
     value: (row) => hookupPayload(row.hookup)[key],
-    save: async (row, value) => {
-      const old = hookupPayload(row.hookup);
-      try {
-        await referencesApi.saveHookup(row.record!.id, { ...old, [key]: value, old });
-      } catch (reason) { throw cellFailure(reason); }
+    save: (row, value) => writeHookup(row, { [key]: value }),
+  } : undefined;
+  const sizes = useMemo(() => [...gauges].sort((a, b) => a.section_mm2 - b.section_mm2), [gauges]);
+  const gaugeEdit = (by: "awg" | "section"): DataCellEdit<CableRow> | undefined => canEdit ? {
+    enabled: parsed,
+    value: (row) => row.hookup?.gauge_id ?? "",
+    // AWG is typed or pasted as «22» / «22 AWG», the section as «0,35» / «0.35».
+    options: () => sizes.map((gauge) => ({
+      value: gauge.id, label: gaugeOption(gauge),
+      aliases: by === "awg" ? (gauge.awg ? [gauge.awg, `${gauge.awg} AWG`, `AWG ${gauge.awg}`] : [])
+        : [num(gauge.section_mm2), String(gauge.section_mm2), `${num(gauge.section_mm2)} мм²`],
+    })),
+    save: (row, value) => writeHookup(row, { gauge_id: value }),
+  } : undefined;
+  const tempEdit: DataCellEdit<CableRow> | undefined = canEdit ? {
+    enabled: parsed,
+    value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "",
+    save: (row, value) => {
+      const { min, max } = parseTempRange(value);
+      return writeHookup(row, { temp_min_c: min, temp_max_c: max });
     },
   } : undefined;
   const base: DataColumn<CableRow>[] = [
@@ -242,28 +312,32 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
     </> },
     // The series is the group header (owner 16.10: «серию исключить») — kept in «Колонки», hidden.
     {
-      key: "series", title: "Серия", hidden: true, value: (row) => row.hookup?.series ?? "",
+      key: "series", title: "Серия", hidden: true, value: (row) => row.hookup?.series ?? "", edit: hookupEdit("series"),
       render: (row) => row.hookup ? row.hookup.series : <span className="tone-warn" title={row.hookup_problem || "Жила не выбрана из таблицы сечений"}>не разобран</span>,
     },
-    { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "" },
-    { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2) },
-    { key: "core", title: "Ø жилы, мм", numeric: true, value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
+    { key: "awg", title: "AWG", numeric: true, value: (row) => gaugeOf(row)?.awg ?? "", edit: gaugeEdit("awg") },
+    { key: "section", title: "Сечение, мм²", numeric: true, value: (row) => gaugeOf(row)?.section_mm2 ?? "", render: (row) => num(gaugeOf(row)?.section_mm2), edit: gaugeEdit("section") },
+    // Ø жилы is the size row's (it changes with the size, or in «Сечения AWG ↔ мм²» for every wire of that size).
+    { key: "core", title: "Ø жилы, мм", numeric: true, computed: true, hint: "По сечению — правится в «Сечения AWG ↔ мм²»", value: (row) => gaugeOf(row)?.conductor_d_mm ?? "", render: (row) => num(gaugeOf(row)?.conductor_d_mm) },
     { key: "strands", title: "Структура жилы", value: (row) => field(row, STRANDS), render: (row) => field(row, STRANDS) ? clip(field(row, STRANDS)) : <span className="muted">—</span>,
       edit: canEdit ? fieldCellEdit<CableRow>(STRANDS, (row) => row.record) : undefined },
     { key: "outer", title: "Ø наружный, мм", numeric: true, value: (row) => row.hookup?.outer_d_mm ?? "", render: (row) => num(row.hookup?.outer_d_mm), edit: hookupEdit("outer_d_mm") },
     { key: "insulation", title: "Изоляция", hidden: true, value: (row) => row.hookup?.insulation ?? "", render: (row) => clip(row.hookup?.insulation ?? ""), edit: hookupEdit("insulation") },
     { key: "voltage", title: "Напряжение, В", numeric: true, value: (row) => row.hookup?.voltage_v ?? "", render: (row) => sharedOf(row)?.voltage ? null : row.hookup?.voltage_v ?? "", edit: hookupEdit("voltage_v") },
-    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "" },
-    { key: "colors", title: "Цвета", value: (row) => field(row, "Цвета"), render: (row) => <WireColors text={field(row, "Цвета")} /> },
+    { key: "temp", title: "Температура, °C", value: (row) => row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", render: (row) => sharedOf(row)?.temp ? null : row.hookup ? range(row.hookup.temp_min_c, row.hookup.temp_max_c) : "", edit: tempEdit },
+    // Colours as dots; typed as text («красный, синий») they go by the palette, the picker stays in the wire's window.
+    { key: "colors", title: "Цвета", value: (row) => field(row, COLORS), render: (row) => <WireColors text={field(row, COLORS)} />,
+      edit: canEdit ? fieldCellEdit<CableRow>(COLORS, (row) => row.record, own.includes(COLORS), normalizeColors) : undefined },
     ...data.columns.filter((name) => name !== MARK && name !== "Цвета" && name !== STRANDS && !MIRRORED.includes(name)).map((name): DataColumn<CableRow> => ({
       key: name, title: name, value: (row) => field(row, name), hidden: !WIRE_SHOWN.has(name) && (!own.includes(name) || OTHER_LISTS.has(name)),
       // The series' common jacket material is in the group header (owner 15.10: «Изоляция» — a rudiment).
       render: (row) => name === JACKET_MATERIAL && sharedOf(row)?.jacket ? null : clip(field(row, name)),
-      // «Тип провода» решает, в каком списке провод: меняется в окне провода.
-      edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : name === TYPE ? undefined : fieldCellEdit<CableRow>(name, (row) => row.record),
+      // «Тип провода» is free text as in the window; the list a wire is in — the «Вкладка» cell.
+      edit: !canEdit ? undefined : own.includes(name) ? ownCellEdit<CableRow>(name, (row) => row.record) : fieldCellEdit<CableRow>(name, (row) => row.record),
       remove: own.includes(name) ? removeColumn?.(name) : undefined,
     })),
-    { key: "__reason", title: "Почему здесь", value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
+    kindColumn(canEdit, onSaved),
+    { key: "__reason", title: "Почему здесь", computed: true, value: (row) => row.reason, hidden: !rows.some((row) => row.manual) },
   ];
   // The materials right after «Ø наружный» (owner 16.10: «материалы после наружного диаметра»).
   const materials = base.filter((column) => column.key === CORE_MATERIAL || column.key === JACKET_MATERIAL);
@@ -285,9 +359,12 @@ export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, t
       rows={rows}
       columns={columns}
       rowKey={(row) => row.id}
+      rowLabel={(row) => row.cable}
       storageKey="db:cables:wire-structured:4"
       groupBy={(row) => row.hookup?.series ?? UNPARSED}
       groupLabel={groupLabel}
+      groupSort
+      pageSize={Infinity}
       exportName="Монтажные провода"
       renderDetail={detail}
       presets={[

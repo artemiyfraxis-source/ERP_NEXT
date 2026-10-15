@@ -43,6 +43,16 @@ export interface DataColumn<T> {
   edit?: DataCellEdit<T>;
   /** Свой столбец пользователя («+ Столбец»): в «Колонках» у него кнопка «Удалить» — экран спрашивает подтверждение. */
   remove?: () => void;
+  /** Считается из других данных («Почему здесь», диапазон, статус карточки): в таблице с правкой ячейка выглядит
+      только для чтения. */
+  computed?: boolean;
+}
+
+export interface DataCellOption {
+  value: string;
+  label: string;
+  /** Как ещё пишут этот вариант при вводе и вставке («22», «22 AWG», «0,35»). */
+  aliases?: string[];
 }
 
 export interface DataCellEdit<T> {
@@ -53,6 +63,10 @@ export interface DataCellEdit<T> {
   value?: (row: T) => string;
   /** Можно ли править ячейку этой строки (у записи есть такое поле…); по умолчанию — да. */
   enabled?: (row: T) => boolean;
+  /** Ячейка — выбор из списка (сечение из таблицы сечений, категория, вкладка): правка — выпадающий список в ячейке,
+      `value` — значение варианта. Ввод буквы выбирает первый вариант на неё, вставка и Ctrl+D ищут вариант по значению,
+      подписи или `aliases`. */
+  options?: (row: T) => DataCellOption[];
 }
 
 export interface DataPreset<T> {
@@ -116,6 +130,9 @@ export interface DataTableProps<T> {
   phoneCards?: boolean;
   /** После записи ячеек в таблице (и после отказа): перечитать строки с сервера. */
   onEdited?: () => Promise<unknown> | void;
+  /** Своя сортировка у каждой группы (owner 16.10.2026: «у каждой группы своя, и это во всех кабелях»): колонка и
+      направление выбираются в строке группы, другие группы и порядок групп не меняются; заголовок таблицы не сортирует. */
+  groupSort?: boolean;
 }
 
 type Sort = { key: string; direction: 1 | -1 } | null;
@@ -130,7 +147,11 @@ export interface Saved {
   widths?: Record<string, number>;
   /** Свои подписи колонок. */
   titles?: Record<string, string>;
+  /** Сортировка внутри каждой группы (`groupSort`): имя группы → колонка и направление. */
+  groupSorts?: Record<string, GroupSort>;
 }
+
+type GroupSort = { key: string; direction: 1 | -1 };
 
 const MIN_WIDTH = 40;
 const MAX_WIDTH = 900;
@@ -172,12 +193,18 @@ function cleanSaved(raw: unknown): Saved {
   const order = Array.isArray(saved.order) ? saved.order.filter((item): item is string => typeof item === "string") : [];
   const widths = map(saved.widths).filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]));
   const titles = map(saved.titles).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim() !== "");
+  const groupSorts = map(saved.groupSorts).filter((entry): entry is [string, GroupSort] => {
+    const sort = entry[1] as { key?: unknown; direction?: unknown } | null;
+    return Boolean(sort && typeof sort === "object" && typeof sort.key === "string" && (sort.direction === 1 || sort.direction === -1));
+  });
   delete saved.order;
   delete saved.widths;
   delete saved.titles;
+  delete saved.groupSorts;
   if (order.length) saved.order = order;
   if (widths.length) saved.widths = Object.fromEntries(widths.map(([key, width]) => [key, clampWidth(width)]));
   if (titles.length) saved.titles = Object.fromEntries(titles);
+  if (groupSorts.length) saved.groupSorts = Object.fromEntries(groupSorts.map(([name, sort]) => [name, { key: sort.key, direction: sort.direction }]));
   if (saved.hidden !== undefined && !Array.isArray(saved.hidden)) delete saved.hidden;
   return saved;
 }
@@ -206,6 +233,25 @@ export function compareCells(a: CellValue, b: CellValue, numeric = false) {
     if (!Number.isNaN(left) && !Number.isNaN(right)) return left - right;
   }
   return String(a).localeCompare(String(b), "ru", { numeric: true, sensitivity: "base" });
+}
+
+/** Сравнение в направлении сортировки; пустые — внизу в обоих направлениях. */
+function directed(a: CellValue, b: CellValue, direction: 1 | -1, numeric = false) {
+  const empty = (value: CellValue) => value === null || value === undefined || value === "";
+  return empty(a) || empty(b) ? compareCells(a, b) : direction * compareCells(a, b, numeric);
+}
+
+/** Вариант списка ячейки по введённому или вставленному тексту: значение, подпись или другое написание (без учёта
+    регистра и лишних пробелов), иначе единственная подпись, которая с него начинается. */
+export function findOption(options: DataCellOption[], text: string): DataCellOption | null {
+  const fold = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  const wanted = fold(text);
+  const exact = options.find((option) => option.value === text.trim()
+    || [option.label, ...(option.aliases ?? [])].some((name) => fold(name) === wanted));
+  if (exact) return exact;
+  if (!wanted) return null;
+  const starts = options.filter((option) => fold(option.label).startsWith(wanted));
+  return starts.length === 1 ? starts[0] : null;
 }
 
 /** Текст выгрузки: табуляция, заголовок первой строкой, CRLF — Excel открывает как таблицу. */
@@ -322,6 +368,7 @@ export function DataTable<T>({
   hideSearch = false,
   phoneCards = true,
   onEdited,
+  groupSort = false,
 }: DataTableProps<T>) {
   const compact = rows.length < compactBelow;
   const saved = useMemo(() => readSaved(storageKey), [storageKey]);
@@ -335,6 +382,7 @@ export function DataTable<T>({
   const [order, setOrder] = useState<string[] | undefined>(saved.order);
   const [widths, setWidths] = useState<Record<string, number>>(saved.widths ?? {});
   const [titles, setTitles] = useState<Record<string, string>>(saved.titles ?? {});
+  const [groupSorts, setGroupSorts] = useState<Record<string, GroupSort>>(saved.groupSorts ?? {});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<string | null>(null);
   const [limit, setLimit] = useState(pageSize);
@@ -374,14 +422,15 @@ export function DataTable<T>({
 
   // A screen may keep its own fields under the same key (the «В работе» sheet's groups): they are written back as found.
   useEffect(() => {
-    const { order: _order, widths: _widths, titles: _titles, ...kept } = readSaved(storageKey);
+    const { order: _order, widths: _widths, titles: _titles, groupSorts: _groupSorts, ...kept } = readSaved(storageKey);
     writeSaved(storageKey, {
     ...kept, hidden, sort, preset,
     ...(order ? { order } : {}),
     ...(Object.keys(widths).length ? { widths } : {}),
     ...(Object.keys(titles).length ? { titles } : {}),
+    ...(Object.keys(groupSorts).length ? { groupSorts } : {}),
     });
-  }, [storageKey, hidden, sort, preset, order, widths, titles]);
+  }, [storageKey, hidden, sort, preset, order, widths, titles, groupSorts]);
 
   // The user's order and captions: everything below (headers, search hint, filters, Excel) reads these columns.
   const ordered = useMemo(() => orderColumns(columns, order), [columns, order]);
@@ -404,14 +453,15 @@ export function DataTable<T>({
 
   const filtered = useMemo(() => {
     const result = searched.filter((row) => !activePreset || activePreset.test(row));
-    if (sort) {
+    // With a sort per group the header does not sort: the rows come in the screen's order, each group sorts its own.
+    if (sort && !groupSort) {
       const column = columns.find((item) => item.key === sort.key);
       if (column) {
         result.sort((a, b) => sort.direction * compareCells(column.value(a), column.value(b), column.numeric));
       }
     }
     return result;
-  }, [searched, columns, sort, activePreset]);
+  }, [searched, columns, sort, activePreset, groupSort]);
 
   const shown = filtered.slice(0, limit);
   const keys = new Set(rows.map(rowKey));
@@ -541,7 +591,22 @@ export function DataTable<T>({
       if (!byName.has(name)) { byName.set(name, []); groups.push([name, byName.get(name)!]); }
       byName.get(name)!.push(row);
     }
+    // A group's own sort orders only its rows; the groups stay where they are.
+    if (groupSort) {
+      for (const [name, groupRows] of groups) {
+        const own = groupSorts[name];
+        const column = own && columns.find((item) => item.key === own.key);
+        if (column) groupRows.sort((a, b) => directed(column.value(a), column.value(b), own.direction, column.numeric));
+      }
+    }
   } else groups.push(["", shown]);
+  /** `choice` — «ключ:+» / «ключ:-», пусто — порядок экрана. */
+  const sortGroup = (name: string, choice: string) => setGroupSorts((current) => {
+    const next = { ...current };
+    if (!choice) delete next[name];
+    else next[name] = { key: choice.slice(0, -2), direction: choice.endsWith(":-") ? -1 : 1 };
+    return next;
+  });
 
   // --- Cells edited in place ---
   const lines = groups.flatMap(([name, groupRows]) => collapsibleGroups && collapsed.has(name) ? [] : groupRows);
@@ -549,7 +614,21 @@ export function DataTable<T>({
   const editable = (column: DataColumn<T> | undefined, row: T | undefined): column is DataColumn<T> & { edit: DataCellEdit<T> } =>
     Boolean(column?.edit && row && (column.edit.enabled?.(row) ?? true));
   const textOf = (column: DataColumn<T>, row: T) => column.edit?.value ? column.edit.value(row) : String(column.value(row) ?? "");
+  // A choice cell copies what it shows (the size «22», not the size row's id); a paste finds the option again.
+  const copyOf = (column: DataColumn<T>, row: T) => column.edit?.options ? String(column.value(row) ?? "") : textOf(column, row);
+  /** The value a typed or pasted text writes: a choice cell takes an option of its list, or refuses. */
+  function resolve(column: DataColumn<T>, row: T, text: string): string {
+    const options = column.edit?.options?.(row);
+    if (!options || text === textOf(column, row)) return text;
+    const option = findOption(options, text);
+    if (!option) throw new Error(`«${text}» — нет в списке`);
+    return option.value;
+  }
   const nameOf = (row: T) => rowLabel?.(row) ?? rowKey(row);
+  // A choice opened by the mouse shows its list at once; arrows in a closed list only move the draft (Enter writes it),
+  // a pick by the mouse is written at once.
+  const pickerOnOpen = useRef(false);
+  const keyed = useRef(false);
   const hasEditing = visible.some((column) => column.edit);
   // The grid is one Tab stop: the active cell, or the first editable one.
   const entry: CellRef | null = active ?? (() => {
@@ -604,14 +683,26 @@ export function DataTable<T>({
     setActive(cell);
   }
 
-  function startEdit(cell: CellRef, draft?: string) {
+  function startEdit(cell: CellRef, draft?: string, byPointer = false) {
     const row = byKey.get(cell.row);
     const column = visible.find((item) => item.key === cell.col);
     if (!editable(column, row)) return;
+    const current = textOf(column, row!);
+    let text = draft ?? current;
+    const options = column.edit.options?.(row!);
+    if (options && draft !== undefined) {
+      // A typed letter picks the first option starting with it; Delete — the empty option when the list has one.
+      const fold = (value: string) => value.toLowerCase();
+      const option = draft === "" ? options.find((item) => item.value === "")
+        : findOption(options, draft) ?? options.find((item) => fold(item.label).startsWith(fold(draft)));
+      text = option ? option.value : current;
+    }
     setNote(null);
     setRangeFrom(null);
     setActive(cell);
-    setEditing({ ...cell, draft: draft ?? textOf(column, row!), error: "", saving: false });
+    keyed.current = false;
+    pickerOnOpen.current = Boolean(options && byPointer);
+    setEditing({ ...cell, draft: text, error: "", saving: false });
   }
 
   async function refresh() {
@@ -623,7 +714,7 @@ export function DataTable<T>({
     if (!edit || edit.saving) return;
     const row = byKey.get(edit.row);
     const column = visible.find((item) => item.key === edit.col);
-    const value = edit.draft.trim();
+    const value = column?.edit?.options ? edit.draft : edit.draft.trim();
     const move = () => { if (then !== "stay") select(step(edit, then) ?? edit); };
     if (!editable(column, row) || value === textOf(column, row!).trim()) {
       setEditing(null);
@@ -650,17 +741,23 @@ export function DataTable<T>({
   /** Paste and fill-down: the same save per cell, one after another, and one line about the result. */
   async function writeMany(column: DataColumn<T>, cells: Array<{ row: T; value: string }>) {
     if (!column.edit) return;
-    const todo = cells.map((cell) => ({ ...cell, value: cell.value.trim() }))
-      .filter((cell) => editable(column, cell.row) && cell.value !== textOf(column, cell.row).trim());
-    if (!todo.length) return;
-    setNote({ tone: "info", text: `Записываем ячеек: ${todo.length}…` });
     const failed: string[] = [];
+    // A choice cell writes the option the text names; a text that names none is refused for that row.
+    const todo = cells.filter((cell) => editable(column, cell.row)).flatMap((cell) => {
+      try { return [{ row: cell.row, value: resolve(column, cell.row, cell.value.trim()) }]; } catch (reason) {
+        failed.push(`${nameOf(cell.row)} — ${failure(reason)}`);
+        return [];
+      }
+    }).filter((cell) => cell.value !== textOf(column, cell.row).trim());
+    const total = todo.length + failed.length;
+    if (!total) return;
+    setNote({ tone: "info", text: `Записываем ячеек: ${todo.length}…` });
     for (const cell of todo) {
       try { await column.edit.save(cell.row, cell.value); } catch (reason) { failed.push(`${nameOf(cell.row)} — ${failure(reason)}`); }
     }
     await refresh();
     setNote(failed.length
-      ? { tone: "danger", text: `Не записано ${failed.length} из ${todo.length}: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}` }
+      ? { tone: "danger", text: `Не записано ${failed.length} из ${total}: ${failed.slice(0, 3).join("; ")}${failed.length > 3 ? "…" : ""}` }
       : { tone: "ok", text: `${column.title}: записано ячеек — ${todo.length}` });
   }
 
@@ -726,7 +823,7 @@ export function DataTable<T>({
     if (!ctrl && !event.altKey && event.key.length === 1) { event.preventDefault(); startEdit(cell, event.key); }
   }
 
-  function editorKeys(event: ReactKeyboardEvent<HTMLInputElement>) {
+  function editorKeys(event: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>) {
     event.stopPropagation();
     if (event.key === "Enter") { event.preventDefault(); void commit(event.shiftKey ? "up" : "down"); }
     else if (event.key === "Tab") { event.preventDefault(); void commit(event.shiftKey ? "prev" : "next"); }
@@ -755,11 +852,14 @@ export function DataTable<T>({
       // A narrowed column cuts long text with «…»: the whole value on hover.
       : width ? <div className="dt-clip" title={String(column.value(row) ?? "") || undefined}>{content}</div> : content;
     if (!editable(column, row)) {
+      if (column.computed && hasEditing) classes.push("dt-computed");
       return <td key={column.key} className={classes.filter(Boolean).join(" ") || undefined} style={style} data-label={column.title}>{body}</td>;
     }
     const cell = { row: key, col: column.key };
     const isActive = sameCell(active, cell);
     const edit = editing && sameCell(editing, cell) ? editing : null;
+    const options = edit ? column.edit.options?.(row) : undefined;
+    if (column.edit.options) classes.push("dt-choice");
     classes.push("dt-editable", isActive ? "dt-active" : "", inRange.has(key) && active?.col === column.key ? "dt-in-range" : "",
       edit ? "dt-editing" : "", edit?.error ? "dt-error" : "");
     return (
@@ -774,15 +874,15 @@ export function DataTable<T>({
         onClick={(event) => {
           event.stopPropagation();
           if (edit) return;
-          if (isActive && !event.shiftKey) startEdit(cell); else select(cell, event.shiftKey);
+          if (isActive && !event.shiftKey) startEdit(cell, undefined, true); else select(cell, event.shiftKey);
         }}
-        onDoubleClick={(event) => { event.stopPropagation(); if (!edit) startEdit(cell); }}
+        onDoubleClick={(event) => { event.stopPropagation(); if (!edit) startEdit(cell, undefined, true); }}
         onKeyDown={(event) => cellKeys(event, cell)}
         onCopy={(event) => {
           if (edit || event.target !== event.currentTarget) return;
           event.preventDefault();
           const range = rangeRows();
-          event.clipboardData.setData("text/plain", (range.length ? range : [row]).map((item) => textOf(column, item)).join("\r\n"));
+          event.clipboardData.setData("text/plain", (range.length ? range : [row]).map((item) => copyOf(column, item)).join("\r\n"));
         }}
         onPaste={(event) => {
           if (edit || event.target !== event.currentTarget) return;
@@ -791,7 +891,33 @@ export function DataTable<T>({
         }}
       >
         {edit ? <>
-          <input
+          {options ? <select
+            className="dt-cell-input dt-cell-select"
+            aria-label={`${column.title}: ${nameOf(row)}`}
+            aria-invalid={edit.error ? true : undefined}
+            aria-busy={edit.saving || undefined}
+            autoFocus
+            disabled={edit.saving}
+            value={edit.draft}
+            ref={(select) => {
+              if (!select || !pickerOnOpen.current) return;
+              pickerOnOpen.current = false;
+              try { (select as HTMLSelectElement & { showPicker?: () => void }).showPicker?.(); } catch { /* the list opens on the next click */ }
+            }}
+            onPointerDown={() => { keyed.current = false; }}
+            onChange={(event) => {
+              const draft = event.target.value;
+              const next = { ...edit, draft, error: "" };
+              setEditing((current) => current && sameCell(current, edit) ? next : current);
+              if (!keyed.current) { editingRef.current = next; void commit("stay"); }
+            }}
+            onKeyDown={(event) => { keyed.current = true; editorKeys(event); }}
+            onClick={(event) => event.stopPropagation()}
+            onBlur={() => { const current = editingRef.current; if (current && sameCell(current, edit) && !current.saving && !current.error) void commit("stay"); }}
+          >
+            {!options.some((option) => option.value === edit.draft) && <option value={edit.draft}>{copyOf(column, row) || EMPTY}</option>}
+            {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select> : <input
             className="dt-cell-input"
             autoComplete="off"
             aria-label={`${column.title}: ${nameOf(row)}`}
@@ -805,7 +931,7 @@ export function DataTable<T>({
             onKeyDown={editorKeys}
             onClick={(event) => event.stopPropagation()}
             onBlur={() => { const current = editingRef.current; if (current && sameCell(current, edit) && !current.saving && !current.error) void commit("stay"); }}
-          />
+          />}
           {edit.error && <small className="cell-edit-error" role="alert">{edit.error}</small>}
         </> : body}
       </td>
@@ -960,8 +1086,9 @@ export function DataTable<T>({
                     data-col={column.key}
                     className={[columnClass(width ? { ...column, width } : column, index, sized), width ? "dt-w" : "", drop].filter(Boolean).join(" ") || undefined}
                     style={width ? { "--dt-w": `${width}px` } as CSSProperties : column.width ? { width: column.width } : undefined}
-                    title={column.hint}
-                    aria-sort={direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
+                    title={column.hint ?? (column.computed && hasEditing ? "Считается — в таблице не правится"
+                      : groupSort ? "Сортировка — у каждой группы, в её строке" : undefined)}
+                    aria-sort={groupSort ? undefined : direction === 1 ? "ascending" : direction === -1 ? "descending" : "none"}
                     draggable
                     onDragStart={(event) => {
                       if ((event.target as HTMLElement).closest?.(".dt-resize")) { event.preventDefault(); return; }
@@ -983,9 +1110,12 @@ export function DataTable<T>({
                     }}
                     onDragEnd={() => { dragKey.current = null; setDropTarget(null); }}
                   >
-                    <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
-                      {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
-                    </button>
+                    {groupSort
+                      // Each group sorts its own rows (the control in the group's row): the header only names the column.
+                      ? <span className="sort-head">{column.title}</span>
+                      : <button type="button" className="sort-head" onClick={() => toggleSort(column.key)}>
+                        {column.title}{direction === 1 ? " ▲" : direction === -1 ? " ▼" : ""}
+                      </button>}
                     <span
                       className="dt-resize"
                       aria-hidden="true"
@@ -1030,6 +1160,29 @@ export function DataTable<T>({
                             return next;
                           })} style={{ all: "unset", cursor: "pointer" }}>{collapsed.has(name) ? "▸" : "▾"} {title}</button>
                           : title;
+                      })()}
+                      {groupSort && groupRows.length > 1 && (() => {
+                        const own = groupSorts[name];
+                        const column = own && visible.find((item) => item.key === own.key);
+                        const choice = column ? `${column.key}:${own.direction === -1 ? "-" : "+"}` : "";
+                        // The chosen sort reads as text as wide as it is; the list itself lies over it, invisible.
+                        return (
+                          <span className={choice ? "dt-group-sort active" : "dt-group-sort"}>
+                            <span aria-hidden="true">{column ? `${column.title} ${own.direction === -1 ? "▼" : "▲"}` : "порядок каталога ▾"}</span>
+                            <select
+                              aria-label={`Сортировка группы «${name || "—"}»`}
+                              title="Сортировка этой группы"
+                              value={choice}
+                              onChange={(event) => sortGroup(name, event.target.value)}
+                            >
+                              <option value="">порядок каталога</option>
+                              {visible.flatMap((item) => [
+                                <option key={`${item.key}:+`} value={`${item.key}:+`}>{item.title} ▲</option>,
+                                <option key={`${item.key}:-`} value={`${item.key}:-`}>{item.title} ▼</option>,
+                              ])}
+                            </select>
+                          </span>
+                        );
                       })()}
                     </td>
                   </tr>

@@ -479,11 +479,140 @@ describe("cells edited right in the table, like a sheet", () => {
     await vi.waitFor(() => expect(save).toHaveBeenCalledWith(rows[1], "Чип и Дип"));
   });
 
+  describe("a choice cell (owner 16.10: «редактирование везде сделать как в экселе»)", () => {
+    const STATUSES = [
+      { value: "s-way", label: "В пути", aliases: ["едет"] },
+      { value: "s-done", label: "Принято" },
+      { value: "s-back", label: "Возврат" },
+    ];
+    const statusOf = (row: Row) => STATUSES.find((item) => item.label === row.status)!.value;
+    function choice(save = vi.fn(async (_row: Row, _value: string) => undefined as unknown)) {
+      const onEdited = vi.fn(async () => undefined);
+      const list: DataColumn<Row>[] = [
+        { key: "name", title: "Наименование", value: (row) => row.name },
+        { key: "status", title: "Статус", value: (row) => row.status, edit: { save, value: statusOf, options: () => STATUSES } },
+        { key: "why", title: "Почему", value: () => "по правилу", computed: true },
+      ];
+      render(<DataTable rows={rows} columns={list} rowKey={(row) => row.id} rowLabel={(row) => row.name} onEdited={onEdited} />);
+      const cell = (name: string, index = 1) => screen.getByText(name).closest("tr")!.querySelectorAll("td")[index] as HTMLElement;
+      return { save, cell, onEdited };
+    }
+
+    it("opens a list in the cell: a typed letter picks an option, Enter writes its value and moves down", async () => {
+      const { save, cell } = choice();
+      fireEvent.click(cell("Разъём JST XH"));
+      fireEvent.keyDown(cell("Разъём JST XH"), { key: "в" });
+      const select = screen.getByRole("combobox", { name: "Статус: Разъём JST XH" });
+      expect(select).toHaveValue("s-way"); // «в» — the first option starting with it («В пути», then «Возврат»)
+      fireEvent.keyDown(select, { key: "ArrowDown" });
+      fireEvent.change(select, { target: { value: "s-done" } }); // arrows in a closed list only move the draft
+      expect(save).not.toHaveBeenCalled();
+      fireEvent.keyDown(select, { key: "Enter" });
+      await vi.waitFor(() => expect(save).toHaveBeenCalledWith(rows[0], "s-done"));
+      await vi.waitFor(() => expect(cell("Провод МГТФ 0,12")).toHaveClass("dt-active"));
+    });
+
+    it("writes a pick by the mouse at once; Esc closes without writing; the computed cell is read-only", async () => {
+      const { save, cell } = choice();
+      fireEvent.click(cell("Разъём Molex"));
+      fireEvent.click(cell("Разъём Molex")); // the active cell opens
+      let select = screen.getByRole("combobox", { name: "Статус: Разъём Molex" });
+      expect(select).toHaveValue("s-way");
+      expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["В пути", "Принято", "Возврат"]);
+      fireEvent.keyDown(select, { key: "Escape" });
+      expect(screen.queryByRole("combobox")).toBeNull();
+      fireEvent.doubleClick(cell("Разъём Molex"));
+      select = screen.getByRole("combobox", { name: "Статус: Разъём Molex" });
+      fireEvent.pointerDown(select);
+      fireEvent.change(select, { target: { value: "s-back" } });
+      await vi.waitFor(() => expect(save).toHaveBeenCalledWith(rows[2], "s-back"));
+      await vi.waitFor(() => expect(screen.queryByRole("combobox")).toBeNull());
+      expect(cell("Разъём Molex", 2)).toHaveClass("dt-computed");
+      expect(cell("Разъём Molex", 2)).not.toHaveClass("dt-editable");
+    });
+
+    it("shows the server's refusal under the list and keeps the pick", async () => {
+      const save = vi.fn(async (_row: Row, _value: string) => undefined as unknown).mockRejectedValueOnce(new Error("Ячейку уже поменяли"));
+      const { cell } = choice(save);
+      fireEvent.doubleClick(cell("Разъём JST XH"));
+      const select = screen.getByRole("combobox", { name: "Статус: Разъём JST XH" });
+      fireEvent.change(select, { target: { value: "s-done" } });
+      expect(await screen.findByRole("alert")).toHaveTextContent("Ячейку уже поменяли");
+      expect(select).toHaveValue("s-done");
+      expect(select).toHaveAttribute("aria-invalid", "true");
+    });
+
+    it("pastes a text that names an option by its label or another spelling, refuses one that names none, copies what it shows", async () => {
+      const { save, cell } = choice();
+      fireEvent.click(cell("Разъём JST XH"));
+      fireEvent.paste(cell("Разъём JST XH"), { clipboardData: { getData: () => "принято\r\nедет\r\nкуда-то\r\n" } });
+      await screen.findByText(/Не записано 1 из 3: Разъём Molex — «куда-то» — нет в списке/);
+      expect(save.mock.calls.map(([row, value]) => `${row.id}=${value}`)).toEqual(["1=s-done", "2=s-way"]);
+      const data = { setData: vi.fn() };
+      fireEvent.copy(cell("Разъём JST XH"), { clipboardData: data });
+      expect(data.setData).toHaveBeenCalledWith("text/plain", "В пути");
+    });
+  });
+
   it("has no editable cells without an edit on the column", () => {
     const { container } = render(<DataTable rows={rows} columns={columns} rowKey={(row) => row.id} />);
     expect(container.querySelector("td.dt-editable")).toBeNull();
     expect(screen.queryByText(/Ctrl\+D/)).toBeNull();
   });
+});
+
+describe("a sort of its own in every group (owner 16.10: «у каждой группы своя, и это во всех кабелях»)", () => {
+  const stock: Row[] = [
+    { id: "a1", name: "Б-разъём", supplier: "Чип и Дип", qty: 5, status: "" },
+    { id: "a2", name: "А-разъём", supplier: "Чип и Дип", qty: 50, status: "" },
+    { id: "a3", name: "В-разъём", supplier: "Чип и Дип", qty: 1, status: "" },
+    { id: "b1", name: "Провод 2", supplier: "Кабель-Торг", qty: 7, status: "" },
+    { id: "b2", name: "Провод 1", supplier: "Кабель-Торг", qty: 3, status: "" },
+  ];
+  const table = () => <DataTable rows={stock} columns={columns} rowKey={(row) => row.id} storageKey="grouped" groupBy={(row) => row.supplier} groupSort />;
+  const order = () => screen.getAllByRole("row").slice(1).map((row) => row.classList.contains("group-row")
+    ? `[${row.querySelector("strong")?.textContent}]` : row.querySelector("td")?.textContent);
+
+  it("sorts one group up and down by a column it picks; the other group and the order of groups stay", () => {
+    const { unmount } = render(table());
+    const catalogue = ["[Чип и Дип]", "Б-разъём", "А-разъём", "В-разъём", "[Кабель-Торг]", "Провод 2", "Провод 1"];
+    expect(order()).toEqual(catalogue);
+    expect(screen.queryByRole("button", { name: "Кол-во" })).toBeNull(); // the header does not sort
+    const sorter = screen.getByRole("combobox", { name: "Сортировка группы «Чип и Дип»" });
+    expect(sorter).toHaveValue("");
+    expect(within(sorter).getAllByRole("option")[0]).toHaveTextContent("порядок каталога");
+
+    fireEvent.change(sorter, { target: { value: "qty:+" } });
+    expect(order()).toEqual(["[Чип и Дип]", "В-разъём", "Б-разъём", "А-разъём", "[Кабель-Торг]", "Провод 2", "Провод 1"]);
+    fireEvent.change(sorter, { target: { value: "qty:-" } });
+    expect(order()).toEqual(["[Чип и Дип]", "А-разъём", "Б-разъём", "В-разъём", "[Кабель-Торг]", "Провод 2", "Провод 1"]);
+    fireEvent.change(screen.getByRole("combobox", { name: "Сортировка группы «Кабель-Торг»" }), { target: { value: "name:+" } });
+    expect(order()).toEqual(["[Чип и Дип]", "А-разъём", "Б-разъём", "В-разъём", "[Кабель-Торг]", "Провод 1", "Провод 2"]);
+
+    // remembered with the table's key
+    unmount();
+    render(table());
+    expect(screen.getByRole("combobox", { name: "Сортировка группы «Чип и Дип»" })).toHaveValue("qty:-");
+    expect(order()).toEqual(["[Чип и Дип]", "А-разъём", "Б-разъём", "В-разъём", "[Кабель-Торг]", "Провод 1", "Провод 2"]);
+    fireEvent.change(screen.getByRole("combobox", { name: "Сортировка группы «Чип и Дип»" }), { target: { value: "" } });
+    expect(order().slice(0, 4)).toEqual(catalogue.slice(0, 4));
+  });
+
+  it("keeps the header sort of other grouped tables as it was", () => {
+    render(<DataTable rows={stock} columns={columns} rowKey={(row) => row.id} groupBy={(row) => row.supplier} />);
+    expect(screen.queryByRole("combobox", { name: /Сортировка группы/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Кол-во" }));
+    expect(order()[0]).toBe("[Чип и Дип]");
+    expect(order()[1]).toBe("В-разъём");
+  });
+});
+
+it("shows every row at once with an unlimited page (the cable lists: 369 multi-core cables and more)", () => {
+  const many: Row[] = Array.from({ length: 450 }, (_, index) => ({ id: String(index), name: `Кабель ${index}`, supplier: index % 2 ? "А" : "Б", qty: index, status: "" }));
+  const { container } = render(<DataTable rows={many} columns={columns} rowKey={(row) => row.id} groupBy={(row) => row.supplier} pageSize={Infinity} />);
+  expect(container.querySelectorAll("tbody tr:not(.group-row)")).toHaveLength(450);
+  expect(screen.getByText("Показано 450 из 450")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Показать ещё" })).toBeNull();
 });
 
 it("shows «Удалить» in «Колонки» only for a column that can be removed and calls it", () => {
