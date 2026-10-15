@@ -66,6 +66,9 @@ export type Endpoint = {
   /** «Термоусадка поверх разъёма»: рукав на тыльной части разъёма (корпус + выход проводов). Поля необязательны — старые
       сохранённые состояния грузятся без них. shrinkMat пуст — строка ТТК листа (иначе первая ТУТ); shrinkLen пуст — 20 мм. */
   shrinkOn?: boolean; shrinkMat?: string; shrinkLen?: string;
+  /** «Сборка корпуса после пайки» паяльного разъёма (владелец 15.10): детали корпуса надеваются на кабель до пайки, корпус
+   *  собирается после усадки ТУТ на чашках. Нет поля — по типу разъёма (housingDefault_: D-Sub, круглые, коаксиальные). */
+  housingOn?: boolean;
   pins?: Record<number, string>;
   /** «Распиновка проверена»: подпись проверенной распиновки (pinoutCheck.ts); другая подпись — флаг снят. */
   pinChecked?: string;
@@ -79,6 +82,10 @@ export type Connection = { wire: string; from: ConnectionEnd; to: ConnectionEnd;
 export type WireEntry = { idx: number; compId: string; length: number; qty: number; cores?: number; jacket?: string; coreColors?: string[];
   /** `nets[k]` — цепь k-й жилы (после жил — экраны), как её подписывают на чертеже («GND», «CAN_H»); пусто — без имени. */
   nets?: string[] };
+/** Термоусадка на место разделки оболочки (владелец 15.10: «опционально с опциональной длиной, если длина не указывается —
+ *  25 мм, тут можно выбрать из состава»): трубка на срез оболочки кабеля стороны. `mat` пуст — первая ТУТ состава (иначе
+ *  ТТК), `len` пуст — 25 мм. */
+export type JacketShrink = { on: boolean; mat: string; len: string };
 export type WrapKind = "tape" | "braid" | "under";
 export type WrapSlot = { mat: string; kind: WrapKind; len: string };
 export type CoaxSide = { art: string; name: string } | null;
@@ -142,6 +149,8 @@ export type GenState = {
   freeStrip: { enabled: boolean; len: string };
   cap: { enabled: boolean; tut: string; len: string };
   wrap: { enabled: boolean; slots: WrapSlot[] };
+  /** «Термоусадка на место разделки» по сторонам; нет ключа — выключена (старые состояния грузятся без него). */
+  jacketShrink?: Partial<Record<Side, JacketShrink>>;
   seal: { enabled: boolean; mat: string; places: string };
   tin: { enabled: boolean; wires: number[] | null; stripLen: string };
   coax: {
@@ -165,7 +174,9 @@ export type OpSpec = {
   tmplHint?: string; cat?: string; termArt?: string; firstTerm?: boolean; wireIdxs?: number[];
   /** Карта, которую операция хочет по правилу, когда tmplHint — замена за её отсутствием (CUT_WIRE+2crimp → +1crimp). */
   tmplWant?: string;
-  strip?: { a: boolean; lenA: string; b: boolean; lenB: string }; stripCount?: number;
+  /** Разделка концов: lenA/lenB — зачистка конца (у кабеля в оболочке — оболочка), coreA/coreB — зачистка жил кабеля в
+   *  оболочке под обжим или пайку (ротор снимает оболочку и зачищает жилы одним проходом, владелец 15.10). */
+  strip?: { a: boolean; lenA: string; b: boolean; lenB: string; coreA?: string; coreB?: string }; stripCount?: number;
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
   harness?: boolean; units?: number; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
   wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
@@ -178,6 +189,11 @@ export type OpSpec = {
 export const JACKET_STRIP_MM_ = "20";
 /** Длина рукава «Термоусадка поверх разъёма» по умолчанию, мм. */
 export const SHRINK_LEN_MM_ = "20";
+/** Длина трубки «Термоусадка на место разделки» по умолчанию, мм (владелец 15.10). */
+export const JACKET_SHRINK_LEN_MM_ = "25";
+/** Паяльные разъёмы с корпусом (кожух, хвостовик, гайка): D-Sub/DH/СНП, круглые, коаксиальные — «Сборка корпуса после
+ *  пайки» у них включена по умолчанию. */
+const HOUSING_CONN_RE_ = /\bd[-\s]?sub\b|\bdb[-\s]?\d|\bde[-\s]?9\b|\bdh[-\s]?\d|\bdhr\b|снп|gx[\s-]*\d|\blp[\s-]*\d|lemo|\bm(?:8|12|16)\b|2рм|онц|снц|\bрс[\s-]*\d|xlr|\bdin\b|кругл|circular|\bbnc\b|\bsma\b|\btnc\b|\bn[-\s]?type\b|\bfme\b|\buhf\b|pl[-\s]?259/i;
 export const DIODE_RE_ = /tvs|диод|\d[.,]\d\s*ke\d|\bsmbj\d/i;
 export const LUG_RE_ = /^\s*(?:нки|нви|нвки|ншви|нши|рпи|тмл)(?![а-яa-z])/i;
 export const FOLD_STRIP_MM_ = "10";
@@ -262,6 +278,18 @@ export function applyOpOrder(ops: OpSpec[], order: string[]): OpSpec[] {
   const sorted = ops.map((op) => (rank.has(op.opKey) ? known[next++] : op));
   const firstPrs = sorted.find((op) => op.firstTerm !== undefined);
   return sorted.map((op) => (op.firstTerm === undefined ? op : { ...op, firstTerm: op === firstPrs }));
+}
+
+/** Размеры разделки кабеля в оболочке для названия операции: «оболочка 20 мм, жилы 3,5 мм»; у сторон разные —
+ *  «оболочка 20 мм, жилы А 3,5 мм, В 5 мм»; длины нет («—») — «?». */
+export function jacketCoreText_(jacket: { a: string; b: string }, core: { a: string; b: string }): string {
+  const mm = (v: string) => (!v || v === "—" ? "? мм" : `${v.replace(".", ",")} мм`);
+  const part = (title: string, v: { a: string; b: string }) => {
+    const both = [v.a, v.b].filter(Boolean);
+    if (!both.length) return "";
+    return new Set(both).size === 1 ? `${title} ${mm(both[0])}` : `${title} А ${mm(v.a)}, В ${mm(v.b)}`;
+  };
+  return [part("оболочка", jacket), part("жилы", core)].filter(Boolean).join(", ");
 }
 
 /** Свой порядок операций сохранённой карты (`build_config.opOrder`); нет — порядок генератора. */
@@ -681,6 +709,37 @@ export function makeGen(D: GenData, S: GenState) {
     const comp = (e.shrinkMat ? getCompById(e.shrinkMat) : null) || defaultShrinkComp_();
     return comp ? { comp, len: (e.shrinkLen || "").trim() || SHRINK_LEN_MM_ } : null;
   }
+  /** Трубка на место разделки по умолчанию: ТУТ состава (на срез оболочки клеевая не нужна), иначе ТТК. */
+  function defaultJacketShrinkComp_() {
+    const all = shrinkCandidates_();
+    return all.find((c) => !isGlueSleeve_(c)) || all[0] || null;
+  }
+  /** Кабелей в оболочке на изделие, чьи жилы приходят в разъёмы стороны (по трубке на каждый срез оболочки). */
+  const jacketCablesOnSide_ = (side: Side) => cableEnds_(side).reduce((n, x) => n + Math.max(1, Math.round(Number(x.w.qty) || 1)), 0);
+  /** «Термоусадка на место разделки» стороны: трубка, длина отрезка и число отрезков на изделие; выключена или кабеля в
+   *  оболочке на стороне нет — null. */
+  function jacketShrinkOf_(side: Side): { comp: Comp; len: string; count: number } | null {
+    const js = S.jacketShrink?.[side];
+    if (!js?.on) return null;
+    const count = jacketCablesOnSide_(side);
+    const comp = (js.mat ? getCompById(js.mat) : null) || defaultJacketShrinkComp_();
+    return count && comp ? { comp, len: (js.len || "").trim() || JACKET_SHRINK_LEN_MM_, count } : null;
+  }
+  /** Корпус паяльного разъёма: строка «корпус/housing» состава или разъём с корпусом по названию (HOUSING_CONN_RE_). */
+  const housingComp_ = () => comps().find((c) => /корпус|housing/i.test(`${c.type || ""} ${c.name || ""}`)) || null;
+  function housingDefault_(e: Endpoint) {
+    const conn = e.connId ? getCompById(e.connId) : null;
+    return !!conn && (HOUSING_CONN_RE_.test(`${conn.art || ""} ${conn.name || ""}`) || !!housingComp_());
+  }
+  /** «Сборка корпуса после пайки» у этого конца: выбор технолога, иначе по типу разъёма. */
+  const housingOn_ = (e: Endpoint) => e.method === "solder" && !!e.connId && (e.housingOn ?? housingDefault_(e));
+  /** Карта сборки корпуса: по корпусу из состава или по разъёму (USB, GX/LP, D-Sub/DH/СНП); не подобрана — "". */
+  function housingTmpl_(e: Endpoint) {
+    const conn = e.connId ? getCompById(e.connId) : null, h = housingComp_();
+    const s = `${h ? `${h.art || ""} ${h.name || ""}` : ""} ${conn ? `${conn.art || ""} ${conn.name || ""}` : ""}`;
+    return /usb/i.test(s) ? "INS_housing_USB" : /gx|\blp[\s-]*\d/i.test(s) ? "INS_housing_GX"
+      : /\bd[-\s]?sub\b|\bdb[-\s]?\d|\bde[-\s]?9\b|\bdh[-\s]?\d|\bdhr\b|снп/i.test(s) ? "INS_housing_DB/DH/СНП" : "";
+  }
   function lugTmplHint_(art: string) {
     const s = String(art || "");
     if (!LUG_RE_.test(s)) return "";
@@ -700,7 +759,7 @@ export function makeGen(D: GenData, S: GenState) {
   const markComps_ = () => comps().filter((c) => /маркир/i.test(`${c.type || ""} ${c.name || ""}`));
   function harnessSleeveComps_() {
     const solderTut = S.endpoints.some((e) => e.method === "solder" && !e.tutOff) ? bomTut_() : null;
-    const connSleeves = new Set(S.endpoints.map((e) => shrinkOf_(e)?.comp).filter(Boolean));
+    const connSleeves = new Set([...S.endpoints.map((e) => shrinkOf_(e)?.comp), ...(["A", "B"] as Side[]).map((side) => jacketShrinkOf_(side)?.comp)].filter(Boolean));
     return comps().filter((c) => {
       const s = `${c.type || ""} ${c.name || ""} ${c.art || ""}`;
       return c !== solderTut && !connSleeves.has(c) && /ттк|тут|термоусад|трубк|shrink/i.test(s) && !PROTECT_TUBE_RE_.test(s);
@@ -900,9 +959,11 @@ export function makeGen(D: GenData, S: GenState) {
     if (!S.hs.enabled) return [];
     const cap = capTube_();
     const spl = spliceEnds_() ? getCompById(S.spl.tutMat) : null;
+    // Трубка на место разделки считается своей операцией — не второй раз как термоусадка на жгут.
+    const jackets = new Set((["A", "B"] as Side[]).map((side) => jacketShrinkOf_(side)?.comp.id).filter(Boolean));
     return S.hs.rows.map((row) => {
       const c = getCompById(row.compId);
-      if (c && ((cap && c.id === cap.id) || (spl && c.id === spl.id))) return null;
+      if (c && ((cap && c.id === cap.id) || (spl && c.id === spl.id) || jackets.has(c.id))) return null;
       const len = (row.len || "").trim();
       const cnt = Math.max(0, parseInt(row.cnt, 10) || 0);
       return c && cnt ? { comp: c, len, cnt } : null;
@@ -1335,41 +1396,100 @@ export function makeGen(D: GenData, S: GenState) {
   function getActiveOps(): OpSpec[] {
     return applyOpOrder(autoOps(), S.opOrder || []);
   }
-  /** «Термоусадка поверх разъёма»: резка рукавов (вместе с прочей резкой трубок), «надеть» до терминирования своего конца
-   *  (после монтажа корпус не пролезет), «усадка» после монтажа/пайки этого конца. Количество — на изделие, как tutCount. */
-  function shrinkOverConnectors_(ops: OpSpec[]) {
-    const items: Array<{ ep: Endpoint; tag: string; comp: Comp; len: string }> = [];
+  const tubeKind_ = (c: Comp) => (isGlueSleeve_(c) ? "ТТК" : "ТУТ");
+  /** Трубки, которые надеваются на кабель до обжима и пайки (владелец 15.10: «даже до обжимки она одевается, потому что с
+   *  контактами неудобно; то же самое с оплёткой»; «термоусадки должны одеваться сразу на две стороны»): «Термоусадка поверх
+   *  разъёма», «Термоусадка на место разделки» сторон, термоусадка на жгут и детали корпуса паяльных разъёмов. Резка — со
+   *  своими отрезками; надевание — одна операция на обе стороны; усадка — у каждой стороны после её монтажа. */
+  function sleeveItems_() {
+    const conn: Array<{ ep: Endpoint; tag: string; comp: Comp; len: string }> = [];
     (["A", "B"] as Side[]).forEach((side) => endpointsOnSide_(side).forEach((ep) => {
       const sh = shrinkOf_(ep);
-      if (sh) items.push({ ep, tag: sideRu_(side) + endpointOrdinal_(ep), ...sh });
+      if (sh) conn.push({ ep, tag: endKey_(ep), ...sh });
     }));
-    if (!items.length) return;
-    const kindOf = (c: Comp) => (isGlueSleeve_(c) ? "ТТК" : "ТУТ");
-    const groups: Record<string, typeof items> = {};
-    items.forEach((it) => { (groups[it.comp.id + "|" + it.len] || (groups[it.comp.id + "|" + it.len] = [])).push(it); });
-    const cuts: OpSpec[] = Object.keys(groups).map((k, i) => {
+    const jacket = (["A", "B"] as Side[]).flatMap((side) => { const js = jacketShrinkOf_(side); return js ? [{ side, ...js }] : []; });
+    const harness = harnessSleeves_();
+    const housings = S.endpoints.filter(housingOn_);
+    return { conn, jacket, harness, housings };
+  }
+  /** Резка трубок до обжима: рукава поверх разъёмов, трубки на место разделки, термоусадка на жгут. Отрезки одной трубки и
+   *  длины — одной операцией; количество — на изделие (tutCount). */
+  function sleeveCuts_(it: ReturnType<typeof sleeveItems_>): OpSpec[] {
+    const cuts: OpSpec[] = [];
+    const groups: Record<string, typeof it.conn> = {};
+    it.conn.forEach((x) => { (groups[x.comp.id + "|" + x.len] || (groups[x.comp.id + "|" + x.len] = [])).push(x); });
+    Object.keys(groups).forEach((k, i) => {
       const g = groups[k], c = g[0].comp;
-      return { type: "cutTut", opKey: "cutShr" + (i + 1), tmplHint: "CUT_TUT_short", cat: "Резка",
-        label: `Резка ${kindOf(c)} поверх разъёма ${g.map((x) => x.tag).join(", ")} — ${g.length}×${g[0].len} мм`,
-        tutArt: c.art || c.name || "", tutName: c.name || c.art || "", tutCount: g.length, tutSegs: [{ len: g[0].len, count: g.length }] };
+      cuts.push({ type: "cutTut", opKey: "cutShr" + (i + 1), tmplHint: "CUT_TUT_short", cat: "Резка",
+        label: `Резка ${tubeKind_(c)} поверх разъёма ${g.map((x) => x.tag).join(", ")} — ${g.length}×${g[0].len} мм`,
+        tutArt: c.art || c.name || "", tutName: c.name || c.art || "", tutCount: g.length, tutSegs: [{ len: g[0].len, count: g.length }] });
     });
-    let lastCut = -1;
-    ops.forEach((o, i) => { if (o.type === "cutTut" || /^cutWire/.test(o.type)) lastCut = i; });
-    ops.splice(lastCut + 1, 0, ...cuts);
-    items.forEach((it) => {
-      const side = it.ep.side, ord = endpointOrdinal_(it.ep);
-      const own = (o: OpSpec) => o.epId === it.ep.id || ["stripCable", "shield", "idle"].some((k) => o.opKey === k + side + ord);
-      const first = ops.findIndex(own);
-      const kind = kindOf(it.comp);
-      const put: OpSpec = { type: "insTut", opKey: "insShr" + side + ord, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: 1,
-        label: `Надеть ${kind} на кабель (${it.tag}) — 1 шт` };
-      ops.splice(first >= 0 ? first : ops.length, 0, put);
+    const jg: Record<string, typeof it.jacket> = {};
+    it.jacket.forEach((x) => { (jg[x.comp.id + "|" + x.len] || (jg[x.comp.id + "|" + x.len] = [])).push(x); });
+    Object.keys(jg).forEach((k, i) => {
+      const g = jg[k], c = g[0].comp, n = g.reduce((s, x) => s + x.count, 0);
+      cuts.push({ type: "cutTut", opKey: "cutJs" + (i + 1), tmplHint: "CUT_TUT_short", cat: "Резка",
+        label: `Резка ${tubeKind_(c)} на место разделки ${g.map((x) => sideRu_(x.side)).join(", ")} — ${n}×${g[0].len} мм`,
+        tutArt: c.art || c.name || "", tutName: c.name || c.art || "", tutCount: n, tutSegs: [{ len: g[0].len, count: n }] });
+    });
+    it.harness.forEach((s, i) => cuts.push({ type: "cutTut", opKey: "cutHs" + (i + 1), tmplHint: "CUT_TUT_short", cat: "Резка",
+      label: `Резка ${s.comp.art || s.comp.name} — ${s.cnt}×${s.len || "?"} мм`,
+      tutArt: s.comp.art || s.comp.name || "", tutName: s.comp.name || s.comp.art || "", tutCount: s.cnt, tutSegs: [{ len: s.len, count: s.cnt }] }));
+    return cuts;
+  }
+  /** «Надеть трубки (стороны А и В)»: одна операция на изделие до первого обжима, разделки у разъёма или пайки. */
+  function sleeveOn_(it: ReturnType<typeof sleeveItems_>): OpSpec | null {
+    const parts: string[] = [];
+    const byComp = <T extends { comp: Comp }>(list: T[]) => {
+      const out = new Map<string, T[]>();
+      list.forEach((x) => out.set(x.comp.id, [...(out.get(x.comp.id) || []), x]));
+      return [...out.values()];
+    };
+    // «ТУТ 6/3мм», «ТТК 6/2»; артикул без вида трубки — с видом впереди.
+    const tube = (c: Comp) => { const name = c.art || c.name || ""; return /^\s*(?:тут|ттк)/i.test(name) ? name : `${tubeKind_(c)} ${name}`; };
+    byComp(it.jacket).forEach((g) => parts.push(`${tube(g[0].comp)} на место разделки ${g.map((x) => sideRu_(x.side)).join(", ")} — ${g.reduce((s, x) => s + x.count, 0)} шт`));
+    byComp(it.conn).forEach((g) => parts.push(`${tube(g[0].comp)} поверх разъёма ${g.map((x) => x.tag).join(", ")} — ${g.length} шт`));
+    it.harness.forEach((s) => parts.push(`${s.comp.art || s.comp.name} ${allRjEndpoints_() ? "на кабель под хвостовики RJ" : "на жгут"} — ${s.cnt} шт`));
+    const tubes = parts.length;
+    it.housings.forEach((ep) => { const c = getCompById(ep.connId); parts.push(`детали корпуса ${endKey_(ep)}${c ? ` (${c.art || c.name})` : ""}`); });
+    if (!parts.length) return null;
+    const sides = (["A", "B"] as Side[]).filter((side) => endpointsOnSide_(side).length).map(sideRu_);
+    const where = sides.length === 2 ? " (стороны А и В)" : sides.length ? ` (сторона ${sides[0]})` : "";
+    const pieces = it.jacket.reduce((s, x) => s + x.count, 0) + it.conn.length + it.harness.reduce((s, x) => s + x.cnt, 0);
+    return { type: "insTut", opKey: "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true, tutCount: pieces,
+      label: `${tubes ? "Надеть трубки" : "Надеть детали корпуса"}${where}: ${parts.join("; ")}` };
+  }
+  /** Стороны, которые обжимает автомат резки, когда до обжима надо надеть трубку или оплётку: станок обжимает конец при
+   *  резке — надеть её раньше нельзя. Пусто — порядок честный. */
+  function sleeveCrimpCutConflict_(): Side[] {
+    const it = sleeveItems_();
+    const any = it.conn.length || it.jacket.length || it.harness.length || braidOn_();
+    return any ? crimpCutActiveSides_() : [];
+  }
+  /** Предупреждение формы: трубку надо надеть до обжима, а сторону обжимает станок при резке. */
+  function sleeveWarning_(): string {
+    const sides = sleeveCrimpCutConflict_();
+    if (!sides.length) return "";
+    return `Трубку надо надеть до обжима — обжим на станке для ${sides.length === 2 ? "сторон А и В" : `стороны ${sideRu_(sides[0])}`} отключите или наденьте трубку до резки.`;
+  }
+  /** Усадка трубок у сторон: рукав поверх разъёма — после последней операции своего разъёма (монтаж, пайка, сборка
+   *  корпуса), трубка на место разделки — после последней операции своей стороны. */
+  function sleeveShrinks_(ops: OpSpec[], it: ReturnType<typeof sleeveItems_>) {
+    it.conn.forEach((x) => {
+      const side = x.ep.side, ord = endpointOrdinal_(x.ep);
+      const own = (o: OpSpec) => o.epId === x.ep.id || ["stripCable", "shield", "idle"].some((k) => o.opKey === k + side + ord);
       let last = -1;
       ops.forEach((o, i) => { if (own(o)) last = i; });
-      if (it.ep.method === "solder") ops.forEach((o, i) => { if (o.type === "insHousing") last = Math.max(last, i); });
-      const shrink: OpSpec = { type: "heatTut", opKey: "heatShr" + side + ord, tmplHint: isGlueSleeve_(it.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short",
-        cat: "Усадка", tutCount: 1, label: `Усадка ${kind} поверх разъёма ${it.tag}` };
-      ops.splice(last >= 0 ? last + 1 : ops.length, 0, shrink);
+      ops.splice(last >= 0 ? last + 1 : ops.length, 0, { type: "heatTut", opKey: "heatShr" + side + ord,
+        tmplHint: isGlueSleeve_(x.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short", cat: "Усадка", tutCount: 1, label: `Усадка ${tubeKind_(x.comp)} поверх разъёма ${x.tag}` });
+    });
+    it.jacket.forEach((x) => {
+      const mineSide = (o: OpSpec) => o.side === x.side && (!!o.epId || /^(stripCable|shield|idle|heatShr)/.test(o.opKey));
+      let last = -1;
+      ops.forEach((o, i) => { if (mineSide(o)) last = i; });
+      ops.splice(last >= 0 ? last + 1 : ops.length, 0, { type: "heatTut", opKey: "heatJs" + x.side,
+        tmplHint: isGlueSleeve_(x.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short", cat: "Усадка", tutCount: x.count,
+        label: `Усадка ${tubeKind_(x.comp)} на месте разделки ${sideRu_(x.side)} — ${x.count} шт` });
     });
   }
   function autoOps(): OpSpec[] {
@@ -1392,7 +1512,8 @@ export function makeGen(D: GenData, S: GenState) {
     if (tutByLen[""] && solderEnds > 0) {
       const t = bomTut_();
       // Тот же материал уходит и на рукава поверх разъёмов — на пайку остаётся то, что за вычетом их длины.
-      const shrinkM = t ? S.endpoints.reduce((sum, e) => { const sh = shrinkOf_(e); return sh && sh.comp === t ? sum + (parseLengthVal_(sh.len) || 0) / 1000 : sum; }, 0) : 0;
+      const shrinkM = t ? S.endpoints.reduce((sum, e) => { const sh = shrinkOf_(e); return sh && sh.comp === t ? sum + (parseLengthVal_(sh.len) || 0) / 1000 : sum; }, 0)
+        + (["A", "B"] as Side[]).reduce((sum, side) => { const js = jacketShrinkOf_(side); return js && js.comp === t ? sum + (parseLengthVal_(js.len) || 0) * js.count / 1000 : sum; }, 0) : 0;
       const m = t ? Math.max(0, qtyNum(t) - shrinkM) : 0;
       if (m > 0) {
         const auto = String(Math.round(m * 1000 / solderEnds));
@@ -1411,7 +1532,7 @@ export function makeGen(D: GenData, S: GenState) {
       const splLen = (S.spl.strip || "").trim() || "—";
       const tinIdx = tinWireIndices_();
       const stripOf = (w: WireEntry) => {
-        let a = "", b = "";
+        let a = "", b = "", coreA = "", coreB = "";
         if (splAtCut) (["A", "B"] as Side[]).forEach((side) => {
           const eps = endpointsOnSide_(side);
           if (!eps.length || eps.some((e) => routedWireIdxs_(e).includes(w.idx))) return;
@@ -1419,8 +1540,15 @@ export function makeGen(D: GenData, S: GenState) {
         });
         S.endpoints.forEach((e) => {
           if (!routedWireIdxs_(e).includes(w.idx)) return;
-          let len: string | null = null;
+          let len: string | null = null, core = "";
           if (crimpSides.includes(e.side)) len = epStripLen_(e);
+          // Ротор снимает оболочку и зачищает жилы одним проходом (владелец 15.10: «разделка есть, но жилы не зачищаются»):
+          // оболочка — «Разделка» строки «Кабели», жилы — под обжим (зачистка терминала) или под пайку. RJ — без зачистки
+          // жил (врезной контакт), складывание жилы — по своему правилу ниже.
+          else if (S.rotor && isJacketedCable_(w) && (e.method === "solder" || (!isRjEndpoint_(e) && !(e.fold && isComplex_())))) {
+            len = w.jacket || JACKET_STRIP_MM_;
+            core = e.method === "solder" ? (e.solderStrip || "").trim() || DEFAULT_LEN_MM_ : epStripLen_(e);
+          }
           // «Без зачистки (ОТП)» — конец приходит на обжим уже зачищенным: его зачищает резка (владелец 14.10: «обжим с одной
           // и ОТП с другой» → «резка с обжимом А и зачисткой В»). Без ОТП конец под ручной обжим резка не трогает — его
           // зачищает пресс. Кабель в оболочке — по правилу ротора ниже.
@@ -1434,7 +1562,7 @@ export function makeGen(D: GenData, S: GenState) {
             len = epStripLen_(e);
           }
           if (len === null) return;
-          if (e.side === "A") a = len; else b = len;
+          if (e.side === "A") { a = len; coreA = core; } else { b = len; coreB = core; }
         });
         // Лужёный свободный конец зачищают под лужение: его длина главнее «Зачистки свободных концов» (тот блок — без
         // лужения); пустая длина свободной зачистки больше не прячет длину под лужение (719К.2 КБ1 «B ?», 04.10).
@@ -1442,28 +1570,30 @@ export function makeGen(D: GenData, S: GenState) {
         const freeLen = S.freeStrip.enabled ? (S.freeStrip.len || "").trim() : "";
         if (!b && tinned) b = (S.tin.stripLen || "").trim() || freeLen || "—";
         if (!b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = freeLen || "—";
-        return { a, b };
+        return { a, b, coreA, coreB };
       };
       // Сторона, которую обжимает станок: её первый разъём (терминал на стороне один — crimpCutBlock_) и заведённые в
       // неё провода. Провод, не заведённый в разъём этой стороны, на ней не обжимается.
       const crimpEpOf = (side: Side) => (crimpSides.includes(side) ? endpointsOnSide_(side)[0] || null : null);
       const crimpSets = (["A", "B"] as Side[]).map((side) => new Set(crimpEpOf(side) ? endpointsOnSide_(side).flatMap(routedWireIdxs_) : []));
       const rotor = S.rotor;
-      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; crimp: Side[]; tin: boolean; rot: boolean }> = {};
+      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; coreA: string; coreB: string; crimp: Side[]; tin: boolean; rot: boolean }> = {};
       activeWires.forEach((w) => {
         const s = stripOf(w);
         const crimp = (["A", "B"] as Side[]).filter((_, i) => crimpSets[i].has(w.idx));
         const tin = crimp.length > 0 && tinAtCut.has(w.idx);
         const rot = rotor && isJacketedCable_(w);
-        const sig = `${s.a}|${s.b}|${crimp.join("")}${tin ? "T" : ""}|${rot ? "R" : ""}`;
-        (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, crimp, tin, rot })).wires.push(w);
+        const sig = `${s.a}|${s.b}|${s.coreA}|${s.coreB}|${crimp.join("")}${tin ? "T" : ""}|${rot ? "R" : ""}`;
+        (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, coreA: s.coreA, coreB: s.coreB, crimp, tin, rot })).wires.push(w);
       });
       let ci = 0;
       Object.keys(groups).forEach((sig) => {
         const g = groups[sig], ws = g.wires;
         const hasA = g.a !== "", hasB = g.b !== "", n = (hasA ? 1 : 0) + (hasB ? 1 : 0);
         const key = ci === 0 ? "cutWire" : "cutWire" + ci; ci++;
-        const strip = { a: hasA, lenA: g.a === "—" ? "" : g.a, b: hasB, lenB: g.b === "—" ? "" : g.b };
+        const dashless = (s: string) => (s === "—" ? "" : s);
+        const strip = { a: hasA, lenA: dashless(g.a), b: hasB, lenB: dashless(g.b),
+          ...(g.coreA ? { coreA: dashless(g.coreA) } : {}), ...(g.coreB ? { coreB: dashless(g.coreB) } : {}) };
         if (g.crimp.length === 2) {
           // Обе стороны на станке с двумя аппликаторами: ручной опрессовки у этих концов нет. Терминалы сторон могут
           // различаться — в названии оба. Карты CUT_WIRE+2crimp нет в библиотеке — норма и карта односторонней резки.
@@ -1483,7 +1613,8 @@ export function makeGen(D: GenData, S: GenState) {
         } else if (n === 0) {
           ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), wireIdxs: ws.map((w) => w.idx), tmplHint: "CUT_WIRE_auto", cat: "Резка" });
         } else {
-          ops.push({ type: "cutWireStrip", opKey: key, label: cutLabel(ws, `Резка с разделкой${g.rot ? " на роторе" : ""} (${n} ст.)`),
+          const sizes = g.coreA || g.coreB ? `: ${jacketCoreText_({ a: g.a, b: g.b }, { a: g.coreA, b: g.coreB })}` : "";
+          ops.push({ type: "cutWireStrip", opKey: key, label: cutLabel(ws, `Резка с разделкой${g.rot ? " на роторе" : ""} (${n} ст.${sizes})`),
             wireIdxs: ws.map((w) => w.idx), tmplHint: `${g.rot ? "CUT_COAX" : "CUT_WIRE"}+${n}strip`, strip });
         }
       });
@@ -1512,8 +1643,16 @@ export function makeGen(D: GenData, S: GenState) {
       const cableOps = (how: string) => {
         const out: OpSpec[] = [];
         if (mine.length && !S.rotor && (conn || ep.method === "crimp")) {
-          out.push({ type: "stripCable", opKey: "stripCable" + side + ord, side, ord, label: `Разделка кабеля ${how} ${tags} — ${count(mine)} конц.`,
-            tmplHint: stripCableTmpl_(getCompById(mine[0].w.compId), mine.some((x) => x.screened)), cat: "Разделка", tutCount: count(mine) });
+          // Разделка у разъёма — оболочка и зачистка жил под обжим или пайку (владелец 15.10: «жилы не зачищаются»); у RJ
+          // жилы не зачищают — врезной контакт.
+          const jacket = mine[0].w.jacket || JACKET_STRIP_MM_;
+          const core = isRjEndpoint_(ep) ? "" : ep.method === "solder" ? (ep.solderStrip || "").trim() || DEFAULT_LEN_MM_ : epStripLen_(ep);
+          const key = side === "A" ? "a" : "b";
+          const sizes = jacketCoreText_({ a: jacket, b: "" }, { a: core, b: "" });
+          out.push({ type: "stripCable", opKey: "stripCable" + side + ord, side, ord, label: `Разделка кабеля ${how} ${tags} (${sizes}) — ${count(mine)} конц.`,
+            tmplHint: stripCableTmpl_(getCompById(mine[0].w.compId), mine.some((x) => x.screened)), cat: "Разделка", tutCount: count(mine),
+            strip: { a: key === "a", lenA: key === "a" ? jacket : "", b: key === "b", lenB: key === "b" ? jacket : "",
+              ...(core ? { [key === "a" ? "coreA" : "coreB"]: core === "—" ? "" : core } : {}) } });
         }
         const shielded = mine.filter((x) => x.screened);
         if (shielded.length) {
@@ -1579,18 +1718,23 @@ export function makeGen(D: GenData, S: GenState) {
       const firstEp = ops.findIndex((o) => o.epId);
       ops.splice(firstEp >= 0 ? firstEp : ops.length, 0, ...splOps);
     }
-    const housing = comps().find((c) => /корпус|housing/i.test(`${c.type || ""} ${c.name || ""}`));
-    const solderEps = S.endpoints.filter((e) => e.method === "solder" && e.connId);
-    if (housing && solderEps.length) {
-      const h = `${housing.art || ""} ${housing.name || ""}`;
-      const tmpl = /usb/i.test(h) ? "INS_housing_USB" : /gx/i.test(h) ? "INS_housing_GX" : /db|dh|снп/i.test(h) ? "INS_housing_DB/DH/СНП" : "";
-      if (tmpl) ops.push({ type: "insHousing", opKey: "insHousing", cat: "Монтаж корпуса", tmplHint: tmpl, units: solderEps.length,
-        label: `Монтаж корпуса — ${housing.art || housing.name} × ${solderEps.length}` });
-    }
     if (ops.some((o) => o.opKey === "insTut")) {
       ops.push({ type: "heatTut", opKey: "heatTut", label: `Усадка ТУТ — ${solderEnds} шт`, tmplHint: "HEAT_TYT_short", cat: "Усадка", tutCount: solderEnds });
     }
-    shrinkOverConnectors_(ops);
+    // «Сборка корпуса после пайки» (владелец 15.10): пайка → усадка ТУТ на чашках → сборка корпуса (кожух, винты, зажим
+    // кабеля) → усадка наружных трубок стороны. Детали корпуса надеваются на кабель до пайки — в «Надеть трубки».
+    let housingAt = ops.findIndex((o) => o.opKey === "heatTut");
+    S.endpoints.filter(housingOn_).forEach((ep) => {
+      const side = ep.side, ord = endpointOrdinal_(ep), conn = getCompById(ep.connId), tmpl = housingTmpl_(ep);
+      const op: OpSpec = { type: "insHousing", opKey: "housing" + side + ord, side, ord, epId: ep.id, units: 1,
+        ...(tmpl ? { tmplHint: tmpl, cat: "Монтаж корпуса" } : {}),
+        label: `Сборка корпуса после пайки ${endKey_(ep)}${conn ? ` — ${conn.art || conn.name}` : ""}${tmpl ? "" : " (норма — уточнить)"}` };
+      if (housingAt >= 0) { housingAt += 1; ops.splice(housingAt, 0, op); return; }
+      const solder = ops.findIndex((o) => o.type === "solderConn" && o.epId === ep.id);
+      ops.splice(solder >= 0 ? solder + 1 : ops.length, 0, op);
+    });
+    const sleeves = sleeveItems_();
+    sleeveShrinks_(ops, sleeves);
     const seal = sealOp_();
     if (seal) { const h = ops.findIndex((o) => o.type === "insHousing"); ops.splice(h >= 0 ? h : ops.length, 0, seal); }
     if (S.twist.enabled && getTwistSelectionCount() > 0) {
@@ -1605,13 +1749,9 @@ export function makeGen(D: GenData, S: GenState) {
     }
 
     const dress: OpSpec[] = [];
-    const sleeves = harnessSleeves_();
-    sleeves.forEach((s, i) => dress.push({ type: "cutTut", opKey: "cutHs" + (i + 1), tmplHint: "CUT_TUT_short", cat: "Резка",
-      label: `Резка ${s.comp.art || s.comp.name} — ${s.cnt}×${s.len || "?"} мм`,
-      tutArt: s.comp.art || s.comp.name || "", tutName: s.comp.name || s.comp.art || "", tutCount: s.cnt, tutSegs: [{ len: s.len, count: s.cnt }] }));
-    const hsCount = sleeves.reduce((n, s) => n + s.cnt, 0);
+    // Термоусадка на жгут режется и надевается вместе с прочими трубками до обжима (sleeveCuts_/sleeveOn_), здесь — усадка.
+    const hsCount = sleeves.harness.reduce((n, s) => n + s.cnt, 0);
     if (hsCount) {
-      dress.push({ type: "insTut", opKey: "insHs", tmplHint: "INS_TUT", cat: "Монтаж", tutCount: hsCount, harness: true, label: `Надеть термоусадку на жгут — ${hsCount} шт` });
       dress.push({ type: "heatTut", opKey: "heatHs", tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: hsCount, harness: true, label: `Усадка термоусадки на жгуте — ${hsCount} шт` });
     }
     const kdMarks = S.mark ? markSpecs(S.markRows || [], comps()) : [];
@@ -1637,21 +1777,17 @@ export function makeGen(D: GenData, S: GenState) {
     const wrapOps = (isComplex_() ? [0, 1, 2, 3] : [0]).map(mkWrap).filter((o): o is OpSpec => !!o);
     const braidOps = wrapOps.filter((o) => o.wrapKind === "braid");
     if (!braidOps.length) wrapOps.forEach((o) => { o.under = false; });
-    dress.splice(sleeves.length, 0, ...wrapOps.filter((o) => o.under), ...braidOps);
+    // Оплётка (и лента под ней) надевается до обжима, как трубки (владелец 15.10) — вместе с ними, ниже.
+    const slid = [...wrapOps.filter((o) => o.under), ...braidOps];
     if (dress.length && allRjEndpoints_()) {
-      const firstEp = ops.findIndex((o) => o.epId);
-      const glue = sleeves.some((s) => /ттк|клеев/i.test(`${s.comp.name || ""} ${s.comp.art || ""}`));
+      const glue = sleeves.harness.some((s) => /ттк|клеев/i.test(`${s.comp.name || ""} ${s.comp.art || ""}`));
       dress.forEach((o) => {
         if (o.opKey === "heatHs" && !glue) o.tmplHint = "HEAT_TYT_short";
-        if (o.opKey === "insHs") o.label = `Надеть термоусадку на кабель под хвостовики RJ — ${hsCount} шт`;
         if (o.opKey === "heatHs") o.label = `Усадка термоусадки на хвостовиках RJ — ${hsCount} шт`;
       });
-      const pre = dress.filter((o) => o.type === "cutTut" || o.type === "insTut" || o.type === "insWrap");
-      const post = dress.filter((o) => pre.indexOf(o) < 0);
-      ops.splice(firstEp >= 0 ? firstEp : ops.length, 0, ...pre);
       let lastEp = -1;
       ops.forEach((o, i) => { if (o.epId) lastEp = i; });
-      ops.splice(lastEp >= 0 ? lastEp + 1 : ops.length, 0, ...post);
+      ops.splice(lastEp >= 0 ? lastEp + 1 : ops.length, 0, ...dress);
     } else if (dress.length) {
       const firstB = ops.findIndex((o) => o.side === "B" && o.epId);
       const tinAt = ops.findIndex((o) => o.type === "tin");
@@ -1663,6 +1799,20 @@ export function makeGen(D: GenData, S: GenState) {
       let lastCut = -1;
       ops.forEach((o, i) => { if (/^cutWire/.test(o.type)) lastCut = i; });
       ops.splice(lastCut + 1, 0, ...prep);
+    }
+    // Трубки и оплётка — после резки и подготовки, до первого обжима, разделки у разъёма или пайки любой стороны: резка
+    // трубок, «Надеть трубки (стороны А и В)», оплётка. ТУТ «на пайку» режется после них — её надевает своя операция
+    // перед пайкой (иначе её отрезки ушли бы в «Надеть трубки»).
+    const on = sleeveOn_(sleeves);
+    const cuts = sleeveCuts_(sleeves);
+    if (on || cuts.length || slid.length) {
+      const prepOp = (o: OpSpec) => /^cutWire/.test(o.type) || o.type === "cutTut" || o.type === "foldCore" || (o.type === "endCap" && !o.side);
+      let at = ops.findIndex((o) => !prepOp(o));
+      if (at < 0) at = ops.length;
+      const solderCut = ops.findIndex((o, i) => i < at && o.opKey === "cutTut");
+      const moved = solderCut >= 0 ? ops.splice(solderCut, 1) : [];
+      if (moved.length) at -= 1;
+      ops.splice(at, 0, ...cuts, ...(on ? [on] : []), ...slid, ...moved);
     }
     return ops;
   }
@@ -1989,6 +2139,7 @@ export function makeGen(D: GenData, S: GenState) {
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
     harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
+    defaultJacketShrinkComp_, jacketShrinkOf_, jacketCablesOnSide_, housingOn_, housingDefault_, sleeveWarning_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
     markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
       const conn = getCompById(e.connId);

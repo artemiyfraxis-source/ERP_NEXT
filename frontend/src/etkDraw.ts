@@ -80,7 +80,8 @@ export function etkTolerance(value: unknown): string {
 }
 
 export type CutEndKind = "none" | "strip" | "tin" | "crimp";
-export type CutEnd = { kind: CutEndKind; len: string; terminal: string };
+/** `core` — зачистка жил кабеля в оболочке (ротор снимает оболочку `len` и зачищает жилы), "" — не кабель в оболочке. */
+export type CutEnd = { kind: CutEndKind; len: string; terminal: string; core?: string };
 
 /** Концы провода в операции резки: без зачистки, зачищен (медь), облужен или с обжатым терминалом. Считается при показе
  *  по типу, стороне и коду операции (CUT_WIRE+1crimp — обжим стороны операции, +2crimp — обеих, +tin — лудится свободный
@@ -100,15 +101,18 @@ export function etkCutEnds(operation: Row): { a: CutEnd; b: CutEnd } {
   };
   const end = (key: "a" | "b"): CutEnd => {
     const k = kind(key);
+    const coreKey = key === "a" ? "coreA" : "coreB";
     return { kind: k, len: str(key === "a" ? st.lenA : st.lenB).trim(),
-      terminal: k === "crimp" ? terminals[key === "b" && terminals.length > 1 ? 1 : 0] || "" : "" };
+      terminal: k === "crimp" ? terminals[key === "b" && terminals.length > 1 ? 1 : 0] || "" : "",
+      ...(k === "strip" && coreKey in st ? { core: str(st[coreKey]).trim() } : {}) };
   };
   return { a: end("a"), b: end("b") };
 }
 
 /** Зачистка конца: «A 1,2 мм», длины нет — «?»; с пометкой — лужёный «B 3 мм (лужение)» (в эскизе это подпись под проводом). */
 function endStrip(key: "A" | "B", end: CutEnd, note = false): string {
-  return `${key} ${mm(end.len) || "?"}${note && end.kind === "tin" ? " (лужение)" : ""}`;
+  const core = end.core !== undefined ? `, жилы ${mm(end.core) || "?"}` : "";
+  return `${key} ${mm(end.len) || "?"}${core}${note && end.kind === "tin" ? " (лужение)" : ""}`;
 }
 
 /** Провода резки: полоса на провод, концы — как их отдаёт операция: зачищенная медь, лужёный конец, обжатый терминал
@@ -543,7 +547,12 @@ function sideItems(operation: Row, end: "A" | "B"): EtkParam[] {
   // Зачистка: резка считает концы по коду операции (лужёный конец зачищен всегда); прочие — по полю зачистки.
   const entryStrip = entries.map((entry) => entry.strip?.trim()).find(Boolean) || "";
   const strip = obj(f.strip);
-  if (/^cutWire/.test(str(operation.type))) {
+  const coreKey = key === "a" ? "coreA" : "coreB";
+  if (strip[key] && coreKey in strip) {
+    // Кабель в оболочке (владелец 15.10): разделка оболочки и зачистка жил под обжим или пайку — двумя строками.
+    out.push(["Разделка оболочки", withUnit(str(key === "a" ? strip.lenA : strip.lenB), "мм")],
+      ["Зачистка жил", withUnit(str(strip[coreKey]), "мм")]);
+  } else if (/^cutWire/.test(str(operation.type))) {
     const cut = etkCutEnds(operation)[key];
     if (cut.kind !== "none") out.push(["Зачистка", `${withUnit(entryStrip || cut.len, "мм")}${cut.kind === "tin" ? " (лужение)" : ""}`]);
   } else if (entryStrip || strip[key]) {

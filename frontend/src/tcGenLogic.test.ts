@@ -513,8 +513,9 @@ it("heat-shrink over a connector: cut with other tubes, put on before this end's
   const keys = ops.map((o) => o.opKey);
   expect(ops.find((o) => o.opKey === "cutShr1")).toMatchObject({ type: "cutTut", tmplHint: "CUT_TUT_short", label: "Резка ТТК поверх разъёма А1 — 1×25 мм",
     tutArt: "ТТК 6/2", tutSegs: [{ len: "25", count: 1 }] });
-  const put = keys.indexOf("insShrA1"), shrink = keys.indexOf("heatShrA1");
-  expect(ops[put].label).toBe("Надеть ТТК на кабель (А1) — 1 шт");
+  // Надевается вместе с прочими трубками одной операцией на обе стороны — до обжима (владелец 15.10).
+  const put = keys.indexOf("insSleeves"), shrink = keys.indexOf("heatShrA1");
+  expect(ops[put]).toMatchObject({ type: "insTut", harness: true, tutCount: 1, label: "Надеть трубки (стороны А и В): ТТК 6/2 поверх разъёма А1 — 1 шт" });
   expect(ops[shrink]).toMatchObject({ label: "Усадка ТТК поверх разъёма А1", tmplHint: "HEAT_TTK_short" });
   const ownOps = ops.filter((o) => o.side === "A" && o.epId).map((o) => keys.indexOf(o.opKey));
   expect(put).toBeLessThan(Math.min(...ownOps));
@@ -533,7 +534,7 @@ it("heat-shrink over a solder connector shrinks after its mount; toggle off give
   const keys = ops.map((o) => o.opKey);
   expect(ops.find((o) => o.opKey === "cutShr1")?.tutSegs).toEqual([{ len: "20", count: 1 }]);
   const own = ops.filter((o) => o.epId === "a1").map((o) => keys.indexOf(o.opKey));
-  expect(keys.indexOf("insShrA1")).toBeLessThan(Math.min(...own));
+  expect(keys.indexOf("insSleeves")).toBeLessThan(Math.min(...own));
   expect(keys.indexOf("heatShrA1")).toBeGreaterThan(Math.max(...own));
 });
 
