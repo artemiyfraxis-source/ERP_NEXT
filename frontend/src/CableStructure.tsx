@@ -164,7 +164,7 @@ const UNPARSED = "Не разобраны";
 // A wire's own set (owner 15.10.2026: «для каждой группы свои требования»): the core material, the standard, the maker
 // and the supply columns; the coax materials (dielectric, screen, jacket) stay in «Колонки», hidden.
 const WIRE_SHOWN = new Set(["Материал жилы", "Стандарт", "Производители", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м", "Дата цены"]);
-const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал экрана", "Материал оболочки"]);
+const OTHER_LISTS = new Set(["Материал диэлектрика", "Материал изоляции жилы", "Материал экрана", "Материал оболочки"]);
 type Shared = { insulation?: string; voltage?: string; temp?: string };
 
 export function HookupWireTable({ data, canEdit, onSaved, onError, kindSelect, toolbar, removeColumn }: {

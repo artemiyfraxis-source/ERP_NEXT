@@ -234,14 +234,17 @@ describe("coax column order (owner 15.10: «сначала конструкти�
   });
 
   it("keeps the coax materials off the multicore list; its supply columns stay apart", async () => {
-    withColumns([...BASE, ...OWN], OWN);
+    withColumns([...BASE, ...OWN, "Материал изоляции жилы"], [...OWN, "Материал изоляции жилы"]);
     render(<ReferencesPage principal={admin} initialTab="cab_coax" />);
     await screen.findByText("RG316");
     fireEvent.click(screen.getByRole("button", { name: /^Многожильные кабели/ }));
     await screen.findByText("КСПВГ 4x0,20");
     const shown = heads();
-    expect(shown.filter((name) => name.startsWith("Материал"))).toEqual([]); // owner 15.10: «для каждой группы свои требования»
-    expect(shown).toEqual(expect.arrayContaining(["Экран", "Изоляция", "Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"]));
+    // owner 15.10: «у многожильных нужно материал жилы, материал изоляции жилы, материал экрана если есть, материал оболочки»
+    expect(shown.filter((name) => name.startsWith("Материал"))).toEqual(["Материал жилы", "Материал изоляции жилы", "Материал экрана", "Материал оболочки"]);
+    expect(shown).not.toContain("Изоляция");
+    expect(shown).not.toContain("Экран");
+    expect(shown).toEqual(expect.arrayContaining(["Поставщик", "Артикул поставщика", "Цена поставщика, ₽/м"]));
   });
 
   it("gives the range of the VNA span, else DC up to the rated maximum, never the cut-off", () => {
