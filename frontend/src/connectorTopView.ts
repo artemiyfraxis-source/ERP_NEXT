@@ -26,7 +26,7 @@ function line(x1: number, y1: number, x2: number, y2: number, width = THIN, extr
   return `<line x1="${f(x1)}" y1="${f(y1)}" x2="${f(x2)}" y2="${f(y2)}" stroke="${EDGE}" stroke-width="${width}"${extra}/>`;
 }
 
-function text(x: number, y: number, value: string, size = 9, anchor = "middle", extra = ""): string {
+function text(x: number, y: number, value: string, size = 11, anchor = "middle", extra = ""): string {
   return `<text x="${f(x)}" y="${f(y)}" font-size="${size}" font-family="Arial, sans-serif" text-anchor="${anchor}" fill="${EDGE}"${extra}>${value}</text>`;
 }
 
@@ -35,7 +35,7 @@ function dimension(x1: number, x2: number, y: number, y0: number, label: string)
   const a = 3.2, b = 1.2;
   return line(x1, y0, x1, y - 2, 0.4) + line(x2, y0, x2, y - 2, 0.4) + line(x1, y, x2, y, 0.5) +
     `<path d="M${f(x1 + a)},${f(y - b)} L${f(x1)},${f(y)} L${f(x1 + a)},${f(y + b)} M${f(x2 - a)},${f(y - b)} L${f(x2)},${f(y)} L${f(x2 - a)},${f(y + b)}" fill="none" stroke="${EDGE}" stroke-width=".5"/>` +
-    text((x1 + x2) / 2, y - 2.6, label);
+    text((x1 + x2) / 2, y - 3, label);
 }
 
 /** Вид сверху, вписанный в maxW × maxH; `dims: false` — без размеров и подписей (миниатюра в списке серий). */
@@ -49,7 +49,7 @@ export function connectorTopView(hs: ConnectorHousing, maxW: number, maxH: numbe
   const ears = b?.ears || 0;
   const centers = b ? bodyColumns(hs, b, pitch)
     : Array.from({ length: hs.cols }, (_, c) => W / 2 + (c - (hs.cols - 1) / 2) * pitch);
-  const m = dims ? 28 : 3, top = dims ? 4 + 13 * (hs.cols > 2 ? 3 : 2) + 6 : 3, bottom = dims ? 48 : 3;
+  const m = dims ? 28 : 3, top = dims ? 6 + 15 * (hs.cols > 2 ? 3 : 2) + 6 : 3, bottom = dims ? 58 : 3;
   const k = Math.max(1, Math.min((maxW - 2 * m) / W, (maxH - top - bottom) / L, 40));
   const x0 = m + (dims ? Math.max(0, (150 - (W * k + 2 * m)) / 2) : 0), y0 = top, w = W * k, h = L * k, sx = (mm: number) => x0 + mm * k;
   let g = "";
@@ -85,20 +85,20 @@ export function connectorTopView(hs: ConnectorHousing, maxW: number, maxH: numbe
 
   if (dims) {
     const [row, col] = pinOne(hs), px = sx(centers[col] ?? W / 2), n = hs.cols;
-    let dy = y0 - 12;
-    if (n >= 2) { g += dimension(sx(centers[0]), sx(centers[1]), dy, cy, comma(pitch)); dy -= 13; }
-    if (n >= 3) { g += dimension(sx(centers[0]), sx(centers[n - 1]), dy, cy, `A ${comma((n - 1) * pitch)}`); dy -= 13; }
+    let dy = y0 - 13;
+    if (n >= 2) { g += dimension(sx(centers[0]), sx(centers[1]), dy, cy, comma(pitch)); dy -= 15; }
+    if (n >= 3) { g += dimension(sx(centers[0]), sx(centers[n - 1]), dy, cy, `A ${comma((n - 1) * pitch)}`); dy -= 15; }
     g += dimension(x0, x0 + w, dy, y0, `B ${estimated ? "≈ " : ""}${comma(W)}`);
     // Контакт 1 — выноска снизу к окну; вход проводов — стрелка вверх.
     const yb = y0 + h;
     g += line(px, yb + 11, px, cy + cl, THIN) +
       `<path d="M${f(px - 2)},${f(cy + cl + 3.5)} L${f(px)},${f(cy + cl)} L${f(px + 2)},${f(cy + cl + 3.5)}" fill="none" stroke="${EDGE}" stroke-width=".5"/>` +
-      text(Math.min(Math.max(px, 56), 2 * x0 + w - 56), yb + 21, `Конт. 1${hs.rows > 1 && row > 0 ? " (нижний ряд)" : ""}`) +
-      text(x0 + w / 2, yb + 33, "вход проводов ▲", 8.5) + (hs.rows > 1 ? text(x0 + w / 2, yb + 44, `${hs.rows} ряда, нижний скрыт`, 8) : "");
+      text(Math.min(Math.max(px, 64), 2 * x0 + w - 64), yb + 24, `Конт. 1${hs.rows > 1 && row > 0 ? " (нижний ряд)" : ""}`) +
+      text(x0 + w / 2, yb + 38, "вход проводов ▲", 10) + (hs.rows > 1 ? text(x0 + w / 2, yb + 51, `${hs.rows} ряда, нижний скрыт`, 10) : "");
     if (b) { // длина корпуса — только когда она с чертежа
       const xr = x0 + w + 12;
       g += line(x0 + w, y0, xr + 2, y0, 0.4) + line(x0 + w, y0 + h, xr + 2, y0 + h, 0.4) + line(xr, y0, xr, y0 + h, 0.5) +
-        text(xr + 3, y0 + h / 2, comma(L), 9, "middle", ` transform="rotate(90 ${f(xr + 3)} ${f(y0 + h / 2)})"`);
+        text(xr + 4, y0 + h / 2, comma(L), 11, "middle", ` transform="rotate(90 ${f(xr + 4)} ${f(y0 + h / 2)})"`);
     }
   }
   const width = Math.max(2 * x0 + w, 30), height = y0 + h + bottom;
