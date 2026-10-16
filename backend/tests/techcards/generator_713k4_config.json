@@ -519,35 +519,6 @@
       ]
     },
     {
-      "type": "insTut",
-      "opKey": "onTubesA1",
-      "templateId": "ins-tut-монтаж",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
-      "harness": true,
-      "branch": "А1 «5»"
-    },
-    {
-      "type": "insWrap",
-      "opKey": "braidA1",
-      "templateId": "ins-braid-монтаж-оплётки",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "wrapArt": "XP-3",
-      "wrapName": "XP-3",
-      "wrapLen": "120",
-      "wrapKind": "braid",
-      "wrapCut": true,
-      "branch": "А1 «5»"
-    },
-    {
       "type": "insTerm",
       "opKey": "insTermA1",
       "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
@@ -593,36 +564,8 @@
       "epKey": "А1"
     },
     {
-      "type": "heatTut",
-      "opKey": "heatShrA1",
-      "templateId": "heat-ttk-short-усадка",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
-      "harness": true,
-      "side": "A"
-    },
-    {
-      "type": "insTut",
-      "opKey": "onTubesA2",
-      "templateId": "ins-tut-монтаж",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
-      "harness": true,
-      "branch": "А2 «I3»"
-    },
-    {
       "type": "insWrap",
-      "opKey": "braidA2",
+      "opKey": "braidA1",
       "templateId": "ins-braid-монтаж-оплётки",
       "opNum": "",
       "tPrep": "",
@@ -630,10 +573,66 @@
       "tMachine": "",
       "wrapArt": "XP-3",
       "wrapName": "XP-3",
-      "wrapLen": "110",
+      "wrapLen": "120",
       "wrapKind": "braid",
       "wrapCut": true,
-      "branch": "А2 «I3»"
+      "branch": "X1 «5»"
+    },
+    {
+      "type": "insTut",
+      "opKey": "onTubesA1",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "ТТК 8/2мм, черная",
+      "tutName": "ТТК 8/2мм, черная",
+      "tutCount": 1,
+      "harness": true,
+      "branch": "X1 «5»"
+    },
+    {
+      "type": "insTut",
+      "opKey": "onMarkA1",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "markTube": true,
+      "branch": "X1 «5»"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatShrA1",
+      "templateId": "heat-ttk-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "ТТК 8/2мм, черная",
+      "tutName": "ТТК 8/2мм, черная",
+      "tutCount": 1,
+      "harness": true,
+      "side": "A"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatMarkA1",
+      "templateId": "heat-tyt-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "markTube": true,
+      "branch": "X1 «5»"
     },
     {
       "type": "insTerm",
@@ -681,47 +680,8 @@
       "epKey": "А2"
     },
     {
-      "type": "heatTut",
-      "opKey": "heatShrA2",
-      "templateId": "heat-ttk-short-усадка",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
-      "harness": true,
-      "side": "A"
-    },
-    {
-      "type": "twist",
-      "opKey": "twistA2",
-      "templateId": "twist-свивка",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "units": 1,
-      "branch": "А2 «I3»"
-    },
-    {
-      "type": "insTut",
-      "opKey": "onTubesA3",
-      "templateId": "ins-tut-монтаж",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
-      "harness": true,
-      "branch": "А3 «C»"
-    },
-    {
       "type": "insWrap",
-      "opKey": "braidA3",
+      "opKey": "braidA2",
       "templateId": "ins-braid-монтаж-оплётки",
       "opNum": "",
       "tPrep": "",
@@ -732,7 +692,74 @@
       "wrapLen": "110",
       "wrapKind": "braid",
       "wrapCut": true,
-      "branch": "А3 «C»"
+      "branch": "X2 «I3»"
+    },
+    {
+      "type": "insTut",
+      "opKey": "onTubesA2",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "ТТК 8/2мм, черная",
+      "tutName": "ТТК 8/2мм, черная",
+      "tutCount": 1,
+      "harness": true,
+      "branch": "X2 «I3»"
+    },
+    {
+      "type": "insTut",
+      "opKey": "onMarkA2",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "markTube": true,
+      "branch": "X2 «I3»"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatShrA2",
+      "templateId": "heat-ttk-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "ТТК 8/2мм, черная",
+      "tutName": "ТТК 8/2мм, черная",
+      "tutCount": 1,
+      "harness": true,
+      "side": "A"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatMarkA2",
+      "templateId": "heat-tyt-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "markTube": true,
+      "branch": "X2 «I3»"
+    },
+    {
+      "type": "twist",
+      "opKey": "twistA2",
+      "templateId": "twist-свивка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "units": 1,
+      "branch": "X2 «I3»"
     },
     {
       "type": "insTerm",
@@ -780,6 +807,49 @@
       "epKey": "А3"
     },
     {
+      "type": "insWrap",
+      "opKey": "braidA3",
+      "templateId": "ins-braid-монтаж-оплётки",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wrapArt": "XP-3",
+      "wrapName": "XP-3",
+      "wrapLen": "110",
+      "wrapKind": "braid",
+      "wrapCut": true,
+      "branch": "X3 «C»"
+    },
+    {
+      "type": "insTut",
+      "opKey": "onTubesA3",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "ТТК 8/2мм, черная",
+      "tutName": "ТТК 8/2мм, черная",
+      "tutCount": 1,
+      "harness": true,
+      "branch": "X3 «C»"
+    },
+    {
+      "type": "insTut",
+      "opKey": "onMarkA3",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "markTube": true,
+      "branch": "X3 «C»"
+    },
+    {
       "type": "heatTut",
       "opKey": "heatShrA3",
       "templateId": "heat-ttk-short-усадка",
@@ -787,11 +857,25 @@
       "tPrep": "",
       "tOp": "",
       "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
+      "tutArt": "ТТК 8/2мм, черная",
+      "tutName": "ТТК 8/2мм, черная",
+      "tutCount": 1,
       "harness": true,
       "side": "A"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatMarkA3",
+      "templateId": "heat-tyt-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "markTube": true,
+      "branch": "X3 «C»"
     },
     {
       "type": "twist",
@@ -802,36 +886,7 @@
       "tOp": "",
       "tMachine": "",
       "units": 1,
-      "branch": "А3 «C»"
-    },
-    {
-      "type": "insTut",
-      "opKey": "onTubesA4",
-      "templateId": "ins-tut-монтаж",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 1,
-      "harness": true,
-      "branch": "А4 «A6»"
-    },
-    {
-      "type": "insWrap",
-      "opKey": "braidA4",
-      "templateId": "ins-braid-монтаж-оплётки",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "wrapArt": "XP-3",
-      "wrapName": "XP-3",
-      "wrapLen": "120",
-      "wrapKind": "braid",
-      "wrapCut": true,
-      "branch": "А4 «A6»"
+      "branch": "X3 «C»"
     },
     {
       "type": "insTerm",
@@ -887,8 +942,37 @@
       "epKey": "А4"
     },
     {
+      "type": "insWrap",
+      "opKey": "braidA4",
+      "templateId": "ins-braid-монтаж-оплётки",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wrapArt": "XP-3",
+      "wrapName": "XP-3",
+      "wrapLen": "120",
+      "wrapKind": "braid",
+      "wrapCut": true,
+      "branch": "X4 «A6»"
+    },
+    {
+      "type": "insTut",
+      "opKey": "onMarkA4",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "markTube": true,
+      "branch": "X4 «A6»"
+    },
+    {
       "type": "heatTut",
-      "opKey": "heatShrA4",
+      "opKey": "heatMarkA4",
       "templateId": "heat-tyt-short-усадка",
       "opNum": "",
       "tPrep": "",
@@ -897,8 +981,8 @@
       "tutArt": "",
       "tutName": "",
       "tutCount": 1,
-      "harness": true,
-      "side": "A"
+      "markTube": true,
+      "branch": "X4 «A6»"
     },
     {
       "type": "insTut",
@@ -1163,6 +1247,7 @@
     "blocks": [
       {
         "key": "pf-cutWire",
+        "name": "Резка + обжим SYM, зачистка — X1, X2",
         "ops": [
           1
         ],
@@ -1171,6 +1256,7 @@
       },
       {
         "key": "pf-cutWire1",
+        "name": "Резка + обжим T-DS1071, зачистка — X5, X6",
         "ops": [
           2
         ],
@@ -1179,6 +1265,7 @@
       },
       {
         "key": "pf-cutWire2",
+        "name": "Резка хвостов + лужение",
         "ops": [
           3
         ],
@@ -1187,6 +1274,7 @@
       },
       {
         "key": "pf-cutWire3",
+        "name": "Резка + обжим SHF, зачистка — X3",
         "ops": [
           4
         ],
@@ -1195,6 +1283,7 @@
       },
       {
         "key": "pf-cutWire4",
+        "name": "Резка + обжим А и В — X4→X6",
         "ops": [
           5
         ],
@@ -1203,7 +1292,7 @@
       },
       {
         "key": "pf-tubes",
-        "name": "Нарезанные трубки",
+        "name": "Резка трубок",
         "ops": [
           6
         ],
@@ -1212,7 +1301,7 @@
       },
       {
         "key": "pf-braid",
-        "name": "Нарезанная оплётка",
+        "name": "Резка оплётки",
         "ops": [
           7
         ],
@@ -1230,64 +1319,50 @@
       },
       {
         "key": "pf-A1",
-        "name": "Ветвь А1 «5»",
+        "name": "Ветвь X1 «5», сторона А",
         "ops": [
           9,
           10,
           11,
-          12
+          12,
+          13,
+          14
         ],
         "final": false
       },
       {
         "key": "pf-A2",
-        "name": "Ветвь А2 «I3»",
+        "name": "Ветвь X2 «I3», сторона А",
         "ops": [
-          13,
-          14,
           15,
           16,
-          17
+          17,
+          18,
+          19,
+          20,
+          21
         ],
         "final": false
       },
       {
         "key": "pf-A3",
-        "name": "Ветвь А3 «C»",
+        "name": "Ветвь X3 «C», сторона А",
         "ops": [
-          18,
-          19,
-          20,
-          21,
-          22
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28
         ],
         "final": false
       },
       {
         "key": "pf-A4",
-        "name": "Ветвь А4 «A6»",
+        "name": "Ветвь X4 «A6», сторона А",
         "ops": [
-          23,
-          24,
-          25,
-          26
-        ],
-        "final": false
-      },
-      {
-        "key": "pf-spl1",
-        "name": "Пайка С1, С2",
-        "ops": [
-          27,
-          28,
-          29
-        ],
-        "final": false
-      },
-      {
-        "key": "pf-spl2",
-        "name": "Пайка С3, С4",
-        "ops": [
+          29,
           30,
           31,
           32
@@ -1295,12 +1370,33 @@
         "final": false
       },
       {
-        "key": "pf-final",
+        "key": "pf-spl1",
+        "name": "Пайка С1, С2",
         "ops": [
           33,
           34,
-          35,
-          36
+          35
+        ],
+        "final": false
+      },
+      {
+        "key": "pf-spl2",
+        "name": "Пайка С3, С4",
+        "ops": [
+          36,
+          37,
+          38
+        ],
+        "final": false
+      },
+      {
+        "key": "pf-final",
+        "name": "Кабельная сборка Жгут НВ4",
+        "ops": [
+          39,
+          40,
+          41,
+          42
         ],
         "final": true
       }
@@ -1310,13 +1406,13 @@
         "from": "pf-A1",
         "to": "pf-spl1",
         "per_unit": 1,
-        "item": "Ветвь А1 «5»"
+        "item": "Ветвь X1 «5», сторона А"
       },
       {
         "from": "pf-A2",
         "to": "pf-spl2",
         "per_unit": 1,
-        "item": "Ветвь А2 «I3»"
+        "item": "Ветвь X2 «I3», сторона А"
       },
       {
         "from": "pf-spl1",
@@ -1328,139 +1424,139 @@
         "from": "pf-A3",
         "to": "pf-spl2",
         "per_unit": 1,
-        "item": "Ветвь А3 «C»"
+        "item": "Ветвь X3 «C», сторона А"
       },
       {
         "from": "pf-A4",
         "to": "pf-final",
         "per_unit": 1,
-        "item": "Ветвь А4 «A6»"
+        "item": "Ветвь X4 «A6», сторона А"
       },
       {
         "from": "pf-cutWire",
         "to": "pf-A1",
         "per_unit": 1,
-        "item": "НВ4 0,5 красный ×1; НВ4 0,5 черный ×1"
+        "item": "НВ4 0,5 красный, черный — 2 шт"
       },
       {
         "from": "pf-cutWire",
         "to": "pf-A2",
         "per_unit": 1,
-        "item": "НВ4 0,12 белый ×1; НВ4 0,12 синий ×1"
+        "item": "НВ4 0,12 белый, синий — 2 шт"
       },
       {
         "from": "pf-cutWire1",
         "to": "pf-spl1",
         "per_unit": 1,
-        "item": "НВ4 0,2 красный ×2; НВ4 0,2 черный ×2"
+        "item": "НВ4 0,2 красный ×2, черный ×2 — 4 шт"
       },
       {
         "from": "pf-cutWire2",
         "to": "pf-spl1",
         "per_unit": 1,
-        "item": "НВ4 0,2 красный ×1; НВ4 0,2 черный ×1"
+        "item": "НВ4 0,2 красный, черный — 2 шт"
       },
       {
         "from": "pf-cutWire2",
         "to": "pf-spl2",
         "per_unit": 1,
-        "item": "НВ4 0,12 белый ×1; НВ4 0,12 синий ×1"
+        "item": "НВ4 0,12 белый, синий — 2 шт"
       },
       {
         "from": "pf-cutWire3",
         "to": "pf-A3",
         "per_unit": 1,
-        "item": "НВ4 0,12 белый ×1; НВ4 0,12 синий ×1"
+        "item": "НВ4 0,12 белый, синий — 2 шт"
       },
       {
         "from": "pf-cutWire4",
         "to": "pf-A4",
         "per_unit": 1,
-        "item": "НВ4 0,2 белый ×1; НВ4 0,2 зеленый ×1; НВ4 0,2 желтый ×1"
+        "item": "НВ4 0,2 белый, зеленый, желтый — 3 шт"
       },
       {
         "from": "pf-tubes",
         "to": "pf-A1",
         "per_unit": 1,
-        "item": "ТТК 8/2 ×1"
+        "item": "ТТК 8/2 — 1 шт"
       },
       {
         "from": "pf-tubes",
         "to": "pf-A2",
         "per_unit": 1,
-        "item": "ТТК 8/2 ×1"
+        "item": "ТТК 8/2 — 1 шт"
       },
       {
         "from": "pf-tubes",
         "to": "pf-A3",
         "per_unit": 1,
-        "item": "ТТК 8/2 ×1"
+        "item": "ТТК 8/2 — 1 шт"
       },
       {
         "from": "pf-tubes",
         "to": "pf-final",
         "per_unit": 1,
-        "item": "ТТК 12/4 ×2"
+        "item": "ТТК 12/4 — 2 шт"
       },
       {
         "from": "pf-tubes",
         "to": "pf-spl1",
         "per_unit": 1,
-        "item": "ТТК 3/1 ×2"
+        "item": "ТТК 3/1 — 2 шт"
       },
       {
         "from": "pf-tubes",
         "to": "pf-spl2",
         "per_unit": 1,
-        "item": "ТТК 3/1 ×2"
+        "item": "ТТК 3/1 — 2 шт"
       },
       {
         "from": "pf-braid",
         "to": "pf-A1",
         "per_unit": 1,
-        "item": "XP-3 120 мм ×1"
+        "item": "Оплётка XP-3 120 мм — 1 шт"
       },
       {
         "from": "pf-braid",
         "to": "pf-A2",
         "per_unit": 1,
-        "item": "XP-3 110 мм ×1"
+        "item": "Оплётка XP-3 110 мм — 1 шт"
       },
       {
         "from": "pf-braid",
         "to": "pf-A3",
         "per_unit": 1,
-        "item": "XP-3 110 мм ×1"
+        "item": "Оплётка XP-3 110 мм — 1 шт"
       },
       {
         "from": "pf-braid",
         "to": "pf-A4",
         "per_unit": 1,
-        "item": "XP-3 120 мм ×1"
+        "item": "Оплётка XP-3 120 мм — 1 шт"
       },
       {
         "from": "pf-mark",
         "to": "pf-A1",
         "per_unit": 1,
-        "item": "маркировка «5» ×1"
+        "item": "Маркировка «5» — 1 шт"
       },
       {
         "from": "pf-mark",
         "to": "pf-A2",
         "per_unit": 1,
-        "item": "маркировка «I3» ×1"
+        "item": "Маркировка «I3» — 1 шт"
       },
       {
         "from": "pf-mark",
         "to": "pf-A3",
         "per_unit": 1,
-        "item": "маркировка «C» ×1"
+        "item": "Маркировка «C» — 1 шт"
       },
       {
         "from": "pf-mark",
         "to": "pf-A4",
         "per_unit": 1,
-        "item": "маркировка «A6» ×1"
+        "item": "Маркировка «A6» — 1 шт"
       },
       {
         "from": "pf-spl2",

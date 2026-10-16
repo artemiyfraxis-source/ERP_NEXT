@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
 import sample from "../../backend/tests/techcards/generator_713k4_config.json";
-import { makeGen, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { makeGen, termShort_, wiresItem_, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 import { DSA, fullHarness, R } from "./tcGenRealHarness.fixture";
 
 /*
@@ -81,6 +81,21 @@ it("the build config carries each batch's own wires and terminals — the server
     * o.wires.reduce((s: number, w: any) => s + w.qty, 0), 0);
   expect([count("SYM-001T-P0.6"), count("T-DS1071-SC600"), count("SHF-001T-0.8BS")]).toEqual([7, 7, 2]);
   expect(cfg).toEqual(sample);
+});
+
+it("names every cut batch ПФ shortly and distinctly: what the machine does and which connectors by КД (X1…X6)", () => {
+  const route = (S: GenState) => (makeGen(DSA, S).buildConfig() as { route: { blocks: Array<{ key: string; name?: string }> } }).route;
+  const cutNames = (S: GenState) => route(S).blocks.filter((b) => b.key.startsWith("pf-cutWire")).map((b) => b.name);
+  expect(cutNames(fullHarness())).toEqual(["Резка + обжим SYM, зачистка — X1, X2", "Резка + обжим T-DS1071, зачистка — X5, X6",
+    "Резка хвостов + лужение", "Резка + обжим SHF, зачистка — X3", "Резка + обжим А и В — X4→X6"]);
+  // Сторона В вручную: её провода режутся с разделкой — ПФ называет разъёмы, куда они идут.
+  expect(cutNames({ ...fullHarness(), crimpCutSide: "A" })).toEqual(["Резка + обжим SYM, зачистка — X1, X2", "Резка + зачистка — X5, X6",
+    "Резка хвостов + лужение", "Резка + обжим SHF, зачистка — X3", "Резка + обжим SYM — X4"]);
+  // Провода одной марки — общее начало один раз; разные количества — у каждого.
+  expect([wiresItem_([["НВ4 0,12 белый", 1], ["НВ4 0,12 синий", 1]]), wiresItem_([["НВ4 0,2 красный", 2], ["НВ4 0,2 черный", 1]]),
+    wiresItem_([["НВ4 0,5 красный", 1], ["НВ4 0,2 черный", 1]]), wiresItem_([["МГТФ 0,12", 3]])])
+    .toEqual(["НВ4 0,12 белый, синий — 2 шт", "НВ4 0,2 красный ×2, черный ×1 — 3 шт", "НВ4 0,5 красный, 0,2 черный — 2 шт", "МГТФ 0,12 — 3 шт"]);
+  expect(["SYM-001T-P0.6", "T-DS1071-SC600", "shf-001T-0.8BS", "НШВИ 0,5-8"].map(termShort_)).toEqual(["SYM", "T-DS1071", "shf", "НШВИ 0,5"]);
 });
 
 it("one crimp side picked by hand: the other side's ends are crimped by hand, both-ends wires join their side's batch", () => {

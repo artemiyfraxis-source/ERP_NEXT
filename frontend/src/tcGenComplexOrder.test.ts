@@ -7,9 +7,10 @@ import { DSA, fullHarness, harness, R } from "./tcGenRealHarness.fixture";
 
 /*
  * «Сложная сборка» строит схему ПФ сама (владелец 16.10, 713К.4 КБ1): ПФ-комплекты (партии резки, резка всех трубок, резка
- * оплётки по ветвям, печать и резка маркировки) → ветви разъёмов А (надеть трубки и маркировку → оплётка → монтаж →
- * усадка → свивка своей пары) → группы сростков по разъёмам А, с которых приходят провода (трубка → пайка → усадка) →
- * изделие (трубки на ствол → усадка → разъёмы В). Операции стоят в порядке схемы; схема уходит в build_config.route.
+ * оплётки по ветвям, печать и резка маркировки) → ветви разъёмов А (монтаж контактов в разъём → надеть оплётку → надеть
+ * ТТК → надеть маркировку → усадка ТТК на разъёме → усадка маркировки → свивка своей пары) → группы сростков по разъёмам
+ * А, с которых приходят провода (трубка → пайка → усадка) → изделие (трубки на ствол → усадка → разъёмы В). Операции
+ * стоят в порядке схемы; схема уходит в build_config.route с короткими разными именами ПФ.
  */
 const labels = (S: GenState, data: GenData = DSA) => makeGen(data, S).getActiveOps().map((o) => o.label);
 const keys = (S: GenState, data: GenData = DSA) => makeGen(data, S).getActiveOps().map((o) => o.opKey);
@@ -25,27 +26,33 @@ const GRAPH_ORDER = [
   "Резка с обжимом А (SHF-001T-0.8BS) и зачисткой В — 2 кабеля",
   "Резка с обжимом А и В (SYM-001T-P0.6 / T-DS1071-SC600) — 3 кабеля",
   "Резка трубок — ТТК 8/2 3×15 мм, ТТК 12/4 2×25 мм, ТТК 3/1 4×20 мм",
-  "Резка оплётки XP-3 — А1 «5» 120 мм, А2 «I3» 110 мм, А3 «C» 110 мм, А4 «A6» 120 мм",
+  "Резка оплётки XP-3 — X1 «5» 120 мм, X2 «I3» 110 мм, X3 «C» 110 мм, X4 «A6» 120 мм",
   "Печать и резка маркировки — «5» 15 мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм",
-  // 2. Ветви X1–X4
-  "Надеть трубки А1 «5»: ТТК 8/2 ×1, маркировка «5»",
-  "Монтаж оплётки А1 «5» — XP-3, 120 мм",
-  "Монтаж в разъём А1 — SMR-02V-B",
-  "Усадка трубок А1 «5»: ТТК 8/2, маркировка «5»",
-  "Надеть трубки А2 «I3»: ТТК 8/2 ×1, маркировка «I3»",
-  "Монтаж оплётки А2 «I3» — XP-3, 110 мм",
-  "Монтаж в разъём А2 — SMR-02V-B",
-  "Усадка трубок А2 «I3»: ТТК 8/2, маркировка «I3»",
-  "Свивка А2 «I3» — 1 пара",
-  "Надеть трубки А3 «C»: ТТК 8/2 ×1, маркировка «C»",
-  "Монтаж оплётки А3 «C» — XP-3, 110 мм",
-  "Монтаж в разъём А3 — SMP-02V-BC",
-  "Усадка трубок А3 «C»: ТТК 8/2, маркировка «C»",
-  "Свивка А3 «C» — 1 пара",
-  "Надеть трубки А4 «A6»: маркировка «A6»",
-  "Монтаж оплётки А4 «A6» — XP-3, 120 мм",
-  "Монтаж в разъём А4 — SMR-04V-B",
-  "Усадка трубок А4 «A6»: маркировка «A6»",
+  // 2. Ветви X1–X4: монтаж → оплётка → ТТК → маркировка → усадка ТТК → усадка маркировки → свивка
+  "Монтаж контактов в разъём X1 «5» — SMR-02V-B",
+  "Надеть оплётку X1 «5» — XP-3, 120 мм",
+  "Надеть ТТК X1 «5» — ТТК 8/2",
+  "Надеть маркировку X1 «5» — «5»",
+  "Усадка ТТК на разъёме X1 «5» — ТТК 8/2",
+  "Усадка маркировки X1 «5» — «5»",
+  "Монтаж контактов в разъём X2 «I3» — SMR-02V-B",
+  "Надеть оплётку X2 «I3» — XP-3, 110 мм",
+  "Надеть ТТК X2 «I3» — ТТК 8/2",
+  "Надеть маркировку X2 «I3» — «I3»",
+  "Усадка ТТК на разъёме X2 «I3» — ТТК 8/2",
+  "Усадка маркировки X2 «I3» — «I3»",
+  "Свивка X2 «I3» — 1 пара",
+  "Монтаж контактов в разъём X3 «C» — SMP-02V-BC",
+  "Надеть оплётку X3 «C» — XP-3, 110 мм",
+  "Надеть ТТК X3 «C» — ТТК 8/2",
+  "Надеть маркировку X3 «C» — «C»",
+  "Усадка ТТК на разъёме X3 «C» — ТТК 8/2",
+  "Усадка маркировки X3 «C» — «C»",
+  "Свивка X3 «C» — 1 пара",
+  "Монтаж контактов в разъём X4 «A6» — SMR-04V-B",
+  "Надеть оплётку X4 «A6» — XP-3, 120 мм",
+  "Надеть маркировку X4 «A6» — «A6»",
+  "Усадка маркировки X4 «A6» — «A6»",
   // 3. Группы сростков
   "Надеть трубку на провода сростков С1, С2 — 2 шт",
   "Сростки С1, С2 — 2 шт по 4 провода",
@@ -56,8 +63,8 @@ const GRAPH_ORDER = [
   // 4. Изделие
   "Надеть трубки: ТТК 12/4мм, черная на жгут — 2 шт",
   "Усадка термоусадки на жгуте — 2 шт",
-  "Монтаж в разъём В1 — I-DS1071-SCB01X3",
-  "Монтаж в разъём В2 — I-DS1071-SCB02X3",
+  "Монтаж контактов в разъём X5 — I-DS1071-SCB01X3",
+  "Монтаж контактов в разъём X6 — I-DS1071-SCB02X3",
 ];
 
 it("builds 713К.4 КБ1 as the ПФ graph: kits, branches X1–X4, splice groups, the product — ops in the graph's order", () => {
@@ -69,31 +76,45 @@ it("the build config carries the graph as a generated route: every op in one blo
   const route = routeOf(S);
   const opKeys = keys(S);
   expect(route.source).toBe("generated");
+  const branch = (n: number, twist = true, tube = true) => [`insTermA${n}`, `braidA${n}`, ...(tube ? [`onTubesA${n}`] : []), `onMarkA${n}`,
+    ...(tube ? [`heatShrA${n}`] : []), `heatMarkA${n}`, ...(twist ? [`twistA${n}`] : [])];
+  // Короткие разные имена ПФ: что делает станок и на какие разъёмы по КД (X1…X6: сторона А, потом В).
   expect(route.blocks.map((b) => [b.key, b.name ?? "", b.ops.map((p) => opKeys[p - 1]), !!b.kit, b.final])).toEqual([
-    ["pf-cutWire", "", ["cutWire"], true, false], ["pf-cutWire1", "", ["cutWire1"], true, false],
-    ["pf-cutWire2", "", ["cutWire2"], true, false], ["pf-cutWire3", "", ["cutWire3"], true, false],
-    ["pf-cutWire4", "", ["cutWire4"], true, false],
-    ["pf-tubes", "Нарезанные трубки", ["cutTubes"], true, false], ["pf-braid", "Нарезанная оплётка", ["cutBraid"], true, false],
+    ["pf-cutWire", "Резка + обжим SYM, зачистка — X1, X2", ["cutWire"], true, false],
+    ["pf-cutWire1", "Резка + обжим T-DS1071, зачистка — X5, X6", ["cutWire1"], true, false],
+    ["pf-cutWire2", "Резка хвостов + лужение", ["cutWire2"], true, false],
+    ["pf-cutWire3", "Резка + обжим SHF, зачистка — X3", ["cutWire3"], true, false],
+    ["pf-cutWire4", "Резка + обжим А и В — X4→X6", ["cutWire4"], true, false],
+    ["pf-tubes", "Резка трубок", ["cutTubes"], true, false], ["pf-braid", "Резка оплётки", ["cutBraid"], true, false],
     ["pf-mark", "Маркировка", ["cutMark"], true, false],
-    ["pf-A1", "Ветвь А1 «5»", ["onTubesA1", "braidA1", "insTermA1", "heatShrA1"], false, false],
-    ["pf-A2", "Ветвь А2 «I3»", ["onTubesA2", "braidA2", "insTermA2", "heatShrA2", "twistA2"], false, false],
-    ["pf-A3", "Ветвь А3 «C»", ["onTubesA3", "braidA3", "insTermA3", "heatShrA3", "twistA3"], false, false],
-    ["pf-A4", "Ветвь А4 «A6»", ["onTubesA4", "braidA4", "insTermA4", "heatShrA4"], false, false],
+    ["pf-A1", "Ветвь X1 «5», сторона А", branch(1, false), false, false],
+    ["pf-A2", "Ветвь X2 «I3», сторона А", branch(2), false, false],
+    ["pf-A3", "Ветвь X3 «C», сторона А", branch(3), false, false],
+    ["pf-A4", "Ветвь X4 «A6», сторона А", branch(4, false, false), false, false],
     ["pf-spl1", "Пайка С1, С2", ["insSpl1", "splice1", "heatSpl1"], false, false],
     ["pf-spl2", "Пайка С3, С4", ["insSpl2", "splice2", "heatSpl2"], false, false],
-    ["pf-final", "", ["insSleeves", "heatHs", "insTermB1", "insTermB2"], false, true],
+    ["pf-final", "Кабельная сборка Жгут НВ4", ["insSleeves", "heatHs", "insTermB1", "insTermB2"], false, true],
   ]);
+  expect(route.blocks.every((b) => (b.name ?? "").length <= 41)).toBe(true);
   expect(route.blocks.flatMap((b) => b.ops).sort((a, b) => a - b)).toEqual(opKeys.map((_, i) => i + 1));
+  // Каждая операция ветви — своя карта: монтаж контактов, оплётка, ТТК, маркировка, усадка ТТК, усадка маркировки, свивка.
+  const gen = makeGen(DSA, S);
+  const ops = gen.getActiveOps();
+  expect(branch(2).map((key) => gen.templateIdFor(ops.find((o) => o.opKey === key)!))).toEqual([
+    "ins-terminal-2-54-6-3-монтаж-терминалов-a", "ins-braid-монтаж-оплётки", "ins-tut-монтаж", "ins-tut-монтаж",
+    "heat-ttk-short-усадка", "heat-tyt-short-усадка", "twist-свивка"]);
   const edge = (from: string, to: string) => route.edges.find((e) => e.from === from && e.to === to)?.item;
-  // Партия SYM отдаёт провода двум ветвям; провода с обжимом В и хвосты — в группы сростков.
-  expect(edge("pf-cutWire", "pf-A1")).toBe("НВ4 0,5 красный ×1; НВ4 0,5 черный ×1");
-  expect(edge("pf-cutWire", "pf-A2")).toBe("НВ4 0,12 белый ×1; НВ4 0,12 синий ×1");
-  expect(edge("pf-cutWire1", "pf-spl1")).toBe("НВ4 0,2 красный ×2; НВ4 0,2 черный ×2");
-  expect(edge("pf-cutWire2", "pf-spl2")).toBe("НВ4 0,12 белый ×1; НВ4 0,12 синий ×1");
+  // Партия SYM отдаёт провода двум ветвям; провода с обжимом В и хвосты — в группы сростков. Провода партии — одной строкой.
+  expect(edge("pf-cutWire", "pf-A1")).toBe("НВ4 0,5 красный, черный — 2 шт");
+  expect(edge("pf-cutWire", "pf-A2")).toBe("НВ4 0,12 белый, синий — 2 шт");
+  expect(edge("pf-cutWire1", "pf-spl1")).toBe("НВ4 0,2 красный ×2, черный ×2 — 4 шт");
+  expect(edge("pf-cutWire2", "pf-spl2")).toBe("НВ4 0,12 белый, синий — 2 шт");
+  expect(edge("pf-cutWire4", "pf-A4")).toBe("НВ4 0,2 белый, зеленый, желтый — 3 шт");
   // Каждая трубка — своей стрелкой к тому, кто её надевает.
-  expect(["pf-A1", "pf-A4", "pf-spl1", "pf-final"].map((to) => edge("pf-tubes", to))).toEqual(["ТТК 8/2 ×1", undefined, "ТТК 3/1 ×2", "ТТК 12/4 ×2"]);
-  expect(["pf-A1", "pf-A2"].map((to) => edge("pf-braid", to))).toEqual(["XP-3 120 мм ×1", "XP-3 110 мм ×1"]);
-  expect(edge("pf-mark", "pf-A4")).toBe("маркировка «A6» ×1");
+  expect(["pf-A1", "pf-A4", "pf-spl1", "pf-final"].map((to) => edge("pf-tubes", to))).toEqual(["ТТК 8/2 — 1 шт", undefined, "ТТК 3/1 — 2 шт", "ТТК 12/4 — 2 шт"]);
+  expect(["pf-A1", "pf-A2"].map((to) => edge("pf-braid", to))).toEqual(["Оплётка XP-3 120 мм — 1 шт", "Оплётка XP-3 110 мм — 1 шт"]);
+  expect(edge("pf-mark", "pf-A4")).toBe("Маркировка «A6» — 1 шт");
+  expect(edge("pf-A2", "pf-spl2")).toBe("Ветвь X2 «I3», сторона А");
   // Ветви X1–X3 — в сростки, X4 — прямо в изделие; группы — в изделие.
   expect(route.edges.filter((e) => /^pf-(A|spl)/.test(e.from)).map((e) => `${e.from}>${e.to}`).sort()).toEqual([
     "pf-A1>pf-spl1", "pf-A2>pf-spl2", "pf-A3>pf-spl2", "pf-A4>pf-final", "pf-spl1>pf-final", "pf-spl2>pf-final"]);
@@ -142,12 +163,12 @@ it("a pair from two connectors into one splice group is twisted in that group, b
 });
 
 it("the technologist's own order still wins; the route follows the new positions", () => {
-  const S = { ...fullHarness(), opOrder: ["braidA1", "onTubesA1"] };
+  const S = { ...fullHarness(), opOrder: ["onTubesA1", "braidA1"] };
   const order = keys(S);
-  expect(order.indexOf("braidA1")).toBeLessThan(order.indexOf("onTubesA1"));
+  expect(order.indexOf("onTubesA1")).toBeLessThan(order.indexOf("braidA1"));
   expect(order.filter((key) => key !== "braidA1" && key !== "onTubesA1")).toEqual(keys(fullHarness()).filter((key) => key !== "braidA1" && key !== "onTubesA1"));
   const a1 = routeOf(S).blocks.find((b) => b.key === "pf-A1")!;
-  expect(a1.ops.map((p) => order[p - 1])).toEqual(["braidA1", "onTubesA1", "insTermA1", "heatShrA1"]);
+  expect(a1.ops.map((p) => order[p - 1])).toEqual(["insTermA1", "onTubesA1", "braidA1", "onMarkA1", "heatShrA1", "heatMarkA1"]);
 });
 
 it("marking tubes from the kit: printed and cut on INS_MARK_TUBE_AUTO, put on and shrunk with their branch; tags stay in «Маркировка»", () => {
@@ -165,7 +186,10 @@ it("marking tubes from the kit: printed and cut on INS_MARK_TUBE_AUTO, put on an
   expect(mark).toMatchObject({ label: "Маркировка — КБ1", pf: "pf-final" });
   expect(mark.marks).toHaveLength(1);
   const cfg = gen.buildConfig() as { ops: Array<Record<string, unknown>> };
-  expect(cfg.ops.filter((o) => o.markTube).map((o) => o.opKey)).toEqual(["cutMark"]);
+  // Каждая ветвь надевает и усаживает свою маркировку своими операциями (после ТТК).
+  expect(cfg.ops.filter((o) => o.markTube).map((o) => o.opKey)).toEqual(["cutMark", ...[1, 2, 3, 4].flatMap((n) => [`onMarkA${n}`, `heatMarkA${n}`])]);
+  expect(cfg.ops.find((o) => o.opKey === "onMarkA2")).toMatchObject({ type: "insTut", tutCount: 1, branch: "X2 «I3»", templateId: "ins-tut-монтаж" });
+  expect(cfg.ops.find((o) => o.opKey === "heatMarkA2")).toMatchObject({ type: "heatTut", tutCount: 1, branch: "X2 «I3»", templateId: "heat-tyt-short-усадка" });
   // Трубка без длины по КД — «?» в названии; трубка из справочника (её печатают) — в «Маркировке».
   const noLen = { ...S0, markRows: S0.markRows.map((row, i) => (i === 0 ? { ...row, len: "" } : row)) };
   expect(labels(noLen)).toContain("Печать и резка маркировки — «5» ? мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм");
@@ -218,11 +242,11 @@ it("braid pieces per branch: own length, an equal share of the length per item, 
   const S = { ...S0, endpoints: S0.endpoints.map((e) => (e.label === "A6" ? { ...e, braidLen: "0" } : e.label === "C" ? { ...e, braidLen: "" } : e)) };
   const cut = makeGen(DSA, S).getActiveOps().find((o) => o.opKey === "cutBraid")!;
   // Без А4 оплётку делят на три ветви: 460 / 3 ≈ 153 мм — это у «C», у остальных свои длины.
-  expect(cut.label).toBe("Резка оплётки XP-3 — А1 «5» 120 мм, А2 «I3» 110 мм, А3 «C» 153 мм");
+  expect(cut.label).toBe("Резка оплётки XP-3 — X1 «5» 120 мм, X2 «I3» 110 мм, X3 «C» 153 мм");
   expect(cut.tutParts).toEqual([{ art: "XP-3", name: "XP-3", count: 1, len: "120" }, { art: "XP-3", name: "XP-3", count: 1, len: "110" },
     { art: "XP-3", name: "XP-3", count: 1, len: "153" }]);
   expect(keys(S)).not.toContain("braidA4");
   const cfg = makeGen(DSA, S0).buildConfig() as { ops: Array<Record<string, unknown>> };
   expect(cfg.ops.find((o) => o.opKey === "cutBraid")).toMatchObject({ type: "cutTut", wrapKind: "braid", tutArt: "XP-3", tutCount: 4 });
-  expect(cfg.ops.find((o) => o.opKey === "braidA1")).toMatchObject({ type: "insWrap", wrapKind: "braid", wrapCut: true, wrapLen: "120", branch: "А1 «5»" });
+  expect(cfg.ops.find((o) => o.opKey === "braidA1")).toMatchObject({ type: "insWrap", wrapKind: "braid", wrapCut: true, wrapLen: "120", branch: "X1 «5»" });
 });
