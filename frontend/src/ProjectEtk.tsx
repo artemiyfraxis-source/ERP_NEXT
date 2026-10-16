@@ -15,7 +15,8 @@ import {
 import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
-import { ETK_PART_SOURCE, etkRouteBranches, etkRouteChips, etkRouteFeedText, etkRouteOf, etkRouteSummary, etkSemiSource, formatMinutes } from "./etkRoute";
+import { ETK_PART_SOURCE, etkRouteBranches, etkRouteOf, etkSemiSource, formatMinutes } from "./etkRoute";
+import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
 import { ETK_TOOLING_SECTIONS, etkOperationName, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
@@ -534,33 +535,6 @@ export function editDraft(name: string, card: { safety?: string; defects?: strin
 }
 
 
-/** Полоса «Маршрут» над ЭТК, только у ветвящейся схемы полуфабрикатов (линейная ЭТК её не показывает): блоки по порядку
- *  «источники → потребители» чипами «№ имя · N оп. · X мин/шт», под именем — что блок берёт на вход (с ×N, когда на штуку
- *  нужно не одна), у финального блока метка «итог». Чип открывает первую операцию блока; блок открытой операции подсвечен. */
-function RouteStrip({ route, current, onPick }: { route: EtkRoute; current: number; onPick: (position: number) => void }) {
-  const chips = etkRouteChips(route);
-  const active = route.blocks.find((block) => block.ops.includes(current))?.key;
-  return <section className="etk-route" aria-label="Маршрут полуфабрикатов">
-    <div className="etk-route-head"><strong>Маршрут</strong><small>{etkRouteSummary(chips)}</small></div>
-    <ol className="etk-route-chips">{chips.map((chip) => {
-      const meta = [chip.ops ? `${chip.ops} оп.` : "", chip.perUnit].filter(Boolean);
-      return <li key={chip.key}>
-        <button type="button" className={`etk-route-chip${chip.key === active ? " on" : ""}${chip.final ? " final" : ""}`}
-          disabled={chip.first == null} aria-current={chip.key === active ? "step" : undefined}
-          onClick={() => chip.first != null && onPick(chip.first)}>
-          <span className="etk-route-n">{chip.number}</span>
-          <span className="etk-route-text">
-            <span><b>{chip.name}</b>{meta.map((part) => <small key={part} className="etk-route-meta"> · <span>{part}</span></small>)}</span>
-            {chip.feeds.length > 0 && <small className="etk-route-feed" aria-label="Берёт на вход">← {chip.feeds.map((feed, position) =>
-              <span key={`${feed.number}:${position}`}>{position > 0 && " · "}{etkRouteFeedText(feed)}</span>)}</small>}
-          </span>
-          {chip.final && <em className="etk-route-final">итог</em>}
-        </button>
-      </li>;
-    })}</ol>
-  </section>;
-}
-
 /** Операция, на которой открыть ЭТК (экран «Мои задания»): по коду, иначе по номеру этапа. `positions` — задание по
  *  ПФ: только эти операции ЭТК (1-based позиции, в порядке работы ПФ), каждая свёрнута. */
 export interface EtkFocus { code?: string; position?: number; positions?: number[] }
@@ -673,7 +647,7 @@ function EtkView({ card, canEdit, onSaved, onRouteSaved, sketches, onSketches, s
   </div>;
   // Линейная схема (и ЭТК без схемы): тот же элемент, что и раньше, без обёртки.
   return !task && route && etkRouteBranches(route)
-    ? <><RouteStrip route={route} current={index + 1} onPick={pick} />{view}</>
+    ? <><EtkRouteDiagram route={route} current={index + 1} onPick={pick} />{view}</>
     : view;
 }
 

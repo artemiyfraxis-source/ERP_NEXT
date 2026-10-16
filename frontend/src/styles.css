@@ -2231,16 +2231,25 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-route { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 12px 10px; }
 .etk-route-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
 .etk-route-head small { color: var(--muted-foreground); font-size: 12px; }
-.etk-route-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
-.etk-route-chip { display: flex; align-items: flex-start; gap: 8px; max-width: 320px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 13px; }
-.etk-route-chip:hover:not(:disabled) { border-color: var(--primary); }
-.etk-route-chip.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, transparent); }
-.etk-route-chip:disabled { cursor: default; opacity: 1; }
-.etk-route-n { flex: none; min-width: 18px; font-weight: 800; color: var(--primary); text-align: center; }
-.etk-route-text { display: grid; gap: 2px; min-width: 0; }
-.etk-route-text small { color: var(--muted-foreground); font-size: 12px; }
-.etk-route-meta > span { white-space: nowrap; }
-.etk-route-feed { overflow-wrap: anywhere; }
+.etk-dag-scroll { margin-top: 8px; overflow-x: auto; }
+.etk-dag { position: relative; }
+.etk-dag svg { position: absolute; inset: 0; }
+.etk-dag-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.4; opacity: .7; }
+.etk-dag-head { fill: var(--muted-foreground); }
+.etk-dag-item { position: absolute; padding: 0 3px; border-radius: 3px; background: var(--card); color: var(--foreground); font-size: 12px; line-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
+.etk-dag-box { position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 2px; line-height: 1.25; min-height: 0; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 13px; overflow: hidden; }
+.etk-dag-box:hover:not(:disabled) { border-color: var(--primary); }
+.etk-dag-box:disabled { cursor: default; opacity: 1; }
+.etk-dag-box.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
+.etk-dag-box.final { border-width: 2px; border-color: var(--primary); }
+.etk-dag-box.kit { border-style: dashed; background: color-mix(in srgb, var(--muted-foreground) 6%, var(--card)); color: var(--muted-foreground); }
+.etk-dag-box > * { flex: none; }
+.etk-dag-top { display: flex; align-items: center; gap: 6px; }
+.etk-dag-top b { color: var(--primary); font-weight: 800; }
+.etk-dag-top small { color: var(--muted-foreground); font-size: 11px; }
+.etk-dag-top .etk-route-final { margin-left: auto; }
+.etk-dag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.etk-dag-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
 .etk-route-final { flex: none; align-self: center; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); font-size: 11px; font-style: normal; font-weight: 700; }
 .etk-op { display: grid; gap: 14px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
 .etk-op-head { display: flex; align-items: flex-start; gap: 12px; }

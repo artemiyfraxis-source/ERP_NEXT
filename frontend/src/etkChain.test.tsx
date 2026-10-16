@@ -68,9 +68,9 @@ it("tells where to take a semi-finished product from: the previous operation of 
     edges: [{ from: "b1", to: "b2", per_unit: 1 }, { from: "b2", to: "b3", per_unit: 1 }],
   };
   expect(etkSemiSource(route, 1)).toBe("");
-  expect(etkSemiSource(route, 2)).toBe("из ПФ-1, коробка с операции 01");
+  expect(etkSemiSource(route, 2)).toBe("из ПФ 1, коробка с операции 01");
   expect(etkSemiSource(route, 3)).toBe("с операции 02");
-  expect(etkSemiSource(route, 4)).toBe("из ПФ-2, коробка с операции 03");
+  expect(etkSemiSource(route, 4)).toBe("из ПФ 2, коробка с операции 03");
   expect(etkSemiSource(null, 3)).toBe("с операции 02");
   // В списке ПФ вход назван результатом последней операции ПФ-источника, а не названием блока схемы.
   const operations = CHAIN.map((item) => ({ result: item.result.map(([name, norm]) => ({ name, norm })) }));
