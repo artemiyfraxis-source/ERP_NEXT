@@ -96,6 +96,14 @@ export type JacketShrink = { on: boolean; mat: string; len: string };
 export type WrapKind = "tape" | "braid" | "under";
 export type WrapSlot = { mat: string; kind: WrapKind; len: string };
 export type CoaxSide = { art: string; name: string } | null;
+/** Способ сростка: опрессовка гильзой, пайка, ленточный обжим. */
+export type SpliceMethod = "sleeve" | "solder" | "band";
+/** Карта операции «Сростки» по способу (БД.ОП). */
+export const SPLICE_TMPL: Record<SpliceMethod, string> = { solder: "SDR_W_W", sleeve: "PRS_НШВИ", band: "PRS_COPPER" };
+/** Ключ выбора гильзы для сростков без своей точки на схеме (заданы числом или ответвлением). */
+export const SPLICE_REST_ = "*";
+/** Длина зачистки хвоста под лужение по умолчанию, мм (владелец 16.10: «2–3 мм»). */
+export const TAIL_STRIP_MM_ = "3";
 export type CoaxStripMode = "machine" | "separate";
 export type CoaxMachineKey = "small" | "big";
 /** Роторные станки резки с разделкой коаксиала (БД.ОБ, категория «Резка с разделкой»). Карточки CUT_COAX+1strip /
@@ -150,13 +158,20 @@ export type GenState = {
     enabled: boolean; mode: "pairs" | "all"; pairs: TwistRow[];
     wires: number[] | null; pitch: string; z0: string; dia: string; diaManual: boolean;
   };
-  spl: { enabled: boolean; count: string; wires: string; tut: string; tutMat: string; strip: string; fold: boolean };
+  /** `method` — способ сростка (владелец 16.10: «основа это обжим»): нет поля — пайка (формы и карты до 16.10, SDR_W_W).
+   *  `sleeves` — гильза из состава по сросткам: ключ — id сростка схемы (S.splices) или SPLICE_REST_ («все»/«остальные»).
+   *  `band` — материал ленточного обжима из того же списка, необязателен. */
+  spl: { enabled: boolean; count: string; wires: string; tut: string; tutMat: string; strip: string; fold: boolean;
+    method?: SpliceMethod; sleeves?: Record<string, string>; band?: string };
   hs: { enabled: boolean; manual: boolean; rows: Array<{ compId: string; len: string; cnt: string }> };
   mark: boolean;
   /** Метки по КД (tcGenMarks); пусто — в маркировку идут бирки из состава, как раньше. */
   markRows: MarkRow[];
   freeStrip: { enabled: boolean; len: string };
   cap: { enabled: boolean; tut: string; len: string };
+  /** «Свободные концы» → «Зачистка и лужение хвостов» (владелец 16.10, 2–3 мм): концы S.tails зачищаются и лудятся — и при
+   *  разъёмах стороны В. Нет поля (формы до 16.10) — выключено. Включено — заделка трубкой (cap) не делается. */
+  tailTin?: { enabled: boolean; strip: string };
   wrap: { enabled: boolean; slots: WrapSlot[] };
   /** «Термоусадка на место разделки» по сторонам — форма до переноса в строку «Кабели» (WireEntry.jacketShrink): читается
    *  запасным значением для кабеля без своего поля и больше не пишется (setCableJacketShrink). */
@@ -485,12 +500,13 @@ export function emptyState(): GenState {
     measureMode: "inner", drawingLength: 0, sharedLengthText: "", lenFromCalc: false,
     rotor: true, crimpCut: false, crimpCutManual: false, crimpCutSide: "",
     twist: { enabled: false, mode: "pairs", pairs: [], wires: null, pitch: "", z0: "", dia: "", diaManual: false },
-    spl: { enabled: false, count: "1", wires: "3", tut: "", tutMat: "", strip: "", fold: false },
+    spl: { enabled: false, count: "1", wires: "3", tut: "", tutMat: "", strip: "", fold: false, method: "sleeve" },
     hs: { enabled: false, manual: false, rows: [] },
     mark: false,
     markRows: [],
     freeStrip: { enabled: false, len: "" },
     cap: { enabled: true, tut: "", len: "" },
+    tailTin: { enabled: false, strip: TAIL_STRIP_MM_ },
     wrap: { enabled: false, slots: WRAP_SLOTS_.map(() => ({ mat: "", kind: "tape" as WrapKind, len: "" })) },
     seal: { enabled: false, mat: "", places: "" },
     tin: { enabled: false, wires: null, stripLen: "5" },  // зачистка под лужение по умолчанию 5 мм (владелец 12.10.2026)
@@ -713,6 +729,8 @@ export function makeGen(D: GenData, S: GenState) {
     return comps().filter((c) => /тут|ттк|термоусад|shrink/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`)
       && !PROTECT_TUBE_RE_.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`));
   }
+  const tubeDia_ = (c: Comp) => { const m = /(\d+(?:[.,]\d+)?)\s*\/\s*\d/.exec(`${c.name || ""} ${c.art || ""}`); return m ? parseDecimal_(m[1]) : 99; };
+  const byTubeDia_ = (list: Comp[]) => list.slice().sort((a, b) => tubeDia_(a) - tubeDia_(b));
   const isGlueSleeve_ = (c: Comp) => /ттк|клеев/i.test(`${c.name || ""} ${c.art || ""}`);
   function defaultShrinkComp_() {
     const all = shrinkCandidates_();
@@ -844,8 +862,82 @@ export function makeGen(D: GenData, S: GenState) {
   }
   const spliceStripAtCut_ = () => spliceEnds_() > 0 && freeEnds_() === 0;
   function capTube_() {
-    if (!isComplex_() || !S.cap.enabled || !freeEnds_()) return null;
+    if (!isComplex_() || !S.cap.enabled || tailTinOn_() || !freeEnds_()) return null;
     return getCompById(S.cap.tut) || null;
+  }
+  // ── Хвосты: зачистка и лужение ──
+  const tailTinOn_ = () => isComplex_() && !!S.tailTin?.enabled;
+  /** Хвосты схемы соединений (S.tails) у проводов, что есть в форме. */
+  function tailEnds_(): WireEnd[] {
+    if (!isComplex_()) return [];
+    const alive = new Map(activeWires_().map((w) => [w.idx, unitCount_(w)]));
+    return (S.tails || []).filter((e) => (alive.get(e.idx) ?? 0) > e.unit);
+  }
+  /** Конец стороны В без разъёмов, который зачищает (и лудит) прежнее «Лужение свободных концов» / «Зачистка свободных
+   *  концов» — его хвостовая обработка второй раз не трогает. */
+  function freeEndStripped_(e: WireEnd) {
+    if (e.side !== "B" || endpointsOnSide_("B").length) return false;
+    return S.freeStrip.enabled || freeEndTinned_(e);
+  }
+  function freeEndTinned_(e: WireEnd) {
+    if (e.side !== "B" || endpointsOnSide_("B").length || !S.tin.enabled) return false;
+    return tinWireIndices_().includes(activeWires_().findIndex((w) => w.idx === e.idx));
+  }
+  /** «Зачистка и лужение хвостов»: зачистка тех хвостов, что не зачистила резка (длина по умолчанию 3 мм). */
+  function tailStripOp_(): OpSpec | null {
+    if (!tailTinOn_()) return null;
+    const ends = tailEnds_().filter((e) => !freeEndStripped_(e));
+    if (!ends.length) return null;
+    const len = (S.tailTin?.strip || "").trim() || TAIL_STRIP_MM_;
+    const a = ends.some((e) => e.side === "A"), b = ends.some((e) => e.side === "B");
+    return { type: "stripCable", opKey: "stripTail", tmplHint: "STRIP_WIRE", cat: "Разделка", tutCount: ends.length,
+      label: `Зачистка хвостов (${len.replace(".", ",")} мм) — ${ends.length} конц.`,
+      strip: { a, lenA: a ? len : "", b, lenB: b ? len : "" } };
+  }
+  /** Хвосты, которые лудит «Зачистка и лужение хвостов» (без тех, что уже лудит «Лужение свободных концов»). */
+  const tailTinEnds_ = () => (tailTinOn_() ? tailEnds_().filter((e) => !freeEndTinned_(e)) : []);
+  function tailTinOp_(ends: WireEnd[]): OpSpec {
+    return { type: "tin", opKey: "tinTail", cat: "Лужение", ...(hasTemplateCode_("SDR_tin") ? { tmplHint: "SDR_tin" } : {}),
+      wireIdxs: [...new Set(ends.map((e) => e.idx))], units: ends.length, label: `Лужение хвостов — ${ends.length} конц.` };
+  }
+  // ── Способ сростка и гильзы ──
+  const splMethod_ = (): SpliceMethod => S.spl.method || "solder";
+  /** Гильзы состава для сростков: строки «Др»/«Терминал» с «гильз», «НШВ» или «sleeve» в названии. */
+  function spliceSleeveComps_() {
+    return comps().filter((c) => /^\s*(?:др|терминал)/i.test(c.type || "") && /гильз|ншв|sleeve/i.test(`${c.name || ""} ${c.art || ""}`));
+  }
+  /** Места выбора гильзы: сростки схемы С1…Сn по одному; сростки без точки на схеме (числом, ответвления) — одним местом. */
+  function spliceSlots_(): Array<{ key: string; label: string; count: number; wires: number }> {
+    const sizes = spliceSizes_();
+    if (!sizes.length) return [];
+    const all = S.splices || [];
+    const drawn = all.filter((s) => s.ends.length >= 2).slice(0, sizes.length);
+    const slots = drawn.map((s) => ({ key: s.id, label: `С${all.indexOf(s) + 1}`, count: 1, wires: s.ends.length }));
+    const rest = sizes.length - drawn.length;
+    if (rest > 0) slots.push({ key: SPLICE_REST_, label: drawn.length ? "остальные" : "все сростки", count: rest, wires: 0 });
+    return slots;
+  }
+  /** Гильза места: выбор технолога (и «— нет —»), иначе единственная гильза состава. */
+  function spliceSleeveOf_(key: string): Comp | null {
+    const picked = S.spl.sleeves?.[key];
+    if (picked !== undefined) return getCompById(picked);
+    const list = spliceSleeveComps_();
+    return list.length === 1 ? list[0] : null;
+  }
+  /** Гильзы сростков (ленточный обжим — его материал): строка состава и число сростков на неё; места без гильзы — missing. */
+  function spliceSleeves_(): { items: Array<{ comp: Comp; count: number }>; missing: string[] } {
+    const items: Array<{ comp: Comp; count: number }> = [], missing: string[] = [];
+    const method = splMethod_();
+    if (method === "solder") return { items, missing };
+    const add = (comp: Comp, count: number) => { const same = items.find((x) => x.comp === comp); if (same) same.count += count; else items.push({ comp, count }); };
+    const slots = spliceSlots_();
+    if (method === "band") {
+      const comp = getCompById(S.spl.band), total = slots.reduce((n, s) => n + s.count, 0);
+      if (comp && total) add(comp, total);
+      return { items, missing };
+    }
+    slots.forEach((slot) => { const comp = spliceSleeveOf_(slot.key); if (comp) add(comp, slot.count); else missing.push(slot.label); });
+    return { items, missing };
   }
   function foldOps_(): OpSpec[] {
     if (!isComplex_()) return [];
@@ -883,7 +975,8 @@ export function makeGen(D: GenData, S: GenState) {
       sealArt: c.art || c.name || "", sealName: c.name || c.art || "", sealQty: String(c.qty || ""), sealPlaces: places };
   }
   function spliceWelded_() {
-    const id = templateIdFor({ type: "splice", opKey: "splice", tmplHint: "SDR_W_W", cat: "Пайка", label: "" });
+    if (splMethod_() !== "solder") return false;
+    const id = templateIdFor({ type: "splice", opKey: "splice", tmplHint: SPLICE_TMPL.solder, cat: "Пайка", label: "" });
     const t = (D.templates || []).find((x) => x.id === id);
     return !!(t && /US_WELD|сварк/i.test(t.title || ""));
   }
@@ -904,8 +997,12 @@ export function makeGen(D: GenData, S: GenState) {
       ops.push({ type: "insTut", opKey: "insSpl", tmplHint: "INS_TUT", cat: "Монтаж", tutCount: cnt,
         label: `Надеть трубку на провода сростка — ${cnt} шт` });
     }
-    ops.push({ type: "splice", opKey: "splice", tmplHint: "SDR_W_W", cat: "Пайка", units: cnt,
-      label: `Сростки — ${cnt} шт по ${wires} провода` });
+    // Пайка — как до 16.10 (название и карта те же); опрессовка гильзой и ленточный обжим — со способом и гильзами.
+    const method = splMethod_();
+    const how = method === "sleeve" ? " опрессовкой гильзой" : method === "band" ? " ленточным обжимом" : "";
+    const used = spliceSleeves_().items.map((x) => `${x.comp.art || x.comp.name} ×${x.count}`);
+    ops.push({ type: "splice", opKey: "splice", tmplHint: SPLICE_TMPL[method], cat: method === "solder" ? "Пайка" : "Опрессовка", units: cnt,
+      label: `Сростки${how} — ${cnt} шт по ${wires} провода${used.length ? `: ${used.join(", ")}` : ""}` });
     if (len && tut) {
       ops.push({ type: "heatTut", opKey: "heatSpl", tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: cnt,
         label: `Усадка трубки на сростках — ${cnt} шт` });
@@ -1868,9 +1965,17 @@ export function makeGen(D: GenData, S: GenState) {
     }
     const tinOn = endpointsOnSide_("B").length === 0 && S.tin.enabled;
     const tinLeft = tinWireIndices_().map((i) => activeWires[i].idx).filter((idx) => !tinAtCut.has(idx));
+    // Хвосты под лужение: без стороны В вместе с «Лужением свободных концов» — одна операция, иначе своя после резки.
+    const tailTin = tailTinEnds_();
     if (tinOn && tinLeft.length > 0) {
-      ops.push({ type: "tin", opKey: "tin", label: "Лужение", cat: "Лужение", ...(tinAtCut.size ? { wireIdxs: tinLeft } : {}) });
+      if (!tailTin.length) ops.push({ type: "tin", opKey: "tin", label: "Лужение", cat: "Лужение", ...(tinAtCut.size ? { wireIdxs: tinLeft } : {}) });
+      else {
+        const units = activeWires.filter((w) => tinLeft.includes(w.idx)).reduce((n, w) => n + unitCount_(w), 0) + tailTin.length;
+        ops.push({ type: "tin", opKey: "tin", label: `Лужение свободных концов и хвостов — ${units} конц.`, cat: "Лужение",
+          wireIdxs: [...new Set([...tinLeft, ...tailTin.map((e) => e.idx)])], units });
+      }
     }
+    const tailPrep = [tailStripOp_(), !(tinOn && tinLeft.length > 0) && tailTin.length ? tailTinOp_(tailTin) : null].filter((o): o is OpSpec => !!o);
 
     const dress: OpSpec[] = [];
     // Термоусадка на жгут режется и надевается вместе с прочими трубками до обжима (sleeveCuts_/sleeveOn_), здесь — усадка.
@@ -1918,7 +2023,7 @@ export function makeGen(D: GenData, S: GenState) {
       ops.splice(firstB >= 0 ? firstB : (tinAt >= 0 ? tinAt : ops.length), 0, ...dress);
     }
     wrapOps.filter((o) => o.wrapKind === "tape" && !o.under).forEach((o) => ops.push(o));
-    const prep = capOps_().concat(foldOps_());
+    const prep = capOps_().concat(foldOps_(), tailPrep);
     if (prep.length) {
       let lastCut = -1;
       ops.forEach((o, i) => { if (/^cutWire/.test(o.type)) lastCut = i; });
@@ -2188,6 +2293,18 @@ export function makeGen(D: GenData, S: GenState) {
       if (spec.type === "insMark") op.marks = spec.marks;
       if (spec.tin) op.tin = true;
       if (spec.type === "splice" || spec.type === "insHousing") op.units = spec.units || 1;
+      // Сростки: способ и гильзы из состава (ленточный обжим — его материал) с числом сростков на каждую.
+      if (spec.type === "splice") {
+        op.method = splMethod_();
+        op.sleeves = spliceSleeves_().items.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count }));
+      }
+      if (spec.opKey === "stripTail") op.strip = spec.strip;
+      // Лужение хвостов: провода хвостов (номера в `wires` карты) и число концов.
+      if (spec.type === "tin" && spec.units) {
+        const set = new Set(spec.wireIdxs || []);
+        op.units = spec.units;
+        op.wireIdxs = activeWires.flatMap((w, pos) => (set.has(w.idx) ? [pos] : []));
+      }
       if (spec.type === "seal") { op.sealArt = spec.sealArt; op.sealName = spec.sealName; op.sealQty = spec.sealQty; op.sealPlaces = spec.sealPlaces; }
       // Усадка трубки стороны (поверх разъёма, на месте разделки) — со своей стороной: ПФ на сервере и ключ операции ЭТК
       // (две усадки сторон А и В иначе совпадали и сборка ЭТК отказывала).
@@ -2237,6 +2354,13 @@ export function makeGen(D: GenData, S: GenState) {
     ((cfg.wires as Array<{ art?: string; name?: string; length: number }>) || []).forEach((x, i) => {
       if (!(x.length > 0)) w.push("Кабель " + (i + 1) + " (" + (x.art || x.name || "—") + "): не указана длина — норма резки уйдёт пустой.");
     });
+    if (isComplex_()) {
+      // Гильзы состава (НШВ) ждут сростка: не выбранная ни в одном сростке и сросток без гильзы — видно до сборки.
+      const sl = spliceSleeves_();
+      const used = new Set([...sl.items.map((x) => x.comp.id), ...S.endpoints.map((e) => e.termId).filter(Boolean)]);
+      spliceSleeveComps_().filter((c) => !used.has(c.id)).forEach((c) => w.push(`Гильза «${c.art || c.name}» из состава не выбрана ни в одном сростке.`));
+      if (spliceSleeveComps_().length) sl.missing.forEach((label) => w.push(`Сростки (${label}): не выбрана гильза из состава.`));
+    }
     if (cfg.mode === "coax") {
       const cx = (cfg.coax || {}) as { cableLength?: unknown; sideA?: { article: string; type: string } | null; sideB?: { article: string; type: string } | null };
       if (!cx.cableLength) w.push("Не указана длина кабеля — норма резки будет пустой.");
@@ -2291,10 +2415,11 @@ export function makeGen(D: GenData, S: GenState) {
       return terms > 0 && Number.isInteger(n) ? n : 0;
     },
     detectSolderConn_, rjCableCat_, sealComps: () => comps().filter((c) => SEAL_RE_.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`)),
-    capTubes: () => {
-      const dia = (c: Comp) => { const m = /(\d+(?:[.,]\d+)?)\s*\/\s*\d/.exec(`${c.name || ""} ${c.art || ""}`); return m ? parseDecimal_(m[1]) : 99; };
-      return comps().filter((c) => /тут|термоусад/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`)).sort((a, b) => dia(a) - dia(b));
-    },
+    /** Трубки заделки и сростка: вся термоусадка состава — ТУТ и ТТК (владелец 16.10: «ТТК 3/1мм» в списке), по Ø. */
+    capTubes: () => byTubeDia_(shrinkCandidates_()),
+    /** Трубка заделки, которую засев ставит сам: только ТУТ (как до 16.10 — засев старых карт не меняется). */
+    capSeedTubes_: () => byTubeDia_(comps().filter((c) => /тут|термоусад/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`))),
+    splMethod_, spliceSleeveComps_, spliceSlots_, spliceSleeveOf_, spliceSleeves_, tailEnds_, bomWarnings_,
     wrapCandidates: () => {
       const re = new RegExp(/лент|оплет|оплёт|рукав|braid|sleeve|wrap|/.source + PROTECT_TUBE_RE_.source, "i");
       const hit = (c: Comp) => re.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`);
@@ -2345,7 +2470,7 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
   const seals = makeGen(D, S).sealComps();
   if (seals.length) S = { ...S, seal: { enabled: true, mat: seals[0].id, places: String(S.endpoints.filter((e) => e.connId).length || 1) } };
   // seedCapFromBom_
-  const tubes = makeGen(D, S).capTubes();
+  const tubes = makeGen(D, S).capSeedTubes_();
   if (tubes.length) S = { ...S, cap: { ...S.cap, tut: tubes[0].id } };
   // seedHarnessFromBom_
   {
@@ -2439,6 +2564,30 @@ export function savedComplex(config: unknown): boolean {
   const ends = ops.flatMap((o) => [o.ep, o.epB]).filter((e): e is Record<string, unknown> => !!e && typeof e === "object");
   return !!(c.bigAssembly || c.connections || ops.some((o) => ["splice", "seal", "foldCore"].includes(String(o.type)))
     || ends.some((e) => String(e.label ?? "").trim() || e.fold));
+}
+
+/** «Способ» сростков: карта операции подбирается заново (выбранная для прежнего способа снимается). */
+export function setSplMethod(S: GenState, method: SpliceMethod): GenState {
+  if ((S.spl.method || "solder") === method) return S;
+  const { splice: _old, ...selectedTemplates } = S.selectedTemplates;
+  return { ...S, spl: { ...S.spl, method }, selectedTemplates, manualTemplates: S.manualTemplates.filter((key) => key !== "splice") };
+}
+
+/** Способ сростков собранной карты без снимка формы: у операции «Сростки» нет `method` — пайка (карты до 16.10); операции
+ *  нет — null (форма берёт засев). */
+export function splMethodFromConfig(config: unknown): SpliceMethod | null {
+  const ops = config && typeof config === "object" ? (config as { ops?: unknown }).ops : null;
+  const op = Array.isArray(ops) ? ops.find((o) => !!o && typeof o === "object" && (o as { type?: unknown }).type === "splice") as { method?: unknown } | undefined : undefined;
+  if (!op) return null;
+  return op.method === "sleeve" || op.method === "band" ? op.method : "solder";
+}
+
+/** «Свободные концы»: заделка трубкой, зачистка и лужение хвостов или ничего. */
+export type TailMode = "cap" | "tin" | "none";
+export const tailModeOf = (S: Pick<GenState, "cap" | "tailTin">): TailMode => (S.tailTin?.enabled ? "tin" : S.cap.enabled ? "cap" : "none");
+export function setTailMode(S: GenState, mode: TailMode): GenState {
+  return { ...S, cap: { ...S.cap, enabled: mode === "cap" },
+    tailTin: { strip: S.tailTin?.strip ?? TAIL_STRIP_MM_, enabled: mode === "tin" } };
 }
 
 /** Новая карта на «Сложной сборке» (владелец 13.10: «в сложной сборке не нужно автоподбора конфигурации проводов»):

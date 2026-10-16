@@ -1,5 +1,5 @@
 import { joinSplice, assignPinJoined, setTail } from "./tcGenSplices";
-import { addEndpoint, complexByHand, initState, toggleLengthMode, updateEndpoint, type Comp, type GenData, type GenState, type TerRec, type WireEnd } from "./tcGenLogic";
+import { addEndpoint, complexByHand, initState, toggleLengthMode, updateEndpoint, type Comp, type GenData, type GenState, type TerRec, type Tmpl, type WireEnd } from "./tcGenLogic";
 
 /*
  * Чертёж заказчика «Кабельная сборка Жгут НВ4» (КБ1, 500 шт, владелец 13.10): сторона А — «5» SMR-02V-B, «I3» SMR-02V-B,
@@ -28,6 +28,16 @@ const base = { assemblyInfo: { "Индекс": "КБ1", "Наименовани�
 export const D: GenData = { ...base, components: COMPONENTS, terRecords: [ter("SYM-001T-P0.6", "SMR, SYP"), ter("T-DS1071-SC600", "I-DS1071-SCB01, I-DS1071-SCB02"), ter("shf-001T-0.8BS", "SM")] };
 // Тот же состав без записей БД.ТЕР: терминал — по семейству артикулов и по количеству в составе.
 export const BARE: GenData = { ...base, components: COMPONENTS, terRecords: [] };
+// Состав КД целиком (владелец 16.10): гильзы сростков НШВ (тип «Др»), термоусадка ТТК трёх размеров, оплётка XP-3 — и
+// карты операций сростка, лужения и зачистки из библиотеки.
+const SLEEVES: Comp[] = [
+  C("nshv10", "Др", "НШВ 1,0-8", 2), C("nshv05", "Др", "НШВ 0,5-8", 2),
+  C("ttk8", "ТТК", "ТТК 8/2мм, черная", 0.1), C("ttk12", "ТТК", "ТТК 12/4мм, черная", 0.05), C("xp3", "Др", "XP-3", 0.3),
+];
+export const TEMPLATES: Tmpl[] = ["SDR_W_W | Пайка", "PRS_НШВИ | Опрессовка наконечников", "PRS_COPPER | Ленточный обжим", "SDR_tin | Лужение",
+  "STRIP_WIRE | Разделка"].map((title, i) => ({ id: `t${i}`, title, category: title.split("|")[1].trim() }));
+export const tmplId = (code: string) => TEMPLATES.find((t) => t.title.startsWith(`${code} |`))!.id;
+export const DS: GenData = { ...D, components: [...COMPONENTS, ...SLEEVES], templates: TEMPLATES };
 
 const ROWS: Array<[string, number, number]> = [
   ["r5", 150, 1], ["k5", 150, 1], ["r2", 160, 2], ["r2", 60, 1], ["k2", 160, 1], ["k2", 180, 1], ["k2", 60, 1],

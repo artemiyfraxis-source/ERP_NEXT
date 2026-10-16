@@ -46,7 +46,13 @@ import {
   twistPitchForZ0_,
   twistZ0_,
   setCableJacketShrink,
+  setSplMethod,
+  setTailMode,
   setWireCores,
+  splMethodFromConfig,
+  tailModeOf,
+  SPLICE_REST_,
+  TAIL_STRIP_MM_,
   updateEndpoint,
   updateWire,
   wireDiaFromRecords,
@@ -61,7 +67,9 @@ import {
   type GenState,
   type OpSpec,
   type Side,
+  type SpliceMethod,
   type Tab,
+  type TailMode,
   type Tmpl,
   type WrapKind,
   type CableJacketShrink,
@@ -308,7 +316,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     // Карта, собранная после 14.10, несёт снимок формы: открывается с ним, сверенным с нынешним составом набора.
     const snap = restored ? null : snapshotFromConfig(card.document?.build_config);
     const back = snap ? restoreFromSnapshot(components, init, snap) : null;
-    const fromBuild = restored ? switchGenTab(seeded, "manual") : back ? back.S : restorePinout(D, seeded, card.document?.build_config);
+    // Карта без снимка: способ сростков — по её операции «Сростки» (без `method` — пайка, как собиралась до 16.10).
+    const oldSplMethod = splMethodFromConfig(card.document?.build_config);
+    const fromPinout = (S0: GenState) => (oldSplMethod ? { ...S0, spl: { ...S0.spl, method: oldSplMethod } } : S0);
+    const fromBuild = restored ? switchGenTab(seeded, "manual") : back ? back.S : fromPinout(restorePinout(D, seeded, card.document?.build_config));
     // Несохранённый черновик поверх текущей сборки возвращается вместо засева.
     const form = draft.open({ S: fromBuild, manual: restored ?? emptyManual(), terEdits: back?.terEdits ?? {}, coaxAdd: back?.coaxAdd ?? {} });
     setManual(form.manual); setS(ensureSeparateLengths(form.S)); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
@@ -1008,6 +1019,11 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   const wrapOpts = gen.wrapCandidates().list;
   const capTubes = gen.capTubes();
+  const tailMode = tailModeOf(S);
+  const tailCount = gen.tailEnds_().length;
+  const splMethod = gen.splMethod_();
+  const sleeveComps = gen.spliceSleeveComps_();
+  const spliceSlots = gen.spliceSlots_();
   const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.getCompById(row.compId) }));
   const marks = gen.markComps_();
   const kdMarks = S.markRows.filter((row) => row.text.trim() || row.target.trim());
@@ -1094,7 +1110,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   // Обработка — по смыслу: концы провода, жгут целиком, автомат при резке. Пустая группа не показывается.
   const ends = [
-    <Toggle key="free" checked={S.freeStrip.enabled} title="Зачистка свободных концов" hint="без стороны В, без лужения"
+    // «Зачистка свободных концов» работает только без стороны В (как «Лужение»): при разъёмах В хвосты — в «Свободных концах».
+    !hasB && <Toggle key="free" checked={S.freeStrip.enabled} title="Зачистка свободных концов" hint="без стороны В, без лужения"
       onChange={(on) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, enabled: on } }))}>
       <Field label="Длина зачистки" className="short"><UnitInput unit="мм" value={S.freeStrip.len} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, freeStrip: { ...current.freeStrip, len: event.target.value } }))} /></Field>
     </Toggle>,
@@ -1106,12 +1123,19 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         })}>{compLabel(w.compId)}</Chip>)}</div></div>
       <Field label="Зачистка под лужение" className="short"><UnitInput unit="мм" value={S.tin.stripLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, tin: { ...current.tin, stripLen: event.target.value } }))} /></Field>
     </Toggle>,
-    complex && <Toggle key="cap" checked={S.cap.enabled} title="Заделка свободных концов" hint="жилы, не заведённые в разъём своей стороны"
-      onChange={(on) => update((current) => ({ ...current, cap: { ...current.cap, enabled: on } }))}>
-      <div className="opt-grid">
+    complex && <Toggle key="cap" checked={tailMode !== "none"} title="Свободные концы" hint="хвосты и жилы, не заведённые в разъём своей стороны"
+      onChange={(on) => update((current) => setTailMode(current, on ? "cap" : "none"))}>
+      <Seg<TailMode> label="Обработка свободных концов" value={tailMode} options={[["cap", "Заделка трубкой"], ["tin", "Зачистка и лужение хвостов"]]}
+        onChange={(mode) => update((current) => setTailMode(current, mode))} />
+      {tailMode === "cap" ? <div className="opt-grid">
         <Field label="Трубка из состава" className="span2">{selectComps(capTubes, S.cap.tut, (id) => update((current) => ({ ...current, cap: { ...current.cap, tut: id } })), "Трубка заделки")}</Field>
         <Field label="Отрезок на конец"><UnitInput unit="мм" value={S.cap.len} placeholder="из нормы" onChange={(event) => update((current) => ({ ...current, cap: { ...current.cap, len: event.target.value } }))} /></Field>
-      </div>
+      </div> : <div className="opt-grid">
+        <Field label="Зачистка хвоста" hint="2–3 мм"><UnitInput unit="мм" aria-label="Зачистка хвоста" value={S.tailTin?.strip ?? TAIL_STRIP_MM_} placeholder={TAIL_STRIP_MM_}
+          onChange={(event) => update((current) => ({ ...current, tailTin: { enabled: true, strip: event.target.value } }))} /></Field>
+        {tailCount > 0 ? <span className="opt-note">Хвостов на схеме: {tailCount}</span>
+          : <span className="opt-note tone-warn">Хвостов на схеме нет — отметьте свободные концы на схеме соединений</span>}
+      </div>}
     </Toggle>,
     complex && <Toggle key="seal" checked={S.seal.enabled} title="Герметизация" hint="клей-герметик на пайку и хвостовики разъёмов"
       onChange={(on) => update((current) => ({ ...current, seal: { ...current.seal, enabled: on } }))}>
@@ -1125,6 +1149,19 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     twistToggle,
     complex && <Toggle key="spl" checked={S.spl.enabled} title="Сростки" hint="соединение проводов в стволе"
       onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, enabled: on } }))}>
+      <Seg<SpliceMethod> label="Способ сростка" value={splMethod} options={[["sleeve", "Опрессовка гильзой"], ["solder", "Пайка"], ["band", "Ленточный обжим"]]}
+        onChange={(method) => update((current) => setSplMethod(current, method))} />
+      {splMethod === "sleeve" && (sleeveComps.length ? spliceSlots.length > 0 && <div className="opt-grid">
+        {spliceSlots.map((slot) => <Field key={slot.key} label={slot.key === SPLICE_REST_ ? `Гильза — ${slot.label}` : `Гильза ${slot.label}`}
+          hint={slot.key === SPLICE_REST_ ? `${slot.count} шт` : `${slot.wires} пр.`}>
+          {selectComps(sleeveComps, S.spl.sleeves?.[slot.key] ?? gen.spliceSleeveOf_(slot.key)?.id ?? "",
+            (id) => update((current) => ({ ...current, spl: { ...current.spl, sleeves: { ...(current.spl.sleeves || {}), [slot.key]: id } } })),
+            `Гильза ${slot.label}`, "— не выбрана —")}</Field>)}
+      </div> : <span className="opt-note tone-warn">В составе нет гильз (НШВ) — добавьте их в состав</span>)}
+      {splMethod === "band" && <div className="opt-grid">
+        <Field label="Материал обжима из состава" hint="необязательно" className="span2">{selectComps(sleeveComps, S.spl.band || "",
+          (id) => update((current) => ({ ...current, spl: { ...current.spl, band: id } })), "Материал ленточного обжима")}</Field>
+      </div>}
       <div className="opt-grid">
         <Field label="Сростков на изделие"><input type="number" min={1} value={S.spl.count} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, count: event.target.value } }))} /></Field>
         <Field label="Проводов в сростке" hint="разные — через запятую"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
