@@ -212,6 +212,21 @@ describe("коакс: резка с разделкой на роторном с�
     expect(ops.some((op) => op.machine)).toBe(false);
   });
 
+  it("separately: the cut takes the coax card CUT_COAX_auto once both its card and its БД.ОП row exist", () => {
+    const card = { id: "ccut", title: "CUT_COAX_auto | Резка", category: "Резка" };
+    const row = { opNumber: "CUT_COAX_auto", opName: "Резка", tOp: "3,5", tPrep: "180", tMachine: "3,5" };
+    const S0 = initState(coaxData());
+    const S = { ...S0, coax: { ...S0.coax, stripMode: "separate" as const } };
+    const full: GenData = { ...coaxData(), templates: [...coaxTemplates, card], ops: [...coaxData().ops, row] };
+    expect(opsOf(full, S)[0]).toMatchObject({ tmplHint: "CUT_COAX_auto", tmplWant: "CUT_COAX_auto" });
+    expect((makeGen(full, S).buildConfig() as Record<string, any>).ops[0]).toMatchObject({ templateId: "ccut", opNum: "CUT_COAX_auto", tOp: "3.5" });
+    // Карта без строки БД.ОП (или строка без карты) — прежняя карта провода, чтобы у резки остались нормы.
+    const cardOnly: GenData = { ...coaxData(), templates: [...coaxTemplates, card] };
+    expect(opsOf(cardOnly, S)[0]).toMatchObject({ tmplHint: "CUT_WIRE_auto", tmplWant: "CUT_COAX_auto" });
+    const rowOnly: GenData = { ...coaxData(), ops: [...coaxData().ops, row] };
+    expect(opsOf(rowOnly, S)[0].tmplHint).toBe("CUT_WIRE_auto");
+  });
+
   it("796К.2 КБ1: the ПФ scheme follows the order of work, the tubes go where «Монтаж ТУТ» takes them", () => {
     // MMCX-Male RG316 → N-Male, ТУТ, втулка экрана (обжим), пайка А и В, корпуса А и В, опрессовка, усадка.
     const D = coaxData();

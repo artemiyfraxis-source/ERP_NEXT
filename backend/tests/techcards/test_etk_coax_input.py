@@ -184,3 +184,35 @@ def test_the_read_fill_keeps_what_is_there_and_skips_documents_it_cannot_replay(
     wire = {"build_config": {"ops": [{"type": "cutWire"}]}, "operations": [{"type": "cutWire", "result": []}]}
     assert fill_generator_chain(wire) is wire
     assert fill_generator_chain(None) is None
+
+
+# Владелец 16.10: у опрессовки втулки экрана (PRS_SLEEVE_coax) не было размера HEX — он зависит от разъёма и кабеля.
+def _shield(**coax_extra: object) -> dict:
+    return next(op for op in _owner_coax_etk(**coax_extra) if op["type"] == "coaxShield")
+
+
+def _hex_step(operation: dict) -> str:
+    return next(step["text"] for step in operation["card"]["steps"] if "hex" in step["text"].casefold())
+
+
+def _dies(operation: dict) -> str:
+    return next(tool["name"] for tool in operation["card"]["tooling"] if tool["section"] == "Матрицы")
+
+
+def test_shield_crimp_without_hex_in_the_base_says_so_instead_of_guessing():
+    shield = _shield()
+    assert shield["fields"]["crimpHex"] == [{"side": "А", "connector": "MMCX-Male", "hex": ""},
+                                            {"side": "В", "connector": "N-Male", "hex": ""}]
+    assert _hex_step(shield).endswith("Размер: HEX не задан — по чертежу разъёма.")
+    assert _dies(shield) == "Шестигранные матрицы — HEX не задан — по чертежу разъёма"
+
+
+def test_shield_crimp_shows_the_hex_of_the_connector_on_its_cable():
+    same = _shield(sideA={"article": "MMCX-Male", "crimpHex": "3,25"}, sideB={"article": "N-Male", "crimpHex": "3,25"})
+    assert _hex_step(same).endswith("Размер: HEX 3,25 мм.")
+    assert _dies(same) == "Шестигранные матрицы — HEX 3,25 мм"
+    mixed = _shield(sideA={"article": "MMCX-Male", "crimpHex": "3,25"}, sideB={"article": "N-Male"})
+    assert _hex_step(mixed).endswith(
+        "Размер: А (MMCX-Male) — HEX 3,25 мм; В (N-Male) — HEX не задан — по чертежу разъёма.")
+    inches = _shield(sideA={"article": "MMCX-Male", "crimpHex": "0,475″"}, sideB=None)
+    assert _dies(inches) == "Шестигранные матрицы — HEX 0,475″"

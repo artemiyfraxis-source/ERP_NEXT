@@ -226,6 +226,8 @@ export const CRIMP_BOTH_ = "AB";
 const CRIMP_BOTH_CODE_ = "CUT_WIRE+2crimp";
 /** Скрутка экрана кабеля в оболочке (БД.ОП «Скрутка экрана»). */
 const SHIELD_CODE_ = "TWST_SHILED";
+/** Резка коаксиального кабеля без разделки (вкладка «Коакс», разделка отдельно): своя карта, не карта провода. */
+export const COAX_CUT_CODE_ = "CUT_COAX_auto";
 
 /** Русское название операции генератора по её `type` (как `OPERATION_TYPE_NAMES` на сервере): когда в конфиге нет `label`. */
 const OP_TYPE_NAMES: Record<string, string> = {
@@ -954,6 +956,9 @@ export function makeGen(D: GenData, S: GenState) {
   }
   const hasTemplateCode_ = (code: string) =>
     (D.templates || []).some((t) => String(t.title || "").split("|")[0].trim().toLowerCase() === code.toLowerCase());
+  /** Есть и карта операции, и строка БД.ОП с её временами: без строки карта дала бы операцию без норм. */
+  const hasOperation_ = (code: string) =>
+    hasTemplateCode_(code) && (D.ops || []).some((op) => (op.opNumber || "").trim().toLowerCase() === code.toLowerCase());
   /** Провода (idx), которые станок резки обжимает на стороне `side` и тут же лудит свободным концом (CUT_WIRE+1crimp+tin):
    *  стороны В нет, блок «Лужение» включён, провод лудится и заведён в разъёмы стороны. Без карты операции в библиотеке —
    *  пусто: лужение остаётся отдельной операцией. */
@@ -1396,7 +1401,9 @@ export function makeGen(D: GenData, S: GenState) {
         label: sideB ? "Резка с разделкой (А и В)" : stripB ? "Резка с разделкой (А) и зачисткой (В)" : "Резка с разделкой (А)",
         tmplHint: stripB ? "CUT_COAX+2strip" : "CUT_COAX+1strip", machine: machine.model, stripSides: stripB ? ["A", "B"] : ["A"] });
     } else {
-      ops.push({ type: "coaxCut", opKey: "coaxCut", label: "Резка кабеля", tmplHint: "CUT_WIRE_auto" });
+      // Своя карта резки коаксиала (CUT_COAX_auto); пока её или строки БД.ОП нет — прежняя карта провода с пометкой.
+      ops.push({ type: "coaxCut", opKey: "coaxCut", label: "Резка кабеля",
+        tmplHint: hasOperation_(COAX_CUT_CODE_) ? COAX_CUT_CODE_ : "CUT_WIRE_auto", tmplWant: COAX_CUT_CODE_ });
       ops.push({ type: "coaxStrip", side: "A", opKey: "coaxStripA", label: "Разделка коаксиала (А)", tmplHint: "STRIP_COAX_auto" });
       if (sideB) ops.push({ type: "coaxStrip", side: "B", opKey: "coaxStripB", label: "Разделка коаксиала (B)", tmplHint: "STRIP_COAX_auto" });
       else if (S.coax.stripB) ops.push({ type: "coaxStrip", side: "B", opKey: "coaxStripB", label: "Зачистка стороны B (голый конец)", tmplHint: "STRIP_COAX_auto" });

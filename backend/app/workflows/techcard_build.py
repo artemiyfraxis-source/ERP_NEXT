@@ -48,10 +48,14 @@ def with_technology(
         prov_rows = [record.fields for record in references_uow.tech_operations.list(
             tab=TechOperationTab.WIRE, query="", limit=10_000,
         )]
+        coax_rows = [record.fields for record in references_uow.tech_operations.list(
+            tab=TechOperationTab.COAX, query="", limit=10_000,
+        )] if isinstance(config.get("coax"), Mapping) else []
     enriched = enrich_terminal_norms(config, (TerminalRecord.from_fields(record.fields) for record in records), gost_awg)
     enriched = enrich_marking(enriched, equipment, operation_records)
     enriched = enrich_linear_timing(enriched, operation_records)
     enriched = enrich_wire_diameters(enriched, hookups, gauges, prov_rows)
+    enriched = enrich_coax_hex(enriched, coax_rows)
     return enriched, {
         "schema_version": metadata["schema_version"],
         "source_updated_at": metadata["source_updated_at"].isoformat() if metadata["source_updated_at"] else None,
@@ -233,6 +237,46 @@ def enrich_linear_timing(config: Mapping[str, Any], operations: Iterable[Mapping
         timing = timings.get(str(op.get("opNum") or "").strip())
         if timing:
             op["linearTiming"] = timing
+    return enriched
+
+
+def coax_hex_cell(fields: Mapping[str, Any]) -> str:
+    """HEX матрицы обжима втулки экрана из строки БД.КОАКС: столбец, чьё имя начинается с «HEX» (свой столбец
+    владельца «HEX обжима, мм»); пусто — не задан."""
+    for key, value in fields.items():
+        if str(key).strip().casefold().startswith("hex") and str(value or "").strip():
+            return str(value).strip()
+    return ""
+
+
+def enrich_coax_hex(config: Mapping[str, Any], coax_rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Copy of the config whose coax ends (`coax.sideA` / `sideB`) carry `crimpHex` — the HEX of the БД.КОАКС row of that
+    connector on that cable (the end's `wire`, else the assembly's cable). No row of the pair — the connector's rows on
+    other cables only when they all give one HEX; otherwise no key, and the ETK says «HEX не задан — по чертежу разъёма»."""
+    enriched = deepcopy(dict(config))
+    coax = enriched.get("coax")
+    if not isinstance(coax, dict):
+        return enriched
+    rows = list(coax_rows)
+
+    def folded(value: object) -> str:
+        return " ".join(str(value or "").casefold().split())
+
+    cable = coax.get("cableArt") or coax.get("cableName") or ""
+    for key in ("sideA", "sideB"):
+        end = coax.get(key)
+        if not isinstance(end, dict):
+            continue
+        end.pop("crimpHex", None)
+        article = folded(end.get("article"))
+        if not article:
+            continue
+        mine = [fields for fields in rows if folded(fields.get("coaxArticle") or fields.get("Артикул")) == article]
+        wire = cable_key(end.get("wire") or cable)
+        pair = [fields for fields in mine if wire and cable_key(fields.get("coaxWire") or fields.get("Провод")) == wire]
+        values = {coax_hex_cell(fields) for fields in (pair or mine)}
+        if len(values) == 1 and (value := next(iter(values))):
+            end["crimpHex"] = value
     return enriched
 
 

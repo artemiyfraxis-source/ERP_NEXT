@@ -38,14 +38,15 @@ ERP из `backend/data/techcard-library-erp.json` (всего 108 кодов; к
 | `INS_terminal_1.5` | Монтаж терминалов | insTerm | сторона A/B |
 | `INS_terminal_2` | Монтаж терминалов | insTerm | сторона A/B |
 | `INS_terminal_2,54-6,3` | Монтаж терминалов | insTerm | сторона A/B |
-| `PRS_SLEEVE_coax` | Опрессовка | coaxShield | — |
+| `PRS_SLEEVE_coax` | Опрессовка | coaxShield | HEX матрицы — БД.КОАКС «HEX обжима, мм» пары разъём × кабель |
 | `PRS_TERMINAL_auto` | Опрессовка терминалов | prsTerm | сторона A/B |
 | `SDR_COAX_pin` | Пайка | coaxPin | сторона A/B |
 | `SDR_COAX_pin_R/A` | Пайка | coaxPin | сторона A/B |
 | `SDR_COAX_housing` | Пайка экрана | coaxSolderShield | сторона A/B |
 | `STRIP_COAX_auto` | Разделка | coaxStrip | сторона A/B |
 | `CUT_TUT_short` | Резка | cutTut, coaxCutTut | длина по КД (`[L КД]`) |
-| `CUT_WIRE_auto` | Резка | cutWire, coaxCut | — |
+| `CUT_WIRE_auto` | Резка | cutWire, coaxCut (пока нет CUT_COAX_auto) | — |
+| `CUT_COAX_auto` | Резка | coaxCut (разделка отдельно) | шаблон ERP |
 | `CUT_WIRE+1strip` | Резка с разделкой | cutWireStrip | — |
 | `CUT_WIRE+2strip` | Резка с разделкой | cutWireStrip | — |
 | `TWIST` | Свивка | twist | — |
