@@ -82,6 +82,8 @@ function HousingCard({ item, hit, wide = false }: { item: ConnectorSeriesHousing
   </div>;
 }
 
+const terminalCrimp = (t: ConnectorTerminal) => ({ conductor: t.crimp_height, insulation: t.ins_crimp_height, pull: t.pull_force });
+
 const TERMINAL_COLUMNS: DataColumn<ConnectorTerminal>[] = [
   { key: "article", title: "Артикул контакта", value: (t) => t.article, render: (t) => <b>{t.article}</b> },
   { key: "kind", title: "Контакт", value: (t) => t.kind },
@@ -90,8 +92,7 @@ const TERMINAL_COLUMNS: DataColumn<ConnectorTerminal>[] = [
   { key: "awg", title: "AWG", value: (t) => (t.awg_from && t.awg_to && t.awg_from !== t.awg_to ? `${t.awg_from}–${t.awg_to}` : t.awg_from || t.awg_to) },
   { key: "mm2", title: "Сечение, мм²", value: (t) => (t.mm2_from && t.mm2_to && t.mm2_from !== t.mm2_to ? `${t.mm2_from}–${t.mm2_to}` : t.mm2_from || t.mm2_to) },
   { key: "strip", title: "Зачистка, мм", value: (t) => t.strip, numeric: true },
-  { key: "crimp", title: CRIMP_COLUMN_TITLE, value: (t) => crimpText({ conductor: t.crimp_height, pull: t.pull_force }),
-    render: (t) => <CrimpCell values={{ conductor: t.crimp_height, pull: t.pull_force }} /> },
+  { key: "crimp", title: CRIMP_COLUMN_TITLE, value: (t) => crimpText(terminalCrimp(t)), render: (t) => <CrimpCell values={terminalCrimp(t)} /> },
   { key: "applicator", title: "Аппликатор", value: (t) => t.applicator },
 ];
 

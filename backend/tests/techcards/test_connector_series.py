@@ -191,6 +191,18 @@ def test_terminal_payload_carries_crimp_height_and_pull_force():
     assert (b["crimp_height"], b["pull_force"]) == ("26 AWG: 0,62; 28 AWG: 0,70", "26 AWG: 15; 28 AWG: 12")
     assert (c["crimp_height"], c["pull_force"]) == ("24 AWG: 0,76–0,81; 22 AWG: 0,84", "24 AWG: 29,3–35; 22 AWG: 44,1")
     assert (d["crimp_height"], d["pull_force"]) == ("", "")
+    assert [t["ins_crimp_height"] for t in (a, b, c, d)] == ["", "", "", ""]
+
+
+def test_terminal_payload_carries_insulation_crimp_height_per_awg():
+    plain = {"terSeries": "GHR", "terArticle": "P-1", "terCrimpHeight": "0,85", "terInsCrimpHeight": "1,50 - 1,65"}
+    profiled = {"terSeries": "GHR", "terArticle": "P-2", "terCrimpHeight": "28 AWG: 0,52 - 0,58\n26 AWG: 0,56 - 0,62",
+                "terInsCrimpHeight": "28 AWG: 1,30 - 1,45\n26 AWG: 1,35 - 1,50"}
+    a, b = terminals_for(("GHR",), [plain, profiled])
+
+    assert a["ins_crimp_height"] == "1,50–1,65"
+    assert b["ins_crimp_height"] == "28 AWG: 1,30–1,45; 26 AWG: 1,35–1,50"
+    assert b["crimp_height"] == "28 AWG: 0,52–0,58; 26 AWG: 0,56–0,62"
 
 
 # --- housing catalogues from the makers' documents (connector_catalog_data, 12.10.2026) -------------------------------

@@ -86,10 +86,16 @@ it("Терминалы: plain cells are edited in place with the old value; the 
   render(<ReferencesPage principal={admin} initialTab="ter" />);
   await screen.findByText("39000038");
 
-  for (const fixed of ["Тип разъёма", "Производитель", "Серия", "Тип контакта", "Артикул контакта (катушка)", "С зачисткой"]) {
+  // «Тип разъёма» — в «Колонках», по умолчанию скрыт: строки идут группами по серии, «Обжим» влезает в 16" (16.10).
+  expect(screen.getAllByRole("columnheader").map((th) => th.textContent)).not.toContain("Тип разъёма");
+  for (const fixed of ["Производитель", "Серия", "Тип контакта", "Артикул контакта (катушка)", "С зачисткой"]) {
     expect(cellOf("39000038", fixed)).not.toHaveClass("dt-editable");
   }
   expect(cellOf("39000038", "Аппликатор")).toHaveClass("dt-editable");
+  // Серия — узкой колонкой с «…», полный текст в подсказке.
+  const series = cellOf("39000038", "Серия").querySelector(".db-clip-narrow");
+  expect(series).not.toBeNull();
+  expect(series?.getAttribute("title")).toBe(series?.textContent);
   typeInCell(cellOf("39000038", "Длина зачистки, мм"), "3,1");
 
   await waitFor(() => expect(calls.find((call) => call.method === "PATCH")).toEqual({

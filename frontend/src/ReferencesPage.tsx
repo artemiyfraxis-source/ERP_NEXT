@@ -148,7 +148,11 @@ function mergeTerminalColumns(columns: DataColumn<TechOperationRecord>[], fields
 // Заголовки листа, которых нет в карте: без переносов строк, русские слова вместо английских (referenceLabels.ts).
 // Столбцы БД.ТЕР, нужные редко (ссылка, источник, материал, диаметры изоляции, пневма): в «Колонках», по умолчанию скрыты —
 // остальные (артикулы, шаг, обжим) укладываются в ширину ноутбука (аудит БД-3).
-const TER_RARE = new Set(["пневма автомат", "отр", "диаметр изоляции от, мм", "диаметр изоляции до, мм", "материал контакта", "ссылка на datasheet на сайте производителя", "источник высоты обжима"]);
+// «Тип разъёма» («Обжимной контакт» / «Обжимная клемма») скрыт тоже: строки и так идут группами по серии, а на 16"
+// (1536 px) без него «Обжим» виден без прокрутки вбок (16.10).
+const TER_RARE = new Set(["тип разъема", "пневма автомат", "отр", "диаметр изоляции от, мм", "диаметр изоляции до, мм", "материал контакта", "ссылка на datasheet на сайте производителя", "источник высоты обжима"]);
+// Длинные списки серий («I-DS1071-01-SCB01, I-DS1071-01-SCB02») и наименования — узкой колонкой с «…», целиком в подсказке.
+const TER_NARROW = new Set(["наименование", "серия"]);
 // БД.КОАКС (owner 29.09.2026): Ø belong to the cable (СПР.КАБ · коаксиал), the connector row keeps only lengths;
 // D1–D3 come from СПР.КАБ by «Провод», as the sheet's D1 formula does. Same key as the generator's coaxCableDiaLookup_.
 const CABLE_DIAMETERS = ["D1", "D2", "D3"];
@@ -437,6 +441,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       const shown = (record: TechOperationRecord) => valueLabel(field, record.fields[field] ?? "");
       const values = tech.records.map((record) => record.fields[field] ?? "").filter((value) => value && value !== "—");
       const long = values.some((value) => value.length > 40);
+      const narrow = techTab === "ter" && TER_NARROW.has(headerKey(fieldTitle(field)));
       const own = ownColumns.includes(field);
       // Да/нет листа (TRUE/FALSE) — выбор, а не текст: правится в окне записи. Первая колонка — ручка строки: щелчок по ней
       // открывает запись (карточку контакта), поэтому она не правится в ячейке.
@@ -446,7 +451,8 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       return {
         key: field, title: fieldTitle(field), value: shown, hint: techTab === "ter" ? terFieldHint(field) : undefined,
         // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
-        render: long ? (record) => <span className="db-clip" title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
+        render: long || narrow
+          ? (record) => <span className={narrow ? "db-clip db-clip-narrow" : "db-clip"} title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
         edit: canEdit && inCell ? (own ? ownCellEdit<TechOperationRecord>(field, (record) => record) : fieldCellEdit<TechOperationRecord>(field, (record) => record)) : undefined,
         remove: own ? techRemoval.removeOf(field) : undefined,
         // «Группа» материалов — заголовок группы строк, колонкой не повторяется (она в «Колонках»).

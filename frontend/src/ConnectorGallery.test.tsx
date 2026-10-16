@@ -23,7 +23,8 @@ const GH: ConnectorSeries = {
   datasheet: "https://www.jst-mfg.com/product/pdf/eng/eGH.pdf", note: "",
   variants: [{ title: "Корпус", family: "jst-gh", housings: [housing(2), housing(3), housing(4)] }],
   terminals: [{ article: "SSHL-002T-P0.2", maker: "JST", product: "GHD, GH", series: "GHDR, GHR", kind: "гнездо",
-    awg_from: "30", awg_to: "26", mm2_from: "0,05", mm2_to: "0,12", strip: "1,7", applicator: "S4/M4/A4", crimp_height: "26 AWG: 0,62; 28 AWG: 0,70", pull_force: "26 AWG: 15; 28 AWG: 12" }],
+    awg_from: "30", awg_to: "26", mm2_from: "0,05", mm2_to: "0,12", strip: "1,7", applicator: "S4/M4/A4", crimp_height: "26 AWG: 0,62; 28 AWG: 0,70", pull_force: "26 AWG: 15; 28 AWG: 12",
+    ins_crimp_height: "26 AWG: 1,35–1,50" }],
   wire: { awg_thin: 30, awg_thick: 26, mm2_min: 0.05, mm2_max: 0.12 },
   housing_count: 3, counts: [2, 3, 4], pitch: 1.25, color: "#efe6cf", checked: true, sample: housing(2),
   category: "Провод — плата", catalog: [],
@@ -119,7 +120,7 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
     expect(screen.getByText("SSHL-002T-P0.2")).toBeInTheDocument();
     expect(screen.getByText(CRIMP_COLUMN_TITLE)).toBeInTheDocument();
     const rows = Array.from(document.querySelectorAll(".crimp-row")).map((row) => row.textContent);
-    expect(rows).toEqual(["26 AWG0,62—15 Н", "28 AWG0,70—12 Н"]);
+    expect(rows).toEqual(["26 AWG0,621,35–1,5015 Н", "28 AWG0,70—12 Н"]);
     expect(screen.getAllByRole("img", { name: /^Вид сверху GHR/ })).toHaveLength(3);
     fireEvent.click(screen.getByRole("button", { name: "← Все серии" }));
     expect(await screen.findByRole("button", { name: "Серия JST GH" })).toBeInTheDocument();
