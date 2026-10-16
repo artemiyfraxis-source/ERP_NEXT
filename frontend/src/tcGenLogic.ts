@@ -7,7 +7,7 @@
  * Выход — тот же config, что форма отправляла portalTechmapGenerate, и его принимает
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
-import { markLabel, markSpecs, type MarkMat, type MarkRow, type MarkSpec } from "./tcGenMarks";
+import { markLabel, markSpecs, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
 
@@ -96,10 +96,14 @@ export type JacketShrink = { on: boolean; mat: string; len: string };
 export type WrapKind = "tape" | "braid" | "under";
 export type WrapSlot = { mat: string; kind: WrapKind; len: string };
 export type CoaxSide = { art: string; name: string } | null;
-/** Способ сростка: опрессовка гильзой, пайка, ленточный обжим. */
-export type SpliceMethod = "sleeve" | "solder" | "band";
-/** Карта операции «Сростки» по способу (БД.ОП). */
-export const SPLICE_TMPL: Record<SpliceMethod, string> = { solder: "SDR_W_W", sleeve: "PRS_НШВИ", band: "PRS_COPPER" };
+/** Способ сростка: опрессовка гильзой, пайка, ленточный обжим, ультразвуковая сварка (владелец 16.10). */
+export type SpliceMethod = "sleeve" | "solder" | "band" | "ultrasonic";
+/** Карта операции «Сростки» по способу (БД.ОП; УЗ сварка — US_WELD). */
+export const SPLICE_TMPL: Record<SpliceMethod, string> = { solder: "SDR_W_W", sleeve: "PRS_НШВИ", band: "PRS_COPPER", ultrasonic: "US_WELD" };
+/** Способы сростка для выбора в форме — по-русски. */
+export const SPLICE_METHODS: ReadonlyArray<readonly [SpliceMethod, string]> = [
+  ["sleeve", "Опрессовка гильзой"], ["solder", "Пайка"], ["band", "Ленточный обжим"], ["ultrasonic", "Ультразвуковая сварка"],
+];
 /** Ключ выбора гильзы для сростков без своей точки на схеме (заданы числом или ответвлением). */
 export const SPLICE_REST_ = "*";
 /** Длина зачистки хвоста под лужение по умолчанию, мм (владелец 16.10: «2–3 мм»). */
@@ -208,6 +212,11 @@ export type OpSpec = {
   sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
   /** Коакс, резка с разделкой на станке: модель станка (COAX_MACHINES) и разделываемые концы. */
   machine?: string; stripSides?: Side[];
+  /** Партия резки с обжимом (владелец 16.10): жил провода в этой операции, когда их меньше, чем в строке «Кабели» (провод
+   *  ×2, одна жила — к SYM, другая — к SHF); все разъёмы стороны, что обжимает партия; терминалы партии для формы. */
+  wireUnits?: Record<number, number>; crimpEpIds?: string[]; crimpEpIdsB?: string[]; crimpTerms?: string;
+  /** Метка-трубка из состава: резка, надевание и усадка маркировки; `tutParts` — отрезки по позициям состава. */
+  markTube?: boolean; tutParts?: Array<{ art: string; name: string; count: number; len: string }>;
 };
 
 // ── Константы TcGenInline ─────────────────────────────────────────────────
@@ -928,7 +937,7 @@ export function makeGen(D: GenData, S: GenState) {
   function spliceSleeves_(): { items: Array<{ comp: Comp; count: number }>; missing: string[] } {
     const items: Array<{ comp: Comp; count: number }> = [], missing: string[] = [];
     const method = splMethod_();
-    if (method === "solder") return { items, missing };
+    if (method === "solder" || method === "ultrasonic") return { items, missing };
     const add = (comp: Comp, count: number) => { const same = items.find((x) => x.comp === comp); if (same) same.count += count; else items.push({ comp, count }); };
     const slots = spliceSlots_();
     if (method === "band") {
@@ -975,6 +984,7 @@ export function makeGen(D: GenData, S: GenState) {
       sealArt: c.art || c.name || "", sealName: c.name || c.art || "", sealQty: String(c.qty || ""), sealPlaces: places };
   }
   function spliceWelded_() {
+    if (splMethod_() === "ultrasonic") return true;
     if (splMethod_() !== "solder") return false;
     const id = templateIdFor({ type: "splice", opKey: "splice", tmplHint: SPLICE_TMPL.solder, cat: "Пайка", label: "" });
     const t = (D.templates || []).find((x) => x.id === id);
@@ -999,10 +1009,13 @@ export function makeGen(D: GenData, S: GenState) {
     }
     // Пайка — как до 16.10 (название и карта те же); опрессовка гильзой и ленточный обжим — со способом и гильзами.
     const method = splMethod_();
-    const how = method === "sleeve" ? " опрессовкой гильзой" : method === "band" ? " ленточным обжимом" : "";
+    const how = { sleeve: " опрессовкой гильзой", band: " ленточным обжимом", ultrasonic: " ультразвуковой сваркой", solder: "" }[method];
     const used = spliceSleeves_().items.map((x) => `${x.comp.art || x.comp.name} ×${x.count}`);
-    ops.push({ type: "splice", opKey: "splice", tmplHint: SPLICE_TMPL[method], cat: method === "solder" ? "Пайка" : "Опрессовка", units: cnt,
-      label: `Сростки${how} — ${cnt} шт по ${wires} провода${used.length ? `: ${used.join(", ")}` : ""}` });
+    // Карты УЗ сварки (US_WELD) в библиотеке может не быть — подсказка остаётся, в названии видно, что карточку надо уточнить.
+    const noCard = method === "ultrasonic" && !hasTemplateCode_(SPLICE_TMPL.ultrasonic) ? " (карточка — уточнить)" : "";
+    ops.push({ type: "splice", opKey: "splice", tmplHint: SPLICE_TMPL[method],
+      cat: method === "solder" ? "Пайка" : method === "ultrasonic" ? "УЗ сварка" : "Опрессовка", units: cnt,
+      label: `Сростки${how} — ${cnt} шт по ${wires} провода${used.length ? `: ${used.join(", ")}` : ""}${noCard}` });
     if (len && tut) {
       ops.push({ type: "heatTut", opKey: "heatSpl", tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: cnt,
         label: `Усадка трубки на сростках — ${cnt} шт` });
@@ -1015,23 +1028,41 @@ export function makeGen(D: GenData, S: GenState) {
     const r = findTerRecord_(art);
     return !!(r && String(r.applicator || "").split(/[/,;]/).some((s) => /^[AА]\d+$/i.test(s.trim())));
   }
-  /** Можно ли обжать сторону на автомате резки: "" — можно; "applicator" — мешает только то, что у терминала в БД.ТЕР нет
-   *  автоматического аппликатора (A…); "other" — групповой обжим, складывание, RJ, разные терминалы, наконечник, кабель. */
+  /** Можно ли обжать концы разъёма на автомате резки: "" — можно; "applicator" — у терминала в БД.ТЕР нет автоматического
+   *  аппликатора (A…); "other" — пайка, нет терминала, групповой обжим, складывание, RJ, наконечник, кабель в оболочке. */
+  function crimpCutEpBlock_(e: Endpoint): "" | "applicator" | "other" {
+    if (e.method !== "crimp" || !e.termId || e.double || epDoublePins_(e).length > 0 || (e.fold && isComplex_()) || isRjEndpoint_(e)) return "other";
+    const t = getCompById(e.termId);
+    if (!t || LUG_RE_.test(t.art || t.name || "")) return "other";
+    const routed = new Set(routedWireIdxs_(e));
+    if (activeWires_().some((w) => routed.has(w.idx) && isJacketedCable_(w))) return "other";
+    return terHasAutoApplicator_(t.art || t.name) ? "" : "applicator";
+  }
+  /** Можно ли обжать сторону на автомате резки: "" — да (партиями по терминалам, владелец 16.10: разные терминалы стороны
+   *  обжимаются каждый своей партией, терминал без аппликатора автомата — вручную); "applicator" — ни у одного терминала
+   *  стороны нет аппликатора автомата; "other" — пайка, групповой обжим, складывание, RJ, наконечник, кабель, нет проводов. */
   function crimpCutBlock_(side: Side): "" | "applicator" | "other" {
     const eps = endpointsOnSide_(side);
-    if (!eps.length || eps.some((e) => e.method !== "crimp" || !e.termId || e.termId !== eps[0].termId
-        || e.double || epDoublePins_(e).length > 0 || (e.fold && isComplex_()) || isRjEndpoint_(e))) return "other";
-    const t = getCompById(eps[0].termId);
-    if (!t || LUG_RE_.test(t.art || t.name || "")) return "other";
-    const routed = new Set(eps.flatMap(routedWireIdxs_));
-    const ws = activeWires_().filter((w) => routed.has(w.idx));
-    if (!ws.length || ws.some((w) => isJacketedCable_(w))) return "other";
-    return terHasAutoApplicator_(t.art || t.name) ? "" : "applicator";
+    if (!eps.length || !eps.some((e) => routedWireIdxs_(e).length > 0)) return "other";
+    const blocks = eps.map(crimpCutEpBlock_);
+    if (blocks.includes("other")) return "other";
+    return blocks.includes("") ? "" : "applicator";
   }
   function crimpCutSides_(): Side[] {
     return (["A", "B"] as Side[]).filter((side) => !crimpCutBlock_(side));
   }
-  /** Почему сторону с обжимом нельзя обжать на автомате резки: короткая строка для формы («сторона В: разные терминалы —
+  /** Разъём, концы которого станок обжимает при резке: его сторона обжимается на автомате и у терминала есть аппликатор. */
+  const epCrimpAtCut_ = (e: Endpoint | null | undefined) => !!e && crimpCutActiveSides_().includes(e.side) && crimpCutEpBlock_(e) === "";
+  /** Разъём, где стоит конец жилы `k` провода на стороне: по распиновке; контакта нет — единственный разъём стороны, куда
+   *  заведён провод (или первый, пока распиновки у провода нет нигде). Конец в сростке или хвосте («Сложная сборка») — null. */
+  function unitEndpoint_(w: WireEntry, k: number, side: Side): Endpoint | null {
+    if (isComplex_() && endJoined(S, w.idx, k, side)) return null;
+    const eps = endpointsOnSide_(side).filter((e) => routedWireIdxs_(e).includes(w.idx));
+    const pinned = eps.find((e) => corePinsOf_(e, w.idx)[k] != null);
+    if (pinned) return pinned;
+    return eps.length === 1 || !eps.some((e) => corePinsOf_(e, w.idx).some((p) => p != null)) ? eps[0] || null : null;
+  }
+  /** Почему сторону с обжимом нельзя обжать на автомате резки: короткая строка для формы («сторона В: есть пайка —
    *  обжим вручную», «сторона В: у 2 проводов не выбран терминал») или "" — можно либо на стороне нечего обжимать. */
   function crimpCutSideNote_(side: Side): string {
     const eps = endpointsOnSide_(side);
@@ -1049,12 +1080,37 @@ export function makeGen(D: GenData, S: GenState) {
       return `${head}у ${n} ${n % 10 === 1 && n % 100 !== 11 ? "провода" : "проводов"} не выбран терминал`;
     }
     if (eps.some((e) => e.method !== "crimp")) return `${head}есть пайка${tail}`;
-    if (new Set(eps.map((e) => e.termId)).size > 1) return `${head}разные терминалы${tail}`;
     if (crimpCutBlock_(side) === "applicator") {
-      const t = getCompById(eps[0].termId);
-      return `${head}у ${t ? t.art || t.name : "терминала"} нет аппликатора автомата (A…)${tail}`;
+      const arts = [...new Set(eps.map((e) => { const t = getCompById(e.termId); return t ? t.art || t.name : ""; }).filter(Boolean))];
+      return `${head}у ${arts.join(", ") || "терминала"} нет аппликатора автомата (A…)${tail}`;
     }
     return `${head}двойной обжим, сложенная жила, RJ, наконечник или кабель${tail}`;
+  }
+  /** Партии обжима при резке для формы (владелец 16.10): «А — SYM-001T-P0.6: 4 пр., SHF-001T-0.8BS: 2 пр.; В —
+   *  T-DS1071-SC600: 4 пр.; А и В — SYM-001T-P0.6 / T-DS1071-SC600: 3 пр.», терминалы активной стороны без аппликатора
+   *  автомата — «вручную: …»; концы в сростках и хвостах станок не обжимает. "" — обжима при резке нет. */
+  function crimpCutBatchNote_(): string {
+    const lines = crimpCutBatchLines_();
+    return lines.length ? `Партии: ${lines.join("; ")}` : "";
+  }
+  /** Те же партии построчно для формы: «А — SYM-001T-P0.6: 4 пр., SHF-001T-0.8BS: 2 пр.», «В — …», «А и В — …», «вручную,
+   *  нет аппликатора автомата: …», «концы в сростках и хвостах не обжимаются». */
+  function crimpCutBatchLines_(): string[] {
+    const cuts = getActiveOps().filter((o) => o.type === "cutWireCrimp");
+    if (!cuts.length) return [];
+    const ends = (o: OpSpec) => activeWires_().filter((w) => (o.wireIdxs || []).includes(w.idx))
+      .reduce((n, w) => n + (o.wireUnits?.[w.idx] ?? unitCount_(w)), 0);
+    const where = (o: OpSpec) => (o.crimpEpIdB ? "А и В" : sideRu_(o.side || "A"));
+    const groups: string[] = [];
+    ["А", "В", "А и В"].forEach((key) => {
+      const list = cuts.filter((o) => where(o) === key).map((o) => `${o.crimpTerms || "?"}: ${ends(o)} пр.`);
+      if (list.length) groups.push(`${key} — ${list.join(", ")}`);
+    });
+    const manual = crimpCutActiveSides_().flatMap((side) => endpointsOnSide_(side).filter((e) => crimpCutEpBlock_(e) === "applicator")
+      .map((e) => { const t = getCompById(e.termId); return `${t ? t.art || t.name : "?"} (${sideRu_(side)})`; }));
+    const joined = isComplex_() && ((S.splices || []).length || (S.tails || []).length);
+    return [...groups, ...(manual.length ? [`вручную, нет аппликатора автомата: ${[...new Set(manual)].join(", ")}`] : []),
+      ...(joined ? ["концы в сростках и хвостах не обжимаются"] : [])];
   }
   const hasTemplateCode_ = (code: string) =>
     (D.templates || []).some((t) => String(t.title || "").split("|")[0].trim().toLowerCase() === code.toLowerCase());
@@ -1265,21 +1321,27 @@ export function makeGen(D: GenData, S: GenState) {
     if (g.mm2 != null && r.mm2Min != null) return { ok: g.mm2 >= r.mm2Min && g.mm2 <= r.mm2Max!, basis: g.mm2 + " мм²", range: r.mm2Min + "–" + r.mm2Max + " мм²" };
     return { ok: true, basis: "", range: "" };
   }
+  /** Сечение провода против диапазона терминала, в который обжимается его конец (владелец 16.10: провод 0,5, чей конец В
+   *  уходит в сросток, не сверяется с терминалом В). Конец в сростке или хвосте — без терминала. */
   function checkTerminalFit_() {
     const warns: string[] = [];
-    const epA = firstCrimpEndpoint_("A"), epB = endpointsOnSide_("B").length ? firstCrimpEndpoint_("B") : null;
-    const termA = getCompById(epA?.termId), termB = getCompById(epB?.termId);
-    const rA = termA ? terRange_(findTerRecord_(termA.art)) : null;
-    const rB = termB ? terRange_(findTerRecord_(termB.art)) : null;
-    if (!rA && !rB) return warns;
     activeWires_().forEach((w) => {
       const c = getCompById(w.compId);
       if (!c) return;
       const g = wireGaugeOf_(c);
-      ([["A", rA, termA], ["B", rB, termB]] as const).forEach(([side, r, t]) => {
-        if (!r || !t) return;
-        const fit = wireFitsTerminal_(g, r);
-        if (!fit.ok) warns.push("• «" + (c.name || c.art) + "» (" + fit.basis + ") вне диапазона терминала " + side + " «" + (t.name || t.art) + "» (" + fit.range + ")");
+      (["A", "B"] as Side[]).forEach((side) => {
+        const terms: string[] = [];
+        for (let k = 0; k < unitCount_(w); k++) {
+          const ep = unitEndpoint_(w, k, side);
+          if (ep && ep.method === "crimp" && ep.termId && !terms.includes(ep.termId)) terms.push(ep.termId);
+        }
+        terms.forEach((id) => {
+          const t = getCompById(id);
+          const r = t ? terRange_(findTerRecord_(t.art)) : null;
+          if (!t || !r) return;
+          const fit = wireFitsTerminal_(g, r);
+          if (!fit.ok) warns.push("• «" + (c.name || c.art) + "» (" + fit.basis + ") вне диапазона терминала " + side + " «" + (t.name || t.art) + "» (" + fit.range + ")");
+        });
       });
     });
     return warns;
@@ -1615,6 +1677,9 @@ export function makeGen(D: GenData, S: GenState) {
   /** Стороны, которые обжимает автомат резки, когда до обжима надо надеть трубку или оплётку: станок обжимает конец при
    *  резке — надеть её раньше нельзя. Пусто — порядок честный. */
   function sleeveCrimpCutConflict_(): Side[] {
+    // «Сложная сборка»: трубки и оплётку надевают после партий обжима при резке (порядок владельца 16.10, 713К.4 КБ1 —
+    // мелкие терминалы проходят в трубку), предупреждать не о чем.
+    if (isComplex_()) return [];
     const it = sleeveItems_();
     const any = it.conn.length || it.jacket.length || it.harness.length || braidOn_();
     return any ? crimpCutActiveSides_() : [];
@@ -1707,17 +1772,33 @@ export function makeGen(D: GenData, S: GenState) {
       const splAtCut = spliceStripAtCut_();
       const splLen = (S.spl.strip || "").trim() || "—";
       const tinIdx = tinWireIndices_();
-      const stripOf = (w: WireEntry) => {
+      // Кусок провода: его жилы, концы которых стоят на одних и тех же разъёмах сторон (провод ×2: одна жила — к «I3»,
+      // другая — к «C»). Кабель в оболочке и провод без распиновки по разъёмам — целиком, по всем разъёмам стороны.
+      type Piece = { w: WireEntry; units: number; ends: Partial<Record<Side, Endpoint | null>> | null };
+      const pieces: Piece[] = [];
+      activeWires.forEach((w) => {
+        if (wireCores_(w) > 1) { pieces.push({ w, units: unitCount_(w), ends: null }); return; }
+        const own = new Map<string, Piece>();
+        for (let k = 0; k < unitCount_(w); k++) {
+          const epA = unitEndpoint_(w, k, "A"), epB = unitEndpoint_(w, k, "B");
+          const key = `${epA?.id ?? ""}|${epB?.id ?? ""}`;
+          const piece = own.get(key);
+          if (piece) piece.units++;
+          else { const next: Piece = { w, units: 1, ends: { A: epA, B: epB } }; own.set(key, next); pieces.push(next); }
+        }
+      });
+      const stripOf = (w: WireEntry, piece: Piece) => {
         let a = "", b = "";
+        const ends = piece.ends;
         if (splAtCut) (["A", "B"] as Side[]).forEach((side) => {
           const eps = endpointsOnSide_(side);
-          if (!eps.length || eps.some((e) => routedWireIdxs_(e).includes(w.idx))) return;
+          if (!eps.length || (ends ? !!ends[side] : eps.some((e) => routedWireIdxs_(e).includes(w.idx)))) return;
           if (side === "A") a = splLen; else b = splLen;
         });
-        S.endpoints.forEach((e) => {
-          if (!routedWireIdxs_(e).includes(w.idx)) return;
+        const own = ends ? [ends.A, ends.B].filter((e): e is Endpoint => !!e) : S.endpoints.filter((e) => routedWireIdxs_(e).includes(w.idx));
+        own.forEach((e) => {
           let len: string | null = null;
-          if (crimpSides.includes(e.side)) len = epStripLen_(e);
+          if (epCrimpAtCut_(e)) len = epStripLen_(e);
           // Ротор снимает только оболочку — «Разделка» строки «Кабели» (владелец 15.10: «жилы у многожильного не могут
           // разделываться на станке, они либо разделываются отдельно перед обжимом, либо на ОТП»): жилы зачищает своя
           // операция у разъёма (coreStripOp_). RJ — без зачистки жил (врезной контакт), складывание жилы — по своему
@@ -1748,50 +1829,62 @@ export function makeGen(D: GenData, S: GenState) {
         if (!b && !endpointsOnSide_("B").length && S.freeStrip.enabled) b = freeLen || "—";
         return { a, b };
       };
-      // Сторона, которую обжимает станок: её первый разъём (терминал на стороне один — crimpCutBlock_) и заведённые в
-      // неё провода. Провод, не заведённый в разъём этой стороны, на ней не обжимается.
-      const crimpEpOf = (side: Side) => (crimpSides.includes(side) ? endpointsOnSide_(side)[0] || null : null);
-      const crimpSets = (["A", "B"] as Side[]).map((side) => new Set(crimpEpOf(side) ? endpointsOnSide_(side).flatMap(routedWireIdxs_) : []));
+      // Партии резки с обжимом (владелец 16.10, 713К.4 КБ1): концы, которые станок обжимает, — по терминалу каждой стороны
+      // (SYM — одна партия, SHF — другая, T-DS1071 стороны В — своя; провод с терминалами на обоих концах — партия обжима
+      // А и В). Конец в сростке или хвосте станок не обжимает. Партия обжимает концы на всех разъёмах своего терминала.
       const rotor = S.rotor;
-      const groups: Record<string, { wires: WireEntry[]; a: string; b: string; crimp: Side[]; tin: boolean; rot: boolean }> = {};
-      activeWires.forEach((w) => {
-        const s = stripOf(w);
-        const crimp = (["A", "B"] as Side[]).filter((_, i) => crimpSets[i].has(w.idx));
-        const tin = crimp.length > 0 && tinAtCut.has(w.idx);
+      const termOf = (e: Endpoint | null) => (e ? e.termId : "");
+      type Group = { pieces: Piece[]; a: string; b: string; crimpA: Endpoint[]; crimpB: Endpoint[]; tin: boolean; rot: boolean };
+      const groups: Record<string, Group> = {};
+      pieces.forEach((piece) => {
+        const w = piece.w;
+        const s = stripOf(w, piece);
+        const crimpA = piece.ends && epCrimpAtCut_(piece.ends.A) ? piece.ends.A! : null;
+        const crimpB = piece.ends && epCrimpAtCut_(piece.ends.B) ? piece.ends.B! : null;
+        const tin = (!!crimpA || !!crimpB) && tinAtCut.has(w.idx);
         const rot = rotor && isJacketedCable_(w);
-        const sig = `${s.a}|${s.b}|${crimp.join("")}${tin ? "T" : ""}|${rot ? "R" : ""}`;
-        (groups[sig] || (groups[sig] = { wires: [], a: s.a, b: s.b, crimp, tin, rot })).wires.push(w);
+        const sig = `${s.a}|${s.b}|${crimpA ? "A" : ""}${crimpB ? "B" : ""}${tin ? "T" : ""}|${termOf(crimpA)}/${termOf(crimpB)}|${rot ? "R" : ""}`;
+        const g = groups[sig] || (groups[sig] = { pieces: [], a: s.a, b: s.b, crimpA: [], crimpB: [], tin, rot });
+        g.pieces.push(piece);
+        if (crimpA && !g.crimpA.includes(crimpA)) g.crimpA.push(crimpA);
+        if (crimpB && !g.crimpB.includes(crimpB)) g.crimpB.push(crimpB);
       });
       let ci = 0;
       Object.keys(groups).forEach((sig) => {
-        const g = groups[sig], ws = g.wires;
+        const g = groups[sig];
+        const ws = [...new Set(g.pieces.map((p) => p.w))];
+        const units: Record<number, number> = {};
+        g.pieces.forEach((p) => { units[p.w.idx] = (units[p.w.idx] || 0) + p.units; });
+        const part = Object.fromEntries(ws.filter((w) => units[w.idx] < unitCount_(w)).map((w) => [w.idx, units[w.idx]]));
+        const own = { wireIdxs: ws.map((w) => w.idx), ...(Object.keys(part).length ? { wireUnits: part } : {}) };
         const hasA = g.a !== "", hasB = g.b !== "", n = (hasA ? 1 : 0) + (hasB ? 1 : 0);
         const key = ci === 0 ? "cutWire" : "cutWire" + ci; ci++;
         const dashless = (s: string) => (s === "—" ? "" : s);
         const strip = { a: hasA, lenA: dashless(g.a), b: hasB, lenB: dashless(g.b) };
-        if (g.crimp.length === 2) {
+        const artOf = (ep: Endpoint) => { const t = getCompById(ep.termId)!; return t.art || t.name; };
+        const many = (list: Endpoint[]) => (list.length > 1 ? list.map((e) => e.id) : undefined);
+        if (g.crimpA.length && g.crimpB.length) {
           // Обе стороны на станке с двумя аппликаторами: ручной опрессовки у этих концов нет. Терминалы сторон могут
           // различаться — в названии оба. Карты CUT_WIRE+2crimp нет в библиотеке — норма и карта односторонней резки.
-          const epA = crimpEpOf("A")!, epB = crimpEpOf("B")!;
-          const artOf = (ep: Endpoint) => { const t = getCompById(ep.termId)!; return t.art || t.name; };
+          const epA = g.crimpA[0], epB = g.crimpB[0];
           const terms = artOf(epA) === artOf(epB) ? artOf(epA) : `${artOf(epA)} / ${artOf(epB)}`;
-          ops.push({ type: "cutWireCrimp", opKey: key, side: "A", crimpEpId: epA.id, crimpEpIdB: epB.id,
-            label: cutLabel(ws, `Резка с обжимом А и В (${terms})`),
-            wireIdxs: ws.map((w) => w.idx), tmplHint: hasTemplateCode_(CRIMP_BOTH_CODE_) ? CRIMP_BOTH_CODE_ : "CUT_WIRE+1crimp", tmplWant: CRIMP_BOTH_CODE_, strip });
-        } else if (g.crimp.length === 1) {
-          const crimpSide = g.crimp[0], crimpEp = crimpEpOf(crimpSide)!;
-          const term = getCompById(crimpEp.termId)!;
+          ops.push({ type: "cutWireCrimp", opKey: key, side: "A", crimpEpId: epA.id, crimpEpIdB: epB.id, crimpEpIds: many(g.crimpA), crimpEpIdsB: many(g.crimpB),
+            crimpTerms: terms, label: cutLabel(ws, `Резка с обжимом А и В (${terms})`),
+            ...own, tmplHint: hasTemplateCode_(CRIMP_BOTH_CODE_) ? CRIMP_BOTH_CODE_ : "CUT_WIRE+1crimp", tmplWant: CRIMP_BOTH_CODE_, strip });
+        } else if (g.crimpA.length || g.crimpB.length) {
+          const crimpSide: Side = g.crimpA.length ? "A" : "B", list = g.crimpA.length ? g.crimpA : g.crimpB, crimpEp = list[0];
+          const term = artOf(crimpEp);
           // С лужением свободного конца тем же станком (BZW-5.0+Z) отдельной операции «Лужение» у этих проводов нет.
-          ops.push({ type: "cutWireCrimp", opKey: key, side: crimpSide, crimpEpId: crimpEp.id,
-            label: cutLabel(ws, `Резка с обжимом ${sideRu_(crimpSide)} (${term.art || term.name})${g.tin ? " и лужением" : (crimpSide === "A" ? hasB : hasA) ? ` и зачисткой ${sideRu_(crimpSide === "A" ? "B" : "A")}` : ""}`),
-            wireIdxs: ws.map((w) => w.idx), tmplHint: g.tin ? CRIMP_TIN_CODE_ : "CUT_WIRE+1crimp", strip, ...(g.tin ? { tin: true } : {}) });
+          ops.push({ type: "cutWireCrimp", opKey: key, side: crimpSide, crimpEpId: crimpEp.id, crimpEpIds: many(list), crimpTerms: term,
+            label: cutLabel(ws, `Резка с обжимом ${sideRu_(crimpSide)} (${term})${g.tin ? " и лужением" : (crimpSide === "A" ? hasB : hasA) ? ` и зачисткой ${sideRu_(crimpSide === "A" ? "B" : "A")}` : ""}`),
+            ...own, tmplHint: g.tin ? CRIMP_TIN_CODE_ : "CUT_WIRE+1crimp", strip, ...(g.tin ? { tin: true } : {}) });
         } else if (n === 0) {
-          ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), wireIdxs: ws.map((w) => w.idx), tmplHint: "CUT_WIRE_auto", cat: "Резка" });
+          ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), ...own, tmplHint: "CUT_WIRE_auto", cat: "Резка" });
         } else {
           // Ротор — только оболочка: её длина в названии (жилы зачищает своя операция у разъёма).
           const sizes = g.rot ? `: ${jacketCoreText_({ a: g.a, b: g.b }, { a: "", b: "" })}` : "";
           ops.push({ type: "cutWireStrip", opKey: key, label: cutLabel(ws, `Резка с разделкой${g.rot ? " на роторе" : ""} (${n} ст.${sizes})`),
-            wireIdxs: ws.map((w) => w.idx), tmplHint: `${g.rot ? "CUT_COAX" : "CUT_WIRE"}+${n}strip`, strip });
+            ...own, tmplHint: `${g.rot ? "CUT_COAX" : "CUT_WIRE"}+${n}strip`, strip });
         }
       });
       if (solderEnds > 0 && (bomTut_() || tutSegs.some((s) => s.len))) {
@@ -1865,7 +1958,7 @@ export function makeGen(D: GenData, S: GenState) {
           if (!conn) return null;
           len = (ep.solderStrip || "").trim() || DEFAULT_LEN_MM_;
         } else {
-          if (!term || ep.otp || crimpSides.includes(side) || isRjEndpoint_(ep) || (ep.fold && isComplex_())) return null;
+          if (!term || ep.otp || epCrimpAtCut_(ep) || isRjEndpoint_(ep) || (ep.fold && isComplex_())) return null;
           len = epStripLen_(ep);
         }
         const routed = routedWireIdxs_(ep);
@@ -1886,7 +1979,8 @@ export function makeGen(D: GenData, S: GenState) {
           label: `Пайка разъёма ${tag} — ${conn.art || conn.name}`, tmplHint: ep.sdrTmpl || detectSolderConn_(conn.art) || undefined });
       } else {
         ops.push(...cableOps("под обжим"));
-        if (term && !crimpSides.includes(side)) {
+        // Терминалы, которые обжал станок при резке (своей партией), второй раз вручную не обжимаются.
+        if (term && !epCrimpAtCut_(ep)) {
           ops.push({ type: "prsTerm", opKey: endpointOpKey_(side, ord, "prs"), side, ord, epId: ep.id,
             label: `Опрессовка ${LUG_RE_.test(term.art || term.name || "") ? "наконечников" : "терминалов"} ${tag}`
               + (ep.double ? ` (${epPer_(ep) > 2 ? "по " + epPer_(ep) + " провода" : "двойной обжим"})` : epDoublePins_(ep).length ? ` (двойной обжим: конт. ${epDoublePins_(ep).join(", ")})` : "")
@@ -1983,8 +2077,13 @@ export function makeGen(D: GenData, S: GenState) {
     if (hsCount) {
       dress.push({ type: "heatTut", opKey: "heatHs", tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: hsCount, harness: true, label: `Усадка термоусадки на жгуте — ${hsCount} шт` });
     }
-    const kdMarks = S.mark ? markSpecs(S.markRows || [], comps()) : [];
-    const marks = S.mark && !kdMarks.length ? markComps_() : [];
+    const allKdMarks = S.mark ? markSpecs(S.markRows || [], comps()) : [];
+    // «Сложная сборка»: метки-трубки из состава — свои резка, надевание и усадка (markTubeOps_), в «Маркировку» не идут.
+    const tubeMarks = S.mark && isComplex_() ? markTubeSplit(S.markRows || [], comps()) : null;
+    const kdMarks = tubeMarks ? tubeMarks.rest : allKdMarks;
+    const markOps = markTubeOps_(tubeMarks ? tubeMarks.tubes : []);
+    if (markOps.heat) dress.push(markOps.heat);
+    const marks = S.mark && !allKdMarks.length ? markComps_() : [];
     if (kdMarks.length) {
       dress.push({ type: "insMark", opKey: "insMark", cat: "Монтаж маркировки", label: markLabel(kdMarks), marks: kdMarks });
     } else if (marks.length) {
@@ -2033,17 +2132,84 @@ export function makeGen(D: GenData, S: GenState) {
     // трубок, «Надеть трубки (стороны А и В)», оплётка. ТУТ «на пайку» режется после них — её надевает своя операция
     // перед пайкой (иначе её отрезки ушли бы в «Надеть трубки»).
     const on = sleeveOn_(sleeves);
-    const cuts = sleeveCuts_(sleeves);
-    if (on || cuts.length || slid.length) {
+    const cuts = [...sleeveCuts_(sleeves), ...(markOps.cut ? [markOps.cut] : [])];
+    const ons = [...(on ? [on] : []), ...(markOps.on ? [markOps.on] : [])];
+    if (ons.length || cuts.length || slid.length) {
       const prepOp = (o: OpSpec) => /^cutWire/.test(o.type) || o.type === "cutTut" || o.type === "foldCore" || (o.type === "endCap" && !o.side);
       let at = ops.findIndex((o) => !prepOp(o));
       if (at < 0) at = ops.length;
       const solderCut = ops.findIndex((o, i) => i < at && o.opKey === "cutTut");
       const moved = solderCut >= 0 ? ops.splice(solderCut, 1) : [];
       if (moved.length) at -= 1;
-      ops.splice(at, 0, ...cuts, ...(on ? [on] : []), ...slid, ...moved);
+      ops.splice(at, 0, ...cuts, ...ons, ...slid, ...moved);
     }
+    if (isComplex_()) complexOrder_(ops);
     return ops;
+  }
+  /** Метки-трубки из состава «Сложной сборки» (владелец 16.10, 713К.4 КБ1 «Маркировка "5" 4/2мм», длина 10–15 мм по КД —
+   *  верхняя): резка отрезков (по позициям состава), «Надеть маркировку» до монтажа разъёмов и усадка термоусадочной. */
+  function markTubeOps_(tubes: MarkTube[]): { cut: OpSpec | null; on: OpSpec | null; heat: OpSpec | null } {
+    if (!tubes.length) return { cut: null, on: null, heat: null };
+    const count = tubes.reduce((n, t) => n + t.spec.qty, 0);
+    const title = (t: MarkTube) => `«${t.spec.text || t.spec.target}»`;
+    const parts: Array<{ art: string; name: string; count: number; len: string }> = [];
+    tubes.forEach((t) => {
+      const same = parts.find((p) => p.art === t.art && p.len === t.len);
+      if (same) same.count += t.spec.qty; else parts.push({ art: t.art, name: t.name, count: t.spec.qty, len: t.len });
+    });
+    const segs: Array<{ len: string; count: number }> = [];
+    parts.forEach((p) => { const same = segs.find((s) => s.len === p.len); if (same) same.count += p.count; else segs.push({ len: p.len, count: p.count }); });
+    const sizes = tubes.map((t) => `${title(t)} ${t.spec.qty > 1 ? `${t.spec.qty}×` : ""}${t.len ? t.len.replace(".", ",") : "?"} мм`).join(", ");
+    const one = parts.every((p) => p.art === parts[0].art) ? parts[0] : null;
+    const atConn = tubes.every((t) => t.spec.placeKind === "conn");
+    const heat = tubes.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
+    return {
+      cut: { type: "cutTut", opKey: "cutMark", tmplHint: "CUT_TUT_short", cat: "Резка", markTube: true, label: `Резка маркировки — ${sizes}`,
+        tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: count, tutSegs: segs, tutParts: parts },
+      on: { type: "insTut", opKey: "onMark", tmplHint: "INS_TUT", cat: "Монтаж", markTube: true, tutCount: count,
+        label: `Надеть маркировку${atConn ? " у разъёмов" : ""} — ${tubes.map(title).join(", ")}` },
+      heat: heat ? { type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: heat,
+        label: `Усадка маркировки — ${heat} шт` } : null,
+    };
+  }
+  /** Свиваемые провода уходят в сросток: свивка — до сростков (владелец 16.10, 713К.4 КБ1: пары белый/синий «I3» и «C»). */
+  function twistIntoSplice_() {
+    if (!S.twist.enabled || !getTwistSelectionCount() || !(S.splices || []).length) return false;
+    const active = activeWires_();
+    const twisted = new Set((S.twist.mode === "pairs" ? getTwistPairs().flat() : twistWireIndices_()).map((i) => active[i]?.idx));
+    return (S.splices || []).some((s) => s.ends.some((e) => twisted.has(e.idx)));
+  }
+  /** Порядок «Сложной сборки» по умолчанию (владелец 16.10, проверен на 713К.4 КБ1): резка (с партиями обжима) → резка всех
+   *  трубок (на разъёмы, сростки, маркировку) → свивка проводов, что уходят в сростки → сростки (зачистка, трубка, сросток,
+   *  усадка) → хвосты (зачистка, лужение) → оплётка → надеть трубки и маркировку → разъёмы А (ручной обжим и монтаж) →
+   *  усадки (хвостовики разъёмов, жгут, маркировка) → разъёмы В. Остальное — в порядке генератора; свой порядок технолога
+   *  (opOrder) — поверх. */
+  function complexOrder_(ops: OpSpec[]) {
+    const twistSplice = twistIntoSplice_();
+    const stages: Array<(o: OpSpec) => boolean> = [
+      (o) => /^cutWire/.test(o.type),
+      (o) => o.type === "cutTut" || o.type === "foldCore",
+      (o) => twistSplice && o.type === "twist",
+      (o) => ["stripSpl", "insSpl", "splice", "heatSpl"].includes(o.opKey),
+      (o) => o.opKey === "stripTail" || o.opKey === "tinTail" || (o.type === "endCap" && !o.side),
+      (o) => o.type === "insWrap" && (o.wrapKind === "braid" || !!o.under),
+      (o) => o.opKey === "insSleeves" || o.opKey === "onMark",
+    ];
+    const front: OpSpec[][] = stages.map(() => []);
+    const rest: OpSpec[] = [];
+    ops.forEach((o) => { const at = stages.findIndex((test) => test(o)); if (at >= 0) front[at].push(o); else rest.push(o); });
+    // Усадки стороны А, термоусадки на жгуте и маркировки — сразу после последнего разъёма А, до первого разъёма В
+    // (свивка, что стояла перед стороной В, остаётся перед ней).
+    const shrink = (o: OpSpec) => o.type === "heatTut" && (o.opKey === "heatHs" || o.opKey === "heatMark" || (/^heat(Shr|Js)/.test(o.opKey) && o.side !== "B"));
+    const firstB = rest.findIndex((o) => o.side === "B" && !!o.epId);
+    let tail = rest;
+    if (firstB >= 0) {
+      const before = rest.slice(0, firstB).filter((o) => !shrink(o));
+      const lastA = before.reduce((last, o, i) => (o.side === "A" ? i : last), -1);
+      before.splice(lastA >= 0 ? lastA + 1 : before.length, 0, ...rest.filter(shrink));
+      tail = [...before, ...rest.slice(firstB).filter((o) => !shrink(o))];
+    }
+    ops.splice(0, ops.length, ...front.flat(), ...tail);
   }
 
   // ── Шаблоны и времена ──
@@ -2272,7 +2438,10 @@ export function makeGen(D: GenData, S: GenState) {
     applyTwistAllowance_(wires, twist);
     const welded = spliceWelded_();
     const links = connections_().list;
-    const ops = getActiveOps().map((spec) => {
+    const specs = getActiveOps();
+    // Несколько партий резки с обжимом — у каждой в ЭТК свой терминал в названии (etk_builder: «обжим SYM-001T-P0.6»).
+    const crimpBatches = specs.filter((spec) => spec.type === "cutWireCrimp").length > 1;
+    const ops = specs.map((spec) => {
       const row = opRow(spec);
       const op: Record<string, unknown> = {
         type: spec.type, opKey: spec.opKey, templateId: row.templateId, opNum: row.matched ? (row.matched.opNumber || "") : "",
@@ -2280,7 +2449,9 @@ export function makeGen(D: GenData, S: GenState) {
       };
       if (spec.wireIdxs) {
         const set = new Set(spec.wireIdxs);
-        op.wires = activeWires.map((w, pos) => ({ w, pos })).filter((x) => set.has(x.w.idx)).map((x) => wires[x.pos]);
+        // Партия берёт из строки «Кабели» только свои жилы (провод ×2: одна жила — к SYM, другая — к SHF).
+        const own = (w: WireEntry, wire: Record<string, unknown>) => (spec.wireUnits?.[w.idx] !== undefined ? { ...wire, qty: spec.wireUnits[w.idx] } : wire);
+        op.wires = activeWires.map((w, pos) => ({ w, pos })).filter((x) => set.has(x.w.idx)).map((x) => own(x.w, wires[x.pos]));
         if (spec.strip) op.strip = spec.strip;
       }
       if (["cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable"].includes(spec.type)) {
@@ -2288,6 +2459,8 @@ export function makeGen(D: GenData, S: GenState) {
         if (spec.harness) op.harness = true;
         if ((spec.opKey === "insSpl" || spec.opKey === "heatSpl") && welded) op.spliceWeld = true;
         if (spec.tutSegs) op.tutSegs = spec.tutSegs;
+        if (spec.markTube) op.markTube = true;
+        if (spec.tutParts) op.tutParts = spec.tutParts;
       }
       if (spec.type === "insWrap") { op.wrapArt = spec.wrapArt; op.wrapName = spec.wrapName; op.wrapLen = spec.wrapLen; op.wrapKind = spec.wrapKind; }
       if (spec.type === "insMark") op.marks = spec.marks;
@@ -2309,9 +2482,17 @@ export function makeGen(D: GenData, S: GenState) {
       // Усадка трубки стороны (поверх разъёма, на месте разделки) — со своей стороной: ПФ на сервере и ключ операции ЭТК
       // (две усадки сторон А и В иначе совпадали и сборка ЭТК отказывала).
       if (spec.type === "heatTut" && spec.side && /^heat(Shr|Js)/.test(spec.opKey)) op.side = spec.side;
-      if (spec.crimpEpId) { op.side = spec.side; op.ep = epSnap(epById_(spec.crimpEpId)); }
+      // Партия на нескольких разъёмах стороны — в подписи все они («5, I3, A6: обжаты терминалы SYM-001T-P0.6»).
+      const batchSnap = (id: string, ids?: string[]) => {
+        const snap = epSnap(epById_(id));
+        if (!ids || ids.length < 2) return snap;
+        const labels = ids.map((x) => epById_(x)).filter((e): e is Endpoint => !!e).map((e) => (e.label || "").trim() || endKey_(e));
+        return { ...snap, label: labels.join(", ") };
+      };
+      if (spec.crimpEpId) { op.side = spec.side; op.ep = batchSnap(spec.crimpEpId, spec.crimpEpIds); }
       // Обжим обеих сторон: `ep` — сторона А, `epB` — сторона В (etk_builder: терминалы обеих сторон в комплектующих).
-      if (spec.crimpEpIdB) op.epB = epSnap(epById_(spec.crimpEpIdB));
+      if (spec.crimpEpIdB) op.epB = batchSnap(spec.crimpEpIdB, spec.crimpEpIdsB);
+      if (spec.type === "cutWireCrimp" && crimpBatches) op.crimpBatch = true;
       if (spec.epId) {
         const ep = epById_(spec.epId)!;
         op.side = spec.side; op.firstTerm = !!spec.firstTerm; op.ep = epSnap(ep);
@@ -2393,7 +2574,7 @@ export function makeGen(D: GenData, S: GenState) {
     getCompById, bomLists, wireComps_, wireCores_, isJacketedCable_, activeWires_, routedWireIdxs_, connections_, endpointsOnSide_,
     cableRecOf_, isUlMulticore_, wireScreened_, unitCount_, coreColors_, corePinsOf_, endUnits_, cableEnds_, shieldCount_, isShieldPos_, shieldPinsAt_,
     endpointOrdinal_, epPer_, epDoublePins_, epStripLen_, findTerRecord_, isComplex_, crimpCutSides_, crimpCutSideNote_, crimpCutEnabled_, crimpCutSideSelected_, batchWires_,
-    crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_,
+    crimpCutTin_, crimpCutMinWires_, crimpTinNoApplicator_, crimpCutBatchNote_, crimpCutBatchLines_, checkTerminalFit_,
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
@@ -2579,7 +2760,7 @@ export function splMethodFromConfig(config: unknown): SpliceMethod | null {
   const ops = config && typeof config === "object" ? (config as { ops?: unknown }).ops : null;
   const op = Array.isArray(ops) ? ops.find((o) => !!o && typeof o === "object" && (o as { type?: unknown }).type === "splice") as { method?: unknown } | undefined : undefined;
   if (!op) return null;
-  return op.method === "sleeve" || op.method === "band" ? op.method : "solder";
+  return op.method === "sleeve" || op.method === "band" || op.method === "ultrasonic" ? op.method : "solder";
 }
 
 /** «Свободные концы»: заделка трубкой, зачистка и лужение хвостов или ничего. */

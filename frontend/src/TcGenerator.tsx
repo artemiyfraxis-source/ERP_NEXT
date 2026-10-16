@@ -50,6 +50,7 @@ import {
   setTailMode,
   setWireCores,
   splMethodFromConfig,
+  SPLICE_METHODS,
   tailModeOf,
   SPLICE_REST_,
   TAIL_STRIP_MM_,
@@ -614,6 +615,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const crimpTinTerm = gen.crimpTinNoApplicator_();
   // Одну сторону автомат обжать может, другую — нет: почему другая остаётся ручной.
   const crimpSideNote = crimpSides.length === 1 ? gen.crimpCutSideNote_(crimpSides[0] === "A" ? "B" : "A") : "";
+  // Партии обжима при резке (владелец 16.10): какие терминалы станок обжимает и сколько концов; одна партия — без строки.
+  const crimpBatches = gen.crimpCutEnabled_() && gen.getActiveOps().filter((o) => o.type === "cutWireCrimp").length > 1 ? gen.crimpCutBatchLines_() : [];
   const note = gen.twistNote();
   const diaMissing = gen.twistDiaMissing_();
   const diaOld = gen.twistDiaOld_();
@@ -1149,7 +1152,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     twistToggle,
     complex && <Toggle key="spl" checked={S.spl.enabled} title="Сростки" hint="соединение проводов в стволе"
       onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, enabled: on } }))}>
-      <Seg<SpliceMethod> label="Способ сростка" value={splMethod} options={[["sleeve", "Опрессовка гильзой"], ["solder", "Пайка"], ["band", "Ленточный обжим"]]}
+      <Seg<SpliceMethod> label="Способ сростка" value={splMethod} options={SPLICE_METHODS}
         onChange={(method) => update((current) => setSplMethod(current, method))} />
       {splMethod === "sleeve" && (sleeveComps.length ? spliceSlots.length > 0 && <div className="opt-grid">
         {spliceSlots.map((slot) => <Field key={slot.key} label={slot.key === SPLICE_REST_ ? `Гильза — ${slot.label}` : `Гильза ${slot.label}`}
@@ -1207,6 +1210,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
             options={[...crimpSides.map((side) => [side, `Сторона ${sideRu_(side)}`] as const), [CRIMP_BOTH_, "Обе стороны"] as const]}
             onChange={(side) => update({ crimpCutSide: side })} /></div>
         : <span className="opt-note">Обжим на стороне {sideRu_(crimpSides[0])}{crimpSideNote && `; ${crimpSideNote}`}</span>}
+      {crimpBatches.length > 0 && <div className="opt-note">Партии обжима при резке:
+        {crimpBatches.map((line) => <div key={line}>{line}</div>)}</div>}
     </Toggle>,
     !crimpSides.length && crimpTinTerm && <p key="crimp-off" className="opt-note">Резка с обжимом и лужением недоступна: у {crimpTinTerm} в БД.ТЕР нет аппликатора автомата (A…).</p>,
   ].filter(Boolean);

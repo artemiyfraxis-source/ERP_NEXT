@@ -1,0 +1,1030 @@
+{
+  "tab": "complex",
+  "assemblyIndex": "КБ1",
+  "assemblyName": "Кабельная сборка Жгут НВ4",
+  "partQty": 500,
+  "bigAssembly": true,
+  "wires": [
+    {
+      "name": "НВ4 0,5 красный",
+      "art": "НВ4 0,5 красный",
+      "qty": 1,
+      "length": 155
+    },
+    {
+      "name": "НВ4 0,5 черный",
+      "art": "НВ4 0,5 черный",
+      "qty": 1,
+      "length": 155
+    },
+    {
+      "name": "НВ4 0,2 красный",
+      "art": "НВ4 0,2 красный",
+      "qty": 2,
+      "length": 165
+    },
+    {
+      "name": "НВ4 0,2 красный",
+      "art": "НВ4 0,2 красный",
+      "qty": 1,
+      "length": 60
+    },
+    {
+      "name": "НВ4 0,2 черный",
+      "art": "НВ4 0,2 черный",
+      "qty": 1,
+      "length": 165
+    },
+    {
+      "name": "НВ4 0,2 черный",
+      "art": "НВ4 0,2 черный",
+      "qty": 1,
+      "length": 185
+    },
+    {
+      "name": "НВ4 0,2 черный",
+      "art": "НВ4 0,2 черный",
+      "qty": 1,
+      "length": 60
+    },
+    {
+      "name": "НВ4 0,12 белый",
+      "art": "НВ4 0,12 белый",
+      "qty": 2,
+      "length": 158
+    },
+    {
+      "name": "НВ4 0,12 белый",
+      "art": "НВ4 0,12 белый",
+      "qty": 1,
+      "length": 60
+    },
+    {
+      "name": "НВ4 0,12 синий",
+      "art": "НВ4 0,12 синий",
+      "qty": 2,
+      "length": 158
+    },
+    {
+      "name": "НВ4 0,12 синий",
+      "art": "НВ4 0,12 синий",
+      "qty": 1,
+      "length": 60
+    },
+    {
+      "name": "НВ4 0,2 белый",
+      "art": "НВ4 0,2 белый",
+      "qty": 1,
+      "length": 340
+    },
+    {
+      "name": "НВ4 0,2 зеленый",
+      "art": "НВ4 0,2 зеленый",
+      "qty": 1,
+      "length": 340
+    },
+    {
+      "name": "НВ4 0,2 желтый",
+      "art": "НВ4 0,2 желтый",
+      "qty": 1,
+      "length": 340
+    }
+  ],
+  "twist": {
+    "enabled": true,
+    "mode": "pairs",
+    "pairs": [
+      [
+        7,
+        9
+      ]
+    ],
+    "wireIndices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "pitch": "15",
+    "wireDia": "0,95"
+  },
+  "tin": {
+    "enabled": false,
+    "wireIndices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "stripLen": "5"
+  },
+  "strip": {
+    "a": false,
+    "b": false,
+    "lenA": "",
+    "lenB": ""
+  },
+  "ops": [
+    {
+      "type": "cutWireCrimp",
+      "opKey": "cutWire",
+      "templateId": "cut-wire-1crimp-автомат-резка-опрессовка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wires": [
+        {
+          "name": "НВ4 0,5 красный",
+          "art": "НВ4 0,5 красный",
+          "qty": 1,
+          "length": 155
+        },
+        {
+          "name": "НВ4 0,5 черный",
+          "art": "НВ4 0,5 черный",
+          "qty": 1,
+          "length": 155
+        },
+        {
+          "name": "НВ4 0,12 белый",
+          "art": "НВ4 0,12 белый",
+          "qty": 1,
+          "length": 158
+        },
+        {
+          "name": "НВ4 0,12 синий",
+          "art": "НВ4 0,12 синий",
+          "qty": 1,
+          "length": 158
+        }
+      ],
+      "strip": {
+        "a": true,
+        "lenA": "2,5",
+        "b": false,
+        "lenB": ""
+      },
+      "side": "A",
+      "ep": {
+        "connArt": "SMR-02V-B",
+        "connName": "SMR-02V-B",
+        "termArt": "SYM-001T-P0.6",
+        "termName": "SYM-001T-P0.6",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "5, I3"
+      },
+      "crimpBatch": true
+    },
+    {
+      "type": "cutWireCrimp",
+      "opKey": "cutWire1",
+      "templateId": "cut-wire-1crimp-автомат-резка-опрессовка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wires": [
+        {
+          "name": "НВ4 0,2 красный",
+          "art": "НВ4 0,2 красный",
+          "qty": 2,
+          "length": 165
+        },
+        {
+          "name": "НВ4 0,2 черный",
+          "art": "НВ4 0,2 черный",
+          "qty": 1,
+          "length": 165
+        },
+        {
+          "name": "НВ4 0,2 черный",
+          "art": "НВ4 0,2 черный",
+          "qty": 1,
+          "length": 185
+        }
+      ],
+      "strip": {
+        "a": false,
+        "lenA": "",
+        "b": true,
+        "lenB": "2,5"
+      },
+      "side": "B",
+      "ep": {
+        "connArt": "I-DS1071-SCB01X3",
+        "connName": "I-DS1071-SCB01X3",
+        "termArt": "T-DS1071-SC600",
+        "termName": "T-DS1071-SC600",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "В1, В2"
+      },
+      "crimpBatch": true
+    },
+    {
+      "type": "cutWire",
+      "opKey": "cutWire2",
+      "templateId": "cut-wire-auto-резка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wires": [
+        {
+          "name": "НВ4 0,2 красный",
+          "art": "НВ4 0,2 красный",
+          "qty": 1,
+          "length": 60
+        },
+        {
+          "name": "НВ4 0,2 черный",
+          "art": "НВ4 0,2 черный",
+          "qty": 1,
+          "length": 60
+        },
+        {
+          "name": "НВ4 0,12 белый",
+          "art": "НВ4 0,12 белый",
+          "qty": 1,
+          "length": 60
+        },
+        {
+          "name": "НВ4 0,12 синий",
+          "art": "НВ4 0,12 синий",
+          "qty": 1,
+          "length": 60
+        }
+      ]
+    },
+    {
+      "type": "cutWireCrimp",
+      "opKey": "cutWire3",
+      "templateId": "cut-wire-1crimp-автомат-резка-опрессовка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wires": [
+        {
+          "name": "НВ4 0,12 белый",
+          "art": "НВ4 0,12 белый",
+          "qty": 1,
+          "length": 158
+        },
+        {
+          "name": "НВ4 0,12 синий",
+          "art": "НВ4 0,12 синий",
+          "qty": 1,
+          "length": 158
+        }
+      ],
+      "strip": {
+        "a": true,
+        "lenA": "2,5",
+        "b": false,
+        "lenB": ""
+      },
+      "side": "A",
+      "ep": {
+        "connArt": "SMP-02V-BC",
+        "connName": "SMP-02V-BC",
+        "termArt": "SHF-001T-0.8BS",
+        "termName": "SHF-001T-0.8BS",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "C"
+      },
+      "crimpBatch": true
+    },
+    {
+      "type": "cutWireCrimp",
+      "opKey": "cutWire4",
+      "templateId": "cut-wire-2crimp-автомат-резка-опрессовка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wires": [
+        {
+          "name": "НВ4 0,2 белый",
+          "art": "НВ4 0,2 белый",
+          "qty": 1,
+          "length": 340
+        },
+        {
+          "name": "НВ4 0,2 зеленый",
+          "art": "НВ4 0,2 зеленый",
+          "qty": 1,
+          "length": 340
+        },
+        {
+          "name": "НВ4 0,2 желтый",
+          "art": "НВ4 0,2 желтый",
+          "qty": 1,
+          "length": 340
+        }
+      ],
+      "strip": {
+        "a": true,
+        "lenA": "2,5",
+        "b": true,
+        "lenB": "2,5"
+      },
+      "side": "A",
+      "ep": {
+        "connArt": "SMR-04V-B",
+        "connName": "SMR-04V-B",
+        "termArt": "SYM-001T-P0.6",
+        "termName": "SYM-001T-P0.6",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "A6"
+      },
+      "epB": {
+        "connArt": "I-DS1071-SCB02X3",
+        "connName": "I-DS1071-SCB02X3",
+        "termArt": "T-DS1071-SC600",
+        "termName": "T-DS1071-SC600",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": ""
+      },
+      "crimpBatch": true
+    },
+    {
+      "type": "cutTut",
+      "opKey": "cutShr1",
+      "templateId": "cut-tut-short-резка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "ТТК 8/2мм, черная",
+      "tutName": "ТТК 8/2мм, черная",
+      "tutCount": 4,
+      "tutSegs": [
+        {
+          "len": "15",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "type": "cutTut",
+      "opKey": "cutMark",
+      "templateId": "cut-tut-short-резка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 4,
+      "tutSegs": [
+        {
+          "len": "15",
+          "count": 4
+        }
+      ],
+      "markTube": true,
+      "tutParts": [
+        {
+          "art": "Маркировка \"5\" 4/2мм",
+          "name": "Маркировка \"5\" 4/2мм",
+          "count": 1,
+          "len": "15"
+        },
+        {
+          "art": "Маркировка \"I3\" 4/2мм",
+          "name": "Маркировка \"I3\" 4/2мм",
+          "count": 1,
+          "len": "15"
+        },
+        {
+          "art": "Маркировка \"C\" 4/2мм",
+          "name": "Маркировка \"C\" 4/2мм",
+          "count": 1,
+          "len": "15"
+        },
+        {
+          "art": "Маркировка \"A6\" 4/2мм",
+          "name": "Маркировка \"A6\" 4/2мм",
+          "count": 1,
+          "len": "15"
+        }
+      ]
+    },
+    {
+      "type": "cutTut",
+      "opKey": "cutSpl",
+      "templateId": "cut-tut-short-резка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "ТТК 3/1мм, черная",
+      "tutName": "ТТК 3/1мм, черная",
+      "tutCount": 4,
+      "tutSegs": [
+        {
+          "len": "20",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "type": "twist",
+      "opKey": "twist",
+      "templateId": "twist-свивка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": ""
+    },
+    {
+      "type": "stripCable",
+      "opKey": "stripSpl",
+      "templateId": "strip-wire-разделка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 14
+    },
+    {
+      "type": "insTut",
+      "opKey": "insSpl",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 4
+    },
+    {
+      "type": "splice",
+      "opKey": "splice",
+      "templateId": "sdr-w-w-пайка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "units": 4,
+      "method": "solder",
+      "sleeves": []
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatSpl",
+      "templateId": "heat-ttk-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 4
+    },
+    {
+      "type": "stripCable",
+      "opKey": "stripTail",
+      "templateId": "strip-wire-разделка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 4,
+      "strip": {
+        "a": false,
+        "lenA": "",
+        "b": true,
+        "lenB": "3"
+      }
+    },
+    {
+      "type": "tin",
+      "opKey": "tinTail",
+      "templateId": "sdr-tin-лужение",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wires": [
+        {
+          "name": "НВ4 0,2 красный",
+          "art": "НВ4 0,2 красный",
+          "qty": 1,
+          "length": 60
+        },
+        {
+          "name": "НВ4 0,2 черный",
+          "art": "НВ4 0,2 черный",
+          "qty": 1,
+          "length": 60
+        },
+        {
+          "name": "НВ4 0,12 белый",
+          "art": "НВ4 0,12 белый",
+          "qty": 1,
+          "length": 60
+        },
+        {
+          "name": "НВ4 0,12 синий",
+          "art": "НВ4 0,12 синий",
+          "qty": 1,
+          "length": 60
+        }
+      ],
+      "units": 4,
+      "wireIdxs": [
+        3,
+        6,
+        8,
+        10
+      ]
+    },
+    {
+      "type": "insWrap",
+      "opKey": "insWrap",
+      "templateId": "ins-braid-монтаж-оплётки",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "wrapArt": "XP-3",
+      "wrapName": "XP-3",
+      "wrapLen": "300",
+      "wrapKind": "braid"
+    },
+    {
+      "type": "insTut",
+      "opKey": "insSleeves",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 4,
+      "harness": true
+    },
+    {
+      "type": "insTut",
+      "opKey": "onMark",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 4,
+      "markTube": true
+    },
+    {
+      "type": "insTerm",
+      "opKey": "insTermA1",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "side": "A",
+      "firstTerm": false,
+      "ep": {
+        "connArt": "SMR-02V-B",
+        "connName": "SMR-02V-B",
+        "termArt": "SYM-001T-P0.6",
+        "termName": "SYM-001T-P0.6",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "5"
+      },
+      "wires": [
+        {
+          "name": "НВ4 0,5 красный",
+          "art": "НВ4 0,5 красный",
+          "qty": 1,
+          "length": 155
+        },
+        {
+          "name": "НВ4 0,5 черный",
+          "art": "НВ4 0,5 черный",
+          "qty": 1,
+          "length": 155
+        }
+      ],
+      "wireSources": [
+        "",
+        ""
+      ],
+      "pins": [
+        "1",
+        "2"
+      ],
+      "epKey": "А1"
+    },
+    {
+      "type": "insTerm",
+      "opKey": "insTermA2",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "side": "A",
+      "firstTerm": false,
+      "ep": {
+        "connArt": "SMR-02V-B",
+        "connName": "SMR-02V-B",
+        "termArt": "SYM-001T-P0.6",
+        "termName": "SYM-001T-P0.6",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "I3"
+      },
+      "wires": [
+        {
+          "name": "НВ4 0,12 белый",
+          "art": "НВ4 0,12 белый",
+          "qty": 1,
+          "length": 158
+        },
+        {
+          "name": "НВ4 0,12 синий",
+          "art": "НВ4 0,12 синий",
+          "qty": 1,
+          "length": 158
+        }
+      ],
+      "wireSources": [
+        "",
+        ""
+      ],
+      "pins": [
+        "1",
+        "2"
+      ],
+      "epKey": "А2"
+    },
+    {
+      "type": "insTerm",
+      "opKey": "insTermA3",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "side": "A",
+      "firstTerm": false,
+      "ep": {
+        "connArt": "SMP-02V-BC",
+        "connName": "SMP-02V-BC",
+        "termArt": "SHF-001T-0.8BS",
+        "termName": "SHF-001T-0.8BS",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "C"
+      },
+      "wires": [
+        {
+          "name": "НВ4 0,12 белый",
+          "art": "НВ4 0,12 белый",
+          "qty": 1,
+          "length": 158
+        },
+        {
+          "name": "НВ4 0,12 синий",
+          "art": "НВ4 0,12 синий",
+          "qty": 1,
+          "length": 158
+        }
+      ],
+      "wireSources": [
+        "SMR-02V-B",
+        "SMR-02V-B"
+      ],
+      "pins": [
+        "1",
+        "2"
+      ],
+      "epKey": "А3"
+    },
+    {
+      "type": "insTerm",
+      "opKey": "insTermA4",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "side": "A",
+      "firstTerm": false,
+      "ep": {
+        "connArt": "SMR-04V-B",
+        "connName": "SMR-04V-B",
+        "termArt": "SYM-001T-P0.6",
+        "termName": "SYM-001T-P0.6",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": "A6"
+      },
+      "wires": [
+        {
+          "name": "НВ4 0,2 белый",
+          "art": "НВ4 0,2 белый",
+          "qty": 1,
+          "length": 340
+        },
+        {
+          "name": "НВ4 0,2 зеленый",
+          "art": "НВ4 0,2 зеленый",
+          "qty": 1,
+          "length": 340
+        },
+        {
+          "name": "НВ4 0,2 желтый",
+          "art": "НВ4 0,2 желтый",
+          "qty": 1,
+          "length": 340
+        }
+      ],
+      "wireSources": [
+        "",
+        "",
+        ""
+      ],
+      "pins": [
+        "2",
+        "3",
+        "4"
+      ],
+      "epKey": "А4"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatShrA1",
+      "templateId": "heat-ttk-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "side": "A"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatShrA2",
+      "templateId": "heat-ttk-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "side": "A"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatShrA3",
+      "templateId": "heat-ttk-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "side": "A"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatShrA4",
+      "templateId": "heat-ttk-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 1,
+      "side": "A"
+    },
+    {
+      "type": "heatTut",
+      "opKey": "heatMark",
+      "templateId": "heat-tyt-short-усадка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 4,
+      "markTube": true
+    },
+    {
+      "type": "insTerm",
+      "opKey": "insTermB1",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "side": "B",
+      "firstTerm": false,
+      "ep": {
+        "connArt": "I-DS1071-SCB01X3",
+        "connName": "I-DS1071-SCB01X3",
+        "termArt": "T-DS1071-SC600",
+        "termName": "T-DS1071-SC600",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": ""
+      },
+      "wires": [
+        {
+          "name": "НВ4 0,2 красный",
+          "art": "НВ4 0,2 красный",
+          "qty": 2,
+          "length": 165
+        },
+        {
+          "name": "НВ4 0,2 черный",
+          "art": "НВ4 0,2 черный",
+          "qty": 1,
+          "length": 165
+        }
+      ],
+      "wireSources": [
+        "",
+        ""
+      ],
+      "pins": [
+        "1, 2",
+        "3"
+      ],
+      "epKey": "В1"
+    },
+    {
+      "type": "insTerm",
+      "opKey": "insTermB2",
+      "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-b",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "side": "B",
+      "firstTerm": false,
+      "ep": {
+        "connArt": "I-DS1071-SCB02X3",
+        "connName": "I-DS1071-SCB02X3",
+        "termArt": "T-DS1071-SC600",
+        "termName": "T-DS1071-SC600",
+        "sdrTmpl": null,
+        "double": false,
+        "perTerm": 2,
+        "fold": false,
+        "label": ""
+      },
+      "wires": [
+        {
+          "name": "НВ4 0,2 черный",
+          "art": "НВ4 0,2 черный",
+          "qty": 1,
+          "length": 185
+        },
+        {
+          "name": "НВ4 0,2 белый",
+          "art": "НВ4 0,2 белый",
+          "qty": 1,
+          "length": 340
+        },
+        {
+          "name": "НВ4 0,2 зеленый",
+          "art": "НВ4 0,2 зеленый",
+          "qty": 1,
+          "length": 340
+        },
+        {
+          "name": "НВ4 0,2 желтый",
+          "art": "НВ4 0,2 желтый",
+          "qty": 1,
+          "length": 340
+        }
+      ],
+      "wireSources": [
+        "",
+        "SMR-04V-B",
+        "SMR-04V-B",
+        "SMR-04V-B"
+      ],
+      "pins": [
+        "2",
+        "5",
+        "4",
+        "3"
+      ],
+      "epKey": "В2"
+    }
+  ],
+  "connections": [
+    {
+      "wire": "НВ4 0,2 белый",
+      "from": {
+        "end": "А4",
+        "conn": "SMR-04V-B",
+        "label": "A6",
+        "pin": 2
+      },
+      "to": {
+        "end": "В2",
+        "conn": "I-DS1071-SCB02X3",
+        "label": "",
+        "pin": 5
+      }
+    },
+    {
+      "wire": "НВ4 0,2 зеленый",
+      "from": {
+        "end": "А4",
+        "conn": "SMR-04V-B",
+        "label": "A6",
+        "pin": 3
+      },
+      "to": {
+        "end": "В2",
+        "conn": "I-DS1071-SCB02X3",
+        "label": "",
+        "pin": 4
+      }
+    },
+    {
+      "wire": "НВ4 0,2 желтый",
+      "from": {
+        "end": "А4",
+        "conn": "SMR-04V-B",
+        "label": "A6",
+        "pin": 4
+      },
+      "to": {
+        "end": "В2",
+        "conn": "I-DS1071-SCB02X3",
+        "label": "",
+        "pin": 3
+      }
+    }
+  ]
+}

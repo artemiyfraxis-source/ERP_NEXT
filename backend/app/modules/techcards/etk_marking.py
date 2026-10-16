@@ -26,7 +26,8 @@ OTHER = "other"
 # Порядок важен: «Бирка маркировочная TMS-SCE…» — термоусаживаемая (коэф. усадки 3:1 в БД.МАТ), «Термотрубка» — не ПВХ.
 _KIND_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("flag", re.compile(r"хляст|флаж|флаш", re.IGNORECASE)),
-    ("heat", re.compile(r"термо|\bтут|\bттк|усаж|tms-?sce", re.IGNORECASE)),
+    # «Маркировка "5" 4/2мм» (713К.4 КБ1): размер «до/после усадки» — термоусадочная трубка (генератор markTubeShrinks).
+    ("heat", re.compile(r"термо|\bтут|\bттк|усаж|tms-?sce|\d+(?:[.,]\d+)?\s*/\s*\d+(?:[.,]\d+)?\s*мм", re.IGNORECASE)),
     ("pvc", re.compile(r"кембрик|пвх|трубк", re.IGNORECASE)),
     ("ring", re.compile(r"кольц|колеч", re.IGNORECASE)),
     ("tag", re.compile(r"бирк|этикет|ярлык", re.IGNORECASE)),

@@ -1,5 +1,9 @@
 import { joinSplice, assignPinJoined, setTail } from "./tcGenSplices";
-import { addEndpoint, complexByHand, initState, toggleLengthMode, updateEndpoint, type Comp, type GenData, type GenState, type TerRec, type Tmpl, type WireEnd } from "./tcGenLogic";
+import {
+  addEndpoint, complexByHand, initState, setSplMethod, setTailMode, toggleLengthMode, updateEndpoint, type Comp, type GenData, type GenState,
+  type SpliceMethod, type TerRec, type Tmpl, type WireEnd,
+} from "./tcGenLogic";
+import { newMarkRow } from "./tcGenMarks";
 
 /*
  * Чертёж заказчика «Кабельная сборка Жгут НВ4» (КБ1, 500 шт, владелец 13.10): сторона А — «5» SMR-02V-B, «I3» SMR-02V-B,
@@ -78,6 +82,54 @@ export function harness(data: GenData): GenState {
   splice(end(R.w12, 0, "B"), end(R.w12, 1, "B"), end(R.w12t, 0, "A"));
   splice(end(R.b12, 0, "B"), end(R.b12, 1, "B"), end(R.b12t, 0, "A"));
   [R.r2t, R.k2t, R.w12t, R.b12t].forEach((idx) => { S = setTail(data, S, end(idx, 0, "B")); });
+  return S;
+}
+
+// ── 713К.4 КБ1 целиком (владелец 16.10) ─────────────────────────────────────────────────────────────────────────────
+// Маркировка трубками «Маркировка "<надпись>" 4/2мм» у разъёмов стороны А (длина по КД 10–15 мм), аппликаторы автомата
+// и сечения терминалов как в рабочей БД.ТЕР (SYM — A7, 0,08–0,35 мм²; SHF — A5; T-DS1071 — A14, 0,08–0,2 мм²),
+// Ø проводов НВ-4, карты операций библиотеки.
+const MARK_COMPS: Comp[] = ["I3", "C", "A6"].map((text) => C(`mk${text}`, "Маркировка", `Маркировка "${text}" 4/2мм`, 1));
+const terFull = (article: string, series: string, applicator: string, mm2From: string, mm2To: string): TerRec =>
+  ({ ...ter(article, series), applicator, mm2From, mm2To });
+// Карты библиотеки с их id (backend/data/techcard-library.json): конфиг сборки годится серверу как есть
+// (backend/tests/techcards/generator_713k4_config.json).
+export const FULL_TEMPLATES: Tmpl[] = ([
+  ["cut-wire-auto-резка", "CUT_WIRE_auto | Резка", "Резка"],
+  ["cut-wire-1crimp-автомат-резка-опрессовка", "CUT_WIRE+1crimp | Автомат резка + опрессовка", "Автомат резка + опрессовка"],
+  ["cut-wire-2crimp-автомат-резка-опрессовка", "CUT_WIRE+2crimp | Автомат резка + опрессовка", "Автомат резка + опрессовка"],
+  ["cut-tut-short-резка", "CUT_TUT_short | Резка", "Резка"], ["ins-tut-монтаж", "INS_TUT | Монтаж", "Монтаж"],
+  ["heat-tyt-short-усадка", "HEAT_TYT_short | Усадка", "Усадка"], ["heat-ttk-short-усадка", "HEAT_TTK_short | Усадка", "Усадка"],
+  ["ins-braid-монтаж-оплётки", "INS_BRAID | Монтаж оплётки", "Монтаж оплётки"], ["twist-свивка", "TWIST | Свивка", "Свивка"],
+  ["sdr-w-w-пайка", "SDR_W_W | Пайка", "Пайка"], ["prs-ншви-опрессовка-наконечников", "PRS_НШВИ | Опрессовка наконечников", "Опрессовка наконечников"],
+  ["prs-copper-ленточный-обжим", "PRS_COPPER | Ленточный обжим", "Ленточный обжим"], ["us-weld-уз-сварка", "US_WELD | УЗ сварка", "УЗ сварка"],
+  ["strip-wire-разделка", "STRIP_WIRE | Разделка", "Разделка"], ["sdr-tin-лужение", "SDR_tin | Лужение", "Лужение"],
+  ["prs-terminal-auto-опрессовка-терминалов-a", "PRS_TERMINAL_auto | Опрессовка терминалов (A)", "Опрессовка терминалов"],
+  ["prs-terminal-auto-опрессовка-терминалов-b", "PRS_TERMINAL_auto | Опрессовка терминалов (B)", "Опрессовка терминалов"],
+  ["ins-terminal-2-54-6-3-монтаж-терминалов-a", "INS_terminal_2,54-6,3 | Монтаж терминалов (A)", "Монтаж терминалов"],
+  ["ins-terminal-2-54-6-3-монтаж-терминалов-b", "INS_terminal_2,54-6,3 | Монтаж терминалов (B)", "Монтаж терминалов"],
+] as const).map(([id, title, category]) => ({ id, title, category }));
+export const DSA: GenData = {
+  ...DS, components: [...DS.components, ...MARK_COMPS], templates: FULL_TEMPLATES,
+  terRecords: [terFull("SYM-001T-P0.6", "SMR, SYP", "S11/M11/A7", "0,08", "0,35"),
+    terFull("T-DS1071-SC600", "I-DS1071-SCB01, I-DS1071-SCB02", "M21/A14", "0,08", "0,2"), terFull("shf-001T-0.8BS", "SM", "S8/A5", "0,08", "0,35")],
+  wireDia: { marks: [{ name: "НВ-4", norm: "нв4" }], byAwg: {}, gostAwg: {},
+    byGost: { "0.5": { нв4: 1.4, __core: 0.9 }, "0.2": { нв4: 1.1, __core: 0.6 }, "0.12": { нв4: 0.95, __core: 0.45 } } },
+};
+
+/** Жгут НВ4 так, как его собрал владелец: пары белый/синий «I3» и «C» свиты, сростки паяные с трубкой ТТК 3/1, хвосты
+ *  зачищены и облужены, оплётка XP-3 на ветви А, ТТК 8/2 на хвостовики разъёмов А, маркировка трубками у разъёмов А. */
+export function fullHarness(data: GenData = DSA, method: SpliceMethod = "solder"): GenState {
+  let S = setTailMode(harness(data), "tin");
+  S = setSplMethod(S, method);
+  S = { ...S, spl: { ...S.spl, tut: "20", tutMat: "ttk3" } };
+  S = { ...S, twist: { ...S.twist, enabled: true, mode: "pairs", pairs: [{ a: String(R.w12), b: String(R.b12) }], pitch: "15" } };
+  S = { ...S, wrap: { enabled: true, slots: S.wrap.slots.map((slot, i) => (i === 0 ? { mat: "xp3", kind: "braid" as const, len: "300" } : { ...slot, mat: "" })) } };
+  S = { ...S, endpoints: S.endpoints.map((e) => (e.side === "A" ? { ...e, shrinkOn: true, shrinkMat: "ttk8", shrinkLen: "15" } : e)) };
+  const conn: Record<string, string> = { csmr2: "SMR-02V-B", csmp: "SMP-02V-BC", csmr4: "SMR-04V-B" };
+  S = { ...S, mark: true, markRows: S.endpoints.filter((e) => e.side === "A").map((e) => newMarkRow({
+    target: `Разъём ${e.label} (${conn[e.connId]})`, text: e.label, material: `Маркировка "${e.label}" 4/2мм`,
+    place: "conn", qty: "1", len: "10–15" })) };
   return S;
 }
 

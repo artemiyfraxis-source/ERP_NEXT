@@ -188,7 +188,29 @@ SPLICE_DONE = {
     "solder": "провода спаяны",
     "sleeve": "провода опрессованы гильзой",
     "band": "провода соединены ленточным обжимом",
+    "ultrasonic": "провода сварены ультразвуком",
 }
+
+# Marking tubes of a complex harness (generator, owner 16.10, 713К.4 КБ1 «Маркировка "5" 4/2мм»): cut with the other
+# tubes (`tutParts` — pieces per kit article), put on before the connectors are mounted, shrunk with the other shrinks.
+MARK_TUBE_SUFFIX = "маркировка"
+
+
+def _mark_tube(op: Mapping[str, Any]) -> bool:
+    return bool(op.get("markTube")) and op.get("type") in {"cutTut", "insTut", "heatTut"}
+
+
+def _tut_parts(op: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Pieces of a cut of several kit tubes (`tutParts`: art, name, count per item, length); [] — one tube (`tutArt`)."""
+    parts = []
+    for item in _list(op.get("tutParts")) if op.get("type") == "cutTut" else []:
+        if not isinstance(item, Mapping):
+            continue
+        art = str(item.get("art") or item.get("name") or "").strip()
+        count = _decimal(item.get("count"))
+        if art and count > 0:
+            parts.append({"art": art, "name": str(item.get("name") or art).strip(), "count": count, "len": str(item.get("len") or "").strip()})
+    return parts
 
 
 def _splice_method(op: Mapping[str, Any]) -> str:
@@ -222,7 +244,11 @@ def _suffix(op: Mapping[str, Any]) -> str:
     if operation_type == "cutWireStrip":
         return "разделка"
     if operation_type == "cutWireCrimp":
-        return "обжим + лужение" if op.get("tin") else "обжим А и В" if _endpoint_b(op) else "обжим"
+        crimp = "обжим + лужение" if op.get("tin") else "обжим А и В" if _endpoint_b(op) else "обжим"
+        # Партии обжима при резке (генератор, 16.10): у каждой свой терминал — иначе ключи ЭТК совпали бы.
+        return f"{crimp} {_cut_terminal(op)}".strip() if op.get("crimpBatch") else crimp
+    if _mark_tube(op):
+        return MARK_TUBE_SUFFIX
     if operation_type in ("cutTut", "heatTut") and _sleeve_suffix(op):
         return _sleeve_suffix(op)
     if operation_type == "cutTut":
@@ -295,6 +321,14 @@ def _result_name(
         side_b = _side_b_op(op)
         crimped_b = f"; {_location(side_b, config)}: обжаты терминалы {_terminal(side_b)}" if _terminal(side_b) else ""
         return f"{cut}; {_location(op, config)}: обжаты терминалы {terminal}{crimped_b}{tinned}" if terminal else cut
+    if _mark_tube(op):
+        if operation_type == "cutTut":
+            parts = _tut_parts(op)
+            listed = "; ".join(
+                f"{part['art']} — {_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
+            return f"Маркировка нарезана: {listed}" if listed else "Маркировка нарезана"
+        done = "маркировка надета" if operation_type == "insTut" else "маркировка усажена"
+        return f"{previous}; {done}" if previous else done[:1].upper() + done[1:]
     if operation_type == "cutTut":
         material = str(op.get("tutArt") or op.get("tutName") or "ТУТ")
         segments = op.get("tutSegs") if isinstance(op.get("tutSegs"), list) else []
@@ -498,6 +532,9 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
         return rows
     if operation_type.startswith("coax"):
         return _coax_components(op, config)
+    if operation_type == "cutTut" and _tut_parts(op):
+        # Резка трубок нескольких позиций состава (маркировка «5», «I3»…): каждая — своей строкой, отрезков на партию.
+        return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * quantity), "unit": "Шт."} for part in _tut_parts(op)]
     if operation_type == "cutTut":
         count = _decimal(op.get("tutCount")) * quantity
         return [{"art": str(op.get("tutArt") or ""), "name": str(op.get("tutName") or op.get("tutArt") or ""), "norm": _format(count), "unit": "Шт."}]
@@ -627,7 +664,8 @@ def _result_rows(
     elif operation_type in PIECE_TYPES or operation_type.startswith("coax"):
         norm = _format(quantity)
     if operation_type in TUT_TYPES:
-        norm = _format(quantity if operation_type == "insTut" and op.get("harness") else _decimal(op.get("tutCount")) * quantity)
+        whole = operation_type == "insTut" and (op.get("harness") or _mark_tube(op))
+        norm = _format(quantity if whole else _decimal(op.get("tutCount")) * quantity)
     # The last operation hands over the product itself: never leave its quantity blank.
     return [_row(single, norm or (_format(quantity) if is_last else ""))]
 
@@ -674,7 +712,7 @@ def _output_norm(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
         return quantity if _wires(op, config) else ""
     if kind == "prs":
         return "" if op.get("side") != "B" else quantity
-    if operation_type in PIECE_TYPES or (operation_type == "insTut" and op.get("harness")):
+    if operation_type in PIECE_TYPES or (operation_type == "insTut" and (op.get("harness") or _mark_tube(op))):
         return quantity
     return ""
 
@@ -1423,7 +1461,7 @@ def _advances_chain(op: Mapping[str, Any]) -> bool:
     side work on them (cut / put on wires / end caps / folding / stripping) do not move the product name on."""
     operation_type = op.get("type")
     return operation_type not in {"cutTut", "coaxCutTut", "endCap", "foldCore", "stripCable"} and not (
-        operation_type == "insTut" and not op.get("harness")
+        operation_type == "insTut" and not op.get("harness") and not _mark_tube(op)
     )
 
 
@@ -1981,6 +2019,21 @@ class _ChainLink:
 
 
 TUT_CUT_TYPES = frozenset({"cutTut", "coaxCutTut"})
+# Which cut tubes an operation that puts tubes on takes as its second input, by opKey: the splice tube, the sleeves over
+# connectors / on the jacket cut / on the harness, the marking, the end caps, the solder TUT. «Сложная сборка» cuts all
+# tubes first (owner 16.10) — without this the splice would take the connector sleeves and the marking too. An
+# operation not listed (older configs, coax) takes every tube cut so far, as before.
+TUT_TAKES: dict[str, tuple[str, ...]] = {
+    "insSpl": ("cutSpl",), "insSleeves": ("cutShr", "cutJs", "cutHs"), "onMark": ("cutMark",), "endCap": ("cutCap",),
+    "insTut": ("cutTut",),
+}
+
+
+def _takes_tut(consumer: str, cut: str) -> bool:
+    family = TUT_TAKES.get(consumer)
+    if family is None:
+        return True
+    return any(cut == prefix if prefix in {"cutTut", "cutSpl", "cutMark", "cutCap"} else cut.startswith(prefix) for prefix in family)
 
 
 def _tut_pieces(op: Mapping[str, Any], config: Mapping[str, Any]) -> Decimal:
@@ -2003,13 +2056,15 @@ def _generator_chain(
     for index, (op, code) in enumerate(zip(operations, codes), start=1):
         result = _result_name(op, config, previous_result)
         if op.get("type") in TUT_CUT_TYPES:
-            tut_cuts.append({"name": result, "norm": _tut_pieces(op, config)})
+            tut_cuts.append({"name": result, "norm": _tut_pieces(op, config), "key": str(op.get("opKey") or "")})
         auxiliary = None
         if op.get("type") in {"insTut", "endCap", "coaxInsTut"}:
-            auxiliary = {"name": "; ".join(item["name"] for item in tut_cuts), "norm": _format(sum((item["norm"] for item in tut_cuts), Decimal(0)))}
-            tut_cuts = []
+            consumer = str(op.get("opKey") or "")
+            taken = [item for item in tut_cuts if _takes_tut(consumer, item["key"])]
+            tut_cuts = [item for item in tut_cuts if item not in taken]
+            auxiliary = {"name": "; ".join(item["name"] for item in taken), "norm": _format(sum((item["norm"] for item in taken), Decimal(0)))}
         tut_on = False
-        if op.get("type") == "insTut" and not op.get("harness"):
+        if op.get("type") == "insTut" and not op.get("harness") and not _mark_tube(op):
             tut_on_wires = True
         elif tut_on_wires and _kind(op):
             tut_on, tut_on_wires = True, False
