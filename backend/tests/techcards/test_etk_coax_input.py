@@ -216,3 +216,14 @@ def test_shield_crimp_shows_the_hex_of_the_connector_on_its_cable():
         "Размер: А (MMCX-Male) — HEX 3,25 мм; В (N-Male) — HEX не задан — по чертежу разъёма.")
     inches = _shield(sideA={"article": "MMCX-Male", "crimpHex": "0,475″"}, sideB=None)
     assert _dies(inches) == "Шестигранные матрицы — HEX 0,475″"
+
+
+def test_housing_of_a_collet_contact_does_not_speak_of_a_soldered_pin():
+    # N-111C/8D: «центральный контакт - цанговый и не требует пайки» — генератор ставит тип пина «цанга».
+    operations = _owner_coax_etk(sideA={"article": "N-111C/8D", "pinType": "цанга"})
+    housing_a, housing_b = [op for op in operations if op["type"] == "coaxHousing"]
+    text_a = " ".join(step["text"] for step in housing_a["card"]["steps"])
+    text_b = " ".join(step["text"] for step in housing_b["card"]["steps"])
+    assert housing_a["fields"]["collet"] is True and "collet" not in housing_b["fields"]
+    assert "центральный контакт (цанговый, без пайки)" in text_a and "припаянн" not in text_a
+    assert "припаянный центральный контакт" in text_b

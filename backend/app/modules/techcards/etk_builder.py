@@ -818,6 +818,7 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
 
 
 HEX_MISSING = "HEX не задан — по чертежу разъёма"
+_COLLET_PIN = re.compile(r"припаянн\w*\s+центральн\w*\s+контакт\w*", re.IGNORECASE)
 _PLAIN_NUMBER = re.compile(r"^\d+(?:[.,]\d+)?$")
 
 
@@ -942,6 +943,9 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
     fields.update(coax_sketch_fields(op, config))
     if operation_type == "coaxShield":
         fields["crimpHex"] = coax_crimp_hex(config)
+    if operation_type == "coaxHousing" and "цанг" in str(_coax_end(op, config).get("pinType") or "").casefold():
+        # Цанговый центральный контакт (владелец 16.10): пайки пина не было — карта корпуса не говорит «припаянный».
+        fields["collet"] = True
     machine = _coax_machine(op)
     if machine:
         fields["machine"] = machine
@@ -1177,6 +1181,8 @@ def _resolve_card(
         if tolerance.strip() == "мм":
             # «[L КД] мм» без длины в генераторе — единица без числа не допуск.
             tolerance = "по КД"
+        if fields.get("collet"):
+            text = _COLLET_PIN.sub("центральный контакт (цанговый, без пайки)", text)
         if isinstance(fields.get("crimpHex"), list) and step.kind == "Контроль" and "hex" in text.casefold():
             # Обжим втулки экрана: размер HEX по разъёму и кабелю из БД.КОАКС, нет — явно «не задан».
             text = f"{text.rstrip()} Размер: {_hex_phrase(fields['crimpHex'])}."

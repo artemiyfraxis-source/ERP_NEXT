@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from "vitest";
-import { savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { coaxFromFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 import { genCards } from "./routeCards";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 
@@ -210,6 +210,27 @@ describe("коакс: резка с разделкой на роторном с�
     expect(ops.slice(0, 4).map((op) => op.label)).toEqual(["Резка кабеля", "Разделка коаксиала (А)", "Разделка коаксиала (B)", "Резка ТУТ ×2"]);
     expect(ops.slice(0, 3).map((op) => op.tmplHint)).toEqual(["CUT_WIRE_auto", "STRIP_COAX_auto", "STRIP_COAX_auto"]);
     expect(ops.some((op) => op.machine)).toBe(false);
+  });
+
+  it("a collet centre contact (N-111C/8D × 8D-FB) is not soldered: no pin solder, the housing says why", () => {
+    // gsm-repiteri.ru 3300: «центральный контакт - цанговый и не требует пайки»; «Тип пина» в БД.КОАКС пуст.
+    const rec = coaxFromFields({ coaxArticle: "N-111C/8D", coaxWire: "8D-FB", coaxType: "N-male", "Тип экрана": "обжим",
+      "Центральный контакт": "цанговый, не требует пайки", L1: "9", L2: "3", L3: "6" });
+    expect(rec.centerContact).toBe("цанговый, не требует пайки");
+    const collet = [
+      { id: "k", type: "Кабель", name: "8D-FB", art: "8D-FB", qty: 1.02 },
+      { id: "a", type: "Соед", name: "N-111C/8D", art: "N-111C/8D", qty: 1 },
+      { id: "b", type: "Соед", name: "N-Male RG316", art: "N-Male RG316", qty: 1 },
+      { id: "t", type: "ТУТ", name: "ТУТ 3/1,5", art: "ТУТ 3/1,5", qty: 0.04 },
+    ];
+    const D: GenData = { ...data(collet, "Кабельная сборка N-111C/8D 8D-FB 1m"), templates: coaxTemplates, coaxRecords: [rec] };
+    const S = initState(D);
+    expect([S.coax.pinA, S.coax.pinB]).toEqual(["цанга", "пайка"]);
+    const ops = opsOf(D, S);
+    expect(ops.filter((op) => op.type === "coaxPin").map((op) => op.side)).toEqual(["B"]);
+    expect(ops.filter((op) => op.type === "coaxHousing").map((op) => op.label)).toEqual([
+      "Монтаж корпуса (А) — цанговый контакт, без пайки", "Монтаж корпуса (B)"]);
+    expect((makeGen(D, S).buildConfig() as Record<string, any>).coax.sideA.pinType).toBe("цанга");
   });
 
   it("separately: the cut takes the coax card CUT_COAX_auto once both its card and its БД.ОП row exist", () => {

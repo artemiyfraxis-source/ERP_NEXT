@@ -23,6 +23,8 @@ export type CoaxRec = {
   article: string; type: string; wire: string; mfr: string; program: string;
   d1: string; d2: string; d3: string; l1: string; l2: string; l3: string;
   lPlus: string; lMinus: string; pinType: string; shieldType: string; connArticle: string;
+  /** «Центральный контакт» карточки разъёма (слова поставщика): «цанговый» — контакт не паяется. */
+  centerContact?: string;
 };
 export type OpRec = { opNumber: string; opName: string; tOp: string; tPrep: string; tMachine: string };
 export type Tmpl = { id: string; title: string; category: string };
@@ -228,6 +230,9 @@ const CRIMP_BOTH_CODE_ = "CUT_WIRE+2crimp";
 const SHIELD_CODE_ = "TWST_SHILED";
 /** Резка коаксиального кабеля без разделки (вкладка «Коакс», разделка отдельно): своя карта, не карта провода. */
 export const COAX_CUT_CODE_ = "CUT_COAX_auto";
+/** Тип пина коакс-разъёма с цанговым центральным контактом: жила зажимается цангой, пайки центрального контакта нет. */
+export const COAX_PIN_COLLET = "цанга";
+const COLLET_RE_ = /цанг/i;
 
 /** Русское название операции генератора по её `type` (как `OPERATION_TYPE_NAMES` на сервере): когда в конфиге нет `label`. */
 const OP_TYPE_NAMES: Record<string, string> = {
@@ -1410,18 +1415,21 @@ export function makeGen(D: GenData, S: GenState) {
     }
     if (tutOn) ops.push({ type: "coaxCutTut", opKey: "coaxCutTut", label: `Резка ТУТ${x(nSides)}`, units: nSides, tmplHint: "CUT_TUT_short" });
     const pinOp = (sd: Side, pin: string): OpSpec => ({ type: "coaxPin", side: sd, opKey: "coaxPin" + sd, label: `Пайка центрального контакта (${sd === "B" ? "B" : "А"})`, tmplHint: pinHint(pin) });
+    // Цанговый центральный контакт (владелец 16.10, «не требует пайки») — пайки пина нет, жилу зажимает корпус.
+    const pushPin = (sd: Side, pin: string) => { if (pin !== COAX_PIN_COLLET) ops.push(pinOp(sd, pin)); };
+    const housingLabel = (sd: Side, pin: string) => `Монтаж корпуса (${sd === "B" ? "B" : "А"})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}`;
     const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ${x(nSides)}`, units: nSides, tmplHint: "INS_TUT" } : null);
     const sleeveOp = (): OpSpec => ({ type: "coaxInsSleeve", opKey: "coaxInsSleeve", label: `Монтаж втулки экрана${x(nSides)}`, units: nSides, tmplHint: "INS_SLEEVE_coax" });
     const hasSleeve = shield === "обжим";
     const angledB = sideB && pinB === "внутри корпуса";
     const pushTut = () => { const o = insTutOp(); if (o) ops.push(o); };
     if (angledB) {
-      ops.push(pinOp("A", pinA)); pushTut(); if (hasSleeve) ops.push(sleeveOp()); ops.push(pinOp("B", pinB));
+      pushPin("A", pinA); pushTut(); if (hasSleeve) ops.push(sleeveOp()); ops.push(pinOp("B", pinB));
     } else {
-      ops.push(pinOp("A", pinA)); if (sideB) ops.push(pinOp("B", pinB)); pushTut(); if (hasSleeve) ops.push(sleeveOp());
+      pushPin("A", pinA); if (sideB) pushPin("B", pinB); pushTut(); if (hasSleeve) ops.push(sleeveOp());
     }
-    if (pinA !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "A", opKey: "coaxHousingA", label: "Монтаж корпуса (А)", tmplHint: "INS_housing_COAX" });
-    if (sideB && pinB !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "B", opKey: "coaxHousingB", label: "Монтаж корпуса (B)", tmplHint: "INS_housing_COAX" });
+    if (pinA !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "A", opKey: "coaxHousingA", label: housingLabel("A", pinA), tmplHint: "INS_housing_COAX" });
+    if (sideB && pinB !== "внутри корпуса") ops.push({ type: "coaxHousing", side: "B", opKey: "coaxHousingB", label: housingLabel("B", pinB), tmplHint: "INS_housing_COAX" });
     if (shield === "пайка") {
       ops.push({ type: "coaxSolderShield", side: "A", opKey: "coaxSolderShieldA", label: "Пайка экрана (А)", tmplHint: "SDR_COAX_housing" });
       if (sideB) ops.push({ type: "coaxSolderShield", side: "B", opKey: "coaxSolderShieldB", label: "Пайка экрана (B)", tmplHint: "SDR_COAX_housing" });
@@ -2468,6 +2476,8 @@ export function onCoaxConnChange(D: GenData, S: GenState, side: Side): GenState 
     if (!(rec && rec.pinType) && /r\s*\/\s*a\b|угл/i.test(`${s.art} ${s.name || ""}`)) coax = { ...coax, [pinKey]: "внутри корпуса" };
     if (rec) {
       if (rec.pinType) coax = { ...coax, [pinKey]: /внутри/i.test(rec.pinType) ? "внутри корпуса" : "пайка" };
+      // Пустой «Тип пина» не значит «пайка»: цанговый центральный контакт (N-111C/8D…) не паяется.
+      if (!/внутри/i.test(rec.pinType) && COLLET_RE_.test(rec.centerContact || "")) coax = { ...coax, [pinKey]: COAX_PIN_COLLET };
       if (side === "A" && rec.shieldType) coax = { ...coax, shield: /пайк/i.test(rec.shieldType) ? "пайка" : "обжим" };
     }
   }
@@ -2720,6 +2730,7 @@ export function coaxFromFields(f: Record<string, string>): CoaxRec {
     d1: pick(f, "d1", "D1"), d2: pick(f, "d2", "D2"), d3: pick(f, "d3", "D3"), l1: pick(f, "l1", "L1"), l2: pick(f, "l2", "L2"), l3: pick(f, "l3", "L3"),
     lPlus: pick(f, "lPlus", "L+"), lMinus: pick(f, "lMinus", "L-", "L−"), pinType: pick(f, "pinType", "Тип пина"),
     shieldType: pick(f, "shieldType", "Тип экрана"), connArticle: pick(f, "connArticle", "Артикул разъёма", "Артикул разъема"),
+    centerContact: pick(f, "Центральный контакт"),
   };
 }
 /** Поля записи БД.КОАКС, которые создаёт «Добавить в БД.КОАКС» (addCoaxRecordToDb). */
