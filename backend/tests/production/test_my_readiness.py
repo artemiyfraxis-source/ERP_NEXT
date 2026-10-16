@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from app.main import app
+from app.modules.production.api import _readiness as readiness
 from app.modules.production.application import (
     AssignProductionCommand,
     LaunchProductionCommand,
@@ -72,20 +73,21 @@ def test_readiness_walks_from_not_submitted_to_ready_to_assemble(production_api)
     states, _ = _readiness(client)
     assert states[1] == {"state": "ready", "text": "можно начинать", "boxes": []}
     assert states[3]["state"] == "waiting_stage"
-    assert states[3]["text"] == "ждёт: Нарезка А не сдан"
+    assert states[3]["text"] == "ждёт этап 1 «Нарезка А»: сдано 0 из 10"
+    assert (states[3]["source_position"], states[3]["handed"], states[3]["need"]) == (1, "0", "10")
 
     # Возвращённую на исправление коробку брать нельзя — ждём, пока монтажник её исправит.
     waiting = _box(task, 1, 104301, operator_id, "10", confirmed=False).return_to_operator("Пересчитать")
     _save(factory, waiting)
     states, _ = _readiness(client)
     assert states[3]["state"] == "waiting_master"
-    assert states[3]["text"] == "ждёт: Нарезка А — коробку исправляют"
+    assert states[3]["text"] == "ждёт этап 1 «Нарезка А» — коробку исправляют"
 
     # Сданная монтажником коробка годится сразу — подтверждения мастером нет (13.10).
     cut_a = _box(task, 1, 104302, operator_id, "10", confirmed=False)
     _save(factory, cut_a)
     states, _ = _readiness(client)
-    assert states[3]["text"] == "ждёт: Нарезка Б не сдан"
+    assert states[3]["text"] == "ждёт этап 2 «Нарезка Б»: сдано 0 из 5"
     assert [(box["number"], box["quantity"], box["stage"]) for box in states[3]["boxes"]] == [(cut_a.number, "10", "Нарезка А")]
 
     cut_b = _box(task, 2, 104303, operator_id, "5")
@@ -94,8 +96,10 @@ def test_readiness_walks_from_not_submitted_to_ready_to_assemble(production_api)
     assert states[3]["state"] == "assembly"
     assert states[3]["text"] == "готово к сборке"
     assert sorted(box["number"] for box in states[3]["boxes"]) == sorted([cut_a.number, cut_b.number])
+    # Сборке нужно 2 шт нарезки А на изделие: 10 шт А и 5 шт Б дают 5 сборок.
+    assert states[3]["available"] == "5"
     # Маркировка ждёт сборку, которой ещё нет.
-    assert states[4]["text"] == "ждёт: Сборка не сдан"
+    assert states[4]["text"] == "ждёт этап 3 «Сборка»: сдано 0 из 5"
 
 
 def test_single_input_ready_and_remaining_is_the_share(production_api):  # noqa: F811
@@ -109,7 +113,33 @@ def test_single_input_ready_and_remaining_is_the_share(production_api):  # noqa:
     states, rows = _readiness(client)
     assert states[2]["state"] == "ready" and states[2]["text"] == "можно начинать"
     assert [box["quantity"] for box in states[2]["boxes"]] == ["5"]
+    assert states[2]["available"] == "5"
     assert rows[2]["remaining"] == "5"
+
+
+def test_waiting_text_says_how_many_the_input_stage_handed_and_lacks(production_api):  # noqa: F811
+    """Владелец 16.10: «ждёт: … не сдан» должно говорить, с какого этапа и сколько штук не хватает."""
+    _, operator_id = production_api
+    factory = app.state.production_uow_factory
+    operations = link_inputs((_op(1, "Нарезка"), _op(2, "Сборка")), {2: ((1, Decimal(1)),)})
+    task = _launch(factory, operator_id, "ready-lack", operations)
+    cut, build = sorted(task.operations, key=lambda item: item.position)
+    progress = {str(cut.id): {"fact": {"good": "97"}, "required_quantity": "100"}}
+
+    waiting = readiness(task, build, (), "не начата", progress)
+    assert waiting["state"] == "waiting_stage"
+    assert waiting["text"] == "ждёт этап 1 «Нарезка»: сдано 97 из 100, не хватает 3 шт"
+
+    progress[str(cut.id)]["fact"]["good"] = "0"
+    assert readiness(task, build, (), "не начата", progress)["text"] == "ждёт этап 1 «Нарезка»: сдано 0 из 100"
+
+    # Всё сдано, но коробки уже взял напарник — не «не сдан».
+    progress[str(cut.id)]["fact"]["good"] = "100"
+    assert readiness(task, build, (), "в работе", progress)["text"] == "ждёт этап 1 «Нарезка»: всё сданное уже взято в работу"
+
+    # Сдал часть — начинать можно на то, что есть в коробках.
+    ready = readiness(task, build, (_box(task, 1, 104331, operator_id, "60"),), "не начата", progress)
+    assert (ready["state"], ready["available"]) == ("ready", "60")
 
 
 def test_my_reads_only_own_tasks_and_their_boxes(production_api, monkeypatch):  # noqa: F811

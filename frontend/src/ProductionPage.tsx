@@ -149,7 +149,10 @@ export function ProductionPage({ principal, mine = false }: { principal: Princip
   return <section className="page production-page">
     <header className="page-head">
       <h1>{mine && viewAs ? "Задания" : mine ? "Мои задания" : "Ресурсное планирование"}</h1>
-      <span className="page-count">{tasks.length}</span>
+      {/* «Мои задания»: счётчик — невыполненные (выполненные — в «Выполнено · N»), владелец 16.10. */}
+      {mine
+        ? <span className="page-count" title="Невыполненных операций">{tasks.filter((task) => !isDoneCard(task)).length}</span>
+        : <span className="page-count">{tasks.length}</span>}
       {canPick && <label className="view-as">Сотрудник
         <select aria-label="Сотрудник" style={{ width: "auto" }} value={viewAs} onChange={(event) => setViewAs(event.target.value)}>
           <option value="">Мои задания</option>
@@ -722,10 +725,9 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     const base = `${String(date.getDate()).padStart(2, "0")}.${String(date.getMonth() + 1).padStart(2, "0")}, ${weekdays[date.getDay()]}`;
     return diff === 0 ? `Сегодня · ${base}` : diff === 1 ? `Завтра · ${base}` : diff < 0 ? (started ? `Начато ранее · ${base}` : `Просрочено · план ${base.slice(0, 5)}`) : base;
   };
-  const isDone = (task: ProductionTask) => {
-    const operation = task.operations[0];
-    return Boolean(operation && (operation.state === "выполнена" || operation.my_share?.finished_at));
-  };
+  const isDone = isDoneCard;
+  // Код операции (PRS_TERMINAL_auto) — мастеру и технологу; монтажнику он не нужен (владелец 16.10, erp-screens §1).
+  const showCodes = canSee(principal, "production") || canSee(principal, "techcards");
   const isRunning = (task: ProductionTask) => Boolean(session && session.task_id === task.id && session.operation_id === task.operations[0]?.id);
   const renderCard = (task: ProductionTask, last: { title: string | null }) => {
     const operation = task.operations[0];
@@ -750,32 +752,49 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
     const fact = operation.time_fact;
     const work = { onBehalfOf };
     const paused = running?.status === "Пауза";
+    // Ждёт этап-вход, а коробок нет: «Начать» серая, причина рядом (владелец 16.10: пустой выбор коробок не открывать).
+    const blocked = !operation.first && (operation.readiness?.state === "waiting_stage" || operation.readiness?.state === "waiting_master");
+    const own = ownPieces(task, operation);
+    const norm = cardNorm(task, operation);
+    // Начато раньше плана (до смены): один раз, справкой, а не запретом (владелец 16.10).
+    const begun = parseDate(running?.started_at ?? share?.started_at);
+    const early = !done && begun && startAt ? startAt.getTime() - begun.getTime() : 0;
+    const handed = handedText(task, operation);
+    const factParts = [
+      share?.started_at ? `взял ${formatMoment(share.started_at)}` : "",
+      share?.finished_at ? `закончил ${formatMoment(share.finished_at)}` : "",
+    ].filter(Boolean);
+    const stateId = `mo-state-${key}`;
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
         <div className="mo-h">
-          <div className="mo-name"><b>{stage}</b>{pf ? <small className="op-code">{pfOpsText(operation)}</small> : operation.code && <small className="op-code">{operation.code}</small>}</div>
+          <div className="mo-name"><b>{stage}</b>{pf ? <small className="op-code">{pfOpsText(operation)}</small> : showCodes && operation.code && <small className="op-code">{operation.code}</small>}</div>
           <div className="mo-side">
-            {state && <span className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
+            {state && <span id={stateId} className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
             {!readOnly && running && <>
               {paused
                 ? <button className="primary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "resume", { ...work, key: stepKey(running, "resume") }))}>Продолжить</button>
                 : <button className="secondary" disabled={Boolean(busy)} onClick={() => void mutate(running.id, () => productionApi.workAction(running.id, "pause", { ...work, key: stepKey(running, "pause") }))}>Пауза</button>}
               <button className={paused ? "secondary" : "primary"} aria-expanded={submitting} onClick={() => setSubmitting((value) => !value)}>Сдать…</button>
             </>}
-            {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} disabled={Boolean(session) || Boolean(busy)} title={session ? "Сначала сдайте начатую работу" : undefined} onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
-            <button className="secondary" aria-expanded={etkOpen === key} onClick={() => setEtkOpen(etkOpen === key ? "" : key)}>{pf ? "Инструкция" : "ЭТК"}</button>
+            {!readOnly && !running && !done && <button className="primary" aria-expanded={starting === key} aria-describedby={blocked && state ? stateId : undefined}
+              disabled={Boolean(session) || Boolean(busy) || blocked} title={session ? "Сначала сдайте начатую работу" : blocked ? state?.text : undefined}
+              onClick={() => setStarting(starting === key ? "" : key)}>Начать</button>}
+            <button className="secondary" aria-haspopup="dialog" onClick={() => setEtkOpen(key)}>{pf ? "Инструкция" : "ЭТК"}</button>
           </div>
         </div>
-        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{share?.quantity != null ? <> · <b>ваши {share.quantity} шт</b></> : null}</div>
+        <div className="mo-s">{task.number} · {pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · <b>{taskItemLabel(task)}</b> × {task.quantity}{requiredNote(task, operation)}{task.name ? ` · ${task.name}` : ""}{feedsText(task, operation) ? ` · ${feedsText(task, operation)}` : ""}{own != null ? <> · <b className="mo-own">ваша доля {own} из {task.quantity}</b></> : null}</div>
         {operation.description && !operation.description.startsWith(operation.stage || stage) && <div className="mo-d">{operation.description}</div>}
-        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span> · норма {hours(operation.norm_seconds)}{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
-        <div className="mo-fact">{processed ? <>Сдано <b>{operation.fact?.good}</b> из {requiredOf(task, operation)}{Number(operation.fact?.defect) ? ` · брак ${operation.fact?.defect}` : ""} · {operation.state}</> : "Ещё не сдавали"}{share?.started_at ? ` · взял ${formatMoment(share.started_at)}` : ""}{share?.finished_at ? ` · закончил ${formatMoment(share.finished_at)}` : ""}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>
+        <div className="mo-s mo-plan"><span className="mo-window">{startAt ? `план ${windowText(plannedStart, plannedFinish)}` : "время не назначено"}</span>{early >= EARLY_NOTE_MS ? <span className="mo-early tone-info"> — начато раньше на {spanText(early)}</span> : null} · <span className="mo-norm" title="Как «Расчётное время» в «Результате» ЭТК: подготовка + время на изделие × штуки. «Время» в шапке ЭТК — на одно действие (один обжим, один рез)">{norm}</span>{task.deadline ? ` · срок задания ${formatDay(task.deadline)}` : ""}{operation.mates?.length ? ` · вместе с: ${operation.mates.join(", ")}` : ""}{late ? <> · <b>план истёк</b></> : null}</div>
+        {(handed || factParts.length > 0 || fact) && <div className="mo-fact">{handed}{handed && factParts.length ? " · " : ""}{factParts.join(" · ")}{fact ? <> · <span className="mo-tf">факт {clock(fact.actual_seconds)} · норма {clock(fact.norm_seconds)}{fact.percent != null ? ` · ${fact.percent} %` : ""}</span></> : null}</div>}
         {pf && <PfCardBlocks taskId={task.id} operation={operation} onBehalfOf={onBehalfOf} showInputs={!done && !operation.first} />}
         {!done && <DowntimeControl taskId={task.id} operationId={operation.id} primary={firstOfTask.has(key)} performerId={onBehalfOf || principal.user.id} master={canAct(principal, "production")} readOnly={readOnly} onBehalfOf={onBehalfOf} />}
         {!readOnly && running && submitting && <SubmitWorkForm session={running} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={(number, box) => { setSubmitting(false); onSubmitted(number, box); }} />}
-        {!readOnly && !running && !done && !session && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
-        {etkOpen === key && <OperationEtk principal={principal} task={task} operation={operation} />}
+        {!readOnly && !running && !done && !session && !blocked && starting === key && <StartWorkForm task={task} operation={operation} busy={Boolean(busy)} mutate={mutate} onBehalfOf={onBehalfOf} />}
+        {etkOpen === key && <PageWindow label={`${pf ? "Инструкция" : "ЭТК"}: ${stage}`} width={1280} dismissable close={() => setEtkOpen("")}>
+          <OperationEtk principal={principal} task={task} operation={operation} title={`${task.number} · ${pf ? `ПФ-${operation.position}` : `этап ${operation.position}`} · ${stage}`} close={() => setEtkOpen("")} />
+        </PageWindow>}
       </div>
     </div>;
   };
@@ -826,7 +845,64 @@ function stepKey(session: ProductionWorkSession, action: string): string {
   return `${session.id}:${action}:${session.pause_seconds}:${session.pause_started_at ?? ""}`;
 }
 
-/** Строка состояния карточки рядом с главной кнопкой. */
+/** Выполнена ли карточка «Моих заданий»: операция выполнена или свою долю монтажник закончил. */
+export function isDoneCard(task: ProductionTask): boolean {
+  const operation = task.operations[0];
+  return Boolean(operation && (operation.state === "выполнена" || operation.my_share?.finished_at));
+}
+
+/** Своя доля монтажника в штуках — только когда операция поделена между людьми (иначе «× тираж» и есть его работа). */
+export function ownPieces(task: ProductionTask, operation: ProductionOperation): number | null {
+  const own = operation.my_share?.quantity;
+  return own != null && own < task.quantity ? own : null;
+}
+
+/** «1 мин 23 с», «6 с»: время на штуку. */
+function perUnitText(seconds: number): string {
+  const total = Math.round(seconds);
+  return total < 60 ? `${total} с` : `${Math.floor(total / 60)} мин${total % 60 ? ` ${total % 60} с` : ""}`;
+}
+
+/** «2 ч 38 мин», «45 мин». */
+export function spanText(ms: number): string {
+  const total = Math.round(ms / 60_000);
+  const whole = Math.floor(total / 60);
+  return whole ? `${whole} ч${total % 60 ? ` ${total % 60} мин` : ""}` : `${total} мин`;
+}
+
+/** Не говорить «начато раньше» из-за пары минут. */
+const EARLY_NOTE_MS = 15 * 60_000;
+
+/** Норма карточки — «Расчётное время» ЭТК (подготовка + время на штуку × штуки), на свою долю, с разбивкой: в шапке ЭТК
+ *  «Время» — время одного действия карточки операции (одного обжима), а не изделия (владелец 16.10: «два разных времени»). */
+export function cardNorm(task: ProductionTask, operation: ProductionOperation): string {
+  const own = ownPieces(task, operation);
+  const pieces = own ?? requiredOf(task, operation);
+  const setup = Number(operation.setup_seconds) || 0;
+  const unit = Number(operation.seconds_per_unit) || 0;
+  const seconds = own != null ? setup + unit * own : operation.norm_seconds;
+  const parts = [setup ? `подготовка ${Math.round(setup / 60)} мин` : "", unit ? `${perUnitText(unit)} на изделие` : ""].filter(Boolean);
+  return `норма ${hours(seconds)} на ${pieces}\u00a0шт${parts.length ? ` (${parts.join(" + ")})` : ""}`;
+}
+
+/** Строка «сдано» — только когда что-то сдано (владелец 16.10: «Ещё не сдавали» на каждой карточке — шум). У поделённой
+ *  операции — своё из своей доли и всего по этапу. */
+export function handedText(task: ProductionTask, operation: ProductionOperation): string {
+  const good = Number(operation.fact?.good ?? 0) || 0;
+  const defect = Number(operation.fact?.defect ?? 0) || 0;
+  const required = requiredOf(task, operation);
+  const own = ownPieces(task, operation);
+  const left = Number(operation.remaining);
+  const mine = own != null && operation.remaining !== undefined && Number.isFinite(left) ? Math.max(0, own - left) : null;
+  if (mine != null && own != null) {
+    if (!mine && !good) return "";
+    return `сдано вами ${mine} из ${own} · по этапу ${good} из ${required}${defect ? `, брак ${defect}` : ""}`;
+  }
+  if (!good && !defect) return "";
+  return `сдано ${good} из ${required}${defect ? ` · брак ${defect}` : ""}${operation.state ? ` · ${operation.state}` : ""}`;
+}
+
+/** Строка состояния карточки рядом с главной кнопкой. Готово — сколько штук можно начать (не больше своего остатка). */
 function cardState(operation: ProductionOperation, running: ProductionWorkSession | null, done: boolean, now: Date): { text: string; tone: string } | null {
   if (running) {
     const since = formatMoment(running.started_at);
@@ -839,12 +915,19 @@ function cardState(operation: ProductionOperation, running: ProductionWorkSessio
   if (done) return { text: "выполнена", tone: "tone-neutral" };
   const readiness = operation.readiness;
   if (!readiness || readiness.state === "done") return null;
-  const text = `${readiness.text}${readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${readiness.boxes.length}` : ""}`;
-  return { text, tone: readiness.state === "ready" || readiness.state === "assembly" ? "tone-ok" : "tone-warn" };
+  const ready = readiness.state === "ready" || readiness.state === "assembly";
+  const boxes = readiness.boxes.length > 0 && !operation.first ? ` · коробок: ${readiness.boxes.length}` : "";
+  if (ready && !operation.first && readiness.available !== undefined) {
+    const left = Number(operation.remaining);
+    const can = Math.min(Number(readiness.available) || 0, Number.isFinite(left) && left > 0 ? left : Infinity);
+    return { text: `${readiness.state === "assembly" ? "готово к сборке" : "можно начать"}: ${can}\u00a0шт${boxes}`, tone: "tone-ok" };
+  }
+  return { text: `${readiness.text}${boxes}`, tone: ready ? "tone-ok" : "tone-warn" };
 }
 
-// ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции.
-function OperationEtk({ principal, task, operation }: { principal: Principal; task: ProductionTask; operation: ProductionOperation }) {
+// ЭТК операции для монтажника: выданная карта проекта и изделия, только чтение, открыта на этой операции — в окне поверх
+// списка (владелец 16.10: раскрытая в списке ЭТК сдвигала карточки; правило «правка и карточки — окнами»).
+function OperationEtk({ principal, task, operation, title, close }: { principal: Principal; task: ProductionTask; operation: ProductionOperation; title: string; close: () => void }) {
   const [view, setView] = useState<{ card: ProjectTechcard; focus: { position: number; code: string }; serial?: MarkSerialRange } | undefined>(undefined);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -857,6 +940,7 @@ function OperationEtk({ principal, task, operation }: { principal: Principal; ta
   // Только чтение: правка и пересборка ЭТК — у технолога.
   const viewer: Principal = { ...principal, permissions: { myops: "view" } };
   return <div className="panel mo-etk">
+    <div className="manual-stock-head"><h2>{title}</h2><button className="link-button" onClick={close}>Закрыть</button></div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!error && !view && <div className="empty">Загрузка…</div>}
     {view && <EtkSheet card={view.card} principal={viewer} onChange={() => undefined} focus={view.focus} task taskId={task.id} serial={view.serial} sketchSource={{

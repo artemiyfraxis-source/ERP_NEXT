@@ -314,7 +314,8 @@ it("starts the first operation from an issued GRN and package", async () => {
   });
 
   render(<ProductionPage principal={operatorPrincipal} mine />);
-  expect(await screen.findByText("Ещё не сдавали")).toBeInTheDocument();
+  expect(await screen.findByText("норма 0,2 ч на 10 шт (подготовка 2 мин + 1 мин на изделие)")).toBeInTheDocument();
+  expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
   fireEvent.change(await screen.findByLabelText("Количество из партии PPM.26.0000001 П1"), { target: { value: "3" } });
   fireEvent.click(screen.getByRole("button", { name: "Начать работу" }));
@@ -520,12 +521,38 @@ it("lets the master hand out operations of issued projects to installers and lau
     path: `/api/production/tasks/${open.id}/operations/${open.operations[0].id}/share`,
     body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 4, requested_start: "2026-09-23T13:30" },
   }));
-  // Снять — крестиком на исполнителе, без отдельной кнопки у каждого.
+  // Снять — крестиком на исполнителе, без отдельной кнопки у каждого; сначала окно с тем, что изменится (16.10).
+  const posted = bodies.length;
   fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  const confirm = await screen.findByRole("dialog", { name: "Снять Рыбкина Ольга с этапа" });
+  expect(bodies).toHaveLength(posted);
+  expect(within(confirm).getByText("План Рыбкина Ольга 22.09 10:00–14:00 освободится.")).toBeInTheDocument();
+  expect(within(confirm).getByText("Этап останется без исполнителя — его нужно будет назначить заново.")).toBeInTheDocument();
+  fireEvent.click(within(confirm).getByRole("button", { name: "Отмена" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(bodies).toHaveLength(posted);
+  fireEvent.click(screen.getByRole("button", { name: "Снять Рыбкина Ольга" }));
+  fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Снять Рыбкина Ольга" }));
   await waitFor(() => expect(bodies.at(-1)).toEqual({
     path: `/api/production/tasks/${open.id}/operations/${open.operations[1].id}/share`,
     body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000002", remove: true },
   }));
+
+  // «Назначить только …» (16.10): весь этап одному монтажнику одним нажатием, ближайший рабочий день и час — на кнопке.
+  fireEvent.click(screen.getByRole("button", { name: "Обжим" }));
+  const only = screen.getByRole("group", { name: "Весь этап одному монтажнику" });
+  expect(within(only).getByLabelText("Монтажник на весь этап")).toHaveValue("10000000-0000-0000-0000-000000000002");
+  fireEvent.change(within(only).getByLabelText("Монтажник на весь этап"), { target: { value: "10000000-0000-0000-0000-000000000003" } });
+  expect(within(only).getByLabelText("День начала")).toHaveValue("2026-09-22");
+  expect(within(only).getByText("Остальные исполнители будут сняты — все 10 шт получит Попов Игнат.")).toBeInTheDocument();
+  fireEvent.click(within(only).getByRole("button", { name: "Назначить только Попов Игнат на 22.09 с 09:00" }));
+  await waitFor(() => expect(bodies.at(-1)).toEqual({
+    path: `/api/production/tasks/${open.id}/operations/${open.operations[1].id}/share`,
+    body: { version: 2, operator_id: "10000000-0000-0000-0000-000000000003", quantity: 10, requested_start: "2026-09-22T09:00" },
+  }));
+  // Другой день — кнопка говорит его.
+  fireEvent.change(within(only).getByLabelText("День начала"), { target: { value: "2026-09-24" } });
+  expect(within(only).getByRole("button", { name: "Назначить только Попов Игнат на 24.09 с 09:00" })).toBeInTheDocument();
 
   fireEvent.click(await screen.findByRole("button", { name: "← Все проекты" }));
   await openBoardProject("708К.4");
@@ -772,7 +799,8 @@ it("lets a planner view a fitter's queue read-only", async () => {
   fireEvent.change(select, { target: { value: fitterId } });
 
   expect(await screen.findByText("Вид сотрудника Оператор — только просмотр")).toBeInTheDocument();
-  expect(await screen.findByText("Ещё не сдавали")).toBeInTheDocument();
+  expect(await screen.findByText("ПЗ-0001", { exact: false, selector: ".mo-s" })).toBeInTheDocument();
+  expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
   expect(requested).toContain(`/api/production/my?operator_id=${fitterId}`);
   expect(screen.getByText("000009-6")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Начать" })).not.toBeInTheDocument();
@@ -894,19 +922,19 @@ it("opens the operation's ETK read-only on that operation through the production
     if (path.includes("/api/techcards/projects/")) return json({ items: [] });
     return null;
   });
-  const { container } = render(<ProductionPage principal={fitter} mine />);
+  render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
   // Только операция задания: без списка операций ЭТК слева и без «← Назад / Далее» к чужим операциям.
   expect(await screen.findByRole("heading", { name: /Опрессовка терминалов/ })).toBeInTheDocument();
   expect(screen.queryByRole("navigation", { name: "Маршрут ЭТК" })).not.toBeInTheDocument();
   expect(screen.queryByText("Разделка кабеля")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Назад|Далее/ })).not.toBeInTheDocument();
-  expect(container.querySelector(".etk-sheet")).not.toBeNull();
+  expect(document.querySelector(".etk-sheet")).not.toBeNull();
   expect(screen.queryByRole("button", { name: "Выдать ЭТК" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Пересобрать/ })).not.toBeInTheDocument();
 });
 
-it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme as Э4 and remembers what this user opened", async () => {
+it("opens the fitter's ETK in a window with «Оснастка» and «Ход операции» expanded, the rest collapsed, and remembers what this user changed", async () => {
   window.localStorage.clear();
   const etk = {
     id: "80000000-0000-0000-0000-000000000001", version: 1, project: "591K.3", item_index: "КБ1", product_name: "Жгут",
@@ -932,8 +960,11 @@ it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme a
   });
   const first = render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  const steps = await screen.findByRole("region", { name: "Ход операции" });
-  expect(steps.querySelector("details")).not.toHaveAttribute("open");
+  // Окно поверх списка (16.10): ЭТК не раздвигает карточки, закрывается кнопкой.
+  const dialog = await screen.findByRole("dialog", { name: "ЭТК: Разделка" });
+  const steps = await within(dialog).findByRole("region", { name: "Ход операции" });
+  expect(steps.querySelector("details")).toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Оснастка" }).querySelector("details")).toHaveAttribute("open");
   expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
   expect(screen.getByText("Требование безопасности").closest("details")).not.toHaveAttribute("open");
   const schema = screen.getByText("Схема Э4").closest("details")!;
@@ -950,16 +981,22 @@ it("keeps the fitter's ETK collapsed until a block is opened, shows the scheme a
   expect(screen.queryByText("Таблица соединений · 2")).toBeNull();
   expect(map.closest(".etk-e4")).toBeNull();
 
+  // Закрыл «Ход операции» — запомнилось «закрыт»; открыл «Вход» — «открыт».
   fireEvent.click(within(steps).getByText("Ход операции"));
-  await waitFor(() => expect(steps.querySelector("details")).toHaveAttribute("open"));
-  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Ход операции`)).toBe("1");
+  await waitFor(() => expect(steps.querySelector("details")).not.toHaveAttribute("open"));
+  fireEvent.click(within(screen.getByRole("region", { name: "Вход" })).getByText("Вход"));
+  await waitFor(() => expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Вход`)).toBe("1"));
+  expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:sec:Ход операции`)).toBe("0");
   expect(window.localStorage.getItem(`etk-fold:${fitter.user.id}:schema`)).toBe("1");
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   first.unmount();
 
   render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  expect((await screen.findByRole("region", { name: "Ход операции" })).querySelector("details")).toHaveAttribute("open");
-  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).not.toHaveAttribute("open");
+  expect((await screen.findByRole("region", { name: "Ход операции" })).querySelector("details")).not.toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Вход" }).querySelector("details")).toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Оснастка" }).querySelector("details")).toHaveAttribute("open");
   window.localStorage.clear();
 });
 
@@ -977,12 +1014,63 @@ it("loads the ETK sketches of the fitter's operation through the production endp
     if (path.endsWith("/etk/sketches")) return json({ items: [{ operation_key: "OP-01::::", file_name: "a.png", size: 3, uploaded_by: "Технолог", uploaded_at: "2026-09-20T10:00:00+03:00" }] });
     return null;
   });
-  const { container } = render(<ProductionPage principal={fitter} mine />);
+  render(<ProductionPage principal={fitter} mine />);
   fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
-  await waitFor(() => expect(container.querySelector(".etk-sketch img")).not.toBeNull());
-  expect(container.querySelector(".etk-sketch img")?.getAttribute("src")).toMatch(/^\/api\/production\/my\/tasks\/.+\/operations\/.+\/etk\/sketches\/OP-01%3A%3A%3A%3A\?v=/);
+  await waitFor(() => expect(document.querySelector(".etk-sketch img")).not.toBeNull());
+  expect(document.querySelector(".etk-sketch img")?.getAttribute("src")).toMatch(/^\/api\/production\/my\/tasks\/.+\/operations\/.+\/etk\/sketches\/OP-01%3A%3A%3A%3A\?v=/);
   expect(seen.some((path) => path.endsWith("/etk/sketches"))).toBe(true);
   expect(seen.some((path) => path.includes("/api/techcards/") && path.includes("/sketches"))).toBe(false);
+});
+
+// Демо «задачи монтажника на этапе 3» (владелец 16.10): ждущий этап не зелёный, счётчик — только активные, код операции
+// монтажнику не показывается.
+it("greys out «Начать» on a stage waiting for its input with the reason next to it and counts only active cards", async () => {
+  const waiting = readyTask({ state: "waiting_stage", text: "ждёт этап 1 «Разделка»: сдано 0 из 10", boxes: [], source_position: 1, handed: "0", need: "10" });
+  const finished: ProductionTask = { ...task, id: "70000000-0000-0000-0000-000000000009", operations: [{
+    ...task.operations[0], id: "71000000-0000-0000-0000-000000000009", state: "выполнена", fact: { good: "10", defect: "0", processed: "10" },
+  }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [waiting, finished] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ProductionPage principal={fitter} mine />);
+
+  const start = await screen.findByRole("button", { name: "Начать" });
+  expect(start).toBeDisabled();
+  const reason = screen.getByText("ждёт этап 1 «Разделка»: сдано 0 из 10");
+  expect(start).toHaveAttribute("aria-describedby", reason.id);
+  fireEvent.click(start);
+  expect(screen.queryByRole("button", { name: "Начать работу" })).not.toBeInTheDocument();
+  expect(screen.getByText("1", { selector: ".page-count" })).toBeInTheDocument();
+  expect(screen.getByText("Выполнено · 1")).toBeInTheDocument();
+  expect(screen.queryByText("OP-01")).not.toBeInTheDocument();
+  expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
+});
+
+it("shows the fitter's own share, what was handed of it and how many pieces can be started now", async () => {
+  const share = { operator_id: fitter.user.id, quantity: 4, planned_start: "2026-09-22T09:00:00+03:00", planned_finish: "2026-09-22T09:06:00+03:00", started_at: null, finished_at: null };
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: readyBoxes, available: "10" },
+    { my_share: share, remaining: "3", fact: { good: "5", defect: "0", processed: "5" }, state: "в работе" }));
+  render(<ProductionPage principal={fitter} mine />);
+
+  expect(await screen.findByText("ваша доля 4 из 10")).toBeInTheDocument();
+  expect(screen.getByText("сдано вами 1 из 4 · по этапу 5 из 10")).toBeInTheDocument();
+  // Коробки дают 10 шт, своих осталось 3 — начать можно на 3.
+  expect(screen.getByText("можно начать: 3 шт · коробок: 2")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Начать" })).toBeEnabled();
+  // Норма — на свою долю: 2 мин подготовки + 1 мин × 4 шт.
+  expect(screen.getByText("норма 0,1 ч на 4 шт (подготовка 2 мин + 1 мин на изделие)")).toBeInTheDocument();
+});
+
+it("says once that the work was started earlier than planned", async () => {
+  const share = { operator_id: fitter.user.id, quantity: null, planned_start: "2026-09-22T09:00:00+03:00", planned_finish: "2026-09-22T11:50:00+03:00", started_at: "2026-09-22T06:22:00+03:00", finished_at: null };
+  fitterFetch(readyTask({ state: "ready", text: "можно начинать", boxes: [] }, { my_share: share }));
+  render(<ProductionPage principal={fitter} mine />);
+  expect(await screen.findByText("— начато раньше на 2 ч 38 мин")).toBeInTheDocument();
+  expect(screen.getAllByText(/начато раньше/)).toHaveLength(1);
+  expect(screen.getByText(/^взял 22.09/)).toBeInTheDocument();
 });
 
 it("keeps «Начать» disabled with a reason until a box is chosen, then lets it go", async () => {
@@ -1065,6 +1153,8 @@ it("lets a master work for a fitter: banner, start on her behalf with a replay k
   expect(screen.getByRole("button", { name: "Вернуться к моим заданиям" })).toBeInTheDocument();
   expect(await screen.findByText("можно начинать")).toBeInTheDocument();
   expect(screen.getByText(/^план /, { selector: ".mo-window" })).toHaveTextContent(/^план 22\.09 \d\d:00–\d\d:12$/);
+  // Мастеру код операции виден (монтажнику — нет).
+  expect(screen.getByText("OP-01", { selector: ".op-code" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Начать" }));
   fireEvent.click(await screen.findByRole("button", { name: "Начать работу" }));
 

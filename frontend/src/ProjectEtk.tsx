@@ -365,8 +365,8 @@ function SolderPanel({ mode }: { mode: SolderMode }) {
 }
 
 /** Блок ЭТК, который сворачивается щелчком по заголовку, как «Типовые дефекты» (владелец, 12.10: «не могу скрыть»).
- *  Закрыт по умолчанию, открытое помнится (владелец 13.10: «по дефолту всё свёрнуто»); печать (etkPrint.ts) печатает
- *  все блоки. */
+ *  Закрыт по умолчанию, кроме «Оснастки» и «Хода операции» (владелец 16.10); выбор сотрудника помнится (etkFold.tsx);
+ *  печать (etkPrint.ts) печатает все блоки. */
 function EtkSection({ label, number, children }: { label: string; number: number; children: ReactNode }) {
   const fold = useEtkFold(`sec:${label}`);
   return <section className="etk-sec" aria-label={label}>

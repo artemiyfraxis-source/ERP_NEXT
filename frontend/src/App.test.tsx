@@ -69,6 +69,8 @@ it("draws the block tiles with line icons, never emoji (audit М-6)", async () =
   tiles.forEach((tile) => {
     expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
     expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
+    // Счётчик подписан (владелец 16.10: «1, 2, 2 — непонятно, что считают»).
+    expect(tile.querySelector(".tile-count")?.textContent).toMatch(/^\d+ раздел(а|ов)?$/);
   });
 });
 
