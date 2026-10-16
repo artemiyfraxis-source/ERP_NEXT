@@ -3788,6 +3788,11 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .rc-core-tin { stroke: var(--rc-tin); stroke-width: 3; stroke-linecap: round; }
 .rc-core-term { fill: var(--rc-metal); stroke: var(--rc-outline); stroke-width: .8; }
 .rc-more { color: var(--muted-foreground); font-size: 12px; line-height: 16px; }
+/* Схема ПФ «Сложной сборки»: что входит в ПФ — подписи входящих стрелок строками. */
+.rc-art:has(> .rc-inputs) { flex: 0 0 auto; align-items: flex-start; justify-content: flex-start; }
+.rc-inputs { display: grid; width: 100%; margin: 0; padding: 0; list-style: none; }
+.rc-inputs li { overflow: hidden; font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.tcgen .route-input-item { color: var(--muted-foreground); }
 .rc-faces { display: flex; align-items: flex-end; justify-content: center; gap: 12px; width: 100%; }
 .rc-face-cell { display: grid; justify-items: center; gap: 2px; min-width: 0; margin: 0; }
 .rc-face-cell figcaption { max-width: 120px; overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }

@@ -24,10 +24,11 @@ it("tails get strip and tin ops while side В has connectors: 4 tail ends, 3 mm 
   const keys = makeGen(DS, S).getActiveOps().map((o) => o.opKey);
   expect(keys).toEqual(expect.arrayContaining(["stripTail", "tinTail"]));
   expect(keys.indexOf("stripTail")).toBeLessThan(keys.indexOf("tinTail"));
-  // Порядок «Сложной сборки» по умолчанию (владелец 16.10): резка → сростки → хвосты → монтаж разъёмов.
+  // Схема ПФ «Сложной сборки» (владелец 16.10): резка → группы сростков → изделие (хвосты — первыми, до монтажа разъёмов).
+  // Карты CUT_WIRE+2strip+tin в библиотеке нет — хвосты своими операциями, как раньше.
   const lastCut = keys.reduce((last, key, i) => (/^cutWire/.test(key) ? i : last), -1);
   expect(lastCut).toBeGreaterThanOrEqual(0);
-  expect(keys.indexOf("stripTail")).toBe(keys.indexOf("splice") + 1);
+  expect(keys.indexOf("stripTail")).toBe(keys.indexOf("splice2") + 1);
   expect(keys.indexOf("tinTail")).toBe(keys.indexOf("stripTail") + 1);
   expect(keys.indexOf("tinTail")).toBeLessThan(keys.findIndex((key) => /^insTerm/.test(key)));
   expect(op(S, "stripTail")).toMatchObject({ type: "stripCable", templateId: tmplId("STRIP_WIRE"), tutCount: 4, strip: { a: false, lenA: "", b: true, lenB: "3" } });
@@ -67,12 +68,27 @@ it("without side В the old «Лужение» stays as it was and tail tinning 
   expect(covered.filter((o) => o.type === "tin" || o.opKey === "stripTail").map((o) => [o.opKey, o.units])).toEqual([["tin", undefined]]);
 });
 
+it("with the CUT_WIRE+2strip+tin card the tails of the splices are cut, stripped and tinned by the machine — no tail ops", () => {
+  const data: GenData = { ...DS, templates: [...DS.templates, { id: "t-tail", title: "CUT_WIRE+2strip+tin | Резка с зачисткой двух концов и лужением",
+    category: "Автомат резка + опрессовка" }] };
+  const S = setTailMode(harness(data), "tin");
+  const list = ops(S, data);
+  expect(list.filter((o) => ["stripTail", "tinTail", "stripSpl"].includes(String(o.opKey)))).toEqual([]);
+  expect(list.find((o) => o.templateId === "t-tail")).toMatchObject({ type: "cutWireStrip", tin: true, strip: { a: true, lenA: "", b: true, lenB: "3" },
+    wires: [R.r2t, R.k2t, R.w12t, R.b12t].map(() => expect.objectContaining({ length: 60 })) });
+  // Без лужения хвостов (заделка трубкой) хвост при резке не трогают — зачищается только конец под сросток.
+  const cap = setTailMode(harness(data), "cap");
+  const tailCut = ops(cap, data).find((o) => (o.wires as Array<{ length: number }> | undefined)?.some((w) => w.length === 60));
+  expect(tailCut).toMatchObject({ type: "cutWireStrip", strip: { a: true, b: false } });
+});
+
 it("the splice tube and cap pickers list every heat-shrink tube of the BOM — ТТК 3/1 included; the cap seed stays ТУТ-only", () => {
   const S = harness(DS);
   expect(makeGen(DS, S).capTubes().map((c) => c.art)).toEqual(["ТТК 3/1мм, черная", "ТТК 8/2мм, черная", "ТТК 12/4мм, черная"]);
   expect(initState(DS).cap.tut).toBe("");
   const tubed = { ...S, spl: { ...S.spl, tut: "30", tutMat: "ttk3" } };
-  expect(op(tubed, "cutSpl")).toMatchObject({ tutArt: "ТТК 3/1мм, черная", tutCount: 4 });
+  // Трубка сростков режется вместе со всеми трубками — одной операцией.
+  expect(op(tubed, "cutTubes")).toMatchObject({ tutArt: "ТТК 3/1мм, черная", tutCount: 4, tutParts: [{ art: "ТТК 3/1мм, черная", count: 4, len: "30" }] });
 });
 
 it("a new form splices by sleeve crimping: PRS_НШВИ with the BOM sleeves counted per splice", () => {
@@ -82,28 +98,34 @@ it("a new form splices by sleeve crimping: PRS_НШВИ with the BOM sleeves cou
   expect(gen0.spliceSleeveComps_().map((c) => c.art)).toEqual(["НШВ 1,0-8", "НШВ 0,5-8"]);
   expect(gen0.spliceSlots_().map((s) => `${s.label}:${s.wires}`)).toEqual(["С1:4", "С2:4", "С3:3", "С4:3"]);
   const S = withSleeves(S0);
-  expect(op(S, "splice")).toMatchObject({ type: "splice", units: 4, method: "sleeve", templateId: tmplId("PRS_НШВИ"),
-    sleeves: [{ art: "НШВ 1,0-8", name: "НШВ 1,0-8", count: 2 }, { art: "НШВ 0,5-8", name: "НШВ 0,5-8", count: 2 }] });
-  expect(makeGen(DS, S).getActiveOps().find((o) => o.opKey === "splice")!.label)
-    .toBe("Сростки опрессовкой гильзой — 4 шт по 4, 4, 3, 3 провода: НШВ 1,0-8 ×2, НШВ 0,5-8 ×2");
+  // Группы сростков (по разъёмам А, с которых приходят провода): С1, С2 — с «5», С3, С4 — с «I3» и «C»; гильзы — своей группы.
+  expect(op(S, "splice1")).toMatchObject({ type: "splice", units: 2, method: "sleeve", templateId: tmplId("PRS_НШВИ"),
+    sleeves: [{ art: "НШВ 1,0-8", name: "НШВ 1,0-8", count: 2 }] });
+  expect(op(S, "splice2")).toMatchObject({ units: 2, sleeves: [{ art: "НШВ 0,5-8", name: "НШВ 0,5-8", count: 2 }] });
+  expect(makeGen(DS, S).getActiveOps().filter((o) => o.type === "splice").map((o) => o.label)).toEqual([
+    "Сростки С1, С2 опрессовкой гильзой — 2 шт по 4 провода: НШВ 1,0-8 ×2",
+    "Сростки С3, С4 опрессовкой гильзой — 2 шт по 3 провода: НШВ 0,5-8 ×2"]);
 });
 
 it("solder and band crimping: their template and method; band carries its optional material", () => {
   const S = withSleeves(harness(DS));
   const solder = setSplMethod(S, "solder");
-  expect(op(solder, "splice")).toMatchObject({ method: "solder", templateId: tmplId("SDR_W_W"), sleeves: [], units: 4 });
+  expect(op(solder, "splice1")).toMatchObject({ method: "solder", templateId: tmplId("SDR_W_W"), sleeves: [], units: 2 });
   const band = setSplMethod(S, "band");
-  expect(op(band, "splice")).toMatchObject({ method: "band", templateId: tmplId("PRS_COPPER"), sleeves: [] });
-  expect(op({ ...band, spl: { ...band.spl, band: "nshv05" } }, "splice")!.sleeves).toEqual([{ art: "НШВ 0,5-8", name: "НШВ 0,5-8", count: 4 }]);
+  expect(op(band, "splice2")).toMatchObject({ method: "band", templateId: tmplId("PRS_COPPER"), sleeves: [] });
+  const banded = { ...band, spl: { ...band.spl, band: "nshv05" } };
+  expect([op(banded, "splice1")!.sleeves, op(banded, "splice2")!.sleeves]).toEqual([
+    [{ art: "НШВ 0,5-8", name: "НШВ 0,5-8", count: 2 }], [{ art: "НШВ 0,5-8", name: "НШВ 0,5-8", count: 2 }]]);
 });
 
 it("changing the method drops the splice card picked for the old one — even a hand-picked card", () => {
-  const S = { ...withSleeves(harness(DS)), selectedTemplates: { splice: tmplId("SDR_W_W"), cutWire: "x" }, manualTemplates: ["splice", "cutWire"] };
-  expect(op(S, "splice")!.templateId).toBe(tmplId("SDR_W_W"));
+  const S = { ...withSleeves(harness(DS)), selectedTemplates: { splice: "y", splice1: tmplId("SDR_W_W"), cutWire: "x" },
+    manualTemplates: ["splice", "splice1", "cutWire"] };
+  expect(op(S, "splice1")!.templateId).toBe(tmplId("SDR_W_W"));
   const next = setSplMethod(S, "band");
   expect(next.selectedTemplates).toEqual({ cutWire: "x" });
   expect(next.manualTemplates).toEqual(["cutWire"]);
-  expect(op(next, "splice")!.templateId).toBe(tmplId("PRS_COPPER"));
+  expect(op(next, "splice1")!.templateId).toBe(tmplId("PRS_COPPER"));
   expect(setSplMethod(next, "band")).toBe(next);
 });
 
@@ -135,9 +157,9 @@ it("a draft or card saved before 16.10 (no spl.method) opens as soldering and bu
   const { method: _m, ...oldSpl } = S.spl;
   const old = { ...S, spl: oldSpl };
   expect(makeGen(DS, old).splMethod_()).toBe("solder");
-  const spec = makeGen(DS, old).getActiveOps().find((o) => o.opKey === "splice")!;
-  expect(spec).toMatchObject({ type: "splice", tmplHint: "SDR_W_W", cat: "Пайка", units: 4, label: "Сростки — 4 шт по 4, 4, 3, 3 провода" });
-  expect(op(old, "splice")).toMatchObject({ type: "splice", templateId: tmplId("SDR_W_W"), units: 4, method: "solder", sleeves: [] });
+  const spec = makeGen(DS, old).getActiveOps().find((o) => o.opKey === "splice1")!;
+  expect(spec).toMatchObject({ type: "splice", tmplHint: "SDR_W_W", cat: "Пайка", units: 2, label: "Сростки С1, С2 — 2 шт по 4 провода" });
+  expect(op(old, "splice1")).toMatchObject({ type: "splice", templateId: tmplId("SDR_W_W"), units: 2, method: "solder", sleeves: [] });
   // Снимок формы в собранной карте без способа — пайка, хотя засев новой формы — гильза.
   const back = restoreFromSnapshot(DS.components, initState(DS), genSnapshot(DS.components, old, {}, {}));
   expect(back.S.spl.method).toBe("solder");

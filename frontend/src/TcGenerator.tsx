@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   assemblyApi,
   failureText,
@@ -78,7 +78,7 @@ import {
 } from "./tcGenLogic";
 import { RouteEditor } from "./RouteEditor";
 import { schemeArt } from "./routeCards";
-import { documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
+import { deriveRoute, documentMinutes, parseRoute, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
 import { ManualAssembly, ManualSummary, type KdOffer } from "./ManualAssembly";
 import { AssemblyDrafts } from "./AssemblyDrafts";
 import {
@@ -479,8 +479,18 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [routeEdit, setRouteEdit] = useState<{ route: Route | null; sig: string } | undefined>();
   const [routeError, setRouteError] = useState("");
   useEffect(() => { setRouteEdit(undefined); setRouteError(""); }, [card.id, card.version]);
-  // Схема ручной сборки — для её списка операций, типовым вкладкам она не подходит.
-  const savedRoute = useMemo(() => (savedManual ? null : parseRoute((card.document?.build_config as { route?: unknown } | undefined)?.route)), [card.document, savedManual]);
+  // Схема ручной сборки — для её списка операций, типовым вкладкам она не подходит. Схема, которую построил генератор
+  // («Сложная сборка», source «generated»), — не ручная правка: генератор строит её заново.
+  const savedRoute = useMemo(() => {
+    const raw = (card.document?.build_config as { route?: { source?: unknown } } | undefined)?.route;
+    return savedManual || raw?.source === "generated" ? null : parseRoute(raw);
+  }, [card.document, savedManual]);
+  // «Сложная сборка» (владелец 16.10): схема ПФ без правок — та, что построил генератор (build_config.route).
+  const generatedRoute = useMemo(() => {
+    const route = S.tab === "complex" ? parseRoute((config as { route?: unknown }).route) : null;
+    return route && !routeProblem(route, routeOps, finalName) ? route : null;
+  }, [S.tab, config, routeOps, finalName]); // eslint-disable-line react-hooks/exhaustive-deps
+  const deriveGenerated = useCallback((list: RouteOp[]) => generatedRoute ?? deriveRoute(list), [generatedRoute]);
   const savedFits = !!savedRoute && !!docMinutes && !routeProblem(savedRoute, routeOps, finalName);
   const routeOverride = routeEdit ? (routeEdit.sig === routeSig ? routeEdit.route : null) : (savedFits ? savedRoute : null);
   const routeStale = routeOps.length > 0 && (routeEdit ? !!routeEdit.route && routeEdit.sig !== routeSig : !!savedRoute && !savedFits);
@@ -944,6 +954,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <Field label="Термоусадка" className="lead">{selectComps(gen.shrinkCandidates_(), ep.shrinkMat || gen.defaultShrinkComp_()?.id || "", (id) => set({ shrinkMat: id }), `Термоусадка поверх разъёма ${name}`, "— нет ТУТ/ТТК в листе —")}</Field>
           <Field label="Длина" className="mid"><UnitInput unit="мм" value={ep.shrinkLen ?? ""} placeholder={SHRINK_LEN_MM_} onChange={(event) => set({ shrinkLen: event.target.value })} /></Field>
         </>}
+      </div>}
+      {/* Отрезок оплётки ветви (владелец 16.10, 713К.4: X1 120, X2 110 мм) — не длина проводов; «0» — ветвь без оплётки. */}
+      {complex && conn && ep.side === "A" && S.wrap.enabled && S.wrap.slots.some((slot) => slot.kind === "braid" && slot.mat) && <div className="ep-ter" aria-label={`Оплётка ветви ${name}`}>
+        <Field label="Оплётка ветви, отрезок" className="mid" hint={ep.braidLen?.trim() === "0" ? "без оплётки" : ep.braidLen?.trim() ? undefined : "поровну от длины на изделие"}>
+          <UnitInput unit="мм" aria-label={`Оплётка ветви ${name}, отрезок`} value={ep.braidLen ?? ""} placeholder={gen.braidLenDefault_() || "по КД"}
+            onChange={(event) => set({ braidLen: event.target.value })} /></Field>
       </div>}
       {cableLines.map((line) => <div className="ep-cable" key={line.key} aria-label={`Кабель ${line.name} на ${name}`}>
         <span>Кабель <b>{line.name}</b>: жил здесь <b>{line.here}</b> из {line.total}{line.others.length > 0 && ` · остальные — ${line.others.join(", ")}`}</span>
@@ -1410,7 +1426,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
                 notice={routeStale ? "Операции изменились — схема собрана заново, ручные правки не применены." : ""}
                 skipped={ops.filter((spec) => !routeSpecs.includes(spec)).map((spec) => ops.indexOf(spec) + 1)}
                 renderOp={(position) => { const spec = routeSpecs[position - 1]; return spec ? opItem(spec, ops.indexOf(spec) + 1) : null; }}
-                onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} art={routeArt} />
+                onMove={reorder} orderChanged={orderChanged} onResetOrder={resetOrder} art={routeArt}
+                {...(S.tab === "complex" ? { blockView: true, derive: deriveGenerated } : {})} />
             </>}
           {/* Служебное (владелец 29.09) — свод материалов, удаление черновика, JSON — свёрнуто в «Ещё». */}
           <details className="gen-more"><summary>Ещё</summary>

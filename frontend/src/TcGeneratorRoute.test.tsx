@@ -125,6 +125,17 @@ it("picks up the hand-edited scheme saved with the card, with times from its las
   expect(onBuild.mock.calls[0][0].route).toEqual(savedRoute);
 });
 
+it("a scheme the generator drew itself (source «generated») is not a hand edit: the card reopens with the automatic one", async () => {
+  // «Сложная сборка» пишет свою схему ПФ в build_config.route (владелец 16.10) — генератор строит её заново, а не держит
+  // как ручную правку, которая перекрыла бы его.
+  const onBuild = mount({ card: builtCard({ ...savedRoute, source: "generated" }) });
+  expect(await screen.findByText("автоматическая")).toBeInTheDocument();
+  expect(screen.queryByText("правлена вручную")).not.toBeInTheDocument();
+  await build("Пересобрать");
+  await waitFor(() => expect(onBuild).toHaveBeenCalled());
+  expect(onBuild.mock.calls[0][0]).not.toHaveProperty("route");
+});
+
 it("drops a saved scheme that was made for other operations and says so", async () => {
   const onBuild = mount({ card: builtCard(savedRoute, ["cutWire", "prsTerm", "prsTerm", "insHousing"]) });
   expect(await screen.findByText(/Операции изменились — схема собрана заново/)).toBeInTheDocument();

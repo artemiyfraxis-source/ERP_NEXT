@@ -1,7 +1,9 @@
 """713К.4 КБ1 «Жгут НВ4» built by the generator «Сложная сборка» (owner 16.10): crimp at cut in batches per terminal
-(SYM and SHF on side А, T-DS1071 on side В, SYM + T-DS1071 on both ends of the A6 wires), marking tubes cut / put on /
-shrunk as their own operations, ultrasonic splices. The config is the generator's own output for the НВ4 fixture
-(frontend tcGenRealHarness.fixture.ts `fullHarness`, kept equal by frontend/src/tcGenCrimpBatches.test.ts)."""
+(SYM and SHF on side А, T-DS1071 on side В, SYM + T-DS1071 on both ends of the A6 wires), splice ends stripped at the cut,
+tails cut + stripped + tinned on one machine, one cut for every tube, one for every braid piece, the marking printed and
+cut, and the ПФ graph the generator drew itself (`build_config.route`, source «generated»): kits → branches X1–X4 →
+splice groups → the product. The config is the generator's own output for the НВ4 fixture (frontend
+tcGenRealHarness.fixture.ts `fullHarness`, kept equal by frontend/src/tcGenCrimpBatches.test.ts)."""
 
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.modules.techcards.etk_builder import _chain_results, build_etk
+from app.modules.techcards.etk_builder import _chain_results, _time, build_etk
 from app.modules.techcards.etk_marking import mark_kind
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.modules.techcards.project_cards import ProjectTechcard
@@ -19,7 +21,9 @@ from app.modules.techcards.project_cards import ProjectTechcard
 
 ROOT = Path(__file__).resolve().parents[2]
 LIBRARY = json.loads((ROOT / "data" / "techcard-library.json").read_text(encoding="utf-8"))
-CARDS = parse_operation_library(LIBRARY["templates"])
+ERP_LIBRARY = json.loads((ROOT / "data" / "techcard-library-erp.json").read_text(encoding="utf-8"))
+# The ERP cards too: CUT_WIRE+2strip+tin (tails) and INS_MARK_TUBE_AUTO (marking) live there.
+CARDS = parse_operation_library(LIBRARY["templates"] + ERP_LIBRARY["templates"])
 CONFIG = json.loads((Path(__file__).with_name("generator_713k4_config.json")).read_text(encoding="utf-8"))
 
 
@@ -54,10 +58,17 @@ def test_each_terminal_is_crimped_at_cut_in_its_own_batch_with_its_own_norm():
     assert [row["name"] for row in cuts[2]["result"]] == [
         "НВ4 0,12 белый 158мм, обжатый терминал SHF-001T-0.8BS", "НВ4 0,12 синий 158мм, обжатый терминал SHF-001T-0.8BS"]
     assert cuts[0]["result"][2] == {"name": "НВ4 0,12 белый 158мм, обжатый терминал SYM-001T-P0.6", "norm": "500", "unit": "Шт."}
-    # Хвосты и сростки станок не обжимает: их провода — простой резкой.
-    plain = op_by_key(document, "cutWire2")
-    assert (plain["code"], [row["name"] for row in plain["result"]]) == ("CUT_WIRE_auto", [
+    # Хвосты «сросток → облуженный конец» станок не обжимает: резка, зачистка обоих концов и лужение хвоста — одной
+    # операцией (BZW-5.0+Z), без отдельных зачистки и лужения хвостов и без зачистки концов под сростки.
+    tails = op_by_key(document, "cutWire2")
+    assert (tails["code"], [row["name"] for row in tails["result"]]) == ("CUT_WIRE+2strip+tin", [
         "НВ4 0,2 красный 60мм", "НВ4 0,2 черный 60мм", "НВ4 0,12 белый 60мм", "НВ4 0,12 синий 60мм"])
+    assert tails["fields"]["strip"] == {"a": True, "b": True, "lenA": "", "lenB": "3"}
+    assert _chain_results(CONFIG)[2].endswith("; концы зачищены, свободные концы облужены")
+    keys = {op["opKey"] for op in document["build_config"]["ops"]}
+    assert not keys & {"stripSpl", "stripTail", "tinTail"}
+    # Концы под сростки зачищает станок: партия SYM — обжим А и зачистка В.
+    assert op_by_key(document, "cutWire")["fields"]["strip"]["b"] is True
     # Ручной опрессовки нет — всё обжато при резке.
     assert not [op for op in document["operations"] if op["type"] == "prsTerm"]
     assert document["warnings"] == []
@@ -78,41 +89,65 @@ def test_a_single_crimp_cut_keeps_its_old_etk_key():
     assert build(config)["operations"][0]["connector"] == "обжим"
 
 
-def test_marking_tubes_are_cut_put_on_before_the_connectors_and_shrunk_with_the_shrinks():
+def test_marking_is_printed_and_cut_put_on_with_the_branch_tubes_and_shrunk_with_them():
     document = build()
-    cut, put_on, shrink = (op_by_key(document, key) for key in ("cutMark", "onMark", "heatMark"))
-    assert (cut["code"], cut["connector"]) == ("CUT_TUT_short", "маркировка")
+    cut = op_by_key(document, "cutMark")
+    assert (cut["code"], cut["connector"]) == ("INS_MARK_TUBE_AUTO", "маркировка")
     assert cut["components"] == [
         {"art": f'Маркировка "{text}" 4/2мм', "name": f'Маркировка "{text}" 4/2мм', "norm": "500", "unit": "Шт."}
         for text in ("5", "I3", "C", "A6")]
     assert cut["result"][0]["name"].startswith('Маркировка нарезана: Маркировка "5" 4/2мм — 1 шт по 15 мм;')
-    # Надевают только маркировку: трубка сростков и ТТК хвостовиков ушли в свои операции.
-    assert (put_on["code"], put_on["connector"]) == ("INS_TUT", "маркировка")
-    assert put_on["semis"][1]["name"] == cut["result"][0]["name"]
-    assert op_by_key(document, "insSpl")["semis"][1]["name"] == "Трубка ТТК 3/1мм, черная нарезана: 4 шт по 20 мм"
-    assert op_by_key(document, "insSleeves")["semis"][1]["name"] == "Трубка ТТК 8/2мм, черная нарезана: 4 шт по 15 мм"
-    assert put_on["result"][0]["name"].endswith("; маркировка надета")
-    assert (shrink["code"], shrink["connector"]) == ("HEAT_TYT_short", "маркировка")
-    assert shrink["result"][0]["name"].endswith("; маркировка усажена")
-    positions = [op["position"] for op in (put_on, shrink)]
-    mounts = [op["position"] for op in document["operations"] if op["type"] == "insTerm" and op["side"] == "A"]
-    assert positions[0] < min(mounts) < max(mounts) < positions[1]
+    # Ветвь X1: надеть ТТК и маркировку → оплётка → монтаж → усадка ТТК и маркировки одной операцией.
+    put_on, braid, mount, shrink = (op_by_key(document, key) for key in ("onTubesA1", "braidA1", "insTermA1", "heatShrA1"))
+    assert (put_on["code"], put_on["connector"]) == ("INS_TUT", "на жгут А1 «5»")
+    assert (braid["code"], braid["connector"], braid["components"]) == ("INS_BRAID", "А1 «5»", [])
+    assert (shrink["code"], shrink["connector"]) == ("HEAT_TTK_short", "поверх разъёма А1")
+    assert put_on["position"] < braid["position"] < mount["position"] < shrink["position"]
     # «Маркировка "5" 4/2мм» — термоусадочная трубка и для маркировки по КД (вид метки).
     assert mark_kind('Маркировка "5" 4/2мм') == "heat"
 
 
+def test_every_tube_is_cut_by_one_operation_and_every_braid_piece_by_another():
+    document = build()
+    tubes, braid = op_by_key(document, "cutTubes"), op_by_key(document, "cutBraid")
+    assert (tubes["code"], tubes["connector"]) == ("CUT_TUT_short", "трубки")
+    assert tubes["components"] == [
+        {"art": "ТТК 8/2мм, черная", "name": "ТТК 8/2мм, черная", "norm": "1500", "unit": "Шт."},
+        {"art": "ТТК 12/4мм, черная", "name": "ТТК 12/4мм, черная", "norm": "1000", "unit": "Шт."},
+        {"art": "ТТК 3/1мм, черная", "name": "ТТК 3/1мм, черная", "norm": "2000", "unit": "Шт."},
+    ]
+    assert tubes["result"][0]["name"] == ("Трубки нарезаны: ТТК 8/2мм, черная — 3 шт по 15 мм; ТТК 12/4мм, черная — 2 шт по 25 мм; "
+                                          "ТТК 3/1мм, черная — 4 шт по 20 мм")
+    # Оплётка — отрезок на ветвь (X1 120, X2 110, X3 110, X4 120 мм); материал в метрах — у резки, не у монтажа ветвей.
+    assert (braid["code"], braid["connector"]) == ("CUT_NEYLON", "оплётка")
+    assert braid["components"] == [{"art": "XP-3", "name": "XP-3", "norm": "230", "unit": "М."}]
+    assert braid["result"][0]["name"] == "Оплётка XP-3 нарезана: 2 шт по 120 мм; 2 шт по 110 мм"
+    assert [op_by_key(document, f"braidA{n}")["components"] for n in range(1, 5)] == [[], [], [], []]
+
+
+def test_a_branch_twists_its_own_pairs_only():
+    document = build()
+    assert [op["opKey"] for op in document["build_config"]["ops"] if op["type"] == "twist"] == ["twistA2", "twistA3"]
+    assert op_by_key(document, "twistA2")["connector"] == "А2 «I3»"
+    # Время свивки — по своим парам (`units`), не по всем парам формы.
+    config = {"partQty": 2, "wires": [{"qty": 1}] * 4, "twist": {"mode": "pairs", "pairs": [[0, 1], [2, 3]]}}
+    assert _time({"type": "twist", "units": 1, "tOp": "60", "tPrep": "0"}, config, "x")[0]["norm"] == "2"
+    assert _time({"type": "twist", "tOp": "60", "tPrep": "0"}, config, "x")[0]["norm"] == "4"
+
+
 def test_ultrasonic_splices_take_the_weld_card_and_no_sleeves():
     config = deepcopy(CONFIG)
-    splice = next(op for op in config["ops"] if op["opKey"] == "splice")
-    splice.update(method="ultrasonic", templateId="us-weld-уз-сварка", sleeves=[])
     for op in config["ops"]:
-        if op["opKey"] in {"insSpl", "heatSpl"}:
+        if op["type"] == "splice":
+            op.update(method="ultrasonic", templateId="us-weld-уз-сварка", sleeves=[])
+        if op["opKey"].startswith(("insSpl", "heatSpl")):
             op["spliceWeld"] = True
     document = build(config)
-    operation = op_by_key(document, "splice")
+    operation = op_by_key(document, "splice1")
     assert (operation["code"], operation["components"]) == ("US_WELD", [])
     assert operation["result"][0]["name"].endswith("; провода сварены ультразвуком")
-    assert [op_by_key(document, key)["connector"] for key in ("insSpl", "heatSpl")] == ["на сростки", "на сростках"]
+    assert [op_by_key(document, key)["connector"] for key in ("insSpl1", "heatSpl1", "insSpl2")] == [
+        "на сростки С1, С2", "на сростках С1, С2", "на сростки С3, С4"]
 
 
 def test_the_card_is_accepted_with_unique_etk_keys():
@@ -125,15 +160,51 @@ def test_the_card_is_accepted_with_unique_etk_keys():
     card.rebuild(document, now)
 
 
-def test_the_harness_is_cut_into_semi_finished_items_not_one_per_operation():
-    # Owner 16.10: «нам нужно понимать иерархию» — all the cuts are one ПФ (done at one time, their order does not
-    # matter), the tube cuts another; both feed the splices, then side А, then the finished harness.
+def test_the_generator_draws_the_semi_finished_graph_kits_branches_splice_groups_product():
+    # Owner 16.10: «нам нужно понимать иерархию». The generator draws the ПФ graph itself (source «generated»): every
+    # cut batch, the tube cut, the braid cut and the marking are kits (made once per product); the branches X1–X4 take
+    # them; the splice groups take the branches and the cut wires of the other ends; the product takes the rest.
     document = build()
     route = document["route"]
-    cuts = [op["position"] for op, cfg in zip(document["operations"], document["build_config"]["ops"])
-            if cfg["type"] in {"cutWire", "cutWireCrimp"}]
-    blocks = {block["key"]: block for block in route["blocks"]}
     assert route["source"] == "generated"
-    assert blocks["wires"]["ops"] == cuts and len(cuts) == 5
-    assert len(route["blocks"]) < len(document["operations"])
-    assert {(edge["from"], edge["to"]) for edge in route["edges"]} >= {("wires", "crimped"), ("tubes", "crimped")}
+    keys = [op["opKey"] for op in document["build_config"]["ops"]]
+    blocks = {block["key"]: block for block in route["blocks"]}
+    by_label = [(block["label"], block["name"] if not block["key"].startswith("pf-cutWire") else block["key"],
+                 [keys[position - 1] for position in block["ops"]], block.get("kit", False)) for block in route["blocks"]]
+    assert by_label == [
+        ("1.1", "pf-cutWire", ["cutWire"], True), ("1.2", "pf-cutWire1", ["cutWire1"], True),
+        ("1.3", "pf-cutWire2", ["cutWire2"], True), ("1.4", "pf-cutWire3", ["cutWire3"], True),
+        ("1.5", "pf-cutWire4", ["cutWire4"], True),
+        ("1.6", "Нарезанные трубки", ["cutTubes"], True), ("1.7", "Нарезанная оплётка", ["cutBraid"], True),
+        ("1.8", "Маркировка", ["cutMark"], True),
+        ("2.1", "Ветвь А1 «5»", ["onTubesA1", "braidA1", "insTermA1", "heatShrA1"], False),
+        ("2.2", "Ветвь А2 «I3»", ["onTubesA2", "braidA2", "insTermA2", "heatShrA2", "twistA2"], False),
+        ("2.3", "Ветвь А3 «C»", ["onTubesA3", "braidA3", "insTermA3", "heatShrA3", "twistA3"], False),
+        ("2.4", "Ветвь А4 «A6»", ["onTubesA4", "braidA4", "insTermA4", "heatShrA4"], False),
+        ("3.1", "Пайка С1, С2", ["insSpl1", "splice1", "heatSpl1"], False),
+        ("3.2", "Пайка С3, С4", ["insSpl2", "splice2", "heatSpl2"], False),
+        ("4", "Кабельная сборка Жгут НВ4", ["insSleeves", "heatHs", "insTermB1", "insTermB2"], False),
+    ]
+    assert blocks["pf-final"]["final"] and sum(len(block["ops"]) for block in route["blocks"]) == len(keys)
+    edges = {(edge["from"], edge["to"]): edge.get("item", "") for edge in route["edges"]}
+    assert edges[("pf-cutWire", "pf-A1")] == "НВ4 0,5 красный ×1; НВ4 0,5 черный ×1"
+    assert edges[("pf-cutWire1", "pf-spl1")] == "НВ4 0,2 красный ×2; НВ4 0,2 черный ×2"
+    assert edges[("pf-tubes", "pf-A1")] == "ТТК 8/2 ×1"
+    assert edges[("pf-tubes", "pf-final")] == "ТТК 12/4 ×2"
+    assert edges[("pf-tubes", "pf-spl1")] == "ТТК 3/1 ×2"
+    assert edges[("pf-braid", "pf-A2")] == "XP-3 110 мм ×1"
+    assert edges[("pf-mark", "pf-A1")] == "маркировка «5» ×1"
+    assert {pair for pair in edges if pair[0].startswith(("pf-A", "pf-spl"))} == {
+        ("pf-A1", "pf-spl1"), ("pf-A2", "pf-spl2"), ("pf-A3", "pf-spl2"), ("pf-A4", "pf-final"),
+        ("pf-spl1", "pf-final"), ("pf-spl2", "pf-final")}
+    assert document["warnings"] == []
+
+
+def test_a_hand_edit_wins_and_a_generated_graph_that_no_longer_fits_falls_back_with_a_warning():
+    broken = deepcopy(CONFIG)
+    broken["route"]["blocks"][0]["ops"] = [1, 2]
+    document = build(broken)
+    assert any("схема генератора не подошла" in warning for warning in document["warnings"])
+    manual = deepcopy(CONFIG)
+    manual["route"].pop("source")
+    assert build(manual)["route"]["source"] == "manual"

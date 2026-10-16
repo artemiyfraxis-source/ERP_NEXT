@@ -77,6 +77,9 @@ export type Endpoint = {
   pinChecked?: string;
   /** Терминал выбран генератором по разъёму (terminalPick.ts); false — выбран вручную, генератор его не трогает. */
   termAuto?: boolean;
+  /** «Оплётка ветви, отрезок» разъёма стороны А «Сложной сборки» (владелец 16.10, 713К.4: X1 120, X2 110 мм): длина куска
+   *  оплётки на эту ветвь — отдельно от длины проводов; пусто — поровну от «Длины на изделие» оплётки; «0» — ветвь без оплётки. */
+  braidLen?: string;
 };
 /** Один провод «разъём · контакт → разъём · контакт» (end — «А1»/«В1» как на карточке разъёма). */
 export type ConnectionEnd = { end: string; conn: string; label: string; pin: number };
@@ -109,6 +112,13 @@ export const SPLICE_METHODS: ReadonlyArray<readonly [SpliceMethod, string]> = [
 export const SPLICE_REST_ = "*";
 /** Длина зачистки хвоста под лужение по умолчанию, мм (владелец 16.10: «2–3 мм»). */
 export const TAIL_STRIP_MM_ = "3";
+/** Хвост «сросток → облуженный свободный конец» режется станком BZW-5.0+Z одной операцией: резка, зачистка обоих концов,
+ *  лужение хвоста (БД.ОП, ОБ.098). */
+export const TAIL_CUT_CODE_ = "CUT_WIRE+2strip+tin";
+/** Печать и резка маркировочной трубки на маркираторе ZCUT-RT660 (ОБ.102). */
+export const MARK_CUT_CODE_ = "INS_MARK_TUBE_AUTO";
+/** Резка оплётки (линейных материалов). */
+export const BRAID_CUT_CODE_ = "CUT_NEYLON";
 export type CoaxStripMode = "machine" | "separate";
 export type CoaxMachineKey = "small" | "big";
 /** Роторные станки резки с разделкой коаксиала (БД.ОБ, категория «Резка с разделкой»). Карточки CUT_COAX+1strip /
@@ -218,7 +228,23 @@ export type OpSpec = {
   wireUnits?: Record<number, number>; crimpEpIds?: string[]; crimpEpIdsB?: string[]; crimpTerms?: string;
   /** Метка-трубка из состава: резка, надевание и усадка маркировки; `tutParts` — отрезки по позициям состава. */
   markTube?: boolean; tutParts?: Array<{ art: string; name: string; count: number; len: string }>;
+  /** «Сложная сборка» (владелец 16.10): ПФ схемы генератора, в который входит операция (ключ блока `build_config.route`). */
+  pf?: string;
+  /** Резка проводов «Сложной сборки»: жилы партии — [строка «Кабели», жила], по ним стрелки к ПФ, что их берут. */
+  cutUnits?: Array<[number, number]>;
+  /** Монтаж оплётки ветви: оплётку отрезала «Резка оплётки» — материал у резки, здесь его нет. */
+  wrapCut?: boolean;
+  /** Гильзы сростков своей группы (ПФ «Пайка С1, С2»): позиция состава и число сростков на неё. */
+  sleeveItems?: Array<{ art: string; name: string; count: number }>;
+  /** Чья операция ПФ «Сложной сборки» — ветвь («А1 «5»») или группа сростков («С1, С2»): в ключе операции ЭТК. */
+  branch?: string;
 };
+
+/** Схема полуфабрикатов, которую строит «Сложная сборка» (владелец 16.10): блоки — ПФ (`kit` — ПФ-комплект: партия резки,
+ *  резка трубок, оплётки, маркировка — делается раз на изделие для нескольких ПФ), стрелки — что идёт из ПФ в ПФ. */
+export type PfBlock = { key: string; name: string; kit?: boolean; final?: boolean };
+export type PfEdge = { from: string; to: string; items: string[] };
+export type PfGraph = { blocks: PfBlock[]; edges: PfEdge[] };
 
 // ── Константы TcGenInline ─────────────────────────────────────────────────
 export const JACKET_STRIP_MM_ = "20";
@@ -870,7 +896,9 @@ export function makeGen(D: GenData, S: GenState) {
     });
     return Math.max(0, ends - spliceEnds_());
   }
-  const spliceStripAtCut_ = () => spliceEnds_() > 0 && freeEnds_() === 0;
+  // Концы под сростки зачищает станок резки (владелец 16.10) — и тогда, когда у жгута есть хвосты: отдельной «Зачистки
+  // концов под сростки» нет.
+  const spliceStripAtCut_ = () => spliceEnds_() > 0;
   function capTube_() {
     if (!isComplex_() || !S.cap.enabled || tailTinOn_() || !freeEnds_()) return null;
     return getCompById(S.cap.tut) || null;
@@ -893,10 +921,20 @@ export function makeGen(D: GenData, S: GenState) {
     if (e.side !== "B" || endpointsOnSide_("B").length || !S.tin.enabled) return false;
     return tinWireIndices_().includes(activeWires_().findIndex((w) => w.idx === e.idx));
   }
+  /** Хвост, который режет, зачищает и лудит станок (CUT_WIRE+2strip+tin, владелец 16.10): провод одной жилы, другой его
+   *  конец — в сростке, лужение хвостов включено и карта есть в библиотеке. Хвост провода с разъёмом на другом конце —
+   *  своими операциями, как раньше. */
+  function tailAtCut_(e: WireEnd) {
+    if (!tailTinOn_() || !hasTemplateCode_(TAIL_CUT_CODE_)) return false;
+    const w = activeWires_().find((x) => x.idx === e.idx);
+    return !!w && wireCores_(w) <= 1 && endJoined(S, e.idx, e.unit, e.side === "A" ? "B" : "A") === "splice";
+  }
+  /** Хвосты, которые зачищают и лудят свои операции (не станок резки). */
+  const tailLeft_ = () => tailEnds_().filter((e) => !tailAtCut_(e));
   /** «Зачистка и лужение хвостов»: зачистка тех хвостов, что не зачистила резка (длина по умолчанию 3 мм). */
   function tailStripOp_(): OpSpec | null {
     if (!tailTinOn_()) return null;
-    const ends = tailEnds_().filter((e) => !freeEndStripped_(e));
+    const ends = tailLeft_().filter((e) => !freeEndStripped_(e));
     if (!ends.length) return null;
     const len = (S.tailTin?.strip || "").trim() || TAIL_STRIP_MM_;
     const a = ends.some((e) => e.side === "A"), b = ends.some((e) => e.side === "B");
@@ -905,7 +943,7 @@ export function makeGen(D: GenData, S: GenState) {
       strip: { a, lenA: a ? len : "", b, lenB: b ? len : "" } };
   }
   /** Хвосты, которые лудит «Зачистка и лужение хвостов» (без тех, что уже лудит «Лужение свободных концов»). */
-  const tailTinEnds_ = () => (tailTinOn_() ? tailEnds_().filter((e) => !freeEndTinned_(e)) : []);
+  const tailTinEnds_ = () => (tailTinOn_() ? tailLeft_().filter((e) => !freeEndTinned_(e)) : []);
   function tailTinOp_(ends: WireEnd[]): OpSpec {
     return { type: "tin", opKey: "tinTail", cat: "Лужение", ...(hasTemplateCode_("SDR_tin") ? { tmplHint: "SDR_tin" } : {}),
       wireIdxs: [...new Set(ends.map((e) => e.idx))], units: ends.length, label: `Лужение хвостов — ${ends.length} конц.` };
@@ -991,35 +1029,56 @@ export function makeGen(D: GenData, S: GenState) {
     const t = (D.templates || []).find((x) => x.id === id);
     return !!(t && /US_WELD|сварк/i.test(t.title || ""));
   }
-  function spliceOps_(): OpSpec[] {
-    const sizes = spliceSizes_();
-    const cnt = sizes.length;
-    if (!cnt) return [];
-    const wires = sizes.every((n) => n === sizes[0]) ? String(sizes[0]) : sizes.join(", ");
+  /** Трубка сростков (длина и позиция состава) или null — трубки на сростки нет. */
+  function spliceTube_(): { comp: Comp; len: string } | null {
     const len = (S.spl.tut || "").trim();
     const tut = getCompById(S.spl.tutMat) || bomTut_();
-    const ends = spliceEnds_();
-    const ops: OpSpec[] = spliceStripAtCut_() ? [] : [{ type: "stripCable", opKey: "stripSpl", tmplHint: "STRIP_WIRE", cat: "Разделка",
-      tutCount: ends, label: `Зачистка концов под сростки — ${ends} конц.` }];
-    if (len && tut) {
-      ops.push({ type: "cutTut", opKey: "cutSpl", tmplHint: "CUT_TUT_short", cat: "Резка",
-        label: `Резка трубки на сростки — ${cnt}×${len} мм`,
-        tutArt: tut.art || tut.name || "", tutName: tut.name || tut.art || "", tutCount: cnt, tutSegs: [{ len, count: cnt }] });
-      ops.push({ type: "insTut", opKey: "insSpl", tmplHint: "INS_TUT", cat: "Монтаж", tutCount: cnt,
-        label: `Надеть трубку на провода сростка — ${cnt} шт` });
+    return len && tut ? { comp: tut, len } : null;
+  }
+  /** Гильзы группы сростков (ПФ «Опрессовка С1, С2»): сростки схемы `ids` и сростки без точки на схеме (`rest`). */
+  function groupSleeves_(ids: string[], rest: number): Array<{ comp: Comp; count: number }> {
+    const items: Array<{ comp: Comp; count: number }> = [];
+    const add = (comp: Comp | null, count: number) => {
+      if (!comp || !count) return;
+      const same = items.find((x) => x.comp === comp);
+      if (same) same.count += count; else items.push({ comp, count });
+    };
+    const method = splMethod_();
+    if (method === "band") add(getCompById(S.spl.band), ids.length + rest);
+    else if (method === "sleeve") {
+      ids.forEach((id) => add(spliceSleeveOf_(id), 1));
+      add(spliceSleeveOf_(SPLICE_REST_), rest);
+    }
+    return items;
+  }
+  /** Операции одной группы сростков (владелец 16.10): надеть трубку → пайка / опрессовка / сварка → усадка. `names` —
+   *  «С1, С2» (пусто — сростки без точки на схеме), `n` — номер группы в ключах операций (0 — группа одна). Зачищает концы
+   *  станок резки. */
+  function spliceGroupOps_(sizes: number[], names: string, n: number, sleeves: Array<{ comp: Comp; count: number }>): OpSpec[] {
+    const cnt = sizes.length;
+    if (!cnt) return [];
+    const suffix = n ? String(n) : "";
+    const wires = sizes.every((x) => x === sizes[0]) ? String(sizes[0]) : sizes.join(", ");
+    const tube = spliceTube_();
+    const where = names ? ` ${names}` : "";
+    const ops: OpSpec[] = [];
+    if (tube) {
+      ops.push({ type: "insTut", opKey: "insSpl" + suffix, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: cnt,
+        label: `Надеть трубку на провода сростк${cnt > 1 ? "ов" : "а"}${where} — ${cnt} шт` });
     }
     // Пайка — как до 16.10 (название и карта те же); опрессовка гильзой и ленточный обжим — со способом и гильзами.
     const method = splMethod_();
     const how = { sleeve: " опрессовкой гильзой", band: " ленточным обжимом", ultrasonic: " ультразвуковой сваркой", solder: "" }[method];
-    const used = spliceSleeves_().items.map((x) => `${x.comp.art || x.comp.name} ×${x.count}`);
+    const used = sleeves.map((x) => `${x.comp.art || x.comp.name} ×${x.count}`);
     // Карты УЗ сварки (US_WELD) в библиотеке может не быть — подсказка остаётся, в названии видно, что карточку надо уточнить.
     const noCard = method === "ultrasonic" && !hasTemplateCode_(SPLICE_TMPL.ultrasonic) ? " (карточка — уточнить)" : "";
-    ops.push({ type: "splice", opKey: "splice", tmplHint: SPLICE_TMPL[method],
+    ops.push({ type: "splice", opKey: "splice" + suffix, tmplHint: SPLICE_TMPL[method],
       cat: method === "solder" ? "Пайка" : method === "ultrasonic" ? "УЗ сварка" : "Опрессовка", units: cnt,
-      label: `Сростки${how} — ${cnt} шт по ${wires} провода${used.length ? `: ${used.join(", ")}` : ""}${noCard}` });
-    if (len && tut) {
-      ops.push({ type: "heatTut", opKey: "heatSpl", tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: cnt,
-        label: `Усадка трубки на сростках — ${cnt} шт` });
+      sleeveItems: sleeves.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count })),
+      label: `Сростки${where}${how} — ${cnt} шт по ${wires} провода${used.length ? `: ${used.join(", ")}` : ""}${noCard}` });
+    if (tube) {
+      ops.push({ type: "heatTut", opKey: "heatSpl" + suffix, tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: cnt,
+        label: `Усадка трубки на сростках${where} — ${cnt} шт` });
     }
     return ops;
   }
@@ -1771,26 +1830,40 @@ export function makeGen(D: GenData, S: GenState) {
       const tinIdx = tinWireIndices_();
       // Кусок провода: его жилы, концы которых стоят на одних и тех же разъёмах сторон (провод ×2: одна жила — к «I3»,
       // другая — к «C»). Кабель в оболочке и провод без распиновки по разъёмам — целиком, по всем разъёмам стороны.
-      type Piece = { w: WireEntry; units: number; ends: Partial<Record<Side, Endpoint | null>> | null };
+      // «Сложная сборка»: у куска ещё и то, что на концах без разъёма, — сросток или хвост (хвост «сросток → облуженный
+      // конец» станок режет своей партией, CUT_WIRE+2strip+tin); `ks` — номера жил куска.
+      type Join = "splice" | "tail" | null;
+      type Piece = { w: WireEntry; units: number; ks: number[]; ends: Partial<Record<Side, Endpoint | null>> | null;
+        joins?: Partial<Record<Side, Join>>; tail?: Side };
       const pieces: Piece[] = [];
       activeWires.forEach((w) => {
-        if (wireCores_(w) > 1) { pieces.push({ w, units: unitCount_(w), ends: null }); return; }
+        if (wireCores_(w) > 1) { pieces.push({ w, units: unitCount_(w), ks: Array.from({ length: unitCount_(w) }, (_, k) => k), ends: null }); return; }
         const own = new Map<string, Piece>();
         for (let k = 0; k < unitCount_(w); k++) {
           const epA = unitEndpoint_(w, k, "A"), epB = unitEndpoint_(w, k, "B");
-          const key = `${epA?.id ?? ""}|${epB?.id ?? ""}`;
+          const joins = isComplex_() ? { A: endJoined(S, w.idx, k, "A"), B: endJoined(S, w.idx, k, "B") } : undefined;
+          const tail = joins ? (["A", "B"] as Side[]).find((side) => joins[side] === "tail" && tailAtCut_({ idx: w.idx, unit: k, side })) : undefined;
+          const key = `${epA?.id ?? joins?.A ?? ""}|${epB?.id ?? joins?.B ?? ""}${tail ? `|T${tail}` : ""}`;
           const piece = own.get(key);
-          if (piece) piece.units++;
-          else { const next: Piece = { w, units: 1, ends: { A: epA, B: epB } }; own.set(key, next); pieces.push(next); }
+          if (piece) { piece.units++; piece.ks.push(k); }
+          else {
+            const next: Piece = { w, units: 1, ks: [k], ends: { A: epA, B: epB }, ...(joins ? { joins } : {}), ...(tail ? { tail } : {}) };
+            own.set(key, next); pieces.push(next);
+          }
         }
       });
+      const tailLen = (S.tailTin?.strip || "").trim() || TAIL_STRIP_MM_;
       const stripOf = (w: WireEntry, piece: Piece) => {
         let a = "", b = "";
         const ends = piece.ends;
         if (splAtCut) (["A", "B"] as Side[]).forEach((side) => {
           const eps = endpointsOnSide_(side);
           if (!eps.length || (ends ? !!ends[side] : eps.some((e) => routedWireIdxs_(e).includes(w.idx)))) return;
-          if (side === "A") a = splLen; else b = splLen;
+          // Хвост станок зачищает под лужение (2–3 мм), только когда сам его и лудит; иначе хвост при резке не трогают.
+          const join = piece.joins?.[side];
+          if (join === "tail" && piece.tail !== side) return;
+          const len = join === "tail" ? tailLen : splLen;
+          if (side === "A") a = len; else b = len;
         });
         const own = ends ? [ends.A, ends.B].filter((e): e is Endpoint => !!e) : S.endpoints.filter((e) => routedWireIdxs_(e).includes(w.idx));
         own.forEach((e) => {
@@ -1831,7 +1904,7 @@ export function makeGen(D: GenData, S: GenState) {
       // А и В). Конец в сростке или хвосте станок не обжимает. Партия обжимает концы на всех разъёмах своего терминала.
       const rotor = S.rotor;
       const termOf = (e: Endpoint | null) => (e ? e.termId : "");
-      type Group = { pieces: Piece[]; a: string; b: string; crimpA: Endpoint[]; crimpB: Endpoint[]; tin: boolean; rot: boolean };
+      type Group = { pieces: Piece[]; a: string; b: string; crimpA: Endpoint[]; crimpB: Endpoint[]; tin: boolean; rot: boolean; tail: boolean };
       const groups: Record<string, Group> = {};
       pieces.forEach((piece) => {
         const w = piece.w;
@@ -1840,8 +1913,9 @@ export function makeGen(D: GenData, S: GenState) {
         const crimpB = piece.ends && epCrimpAtCut_(piece.ends.B) ? piece.ends.B! : null;
         const tin = (!!crimpA || !!crimpB) && tinAtCut.has(w.idx);
         const rot = rotor && isJacketedCable_(w);
-        const sig = `${s.a}|${s.b}|${crimpA ? "A" : ""}${crimpB ? "B" : ""}${tin ? "T" : ""}|${termOf(crimpA)}/${termOf(crimpB)}|${rot ? "R" : ""}`;
-        const g = groups[sig] || (groups[sig] = { pieces: [], a: s.a, b: s.b, crimpA: [], crimpB: [], tin, rot });
+        const tail = !!piece.tail && !crimpA && !crimpB;
+        const sig = `${s.a}|${s.b}|${crimpA ? "A" : ""}${crimpB ? "B" : ""}${tin ? "T" : ""}|${termOf(crimpA)}/${termOf(crimpB)}|${rot ? "R" : ""}${tail ? "|L" : ""}`;
+        const g = groups[sig] || (groups[sig] = { pieces: [], a: s.a, b: s.b, crimpA: [], crimpB: [], tin, rot, tail });
         g.pieces.push(piece);
         if (crimpA && !g.crimpA.includes(crimpA)) g.crimpA.push(crimpA);
         if (crimpB && !g.crimpB.includes(crimpB)) g.crimpB.push(crimpB);
@@ -1853,7 +1927,8 @@ export function makeGen(D: GenData, S: GenState) {
         const units: Record<number, number> = {};
         g.pieces.forEach((p) => { units[p.w.idx] = (units[p.w.idx] || 0) + p.units; });
         const part = Object.fromEntries(ws.filter((w) => units[w.idx] < unitCount_(w)).map((w) => [w.idx, units[w.idx]]));
-        const own = { wireIdxs: ws.map((w) => w.idx), ...(Object.keys(part).length ? { wireUnits: part } : {}) };
+        const own = { wireIdxs: ws.map((w) => w.idx), ...(Object.keys(part).length ? { wireUnits: part } : {}),
+          ...(isComplex_() ? { cutUnits: g.pieces.flatMap((p) => p.ks.map((k): [number, number] => [p.w.idx, k])) } : {}) };
         const hasA = g.a !== "", hasB = g.b !== "", n = (hasA ? 1 : 0) + (hasB ? 1 : 0);
         const key = ci === 0 ? "cutWire" : "cutWire" + ci; ci++;
         const dashless = (s: string) => (s === "—" ? "" : s);
@@ -1875,6 +1950,11 @@ export function makeGen(D: GenData, S: GenState) {
           ops.push({ type: "cutWireCrimp", opKey: key, side: crimpSide, crimpEpId: crimpEp.id, crimpEpIds: many(list), crimpTerms: term,
             label: cutLabel(ws, `Резка с обжимом ${sideRu_(crimpSide)} (${term})${g.tin ? " и лужением" : (crimpSide === "A" ? hasB : hasA) ? ` и зачисткой ${sideRu_(crimpSide === "A" ? "B" : "A")}` : ""}`),
             ...own, tmplHint: g.tin ? CRIMP_TIN_CODE_ : "CUT_WIRE+1crimp", strip, ...(g.tin ? { tin: true } : {}) });
+        } else if (g.tail) {
+          // Хвосты «сросток → облуженный конец» (владелец 16.10): резка, зачистка конца под сросток и хвоста, лужение хвоста —
+          // одной операцией на BZW-5.0+Z, без отдельных «Зачистки хвостов» и «Лужения хвостов».
+          ops.push({ type: "cutWireStrip", opKey: key, label: cutLabel(ws, "Резка с зачисткой двух концов и лужением"), ...own,
+            tmplHint: TAIL_CUT_CODE_, cat: "Резка", strip, tin: true });
         } else if (n === 0) {
           ops.push({ type: "cutWire", opKey: key, label: cutLabel(ws, "Резка"), ...own, tmplHint: "CUT_WIRE_auto", cat: "Резка" });
         } else {
@@ -2008,11 +2088,6 @@ export function makeGen(D: GenData, S: GenState) {
       ops.splice(solderAt - 1, 0, insTut);
     }
 
-    const splOps = spliceOps_();
-    if (splOps.length) {
-      const firstEp = ops.findIndex((o) => o.epId);
-      ops.splice(firstEp >= 0 ? firstEp : ops.length, 0, ...splOps);
-    }
     if (ops.some((o) => o.opKey === "insTut")) {
       ops.push({ type: "heatTut", opKey: "heatTut", label: `Усадка ТУТ — ${solderEnds} шт`, tmplHint: "HEAT_TYT_short", cat: "Усадка", tutCount: solderEnds });
     }
@@ -2140,8 +2215,7 @@ export function makeGen(D: GenData, S: GenState) {
       if (moved.length) at -= 1;
       ops.splice(at, 0, ...cuts, ...ons, ...slid, ...moved);
     }
-    if (isComplex_()) complexOrder_(ops);
-    return ops;
+    return isComplex_() ? complexGraph_(ops) : ops;
   }
   /** Метки-трубки из состава «Сложной сборки» (владелец 16.10, 713К.4 КБ1 «Маркировка "5" 4/2мм», длина 10–15 мм по КД —
    *  верхняя): резка отрезков (по позициям состава), «Надеть маркировку» до монтажа разъёмов и усадка термоусадочной. */
@@ -2160,8 +2234,11 @@ export function makeGen(D: GenData, S: GenState) {
     const one = parts.every((p) => p.art === parts[0].art) ? parts[0] : null;
     const atConn = tubes.every((t) => t.spec.placeKind === "conn");
     const heat = tubes.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
+    // Печать и резка на маркираторе ZCUT-RT660 (INS_MARK_TUBE_AUTO); нет карты в библиотеке — резка трубки, как раньше.
+    const printed = hasTemplateCode_(MARK_CUT_CODE_);
     return {
-      cut: { type: "cutTut", opKey: "cutMark", tmplHint: "CUT_TUT_short", cat: "Резка", markTube: true, label: `Резка маркировки — ${sizes}`,
+      cut: { type: "cutTut", opKey: "cutMark", tmplHint: printed ? MARK_CUT_CODE_ : "CUT_TUT_short", tmplWant: MARK_CUT_CODE_, cat: "Резка", markTube: true,
+        label: `${printed ? "Печать и резка" : "Резка"} маркировки — ${sizes}`,
         tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: count, tutSegs: segs, tutParts: parts },
       on: { type: "insTut", opKey: "onMark", tmplHint: "INS_TUT", cat: "Монтаж", markTube: true, tutCount: count,
         label: `Надеть маркировку${atConn ? " у разъёмов" : ""} — ${tubes.map(title).join(", ")}` },
@@ -2169,44 +2246,321 @@ export function makeGen(D: GenData, S: GenState) {
         label: `Усадка маркировки — ${heat} шт` } : null,
     };
   }
-  /** Свиваемые провода уходят в сросток: свивка — до сростков (владелец 16.10, 713К.4 КБ1: пары белый/синий «I3» и «C»). */
-  function twistIntoSplice_() {
-    if (!S.twist.enabled || !getTwistSelectionCount() || !(S.splices || []).length) return false;
-    const active = activeWires_();
-    const twisted = new Set((S.twist.mode === "pairs" ? getTwistPairs().flat() : twistWireIndices_()).map((i) => active[i]?.idx));
-    return (S.splices || []).some((s) => s.ends.some((e) => twisted.has(e.idx)));
+  // ── Схема ПФ «Сложной сборки» (владелец 16.10, 713К.4 КБ1: «остальное сам додумай») ──
+  /** Слоты оплётки формы (вид «оплётка», материал выбран). */
+  function braidSlots_(): Array<{ comp: Comp; len: string }> {
+    if (!S.wrap.enabled) return [];
+    return S.wrap.slots.slice(0, isComplex_() ? 4 : 1).flatMap((slot) => {
+      const comp = slot.kind === "braid" ? getCompById(slot.mat) : null;
+      return comp ? [{ comp, len: (slot.len || "").trim() }] : [];
+    });
   }
-  /** Порядок «Сложной сборки» по умолчанию (владелец 16.10, проверен на 713К.4 КБ1): резка (с партиями обжима) → резка всех
-   *  трубок (на разъёмы, сростки, маркировку) → свивка проводов, что уходят в сростки → сростки (зачистка, трубка, сросток,
-   *  усадка) → хвосты (зачистка, лужение) → оплётка → надеть трубки и маркировку → разъёмы А (ручной обжим и монтаж) →
-   *  усадки (хвостовики разъёмов, жгут, маркировка) → разъёмы В. Остальное — в порядке генератора; свой порядок технолога
-   *  (opOrder) — поверх. */
-  function complexOrder_(ops: OpSpec[]) {
-    const twistSplice = twistIntoSplice_();
-    const stages: Array<(o: OpSpec) => boolean> = [
-      (o) => /^cutWire/.test(o.type),
-      (o) => o.type === "cutTut" || o.type === "foldCore",
-      (o) => twistSplice && o.type === "twist",
-      (o) => ["stripSpl", "insSpl", "splice", "heatSpl"].includes(o.opKey),
-      (o) => o.opKey === "stripTail" || o.opKey === "tinTail" || (o.type === "endCap" && !o.side),
-      (o) => o.type === "insWrap" && (o.wrapKind === "braid" || !!o.under),
-      (o) => o.opKey === "insSleeves" || o.opKey === "onMark",
-    ];
-    const front: OpSpec[][] = stages.map(() => []);
-    const rest: OpSpec[] = [];
-    ops.forEach((o) => { const at = stages.findIndex((test) => test(o)); if (at >= 0) front[at].push(o); else rest.push(o); });
-    // Усадки стороны А, термоусадки на жгуте и маркировки — сразу после последнего разъёма А, до первого разъёма В
-    // (свивка, что стояла перед стороной В, остаётся перед ней).
-    const shrink = (o: OpSpec) => o.type === "heatTut" && (o.opKey === "heatHs" || o.opKey === "heatMark" || (/^heat(Shr|Js)/.test(o.opKey) && o.side !== "B"));
-    const firstB = rest.findIndex((o) => o.side === "B" && !!o.epId);
-    let tail = rest;
-    if (firstB >= 0) {
-      const before = rest.slice(0, firstB).filter((o) => !shrink(o));
-      const lastA = before.reduce((last, o, i) => (o.side === "A" ? i : last), -1);
-      before.splice(lastA >= 0 ? lastA + 1 : before.length, 0, ...rest.filter(shrink));
-      tail = [...before, ...rest.slice(firstB).filter((o) => !shrink(o))];
+  /** Разъём стороны А, на ветвь которого надевают оплётку: разъём с проводами, «Оплётка ветви» не «0». */
+  const braidEp_ = (ep: Endpoint) => isComplex_() && ep.side === "A" && !!ep.connId && braidSlots_().length > 0
+    && activeWires_().some((w) => routedWireIdxs_(ep).includes(w.idx)) && (ep.braidLen ?? "").trim() !== "0";
+  /** Длина оплётки ветви по умолчанию: «Длина на изделие» оплётки поровну на ветви с оплёткой; не задана — "". */
+  function braidLenDefault_(slotLen?: string): string {
+    const total = parseDecimal_(slotLen ?? braidSlots_()[0]?.len ?? "");
+    const n = S.endpoints.filter(braidEp_).length;
+    return total > 0 && n > 0 ? String(Math.round(total / n)) : "";
+  }
+  /** Отрезок оплётки ветви: свой у разъёма, иначе поровну от длины на изделие. */
+  const braidLenOf_ = (ep: Endpoint, slotLen?: string) => (ep.braidLen || "").trim().replace(",", ".") || braidLenDefault_(slotLen);
+
+  /** Схема ПФ, которую построил последний вызов списка операций «Сложной сборки». */
+  let graph_: PfGraph | null = null;
+
+  /** «Сложная сборка» (владелец 16.10): генератор сам режет жгут на ПФ и ставит операции в порядке схемы.
+   *  1. Источники — ПФ-комплекты: каждая партия резки (обжим при резке зачищает и концы под сростки), хвосты «сросток →
+   *     облуженный конец» (CUT_WIRE+2strip+tin), одна резка всех трубок, одна резка оплётки (отрезок на ветвь), печать и
+   *     резка маркировки.
+   *  2. Ветви — разъём стороны А с трубкой, оплёткой, маркировкой или свитой парой: надеть трубки и маркировку → оплётка →
+   *     монтаж в разъём → усадка → свивка своей пары.
+   *  3. Группы сростков — сростки, провода которых приходят с одних и тех же разъёмов стороны А: свивка пар с разных
+   *     разъёмов → трубка → сросток → усадка.
+   *  4. Изделие — трубки на ствол → усадка → разъёмы стороны В (и разъёмы А без ветви) → остальное.
+   *  Стрелки — что идёт из ПФ в ПФ («НВ4 0,5 красный ×1», «ТТК 8/2 ×1», «XP-3 120 мм ×1», «маркировка «5» ×1»). */
+  function complexGraph_(generic: OpSpec[]): OpSpec[] {
+    const active = activeWires_();
+    const wireOf = (idx: number) => active.find((w) => w.idx === idx) || null;
+    const artOf = (c: Comp | null) => (c ? c.art || c.name || "" : "");
+    const tag = (ep: Endpoint) => { const label = (ep.label || "").trim(); return label ? `${endKey_(ep)} «${label}»` : endKey_(ep); };
+    const short = (art: string) => { const m = /^(.*?\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?)/.exec(art); return m ? m[1].replace(/\s+/g, " ").trim() : art; };
+    const mm = (len: string) => (len ? `${len.replace(".", ",")} мм` : "? мм");
+    const FINAL = "pf-final", TUBES = "pf-tubes", BRAID = "pf-braid", MARK = "pf-mark";
+    const epKey = (ep: Endpoint) => `pf-${ep.side}${endpointOrdinal_(ep)}`;
+
+    // ── Сростки: группы по разъёмам стороны А, с которых приходят их провода ──
+    const sizes = spliceSizes_();
+    const all = S.splices || [];
+    const drawn = all.filter((s) => s.ends.length >= 2).slice(0, sizes.length);
+    const rest = sizes.length - drawn.length;
+    const groupKey = (s: Splice) => {
+      const ids = (side: Side) => [...new Set(s.ends.flatMap((e) => {
+        const w = wireOf(e.idx);
+        const other: Side = e.side === "A" ? "B" : "A";
+        const ep = w ? unitEndpoint_(w, e.unit, other) : null;
+        return ep && ep.side === side ? [ep.id] : [];
+      }))].sort();
+      const a = ids("A"), b = ids("B");
+      return a.length ? `A:${a.join(",")}` : b.length ? `B:${b.join(",")}` : `S:${s.id}`;
+    };
+    const keyOf = new Map(drawn.map((s) => [s.id, groupKey(s)]));
+    // Провод между двумя сростками разных групп — группы сливаются (один ПФ).
+    const spliceOfEnd = (idx: number, unit: number, side: Side) => drawn.find((s) => s.ends.some((e) => e.idx === idx && e.unit === unit && e.side === side)) || null;
+    active.forEach((w) => {
+      for (let k = 0; k < unitCount_(w); k++) {
+        const a = spliceOfEnd(w.idx, k, "A"), b = spliceOfEnd(w.idx, k, "B");
+        if (!a || !b) continue;
+        const ka = keyOf.get(a.id)!, kb = keyOf.get(b.id)!;
+        if (ka !== kb) keyOf.forEach((value, id) => { if (value === kb) keyOf.set(id, ka); });
+      }
+    });
+    const groupKeys = [...new Set(drawn.map((s) => keyOf.get(s.id)!))];
+    const verb = { solder: "Пайка", sleeve: "Опрессовка", band: "Ленточный обжим", ultrasonic: "Сварка" }[splMethod_()];
+    type Group = { key: string; splices: Splice[]; rest: number; names: string; name: string };
+    const groups: Group[] = groupKeys.map((key, i) => {
+      const splices = drawn.filter((s) => keyOf.get(s.id) === key);
+      const names = splices.map((s) => `С${all.indexOf(s) + 1}`).join(", ");
+      return { key: `pf-spl${i + 1}`, splices, rest: 0, names, name: `${verb} ${names}` };
+    });
+    if (rest > 0) groups.push({ key: `pf-spl${groups.length + 1}`, splices: [], rest, names: "", name: drawn.length ? `${verb} остальных сростков` : `${verb} сростков` });
+    const groupOfEnd = (idx: number, unit: number, side: Side) => {
+      const s = spliceOfEnd(idx, unit, side);
+      return s ? groups.find((g) => g.splices.includes(s)) || null : null;
+    };
+
+    // ── Свивка: пара внутри ветви (с одного разъёма А в сростки) — в ветви, пара с разных разъёмов — в группе сростков,
+    //    пара до разъёмов стороны В — в изделии, там, где её ставит генератор (после опрессовки В, до монтажа В) ──
+    const twistSets = !S.twist.enabled || !getTwistSelectionCount() ? []
+      : S.twist.mode === "pairs" ? getTwistPairs() : [twistWireIndices_()];
+    const twistAt = new Map<string, number>(); // "ep:<id>" | ключ группы | FINAL → пар
+    twistSets.forEach((positions) => {
+      const ws = positions.map((i) => active[i]).filter((w): w is WireEntry => !!w);
+      if (ws.length < 2) return;
+      const n = Math.min(...ws.map(unitCount_));
+      for (let k = 0; k < n; k++) {
+        const eps = ws.map((w) => unitEndpoint_(w, k, "A"));
+        let at = FINAL;
+        if (eps[0] && eps.every((ep) => ep === eps[0]) && ws.every((w) => endJoined(S, w.idx, k, "B"))) at = `ep:${eps[0].id}`;
+        else {
+          const hit = [...new Set(ws.flatMap((w) => (["A", "B"] as Side[]).map((side) => groupOfEnd(w.idx, k, side)?.key).filter(Boolean)))];
+          if (hit.length === 1) at = hit[0]!;
+        }
+        twistAt.set(at, (twistAt.get(at) || 0) + 1);
+      }
+    });
+
+    // ── Маркировка-трубки: к разъёму по «Что маркируем» («Разъём 5 (SMR-02V-B)») ──
+    const markTubes = S.mark ? markTubeSplit(S.markRows || [], comps()).tubes : [];
+    const markEp = (t: MarkTube) => {
+      const target = t.spec.target.trim();
+      return S.endpoints.find((ep) => { const name = (ep.label || "").trim() || endKey_(ep); return target === `Разъём ${name}` || target.startsWith(`Разъём ${name} (`); }) || null;
+    };
+    const sleeves = sleeveItems_();
+
+    // ── Ветви стороны А ──
+    const branches = endpointsOnSide_("A").filter((ep) => !!ep.connId && (!!shrinkOf_(ep) || braidEp_(ep) || twistAt.has(`ep:${ep.id}`)
+      || markTubes.some((t) => markEp(t) === ep)));
+    // Пара на разъёме без ветви (терминал без корпуса) — свивка в изделии.
+    [...twistAt.keys()].forEach((at) => {
+      if (!at.startsWith("ep:") || branches.some((ep) => `ep:${ep.id}` === at)) return;
+      twistAt.set(FINAL, (twistAt.get(FINAL) || 0) + twistAt.get(at)!);
+      twistAt.delete(at);
+    });
+    const branchOf = (ep: Endpoint | null) => (ep && branches.includes(ep) ? ep : null);
+    const blockOfEp = (ep: Endpoint | null) => (branchOf(ep) ? epKey(ep!) : FINAL);
+    const markBlock = (t: MarkTube) => blockOfEp(markEp(t));
+
+    // ── Операции генератора: что остаётся как есть и куда ──
+    const epOfOp = (o: OpSpec) => (o.epId ? epById_(o.epId) : o.side && o.ord ? endpointsOnSide_(o.side)[o.ord - 1] || null : null);
+    const solderEp = S.endpoints.find((e) => e.method === "solder" && !e.tutOff && !!e.connId) || null;
+    const finalTwist = twistAt.get(FINAL) || 0;
+    const rebuilt = (o: OpSpec) => o.type === "cutTut"
+      || ["insSleeves", "onMark", "heatMark", "insSpl", "heatSpl", "splice", "stripSpl"].includes(o.opKey)
+      || (o.opKey === "twist" && !finalTwist)
+      || (o.type === "insWrap" && o.wrapKind === "braid")
+      || (o.type === "heatTut" && /^heatShr/.test(o.opKey) && !!branchOf(epOfOp(o)));
+    const prepKeys = (o: OpSpec) => o.type === "foldCore" || (o.type === "endCap" && !o.side) || o.opKey === "stripTail" || o.opKey === "tinTail";
+    const cutOps = generic.filter((o) => /^cutWire/.test(o.type));
+    const blockOf = (o: OpSpec): string => {
+      if (o.opKey === "insTut" || o.opKey === "heatTut") return blockOfEp(solderEp);
+      const ep = epOfOp(o);
+      return ep ? blockOfEp(ep) : FINAL;
+    };
+    // Свивка изделия — не все пары формы (часть свита в ветвях и группах сростков): своё число пар.
+    const total = [...twistAt.values()].reduce((n, x) => n + x, 0);
+    const kept = generic.filter((o) => !/^cutWire/.test(o.type) && !rebuilt(o))
+      .map((o) => (o.opKey === "twist" && finalTwist < total ? { ...o, units: finalTwist } : o));
+
+    // ── Стрелки ──
+    const edgeItems = new Map<string, Map<string, number>>(); // "from>to" → подпись → штук (0 — без числа)
+    const link = (from: string, to: string, item = "", count = 0) => {
+      if (from === to) return;
+      const id = `${from}>${to}`;
+      const items = edgeItems.get(id) || new Map<string, number>();
+      if (item) items.set(item, (items.get(item) || 0) + count);
+      edgeItems.set(id, items);
+    };
+    const level = (key: string) => (key === FINAL ? 4 : key.startsWith("pf-spl") ? 3 : 2);
+    const names = new Map<string, string>();
+    branches.forEach((ep) => names.set(epKey(ep), `Ветвь ${tag(ep)}`));
+    groups.forEach((g) => names.set(g.key, g.name));
+    const endBlock = (w: WireEntry, k: number, side: Side): string | null => {
+      const join = isComplex_() ? endJoined(S, w.idx, k, side) : null;
+      if (join === "splice") return groupOfEnd(w.idx, k, side)?.key ?? (groups.find((g) => g.rest)?.key || null);
+      if (join === "tail") return null;
+      const ep = unitEndpoint_(w, k, side);
+      return ep ? blockOfEp(ep) : null;
+    };
+    const flows: Array<{ from: string; to: string; art: string }> = [];
+    cutOps.forEach((op) => (op.cutUnits || []).forEach(([idx, k]) => {
+      const w = wireOf(idx);
+      if (!w) return;
+      const chain = [...new Set([endBlock(w, k, "A"), endBlock(w, k, "B")].filter((x): x is string => !!x))].sort((a, b) => level(a) - level(b));
+      if (!chain.length) chain.push(FINAL);
+      flows.push({ from: `pf-${op.opKey}`, to: chain[0], art: artOf(getCompById(w.compId)) || "провод" });
+      chain.slice(1).forEach((to, i) => link(chain[i], to, names.get(chain[i]) || ""));
+    }));
+    flows.forEach((f) => link(f.from, f.to, f.art, 1));
+
+    // ── 1. Резка трубок: одна операция на все отрезки ТТК / ТУТ ──
+    type Piece = { art: string; name: string; len: string; count: number; to: string; glue?: boolean };
+    const tubes: Piece[] = [];
+    const tubeOf = (c: Comp) => ({ art: c.art || c.name || "", name: c.name || c.art || "", glue: isGlueSleeve_(c) });
+    sleeves.conn.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: 1, to: blockOfEp(x.ep) }));
+    sleeves.jacket.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.count, to: FINAL }));
+    sleeves.harness.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.cnt, to: FINAL }));
+    const splTube = spliceTube_();
+    if (splTube) groups.forEach((g) => tubes.push({ ...tubeOf(splTube.comp), len: splTube.len, count: g.splices.length + g.rest, to: g.key }));
+    generic.filter((o) => o.opKey === "cutCap" || o.opKey === "cutTut").forEach((o) => (o.tutSegs || []).forEach((seg) => tubes.push({
+      art: o.tutArt || "", name: o.tutName || o.tutArt || "", len: seg.len, count: seg.count, to: o.opKey === "cutCap" ? FINAL : blockOfEp(solderEp) })));
+    const sources: OpSpec[] = cutOps.map((o) => ({ ...o, pf: `pf-${o.opKey}` }));
+    const parts = (list: Piece[]) => {
+      const out: Array<{ art: string; name: string; count: number; len: string }> = [];
+      list.forEach((p) => { const same = out.find((x) => x.art === p.art && x.len === p.len); if (same) same.count += p.count; else out.push({ art: p.art, name: p.name, count: p.count, len: p.len }); });
+      return out;
+    };
+    const segsOf = (list: Array<{ len: string; count: number }>) => {
+      const out: Array<{ len: string; count: number }> = [];
+      list.forEach((p) => { const same = out.find((x) => x.len === p.len); if (same) same.count += p.count; else out.push({ len: p.len, count: p.count }); });
+      return out;
+    };
+    const tubeList = tubes.filter((p) => p.count > 0);
+    if (tubeList.length) {
+      const own = parts(tubeList);
+      const one = own.every((p) => p.art === own[0].art) ? own[0] : null;
+      sources.push({ type: "cutTut", opKey: "cutTubes", tmplHint: "CUT_TUT_short", cat: "Резка", pf: TUBES,
+        label: `Резка трубок — ${own.map((p) => `${short(p.art)} ${p.count}×${mm(p.len)}`).join(", ")}`,
+        tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: own.reduce((n, p) => n + p.count, 0), tutSegs: segsOf(own), tutParts: own });
+      tubeList.forEach((p) => link(TUBES, p.to, short(p.art), p.count));
     }
-    ops.splice(0, ops.length, ...front.flat(), ...tail);
+    // ── 1. Резка оплётки: отрезок на каждую ветвь ──
+    const braids = braidSlots_();
+    const braided = branches.filter(braidEp_);
+    if (braids.length && braided.length) {
+      const pieces: Piece[] = braids.flatMap((slot) => braided.map((ep) => ({ ...tubeOf(slot.comp), len: braidLenOf_(ep, slot.len), count: 1, to: epKey(ep) })));
+      const own = parts(pieces);
+      const one = own.every((p) => p.art === own[0].art) ? own[0] : null;
+      sources.push({ type: "cutTut", opKey: "cutBraid", tmplHint: BRAID_CUT_CODE_, cat: "Резка", pf: BRAID, wrapKind: "braid",
+        label: `Резка оплётки ${braids.map((s) => artOf(s.comp)).join(", ")} — ${braided.map((ep) => `${tag(ep)} ${mm(braidLenOf_(ep, braids[0].len))}`).join(", ")}`,
+        tutArt: one ? one.art : "", tutName: one ? one.name : "", tutCount: pieces.length, tutSegs: segsOf(own), tutParts: own });
+      pieces.forEach((p) => link(BRAID, p.to, `${p.art} ${mm(p.len)}`, 1));
+    }
+    // ── 1. Печать и резка маркировки ──
+    const markCut = generic.find((o) => o.opKey === "cutMark");
+    if (markCut) {
+      sources.push({ ...markCut, pf: MARK });
+      markTubes.forEach((t) => link(MARK, markBlock(t), `маркировка «${t.spec.text || t.spec.target}»`, t.spec.qty));
+    }
+
+    // ── 2. Ветви ──
+    const branchOps: OpSpec[] = branches.flatMap((ep) => {
+      const key = epKey(ep), side = ep.side, ord = endpointOrdinal_(ep), name = tag(ep);
+      const shrink = sleeves.conn.find((x) => x.ep === ep) || null;
+      const marks = markTubes.filter((t) => markEp(t) === ep);
+      const housing = sleeves.housings.includes(ep);
+      const on: string[] = [];
+      if (shrink) on.push(`${short(artOf(shrink.comp))} ×1`);
+      marks.forEach((t) => on.push(`маркировка «${t.spec.text || t.spec.target}»`));
+      if (housing) on.push("детали корпуса");
+      const out: OpSpec[] = [];
+      if (on.length) {
+        out.push({ type: "insTut", opKey: `onTubes${side}${ord}`, tmplHint: "INS_TUT", cat: "Монтаж", harness: true, side, ord,
+          tutCount: (shrink ? 1 : 0) + marks.reduce((n, t) => n + t.spec.qty, 0) || 1, branch: name,
+          label: `Надеть ${shrink || marks.length ? "трубки" : "детали корпуса"} ${name}: ${on.join(", ")}` });
+      }
+      if (braided.includes(ep)) braids.forEach((slot, i) => {
+        const len = braidLenOf_(ep, slot.len);
+        out.push({ type: "insWrap", opKey: `braid${side}${ord}${i ? i + 1 : ""}`, tmplHint: "INS_BRAID", cat: "Монтаж", wrapKind: "braid", wrapCut: true,
+          wrapArt: artOf(slot.comp), wrapName: slot.comp.name || artOf(slot.comp), wrapLen: len, side, ord, branch: name,
+          label: `Монтаж оплётки ${name} — ${artOf(slot.comp)}, ${mm(len)}` });
+      });
+      out.push(...kept.filter((o) => blockOf(o) === key));
+      const heats = [shrink ? short(artOf(shrink.comp)) : "", ...marks.filter((t) => t.shrink).map((t) => `маркировка «${t.spec.text || t.spec.target}»`)].filter(Boolean);
+      if (heats.length) {
+        out.push({ type: "heatTut", opKey: `heatShr${side}${ord}`, side, ord, harness: true, cat: "Усадка",
+          tmplHint: shrink && isGlueSleeve_(shrink.comp) ? "HEAT_TTK_short" : "HEAT_TYT_short", tutCount: heats.length,
+          label: `Усадка трубок ${name}: ${heats.join(", ")}` });
+      }
+      const pairs = twistAt.get(`ep:${ep.id}`) || 0;
+      if (pairs) out.push({ type: "twist", opKey: `twist${side}${ord}`, cat: "Свивка", units: pairs, side, ord, branch: name,
+        label: `Свивка ${name} — ${pairs} ${pluralRu(pairs, "пара", "пары", "пар")}` });
+      return out.map((o) => ({ ...o, pf: key }));
+    });
+
+    // ── 3. Группы сростков ──
+    const groupOps: OpSpec[] = groups.flatMap((g, i) => {
+      const out: OpSpec[] = [];
+      const pairs = twistAt.get(g.key) || 0;
+      if (pairs) out.push({ type: "twist", opKey: `twistS${i + 1}`, cat: "Свивка", units: pairs,
+        label: `Свивка перед сростками${g.names ? ` ${g.names}` : ""} — ${pairs} ${pluralRu(pairs, "пара", "пары", "пар")}` });
+      const groupSizes = g.splices.length ? g.splices.map((s) => Math.max(2, s.ends.length)) : sizes.slice(drawn.length);
+      out.push(...spliceGroupOps_(groupSizes, g.names, groups.length > 1 ? i + 1 : 0, groupSleeves_(g.splices.map((s) => s.id), g.rest)));
+      if (groups.length > 1) out.forEach((o) => { o.branch = g.names || "остальные"; });
+      link(g.key, FINAL, g.name);
+      // Сростки без точки на схеме: их провода — из всех партий резки.
+      if (g.rest) cutOps.forEach((o) => link(`pf-${o.opKey}`, g.key));
+      return out.map((o) => ({ ...o, pf: g.key }));
+    });
+
+    // ── 4. Изделие: трубки на ствол → усадка → разъёмы В и разъёмы А без ветви → остальное ──
+    const finalOn: string[] = [];
+    let finalPieces = 0;
+    const tube = (c: Comp) => { const name = artOf(c); return /^\s*(?:тут|ттк)/i.test(name) ? name : `${tubeKind_(c)} ${name}`; };
+    sleeves.harness.forEach((s) => { finalOn.push(`${artOf(s.comp)} на жгут — ${s.cnt} шт`); finalPieces += s.cnt; });
+    sleeves.jacket.forEach((x) => { finalOn.push(`${tube(x.comp)} на место разделки ${sideRu_(x.side)} — ${x.count} шт`); finalPieces += x.count; });
+    sleeves.conn.filter((x) => !branchOf(x.ep)).forEach((x) => { finalOn.push(`${tube(x.comp)} поверх разъёма ${x.tag}`); finalPieces += 1; });
+    const finalMarks = markTubes.filter((t) => markBlock(t) === FINAL);
+    finalMarks.forEach((t) => { finalOn.push(`маркировка «${t.spec.text || t.spec.target}»`); finalPieces += t.spec.qty; });
+    const tubesOn = finalOn.length;
+    sleeves.housings.filter((ep) => !branchOf(ep)).forEach((ep) => { const c = getCompById(ep.connId); finalOn.push(`детали корпуса ${endKey_(ep)}${c ? ` (${artOf(c)})` : ""}`); });
+    const finalOps: OpSpec[] = [...kept.filter((o) => blockOf(o) === FINAL && prepKeys(o))];
+    if (finalOn.length) finalOps.push({ type: "insTut", opKey: "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true, tutCount: finalPieces || 1,
+      label: `${tubesOn ? "Надеть трубки" : "Надеть детали корпуса"}: ${finalOn.join("; ")}` });
+    const heatHs = kept.find((o) => o.opKey === "heatHs");
+    if (heatHs) finalOps.push(heatHs);
+    finalOps.push(...kept.filter((o) => blockOf(o) === FINAL && !prepKeys(o) && o !== heatHs));
+    const markHeat = finalMarks.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
+    if (markHeat) finalOps.push({ type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: markHeat,
+      label: `Усадка маркировки — ${markHeat} шт` });
+
+    // Ветвь, которая никуда не ведёт, и любой ПФ без выхода — в изделие.
+    const ordered = [...sources, ...branchOps, ...groupOps, ...finalOps.map((o) => ({ ...o, pf: FINAL }))];
+    const used = new Set(ordered.map((o) => o.pf!));
+    used.forEach((key) => { if (key !== FINAL && ![...edgeItems.keys()].some((id) => id.startsWith(`${key}>`))) link(key, FINAL, names.get(key) || ""); });
+    const blocks: PfBlock[] = [...used].map((key) => ({
+      key, name: key === TUBES ? "Нарезанные трубки" : key === BRAID ? "Нарезанная оплётка" : key === MARK ? "Маркировка" : names.get(key) || "",
+      ...(key === TUBES || key === BRAID || key === MARK || cutOps.some((o) => `pf-${o.opKey}` === key) ? { kit: true } : {}),
+      ...(key === FINAL ? { final: true } : {}),
+    }));
+    if (!used.has(FINAL)) blocks.push({ key: FINAL, name: "", final: true });
+    const edges: PfEdge[] = [...edgeItems.entries()].map(([id, items]) => {
+      const [from, to] = id.split(">");
+      return { from, to, items: [...items.entries()].map(([item, count]) => (count ? `${item} ×${count}` : item)) };
+    }).filter((e) => blocks.some((b) => b.key === e.from) && blocks.some((b) => b.key === e.to));
+    graph_ = { blocks, edges };
+    return ordered;
   }
 
   // ── Шаблоны и времена ──
@@ -2359,6 +2713,39 @@ export function makeGen(D: GenData, S: GenState) {
       if (d > 0) w.length = Math.round(w.length * twistTakeupFactor_(d, p));
     });
   }
+  /** `build_config.route` «Сложной сборки» («source»: «generated» — ручная правка «Править ПФ» его перекрывает): блоки
+   *  схемы ПФ генератора с номерами операций в сборке (`list` — операции с шаблоном, в своём порядке). ПФ без операций
+   *  (у всех нет шаблона) выпадает — его входы идут прямо к его выходам; изделие без операций — схемы нет (сервер режет
+   *  ЭТК на ПФ своим правилом). */
+  function complexRoute_(list: OpSpec[]): Record<string, unknown> | null {
+    const graph = graph_;
+    if (!graph || !list.length || list.some((spec) => !spec.pf)) return null;
+    const positions = new Map<string, number[]>();
+    list.forEach((spec, index) => positions.set(spec.pf!, [...(positions.get(spec.pf!) || []), index + 1]));
+    let edges = graph.edges.map((edge) => ({ ...edge, items: [...edge.items] }));
+    const join = (from: string, to: string, items: string[]) => {
+      if (from === to) return;
+      const same = edges.find((edge) => edge.from === from && edge.to === to);
+      if (same) same.items = [...new Set([...same.items, ...items])];
+      else edges.push({ from, to, items: [...items] });
+    };
+    graph.blocks.filter((block) => !block.final && !positions.has(block.key)).forEach((block) => {
+      const ins = edges.filter((edge) => edge.to === block.key), outs = edges.filter((edge) => edge.from === block.key);
+      edges = edges.filter((edge) => edge.to !== block.key && edge.from !== block.key);
+      ins.forEach((input) => outs.forEach((output) => join(input.from, output.to, input.items)));
+    });
+    const final = graph.blocks.find((block) => block.final);
+    if (!final || !positions.has(final.key)) return null;
+    const blocks = graph.blocks.filter((block) => positions.has(block.key));
+    return {
+      source: "generated",
+      blocks: blocks.map((block) => ({
+        key: block.key, ...(block.name ? { name: block.name } : {}), ops: positions.get(block.key)!, final: !!block.final,
+        ...(block.kit ? { kit: true } : {}),
+      })),
+      edges: edges.map((edge) => ({ from: edge.from, to: edge.to, per_unit: 1, ...(edge.items.length ? { item: edge.items.join("; ") } : {}) })),
+    };
+  }
   function buildConfig(): Record<string, unknown> {
     if (S.tab === "coax") return buildConfigCoax_();
     const sideB = endpointsOnSide_("B").length > 0;
@@ -2437,6 +2824,8 @@ export function makeGen(D: GenData, S: GenState) {
     const welded = spliceWelded_();
     const links = connections_().list;
     const specs = getActiveOps();
+    // «Сложная сборка»: схема ПФ генератора — по операциям, что уйдут в сборку (с шаблоном), номерами после своего порядка.
+    const route = isComplex_() ? complexRoute_(specs.filter((spec) => templateIdFor(spec))) : null;
     // Несколько партий резки с обжимом — у каждой в ЭТК свой терминал в названии (etk_builder: «обжим SYM-001T-P0.6»).
     const crimpBatches = specs.filter((spec) => spec.type === "cutWireCrimp").length > 1;
     const ops = specs.map((spec) => {
@@ -2455,19 +2844,28 @@ export function makeGen(D: GenData, S: GenState) {
       if (["cutTut", "insTut", "heatTut", "endCap", "foldCore", "stripCable"].includes(spec.type)) {
         op.tutArt = spec.tutArt || ""; op.tutName = spec.tutName || ""; op.tutCount = spec.tutCount || 0;
         if (spec.harness) op.harness = true;
-        if ((spec.opKey === "insSpl" || spec.opKey === "heatSpl") && welded) op.spliceWeld = true;
+        if (/^(?:insSpl|heatSpl)\d*$/.test(spec.opKey) && welded) op.spliceWeld = true;
         if (spec.tutSegs) op.tutSegs = spec.tutSegs;
         if (spec.markTube) op.markTube = true;
+        // Резка оплётки ветвей (CUT_NEYLON): отрезки — по `tutParts`, материал в метрах — у этой операции.
+        if (spec.type === "cutTut" && spec.wrapKind) op.wrapKind = spec.wrapKind;
         if (spec.tutParts) op.tutParts = spec.tutParts;
       }
-      if (spec.type === "insWrap") { op.wrapArt = spec.wrapArt; op.wrapName = spec.wrapName; op.wrapLen = spec.wrapLen; op.wrapKind = spec.wrapKind; }
+      if (spec.type === "insWrap") {
+        op.wrapArt = spec.wrapArt; op.wrapName = spec.wrapName; op.wrapLen = spec.wrapLen; op.wrapKind = spec.wrapKind;
+        if (spec.wrapCut) op.wrapCut = true;
+      }
       if (spec.type === "insMark") op.marks = spec.marks;
       if (spec.tin) op.tin = true;
       if (spec.type === "splice" || spec.type === "insHousing") op.units = spec.units || 1;
+      // Свивка ветви или группы сростков — своих пар (без числа — все пары формы, как раньше).
+      if (spec.type === "twist" && spec.units) op.units = spec.units;
+      if (spec.branch) op.branch = spec.branch;
       // Сростки: способ и гильзы из состава (ленточный обжим — его материал) с числом сростков на каждую.
       if (spec.type === "splice") {
         op.method = splMethod_();
-        op.sleeves = spliceSleeves_().items.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count }));
+        op.sleeves = spec.sleeveItems
+          ?? spliceSleeves_().items.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count }));
       }
       if (spec.opKey === "stripTail") op.strip = spec.strip;
       // Лужение хвостов: провода хвостов (номера в `wires` карты) и число концов.
@@ -2516,6 +2914,7 @@ export function makeGen(D: GenData, S: GenState) {
     return {
       tab: S.tab, assemblyIndex: findKey(/индекс/i), assemblyName: findKey(/наименование/i), partQty: partQtyFromInfo_(),
       bigAssembly, wires, twist, tin, strip, ops, ...(links.length ? { connections: links } : {}),
+      ...(route ? { route } : {}),
       ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
       ...usedColorHex_(wires),
     };
@@ -2599,6 +2998,9 @@ export function makeGen(D: GenData, S: GenState) {
     /** Трубка заделки, которую засев ставит сам: только ТУТ (как до 16.10 — засев старых карт не меняется). */
     capSeedTubes_: () => byTubeDia_(comps().filter((c) => /тут|термоусад/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`))),
     splMethod_, spliceSleeveComps_, spliceSlots_, spliceSleeveOf_, spliceSleeves_, tailEnds_, bomWarnings_,
+    braidEp_, braidLenDefault_,
+    /** Схема ПФ «Сложной сборки» по текущему списку операций (до номеров ЭТК); другие вкладки — null. */
+    pfGraph: (): PfGraph | null => { if (!isComplex_()) return null; getActiveOps(); return graph_; },
     wrapCandidates: () => {
       const re = new RegExp(/лент|оплет|оплёт|рукав|braid|sleeve|wrap|/.source + PROTECT_TUBE_RE_.source, "i");
       const hit = (c: Comp) => re.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`);
@@ -2748,8 +3150,10 @@ export function savedComplex(config: unknown): boolean {
 /** «Способ» сростков: карта операции подбирается заново (выбранная для прежнего способа снимается). */
 export function setSplMethod(S: GenState, method: SpliceMethod): GenState {
   if ((S.spl.method || "solder") === method) return S;
-  const { splice: _old, ...selectedTemplates } = S.selectedTemplates;
-  return { ...S, spl: { ...S.spl, method }, selectedTemplates, manualTemplates: S.manualTemplates.filter((key) => key !== "splice") };
+  // Группы сростков «Сложной сборки» — splice1, splice2…: их карты подбираются заново тоже.
+  const spliceKey = (key: string) => /^splice\d*$/.test(key);
+  const selectedTemplates = Object.fromEntries(Object.entries(S.selectedTemplates).filter(([key]) => !spliceKey(key)));
+  return { ...S, spl: { ...S.spl, method }, selectedTemplates, manualTemplates: S.manualTemplates.filter((key) => !spliceKey(key)) };
 }
 
 /** Способ сростков собранной карты без снимка формы: у операции «Сростки» нет `method` — пайка (карты до 16.10); операции

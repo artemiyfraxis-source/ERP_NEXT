@@ -7,7 +7,9 @@ import { DSA, fullHarness, R } from "./tcGenRealHarness.fixture";
 /*
  * 713К.4 КБ1 «Жгут НВ4» (владелец 16.10): «Обжим на автомате при резке» на стороне с разными терминалами — партиями по
  * терминалу. Сторона А: SYM («5», «I3», «A6») — одна партия, SHF («C») — другая; сторона В: T-DS1071; провода «A6» → В2 с
- * терминалами на обоих концах — партия обжима А и В (CUT_WIRE+2crimp). Концы в сростках и хвостах станок не обжимает.
+ * терминалами на обоих концах — партия обжима А и В (CUT_WIRE+2crimp). Концы в сростках и хвостах станок не обжимает, но
+ * концы под сростки зачищает при резке; хвосты «сросток → облуженный конец» — своя партия: резка, зачистка обоих концов и
+ * лужение хвоста (CUT_WIRE+2strip+tin, BZW-5.0+Z).
  */
 const cuts = (S: GenState, data: GenData = DSA) => makeGen(data, S).getActiveOps().filter((o) => /^cutWire/.test(o.type));
 const brief = (o: OpSpec) => ({ label: o.label, tmplHint: o.tmplHint, wireIdxs: o.wireIdxs, wireUnits: o.wireUnits });
@@ -19,11 +21,13 @@ it("crimps a side with several terminal types at the cut, one batch per terminal
   expect(gen.crimpCutSideSelected_()).toBe("AB");
   expect(gen.crimpCutSideNote_("A")).toBe("");
   expect(cuts(S).map(brief)).toEqual([
-    { label: "Резка с обжимом А (SYM-001T-P0.6) — 4 кабеля", tmplHint: "CUT_WIRE+1crimp", wireIdxs: [R.r5, R.k5, R.w12, R.b12],
+    { label: "Резка с обжимом А (SYM-001T-P0.6) и зачисткой В — 4 кабеля", tmplHint: "CUT_WIRE+1crimp", wireIdxs: [R.r5, R.k5, R.w12, R.b12],
       wireUnits: { [R.w12]: 1, [R.b12]: 1 } },
-    { label: "Резка с обжимом В (T-DS1071-SC600) — 3 кабеля", tmplHint: "CUT_WIRE+1crimp", wireIdxs: [R.r2, R.k2a, R.k2b], wireUnits: undefined },
-    { label: "Резка — 4 кабеля", tmplHint: "CUT_WIRE_auto", wireIdxs: [R.r2t, R.k2t, R.w12t, R.b12t], wireUnits: undefined },
-    { label: "Резка с обжимом А (SHF-001T-0.8BS) — 2 кабеля", tmplHint: "CUT_WIRE+1crimp", wireIdxs: [R.w12, R.b12],
+    { label: "Резка с обжимом В (T-DS1071-SC600) и зачисткой А — 3 кабеля", tmplHint: "CUT_WIRE+1crimp", wireIdxs: [R.r2, R.k2a, R.k2b],
+      wireUnits: undefined },
+    { label: "Резка с зачисткой двух концов и лужением — 4 кабеля", tmplHint: "CUT_WIRE+2strip+tin", wireIdxs: [R.r2t, R.k2t, R.w12t, R.b12t],
+      wireUnits: undefined },
+    { label: "Резка с обжимом А (SHF-001T-0.8BS) и зачисткой В — 2 кабеля", tmplHint: "CUT_WIRE+1crimp", wireIdxs: [R.w12, R.b12],
       wireUnits: { [R.w12]: 1, [R.b12]: 1 } },
     { label: "Резка с обжимом А и В (SYM-001T-P0.6 / T-DS1071-SC600) — 3 кабеля", tmplHint: "CUT_WIRE+2crimp", wireIdxs: [R.w2, R.g2, R.y2],
       wireUnits: undefined },
@@ -33,21 +37,26 @@ it("crimps a side with several terminal types at the cut, one batch per terminal
   expect(ops.filter((o) => o.type === "prsTerm")).toEqual([]);
   expect(ops.filter((o) => o.type === "insTerm").map((o) => o.opKey)).toEqual(["insTermA1", "insTermA2", "insTermA3", "insTermA4", "insTermB1", "insTermB2"]);
   // Партия обжимает концы на всех разъёмах своего терминала; зачистка — длина терминала из БД.ТЕР.
-  const [sym, tds] = cuts(S);
+  const [sym, tds, tails] = cuts(S);
+  // Конец под сросток («Зачистка под сросток» пуста — длина по КД) зачищает станок при резке.
   expect(sym).toMatchObject({ side: "A", crimpEpIds: [S.endpoints.find((e) => e.label === "5")!.id, S.endpoints.find((e) => e.label === "I3")!.id],
-    strip: { a: true, lenA: "2,5", b: false, lenB: "" } });
-  expect(tds).toMatchObject({ side: "B", strip: { a: false, b: true, lenB: "2,5" } });
+    strip: { a: true, lenA: "2,5", b: true, lenB: "" } });
+  expect(tds).toMatchObject({ side: "B", strip: { a: true, lenA: "", b: true, lenB: "2,5" } });
+  // Хвост: конец под сросток (А) и хвост 3 мм (В), лужение хвоста тем же станком.
+  expect(tails).toMatchObject({ type: "cutWireStrip", strip: { a: true, lenA: "", b: true, lenB: "3" }, tin: true });
+  // Отдельных «Зачистки концов под сростки», «Зачистки хвостов» и «Лужения хвостов» нет.
+  expect(ops.filter((o) => ["stripSpl", "stripTail", "tinTail"].includes(o.opKey))).toEqual([]);
   expect(gen.crimpCutBatchNote_()).toBe("Партии: А — SYM-001T-P0.6: 4 пр., SHF-001T-0.8BS: 2 пр.; В — T-DS1071-SC600: 4 пр.; "
     + "А и В — SYM-001T-P0.6 / T-DS1071-SC600: 3 пр.; концы в сростках и хвостах не обжимаются");
 });
 
 it("re-picks every cut's template: a key stuck to a plain cut does not follow it onto a crimp batch", () => {
   // 713К.4 КБ1, ревизия 3: cutWire1 был простой резкой, после партий обжима стал партией SYM, а сохранённый шаблон
-  // «Резка» остался на ключе — карта вышла без опрессовки.
+  // «Резка» остался на ключе — карта вышла без опрессовки. Здесь на всех ключах залип шаблон резки хвостов.
   const S = fullHarness();
   const gen = makeGen(DSA, S);
   const ops = cuts(S);
-  const plain = gen.templateIdFor(ops.find((o) => o.tmplHint === "CUT_WIRE_auto")!);
+  const plain = gen.templateIdFor(ops.find((o) => o.tmplHint === "CUT_WIRE+2strip+tin")!);
   const want = ops.map((o) => gen.templateIdFor(o));
   expect(new Set(want).size).toBeGreaterThan(1);
   const stale = { ...S, selectedTemplates: Object.fromEntries(ops.map((o) => [o.opKey, plain])) };
@@ -76,14 +85,17 @@ it("the build config carries each batch's own wires and terminals — the server
 
 it("one crimp side picked by hand: the other side's ends are crimped by hand, both-ends wires join their side's batch", () => {
   const S = { ...fullHarness(), crimpCutSide: "A" };
+  // Концы под сростки станок зачищает и здесь: партии делятся по тому, что на другом конце (сросток, хвост, обжим руками).
   expect(cuts(S).map((o) => o.label)).toEqual([
-    "Резка с обжимом А (SYM-001T-P0.6) — 7 кабелей", "Резка — 7 кабелей", "Резка с обжимом А (SHF-001T-0.8BS) — 2 кабеля",
+    "Резка с обжимом А (SYM-001T-P0.6) и зачисткой В — 4 кабеля", "Резка с разделкой (1 ст.) — 3 кабеля",
+    "Резка с зачисткой двух концов и лужением — 4 кабеля", "Резка с обжимом А (SHF-001T-0.8BS) и зачисткой В — 2 кабеля",
+    "Резка с обжимом А (SYM-001T-P0.6) — 3 кабеля",
   ]);
   const ops = makeGen(DSA, S).getActiveOps();
   expect(ops.filter((o) => o.type === "prsTerm").map((o) => o.label)).toEqual(["Опрессовка терминалов В1", "Опрессовка терминалов В2"]);
   // Обжим при резке выключен — ручная опрессовка у каждого разъёма, как раньше.
   const off = makeGen(DSA, { ...fullHarness(), crimpCutManual: true, crimpCut: false }).getActiveOps();
-  expect(off.filter((o) => /^cutWire/.test(o.type)).map((o) => o.type)).toEqual(["cutWire"]);
+  expect(off.filter((o) => /^cutWire/.test(o.type)).map((o) => o.type)).toEqual(["cutWireStrip", "cutWireStrip", "cutWireStrip", "cutWire"]);
   expect(off.filter((o) => o.type === "prsTerm")).toHaveLength(6);
 });
 
@@ -93,7 +105,8 @@ it("a terminal without the machine applicator stays a manual crimp; the rest of 
   const gen = makeGen(data, S);
   expect(gen.crimpCutSides_()).toEqual(["A", "B"]);
   expect(cuts(S, data).map((o) => o.label)).toEqual([
-    "Резка с обжимом А (SYM-001T-P0.6) — 4 кабеля", "Резка с обжимом В (T-DS1071-SC600) — 3 кабеля", "Резка — 6 кабелей",
+    "Резка с обжимом А (SYM-001T-P0.6) и зачисткой В — 4 кабеля", "Резка с обжимом В (T-DS1071-SC600) и зачисткой А — 3 кабеля",
+    "Резка с зачисткой двух концов и лужением — 4 кабеля", "Резка с разделкой (1 ст.) — 2 кабеля",
     "Резка с обжимом А и В (SYM-001T-P0.6 / T-DS1071-SC600) — 3 кабеля",
   ]);
   expect(gen.getActiveOps().filter((o) => o.type === "prsTerm").map((o) => o.label)).toEqual(["Опрессовка терминалов А3"]);

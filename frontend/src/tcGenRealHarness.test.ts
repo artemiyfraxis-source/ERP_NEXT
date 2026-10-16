@@ -55,9 +55,11 @@ it("rebuilds the drawing: every contact, four splices, four tails — nothing le
   expect(S.spl).toMatchObject({ enabled: true, count: "4", wires: "4,4,3,3" });
   expect(gen.freeEnds_()).toBe(4);
   const labels = gen.getActiveOps().map((o) => o.label);
-  // Новая форма — опрессовка гильзой (владелец 16.10: «основа это обжим»); гильз в этом составе нет.
-  expect(labels).toContain("Сростки опрессовкой гильзой — 4 шт по 4, 4, 3, 3 провода");
-  expect(labels).toContain("Зачистка концов под сростки — 14 конц.");
+  // Новая форма — опрессовка гильзой (владелец 16.10: «основа это обжим»); гильз в этом составе нет. Сростки — группами по
+  // разъёмам А, с которых приходят провода; концы под сростки зачищает станок резки (отдельной зачистки нет).
+  expect(labels).toEqual(expect.arrayContaining(["Сростки С1, С2 опрессовкой гильзой — 2 шт по 4 провода",
+    "Сростки С3, С4 опрессовкой гильзой — 2 шт по 3 провода"]));
+  expect(labels.some((label) => label.startsWith("Зачистка концов под сростки"))).toBe(false);
 });
 
 it("cuts each segment by its own drawing length plus L+ of the terminal at its crimped ends (a splice or tail end adds nothing)", () => {

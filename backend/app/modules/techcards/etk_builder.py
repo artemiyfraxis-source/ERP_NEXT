@@ -213,6 +213,21 @@ def _tut_parts(op: Mapping[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
+# «Сложная сборка» (generator, owner 16.10): one cut for every braid piece of the branches (CUT_NEYLON) — the braid is
+# issued there, in metres; the branch «Монтаж оплётки» (`wrapCut`) only puts the cut piece on. One cut for every tube
+# piece (`tutParts` without `markTube`) names the tubes it cut.
+BRAID_CUT_SUFFIX = "оплётка"
+TUBES_CUT_SUFFIX = "трубки"
+
+
+def _braid_cut(op: Mapping[str, Any]) -> bool:
+    return op.get("type") == "cutTut" and op.get("wrapKind") == "braid"
+
+
+def _parts_text(parts: Sequence[Mapping[str, Any]]) -> str:
+    return "; ".join(f"{part['art']} — {_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
+
+
 def _splice_method(op: Mapping[str, Any]) -> str:
     """The splice op's joining method, "" — not given or unknown (an old config: soldered, built as before)."""
     method = str(op.get("method") or "").strip() if op.get("type") == "splice" else ""
@@ -249,6 +264,10 @@ def _suffix(op: Mapping[str, Any]) -> str:
         return f"{crimp} {_cut_terminal(op)}".strip() if op.get("crimpBatch") else crimp
     if _mark_tube(op):
         return MARK_TUBE_SUFFIX
+    if _braid_cut(op):
+        return BRAID_CUT_SUFFIX
+    if operation_type == "cutTut" and _tut_parts(op) and not op.get("tutArt"):
+        return TUBES_CUT_SUFFIX
     if operation_type in ("cutTut", "heatTut") and _sleeve_suffix(op):
         return _sleeve_suffix(op)
     if operation_type == "cutTut":
@@ -320,6 +339,9 @@ def _result_name(
         tinned = f"; {TINNED_END}" if op.get("tin") else ""
         side_b = _side_b_op(op)
         crimped_b = f"; {_location(side_b, config)}: обжаты терминалы {_terminal(side_b)}" if _terminal(side_b) else ""
+        if not terminal and operation_type == "cutWireStrip" and op.get("tin") and cut:
+            # Хвосты «сросток → облуженный конец» (CUT_WIRE+2strip+tin): оба конца зачищены, хвост облужен тем же станком.
+            return f"{cut}; концы зачищены, {TAIL_SUFFIX} облужены"
         return f"{cut}; {_location(op, config)}: обжаты терминалы {terminal}{crimped_b}{tinned}" if terminal else cut
     if _mark_tube(op):
         if operation_type == "cutTut":
@@ -329,6 +351,16 @@ def _result_name(
             return f"Маркировка нарезана: {listed}" if listed else "Маркировка нарезана"
         done = "маркировка надета" if operation_type == "insTut" else "маркировка усажена"
         return f"{previous}; {done}" if previous else done[:1].upper() + done[1:]
+    if _braid_cut(op):
+        material = str(op.get("tutArt") or "")
+        head = f"Оплётка {material or op.get('tutName') or ''}".strip()
+        parts = _tut_parts(op)
+        # Одна оплётка — отрезки без артикула: «Оплётка XP-3 нарезана: 2 шт по 120 мм; 2 шт по 110 мм».
+        listed = ("; ".join(f"{_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
+                  if material else _parts_text(parts))
+        return f"{head} нарезана: {listed}" if listed else f"{head} нарезана"
+    if operation_type == "cutTut" and _tut_parts(op) and not op.get("tutArt"):
+        return f"Трубки нарезаны: {_parts_text(_tut_parts(op))}"
     if operation_type == "cutTut":
         material = str(op.get("tutArt") or op.get("tutName") or "ТУТ")
         segments = op.get("tutSegs") if isinstance(op.get("tutSegs"), list) else []
@@ -532,12 +564,21 @@ def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> 
         return rows
     if operation_type.startswith("coax"):
         return _coax_components(op, config)
+    if _braid_cut(op):
+        # Резка оплётки ветвей: оплётка в метрах — сумма отрезков (по позиции состава) на партию.
+        metres: dict[str, dict[str, Any]] = {}
+        for part in _tut_parts(op):
+            row = metres.setdefault(part["art"], {"name": part["name"], "m": Decimal(0)})
+            row["m"] += part["count"] * _decimal(part["len"]) / 1000
+        return [{"art": art, "name": row["name"], "norm": _format(row["m"] * quantity), "unit": "М."} for art, row in metres.items()]
     if operation_type == "cutTut" and _tut_parts(op):
         # Резка трубок нескольких позиций состава (маркировка «5», «I3»…): каждая — своей строкой, отрезков на партию.
         return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * quantity), "unit": "Шт."} for part in _tut_parts(op)]
     if operation_type == "cutTut":
         count = _decimal(op.get("tutCount")) * quantity
         return [{"art": str(op.get("tutArt") or ""), "name": str(op.get("tutName") or op.get("tutArt") or ""), "norm": _format(count), "unit": "Шт."}]
+    if operation_type == "insWrap" and op.get("wrapCut"):
+        return []
     if operation_type == "insWrap":
         meters = _decimal(op.get("wrapLen")) * quantity / 1000
         return [{"art": str(op.get("wrapArt") or ""), "name": str(op.get("wrapName") or op.get("wrapArt") or ""), "norm": _format(meters), "unit": "М."}]
@@ -775,7 +816,8 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
         ), Decimal(0)) or Decimal(1)
     counters = {
         # Лужение свободных концов (tinTail): `units` — сколько концов; без него — по проводам, как раньше.
-        "twist": twist_count,
+        # Свивка ветви или группы сростков (генератор, 16.10): `units` — её пары; без него — все пары формы.
+        "twist": _decimal(op.get("units")) if _decimal(op.get("units")) > 0 else twist_count,
         "tin": _decimal(op.get("units")) if _decimal(op.get("units")) > 0
         else sum((_number(item.get("qty"), Decimal(1)) for item in wires), Decimal(0)) or 1,
         "cutTut": _number(op.get("tutCount"), Decimal(1)), "insTut": _number(op.get("tutCount"), Decimal(1)),
@@ -1346,8 +1388,12 @@ def _terminal_warning(op: Mapping[str, Any], position: int, code: str) -> str | 
 
 
 def _typed_connector(op: Mapping[str, Any], fallback: object) -> str:
-    """The connector part of the ETK operation key: the sheet suffix, else the side, else `fallback`."""
-    return _suffix(op) or str(op.get("side") or fallback)
+    """The connector part of the ETK operation key: the sheet suffix, else the side, else `fallback`. An operation of a
+    «Сложная сборка» ПФ (generator, 16.10: put the tubes on a branch, twist it, splice a group) names it (`branch`:
+    «А1 «5»», «С1, С2») — four branch put-ons are told apart by it, not by their position."""
+    branch = str(op.get("branch") or "").strip()
+    suffix = " ".join(part for part in (_suffix(op), branch) if part)
+    return suffix or str(op.get("side") or fallback)
 
 
 def _typed_operation(

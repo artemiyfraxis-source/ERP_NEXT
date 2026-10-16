@@ -300,6 +300,30 @@ export function genCards(route: Route, ops: readonly RouteOp[]): { cards: GenCar
   return { cards, links, cardOf };
 }
 
+/** Карточка ПФ схемы, которую строит «Сложная сборка» (владелец 16.10): блок схемы как есть — уровень («2.1»), название,
+    операции, что в него входит (подписи входящих стрелок: «НВ4 0,5 красный ×1», «ТТК 8/2 ×1»). ПФ-комплект — полуфабрикат,
+    изделие — финал, остальное — сборка. */
+export type BlockCard = { id: string; kind: CardKind; title: string; level: string; ops: RouteOp[]; final: boolean; inputs: string[] };
+export type BlockLink = { id: string; from: string; to: string; qty: number | null };
+
+export function blockCards(route: Route, ops: readonly RouteOp[], title: (block: Route["blocks"][number]) => string,
+  levels: Map<string, string>): { cards: BlockCard[]; links: BlockLink[] } {
+  const byPosition = new Map(ops.map((op) => [op.position, op]));
+  const depth = (key: string) => Number((levels.get(key) || "0").split(".")[0]);
+  const cards = route.blocks.map((block): BlockCard => ({
+    id: block.key, kind: block.final ? "final" : block.kit ? "semiFinished" : "assembly", title: title(block), level: levels.get(block.key) || "",
+    ops: block.ops.map((position) => byPosition.get(position)).filter((op): op is RouteOp => !!op), final: block.final,
+    inputs: route.edges.filter((edge) => edge.to === block.key && edge.item?.trim()).flatMap((edge) => edge.item!.split(";").map((item) => item.trim()).filter(Boolean)),
+  })).sort((a, b) => depth(a.id) - depth(b.id));
+  const links = route.edges.map((edge) => ({ id: `${edge.from}>${edge.to}`, from: edge.from, to: edge.to, qty: edge.per_unit }));
+  return { cards, links };
+}
+
+/** Высота списка входов карточки ПФ, px: строка на вход (не больше ART_ROWS и строка «и ещё»). */
+export function inputsHeight(count: number): number {
+  return count ? Math.min(count, ART_ROWS) * 16 + (count > ART_ROWS ? 16 : 0) + 8 : 0;
+}
+
 /** Минуты карточки на одну штуку изделия: нормы её операций на партию / партию; ни у одной нормы нет — null. */
 export function opsMinutes(ops: readonly RouteOp[], quantity: number): number | null {
   const timed = ops.filter((op) => op.minutes != null);
