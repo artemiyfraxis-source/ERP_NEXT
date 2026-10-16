@@ -71,6 +71,21 @@ it("builds 713К.4 КБ1 as the ПФ graph: kits, branches X1–X4, splice group
   expect(labels(fullHarness())).toEqual(GRAPH_ORDER);
 });
 
+it("names a branch by its marking text when the connector's own label is just its «X» designation (713К.4 КБ1, 17.10)", () => {
+  const S0 = fullHarness();
+  // Как на КБ1: разъём подписан «X1», маркировка «5» привязана к «Разъём X1 (…)».
+  const rename = new Map(S0.endpoints.filter((ep) => ep.side === "A").map((ep, i) => [ep.label, `X${i + 1}`]));
+  const S = {
+    ...S0,
+    endpoints: S0.endpoints.map((ep) => (ep.side === "A" ? { ...ep, label: rename.get(ep.label)! } : ep)),
+    markRows: S0.markRows.map((row) => ({ ...row, target: row.target.replace(/^Разъём (\S+)/, (all, old) => `Разъём ${rename.get(old) ?? old}`) })),
+  };
+  const names = routeOf(S).blocks.map((b) => b.name);
+  expect(names).toContain("Ветвь X1 «5», сторона А");
+  expect(names).toContain("Ветвь X2 «I3», сторона А");
+  expect(names.some((name) => /«X\d»/.test(name ?? ""))).toBe(false);
+});
+
 it("the build config carries the graph as a generated route: every op in one block, kits marked, edges say what flows", () => {
   const S = fullHarness();
   const route = routeOf(S);
