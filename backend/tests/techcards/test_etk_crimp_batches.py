@@ -123,3 +123,17 @@ def test_the_card_is_accepted_with_unique_etk_keys():
     card = ProjectTechcard.create(project="713", item_index="К.4 КБ1", product_name="Жгут НВ4", source_calculation="",
                                   deadline=None, now=now)
     card.rebuild(document, now)
+
+
+def test_the_harness_is_cut_into_semi_finished_items_not_one_per_operation():
+    # Owner 16.10: «нам нужно понимать иерархию» — all the cuts are one ПФ (done at one time, their order does not
+    # matter), the tube cuts another; both feed the splices, then side А, then the finished harness.
+    document = build()
+    route = document["route"]
+    cuts = [op["position"] for op, cfg in zip(document["operations"], document["build_config"]["ops"])
+            if cfg["type"] in {"cutWire", "cutWireCrimp"}]
+    blocks = {block["key"]: block for block in route["blocks"]}
+    assert route["source"] == "generated"
+    assert blocks["wires"]["ops"] == cuts and len(cuts) == 5
+    assert len(route["blocks"]) < len(document["operations"])
+    assert {(edge["from"], edge["to"]) for edge in route["edges"]} >= {("wires", "crimped"), ("tubes", "crimped")}
