@@ -13,7 +13,7 @@ import { GaugeTable, HookupWireTable } from "./CableStructure";
 import { CoveringsTable } from "./Coverings";
 import { PageWindow } from "./PageWindow";
 import { TerminalCard, type TerminalRow } from "./TerminalCard";
-import { NO_SERIES, seriesCaption, sortBySeries, terminalGroups } from "./terminalSeries";
+import { NO_SERIES, makerOrder, seriesCaption, sortBySeries, terminalGroups } from "./terminalSeries";
 import { CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
@@ -476,11 +476,11 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
   const techGroup = techTab === "mat" ? (record: TechOperationRecord) => String(record.fields["Группа"] ?? "").trim() || NO_GROUP
     : terGroups ? (record: TechOperationRecord) => terGroups.get(record.id)?.name ?? NO_SERIES : undefined;
   const techGroupLabel = terGroups ? (name: string, rows: TechOperationRecord[]) => seriesCaption(name, rows as TerminalRow[]) : undefined;
-  const techRows = useMemo(() => techTab !== "mat" ? (terGroups ? sortBySeries(tech.records as TerminalRow[], terGroups) : tech.records) : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
+  const techRows = useMemo(() => techTab !== "mat" ? (terGroups ? sortBySeries(tech.records as TerminalRow[], terGroups, makerOrder(terSeries)) : tech.records) : (matTab && coverIds ? materialRows(tech.records, coverIds, matTab) : []).sort((a, b) => {
     const ga = String(a.fields["Группа"] ?? "").trim();
     const gb = String(b.fields["Группа"] ?? "").trim();
     return Number(!ga) - Number(!gb) || natural(ga, gb) || natural(String(a.fields["Наименование"] ?? a.display_text), String(b.fields["Наименование"] ?? b.display_text));
-  }), [tech.records, techTab, matTab, coverIds, terGroups]);
+  }), [tech.records, techTab, matTab, coverIds, terGroups, terSeries]);
   const techPresets: DataPreset<TechOperationRecord>[] = presetFields
     .filter((item): item is [string, string] => Boolean(item[1]))
     .map(([label, field]) => ({ label, test: emptyIn(field) }))
