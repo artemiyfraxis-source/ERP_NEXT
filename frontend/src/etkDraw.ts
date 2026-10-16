@@ -182,13 +182,15 @@ export function etkDrawCoax(operation: Row): string {
 
 /** Ступени по тому, какие из L1–L3 заданы (пустая L — «такой ступени нет», не 0 мм): L1+L2+L3 — жила, диэлектрик, оплётка;
     L1+L2 (зажимной/F) — жила и оплётка, отогнутая на оболочку, до L2; L1+L3 (твист-он BNC, top-hat, semi-rigid) — жила и
-    диэлектрик до L3, оплётка заподлицо; только L1 — одна жила. */
+    диэлектрик до L3, оплётка заподлицо; только L1 — одна жила; только L3 (7/8″ по RFS) — кабель режется заподлицо, снята
+    одна оболочка. */
 function coaxSketch(c: Row, caption: string): string {
   const L = [num(c.l1), num(c.l2), num(c.l3)];
   const has = L.map((v) => v > 0);
   const present = [0, 1, 2].filter((i) => has[i]);
   const ordered = present.every((i, n) => n === 0 || L[i] > L[present[n - 1]]);
-  if (!has[0] || !ordered) {
+  const flush = !has[0] && !has[1] && has[2];
+  if ((!has[0] && !flush) || !ordered) {
     return `<div class="tr-none">Размеров разделки нет в базе коакса для ${esc(c.connector || c.cable)}.</div>`;
   }
   const end = L[present[present.length - 1]];
@@ -199,14 +201,17 @@ function coaxSketch(c: Row, caption: string): string {
     `<rect data-band="${name}" x="${from}" y="${cy - hh / 2}" width="${to - from}" height="${hh}" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
   let body = `<rect data-band="jacket" x="${xe}" y="${cy - 18}" width="${W - 30 - xe}" height="36" rx="4" fill="#222"/>` +
     `<text x="${(xe + W - 30) / 2}" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(c.cable || "кабель")}</text>`;
-  if (has[1] && has[2]) {
+  if (flush) {
+    body += band("braid", x0, xe, 28, "url(#etkBraid)", "#8d9297", "1") +
+      `<text x="${x0}" y="${cy + 30}" font-size="12" fill="#5f7470">Жила, диэлектрик и внешний проводник — заподлицо с торцом</text>`;
+  } else if (has[1] && has[2]) {
     body += band("braid", X(L[1]), xe, 28, "url(#etkBraid)", "#8d9297", "1") + band("dielectric", X(L[0]), X(L[1]), 22, "#fbfbf8", "#17272b");
   } else if (has[1]) {
     body += band("braid", X(L[0]), xe, 28, "url(#etkBraid)", "#8d9297", "1");
   } else if (has[2]) {
     body += band("dielectric", X(L[0]), xe, 22, "#fbfbf8", "#17272b");
   }
-  body += band("conductor", x0, X(L[0]), 8, "#e08a2c", "#17272b");
+  if (!flush) body += band("conductor", x0, X(L[0]), 8, "#e08a2c", "#17272b");
   present.forEach((i, n) => {
     const y = cy - 30 - n * 24, x = X(L[i]), top = i === 0 ? 8 : i === 1 && !has[2] ? 28 : i === 1 ? 22 : has[1] ? 28 : 22;
     body += `<line x1="${x}" y1="${y - 4}" x2="${x}" y2="${cy - (i === 2 || present.length === 1 ? 18 : top / 2)}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
