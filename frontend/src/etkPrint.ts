@@ -6,7 +6,7 @@
 import type { ProjectTechcard, TechcardRevision } from "./api";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
 import {
-  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams,
+  ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
 import { ETK_TOOLING_SECTIONS, etkOperationName, solderMode, toolingSections } from "./etkOperation";
@@ -57,11 +57,16 @@ function paramsTable(operation: Row): PrintBlock[] {
   const params = etkParams(operation);
   const left = params.sides.find((side) => side.end === "A"), right = params.sides.find((side) => side.end === "B");
   const columns = [left && { title: "СТОРОНА А", items: left.items }, { title: "ОБЩИЕ", items: params.common },
-    right && { title: "СТОРОНА В", items: right.items }].filter((column) => column && column.items.length) as Array<{ title: string; items: Array<[string, string]> }>;
+    right && { title: "СТОРОНА В", items: right.items }].filter((column) => column && column.items.length) as Array<{ title: string; items: EtkParam[] }>;
   if (!columns.length) return [];
   const height = Math.max(...columns.map((column) => column.items.length));
   return [{ table: { columns: columns.map((column) => column.title), rows: Array.from({ length: height }, (_, row) =>
-    columns.map((column) => column.items[row] ? `${column.items[row][0]}: ${column.items[row][1]}` : "")) } }];
+    columns.map((column) => {
+      const item = column.items[row];
+      if (!item) return "";
+      // По сечениям — строкой на сечение под подписью.
+      return item[2] ? [`${item[0]}:`, ...item[2].map(([sub, value]) => `${sub} — ${value}`)].join("\n") : `${item[0]}: ${item[1]}`;
+    })) } }];
 }
 
 /** Режим пайки строками таблицы оснастки: жало и температура обязательны (значение ERP по умолчанию помечено). */

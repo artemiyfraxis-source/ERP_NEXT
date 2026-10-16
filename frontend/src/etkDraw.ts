@@ -715,16 +715,20 @@ export function etkContactSpecs(fields: Row, art: unknown): string[] {
 }
 
 const DASH = "—";
-export type EtkParam = [label: string, value: string];
+/** Параметр шапки: подпись, значение одной строкой (печать) и — когда у сечений партии оно разное — строки «сечение →
+ *  значение» (владелец 16.10: «0,12 мм²: …; 0,5 мм²: …» в одну строку плохо читается). */
+export type EtkParam = [label: string, value: string, rows?: Array<[sub: string, value: string]>];
 export type EtkSideParams = { end: "A" | "B"; title: string; items: EtkParam[] };
 /** Параметры операции в шапке ЭТК (владелец 14.10): «Сторона А» | «Общие» | «Сторона В». Сторона В — как везде в ERP
  *  (В1, «Сторона В»). Колонка стороны есть, только если операция что-то делает с этим концом. */
 export type EtkParams = { sides: EtkSideParams[]; common: EtkParam[] };
 
-/** Значение параметра по записям обжима одного конца: одинаковое у всех сечений — одно, разное — «сечение: значение». */
-function sideValue(entries: EtkCrimpEnd[], pick: (entry: EtkCrimpEnd) => string): string {
+/** Параметр по записям обжима одного конца: одинаковое у всех сечений — одно значение, разное — строка на сечение. */
+function sideParam(label: string, entries: EtkCrimpEnd[], pick: (entry: EtkCrimpEnd) => string): EtkParam {
   const values = [...new Set(entries.map(pick))];
-  return values.length > 1 ? entries.map((entry) => `${entry.section || entry.wire}: ${pick(entry)}`).join("; ") : values[0];
+  if (values.length < 2) return [label, values[0]];
+  const rows = entries.map((entry): [string, string] => [entry.section || entry.wire || "", pick(entry)]);
+  return [label, rows.map(([sub, value]) => `${sub}: ${value}`).join("; "), rows];
 }
 
 function firstText(source: Row[], keys: string[]): string {
@@ -738,9 +742,9 @@ function sideItems(operation: Row, end: "A" | "B"): EtkParam[] {
   const out: EtkParam[] = [];
   if (entries.length) {
     out.push(["Терминал", [...new Set(entries.map((entry) => entry.art).filter(Boolean))].join(", ") || ETK_NOT_SET],
-      ["Аппликатор", sideValue(entries, (entry) => entry.applicator?.trim() || ETK_NOT_SET)],
-      ["Высота обжима", sideValue(entries, (entry) => withUnit(entry.crimpHeight, "мм"))],
-      ["Отрыв", sideValue(entries, (entry) => pullText(entry.pullForce))]);
+      sideParam("Аппликатор", entries, (entry) => entry.applicator?.trim() || ETK_NOT_SET),
+      sideParam("Высота обжима", entries, (entry) => withUnit(entry.crimpHeight, "мм")),
+      sideParam("Отрыв", entries, (entry) => pullText(entry.pullForce)));
   }
   // Зачистка: резка считает концы по коду операции (лужёный конец зачищен всегда); прочие — по полю зачистки.
   const entryStrip = entries.map((entry) => entry.strip?.trim()).find(Boolean) || "";
@@ -775,7 +779,10 @@ export function etkParams(operation: Row): EtkParams {
     if ("crimpHeight" in f) common.push(["Высота обжима", f.crimpHeight ? `${crimpText(f.crimpHeight)} мм` : ETK_NOT_SET]);
     if (f.pullForce) common.push(["Отрыв", `${crimpText(f.pullForce)} Н`]);
   }
-  if (f.lengthKd) common.push(["Длина по КД", str(f.lengthKd)]);
+  // Партия резки — провода разной длины: все длины, а не первая.
+  const lengths = [...new Set(list(f.wires).map((wire) => Number(wire.length)).filter((n) => n > 0))].sort((a, b) => a - b);
+  if (lengths.length > 1) common.push(["Длина по КД", `${lengths.join(", ")} мм`]);
+  else if (f.lengthKd) common.push(["Длина по КД", str(f.lengthKd)]);
   if (f.cutTolerance) common.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
   // Диаметры провода приходят из БД.ПРОВ при сборке ЭТК (techcard_build.enrich_wire_diameters); нет в базе — «—», не выдумываем.
   const wires = list(f.wires), isWire = wires.length > 0 || /^cutWire/.test(str(operation.type)) || etkCrimpEnds(f).length > 0;
@@ -783,8 +790,25 @@ export function etkParams(operation: Row): EtkParams {
     const outer = firstText(wires, ["outerDiameter", "outerDiameterMm", "outer"]) || str(f.outerDiameter).trim();
     const core = firstText(wires, ["coreDiameter", "conductorDiameter", "conductorDiameterMm"]) || str(f.coreDiameter).trim();
     const section = etkCrimpEnds(f).map((entry) => entry.section?.trim()).find(Boolean) || firstText(wires, ["section"]);
-    common.push(["Внешний диаметр", outer ? `${crimpText(outer)} мм` : DASH],
-      core || !section ? ["Диаметр жилы", core ? `${crimpText(core)} мм` : DASH] : ["Сечение жилы", section]);
+    // Провода партии разного сечения: диаметры — строкой на марку провода (сечение — из нормы обжима той же марки).
+    const marks = new Map<string, Row>();
+    wires.forEach((wire) => {
+      const art = str(wire.art || wire.name).trim();
+      const entry = etkCrimpEnds(f).find((item) => item.wire && art.startsWith(item.wire));
+      const sub = entry?.section || entry?.wire || art;
+      if (sub && !marks.has(sub)) marks.set(sub, wire);
+    });
+    const perMark = (keys: string[]) => [...marks].map(([sub, wire]): [string, string] => {
+      const value = firstText([wire], keys);
+      return [sub, value ? `${crimpText(value)} мм` : DASH];
+    });
+    const differs = (rows: Array<[string, string]>) => new Set(rows.map(([, value]) => value)).size > 1;
+    const outerRows = perMark(["outerDiameter", "outerDiameterMm", "outer"]);
+    const coreRows = perMark(["coreDiameter", "conductorDiameter", "conductorDiameterMm"]);
+    const joined = (rows: Array<[string, string]>) => rows.map(([sub, value]) => `${sub}: ${value}`).join("; ");
+    common.push(differs(outerRows) ? ["Внешний диаметр", joined(outerRows), outerRows] : ["Внешний диаметр", outer ? `${crimpText(outer)} мм` : DASH],
+      differs(coreRows) ? ["Диаметр жилы", joined(coreRows), coreRows]
+        : core || !section ? ["Диаметр жилы", core ? `${crimpText(core)} мм` : DASH] : ["Сечение жилы", section]);
   }
   // Ручная сборка: сколько раз операция на одно изделие, параметры и примечание технолога.
   if (f.perItem) common.push(["На изделие", `${str(f.perItem)} шт.`]);
