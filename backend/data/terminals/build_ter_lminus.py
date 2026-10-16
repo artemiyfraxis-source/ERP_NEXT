@@ -3,8 +3,10 @@
 
     cd backend && python data/terminals/build_ter_lminus.py
 
-The generator cuts a wire «между разъёмами» as length + L+ and «от краёв разъёмов» as length − L−; the second length is
-the first plus one housing (mating face to rear face) per end, so both give one cut when L− = housing length − L+.
+L+ is the depth of the conductor end inside the housing from its wire-side (rear) face, L− runs from the conductor end
+to the mating face (owner 16.10.2026; the contact length is not L+). The generator cuts a wire «между разъёмами» as
+length + L+ and «от краёв разъёмов» as length − L−; the second length is the first plus one housing (mating face to rear
+face) per end, so both give one cut when L− = housing length − L+.
 The housing lengths are read from the makers' drawings (ter-lminus-sources.json names the document per series); L+ is
 the terminal's as the mirror holds it. Every row writes only an empty L− and its note («Источник L-»), and carries
 `old` — the article, L+ and the empty L− as read here — so on the base a row whose terminal is missing, whose L+ was
@@ -32,7 +34,6 @@ SOURCES = HERE / "ter-lminus-sources.json"
 BODY = HERE / "ter-lminus.json"
 ESTIMATES_BODY = HERE / "ter-lengths-estimates.json"
 DF1B_BODY = HERE / "hirose-df1b.json"  # contacts loaded from the Hirose catalogue: in the base once that body is applied
-SHARE = Decimal("0.83")  # contact length / housing length: JST PH 5.7/6.85, ZH 4.0/4.8, KLS 6.45/7.95, Hirose DF1B 9.5/11.5
 NOTE_FIELD = TER_CARD_COLUMNS[0]  # «Источник L-»: the БД.ТЕР column the note goes to
 NOTE_PREFIX = "оценка по чертежу корпуса"
 
@@ -95,30 +96,29 @@ def catalogue_terminals() -> dict[str, dict[str, str]]:
 
 
 def build_estimates(sources: dict[str, Any], terminals: dict[str, dict[str, str]]) -> list[dict[str, dict[str, str]]]:
-    """Rows of the estimates body: L+ and L− of terminals whose L+ is missing or longer than the housing, or whose L− is
-    wrong. L− = housing length − L+; L+ is the contact length of the maker's drawing (`basis` «contact»), 0,83 of the
-    housing where no contact drawing was found («proportion», an estimate), or the base's own («keep»). Every row says
-    so in «Источник L-» and carries `old` — what the base holds now — so a changed cell is refused, never overwritten."""
+    """Rows of the estimates body: L+ and L− of terminals whose L+ is missing, or whose L− is wrong. L− = housing
+    length − L+; L+ is the depth the maker's drawing shows the wire going into the housing (`basis` «drawing»,
+    `wire_depth_mm`) or the base's own («keep»). The contact length is not L+, so no other basis is accepted. Every row
+    says so in «Источник L-» and carries `old` — what the base holds now — so a changed cell is refused, never
+    overwritten."""
     rows: list[dict[str, dict[str, str]]] = []
     seen: set[str] = set()
     for group in sources["estimates"]:
         length, l_plus = _mm(group["length_mm"]), _mm(group["l_plus"])
         basis = group["basis"]
-        if basis == "contact" and _mm(group["contact_mm"]) != l_plus:
-            raise ValueError(f"{group['housing']}: L+ не равен длине контакта по чертежу")
-        if basis == "proportion" and abs(l_plus - length * SHARE) > Decimal("0.06"):
-            raise ValueError(f"{group['housing']}: L+ {l_plus} не 0,83 от корпуса {length}")
+        if basis not in ("drawing", "keep"):
+            raise ValueError(f"{group['housing']}: L+ берётся только с чертежа (drawing) или из базы (keep), не «{basis}»")
+        if basis == "drawing" and _mm(group["wire_depth_mm"]) != l_plus:
+            raise ValueError(f"{group['housing']}: L+ не равен глубине провода в корпусе по чертежу")
         l_minus = length - l_plus
         if not 0 < l_plus < length or l_minus <= 0:
             raise ValueError(f"{group['housing']}: L+ {l_plus} вне корпуса {length}")
-        if basis == "contact":
-            how = f"L+ = длина контакта {shown(l_plus)} мм по чертежу"
-        elif basis == "proportion":
-            how = "L+ = 0,83 от корпуса (чертёж контакта не найден; доля по JST PH, ZH, KLS, Hirose DF1B)"
+        if basis == "drawing":
+            note = (f"по чертежу: L+ = глубина конца жилы от торца корпуса со стороны провода {shown(l_plus)} мм; "
+                    f"L− = {group['housing']} {shown(length)} мм − L+ {shown(l_plus)} мм; {group['doc']}, {group['url']}")
         else:
-            how = f"L+ {shown(l_plus)} мм оставлен как в базе"
-        note = (f"примерно: {how}; L− = {group['housing']} {shown(length)} мм − L+ {shown(l_plus)} мм; "
-                f"{group['doc']}, {group['url']}")
+            note = (f"примерно: L+ {shown(l_plus)} мм оставлен как в базе; L− = {group['housing']} {shown(length)} мм − "
+                    f"L+ {shown(l_plus)} мм; {group['doc']}, {group['url']}")
         if group.get("remark"):
             note += f"; {group['remark']}"
         for article in group["terminals"]:
@@ -150,7 +150,7 @@ def main() -> int:
     sources = json.loads(SOURCES.read_text(encoding="utf-8"))
     estimates = build_estimates(sources, catalogue_terminals())
     write_body(ESTIMATES_BODY, estimates)
-    print(f"{ESTIMATES_BODY.name}: {len(estimates)} строк (L+ и L- примерно, см. «Источник L-»)")
+    print(f"{ESTIMATES_BODY.name}: {len(estimates)} строк (L+ и L-, см. «Источник L-»)")
     rows = build(sources, mirror_terminals())
     with BODY.open("w", encoding="utf-8", newline="\n") as stream:
         json.dump({"rows": rows}, stream, ensure_ascii=False, indent=1)

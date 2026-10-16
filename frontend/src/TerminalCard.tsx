@@ -1,4 +1,5 @@
 import { PageWindow } from "./PageWindow";
+import { TER_L_MINUS_HINT, TER_L_PLUS_HINT } from "./referenceLabels";
 import type { TechOperationRecord } from "./api";
 
 /** «База данных → Терминалы»: карточка контакта по протоколу v5.2 (владелец 12–13.10.2026) — справа от списка, как
@@ -82,11 +83,11 @@ function Datasheet({ url }: { url: string }) {
   </>;
 }
 
-type Line = [title: string, value: string, options?: { wide?: boolean; link?: boolean }];
+type Line = [title: string, value: string, options?: { wide?: boolean; link?: boolean; hint?: string }];
 
 function Fields({ lines }: { lines: Line[] }) {
   return <dl className="op-fields">{lines.map(([title, value, options]) => <div key={title}>
-    <dt>{title}</dt>
+    <dt title={options?.hint}>{title}</dt>
     <dd className={options?.link ? undefined : "pre-line tnum"}>{value
       ? options?.link && /^https?:\/\//.test(value) ? <Datasheet url={value} /> : value
       : <span className="muted" title="Нет в спецификации производителя">—</span>}</dd>
@@ -114,7 +115,8 @@ export function terminalCardLines(card: TerminalCardData): { contact: Line[]; cr
       ["Диаметр изоляции, мм", rangeText(card.ins_od_from, card.ins_od_to)],
       ["Усилие обрыва, Н", pullText(card)],
       ["Длина зачистки, мм", trim(card.strip)],
-      ["L+ / L−, мм", lengths],
+      ["L+ / L−, мм", lengths, { hint: `${TER_L_PLUS_HINT}
+${TER_L_MINUS_HINT}` }],
       ["Аппликатор", trim(card.applicator)],
     ],
   };

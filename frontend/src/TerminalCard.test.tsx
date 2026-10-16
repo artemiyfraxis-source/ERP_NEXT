@@ -74,6 +74,9 @@ it("reads the card in Russian: gender as штырь / гнездо, wire by AWG 
   expect(shown["Диаметр изоляции, мм"]).toBe("1,3–3,1");
   expect(shown["Высота обжима изоляции, мм"]).toBe(""); // null-spec: nothing averaged or guessed
   expect(shown["L+ / L−, мм"]).toBe("L+ 0,5");
+  const hint = crimp.find(([title]) => title === "L+ / L−, мм")?.[2]?.hint ?? "";
+  expect(hint).toContain("глубина конца жилы от торца корпуса со стороны провода");
+  expect(hint).toContain("от конца жилы до стыковочного торца");
   expect(terminalCardLines({ ...EMPTY, gender: "Male" }).contact[0][1]).toBe("Штырь (папа)");
   expect(terminalCardLines({ ...EMPTY, gender: "Обжимной контакт" }).contact[0][1]).toBe("");
 });

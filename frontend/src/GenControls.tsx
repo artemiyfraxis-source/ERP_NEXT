@@ -39,8 +39,8 @@ export function UnitInput({ unit, ...props }: InputHTMLAttributes<HTMLInputEleme
 }
 
 /** Подпись над полем. */
-export function Field({ label, hint, className, children }: { label: ReactNode; hint?: ReactNode; className?: string; children: ReactNode }) {
-  return <label className={className ? `gfield ${className}` : "gfield"}><span className="gfield-label">{label}{hint ? <small>{hint}</small> : null}</span>{children}</label>;
+export function Field({ label, hint, title, className, children }: { label: ReactNode; hint?: ReactNode; title?: string; className?: string; children: ReactNode }) {
+  return <label className={className ? `gfield ${className}` : "gfield"} title={title}><span className="gfield-label">{label}{hint ? <small>{hint}</small> : null}</span>{children}</label>;
 }
 
 export type CardOption = { id: string; label: string; code: string };
