@@ -344,6 +344,7 @@ td small { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; lin
 .issue-writeoff .table-wrap { margin-top: 8px; }
 @media (pointer: coarse) { .issue-chooser td.check input { width: 22px; height: 22px; } }
 .lot-picker { display: grid; gap: 8px; }
+.lot-picker .lot-held td { color: var(--muted-foreground); }
 .lot-picker .status { margin-left: 6px; }
 .danger-link { color: #a33830; }
 .return-form { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }

@@ -12,9 +12,12 @@ import { matchText } from "./stockCandidates";
 export type BulkBound = { request_id: string; number: string; kb: string; line_id: string; lot_id: string; grn: string; quantity: string };
 export type BulkResult = { bound: BulkBound[]; short: string | number; message?: string };
 
+/** A lot other projects hold in full: shown greyed, not to take — to see where the rest of the stock lies. */
+export type ReservedLot = FulfillmentLot & { reserved: string; held_by: string };
+
 export const bulkApi = {
   /** available = free for this project + its own reserve, so a re-pick sees what the project already holds. */
-  lots: (project: string) => api<{ lots: FulfillmentLot[] }>(`/api/issues/lots?project=${encodeURIComponent(project)}`),
+  lots: (project: string) => api<{ lots: FulfillmentLot[]; reserved_lots?: ReservedLot[] }>(`/api/issues/lots?project=${encodeURIComponent(project)}`),
   bind: (project: string, body: { article: string; name: string; lot_ids: string[]; off_book: boolean; off_book_quantity?: string | null; versions: Record<string, number> }) =>
     api<BulkResult>(`/api/issues/projects/${encodeURIComponent(project)}/bind-lots`, { method: "POST", body: JSON.stringify(body) }),
   /** quantity — «сколько есть» below the line's need (the server splits the line); null — the whole need. */
@@ -128,6 +131,7 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
   onClose: () => void;
 }) {
   const [lots, setLots] = useState<FulfillmentLot[] | null>(null);
+  const [reservedLots, setReservedLots] = useState<ReservedLot[]>([]);
   const [error, setError] = useState("");
   const [query, setQuery] = useState(searchSeed(position.name, position.article));
   const [chosen, setChosen] = useState<string[]>([]);
@@ -136,7 +140,7 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
   useEffect(() => {
     let alive = true;
     setError("");
-    bulkApi.lots(project).then((result) => { if (alive) setLots(result.lots); })
+    bulkApi.lots(project).then((result) => { if (alive) { setLots(result.lots); setReservedLots(result.reserved_lots ?? []); } })
       .catch((reason) => { if (alive) setError(failureText(reason, "Не удалось загрузить партии")); });
     return () => { alive = false; };
   }, [project, versionKey, attempt]);
@@ -145,6 +149,8 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
   const found = (lots ?? [])
     .filter((lot) => chosen.includes(lot.id) || offered.has(lot.id) || matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query))
     .sort((a, b) => (offered.get(a.id)?.index ?? 1e9) - (offered.get(b.id)?.index ?? 1e9));
+  // Занятые чужими проектами — только по запросу, после доступных (владелец 16.10: «на складе ищет другие позиции, а тут нет»).
+  const held = query.trim() ? reservedLots.filter((lot) => matchesWords([lot.article, lot.name, lot.grn, lot.package, lot.storage_location, lot.warehouse, lot.unit], query)) : [];
   const selected = useMemo(() => (lots ?? []).filter((lot) => chosen.includes(lot.id)), [lots, chosen]);
   const preview = useMemo(() => previewSplit(position, selected), [position, selected]);
   const total = round(position.kbs.reduce((sum, kb) => sum + kb.remaining, 0));
@@ -157,13 +163,19 @@ export function BulkLotsPanel({ project, position, versionKey, busy, run, onClos
     {!error && lots === null && <div className="empty">Загрузка…</div>}
     {lots !== null && <>
       <input className="search" type="search" aria-label={`Поиск партий для ${position.name}`} placeholder="поиск: вилка usb · 3B4 · ГРН-2026 …" value={query} onChange={(event) => setQuery(event.target.value)} />
-      {!found.length && <div className="empty">{lots.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${lots.length} строк).` : "На складе нет ни одной строки с остатком."}</div>}
-      {found.length > 0 && <table className="grid wide"><thead><tr><th /><th>Наименование</th><th>ГРН</th><th className="num">Доступно</th></tr></thead><tbody>
+      {!found.length && !held.length && <div className="empty">{lots.length ? `По запросу ничего нет. Сотри слова — покажется весь склад (${lots.length} строк).` : "На складе нет ни одной строки с остатком."}</div>}
+      {(found.length > 0 || held.length > 0) && <table className="grid wide"><thead><tr><th /><th>Наименование</th><th>ГРН</th><th className="num">Доступно</th></tr></thead><tbody>
         {found.slice(0, 200).map((lot) => <tr key={lot.id}>
           <td><input type="checkbox" aria-label={`ГРН ${lot.grn}`} checked={chosen.includes(lot.id)} onChange={() => toggle(lot.id)} /></td>
           <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small>{offered.has(lot.id) && <small className="cand-tag">возможно есть · {matchText(offered.get(lot.id)!.candidate)}</small>}</td>
           <td>{lot.grn}<small>{lot.warehouse}{lot.package ? ` · пакет ${lot.package}` : ""}</small></td>
           <td className="num">{lot.available} {lot.unit}</td>
+        </tr>)}
+        {held.slice(0, 50).map((lot) => <tr key={lot.id} className="lot-held">
+          <td><input type="checkbox" aria-label={`ГРН ${lot.grn} в резерве`} disabled /></td>
+          <td className="text"><strong>{lot.article || "—"}</strong> <span>{lot.name}</span><small>{lot.storage_location || "без места"}</small><small className="cand-tag">в резерве: {lot.held_by || "комплектация"}</small></td>
+          <td>{lot.grn}<small>{lot.warehouse}{lot.package ? ` · пакет ${lot.package}` : ""}</small></td>
+          <td className="num">0 {lot.unit}<small>резерв {lot.reserved}</small></td>
         </tr>)}
       </tbody></table>}
       {found.length > 200 && <p className="page-sub">Показаны первые 200 из {found.length} — уточни поиск.</p>}

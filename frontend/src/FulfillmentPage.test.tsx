@@ -1231,3 +1231,22 @@ it("draws «Отменить заявку» as a danger button and asks before c
   fireEvent.click(cancel);
   expect(confirm).toHaveBeenCalledTimes(1);
 });
+
+it("shows lots other projects hold in full greyed with who holds them, not to pick", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/issues") return json({ requests: [kb1, kb2], next_cursor: null });
+    if (path === "/api/issues/lots") return json({ lots: [] });
+    if (path.startsWith("/api/issues/lots?project=")) return json({ lots: [projectLots[1]], reserved_lots: [
+      { id: "lot-9", warehouse: "ЦАР", grn: "FRX.26.0000009", package: "", article: "CON-001", name: "Разъём", unit: "шт",
+        storage_location: "1F9", available: "0", reserved: "200", held_by: "591К.4 КБ2" },
+    ] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  await openWholeOrder();
+  fireEvent.click(await screen.findByRole("button", { name: "ГРН на все КБ" }));
+  expect(await screen.findByRole("checkbox", { name: "ГРН FRX.26.0000001" })).toBeEnabled();
+  expect(screen.getByRole("checkbox", { name: "ГРН FRX.26.0000009 в резерве" })).toBeDisabled();
+  expect(screen.getByText("в резерве: 591К.4 КБ2")).toBeInTheDocument();
+});
