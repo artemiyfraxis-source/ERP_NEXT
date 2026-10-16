@@ -146,10 +146,12 @@ FAMILIES: tuple[dict[str, Any], ...] = (
      "src": "Molex 436450000-SD (SDA-43645)", "note": "по чертежу Molex 436450000-SD: со стыковки защёлкой вверх CIRCUIT #1 слева; со стороны проводов защёлкой вверх — контакт 1 справа"},
     {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "pattern": r"^22-?55-?2(\d{2})1$", "pitch": 2.54, "rows": 2, "order": "col", "start": "TR", "latch": "friction", "color": BLACK, "conf": "low"},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "pattern": r"^1740(?:47|45|46|44)-\d$", "fixed": 20, "pitch": 2.5, "rows": 2, "order": "col", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
-    # DS1071 — Connfly C-DS1071-XXXXX-B (connfly.com/static/upload/file/pdf/DS1071.pdf): the female housing is drawn
-    # symmetric with no circuit-1 mark (Dupont has no maker drawing of its own), so the numbering stays unchecked.
+    # DS1071 — Connfly C-DS1071-XXXXX-B rev. B (connfly.com/static/upload/file/pdf/DS1071.pdf, read 16.10.2026): pitch
+    # 2.54; the female housing is drawn symmetric — no key, no circuit-1 mark — and the mating headers C-DS1021 / C-DS1022
+    # (through-hole) have no mark either (only the SMT sheet 5 of DS1022 marks «No.1» on the header). The housing goes on
+    # either way round, so contact 1 is set by the board's marking, not by the housing: the numbering stays unchecked.
     {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "pattern": r"^I-DS1071-SC[BW]0?(\d)X0?(\d{1,2})", "grid": True, "pitch": 2.54, "order": "col", "start": "TR", "latch": "none", "color": BLACK, "conf": "low",
-     "note": "на чертеже Connfly DS1071 корпус без метки контакта 1 — контакт 1 по ответной вилке"},
+     "note": "на чертеже Connfly DS1071 корпус симметричный, без ключа и метки контакта 1, у вилок DS1021/DS1022 метки нет — контакт 1 по маркировке платы"},
     # DS1069 — Connfly C-DS1069-XXXXX-E p. 2 «Female Housing» (connfly.com/static/upload/file//DS1069.pdf): front view =
     # face with the lock, wire end up; the bottom (mating) view puts «Circuit No.1 Mark» at the right end -> from the
     # wire side, lock up, contact 1 on the LEFT, exactly as JST eXH. Same sizes as XH: B = N·2.5 + 2.3, 4.1 thick

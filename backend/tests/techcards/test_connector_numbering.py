@@ -227,6 +227,7 @@ def test_kk396_and_sl_terminals_reach_their_series():
     # Connfly DS1071 (Dupont): rows × contacts per row from the part number; no circuit-1 mark on the drawing.
     ("I-DS1071-SCB01X3", "connfly-ds1071", [[3, 2, 1]], "none"),
     ("I-DS1071-SCB02X3", "connfly-ds1071", [[5, 3, 1], [6, 4, 2]], "none"),
+    ("I-DS1071-01-SCB02X3", "connfly-ds1071-01", [[5, 3, 1], [6, 4, 2]], "none"),
 ])
 def test_the_owners_harness_housings_have_a_view(article, family, grid, latch):
     layout = housing_of(article)
@@ -239,7 +240,28 @@ def test_sm_and_ds1071_series_name_their_crimp_contacts():
     assert [c["article"] for c in sm["contacts"]] == ["SYM-001T-P0.6", "SHF-001T-0.8BS"]
     assert "SMR" in sm["contacts"][0]["wire"] and "SMP" in sm["contacts"][1]["wire"]
     assert {h["article"] for v in sm["variants"] for h in v["housings"]} >= {"SMR-02V-B", "SMR-04V-B", "SMP-02V-BC"}
-    assert [c["article"] for c in series["connfly-ds1071"]["contacts"]] == ["T-DS1071-SC600"]
+    assert [c["article"] for c in series["connfly-ds1071"]["contacts"]] == ["T-DS1071-SC600", "T-DS1071-SC800"]
+    assert all("AWG 28–22, 0,09–0,3 мм²" in c["wire"] for c in series["connfly-ds1071"]["contacts"])
+
+
+def test_ds1071_offers_only_its_2_54_contacts_and_the_2_0_contact_goes_to_ds1071_01():
+    # Owner, 16.10.2026: the DS1071 card offered the 2.0 mm contact T-DS1071-01-SC600 («BLD2, BLS2»). Connfly C-DS1071-B
+    # names T-DS1071-SCX00 (AWG 28–22); the 2.0 mm contact is drawn on C-DS1071-01 with the I-DS1071-01 housings.
+    records = [
+        {"terManufacturer": "Connfly", "terComponent": "BLS, BLD", "terSeries": "I-DS1071-SCB01, I-DS1071-SCB02",
+         "terType": "Female", "terArticle": "T-DS1071-SC600", "awgFrom": "28", "awgTo": "22", "mm2From": "0,09", "mm2To": "0,3"},
+        {"terManufacturer": "Connfly", "terComponent": "BLD2, BLS2", "terSeries": "I-DS1071-01-SCB01, I-DS1071-01-SCB02",
+         "terType": "Female", "terArticle": "T-DS1071-01-SC600", "awgFrom": "30", "awgTo": "26", "mm2From": "0,05", "mm2To": "0,12"},
+    ]
+    series = {item["id"]: item for item in connector_series(records)}
+    ds1071, ds1071_01 = series["connfly-ds1071"], series["connfly-ds1071-01"]
+    assert [t["article"] for t in ds1071["terminals"]] == ["T-DS1071-SC600"]
+    assert ds1071["wire"] == {"awg_thin": 28.0, "awg_thick": 22.0, "mm2_min": 0.09, "mm2_max": 0.3}
+    assert ds1071["pitch"] == 2.54 and not ds1071["checked"]
+    assert [t["article"] for t in ds1071_01["terminals"]] == ["T-DS1071-01-SC600"]
+    assert ds1071_01["pitch"] == 2.0 and ds1071_01["counts"][0] == 1 and ds1071_01["counts"][-1] == 80
+    assert housing_of("I-DS1071-01-SCB01X40")["family"] == "connfly-ds1071-01"
+    assert housing_of("I-DS1071-SCB01X4")["family"] == "connfly-ds1071"
 
 
 def test_series_named_in_terminals_have_housing_tables():
