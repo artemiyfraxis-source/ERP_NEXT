@@ -176,17 +176,16 @@ describe("карточка «Обжатые провода»", () => {
     expect(routeProblem(route, ops)).toBeNull();
     const { cards, links } = blockCards(route, ops, (block) => blockTitle(block, ops, "Жгут НВ4"), routeLevels(route));
     expect(cards.map((card) => `${card.level} ${card.title} [${card.kind}]`)).toEqual([
-      "1.1 Резка с обжимом А (SYM-001T-P0.6) и зачисткой В — 4 кабеля [semiFinished]",
-      "1.2 Резка с обжимом В (T-DS1071-SC600) и зачисткой А — 3 кабеля [semiFinished]",
-      "1.3 Резка с зачисткой двух концов и лужением — 4 кабеля [semiFinished]",
-      "1.4 Резка с обжимом А (SHF-001T-0.8BS) и зачисткой В — 2 кабеля [semiFinished]",
-      "1.5 Резка с обжимом А и В (SYM-001T-P0.6 / T-DS1071-SC600) — 3 кабеля [semiFinished]",
-      "1.6 Нарезанные трубки [semiFinished]", "1.7 Нарезанная оплётка [semiFinished]", "1.8 Маркировка [semiFinished]",
-      "2.1 Ветвь А1 «5» [assembly]", "2.2 Ветвь А2 «I3» [assembly]", "2.3 Ветвь А3 «C» [assembly]", "2.4 Ветвь А4 «A6» [assembly]",
-      "3.1 Пайка С1, С2 [assembly]", "3.2 Пайка С3, С4 [assembly]", "4 Жгут НВ4 [final]",
+      "1.1 Резка + обжим SYM, зачистка — X1, X2 [semiFinished]", "1.2 Резка + обжим T-DS1071, зачистка — X5, X6 [semiFinished]",
+      "1.3 Резка хвостов + лужение [semiFinished]", "1.4 Резка + обжим SHF, зачистка — X3 [semiFinished]",
+      "1.5 Резка + обжим А и В — X4→X6 [semiFinished]",
+      "1.6 Резка трубок [semiFinished]", "1.7 Резка оплётки [semiFinished]", "1.8 Маркировка [semiFinished]",
+      "2.1 Ветвь X1 «5», сторона А [assembly]", "2.2 Ветвь X2 «I3», сторона А [assembly]", "2.3 Ветвь X3 «C», сторона А [assembly]",
+      "2.4 Ветвь X4 «A6», сторона А [assembly]",
+      "3.1 Пайка С1, С2 [assembly]", "3.2 Пайка С3, С4 [assembly]", "4 Кабельная сборка Жгут НВ4 [final]",
     ]);
     expect(cards.find((card) => card.id === "pf-A1")!.inputs).toEqual([
-      "НВ4 0,5 красный ×1", "НВ4 0,5 черный ×1", "ТТК 8/2 ×1", "XP-3 120 мм ×1", "маркировка «5» ×1"]);
+      "НВ4 0,5 красный, черный — 2 шт", "ТТК 8/2 — 1 шт", "Оплётка XP-3 120 мм — 1 шт", "Маркировка «5» — 1 шт"]);
     expect(inputsHeight(5)).toBe(4 * 16 + 16 + 8);
     expect(links).toHaveLength(route.edges.length);
     expect(widestRow(cards.map((card) => card.id), links)).toBe(8);

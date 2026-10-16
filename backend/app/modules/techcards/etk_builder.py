@@ -13,7 +13,7 @@ from dataclasses import replace as _replace
 
 from .domain.pf_split import generator_split, same_split
 from .domain.route import (
-    Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_totals,
+    Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_levels, route_totals,
 )
 from .etk_marking import apply_marking, mark_length
 from .operation_cards import OperationCardTemplate
@@ -1400,11 +1400,12 @@ def _typed_operation(
     op: Mapping[str, Any], config: Mapping[str, Any], *, position: int, code: str,
     card: OperationCardTemplate | None, cards_by_code: Mapping[str, OperationCardTemplate],
     previous: str, result: str, single: str, is_last: bool, semis: list[dict[str, str]], connector: str,
-    warnings: list[str],
+    warnings: list[str], result_rows: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """One ETK operation from a generator operation (cut, crimp, mount, TUT, coax…): its card with the placeholders
     filled, kit lines, result rows, time and the fields of its sketch. `previous` / `result` — the product names of the
-    generator chain (card placeholders), `single` — the name of the one piece it hands on, `semis` — its input."""
+    generator chain (card placeholders), `single` — the name of the one piece it hands on, `semis` — its input,
+    `result_rows` — its result rows when the chain set them (a ПФ of the generator's scheme)."""
     wire_data = _wire_data(op, config)
     fields = _typed_fields(op, config, wire_data)
     terminal_warning = _terminal_warning(op, position, code)
@@ -1418,7 +1419,7 @@ def _typed_operation(
         "template_id": str(op.get("templateId") or ""), "title": card.title if card else "",
         "card": _resolve_card(card, replacements, fields, cards_by_code) if card else None,
         "components": _components(op, config, code), "semis": semis,
-        "result": _result_rows(op, config, result, is_last, single),
+        "result": _result_rows(op, config, result, is_last, single) if result_rows is None else result_rows,
         "result_label": "Изделие" if is_last else "Полуфабрикат",
         "time": _time(op, config, single),
         "times": _times(op),
@@ -1517,7 +1518,11 @@ def _list(value: object) -> list[Any]:
 
 
 def _chain_results(config: Mapping[str, Any]) -> list[str]:
-    """The product name every generator operation hands on, replaying build_etk's previous_result chain."""
+    """The product name every generator operation hands on, replaying build_etk's previous_result chain (along the
+    generator's own ПФ scheme when it drew one)."""
+    scheme = _scheme_chain([op for op in _list(config.get("ops")) if isinstance(op, Mapping)], config)
+    if scheme is not None:
+        return [link.result for link in scheme]
     previous = ""
     names: list[str] = []
     for op in _list(config.get("ops")):
@@ -2078,6 +2083,7 @@ class _ChainLink:
     single: str
     is_last: bool
     semis: list[dict[str, str]]
+    rows: list[dict[str, str]] | None = None  # the result rows, when the chain sets them itself (a ПФ of the scheme)
 
 
 TUT_CUT_TYPES = frozenset({"cutTut", "coaxCutTut"})
@@ -2104,12 +2110,162 @@ def _tut_pieces(op: Mapping[str, Any], config: Mapping[str, Any]) -> Decimal:
     return per_item * _part_quantity(config)
 
 
+# «Сложная сборка» (owner 16.10, final): when the generator drew the ПФ scheme itself (`build_config.route`, source
+# «generated»), the semi-finished chain follows the scheme, not the list. The first operation of a ПФ takes one row per
+# incoming arrow — a kit's arrow by what it carries («НВ4 0,12 белый, синий — 2 шт», «ТТК 8/2 — 1 шт»), any other ПФ by
+# its name — × the batch, with the ПФ it comes from («ПФ 1.2»); an inner operation takes what the previous operation of
+# its ПФ handed on. Inside a ПФ the results are short («Оплётка надета», «ТТК усажена»); the last operation hands on
+# the ПФ itself («Ветвь X2 «I3», сторона А»). Kits (cut batches, tubes, braid, marking) keep their own results, one row
+# per piece. Any other config — the linear chain, as before.
+SCHEME_SOURCE = "generated"
+_EDGE_PIECES = re.compile(r"\s+—\s+(\d+(?:[.,]\d+)?)\s*шт\.?$")
+_EDGE_TIMES = re.compile(r"^(.*?)\s*×\s*(\d+(?:[.,]\d+)?)$")
+SCHEME_DONE = {
+    "tin": "Концы облужены", "insMark": "Маркировка нанесена", "seal": "Место загерметизировано",
+    "stripCable": "Концы разделаны", "endCap": "Концы изолированы", "foldCore": "Жила сложена",
+    "insHousing": "Корпус собран",
+}
+
+
+def _edge_pieces(item: str) -> tuple[str, Decimal]:
+    """What one item of an arrow says and how many pieces per product: «НВ4 0,12 белый, синий — 2 шт» → 2; a scheme
+    drawn before («ТТК 8/2 ×1») reads as «ТТК 8/2 — 1 шт»; nothing said — one piece."""
+    text = item.strip()
+    match = _EDGE_PIECES.search(text)
+    if match:
+        return text, _decimal(match.group(1))
+    match = _EDGE_TIMES.match(text)
+    if match:
+        count = _decimal(match.group(2))
+        return f"{match.group(1)} — {_format(count)} шт", count
+    return text, Decimal(1)
+
+
+def _tube_word(op: Mapping[str, Any]) -> str:
+    art = str(op.get("tutArt") or "").upper()
+    return "ТТК" if "ТТК" in art else "ТУТ" if "ТУТ" in art else ""
+
+
+def _scheme_step(op: Mapping[str, Any]) -> str:
+    """What an inner operation of a ПФ hands on, short: «Контакты установлены в разъём», «Оплётка надета»."""
+    operation_type = str(op.get("type") or "")
+    kind = _kind(op)
+    if kind == "ins":
+        return "Контакты установлены в разъём"
+    if kind == "sdr":
+        return "Провода припаяны к разъёму"
+    if kind == "prs":
+        return "Терминалы обжаты"
+    if _mark_tube(op):
+        return "Маркировка надета" if operation_type == "insTut" else "Маркировка усажена"
+    if operation_type == "insWrap":
+        return "Оплётка надета" if op.get("wrapKind") == "braid" else "Лента намотана"
+    if operation_type in {"insTut", "heatTut"}:
+        on = operation_type == "insTut"
+        tube = _tube_word(op)
+        if str(op.get("opKey") or "").startswith(("insSpl", "heatSpl")):
+            return "Трубка надета на провода сростков" if on else "Трубка на сростках усажена"
+        if tube:
+            return f"{tube} надета" if on else f"{tube} усажена"
+        if op.get("harness"):
+            return "Трубки надеты" if on else "Термоусадка усажена"
+        return "Трубка надета на провода" if on else "Трубка усажена"
+    if operation_type == "twist":
+        return "Пара свита" if _decimal(op.get("units")) == 1 else "Пары свиты"
+    method = _splice_method(op) or ("solder" if operation_type == "splice" else "")
+    if method:
+        done = SPLICE_DONE[method]
+        return done[:1].upper() + done[1:]
+    return SCHEME_DONE.get(operation_type) or str(op.get("label") or "").strip() or "Операция выполнена"
+
+
+def _kit_rows(op: Mapping[str, Any], config: Mapping[str, Any], result: str) -> list[dict[str, str]]:
+    """A kit's result, one row per piece: wires of a cut batch as before, tube / braid / marking pieces by article and
+    length («ТТК 8/2мм, черная — 15 мм», 3 × batch) instead of one long sentence."""
+    quantity = _part_quantity(config)
+    parts = _tut_parts(op)
+    if parts:
+        return [_row(f"{part['art']} — {part['len']} мм" if part["len"] else part["art"], _format(part["count"] * quantity))
+                for part in parts]
+    return _result_rows(op, config, result, False, result)
+
+
+def _scheme_chain(
+    operations: Sequence[Mapping[str, Any]], config: Mapping[str, Any], codes: Sequence[str] | None = None,
+) -> list[_ChainLink] | None:
+    """The chain along the ПФ scheme the generator drew (see SCHEME_SOURCE); None — no such scheme, or it does not fit
+    the operations (the linear chain then, and the build falls back with its warning)."""
+    raw = config.get("route")
+    if not isinstance(raw, Mapping) or raw.get("source") != SCHEME_SOURCE or not operations:
+        return None
+    final_name = str(config.get("assemblyName") or "").strip()
+    try:
+        route = parse_route(raw, [RouteOp(position=index) for index in range(1, len(operations) + 1)], final_name)
+    except RouteError:
+        return None
+    labels = route_levels(route)
+    quantity = _part_quantity(config)
+    count = _format(quantity)
+    names: dict[str, str] = {}
+    for block in route.blocks:
+        last = operations[block.ops[-1] - 1]
+        names[block.key] = block.name or (final_name if block.final else "") or (
+            _result_name(last, config, "") if block.kit else _scheme_step(last))
+    by_key = {block.key: block for block in route.blocks}
+
+    def number(key: str) -> tuple[int, ...]:
+        return tuple(int(part) for part in labels[key].split("."))
+
+    links: dict[int, _ChainLink] = {}
+    for block in route.blocks:
+        incoming = sorted((edge for edge in route.edges if edge.target == block.key), key=lambda edge: number(edge.source))
+        previous = ""
+        for index, position in enumerate(block.ops):
+            op = operations[position - 1]
+            last = index == len(block.ops) - 1
+            is_last = block.final and last
+            if block.kit:
+                result = _result_name(op, config, previous)
+            else:
+                result = names[block.key] if last else _scheme_step(op)
+            if index:
+                semis = [{**_row(previous, count), "source": f"операция {_op_number(block.ops[index - 1])}"}]
+            elif codes is not None and codes[position - 1].startswith("CUT_"):
+                semis = []
+            else:
+                semis = []
+                for edge in incoming:
+                    source = by_key[edge.source]
+                    where = f"ПФ {labels[source.key]}"
+                    items = [item for item in edge.item.split("; ") if item.strip()] if source.kit else []
+                    if not items:
+                        semis.append({**_row(names[source.key], _format(edge.per_unit * quantity)), "source": where})
+                    for item in items:
+                        text, pieces = _edge_pieces(item)
+                        semis.append({**_row(text, _format(pieces * edge.per_unit * quantity)), "source": where})
+            single = _single_name(config, result, is_last)
+            rows =_kit_rows(op, config, result) if block.kit else [_row(single, count)]
+            taken = previous if index else "; ".join(row["name"] for row in semis)
+            links[position] = _ChainLink(taken, result, single, is_last, semis, rows)
+            previous = result
+    return [links[position] for position in range(1, len(operations) + 1)]
+
+
+def _op_number(position: int) -> str:
+    """«09»: an ETK operation number as the card shows it."""
+    return str(position).zfill(2)
+
+
 def _generator_chain(
     operations: Sequence[Mapping[str, Any]], config: Mapping[str, Any], codes: Sequence[str],
 ) -> list[_ChainLink]:
     """SUPPLYMAP etkSemis_/etkResult_ chain over the generator operations in order: every operation takes what the
     last chain-advancing one handed on; TUT pieces cut aside come in as a second input of the operation that puts them
-    on. `codes` — the operation cards' codes (a cut — `CUT_…` — takes no semi-finished product)."""
+    on. `codes` — the operation cards' codes (a cut — `CUT_…` — takes no semi-finished product). A config whose ПФ
+    scheme the generator drew itself goes along the scheme (`_scheme_chain`)."""
+    scheme = _scheme_chain(operations, config, codes)
+    if scheme is not None:
+        return scheme
     links: list[_ChainLink] = []
     previous_result = ""
     previous_norm = ""
@@ -2211,7 +2367,7 @@ def build_etk(
         built.append(_typed_operation(
             op, config, position=index, code=code, card=card, cards_by_code=cards_by_code,
             previous=link.previous, result=link.result, single=link.single, is_last=link.is_last,
-            semis=link.semis, connector=_typed_connector(op, index), warnings=warnings,
+            semis=link.semis, connector=_typed_connector(op, index), warnings=warnings, result_rows=link.rows,
         ))
     _distinct_typed_keys(built)
 

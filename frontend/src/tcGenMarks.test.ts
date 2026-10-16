@@ -4,6 +4,7 @@ import {
   markLabel, markMaterialSource, markMatsFromRecords, markPlaceText, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness,
   markSpecs, markTargets, mergeMarkRows, newMarkRow, productMarkRow,
 } from "./tcGenMarks";
+import { DSA, fullHarness } from "./tcGenRealHarness.fixture";
 
 const templates = [
   { id: "cut", title: "CUT_WIRE_auto | Резка", category: "Резка" },
@@ -157,4 +158,18 @@ it("tube length goes to the operation as a number (comma accepted), only for tub
   expect(specs.map((spec) => spec.lengthMm)).toEqual([25.5, undefined, undefined, undefined]);
   expect("lengthMm" in specs[1]).toBe(false);
   expect(markRowsFromConfig({ ops: [{ type: "insMark", marks: [specs[0], specs[2]] }] }).map((row) => row.len ?? "")).toEqual(["25,5", ""]);
+});
+
+it("«Сложная сборка»: a branch's marking tube is put on and shrunk by its own operations; a connector without a label is named by its marking", () => {
+  // 713К.4 КБ1 (владелец 16.10): у разъёма «A6» нет подписи — ветвь и её операции называет надпись маркировки.
+  const S0 = fullHarness();
+  const a4 = S0.endpoints.filter((e) => e.side === "A")[3];
+  const S = { ...S0, endpoints: S0.endpoints.map((e) => (e.id === a4.id ? { ...e, label: "" } : e)),
+    markRows: S0.markRows.map((row) => (row.text === "A6" ? { ...row, target: "Разъём А4 (SMR-04V-B)" } : row)) };
+  const gen = makeGen(DSA, S);
+  const ops = gen.getActiveOps().filter((o) => o.pf === "pf-A4");
+  expect(ops.map((o) => o.label)).toEqual(["Монтаж контактов в разъём X4 «A6» — SMR-04V-B", "Надеть оплётку X4 «A6» — XP-3, 120 мм",
+    "Надеть маркировку X4 «A6» — «A6»", "Усадка маркировки X4 «A6» — «A6»"]);
+  expect(ops.filter((o) => o.markTube).map((o) => [o.opKey, o.tmplHint, o.tutCount])).toEqual([["onMarkA4", "INS_TUT", 1], ["heatMarkA4", "HEAT_TYT_short", 1]]);
+  expect(gen.pfGraph()!.blocks.find((b) => b.key === "pf-A4")!.name).toBe("Ветвь X4 «A6», сторона А");
 });
