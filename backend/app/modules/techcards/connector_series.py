@@ -125,15 +125,7 @@ GROUPS: tuple[dict[str, Any], ...] = (
 NO_TE = "чертежи TE недоступны (сайт TE закрыт), таблицы корпусов нет"
 CAR_SYSTEM = "система контактов для корпусов автопроизводителей — своей таблицы корпусов у серии нет"
 _LOOSE: tuple[tuple[str, str, str, str, str, tuple[str, ...], str], ...] = (
-    # CTX50 terminals 34905 (349052447, 349056447) go into the Mini50 sealed receptacle housing 34967 (Molex part sheet of
-    # 349052447; 349672001 = 2 positions per element14, 349671001 = 10 positions, polarization A per Arrow): the digit after
-    # 34967 is not the position count, so no count can be read from the number and no table is made up; the closest shape.
-    ("molex-ctx50", "Molex CTX50", "Molex", WTB, "jst-xh", ("CTX50",),
-     "в номере Mini50 34967 нет числа контактов, чертёж Molex недоступен"),
-    ("hsm-phu", "Hsuan Mao PHU / MHU / MX", "Hsuan Mao", WTB, "jst-ph", ("PHU/MHU/MX", "HC (PAP)"),
-     "каталога Hsuan Mao с номерами корпусов нет"),
-    ("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, "connfly-ds1071", ("JR/Futaba servo connector contact",),
-     "у сервоконнектора нет производителя и чертежа корпуса"),
+    # CTX50 (Mini50), Hsuan Mao MX / HC and the JR servo plug have housing tables in `connector_catalog_data` (16.10.2026).
     ("te-matenlok", "TE MATE-N-LOK", "TE", WTW, "molex-minifit-jr", ("MATE-N-LOK",), NO_TE),
     ("te-multilock-070", "TE Multilock 070", "TE", AUTO, "te-multilock-040", ("AMP MULTILOCK 070",), NO_TE),
     ("te-mcon12", "TE MCON 1.2", "TE", AUTO, "te-superseal", ("MCON 1.2 LL (Locking-Lance)", "MCON 1.2mm"), CAR_SYSTEM),

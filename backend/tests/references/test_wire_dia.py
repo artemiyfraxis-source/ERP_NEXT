@@ -214,14 +214,14 @@ def test_the_view_against_the_old_spr_kab_table_size_by_size(real_base):
     assert [item for item in differences if "—" not in item[2:]] == CHANGED
     only_in_base = [(series, size, new) for series, size, before, new in differences if before == "—"]
     assert [item for item in only_in_base if item[0] != "МК 26-13"] == ONLY_IN_BASE
-    # МК 26-13 (14.10.2026): the five Ø of the reseller's table, entered as approximate (source «примерно: …»)
-    assert sorted(item[2] for item in only_in_base if item[0] == "МК 26-13") == ["0,75", "0,87", "1,04", "1,19", "1,5"]
+    # МК 26-13 (16.10.2026): the five Ø of the Chuvashkabel table (maximum Ø, 1 core)
+    assert sorted(item[2] for item in only_in_base if item[0] == "МК 26-13") == ["0,75", "0,87", "1,04", "1,19", "1,4"]
     gone: dict[str, list[str]] = {}
     for series, size, _before, new in differences:
         if new == "—":
             gone.setdefault(series, []).append(size.removesuffix(" AWG"))
     assert {series: " ".join(sizes) for series, sizes in gone.items()} == REGRESSED
-    assert [row["МК 26-13"] for row in real_base.base_rows if row["МК 26-13"] != "—"] == ["0,75", "0,87", "1,04", "1,19", "1,5"]
+    assert [row["МК 26-13"] for row in real_base.base_rows if row["МК 26-13"] != "—"] == ["0,75", "0,87", "1,04", "1,19", "1,4"]
 
 
 def test_the_generator_never_loses_a_diameter_the_old_table_had(real_base):

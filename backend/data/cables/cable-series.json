@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "notes": "Серии многожильных кабелей («Кабели»): общие значения серии и размеры. Каждое значение — {value, source: URL}; чего нет в источнике, того здесь нет. Строки БД.ПРОВ наследуют только в ПУСТЫЕ ячейки (python -m app.workflows.cable_series --dry-run). Заполнено 12.10.2026 по тому, что нашлось: LiYCY — листинги RS Components по товару LAPP UNITRONIC LiYCY (не листок LAPP: официальной страницы с таблицей найти не удалось); H05RN-F — страницы Faber Kabel и Nassau National Cable. 13.10.2026 (T6): CCC/CCCU — UL Style Page 2464 (300 В) и карточки brownbear.ru (Тайвань, бренд не назван — производителей нет); PAAR-TRONIC-CY — HELUKABEL; Cat5e — только стандарт категории; КДВВГ, КДВЭВГ — каталог «Паритет» (ТУ 3581-011-39793330-2009); FLEXICORE — flexicore.ru (ЛАПП Руссия); ШВВП, ПВС — ГОСТ 7399-97 (п. 8.2: −40 °C для исполнения У, −25 °C для остальных — поэтому «от» не задано); МКШ — Чувашкабель (ГОСТ 10348-80); RVVP, ШТЛЭ/ШТСПЭ — только «Категория» (классификатор экрана кладёт их в «Прочие»). Изоляция пишется «жилы / оболочка». Не заполнены (нет источника, который открывается, или марку делают разные заводы с разными ТУ): ПВВС, DS1057, КСПВГ/КСПЭВГ (Паритет и Breks), ШВПМ (Паритет и Калужский завод). 14.10.2026 (владелец: «найди значения сам или поставь примерные»): оболочка / изоляция Cat5e, RVVP и новая серия ПВВС заполнены ПРИМЕРНО — слово «примерно» стоит в самом значении; ПВВС: марки нет в ГОСТ/ТУ, что открылись, температура и напряжение — по общему описанию серии rfopt.ru/pvvs.",
+  "notes": "Серии многожильных кабелей («Кабели»): общие значения серии и размеры. Каждое значение — {value, source: URL}; чего нет в источнике, того здесь нет. Строки БД.ПРОВ наследуют только в ПУСТЫЕ ячейки (python -m app.workflows.cable_series --dry-run). Заполнено 12.10.2026 по тому, что нашлось: LiYCY — листинги RS Components по товару LAPP UNITRONIC LiYCY (не листок LAPP: официальной страницы с таблицей найти не удалось); H05RN-F — страницы Faber Kabel и Nassau National Cable. 13.10.2026 (T6): CCC/CCCU — UL Style Page 2464 (300 В) и карточки brownbear.ru (Тайвань, бренд не назван — производителей нет); PAAR-TRONIC-CY — HELUKABEL; Cat5e — только стандарт категории; КДВВГ, КДВЭВГ — каталог «Паритет» (ТУ 3581-011-39793330-2009); FLEXICORE — flexicore.ru (ЛАПП Руссия); ШВВП, ПВС — ГОСТ 7399-97 (п. 8.2: −40 °C для исполнения У, −25 °C для остальных — поэтому «от» не задано); МКШ — Чувашкабель (ГОСТ 10348-80); RVVP, ШТЛЭ/ШТСПЭ — только «Категория» (классификатор экрана кладёт их в «Прочие»). Изоляция пишется «жилы / оболочка». Не заполнены (нет источника, который открывается, или марку делают разные заводы с разными ТУ): ПВВС, DS1057, КСПВГ/КСПЭВГ (Паритет и Breks), ШВПМ (Паритет и Калужский завод). 14.10.2026: оболочка / изоляция Cat5e и RVVP — по страницам продавцов. 16.10.2026: ПВВС — по карточке Беларускабеля (fbns.ru): изоляция и оболочка ПВХ, до 60 В, −40…+60 °C; ТУ не найдено. Как получено каждое значение — docs/data/«Старые хвосты 16.10.md».",
   "series": [
     {
       "key": "LiYCY",
@@ -72,7 +72,7 @@
       "key": "Cat5e",
       "aliases": ["Cat5e", "F/UTP Cat 5e", "F/UTP 24AWG", "FTP 2PR 24AWG CAT5e", "FTP-4P-Cat.5e", "SFTP-4P-Cat.5e", "U/UTP 4х2х0,52мм Сat 5e", "ParLan F/UTP Cat5e", "ParLan Patch U/UTP Cat5e"],
       "standard": {"value": "ANSI/TIA-568.2-D, категория 5e", "source": "https://www.cablinginstall.com/standards/article/16482213/drilling-down-on-the-ansi-tia-5682-d-cabling-standard"},
-      "insulation": {"value": "ПЭ (примерно) / ПВХ (примерно: исполнение для помещений; бывает LSZH и ПВХ+ПЭ для улицы)", "source": "https://www.xcom-shop.ru/paritet_parlan_futp_cat5e_4h2h052_pvc_573406.html"},
+      "insulation": {"value": "ПЭ (жилы) / ПВХ (оболочка)", "source": "https://www.xcom-shop.ru/paritet_parlan_futp_cat5e_4h2h052_pvc_573406.html"},
       "voltage_v": null,
       "temp_min_c": null,
       "temp_max_c": null,
@@ -194,11 +194,11 @@
       "key": "RVVP",
       "aliases": ["RVVP", "РВВП"],
       "standard": null,
-      "insulation": {"value": "ПВХ / ПВХ (примерно: по расшифровке RVVP, материал страница не называет)", "source": "https://kulibin.su/catalog/razemy-konnektory-kabeli-klemmniki-shtekera/perekhodniki/ekranirovannyy-provod/kabel-ekranirovannyy-rvvp-16-x-0-3-mm.html"},
+      "insulation": {"value": "ПВХ (жилы) / ПВХ (оболочка)", "source": "https://kulibin.su/catalog/razemy-konnektory-kabeli-klemmniki-shtekera/perekhodniki/ekranirovannyy-provod/kabel-ekranirovannyy-rvvp-16-x-0-3-mm.html"},
       "voltage_v": {"value": 300, "source": "https://kulibin.su/catalog/razemy-konnektory-kabeli-klemmniki-shtekera/perekhodniki/ekranirovannyy-provod/kabel-ekranirovannyy-rvvp-16-x-0-3-mm.html"},
       "temp_min_c": null,
       "temp_max_c": null,
-      "screen": {"value": "общая оплётка (примерно: тип экрана страница не называет)", "source": "https://kulibin.su/catalog/razemy-konnektory-kabeli-klemmniki-shtekera/perekhodniki/ekranirovannyy-provod/kabel-ekranirovannyy-rvvp-16-x-0-3-mm.html"},
+      "screen": {"value": "общая оплётка", "source": "https://kulibin.su/catalog/razemy-konnektory-kabeli-klemmniki-shtekera/perekhodniki/ekranirovannyy-provod/kabel-ekranirovannyy-rvvp-16-x-0-3-mm.html"},
       "makers": [],
       "sizes": [],
       "category": {"value": "Контрольные / управления", "source": "https://kulibin.su/catalog/razemy-konnektory-kabeli-klemmniki-shtekera/perekhodniki/ekranirovannyy-provod/kabel-ekranirovannyy-rvvp-16-x-0-3-mm.html"}
@@ -220,12 +220,12 @@
       "key": "ПВВС",
       "aliases": ["ПВВС"],
       "standard": null,
-      "insulation": {"value": "ПЭ / ПВХ (примерно: оболочка пластмассовая по описанию серии; на странице позиции — свинцовая, нетипично — проверить)", "source": "https://rfopt.ru/pvvs"},
-      "voltage_v": {"value": 380, "source": "https://rfopt.ru/pvvs"},
-      "temp_min_c": {"value": -40, "source": "https://rfopt.ru/pvvs"},
-      "temp_max_c": {"value": 60, "source": "https://rfopt.ru/pvvs"},
+      "insulation": {"value": "ПВХ пластикат (жилы) / ПВХ пластикат (оболочка)", "source": "https://fbns.ru/product/%D0%BF%D0%B2%D0%B2%D1%81-40-2/"},
+      "voltage_v": {"value": 60, "source": "https://fbns.ru/product/%D0%BF%D0%B2%D0%B2%D1%81-40-2/"},
+      "temp_min_c": {"value": -40, "source": "https://fbns.ru/product/%D0%BF%D0%B2%D0%B2%D1%81-40-2/"},
+      "temp_max_c": {"value": 60, "source": "https://fbns.ru/product/%D0%BF%D0%B2%D0%B2%D1%81-40-2/"},
       "screen": null,
-      "makers": [],
+      "makers": [{"value": "Беларускабель", "source": "https://fbns.ru/product/%D0%BF%D0%B2%D0%B2%D1%81-40-2/"}],
       "sizes": []
     }
   ]

@@ -4,7 +4,7 @@
    "fields": {
     "terArticle": "SSHL-002T-P0.2",
     "terLMinus": "0,7",
-    "Источник L-": "примерно: L+ 5 мм оставлен как в базе; L− = GHR 5,7 мм − L+ 5 мм; JST eGH, Housing, https://www.jst-mfg.com/product/pdf/eng/eGH.pdf"
+    "Источник L-": "по корпусу: L+ 5 мм оставлен как в базе; L− = GHR 5,7 мм − L+ 5 мм; JST eGH, Housing, https://www.jst-mfg.com/product/pdf/eng/eGH.pdf"
    },
    "old": {
     "terArticle": "SSHL-002T-P0.2",

@@ -117,7 +117,7 @@ def build_estimates(sources: dict[str, Any], terminals: dict[str, dict[str, str]
             note = (f"по чертежу: L+ = глубина конца жилы от торца корпуса со стороны провода {shown(l_plus)} мм; "
                     f"L− = {group['housing']} {shown(length)} мм − L+ {shown(l_plus)} мм; {group['doc']}, {group['url']}")
         else:
-            note = (f"примерно: L+ {shown(l_plus)} мм оставлен как в базе; L− = {group['housing']} {shown(length)} мм − "
+            note = (f"по корпусу: L+ {shown(l_plus)} мм оставлен как в базе; L− = {group['housing']} {shown(length)} мм − "
                     f"L+ {shown(l_plus)} мм; {group['doc']}, {group['url']}")
         if group.get("remark"):
             note += f"; {group['remark']}"
