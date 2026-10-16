@@ -193,6 +193,11 @@ describe("etkDraw* sketches", () => {
     expect(only).toContain("L1 = 3 мм");
     expect(only).not.toMatch(/L[23] =/);
     expect(draw({ l1: "", l2: "6" })).toContain("Размеров разделки нет");
+    const flush = draw({ l3: "21,25" });
+    expect(bands(flush)).toEqual(["braid", "jacket"]);
+    expect(flush).toContain("L3 = 21,25 мм");
+    expect(flush).toContain("заподлицо с торцом");
+    expect(flush).not.toMatch(/L[12] =/);
   });
 
   it("draws both ends of a cut with stripping on the machine, each with its side", () => {
