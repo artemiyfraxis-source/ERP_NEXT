@@ -5,7 +5,7 @@ import {
   failureText, techcardsApi,
   type ConnectorFamily, type ConnectorSeries, type ConnectorSeriesHousing, type ConnectorSeriesMatch, type ConnectorTerminal,
 } from "./api";
-import { connectorFace, connectorFaceUnits, connectorSummary, type ConnectorHousing } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, type ConnectorHousing } from "./connectorArt";
 import { connectorModel } from "./connectorModel";
 import { connectorTopView } from "./connectorTopView";
 import { searchRows } from "./searchText";
@@ -53,10 +53,11 @@ function Face({ housing, width = 250 }: { housing: ConnectorHousing; width?: num
   return <Svg box={{ w: face.w + 20, h: face.h + 8, body: face.body }} label="Вид со стороны проводов" />;
 }
 
-/** Картинка серии в списке: модель по шаблону серии, иначе торец со стороны проводов. */
+/** Картинка серии в списке — объёмный корпус у всех серий одного вида (владелец 16.10: «мешанина вида нужна
+ *  однообразность»): модель по чертежу серии, а без неё — объёмная картинка серии по её раскладке. */
 function Thumb({ housing }: { housing: ConnectorHousing }) {
-  const model = connectorModel(housing, 92, 56);
-  return model ? <Svg box={model} label={`Модель ${housing.title ?? ""}`} /> : <Face housing={housing} width={90} />;
+  const model = connectorModel(housing, 92, 56) || connectorPicture(housing, 92, 56);
+  return <Svg box={model} label={`Модель ${housing.title ?? ""}`} />;
 }
 
 // From this many contact widths on, a housing card gets a wider column so the face numbers stay readable.
@@ -64,18 +65,17 @@ const WIDE_UNITS = 9;
 
 function HousingCard({ item, hit, wide = false }: { item: ConnectorSeriesHousing; hit: boolean; wide?: boolean }) {
   const hs = item.housing;
-  const model = connectorModel(hs, 130, 84);
+  // Два вида (владелец 16.10: «зачем мне три вида»): корпус, развёрнутый видом сверху, и торец с нумерацией контактов.
   const top = connectorTopView(hs, wide ? 240 : 170, 120);
   return <div className={hit ? "conn-housing conn-hit" : "conn-housing"} id={`conn-${item.article}`}>
     <div className="conn-housing-head">
       <b>{item.article}</b><span>{item.n} конт.</span>
       {hs.conf !== "high" && <small className="conn-warn" title={hs.note || undefined}>нумерация не сверена</small>}
     </div>
-    <div className="conn-housing-model">{model
-      ? <Svg box={model} label={`Модель ${item.article}`} />
-      : <small className="conn-muted">модель не сверена</small>}</div>
-    {top && <div className="conn-housing-top"><Svg box={top} label={`Вид сверху ${item.article}`} /></div>}
-    <div className="conn-face"><Face housing={hs} width={wide ? 400 : 250} /></div>
+    <div className="conn-housing-views">
+      {top && <div className="conn-housing-top"><Svg box={top} label={`Вид сверху ${item.article}`} /></div>}
+      <div className="conn-face"><Face housing={hs} width={wide ? 400 : 250} /></div>
+    </div>
     {item.headers.length > 0 && <small className="conn-headers">
       {item.headers.map((header) => <span key={header.article} title={header.title}>{header.article}<i> — {header.title.replace("Вилка на плату", "").replace(/^,?\s*/, "")}</i></span>)}
     </small>}

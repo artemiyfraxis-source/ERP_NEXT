@@ -15,6 +15,6 @@ export function hasTopView(hs: ConnectorHousing): boolean {
 export function connectorTopView(hs: ConnectorHousing, maxW: number, maxH: number,
   byPin: Record<number, string> | null = null): Box | null {
   if (!hasTopView(hs)) return null;
-  // Модель по чертежу серии рисует корпус без цветов проводов — с распиновкой берём картинку, где они видны.
-  return (!byPin && connectorModel(hs, maxW, maxH, "top")) || connectorPicture(hs, maxW, maxH, byPin, "top");
+  // Модель по чертежу серии точнее картинки (прорези, защёлка); цвета проводов видны на торце и в легенде рядом.
+  return connectorModel(hs, maxW, maxH, "top") || connectorPicture(hs, maxW, maxH, byPin, "top");
 }
