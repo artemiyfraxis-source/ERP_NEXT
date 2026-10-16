@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from datetime import date
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import UUID
@@ -154,10 +154,54 @@ def _step_of(value: object, count: int, keyed: Mapping[str, int]) -> int:
     return keyed.get(text, -1)
 
 
+def _kit_shares(links: list[tuple[str, str, Decimal]], kits: set[str]) -> list[tuple[str, str, Decimal]]:
+    """A kit block (route `kit`, «Сложная сборка» 16.10: cut batches, tube cut, braid cut, marking — parts one ПФ
+    prepares for several others) is made once per product, not once per consumer: unit_factors sums per_unit over the
+    consumers, so a cut feeding 7 ПФ was planned ×7. Its arrows' per_unit become shares of one kit — Σ per_unit × the
+    consumer's pieces per product = 1. Shares are cut to the 6 places a task stores; when every consumer is one piece
+    per product they add up to exactly 1 (the remainder goes to the first arrows). Other arrows stay as drawn."""
+    if not kits or not links:
+        return links
+    outgoing: dict[str, list[tuple[str, Decimal]]] = {}
+    for source, target, per_unit in links:
+        outgoing.setdefault(source, []).append((target, per_unit))
+    factors: dict[str, Decimal] = {}
+
+    def factor(key: str, path: frozenset[str]) -> Decimal:
+        if key in kits:
+            return Decimal(1)
+        if key not in factors:
+            targets = [(target, per_unit) for target, per_unit in outgoing.get(key, ()) if target not in path]
+            factors[key] = sum(
+                (per_unit * factor(target, path | {key}) for target, per_unit in targets), Decimal(0),
+            ) if targets else Decimal(1)
+        return factors[key]
+
+    shares: dict[tuple[str, str], Decimal] = {}
+    for kit in kits:
+        own = [(target, per_unit, factor(target, frozenset({kit}))) for target, per_unit in outgoing.get(kit, ())]
+        if not own:
+            continue
+        total = sum((per_unit * pieces for _, per_unit, pieces in own), Decimal(0))
+        exact = [per_unit / total for _, per_unit, _ in own]
+        if all(pieces == 1 for *_, pieces in own):
+            micro = [(value / _MICRO).to_integral_value(rounding=ROUND_FLOOR) for value in exact]
+            left = int(Decimal(1) / _MICRO - sum(micro, Decimal(0)))
+            for index in sorted(range(len(own)), key=lambda index: micro[index] - exact[index] / _MICRO)[:left]:
+                micro[index] += 1
+            values = [value * _MICRO for value in micro]
+        else:
+            values = [value.quantize(_MICRO, rounding=ROUND_HALF_UP) for value in exact]
+        for (target, _, _), value in zip(own, values):
+            shares[(kit, target)] = max(value, _MICRO)
+    return [(source, target, shares.get((source, target), per_unit)) for source, target, per_unit in links]
+
+
 def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]) -> tuple[list[_Block] | None, str]:
     """Per-step block data from ETK document.route {blocks:[{key,name,ops,final}], edges:[{from,to,per_unit}]}, or
     None and why (Russian) when the scheme cannot be applied to these steps exactly (unknown or doubled op, step left
-    in no block, duplicate block key, edge to an unknown block): production then falls back to the linear chain."""
+    in no block, duplicate block key, edge to an unknown block): production then falls back to the linear chain.
+    The arrows out of a kit block carry its shares (`_kit_shares`), a block may feed several others."""
     if not count:
         return None, "в техкарте нет операций"
     if not isinstance(route, Mapping) or not isinstance(route.get("blocks"), list) or not route["blocks"]:
@@ -190,11 +234,14 @@ def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]
     if missing:
         return None, (f"операция {missing[0]} не входит" if len(missing) == 1 else f"операции {', '.join(missing)} не входят") + " ни в один блок"
     incoming: dict[str, list[BlockInput]] = {key: [] for key in blocks}
+    links: list[tuple[str, str, Decimal]] = []
     for edge in route.get("edges") or []:
         source, target = (str(edge.get("from") or "").strip(), str(edge.get("to") or "").strip()) if isinstance(edge, Mapping) else ("", "")
         if source not in blocks or target not in blocks:
             return None, f"стрелка «{source or '?'}» → «{target or '?'}» ведёт в блок, которого нет в схеме"
-        incoming[target].append(BlockInput(source, _per_unit(edge.get("per_unit"))))
+        links.append((source, target, _per_unit(edge.get("per_unit"))))
+    for source, target, per_unit in _kit_shares(links, {key for key, block in blocks.items() if block.get("kit") is True}):
+        incoming[target].append(BlockInput(source, per_unit))
     return [
         _Block(owner[index], str(blocks[owner[index]].get("name") or "").strip(), bool(blocks[owner[index]].get("final")),
                tuple(incoming[owner[index]]), numbers[owner[index]], tuple(orders[owner[index]]))

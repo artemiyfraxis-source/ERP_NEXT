@@ -6,7 +6,7 @@ import type { EtkRouteBlock, EtkRouteEdge } from "./api";
 import { etkRouteOf } from "./etkRoute";
 
 /** Правимая часть `document.route` — то, что уходит в `build_config.route` (итоги считаются заново). */
-export type RouteBlock = Pick<EtkRouteBlock, "key" | "name" | "ops" | "final" | "components">;
+export type RouteBlock = Pick<EtkRouteBlock, "key" | "name" | "ops" | "final" | "components" | "kit">;
 export type RouteEdge = EtkRouteEdge;
 export type Route = { blocks: RouteBlock[]; edges: RouteEdge[] };
 
@@ -85,12 +85,15 @@ export function parseRoute(raw: unknown): Route | null {
   const parsed = etkRouteOf({ route: raw });
   if (!parsed) return null;
   return ordered({
-    blocks: parsed.blocks.map(({ key, name, ops, final, components }) => ({ key, name: name.trim(), ops, final, components })),
+    blocks: parsed.blocks.map(({ key, name, ops, final, components, kit }) => ({
+      key, name: name.trim(), ops, final, components, ...(kit ? { kit } : {}),
+    })),
     edges: parsed.edges,
   });
 }
 
-/** Тело `build_config.route`: имя только если его правили руками (пустое сервер берёт из результата последней операции). */
+/** Тело `build_config.route`: имя только если его правили руками (пустое сервер берёт из результата последней операции).
+    Отметка ПФ-комплекта (`kit`) и подпись стрелки (`item`) — только если есть: «Сохранить ПФ» их не теряет. */
 export function routePayload(route: Route, keep = false): Record<string, unknown> {
   const sorted = ordered(route, keep);
   return {
@@ -98,9 +101,12 @@ export function routePayload(route: Route, keep = false): Record<string, unknown
       key: block.key,
       ...(block.name.trim() ? { name: block.name.trim() } : {}),
       ops: block.ops, final: block.final,
+      ...(block.kit ? { kit: true } : {}),
       ...(block.components.length ? { components: block.components } : {}),
     })),
-    edges: sorted.edges.map((edge) => ({ from: edge.from, to: edge.to, per_unit: edge.per_unit })),
+    edges: sorted.edges.map((edge) => ({
+      from: edge.from, to: edge.to, per_unit: edge.per_unit, ...(edge.item?.trim() ? { item: edge.item.trim() } : {}),
+    })),
   };
 }
 
@@ -337,7 +343,11 @@ function sumEdges(edges: RouteEdge[]): RouteEdge[] {
   const result: RouteEdge[] = [];
   for (const edge of edges) {
     const same = result.find((item) => item.from === edge.from && item.to === edge.to);
-    if (same) same.per_unit += edge.per_unit; else result.push({ ...edge });
+    if (!same) { result.push({ ...edge }); continue; }
+    same.per_unit += edge.per_unit;
+    // Одна стрелка на пару блоков: подписи двух стрелок — через «; ».
+    const items = [same.item, edge.item].map((item) => item?.trim()).filter(Boolean);
+    if (items.length) same.item = [...new Set(items)].join("; ");
   }
   return result;
 }
@@ -349,7 +359,10 @@ export function mergeBlocks(route: Route, upstream: string, downstream: string, 
   const down = route.blocks.find((block) => block.key === downstream);
   if (!up || !down || up === down) return route;
   const ops = [...up.ops, ...down.ops];
-  const merged: RouteBlock = { key: down.key, name: down.name, ops: keep ? ops : ops.sort((a, b) => a - b), final: down.final || (keep && up.final), components: [...up.components, ...down.components] };
+  const merged: RouteBlock = {
+    key: down.key, name: down.name, ops: keep ? ops : ops.sort((a, b) => a - b), final: down.final || (keep && up.final),
+    components: [...up.components, ...down.components], ...(down.kit ? { kit: true } : {}),
+  };
   const edges = route.edges
     .filter((edge) => !(edge.from === upstream && edge.to === downstream))
     .map((edge) => ({ ...edge, from: edge.from === upstream ? downstream : edge.from, to: edge.to === upstream ? downstream : edge.to }))

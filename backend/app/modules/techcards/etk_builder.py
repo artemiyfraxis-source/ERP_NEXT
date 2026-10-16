@@ -1589,34 +1589,47 @@ def _generated_split(ops: Sequence[RouteOp], final_name: str, current: Route | N
         return None
 
 
-def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | None:
+def _route(
+    document: Mapping[str, Any], *, strict: bool, warnings: list[str] | None = None,
+) -> dict[str, Any] | None:
     """`document.route` of an assembled document. strict (the build): a hand-edited `build_config.route` must be
-    valid — an error stops the build. Otherwise (the read path) the first scheme that fits wins, then the derived one."""
+    valid — an error stops the build. Otherwise (the read path) the first scheme that fits wins, then the derived one.
+
+    A config scheme the generator drew itself (`build_config.route.source` «generated», «Сложная сборка» 16.10) is
+    checked the same way but stored as generated, so a later hand edit («Сохранить ПФ») wins over it on a rebuild; one
+    that does not fit the operations does not stop the build — the generator's ПФ rule goes instead, with a warning."""
     ops, final_name, quantity = _route_ops(document, strict=strict)
     if not ops:
         return None
     config = document.get("build_config") if isinstance(document.get("build_config"), Mapping) else {}
     stored = document.get("route") if isinstance(document.get("route"), Mapping) else {}
-    candidates = [(config.get("route"), True)] if strict else [
+    drawn = config.get("route")
+    drawn_generated = isinstance(drawn, Mapping) and drawn.get("source") == "generated"
+    candidates = [(drawn, True)] if strict else [
         (stored, bool(stored) and stored.get("source") != "derived"),
-        (config.get("route"), True),
+        (drawn, True),
     ]
     route = None
+    failed: RouteError | None = None
     for raw, manual in candidates:
         if not raw:
             continue
         try:
             route = parse_route(raw, ops, final_name, manual=manual)
-            if raw is stored and stored.get("source") == "generated":
+            if (raw is stored and stored.get("source") == "generated") or (raw is drawn and drawn_generated):
                 route = _replace(route, generated=True)
             break
-        except RouteError:
-            if strict:
+        except RouteError as error:
+            if strict and not drawn_generated:
                 raise
+            failed = error
     # A generator tab cuts its ETK into ПФ by itself (owner 13.10, «Сложная сборка» since 16.10) — only a config that
     # says its tab, so a rebuild of an old config keeps its scheme until the generator builds it anew.
-    if route is None and strict and str(config.get("tab") or "").strip() in SPLIT_TABS:
+    if route is None and strict and (drawn_generated or str(config.get("tab") or "").strip() in SPLIT_TABS):
         route = _generated_split(ops, final_name)
+        if failed is not None and warnings is not None:
+            warnings.append(f"{failed} — схема генератора не подошла к операциям ЭТК, "
+                            + ("ПФ разбиты по правилу генератора" if route else "ПФ — по операции"))
     route = route or derive_route(ops, final_name)
     return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
 
@@ -2174,7 +2187,7 @@ def build_etk(
             **({"technology_snapshot": deepcopy(dict(technology_source))} if technology_source else {}),
         },
     }
-    document["route"] = _route(document, strict=True)
+    document["route"] = _route(document, strict=True, warnings=warnings)
     return document
 
 

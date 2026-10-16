@@ -429,6 +429,59 @@ def test_a_hand_edit_survives_regeneration_and_a_generated_split_survives_an_old
     assert _keep_hand_route(previous, fresh) is fresh
 
 
+# ── a scheme the generator drew itself («Сложная сборка», route v2, 16.10) ─────────────────────────────────────
+
+# 720К.-КБ1: 1 cutWire · 2 prsTerm · 3 insTerm · 4 prsTerm · 5 insTerm.
+DRAWN = {
+    "source": "generated",
+    "blocks": [{"key": "cut", "ops": [1], "kit": True}, {"key": "A", "ops": [2, 3]}, {"key": "B", "ops": [4, 5], "final": True}],
+    "edges": [{"from": "cut", "to": "A", "item": "ПВ3 ×2"}, {"from": "cut", "to": "B", "item": "ПВ3 ×2"},
+              {"from": "A", "to": "B"}],
+}
+
+
+def test_a_scheme_drawn_by_the_generator_is_stored_as_generated_with_its_items_and_kits():
+    document = build(config(tab="complex", route=deepcopy(DRAWN)))
+    route = document["route"]
+
+    assert route["source"] == "generated"
+    assert shape(route) == [("cut", [1], False), ("A", [2, 3], False), ("B", [4, 5], True)]
+    assert [(block.get("kit", False), block["label"]) for block in route["blocks"]] == [(True, "1"), (False, "2"), (False, "3")]
+    assert [edge.get("item") for edge in route["edges"]] == ["ПВ3 ×2", "ПВ3 ×2", None]
+    assert attach_route(document)["route"] == route
+    # Without the generator's mark a config scheme stays the technologist's own, as before.
+    assert build(config(tab="complex", route={**DRAWN, "source": "manual"}))["route"]["source"] == "manual"
+
+
+def test_the_hand_cut_pf_win_over_a_scheme_the_generator_drew_and_keep_items_and_kits():
+    previous = build(config(tab="complex", route=deepcopy(DRAWN)))
+    hand = {**previous, "route": {**previous["route"], "source": "manual", "blocks": [
+        {"key": "cut", "ops": [1], "kit": True}, {"key": "rest", "ops": [2, 3, 4, 5], "final": True}],
+        "edges": [{"from": "cut", "to": "rest", "item": "ПВ3 ×4"}]}}
+
+    kept = _keep_hand_route(hand, build(config(tab="complex", route=deepcopy(DRAWN))))
+    assert kept["route"]["source"] == "manual"
+    assert shape(kept["route"]) == [("cut", [1], False), ("rest", [2, 3, 4, 5], True)]
+    assert kept["route"]["blocks"][0]["kit"] is True and kept["route"]["edges"][0]["item"] == "ПВ3 ×4"
+    # A new generator scheme replaces an older generated one.
+    fresh = build(config(tab="complex", route=deepcopy(DRAWN)))
+    assert _keep_hand_route(previous, fresh) is fresh
+
+
+def test_a_generator_scheme_that_does_not_fit_falls_back_to_the_rule_with_a_warning():
+    broken = {**DRAWN, "blocks": DRAWN["blocks"][:2] + [{"key": "B", "ops": [4], "final": True}]}
+    document = build(config(tab="complex", route=broken))
+
+    assert document["route"]["source"] == "generated"
+    assert shape(document["route"]) == shape(build(config(tab="complex"))["route"])
+    assert document["warnings"][-1] == (
+        "Схема полуфабрикатов: операция 5 не входит ни в один блок — схема генератора не подошла к операциям ЭТК, "
+        "ПФ разбиты по правилу генератора")
+    # A scheme the technologist drew stays strict: the build stops on it.
+    with pytest.raises(ValueError, match="^Схема полуфабрикатов: операция 5 не входит ни в один блок$"):
+        build(config(tab="complex", route={**broken, "source": "manual"}))
+
+
 # ── manual assembly ──────────────────────────────────────────────────────────────────────────────────────────────
 
 MANUAL = {

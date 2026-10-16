@@ -1589,12 +1589,18 @@ export interface EtkRouteBlock {
   unit_minutes: number;
   rolled_minutes: number;
   rolled_ops: number;
+  /** ПФ-комплект («Сложная сборка», 16.10): резка, трубки, оплётка, маркировка для нескольких ПФ — один на изделие. */
+  kit?: boolean;
+  /** Уровень на схеме: «2» — один блок на уровне, «2.1» — первый из нескольких (считает сервер). */
+  label?: string;
 }
 
 export interface EtkRouteEdge {
   from: string;
   to: string;
   per_unit: number;
+  /** Что идёт по стрелке: «НВ4 0,12 белый ×2; ТТК 8/2 ×1». */
+  item?: string;
 }
 
 export interface EtkRoute {

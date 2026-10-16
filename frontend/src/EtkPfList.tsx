@@ -28,7 +28,9 @@ function editable(document: ProjectTechcard["document"]): Route | null {
   const route = etkRouteOf(document);
   if (!route) return null;
   return {
-    blocks: route.blocks.map(({ key, name, ops, final, components }) => ({ key, name, ops, final, components })),
+    blocks: route.blocks.map(({ key, name, ops, final, components, kit }) => ({
+      key, name, ops, final, components, ...(kit ? { kit } : {}),
+    })),
     edges: route.edges.map((edge) => ({ ...edge })),
   };
 }

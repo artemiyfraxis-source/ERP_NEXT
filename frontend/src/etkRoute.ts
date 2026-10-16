@@ -53,12 +53,17 @@ export function etkRouteOf(document: Record<string, unknown> | null | undefined)
     unit_minutes: num(block.unit_minutes),
     rolled_minutes: num(block.rolled_minutes),
     rolled_ops: num(block.rolled_ops),
+    ...(block.kit === true ? { kit: true } : {}),
+    ...(typeof block.label === "string" && block.label ? { label: block.label } : {}),
   }));
   if (!blocks.length) return null;
   const known = new Set(blocks.map((block) => block.key));
   const edges = (Array.isArray(raw.edges) ? raw.edges : []).map(record)
     .filter((edge) => known.has(String(edge.from)) && known.has(String(edge.to)))
-    .map((edge) => ({ from: String(edge.from), to: String(edge.to), per_unit: num(edge.per_unit) || 1 }));
+    .map((edge) => ({
+      from: String(edge.from), to: String(edge.to), per_unit: num(edge.per_unit) || 1,
+      ...(typeof edge.item === "string" && edge.item.trim() ? { item: edge.item.trim() } : {}),
+    }));
   return {
     source: raw.source === "manual" || raw.source === "generated" ? raw.source : "derived",
     final: String(raw.final ?? blocks.find((block) => block.final)?.key ?? ""),

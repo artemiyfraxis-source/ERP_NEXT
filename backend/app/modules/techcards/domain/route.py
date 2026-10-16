@@ -8,6 +8,11 @@ operation in exactly one block. The scheme is for planning; the operation cards 
 Without a hand-edited scheme it is derived from the generator operations, one per block, the way the ETK chains its
 semi-finished products: a cut starts a branch, TUT pieces (cutTut) wait for the operation that puts them on (insTut /
 endCap), every other operation takes all open branches and continues them.
+
+Route v2 («Сложная сборка», 16.10): an edge may say what flows along it (`item`, «НВ4 0,12 белый ×2; ТТК 8/2 ×1» —
+still one edge per pair of blocks, several items joined with «; »); a block may be a kit (`kit`: cut batches, tube
+cut, braid cut, marking — parts one source prepares for several ПФ, made once per product, not once per consumer).
+Every block gets a level label for the diagram (`label`, «2.1»). A scheme without item/kit reads and writes as before.
 """
 
 from __future__ import annotations
@@ -41,6 +46,8 @@ class Block:
     ops: tuple[int, ...]
     final: bool = False
     components: tuple[Any, ...] = ()
+    # A source ПФ that prepares parts for several consumers: one kit per product (production plans it at factor 1).
+    kit: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +55,7 @@ class Edge:
     source: str
     target: str
     per_unit: Decimal = Decimal(1)
+    item: str = ""  # what flows along the edge, for the diagram; "" — not said
 
 
 @dataclass(frozen=True)
@@ -96,7 +104,8 @@ def _ordered(blocks: Sequence[Block], edges: Sequence[Edge], manual: bool, gener
     ascending; a hand-made (manual) block keeps the technologist's order — it IS the order of work inside the
     semi-finished product (ПФ, owner + Vasily 13.10): «05, 03» in one ПФ is allowed, ETK numbers stay as they are."""
     blocks = sorted(
-        (Block(item.key, item.name, tuple(item.ops) if manual else tuple(sorted(item.ops)), item.final, item.components)
+        (Block(item.key, item.name, tuple(item.ops) if manual else tuple(sorted(item.ops)), item.final, item.components,
+               item.kit)
          for item in blocks),
         key=lambda item: (min(item.ops, default=0), item.key),
     )
@@ -196,6 +205,14 @@ def _components(value: object, label: str) -> tuple[Any, ...]:
     return tuple(result)
 
 
+def _item(value: object, index: int) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise RouteError(f"подпись стрелки №{index} должна быть текстом")
+    return value.strip()
+
+
 def parse_route(
     raw: object, ops: Sequence[RouteOp], final_name: str = "", *, manual: bool = True,
 ) -> Route:
@@ -225,7 +242,8 @@ def parse_route(
         if not name and positions:
             # The product of the block is what its last operation hands on: the last by the hand-made order.
             name = (final_name if final else "") or names.get(positions[-1] if manual else max(positions), "")
-        blocks.append(Block(key, name, positions, final, _components(item.get("components"), f"«{name or key}»")))
+        blocks.append(Block(key, name, positions, final, _components(item.get("components"), f"«{name or key}»"),
+                            item.get("kit") is True))
     raw_edges = raw.get("edges")
     if raw_edges is None:
         raw_edges = []
@@ -240,7 +258,7 @@ def parse_route(
         if not source or not target:
             raise RouteError(f"у стрелки №{index} не указано, из какого блока в какой она ведёт")
         per_unit = _per_unit(item.get("per_unit"), labels.get(source, f"«{source}»"), labels.get(target, f"«{target}»"))
-        edges.append(Edge(source, target, per_unit))
+        edges.append(Edge(source, target, per_unit, _item(item.get("item"), index)))
     route = _ordered(blocks, edges, manual)
     validate_route(route, [op.position for op in ops])
     return route
@@ -369,8 +387,29 @@ def _number(value: Decimal, places: int = 4) -> int | float:
     return int(rounded) if rounded == rounded.to_integral_value() else float(rounded)
 
 
+def route_levels(route: Route) -> dict[str, str]:
+    """Level label of every block for the diagram: the level is the longest path from a source (sources are level 1,
+    the product is the last level); «N» when the level holds one block, «N.k» when several — k by the blocks' order
+    (first operation)."""
+    incoming: dict[str, list[str]] = {block.key: [] for block in route.blocks}
+    for edge in route.edges:
+        incoming[edge.target].append(edge.source)
+    level: dict[str, int] = {}
+    for key in _topological(route):
+        level[key] = 1 + max((level[source] for source in incoming[key]), default=0)
+    members: dict[int, list[str]] = {}
+    for block in route.blocks:
+        members.setdefault(level[block.key], []).append(block.key)
+    return {
+        key: str(number) if len(keys) == 1 else f"{number}.{index}"
+        for number, keys in members.items() for index, key in enumerate(keys, start=1)
+    }
+
+
 def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any]:
-    """The `document.route` shape (ETK version 3)."""
+    """The `document.route` shape (ETK version 3). `kit` and an edge's `item` are written only when set, so a scheme
+    without them keeps its shape; `label` is computed on every write, as the totals are."""
+    labels = route_levels(route)
     return {
         "source": "generated" if route.generated else "manual" if route.manual else "derived",
         "final": route.final.key,
@@ -379,6 +418,7 @@ def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any
             "name": block.name,
             "ops": list(block.ops),
             "final": block.final,
+            **({"kit": True} if block.kit else {}),
             "components": deepcopy(list(block.components)),
             "outputs": 1,
             "inputs": _number(totals[block.key].inputs),
@@ -386,8 +426,10 @@ def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any
             "unit_minutes": _number(totals[block.key].unit_minutes),
             "rolled_minutes": _number(totals[block.key].rolled_minutes),
             "rolled_ops": totals[block.key].rolled_ops,
+            "label": labels[block.key],
         } for block in route.blocks],
-        "edges": [{"from": edge.source, "to": edge.target, "per_unit": _number(edge.per_unit)} for edge in route.edges],
+        "edges": [{"from": edge.source, "to": edge.target, "per_unit": _number(edge.per_unit),
+                   **({"item": edge.item} if edge.item else {})} for edge in route.edges],
     }
 
 
