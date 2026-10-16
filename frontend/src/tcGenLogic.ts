@@ -2395,9 +2395,11 @@ export function makeGen(D: GenData, S: GenState) {
     const blockOfEp = (ep: Endpoint | null) => (branchOf(ep) ? epKey(ep!) : FINAL);
     const markBlock = (t: MarkTube) => blockOfEp(markEp(t));
     const markTitle = (t: MarkTube) => `«${t.spec.text || t.spec.target}»`;
-    /** «X2 «I3»»: разъём по КД и его надпись (подпись разъёма, иначе текст его маркировки). */
+    /** «X2 «I3»»: разъём по КД и его надпись — текст его маркировки, иначе подпись разъёма, если она не то же «X2»
+     *  (713К.4 КБ1: подписи разъёмов «X1»…«X4» давали «Ветвь X1 «X1»», владелец 17.10). */
     const xTag = (ep: Endpoint) => {
-      const label = (ep.label || "").trim() || markTubes.find((t) => markEp(t) === ep && t.spec.text)?.spec.text || "";
+      const own = (ep.label || "").trim();
+      const label = markTubes.find((t) => markEp(t) === ep && t.spec.text)?.spec.text || (own !== xKey(ep) ? own : "");
       return label ? `${xKey(ep)} «${label}»` : xKey(ep);
     };
 
