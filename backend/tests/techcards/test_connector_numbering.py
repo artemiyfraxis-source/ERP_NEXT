@@ -168,8 +168,10 @@ def test_missing_molex_housings_are_in_the_catalogue():
     series = {item["id"]: item for item in connector_series()}
 
     kk396 = series["molex-kk396"]
-    assert [h["article"] for v in kk396["variants"] for h in v["housings"]] == ["09-50-8020", "09-50-8051"]
-    assert [h["n"] for v in kk396["variants"] for h in v["housings"]] == [2, 5] and not kk396["range_checked"]
+    # 16.10.2026: the housing table of SD-41695 sheet 3 — options A (2…12), B (2…14), D (2…14).
+    articles = [h["article"] for v in kk396["variants"] for h in v["housings"]]
+    assert articles[:2] == ["09-50-8020", "09-50-8030"] and "09-50-8051" in articles and articles[-1] == "09-50-8143"
+    assert len(articles) == 11 + 13 + 13 and kk396["range_checked"] and kk396["counts"] == list(range(2, 15))
     assert kk396["sources"] and any("SD-41695" in source["title"] for source in kk396["sources"])
     assert kk396["pitch"] == 3.96
 
@@ -185,12 +187,16 @@ def test_missing_molex_housings_are_in_the_catalogue():
     assert series["molex-boardin"]["variants"][0]["housings"][0]["n"] == 4
     for series_id in ("molex-kk396", "molex-minilock", "molex-sl", "molex-igrid", "molex-boardin"):
         assert series[series_id]["maker"] == "Molex" and series[series_id]["category"] == "Провод — плата"
-    # No housing part number table was found for CTX50 (Mini50 34967): it keeps only the terminals and the closest shape.
-    assert series["molex-ctx50"]["variants"] == [] and series["molex-ctx50"]["sample"]["article"] == ""
-    # Owner's reference-data gaps, 14.10.2026: only the housings a document or a distributor listing confirms.
+    # CTX50 (16.10.2026): the Mini50 housings the distributor listings name, the count from a table (not the number).
+    ctx = series["molex-ctx50"]
+    assert [h["n"] for v in ctx["variants"] for h in v["housings"]] == [2, 4, 4, 10, 10, 10, 4, 2, 4, 4]
+    assert ctx["pitch"] == 1.8 and not ctx["range_checked"] and not ctx["checked"]
+    assert {c["article"] for c in ctx["contacts"]} == {"349052447", "560023-0721"}
+    # Owner's reference-data gaps, 14.10.2026 (closed 16.10.2026): 78172-000x and the 6/7-circuit 78172-500x.
     ez = series["molex-picoezmate"]
-    assert [h["article"] for v in ez["variants"] for h in v["housings"]] == [f"78172-000{n}" for n in (2, 3, 4, 5)]
-    assert [h["n"] for v in ez["variants"] for h in v["housings"]] == [2, 3, 4, 5] and not ez["range_checked"]
+    assert [h["article"] for v in ez["variants"] for h in v["housings"]] == [
+        *(f"78172-000{n}" for n in (2, 3, 4, 5)), "78172-5006", "78172-5007"]
+    assert ez["counts"] == [2, 3, 4, 5, 6, 7] and ez["range_checked"] and not ez["checked"]
     assert ez["pitch"] == 1.2 and ez["sources"]
     kls = series["kls"]
     assert [h["n"] for v in kls["variants"] for h in v["housings"]] == list(range(2, 21))
@@ -308,7 +314,32 @@ def test_series_named_in_terminals_have_housing_tables():
 
 def test_series_without_housings_say_why():
     series = {item["id"]: item for item in connector_series()}
-    for series_id in ("te-matenlok", "te-mcp28", "te-mqs", "molex-ctx50", "hsm-phu", "jr-servo", "flat-quick"):
+    for series_id in ("te-matenlok", "te-mcp28", "te-mqs", "flat-quick"):
         item = series[series_id]
         assert item["variants"] == [] and item["note"], series_id
     assert "чертежи TE недоступны" in series["te-matenlok"]["note"] and "автопроизводителей" in series["te-mcp28"]["note"]
+
+def test_old_gaps_have_housings():
+    """16.10.2026: Hsuan Mao MX 5,08 and HC 2,0 from the HSM drawings, the JR servo plug, Micro-Fit+ by 2064610000-SD."""
+    series = {item["id"]: item for item in connector_series()}
+    mx, hc, jr, mf = series["hsm-mx"], series["hsm-hc"], series["jr-servo"], series["molex-microfit-plus"]
+    assert mx["counts"] == list(range(2, 11)) and mx["pitch"] == 5.08 and mx["maker"] == "Hsuan Mao"
+    assert mx["variants"][0]["housings"][2]["headers"][0]["article"] == "W4508-04PSYTW0"
+    assert hc["counts"] == list(range(2, 17)) and hc["pitch"] == 2.0 and hc["range_checked"]
+    assert jr["counts"] == [3] and jr["pitch"] == 2.54 and {c["article"] for c in jr["contacts"]} == {"JR-T-Female", "JR-T-Male"}
+    assert mf["range_checked"] and mf["counts"] == list(range(2, 25, 2)) and not mf["checked"]
+    assert housing_of("206461-0402")["color"] == "#c8322d" and housing_of("206461-0200")["color"] == "#2b2b2b"
+    connectors = connector_series()
+    assert find_in_series("HSM H2011-08PWA000R", connectors)["housing"]["n"] == 8
+    assert find_in_series("H5080-02PYW000R", connectors)["series"] == "hsm-mx"
+    assert find_in_series("0349671131", connectors)["housing"]["n"] == 10
+    records = [{"terManufacturer": "Hsuan Mao", "terComponent": "PHU/MHU/MX", "terSeries": "PHU, MHU, MX", "terType": "Female",
+                "terArticle": "T2410-TBE00000R"},
+               {"terManufacturer": "HSM (Hsuan Mao)", "terComponent": "HC (PAP)", "terSeries": "T2011", "terType": "Female",
+                "terArticle": "T2011-TP200000R"},
+               {"terComponent": "JR/Futaba servo connector contact", "terSeries": "JR", "terType": "Male",
+                "terArticle": "", "terArticleBag": "JR-T-Male"}]
+    series = {item["id"]: item for item in connector_series(records)}
+    assert [t["article"] for t in series["hsm-mx"]["terminals"]] == ["T2410-TBE00000R"]
+    assert [t["article"] for t in series["hsm-hc"]["terminals"]] == ["T2011-TP200000R"]
+    assert series["hsm-mx"]["contacts"][0]["in_base"] and series["jr-servo"]["contacts"][1]["in_base"]

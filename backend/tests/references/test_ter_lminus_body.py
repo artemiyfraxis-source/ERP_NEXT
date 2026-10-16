@@ -161,7 +161,7 @@ def test_estimates_take_l_plus_only_from_a_drawing_of_the_wire_in_the_housing_or
     for article, row in rows.items():
         fields, old = row["fields"], row["old"]
         note = fields[BUILDER.NOTE_FIELD]
-        assert note.startswith(("примерно: ", "по чертежу: ")) and "http" in note, article
+        assert note.startswith(("по корпусу: ", "по чертежу: ")) and "http" in note and "примерно" not in note, article
         l_minus = Decimal(fields["terLMinus"].replace(",", "."))
         l_plus = Decimal(fields.get("terLPlus", old["terLPlus"]).replace(",", "."))
         assert l_minus > 0 and l_plus > 0 and l_plus + l_minus > l_plus, article

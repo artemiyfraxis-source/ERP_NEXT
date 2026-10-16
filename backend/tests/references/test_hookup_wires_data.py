@@ -72,12 +72,11 @@ def test_strand_lay_and_series_colours_are_filled_where_a_source_gives_them():
     for key in ("ПВАМ", "ПуГВ"):
         colors = series[key]["colors"]["value"]
         assert len(colors) >= 11 and len(set(colors)) == len(colors) and "чёрный" in colors, key
-    # 14.10.2026 (владелец: «найди значения сам или поставь примерные»): МК 26-13 and the МГТФ colour are filled, each
-    # one marked «примерно» in its source — never passed off as a first-hand value.
+    # 16.10.2026: МК 26-13 by the Chuvashkabel technical description (ТУ 16.К05-016-2003) — seven colours («белый или
+    # натуральный», no green), 0,50 mm² is Ø 1,40; МГТФ is not dyed.
     mk = series["МК 26-13"]
-    assert len(mk["colors"]["value"]) == 8 and mk["colors"]["source"].startswith("примерно: ")
-    assert mk["standard"]["value"] == "ТУ 16.К05-016-2003" and mk["standard"]["source"].startswith("примерно: ")
-    for size in mk["sizes"]:
-        assert size["strands"]["source"].startswith("примерно: ") and size["outer_dia_mm"]["source"].startswith("примерно: ")
+    assert mk["colors"]["value"] == ["белый", "натуральный", "жёлтый", "оранжевый", "красный", "синий", "коричневый", "чёрный"]
+    assert mk["standard"]["value"] == "ТУ 16.К05-016-2003" and "chuvkab.nt-rt.ru/images/manuals/mk_26_13.pdf" in mk["standard"]["source"]
     assert [size["strands"]["value"] for size in mk["sizes"]] == ["14×0,08", "24×0,08", "19×0,12", "19×0,15", "19×0,18"]
-    assert series["МГТФ"]["colors"]["value"] == ["белый"] and series["МГТФ"]["colors"]["source"].startswith("примерно: ")
+    assert [size["outer_dia_mm"]["value"] for size in mk["sizes"]] == [0.75, 0.87, 1.04, 1.19, 1.4]
+    assert series["МГТФ"]["colors"]["value"] == ["натуральный"]

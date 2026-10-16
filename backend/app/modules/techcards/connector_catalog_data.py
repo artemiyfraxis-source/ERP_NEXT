@@ -77,6 +77,10 @@ SL156_TABLE = {key: count for key, count in _te_table("770849", {"": 0, "1-": 1,
 SL156_TABLE.update({f"{prefix}-770849-2": 2 for prefix in "345678"})
 
 
+MINI50_SEALED = {"2001": 2, "4001": 4, "4021": 4, "4006": 4, "1001": 10, "1005": 10, "1131": 10}
+MINI50_UNSEALED = {"0020": 2, "0040": 4, "0140": 4}
+
+
 CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # JST EL — eEL «Housing»: 2, 3, 4 in one row, 4 (04N) and 6 in two rows, 9, 12, 15 in three rows («Contact position
     # location numbers» prints the grid, but not from which side it is seen).
@@ -236,9 +240,34 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing, front view of the housing: 6 … 1 moulded at the wire end, but
     # the drawing does not say which end that view shows, so the numbering stays unchecked.
     _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", note=UNCHECKED),
-    # Molex Pico-EZmate 78172 — part numbers from the distributors' listings of the Molex part sheets (Farnell, RS, Heilind);
-    # the sales drawing SD-78172-007-001 did not open, so there is no numbering and no housing length.
-    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?000(\d)$", 1.2, color=BLACK, note=NO_DRAWING),
+    # Molex Pico-EZmate 78172 — 78172-0002…0005 (Molex part sheets 78172-0002 / -0004, Farnell, Heilind) and 78172-5006 /
+    # -5007 (6 and 7 circuits, Molex series chart 78172; drawing SD-78172-001). The part sheets print no circuit numbers and
+    # the sales drawing SD-78172-007 did not open, so the numbering stays unchecked.
+    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?[05]00(\d)$", 1.2, color=BLACK, note=NO_DRAWING),
+    # Molex Mini50 (CTX50 terminals), 1.80 mm: the circuit count is not a plain digit of the part number, so each housing a
+    # distributor listing names is in the table. Sealed 34967 with CPA (Heilind / element14 349672001 «2 Circuits,
+    # Polarization Option A, Black», RS 34967-4001 «4 way», RS 34967-1001 «10 way», Mouser 0349671131 «10 Circuits»,
+    # Arrow 349674021 «4 Circuits … Terminal Position 2 Plugged», Molex 349674006 «4 Circuits, without CPA, Polarization
+    # Option B, Light Gray», Molex part sheet 0349671005 «without CPA, 10 Circuits … Pitch 1.80mm»); unsealed 34791 (Heilind / RS 34791-0020 «2 Circuits», 34791-0040 and -0140 «4 Circuits»,
+    # -0140 bridged). No drawing with circuit numbers was reachable (molex.com does not answer).
+    _family("molex-mini50-s", "Molex Mini50 (герметичный 34967)", r"^0?34967-?(\d{4})$", 1.8, latch="lever", color=BLACK,
+            table=MINI50_SEALED, color_by=((r"4006$", "#c9cccf"),), note=NO_DRAWING),
+    _family("molex-mini50-u", "Molex Mini50 (негерметичный 34791)", r"^0?34791-?(\d{4})$", 1.8, latch="lever", color=BLACK,
+            table=MINI50_UNSEALED, note=NO_DRAWING),
+    # Hsuan Mao (HSM) — drawings on definum.ru (the HSM distributor; hsuanmao.com does not answer), read 16.10.2026.
+    # MX 5.08 — H5080-XXPXW000 rev. A: H5080-NN P Y|N W 000 (NN = 02…10, Y — with the locking rib, N — without), white
+    # nylon 66, 7.70 thick, 16.0 long; the views carry no circuit numbers. Distributors add «R» (RoHS).
+    _family("hsm-mx508", "Hsuan Mao MX 5,08", r"^(?:HSM)?H5080-(\d{2})P[YN]W\d{3}R?$", 5.08, latch="ramp",
+            note="на чертеже Hsuan Mao H5080-XXPXW000 номеров контактов нет — сверить по детали"),
+    # HC 2.0 (JST PAP analogue) — H2011-XXPW0000R rev. A: 2…16 circuits, white nylon 66, 5.7 thick, 7.8 long; one view has
+    # «1» at the right end of a face, but the drawing names neither the projection nor the wire end.
+    _family("hsm-hc", "Hsuan Mao HC 2,0 (аналог JST PA)", r"^(?:HSM)?H2011-(\d{2})PW[A0]000R?$", 2.0, latch="lever",
+            note="на чертеже Hsuan Mao H2011 «1» стоит у правого края грани, но с какой стороны вид и где провода, чертёж не показывает — сверить по детали"),
+    # JR / Futaba servo plug: 3 contacts at 2.54 (Pololu 1924, 1925: JR packs, 22–26 AWG crimp pins; a Futaba J plug has an
+    # extra polarising tab). No maker and no part number — the housings carry the shop's names, as the contacts in
+    # «Терминалы» (JR-T-Female / JR-T-Male).
+    _family("jr-servo", "Сервоконнектор JR / Futaba", r"^JR-H-(?:FEMALE|MALE)$", 2.54, fixed=3, color=BLACK,
+            note="контакт 1 — сигнал (оранжевый или белый провод), 2 — «+» (красный), 3 — «−» (коричневый или чёрный); с какой стороны ключ, производителя нет — сверить по детали"),
     # Samtec ISD2 — «positions per row», two rows: ISD2-05-D = 10 contacts.
     _family("samtec-isd2", "Samtec ISD2 (2 ряда)", r"^ISD2-(\d{2})-D-[MS]", 2.0, rows=2, order="col", count_mul=2,
             latch="lever", color=BLACK, note="на листе Samtec метка ▽ контакта 1 есть, со стороны проводов не сверена"),
@@ -269,8 +298,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-nanofit-plug", "Molex Nano-Fit (вилка, 2 ряда)", r"^201444-?[12]1(\d{2})$", 2.5, rows=2, latch="lever",
             color=BLACK, color_by=((r"^201444-?2", IVORY),), conf="high", src="Molex 2014441000-SD",
             note="по чертежу Molex 2014441000-SD: на торце проводов упором защёлки вверх CKT 1 слева вверху, CKT 2 справа от него"),
+    # Micro-Fit+ 206461 — Molex 2064610000-SD rev. C (static.chipdip.ru copy, read 16.10.2026): 206461-NNPC, NN = 02…24
+    # circuits, C = polarisation / colour (0 black A, 1 natural B, 2 red C, 3 blue D, 4 yellow E), P = 1 low halogen. Both
+    # sheets show the cavities and the keys but no circuit numbers.
     _family("molex-microfit-plus", "Molex Micro-Fit+ (2 ряда)", r"^206461-?(\d{2})\d{2}$", 3.0, rows=2, latch="lever",
-            color=BLACK, note="на чертеже Molex 2064610000-SD номеров контактов нет — сверить по детали"),
+            color=BLACK, color_by=((r"1$", IVORY), (r"2$", "#c8322d"), (r"3$", "#3b6fb6"), (r"4$", "#e3c13b")),
+            note="на чертеже Molex 2064610000-SD номеров контактов нет — сверить по детали"),
     # Mini-Fit TPA2 172708 — the wire-end views («before TPA assembly», latch up) mould 8 7 6 5 over 4 3 2 1: contact 1
     # bottom-right, as Mini-Fit Jr.
     _family("molex-minifit-tpa2", "Molex Mini-Fit TPA2 (2 ряда)", r"^172708-?0[0-2](\d{2})$", 4.2, rows=2, start="BR",
@@ -370,6 +403,8 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # under it (underside, carries «41695» and the moulded circuit «1») has CIRCUIT NUMBER 1 at the same left end, so the
     # mark is on the face opposite the ramp. From the wire side the view turns over: ramp up, contact 1 on the RIGHT (the
     # same as KK 254 2695). Parts without a ramp (09-50-8020) have no face cue — the face with the moulded «1» goes down.
+    # Sheet 3 lists the part numbers: option A (no ramp) 09-50-8NN0, 2…12; B (ramp) 09-50-8NN1, 2…14; D (ramp and
+    # polarising ribs) 09-50-8NN3, 2…14 — the two digits after «8» are the circuit count.
     _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, start="TR", latch="ramp", conf="high",
             src="Molex SD-41695",
             note="по чертежу Molex SD-41695: цифра «1» на грани, противоположной рампе; со стороны проводов рампой вверх — контакт 1 справа"),
@@ -408,6 +443,8 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "hirose-df1b-p2r": "DF1B-10DEP-2.5RC", "hirose-df1ba-p": "DF1BA-5EP-2.5RC", "hirose-df1ba-p2r": "DF1BA-10DEP-2.5RC",
     "jae-fis": "FI-S10S", "jae-fir": "FI-RE31HL",
     "kls-2-50": "L-KLS1-2.50-04-H", "molex-picoezmate": "78172-0004",
+    "molex-mini50-s": "34967-4001", "molex-mini50-u": "34791-0040", "hsm-mx508": "H5080-04PYW000", "hsm-hc": "H2011-04PWA000R",
+    "jr-servo": "JR-H-Female",
     "connfly-ds1070": "I-DS1070-SCV04", "connfly-ds1072": "I-DS1072-SCT004", "connfly-ds1073": "I-DS1073-SCW004",
     "connfly-ds1074": "I-DS1074-SCT004", "connfly-ds1071-01": "I-DS1071-01-SCB02X5", "samtec-isd2": "ISD2-05-D-M",
     "te-minict": "353908-4", "te-sl156": "770849-4",
@@ -489,10 +526,15 @@ MOLEX_SERIES: tuple[dict[str, Any], ...] = (
              ("Molex 2002771000-SD", _cd("011158288")), ("Molex 2014441000-SD", _cd("012237572"))),
             note="вилки на плату 105309, 105310, 105311–105314; гнёзда 105300, штыри 201447, TPA 105325"),
     _series("molex-microfit-plus", "Molex Micro-Fit+", "Molex", WTB, ("Micro-Fit+", "Micro-Fit+ PCIe"),
-            (("Розетка, 2 ряда, чёрная", "molex-microfit-plus", "206461-{:02d}00", _even(2, 24)),),
+            (("Розетка, 2 ряда, чёрная, ключ A", "molex-microfit-plus", "206461-{:02d}00", _even(2, 24)),
+             ("Розетка, натуральная, ключ B", "molex-microfit-plus", "206461-{:02d}01", _even(2, 12)),
+             ("Розетка, красная, ключ C", "molex-microfit-plus", "206461-{:02d}02", _even(2, 12)),
+             ("Розетка, синяя, ключ D", "molex-microfit-plus", "206461-{:02d}03", _even(2, 12)),
+             ("Розетка, жёлтая, ключ E", "molex-microfit-plus", "206461-{:02d}04", _even(2, 12)),
+             ("Розетка, чёрная, ключ A, безгалогенная", "molex-microfit-plus", "206461-{:02d}10", _even(2, 24))),
             (("Molex 2064610000-SD", _cd("034869295")),),
-            note="гнёзда 206460; цвета и ключи: -xx01 натуральная, -xx02 красная, -xx04 жёлтая; PCIe 219114 (12 + 4 конт.) не рисуется",
-            range_checked=False),
+            note="гнёзда 206460; ответные вилки 206832, 212528, 215922; PCIe 219114 (12 + 4 конт.) не рисуется",
+            range_src="Molex 2064610000-SD, таблица исполнений"),
     _series("molex-minifit-tpa2", "Molex Mini-Fit TPA2", "Molex", WTB, ("Mini-Fit TPA2",),
             (("Розетка, 2 ряда", "molex-minifit-tpa2", "172708-00{:02d}", _even(2, 24)),
              ("Розетка, 1 ряд", "molex-minifit-tpa2-1r", "200453-10{:02d}", _counts(2, 6))),
@@ -602,15 +644,16 @@ MOLEX_SERIES: tuple[dict[str, Any], ...] = (
             contacts=(("5016471000", "олово, AWG 26–22"), ("5016481000", "олово, AWG 28–26"),
                       ("5030952201", "золото, AWG 24–22"), ("5030952200", "золото, AWG 28–26")),
             note="ответные вилки 501645, 501876, 503091, 208659", range_checked=True, range_src="Molex 5016460000-SD, лист 2"),
-    # Molex part sheets (static.chipdip.ru copies): each confirms one housing; the series tables and the sales drawings
-    # (SD-41695-001, 511630400_sd) were not reachable, so the range and the numbering stay unchecked.
+    # KK 396 41695 — the part numbers of Molex SD-41695 rev. L, sheet 3 (options A, B, D without plugged cavities).
     _series("molex-kk396", "Molex KK 396", "Molex", WTB, ("KK 396 (legacy KK 156)", "KK 396/508"),
-            (("Корпус 41695, без защёлки", "molex-kk396", ("09-50-8020",)),
-             ("Корпус 41695, с фрикционной защёлкой", "molex-kk396", ("09-50-8051",))),
-            (("Molex 0009508020, лист детали", _cd("011657093")), ("Molex 0009508051, лист детали", _cd("029580511")),
-             ("Molex SD-41695 (2…14 конт.)", LCSC.format("95578245b0df1f54ea5b39f283fac359", "C505033"))),
-            note="нумерация корпуса 41695 сверена по SD-41695; в наборе только корпуса из листов деталей (чертёж даёт 2…14 контактов, но не номера деталей по исполнениям); корпуса 2139 (09-50-3…) — лист не найден; контакты 2478, 2578, 6838",
-            range_checked=False),
+            (("Корпус 41695, без защёлки (A)", "molex-kk396", "09-50-8{:02d}0", _counts(2, 12)),
+             ("Корпус 41695, с фрикционной защёлкой (B)", "molex-kk396", "09-50-8{:02d}1", _counts(2, 14)),
+             ("Корпус 41695, с защёлкой и рёбрами поляризации (D)", "molex-kk396", "09-50-8{:02d}3", _counts(2, 14))),
+            (("Molex SD-41695 (2…14 конт.)", LCSC.format("95578245b0df1f54ea5b39f283fac359", "C505033")),
+             ("Molex 0009508020, лист детали", _cd("011657093")), ("Molex 0009508051, лист детали", _cd("029580511"))),
+            note="нумерация и номера деталей — по SD-41695 (лист 3, исполнения A, B, D); корпуса с заглушёнными гнёздами "
+                 "(09-50-9…, 41695-000x) не включены; корпуса 2139 (09-50-3…) — лист не найден; контакты 2478, 2578, 6838",
+            range_src="Molex SD-41695, лист 3"),
     _series("molex-minilock", "Molex Mini-Lock", "Molex", WTB, ("Mini-Lock",),
             (("Корпус 51163, натуральный", "molex-minilock", ("51163-0400",)),),
             (("Molex 0511630400, лист детали", _cd("012341229")),),
@@ -846,9 +889,9 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
             (("Корпус, 1 ряд", "connfly-ds1071-01", "I-DS1071-01-SCB01X{}", _counts(1, 40)),
              ("Корпус, 2 ряда", "connfly-ds1071-01", "I-DS1071-01-SCB02X{}", _counts(2, 40))),
             (("Connfly C-DS1071-01-XXXXX-A", "https://en.connfly.com/static/upload/file/DS1071-01.pdf"),),
-            contacts=(("T-DS1071-01-SC000", "выборочное золото; провод на чертеже не указан"),
-                      ("T-DS1071-01-SC600", "олово; провод на чертеже не указан"),
-                      ("T-DS1071-01-SC800", "золото; провод на чертеже не указан")),
+            contacts=(("T-DS1071-01-SC000", "выборочное золото, AWG 30–26, 0,05–0,12 мм², изоляция Ø 0,9–1,35"),
+                      ("T-DS1071-01-SC600", "олово, AWG 30–26, 0,05–0,12 мм², изоляция Ø 0,9–1,35"),
+                      ("T-DS1071-01-SC800", "золото, AWG 30–26, 0,05–0,12 мм², изоляция Ø 0,9–1,35")),
             note="шаг 2,0; номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40)"),
     # --- Samtec, TE -------------------------------------------------------------------------------------------------
     _series("samtec-isd2", "Samtec ISD2", "Samtec", WTB, ("ISD2, ITD2", "ISD2"),
@@ -877,9 +920,8 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
             range_src="TE C-770849"),
 )
 
-# Series the owner's reference-data gaps asked for (14.10.2026): only the housings a document or a distributor listing
-# confirms; Hsuan Mao PHU / MHU / MX / HC, the JR / Futaba servo plug and the Molex CTX50 (Mini50 34967) have no part-number
-# table here (see `connector_series._LOOSE`).
+# Series the owner's reference-data gaps asked for (14.10.2026, closed 16.10.2026): only the housings a document or a
+# distributor listing confirms.
 GAP_SERIES: tuple[dict[str, Any], ...] = (
     _series("kls", "KLS KLS1-2.50", "KLS", WTB, ("KLS1-2.50", "KLS1-2.54", "KLS1-XL4-1.25 (HRS DF13 type)"),
             (("Корпус L-KLS1-2.50-XX-H", "kls-2-50", "L-KLS1-2.50-{:02d}-H", _counts(2, 20)),),
@@ -888,13 +930,57 @@ GAP_SERIES: tuple[dict[str, Any], ...] = (
             headers=((TOP, "L-KLS1-2.50-{:02d}-S", _counts(2, 20)),),
             note="2,5 мм, тип JST ZH; KLS1-2.54 и KLS1-XL4-1.25 — корпусов с номерами нет"),
     _series("molex-picoezmate", "Molex Pico-EZmate", "Molex", WTB, ("Pico-EZmate", "Pico-EZmate Plus"),
-            (("Корпус 78172, 1 ряд, чёрный", "molex-picoezmate", "78172-000{}", (2, 3, 4, 5)),),
-            (("Molex 78172-0410 (контакт), лист детали", _cd("027493913")),
+            (("Корпус 78172, 1 ряд, чёрный", "molex-picoezmate", "78172-000{}", (2, 3, 4, 5)),
+             ("Корпус 78172-500x, 1 ряд, чёрный", "molex-picoezmate", "78172-500{}", (6, 7))),
+            (("Molex 78172-0002 (корпус), лист детали", _cd("015211617")), ("Molex 78172-0004 (корпус), лист детали", _cd("034082924")),
+             ("Molex 78172-0410 (контакт), лист детали", _cd("027493913")),
              ("Molex 78172-0005 (корпус), лист детали, Mouser", "https://www.mouser.com/datasheet/2/276/1/0781720005_CRIMP_HOUSINGS-175763.pdf")),
             contacts=(("78172-0410", "AWG 30–28"),),
-            note="корпуса 2–5 конт. по листам Farnell / RS / Heilind; есть и 78172-5006 (6 конт.) и 7 конт., номера не сверены; "
-                 "Pico-EZmate Plus (212132) — корпус не найден",
+            note="2–5 конт. — 78172-000x (чертёж SD-78172-007), 6 и 7 конт. — 78172-5006, -5007 (чертёж SD-78172-001); "
+                 "ответная вилка 78171; Pico-EZmate Plus (212132) — корпусов в каталоге нет",
+            range_src="Molex, таблица серии 78172"),
+    _series("molex-ctx50", "Molex CTX50 (Mini50)", "Molex", AUTO, ("CTX50",),
+            (("Mini50 герметичный 34967, 1 ряд, с CPA, чёрный, ключ A", "molex-mini50-s",
+              ("34967-2001", "34967-4001", "34967-4021", "34967-1001", "34967-1131")),
+             ("Mini50 герметичный 34967, без CPA", "molex-mini50-s", ("34967-1005", "34967-4006")),
+             ("Mini50 негерметичный 34791, 1 ряд, чёрный, ключ A", "molex-mini50-u", ("34791-0020", "34791-0040", "34791-0140"))),
+            (("Heilind 34967-2001 (2 конт., ключ A)", "https://heilind.com/mol34967-2001.html"),
+             ("element14 349672001", "https://www.element14.cn/en-CN/molex/349672001/automotive-conn-housing-rcpt-2pos/dp/3702627"),
+             ("RS 34967-4001 (4 конт.)", "https://uk.rs-online.com/web/p/automotive-connectors/1367818"),
+             ("RS 34967-1001 (10 конт.)", "https://uk.rs-online.com/web/p/automotive-connectors/1367814"),
+             ("Molex 0349671005 (10 конт., без CPA, шаг 1,80), лист детали", "https://cdn.eicom.ru/media/PDF/1030948.pdf"),
+             ("Molex 0349671131 (10 конт.), лист детали", "https://www.mouser.com/datasheet/2/276/0349671131_CRIMP_HOUSINGS-1568412.pdf"),
+             ("RS 34791-0020 (2 конт.)", "https://uk.rs-online.com/web/p/automotive-connectors/1314730"),
+             ("Heilind 34791-0040 (4 конт.)", "https://heilind.com/mol34791-0040.html"),
+             ("Heilind 34791-0140 (4 конт., с перемычкой)", "https://heilind.com/mol34791-0140.html")),
+            contacts=(("349052447", "герметичный, 0,35 мм² (AWG 22)"), ("560023-0721", "негерметичный, AWG 24")),
+            note="шаг 1,8; 34967-1005 — чёрный, ключ A, 34967-4006 — светло-серый, ключ B; 34967-4021 — гнездо 2 заглушено, 34791-0140 — с перемычкой; вилки на плату 34792, 34793, 34912; "
+                 "число контактов не читается из номера — в наборе только корпуса из листингов",
             range_checked=False),
+    _series("hsm-mx", "Hsuan Mao MX / MHU 5,08", "Hsuan Mao", WTB, ("PHU/MHU/MX",),
+            (("Корпус с фиксирующим ребром (Y), белый", "hsm-mx508", "H5080-{:02d}PYW000", _counts(2, 10)),
+             ("Корпус без ребра (N), белый", "hsm-mx508", "H5080-{:02d}PNW000", _counts(2, 10))),
+            (("Hsuan Mao H5080-XXPXW000 rev. A", "https://definum.ru/system/files/h5080-xxpxw000-s41_2.pdf"),
+             ("Definum, серия MHU / MPW (HSM)", "https://definum.ru/materials/connectors-terminals-wafers/mhu-mpw")),
+            headers=((TOP, "W4508-{:02d}PSYTW0", (2, 3, 4, 6, 8)),),
+            contacts=(("T2410-TBE00000R", "AWG 24–18, 0,2–0,82 мм², изоляция Ø 1,4–2,8"),),
+            note="шаг 5,08, 5 А, 250 В; у дистрибьютора номер с суффиксом R (H5080-02PYW000R); корпуса шага 3,96 (PHU) — "
+                 "таблицы нет", range_src="Hsuan Mao H5080-XXPXW000"),
+    _series("hsm-hc", "Hsuan Mao HC 2,0 (аналог JST PA)", "Hsuan Mao", WTB, ("HC (PAP)", "T2011"),
+            (("Корпус, белый", "hsm-hc", "H2011-{:02d}PWA000R", _counts(2, 16)),),
+            (("Hsuan Mao H2011-XXPW0000R rev. A", "https://definum.ru/system/files/H2011-XXPW0000R.pdf"),
+             ("Definum, серия HC (PAP)", "https://definum.ru/materials/connectors-terminals-wafers/hc")),
+            contacts=(("T2011-TP200000R", "AWG 28–22, 0,08–0,35 мм²"),),
+            note="шаг 2,0, 3 А, 250 В; аналог JST PAP-NNV-S; на складе — HSM H2011-08PWA000R",
+            range_src="Hsuan Mao H2011-XXPW0000R"),
+    _series("jr-servo", "Сервоконнектор JR / Futaba", "", WTB, ("JR/Futaba servo connector contact",),
+            (("Корпус под гнёзда JR-T-Female", "jr-servo", ("JR-H-Female",)),
+             ("Корпус под штыри JR-T-Male", "jr-servo", ("JR-H-Male",))),
+            (("Pololu 1924, набор JR (гнёзда)", "https://www.pololu.com/product/1924"),
+             ("Pololu 1925, набор JR (штыри)", "https://www.pololu.com/product/1925")),
+            contacts=(("JR-T-Female", "AWG 26–22"), ("JR-T-Male", "AWG 26–22")),
+            note="3 контакта, шаг 2,54; у вилки Futaba J — дополнительный выступ-ключ; производителя и номера детали нет — "
+                 "артикулы корпусов по образцу контактов", range_src="Pololu 1924, 1925"),
 )
 
 # Molex after the rest of the catalogue: the gallery order comes from `connector_series._order`, not from here.

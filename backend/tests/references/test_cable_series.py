@@ -98,12 +98,13 @@ def test_dry_run_apply_and_idempotence(references_api):
     assert run(factory(), actor, now, apply=True).empty
 
 
-def test_the_sheath_gaps_filled_on_14_10_2026_are_marked_approximate_in_the_value_itself():
-    """Owner 14.10.2026: «найди значения сам или поставь примерные». Cat5e, RVVP and ПВВС have no source that opens for
-    the sheath, so the cell says «примерно» in its own text (the source stays a URL, as the loader demands)."""
+def test_the_sheath_gaps_are_plain_values_with_a_url():
+    """Owner 16.10.2026: «"примерно" не надо, будем на деле проверять» — Cat5e, RVVP and ПВВС carry plain values; how each
+    was obtained is in docs/data. ПВВС by the Беларускабель card: PVC insulation and sheath, up to 60 V, −40…+60 °C."""
     series = {item["key"]: item for item in SERIES}
     for key in ("Cat5e", "RVVP", "ПВВС"):
-        assert "примерно" in series[key]["insulation"]["value"], key
+        assert "примерно" not in str(series[key]), key
         assert series[key]["insulation"]["source"].startswith("http"), key
     assert series["RVVP"]["voltage_v"]["value"] == 300
-    assert series["ПВВС"]["voltage_v"]["value"] == 380 and series["ПВВС"]["temp_max_c"]["value"] == 60
+    assert series["ПВВС"]["voltage_v"]["value"] == 60 and series["ПВВС"]["temp_max_c"]["value"] == 60
+    assert series["ПВВС"]["insulation"]["value"].startswith("ПВХ")
