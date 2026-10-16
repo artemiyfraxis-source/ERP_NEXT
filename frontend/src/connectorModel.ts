@@ -21,7 +21,9 @@ export function hasModel(hs: ConnectorHousing): boolean {
 }
 
 /** Объёмная модель корпуса по шаблону серии, вписанная в maxW × maxH; null — шаблона нет. `view: "top"` — та же модель,
- *  развёрнутая видом сверху: крыша с защёлкой, торец проводов снизу (грань с прорезями снизу при этом не видна). */
+ *  развёрнутая видом сверху: крыша с защёлкой, торец проводов снизу. У корпуса с прорезями фиксаторов снизу (JST PH, ZH,
+ *  EH) смотрим со стороны прорезей (владелец 16.10: «нет прорезей как в реальном PHR»): модель повёрнута вокруг оси
+ *  контактов, порядок контактов слева направо тот же, торец проводов — снизу, вверх ногами. */
 export function connectorModel(hs: ConnectorHousing, maxW: number, maxH: number, view: PictureView = "iso"): Box | null {
   if (!hasModel(hs) || !hs.body) return null;
   const b = hs.body, pitch = hs.pitch || 1, color = hs.color || "#efe6cf", dark = isDark(color);
@@ -32,7 +34,8 @@ export function connectorModel(hs: ConnectorHousing, maxW: number, maxH: number,
   const DX = flat ? 0 : 0.62, DY = flat ? -0.87 : below ? 0.4 : -0.4, SY = flat ? 0.5 : 1;
   const k = Math.min(maxW / (W + L * DX), maxH / ((H + lockH) * SY + L * Math.abs(DY)), 18);
   const top = (DY > 0 ? 0 : L * -DY * k) + lockH * k * SY + 1;
-  const P = (x: number, y: number, d: number): Pt => [x * k + 1 + DX * k * d, y * k * SY + top + DY * k * d];
+  const flip = flat && below; // грань с прорезями — к зрителю
+  const P = (x: number, y: number, d: number): Pt => [x * k + 1 + DX * k * d, (flip ? H - y : y) * k * SY + top + DY * k * d];
   const quad = (x0: number, x1: number, y: number, d0: number, d1: number): Pt[] => [P(x0, y, d0), P(x1, y, d0), P(x1, y, d1), P(x0, y, d1)];
   const box = (x0: number, y0: number, x1: number, y1: number, d0: number, d1: number, fill: string, width = 0.8) => {
     const front = [P(x0, y0, d0), P(x1, y0, d0), P(x1, y1, d0), P(x0, y1, d0)];
@@ -50,14 +53,14 @@ export function connectorModel(hs: ConnectorHousing, maxW: number, maxH: number,
     const face = below ? H : 0, rearFace = below ? rearH : H - rearH;
     body += box(ears, below ? 0 : H - rearH, W - ears, below ? rearH : H, fl, L, shade(color, -0.03));
     // Прорези фиксаторов: по одной на контакт, от фланца почти до стыковочного торца.
-    if (!(flat && below)) columns.forEach((cx) => { body += poly(quad(cx - winW * 0.4, cx + winW * 0.4, rearFace, fl + 0.2, L - 0.45), groove, groove, 0.3); });
+    columns.forEach((cx) => { body += poly(quad(cx - winW * 0.4, cx + winW * 0.4, rearFace, fl + 0.2, L - 0.45), groove, groove, 0.3); });
     body += box(ears, 0, W - ears, H, 0, fl, color);
     if (ears) {
       const el = Math.min(b.ear_len || fl, fl);
       body += box(0, 0, ears, H, 0, el, shade(color, -0.06)) + box(W - ears, 0, W, H, 0, el, shade(color, -0.06));
     }
     // Гребёнка фланца над прорезями (зубцы у каждого контакта, как на чертеже PH/ZH/EH).
-    if (!(flat && below)) columns.forEach((cx) => { body += poly(quad(cx - winW * 0.32, cx + winW * 0.32, face, 0.08, fl - 0.08), shade(color, below ? -0.2 : 0.12), EDGE, 0.3); });
+    columns.forEach((cx) => { body += poly(quad(cx - winW * 0.32, cx + winW * 0.32, face, 0.08, fl - 0.08), shade(color, below ? -0.2 : 0.12), EDGE, 0.3); });
     const one = columns[row.indexOf(1)];
     if (hs.latch === "mark" && one !== undefined) {
       const t = pitch * 0.42; // SH: ▽ отлита на фланце над контактом 1

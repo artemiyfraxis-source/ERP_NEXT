@@ -120,17 +120,17 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
     expect(screen.getByText(CRIMP_COLUMN_TITLE)).toBeInTheDocument();
     const rows = Array.from(document.querySelectorAll(".crimp-row")).map((row) => row.textContent);
     expect(rows).toEqual(["26 AWG0,6215 Н", "28 AWG0,7012 Н"]);
-    expect(screen.getAllByRole("img", { name: /^Модель GHR/ })).toHaveLength(3);
+    expect(screen.getAllByRole("img", { name: /^Вид сверху GHR/ })).toHaveLength(3);
     fireEvent.click(screen.getByRole("button", { name: "← Все серии" }));
     expect(await screen.findByRole("button", { name: "Серия JST GH" })).toBeInTheDocument();
   });
 
-  it("shows «модель не сверена» instead of a model for a series without a checked template", async () => {
+  it("draws a housing without a drawing template the same way: top view and the numbered face", async () => {
     mockApi();
     render(<ConnectorGallery />);
     fireEvent.click(await screen.findByRole("button", { name: "Серия Molex Mini-Fit Jr." }));
     const card = screen.getByText("39012080").closest(".conn-housing") as HTMLElement;
-    expect(within(card).getByText("модель не сверена")).toBeInTheDocument();
+    expect(within(card).getByRole("img", { name: "Вид сверху 39012080" })).toBeInTheDocument();
     expect(within(card).getByRole("img", { name: "Вид со стороны проводов" })).toBeInTheDocument();
     expect(screen.getByText("В «Терминалы» нет контактов этой серии.")).toBeInTheDocument();
   });
