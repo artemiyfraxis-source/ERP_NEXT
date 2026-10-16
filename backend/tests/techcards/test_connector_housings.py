@@ -145,12 +145,19 @@ def test_jst_gh_xh_ph_zh_and_microfit_follow_the_maker_drawings():
 def test_series_without_a_checked_drawing_keep_the_warning():
     # 16.10.2026: PicoBlade 51047 and Micro-Fit 43645 / 43020 / 43640 were read from the Molex drawings (see
     # test_connector_numbering); SL 22-55 (molex.com closed, only part sheets) and D-Sub (the Connfly drawing has no
-    # numbers) stay unchecked.
-    for article in ("22-55-2081", "DS1033-09F"):
+    # numbers) stay unchecked — D-Sub was then marked checked by the standard (DIN 41652, numbers moulded on the insert).
+    for article in ("22-55-2081",):
         assert housing_of(article)["conf"] != "high", article
     # Searched for a maker drawing on 04.10 and found none that fixes the side: the note says what is missing.
-    for article in ("XT60H-M", "QS8-S-M", "LP-12-C04PE", "GX12M-4", "DS1033-09F"):
+    for article in ("XT60H-M", "QS8-S-M", "LP-12-C04PE", "GX12M-4"):
         assert housing_of(article)["conf"] != "high" and housing_of(article)["note"], article
+
+
+def test_dsub_follows_the_standard_from_the_solder_side():
+    plug, socket = housing_of("DB9M"), housing_of("DB9F")
+    assert plug["conf"] == socket["conf"] == "high"
+    assert plug["grid"][0] == [5, 0, 4, 0, 3, 0, 2, 0, 1] and plug["grid"][1] == [0, 9, 0, 8, 0, 7, 0, 6, 0]
+    assert socket["grid"][0] == [1, 0, 2, 0, 3, 0, 4, 0, 5] and socket["grid"][1] == [0, 6, 0, 7, 0, 8, 0, 9, 0]
 
 
 def test_jst_ze_nsh_pni_rcy_follow_the_jst_drawings():
