@@ -24,11 +24,12 @@ it("tails get strip and tin ops while side В has connectors: 4 tail ends, 3 mm 
   const keys = makeGen(DS, S).getActiveOps().map((o) => o.opKey);
   expect(keys).toEqual(expect.arrayContaining(["stripTail", "tinTail"]));
   expect(keys.indexOf("stripTail")).toBeLessThan(keys.indexOf("tinTail"));
-  // После резки, до сростков и монтажа.
+  // Порядок «Сложной сборки» по умолчанию (владелец 16.10): резка → сростки → хвосты → монтаж разъёмов.
   const lastCut = keys.reduce((last, key, i) => (/^cutWire/.test(key) ? i : last), -1);
   expect(lastCut).toBeGreaterThanOrEqual(0);
-  expect(keys.indexOf("stripTail")).toBe(lastCut + 1);
-  expect(keys.indexOf("tinTail")).toBeLessThan(keys.indexOf("splice"));
+  expect(keys.indexOf("stripTail")).toBe(keys.indexOf("splice") + 1);
+  expect(keys.indexOf("tinTail")).toBe(keys.indexOf("stripTail") + 1);
+  expect(keys.indexOf("tinTail")).toBeLessThan(keys.findIndex((key) => /^insTerm/.test(key)));
   expect(op(S, "stripTail")).toMatchObject({ type: "stripCable", templateId: tmplId("STRIP_WIRE"), tutCount: 4, strip: { a: false, lenA: "", b: true, lenB: "3" } });
   const tin = op(S, "tinTail")!;
   expect(tin).toMatchObject({ type: "tin", templateId: tmplId("SDR_tin"), units: 4, wireIdxs: [R.r2t, R.k2t, R.w12t, R.b12t] });

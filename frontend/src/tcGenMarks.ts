@@ -47,16 +47,27 @@ export function markPlaceText(row: Pick<MarkRow, "place" | "mm" | "where">): str
   return row.where.trim() || "по КД";
 }
 
+/** Термоусадочная трубка по размеру «4/2мм» (диаметр до/после усадки): «Маркировка "5" 4/2мм» из состава 713К.4 КБ1. */
+const TUBE_SIZE_RE = /\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?\s*мм/i;
+
 /** Метка-трубка (термоусадочная или ПВХ): у неё есть длина отрезка. Те же признаки, что `mark_kind` в etk_marking.py. */
 export function markIsTube(material: string): boolean {
   const text = String(material || "");
   if (/хляст|флаж|флаш/i.test(text)) return false;
-  return /термо|\bтут|\bттк|усаж|tms-?sce/i.test(text) || /кембрик|пвх|трубк/i.test(text);
+  return markTubeShrinks(text) || /кембрик|пвх|трубк/i.test(text);
 }
 
-/** Длина из поля: «25», «25,5» → число > 0; пусто или мусор → undefined (не задана). */
+/** Трубка метки усаживается: термоусадочная (ТУТ, ТТК, «4/2мм»), не ПВХ-кембрик. */
+export function markTubeShrinks(material: string): boolean {
+  const text = String(material || "");
+  return !/хляст|флаж|флаш/i.test(text) && (/термо|\bтут|\bттк|усаж|tms-?sce/i.test(text) || TUBE_SIZE_RE.test(text));
+}
+
+/** Длина из поля: «25», «25,5» → число > 0; диапазон по КД «10–15» — верхнее значение; пусто или мусор → undefined. */
 export function markLength(value: string | undefined): number | undefined {
-  const number = Number(String(value ?? "").trim().replace(",", "."));
+  const text = String(value ?? "").trim().replace(/,/g, ".");
+  const range = /^(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)$/.exec(text);
+  const number = range ? Math.max(Number(range[1]), Number(range[2])) : Number(text);
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
@@ -103,6 +114,27 @@ export function markSpecs(rows: MarkRow[], comps: CompLike[]): MarkSpec[] {
       ...(lengthMm !== undefined ? { lengthMm } : {}),
     };
   });
+}
+
+/** Метка-трубка из состава: строка, её позиция состава, усаживается ли и длина отрезка (мм, "" — не задана). */
+export type MarkTube = { spec: MarkSpec; art: string; name: string; shrink: boolean; len: string };
+
+/** Метки «Сложной сборки» (владелец 16.10, 713К.4 КБ1 «Маркировка "5" 4/2мм»): трубки из состава режутся с прочими
+ *  трубками, надеваются до монтажа разъёмов и усаживаются с прочими усадками; остальные метки (бирки, хлястики, трубка
+ *  из справочника, которую ещё печатают) — операция «Маркировка», как раньше. */
+export function markTubeSplit(rows: MarkRow[], comps: CompLike[]): { tubes: MarkTube[]; rest: MarkSpec[] } {
+  const tubes: MarkTube[] = [], rest: MarkSpec[] = [];
+  rows.filter(markRowActive).forEach((row) => {
+    const [spec] = markSpecs([row], comps);
+    const material = row.material.trim();
+    const comp = material ? comps.find((item) => norm(item.art || "") === norm(material) || norm(item.name || "") === norm(material)) : undefined;
+    const text = comp ? `${comp.name || ""} ${comp.art || ""}` : "";
+    if (!comp || !markIsTube(text)) { rest.push(spec); return; }
+    const len = markLength(row.len);
+    tubes.push({ spec, art: comp.art || comp.name || material, name: comp.name || comp.art || material, shrink: markTubeShrinks(text),
+      len: len === undefined ? "" : String(len) });
+  });
+  return { tubes, rest };
 }
 
 /** Подпись операции: «Маркировка — X1, X2, W1 и ещё 3». */
