@@ -385,15 +385,17 @@ def test_a_typical_tab_builds_its_etk_cut_into_pf_and_launches_by_pf():
     assert attach_route(document)["route"]["source"] == "generated"
 
 
-def test_complex_assembly_and_old_configs_are_not_split_and_launch_per_operation():
+def test_complex_assembly_is_split_like_a_typical_tab_and_old_configs_launch_per_operation():
+    # «Сложная сборка» (owner 16.10, 713К.4 КБ1): ПФ по этапам генератора, не ПФ на операцию.
     complex_document = build(config(tab="complex"))
-    old_document = build(config())  # a config from before 13.10 does not say its tab
+    assert complex_document["route"]["source"] == "generated"
+    assert shape(complex_document["route"]) == shape(build(config(tab="inter"))["route"])
 
-    for document in (complex_document, old_document):
-        assert document["route"]["source"] == "derived"
-        assert len(document["route"]["blocks"]) == len(document["operations"])
-        assert semifinished_steps(launch_route(document).steps) == ()
-        assert len(launch_route(document).steps) == len(document["operations"])
+    old_document = build(config())  # a config from before 13.10 does not say its tab
+    assert old_document["route"]["source"] == "derived"
+    assert len(old_document["route"]["blocks"]) == len(old_document["operations"])
+    assert semifinished_steps(launch_route(old_document).steps) == ()
+    assert len(launch_route(old_document).steps) == len(old_document["operations"])
 
 
 def test_generator_tab_reads_the_marker_and_tells_old_complex_configs_by_their_features():

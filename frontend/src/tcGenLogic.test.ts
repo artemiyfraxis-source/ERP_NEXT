@@ -46,7 +46,7 @@ it("builds the interboard config the /build endpoint reads (TcGenInline buildCon
   expect(cfg.ops[0]).toMatchObject({ opNum: "CUT_WIRE_auto", tOp: "12", tPrep: "60", tMachine: "3" });
   expect(cfg.ops[1]).toMatchObject({ firstTerm: true, ep: { connArt: "XHP-2", termArt: "SXH-001T-P0.6" }, wireSources: [""] });
   expect(cfg.ops[3].wireSources).toEqual(["Колодка XH 2"]);
-  // Вкладка и ключи операций — по ним сервер режет ЭТК типовой вкладки на ПФ (pf_split.py), «Сложную сборку» — нет.
+  // Вкладка и ключи операций — по ним сервер режет ЭТК вкладки генератора на ПФ (pf_split.py), «Сложную сборку» — тоже (16.10).
   expect(cfg.tab).toBe("inter");
   expect(cfg.ops.map((op: any) => op.opKey)).toEqual(expect.arrayContaining(["cutWire"]));
   expect(cfg.ops.every((op: any) => typeof op.opKey === "string" && op.opKey)).toBe(true);

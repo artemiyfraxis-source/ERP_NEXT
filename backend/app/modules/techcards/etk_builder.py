@@ -1552,9 +1552,11 @@ def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[Route
 
 
 # Вкладки генератора (13.10): типовые — «Межплатная» и «КОАКС» — режут ЭТК на ПФ сами (domain/pf_split.py);
-# «Сложную сборку» владелец раскладывает по ПФ сам в «Править ПФ» — автоматики там нет; «Ручная сборка» — свои блоки.
+# «Ручная сборка» — свои блоки. «Сложная сборка» с 16.10 тоже (владелец, 713К.4 КБ1: «нам нужно понимать иерархию» —
+# резки одним ПФ, а не ПФ на операцию); правка — в «Править ПФ».
 TYPICAL_TABS = frozenset({"inter", "coax"})
 COMPLEX_TAB = "complex"
+SPLIT_TABS = TYPICAL_TABS | {COMPLEX_TAB}
 # Операции, которые генератор ставит только на «Сложной сборке» (сростки, герметизация, складывание жилы).
 _COMPLEX_TYPES = frozenset({"splice", "seal", "foldCore"})
 
@@ -1611,9 +1613,9 @@ def _route(document: Mapping[str, Any], *, strict: bool) -> dict[str, Any] | Non
         except RouteError:
             if strict:
                 raise
-    # A typical generator tab cuts its ETK into ПФ by itself (owner 13.10) — only a config that says its tab, so a
-    # rebuild of an old config keeps its scheme until the generator builds it anew.
-    if route is None and strict and str(config.get("tab") or "").strip() in TYPICAL_TABS:
+    # A generator tab cuts its ETK into ПФ by itself (owner 13.10, «Сложная сборка» since 16.10) — only a config that
+    # says its tab, so a rebuild of an old config keeps its scheme until the generator builds it anew.
+    if route is None and strict and str(config.get("tab") or "").strip() in SPLIT_TABS:
         route = _generated_split(ops, final_name)
     route = route or derive_route(ops, final_name)
     return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
