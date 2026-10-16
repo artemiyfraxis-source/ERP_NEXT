@@ -18,6 +18,7 @@ import { periodWords } from "./PlanLoadSheet";
 import { KitTile } from "./ProjectCard";
 import { deadlineChips, feedsText, operationPlanText, taskItemLabel, upstreamIds, windowText } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
+import { PageWindow } from "./PageWindow";
 import { isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 
 // Экран мастера (владелец, 29.09): после выдачи техкарты проект приходит мастеру, разбитый на операции маршрута,
@@ -287,6 +288,44 @@ export function workFinish(start: number, seconds: number, shift: ProductionShif
   return time;
 }
 
+// «Назначить только …»: ближайший с дня from рабочий день монтажника (не отпуск), где после его работы есть место, и
+// момент начала — как «Назначить на день» (appendStart). null — за 60 дней места нет.
+export function firstFreeStart(operatorId: string, from: string, task: ProductionTask, operation: ProductionOperation,
+  tasks: ProductionTask[], shift: ProductionShift, holidays: string[], absences: ProductionAbsence[], now: Date = new Date()) {
+  const earliest = earliestStart(operatorId, task, operation, now);
+  for (let index = 0; index < 60; index += 1) {
+    const day = addDays(from, index);
+    if (!workingDay(day, shift, holidays)) continue;
+    if (absences.some((item) => item.operator_id === operatorId && item.from_date <= day && day <= item.to_date)) continue;
+    const start = appendStart(operatorId, day, tasks, shift, operation.id, earliest);
+    if (start != null) return { day, start };
+  }
+  return null;
+}
+
+// Почему весь этап одному не отдать: штуки начатых и законченных долей сервер не забирает (dispatch.split_shares).
+export function onlyBlocker(operation: ProductionOperation, operatorId: string, operators: ProductionOperator[]) {
+  const nameOf = (id: string) => operators.find((item) => item.id === id)?.name ?? "Монтажник";
+  const own = (operation.shares ?? []).find((share) => share.operator_id === operatorId);
+  if (own && (own.started_at || own.finished_at)) return `${nameOf(operatorId)} уже взял(а) этап — время идёт по факту`;
+  const locked = (operation.shares ?? []).find((share) => share.operator_id !== operatorId && (share.started_at || share.finished_at));
+  return locked ? `${nameOf(locked.operator_id)} уже ${locked.finished_at ? "сделал(а) свою часть" : "взял(а) этап"} — его штуки не забрать` : "";
+}
+
+// Что изменится, если снять монтажника с этапа (окно подтверждения у «×»): то же, что делает сервер (_remove_share).
+export function removalChanges(operation: ProductionOperation, operatorId: string, operators: ProductionOperator[]): string[] {
+  const nameOf = (id: string) => operators.find((item) => item.id === id)?.name ?? "Монтажник";
+  const own = sharesOf(operation, operatorId)[0];
+  const rest = operation.operator_ids.filter((id) => id !== operatorId);
+  const lines: string[] = [];
+  if (own?.planned_start) lines.push(`План ${nameOf(operatorId)} ${windowText(own.planned_start, own.planned_finish)} освободится.`);
+  if (!rest.length) lines.push("Этап останется без исполнителя — его нужно будет назначить заново.");
+  else if (own?.quantity != null) lines.push(`${own.quantity} шт станут нераспределёнными — отдайте их другому монтажнику (${rest.map(nameOf).join(", ")} остаются со своими штуками).`);
+  else lines.push(`Этап сделают ${rest.map(nameOf).join(", ")}: окно пересчитается на меньший состав, их работа после этапа сдвинется.`);
+  if (own?.started_at) lines.push(`${nameOf(operatorId)} уже брал(а) этап в работу ${formatDay(own.started_at.slice(0, 10))}.`);
+  return lines;
+}
+
 // Коэффициент монтажника по операции (prodSkillOf_): нет строк по коду — 1; есть — допущенный со своим коэффициентом.
 function rateOf(skills: ProductionSkill[], code: string, operatorId: string) {
   const skill = code ? skills.find((item) => item.operator_id === operatorId && item.operation_code === code) : undefined;
@@ -367,6 +406,12 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const [openDay, setOpenDay] = useState<{ personId: string; day: string } | null>(null);
   // Штук монтажнику (владелец, 30.09: «дробить операцию между людьми»): по умолчанию — нераспределённое.
   const [pieces, setPieces] = useState("");
+  // «Назначить только …» (владелец 16.10): весь этап одному монтажнику одним действием; день — ближайший рабочий
+  // со свободным временем, его видно на кнопке и можно сменить.
+  const [onlyWho, setOnlyWho] = useState("");
+  const [onlyDay, setOnlyDay] = useState("");
+  // Снятие исполнителя — через окно подтверждения с тем, что изменится (владелец 16.10: «×» сразу пересобирал план).
+  const [removing, setRemoving] = useState<{ taskId: string; operationId: string; personId: string } | null>(null);
   const keys = useRef(new Map<string, string>());
   const board = useWidth();
 
@@ -443,6 +488,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   function select(item: ProductionTask, op: ProductionOperation | null) {
     setSelected(op ? { taskId: item.id, operationId: op.id } : null);
     setPieces(op ? String(defaultPieces(item, op)) : "");
+    setOnlyWho("");
+    setOnlyDay("");
   }
 
   // Мастер выбирает день (и час); доля встаёт с первого свободного времени монтажника, хвост — на следующие дни,
@@ -455,7 +502,22 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const capacity = shiftCapacity(workShift);
 
   function unassign(item: ProductionTask, op: ProductionOperation, operatorId: string) {
+    setRemoving(null);
     void mutate(op.id, () => productionApi.share(item.id, op.id, item.version, operatorId, null, null, true));
+  }
+
+  // «Назначить только»: монтажник по умолчанию — уже назначенный на этап (первый), иначе первый в списке.
+  const onlyPerson = task && operation
+    ? people.find((person) => person.id === onlyWho) ?? people.find((person) => operation.operator_ids.includes(person.id)) ?? people[0]
+    : undefined;
+  const onlySlot = task && operation && onlyPerson
+    ? firstFreeStart(onlyPerson.id, onlyDay || today, task, operation, tasks, workShift, holidays, absences)
+    : null;
+  const onlyBlock = task && operation && onlyPerson ? onlyBlocker(operation, onlyPerson.id, operators) : "";
+  function assignOnly() {
+    if (!task || !operation || !onlyPerson || !onlySlot) return;
+    const date = new Date(onlySlot.start);
+    void mutate(operation.id, () => productionApi.share(task.id, operation.id, task.version, onlyPerson.id, task.quantity, `${isoDay(date)}T${clock(date.getHours() * 60 + date.getMinutes())}`));
   }
 
   function openPersonDay(personId: string, day: string, open: boolean) {
@@ -550,7 +612,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                         const own = sharesOf(op, person.id)[0];
                         return <span className={`mb-chip${own?.finished_at ? " done" : ""}`} key={person.id} title={own?.planned_start ? windowText(own.planned_start, own.planned_finish) : undefined}>
                           {person.name}{own && pieceLabel(item, op, own) ? <b>{pieceLabel(item, op, own)}</b> : null}{own?.finished_at ? " ✓" : own?.started_at ? " · взял" : ""}
-                          {canEdit && <button className="mb-chip-x" aria-label={`Снять ${person.name}`} title="Снять с операции" disabled={Boolean(busy)} onClick={() => unassign(item, op, person.id)}>×</button>}
+                          {canEdit && <button className="mb-chip-x" aria-label={`Снять ${person.name}`} title="Снять с операции" disabled={Boolean(busy)} onClick={() => setRemoving({ taskId: item.id, operationId: op.id, personId: person.id })}>×</button>}
                         </span>;
                       })}
                       {!people.length ? <span className="mb-free">не назначено</span> : remainderOf(item, op) > 0 ? <span className="mb-free">не распределено {remainderOf(item, op)} шт</span> : null}
@@ -585,6 +647,17 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         ? <div className="mb-target"><b>{operation.position}. {operationName(operation)}{isPfOperation(operation) ? ` — ${pfOpsText(operation)}` : ""} · {hours(operation.norm_seconds)}</b><small>{task.number} · {taskItemLabel(task)} × {task.quantity}. Нажмите на день у монтажника.</small>
           <label className="mb-pieces">Штук монтажнику<input type="number" min={1} max={task.quantity} step={1} value={pieces} aria-label="Штук монтажнику" onChange={(event) => setPieces(event.target.value)} /><span>из {task.quantity}{free > 0 && free < task.quantity ? ` · не распределено ${free}` : ""} · норма {hours(Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * quantity)}</span></label>
           {quantity > free && free < task.quantity && <small>Сверх нераспределённых штуки заберём у того, кто заканчивает позже.</small>}
+          {canEdit && people.length > 0 && onlyPerson && <div className="mb-only" role="group" aria-label="Весь этап одному монтажнику">
+            <label>Только<select aria-label="Монтажник на весь этап" value={onlyPerson.id} onChange={(event) => setOnlyWho(event.target.value)}>
+              {people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+            </select></label>
+            <label>с дня<input type="date" aria-label="День начала" min={today} value={onlyDay || onlySlot?.day || today} onChange={(event) => setOnlyDay(event.target.value)} /></label>
+            <button className="primary small" disabled={Boolean(busy) || Boolean(onlyBlock) || !onlySlot} onClick={assignOnly}>
+              {onlySlot ? `Назначить только ${onlyPerson.name} на ${formatDay(onlySlot.day)} с ${clock(new Date(onlySlot.start).getHours() * 60 + new Date(onlySlot.start).getMinutes())}` : `Назначить только ${onlyPerson.name}`}
+            </button>
+            {(onlyBlock || !onlySlot) && <small className="danger-text">{onlyBlock || "Свободного времени в ближайшие 60 дней нет — выберите другой день или монтажника."}</small>}
+            {!onlyBlock && onlySlot && operation.operator_ids.some((id) => id !== onlyPerson.id) && <small>Остальные исполнители будут сняты — все {task.quantity} шт получит {onlyPerson.name}.</small>}
+          </div>}
           <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
         : <div className="mb-target muted">{canEdit ? "Выберите операцию в списке выше, затем день и час у монтажника." : "Нажмите на день — раскладка по часам."}</div>}
       {site === HANDOVER_SITE && <div className="mb-target muted">{HANDOVER_SITE} работает без раскладки по людям и часам: сюда падают задания с пометкой «Отдано в {HANDOVER_SITE}».</div>}
@@ -669,5 +742,22 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       </table>}
       {site !== HANDOVER_SITE && <LoadLegend capacity={capacity} late={false} />}
     </aside>
+    {(() => {
+      const item = removing ? live.find((entry) => entry.id === removing.taskId) : undefined;
+      const op = item?.operations.find((entry) => entry.id === removing?.operationId);
+      if (!removing || !item || !op) return null;
+      const name = operators.find((entry) => entry.id === removing.personId)?.name ?? "Монтажник";
+      return <PageWindow label={`Снять ${name} с этапа`} width={560} dismissable close={() => setRemoving(null)}>
+        <div className="panel mb-remove">
+          <div className="manual-stock-head"><h2>Снять {name} с этапа {op.position}?</h2></div>
+          <p><b>{item.number} · {taskItemLabel(item)}</b> · этап {op.position} «{operationName(op)}»</p>
+          <ul>{removalChanges(op, removing.personId, operators).map((line) => <li key={line}>{line}</li>)}</ul>
+          <div className="form-actions">
+            <button className="secondary" onClick={() => setRemoving(null)}>Отмена</button>
+            <button className="danger" disabled={Boolean(busy)} onClick={() => unassign(item, op, removing.personId)}>Снять {name}</button>
+          </div>
+        </div>
+      </PageWindow>;
+    })()}
   </div>;
 }

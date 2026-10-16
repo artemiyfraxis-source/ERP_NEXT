@@ -763,6 +763,12 @@ export interface ProductionReadiness {
   text: string;
   /** Подтверждённые мастером коробки этого ПЗ, которые можно взять на вход. */
   boxes: ProductionReadyBox[];
+  /** Готово: сколько штук этой операции дают коробки входов (у сборки — по самому бедному входу). */
+  available?: string;
+  /** Ждёт: номер этапа-входа, сколько он сдал и сколько должен сдать. */
+  source_position?: number | null;
+  handed?: string;
+  need?: string;
 }
 
 export interface ProductionOperationInput {

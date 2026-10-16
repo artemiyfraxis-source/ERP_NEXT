@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -624,9 +624,13 @@ _MY_TASK_LIMIT = 300
 _MY_BOX_LIMIT = 2_000
 
 
-def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
+def _readiness(task: ProductionTask, operation, boxes, state: str, progress: dict[str, dict] | None = None) -> dict:
     """Готовность входов операции для карточки монтажника: можно ли начинать и какие сданные коробки
-    этого ПЗ можно взять. Коробки другого ПЗ сюда не попадают."""
+    этого ПЗ можно взять. Коробки другого ПЗ сюда не попадают.
+
+    progress — строки операций задания из `_result` по id (сдано и сколько сдать). Готово — `available`: сколько штук
+    этой операции дают коробки входов (у сборки — по самому бедному входу). Ждёт — с какого этапа и сколько тот сдал
+    из нужного (владелец, 16.10: «ждёт: … не сдан» должно говорить, сколько не хватает)."""
     if state == "выполнена":
         return {"state": "done", "text": "выполнена", "boxes": []}
     if not operation.inputs:
@@ -634,6 +638,7 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
     by_id = {item.id: item for item in task.operations}
     ready: list[dict] = []
     missing = []
+    pieces: list[Decimal] = []
     for edge in operation.inputs:
         source = by_id.get(edge.input_operation_id)
         position = source.position if source else 0
@@ -644,13 +649,17 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
                 "operation_position": box.operation_position,
                 "stage": (stage_name(source.stage) if source else "") or f"этап {position}",
             } for box in sorted(found, key=lambda item: (item.created_at, item.number or "")))
+            per_unit = edge.per_unit if edge.per_unit > 0 else Decimal(1)
+            pieces.append((sum((box.available for box in found), Decimal(0)) / per_unit).to_integral_value(rounding=ROUND_FLOOR))
         else:
             missing.append((edge, source, position))
     if not missing:
         return {"state": "assembly" if len(operation.inputs) > 1 else "ready",
-                "text": "готово к сборке" if len(operation.inputs) > 1 else "можно начинать", "boxes": ready}
+                "text": "готово к сборке" if len(operation.inputs) > 1 else "можно начинать", "boxes": ready,
+                "available": _number(min(pieces))}
     edge, source, position = missing[0]
     label = (stage_name(source.stage) if source else "") or f"этап {position}"
+    where = f"этап {position} «{label}»" if position else label
     # Сданные коробки входа берутся сразу (подтверждения мастера больше нет); ждать можно только коробку,
     # которую монтажник ещё исправляет. Состояние «waiting_master» — прежнее имя в API.
     at_master = any(
@@ -658,10 +667,27 @@ def _readiness(task: ProductionTask, operation, boxes, state: str) -> dict:
         and box.status in {BoxStatus.OPEN, BoxStatus.RETURNED}
         for box in boxes
     )
+    row = (progress or {}).get(str(edge.input_operation_id)) or {}
+    handed = Decimal(row.get("fact", {}).get("good") or 0)
+    need = Decimal(row.get("required_quantity") or 0)
+    if at_master:
+        text = f"ждёт {where} — коробку исправляют"
+    elif need and handed < need:
+        text = f"ждёт {where}: сдано {_number(handed)} из {_number(need)}"
+        if handed > 0:
+            text += f", не хватает {_number(need - handed)} шт"
+    elif need:
+        # Этап-вход сдал всё, но его коробки уже взяли в работу (напарник по операции).
+        text = f"ждёт {where}: всё сданное уже взято в работу"
+    else:
+        text = f"ждёт {where}: не сдан"
     return {
         "state": "waiting_master" if at_master else "waiting_stage",
-        "text": f"ждёт: {label} — коробку исправляют" if at_master else f"ждёт: {label} не сдан",
+        "text": text,
         "boxes": ready,
+        "source_position": position or None,
+        "handed": _number(handed),
+        "need": _number(need),
     }
 
 
@@ -720,7 +746,10 @@ def my_operations(
                     "my_share": next(item for item in result["operations"][index]["shares"] if item["operator_id"] == str(share.operator_id)) if share else None,
                     "first": not operation.inputs,
                     "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != viewed],
-                    "readiness": _readiness(task, operation, boxes_by_task.get(task.id, ()), result["operations"][index]["state"]),
+                    "readiness": _readiness(
+                        task, operation, boxes_by_task.get(task.id, ()), result["operations"][index]["state"],
+                        {row["id"]: row for row in result["operations"]},
+                    ),
                     "remaining": _remaining(task, operation, viewed, outputs, result["operations"][index]),
                     "time_fact": _time_fact_result(logged.get(operation.id, ())),
                 }]})
