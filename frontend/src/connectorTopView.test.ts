@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { connectorTopView, hasTopView } from "./connectorTopView";
 import { housingCatalogItems, filterHousingItems } from "./harness/editor/editor-reference-catalog";
 import { housingTopViewSvg } from "./harness/editor/HarnessDesignEditor";
-import type { ConnectorHousing } from "./connectorArt";
+import { connectorPicture, type ConnectorHousing } from "./connectorArt";
 import type { ConnectorSeries } from "./api";
 
 const picoblade: ConnectorHousing = { art: "51021-0400", family: "molex-picoblade", title: "Molex PicoBlade", pitch: 1.25, rows: 1, cols: 4, n: 4,
@@ -12,38 +12,18 @@ const gh: ConnectorHousing = { ...picoblade, family: "jst-gh", latch: "ramp",
 const minifit: ConnectorHousing = { ...picoblade, family: "molex-minifit-jr", pitch: 4.2, rows: 2, cols: 2, n: 4, latch: "lever", grid: [[4, 3], [2, 1]] };
 const round: ConnectorHousing = { ...picoblade, kind: "round", cols: 1, grid: [[1]], round: [{ pin: 1, x: 0, y: 0 }] };
 
-describe("connectorTopView — вид сверху корпуса", () => {
-  it("shows pitch, A, B, contact 1 and the wire entry at the bottom", () => {
-    const view = connectorTopView(picoblade, 300, 200)!;
-    expect(view.body).toContain(">1,25</text>");
-    expect(view.body).toContain("A 3,75");
-    expect(view.body).toContain("Конт. 1");
-    expect(view.body).toContain("вход проводов");
-    expect(view.body.match(/<text/g)?.length).toBe(5);
+describe("connectorTopView — объёмный корпус, развёрнутый видом сверху", () => {
+  it("is the housing picture seen from above: roof with the latch, the wire face with the contacts at the bottom", () => {
+    const top = connectorTopView(gh, 200, 140)!, iso = connectorPicture(gh, 200, 140)!;
+    expect(top.body).not.toBe(iso.body);
+    expect(top.body).toContain("<polygon");
+    expect(top.body).not.toContain("<text"); // без размеров и подписей — только сам корпус
+    expect(top.w).toBeLessThanOrEqual(201);
+    expect(top.h).toBeLessThanOrEqual(141);
   });
 
-  it("marks B as approximate unless the body comes from the maker's drawing", () => {
-    expect(connectorTopView(picoblade, 300, 200)!.body).toContain("B ≈");
-    const exact = connectorTopView(gh, 300, 200)!;
-    expect(exact.estimated).toBe(false);
-    expect(exact.body).toContain("B 6,25");
-    expect(exact.body).not.toContain("B ≈");
-    expect(exact.depthMm).toBe(5.7);
-  });
-
-  it("scales width with pitch × columns", () => {
-    expect(connectorTopView({ ...picoblade, cols: 8, n: 8, grid: [[1, 2, 3, 4, 5, 6, 7, 8]] }, 400, 200)!.widthMm)
-      .toBeGreaterThan(connectorTopView(picoblade, 400, 200)!.widthMm);
-  });
-
-  it("points to the lower row when contact 1 is hidden under the upper row", () => {
-    expect(connectorTopView(minifit, 300, 200)!.body).toContain("нижний ряд");
-  });
-
-  it("has a plain drawing without dimensions for list thumbnails", () => {
-    const thumb = connectorTopView(picoblade, 92, 56, false)!;
-    expect(thumb.body).not.toContain("<text");
-    expect(thumb.w).toBeLessThanOrEqual(92 + 1);
+  it("paints the wire colours on the contacts of the wire face", () => {
+    expect(connectorTopView(picoblade, 200, 140, { 1: "красный" })!.body).toContain("#d7322d");
   });
 
   it("gives no top view to round housings", () => {
@@ -69,7 +49,7 @@ describe("вид сверху в редакторе чертежей", () => {
   it("drops the same top view as an SVG picture", () => {
     const svg = housingTopViewSvg(gh)!;
     expect(svg.startsWith("<svg xmlns=")).toBe(true);
-    expect(svg).toContain("B 6,25");
+    expect(svg).toContain("<polygon");
     expect(housingTopViewSvg(round)).toBeNull();
   });
 });

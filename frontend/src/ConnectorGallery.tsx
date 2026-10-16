@@ -65,7 +65,7 @@ const WIDE_UNITS = 9;
 function HousingCard({ item, hit, wide = false }: { item: ConnectorSeriesHousing; hit: boolean; wide?: boolean }) {
   const hs = item.housing;
   const model = connectorModel(hs, 130, 84);
-  const top = connectorTopView(hs, wide ? 380 : 270, 170);
+  const top = connectorTopView(hs, wide ? 240 : 170, 120);
   return <div className={hit ? "conn-housing conn-hit" : "conn-housing"} id={`conn-${item.article}`}>
     <div className="conn-housing-head">
       <b>{item.article}</b><span>{item.n} конт.</span>
