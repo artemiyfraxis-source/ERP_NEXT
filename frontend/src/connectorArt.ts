@@ -158,8 +158,29 @@ export function gradId(color: string): string {
   return `cgr${color.replace(/[^0-9a-f]/gi, "")}`;
 }
 
-/** Объёмный вид корпуса разъёма (схема жгута, «База данных → Разъёмы»). Вписывается в maxW × maxH. */
-export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: number, byPin: Record<number, string> | null = null): Box {
+/** Ракурс объёмного вида: «iso» — сбоку-сверху; «top» — та же модель, развёрнутая видом сверху (владелец, 16.10: «просто
+ *  развернуть»): крыша корпуса с защёлкой, торец проводов с контактами — снизу, в сжатой перспективе. */
+export type PictureView = "iso" | "top";
+const VIEWS: Record<PictureView, { dx: number; dz: number; sy: number }> = {
+  iso: { dx: 0.62, dz: 0.4, sy: 1 },
+  top: { dx: 0, dz: 0.87, sy: 0.5 },
+};
+
+/** Окно контакта на торце: прямоугольник, в ракурсе «top» сжатый по высоте. */
+function windowMark(x: number, y: number, w: number, h: number, fill: string, rx = 0): string {
+  return `<rect x="${f(x - w / 2)}" y="${f(y - h / 2)}" width="${f(w)}" height="${f(h)}"${rx ? ` rx="${f(rx)}"` : ""} fill="${fill}"/>`;
+}
+
+function dot(x: number, y: number, r: number, sy: number, fill: string, stroke = ""): string {
+  const edge = stroke ? ` stroke="${stroke}" stroke-width=".5"` : "";
+  return sy === 1 ? `<circle cx="${f(x)}" cy="${f(y)}" r="${f(r)}" fill="${fill}"${edge}/>`
+    : `<ellipse cx="${f(x)}" cy="${f(y)}" rx="${f(r)}" ry="${f(r * sy)}" fill="${fill}"${edge}/>`;
+}
+
+/** Объёмный вид корпуса разъёма (схема жгута, «База данных → Разъёмы»). Вписывается в maxW × maxH. Круглые разъёмы,
+ *  лепестки и «бананы» ракурса «top» не имеют — рисуются как обычно. */
+export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: number, byPin: Record<number, string> | null = null,
+  view: PictureView = "iso"): Box {
   const look = connectorLook(hs);
   if (look.shape === "lug" || look.shape === "banana") {
     const s = Math.min(maxW / 2.7, maxH / 1.3);
@@ -185,19 +206,20 @@ export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: numbe
     }
     return { w: 2 * r + ox + 2, h: 2 * r - oy + 2, body };
   }
-  if (hs.body && hs.rows === 1) return bodyPicture(hs, hs.body, maxW, maxH, byPin);
+  if (hs.body && hs.rows === 1) return bodyPicture(hs, hs.body, maxW, maxH, byPin, view);
+  const { dx, dz, sy } = VIEWS[view];
   const pitch = facePitch(hs, look);
   const [W, H] = faceSize(hs, look, pitch);
   const D = look.depth, latchH = look.latch === "lever" ? H * 0.28 + 0.6 : look.latch === "ramp" ? H * 0.2 + 0.3 : 0;
-  const k = Math.min(maxW / (W + D * 0.62), maxH / (H + latchH + D * 0.4), 16);
-  const ox = D * k * 0.62, oy = -D * k * 0.4, top = -oy + latchH * k + 1;
-  const front = outline(look, W, H).map(([x, y]) => [x * k + 1, y * k + top] as Pt);
+  const k = Math.min(maxW / (W + D * dx), maxH / ((H + latchH) * sy + D * dz), 16);
+  const ox = D * k * dx, oy = -D * k * dz, top = -oy + latchH * k * sy + 1;
+  const front = outline(look, W, H).map(([x, y]) => [x * k + 1, y * k * sy + top] as Pt);
   let body = prism(front, ox, oy, color);
   // Защёлка на верхней грани: рычаг (Mini-Fit, SM, DT, RJ45) или выступ-клин (JST XH/PH/GH).
   if (look.latch === "lever" || look.latch === "ramp") {
     const lw = look.latch === "lever" ? Math.min(W * 0.42, 6) : Math.min(W * 0.34, 4), lh = latchH;
     const lx = (look.shape === "rj45" ? W / 2 : W / 2) - lw / 2;
-    const base: Pt[] = [[lx * k + 1, top], [(lx + lw) * k + 1, top], [(lx + lw) * k + 1, top - lh * k], [lx * k + 1, top - lh * k]];
+    const base: Pt[] = [[lx * k + 1, top], [(lx + lw) * k + 1, top], [(lx + lw) * k + 1, top - lh * k * sy], [lx * k + 1, top - lh * k * sy]];
     const s0 = 0.18, s1 = look.latch === "lever" ? 0.85 : 0.5;
     const shift = (p: Pt, t: number): Pt => [p[0] + ox * t, p[1] + oy * t];
     body += prism(base.map((p) => shift(p, s0)), ox * (s1 - s0), oy * (s1 - s0), shade(color, -0.04), 0.6) +
@@ -206,20 +228,20 @@ export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: numbe
   const dark = isDark(color);
   body += gradient(gradId(color), color) + poly(front, `url(#${gradId(color)})`, EDGE, 0.9);
   if (look.shape === "dsub") {
-    const inset = outline(look, W - look.wall * 2, H - look.wall * 2).map(([x, y]) => [(x + look.wall) * k + 1, (y + look.wall) * k + top] as Pt);
+    const inset = outline(look, W - look.wall * 2, H - look.wall * 2).map(([x, y]) => [(x + look.wall) * k + 1, (y + look.wall) * k * sy + top] as Pt);
     body += poly(inset, "#2f3b44", EDGE, 0.6);
   }
   const holes = cavities(hs, pitch, look.wall + (look.shape === "dsub" ? 0.3 : 0), look.shape === "dsub");
   const hw = (look.shape === "xt" ? pitch * 0.34 : pitch * 0.34) * k;
   holes.forEach((c) => {
-    const x = c.x * k + 1, y = c.y * k + top, wn = byPin && byPin[c.pin];
+    const x = c.x * k + 1, y = c.y * k * sy + top, wn = byPin && byPin[c.pin];
     const round = hs.cavity === "round" || look.shape === "xt" || look.shape === "dsub";
     body += round
-      ? `<circle cx="${f(x)}" cy="${f(y)}" r="${f(hw)}" fill="${look.shape === "xt" ? "#d8b454" : dark ? "#5d666b" : "#2f3336"}"/>`
-      : `<rect x="${f(x - hw)}" y="${f(y - hw)}" width="${f(hw * 2)}" height="${f(hw * 2)}" rx="${f(hw * 0.2)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
-    if (wn) body += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(hw * 0.8)}" fill="${wireColor(wn)}" stroke="#e9eef0" stroke-width=".5"/>`;
+      ? dot(x, y, hw, sy, look.shape === "xt" ? "#d8b454" : dark ? "#5d666b" : "#2f3336")
+      : windowMark(x, y, hw * 2, hw * 2 * sy, dark ? "#5d666b" : "#2f3336", hw * 0.2);
+    if (wn) body += dot(x, y, hw * 0.8, sy, wireColor(wn), "#e9eef0");
   });
-  return { w: W * k + ox + 2, h: top + H * k + 2, body };
+  return { w: W * k + ox + 2, h: top + H * k * sy + 2, body };
 }
 
 function flatSmall(hs: ConnectorHousing, look: Look, s: number, byPin: Record<number, string> | null): Box {
@@ -411,14 +433,16 @@ function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
 
 /** Объёмный корпус по чертежу: торец проводов B × h (с выступами), за ним стыковочная часть потоньше (rear_h),
  *  утопленная с грани метки; на ней окна фиксаторов контактов; метка ▽ над контактом 1. */
-function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: number, byPin: Record<number, string> | null): Box {
+function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: number, byPin: Record<number, string> | null,
+  view: PictureView): Box {
+  const { dx, dz, sy } = VIEWS[view];
   const pitch = hs.pitch || 1, color = hs.color || "#efe6cf", dark = isDark(color);
   const W = bodyWidth(hs, b, pitch), H = b.h, L = b.len, ears = b.ears || 0;
   const rearH = Math.min(b.rear_h || H, H), fl = Math.min(b.front_len || L * 0.35, L), el = Math.min(b.ear_len || fl, fl);
   const lw = lockWidth(b, W), lockH = lw ? b.lock_h || 0 : 0;
-  const k = Math.min(maxW / (W + L * 0.62), maxH / (H + lockH + L * 0.4), 16), ox = 0.62 * k, oy = -0.4 * k;
-  const top = -oy * L + lockH * k + 1;
-  const P = (mx: number, my: number, d: number): Pt => [mx * k + 1 + ox * d, my * k + top + oy * d];
+  const k = Math.min(maxW / (W + L * dx), maxH / ((H + lockH) * sy + L * dz), 16), ox = dx * k, oy = -dz * k;
+  const top = -oy * L + lockH * k * sy + 1;
+  const P = (mx: number, my: number, d: number): Pt => [mx * k + 1 + ox * d, my * k * sy + top + oy * d];
   const rect = (x0: number, y0: number, x1: number, y1: number, d: number): Pt[] => [P(x0, y0, d), P(x1, y0, d), P(x1, y1, d), P(x0, y1, d)];
   const box = (x0: number, y0: number, x1: number, y1: number, d0: number, d1: number, fill: string) => {
     const front = rect(x0, y0, x1, y1, d0);
@@ -440,14 +464,14 @@ function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: n
   columns.forEach((cx, c) => {
     const pin = row[c], wn = pin && byPin && byPin[pin];
     const [px, py] = P(cx, H / 2, 0);
-    body += `<rect x="${f(px - winW * k / 2)}" y="${f(py - winH * k / 2)}" width="${f(winW * k)}" height="${f(winH * k)}" fill="${dark ? "#5d666b" : "#2f3336"}"/>`;
-    if (wn) body += `<circle cx="${f(px)}" cy="${f(py)}" r="${f(Math.min(winW, winH) * k * 0.42)}" fill="${wireColor(wn)}" stroke="#e9eef0" stroke-width=".5"/>`;
+    body += windowMark(px, py, winW * k, winH * k * sy, dark ? "#5d666b" : "#2f3336");
+    if (wn) body += dot(px, py, Math.min(winW, winH) * k * 0.42, sy, wireColor(wn), "#e9eef0");
     if (pin === 1 && hs.latch === "mark") {
       const t = pitch * 0.5;
       body += poly([P(cx - t / 2, 0, 0.3), P(cx + t / 2, 0, 0.3), P(cx, 0, 0.3 + t)], shade(color, -0.45), shade(color, -0.45), 0.3);
     }
   });
-  return { w: W * k + ox * L + 2, h: top + H * k + 2, body };
+  return { w: W * k + ox * L + 2, h: top + H * k * sy + 2, body };
 }
 
 /** Подпись под рисунком: серия, шаг, число контактов — «JST GH · 1,25 мм · 4 конт.». */

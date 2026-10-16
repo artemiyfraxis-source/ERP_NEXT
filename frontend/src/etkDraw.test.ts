@@ -222,6 +222,10 @@ describe("etkDraw* sketches", () => {
       .toContain("конт. 2 — красный");
     expect(etkDrawPinout({ type: "insTerm", housing, fields: { wires: [{ art: "синий", pins: [1] }] } }))
       .toContain("XHP-2 · JST XH, шаг 2,5 мм · вид со стороны проводов, защёлка сверху");
+    // Прямоугольный корпус — ещё и та же картинка, развёрнутая видом сверху: провод контакта 1 виден на торце снизу.
+    const op = etkDrawPinout({ type: "insTerm", housing, fields: { wires: [{ art: "синий", pins: [1] }] } });
+    expect(op).toContain("вид сверху, провода снизу");
+    expect(op.match(/fill="#2463c7"/g)?.length).toBeGreaterThanOrEqual(4);
     expect(etkDrawTwist({ fields: { twist: { pitch: "20", pairs: "1) красный + черный" } } })).toContain("шаг 20 мм");
     // Order of renderEtk_: prsTerm never takes the pinout, it takes the crimp.
     expect(etkFigure({ type: "prsTerm", fields: { crimpHeight: "1", pinout: true, wires: [{ art: "a", pins: [1] }] } })).toContain("обжим по жиле");

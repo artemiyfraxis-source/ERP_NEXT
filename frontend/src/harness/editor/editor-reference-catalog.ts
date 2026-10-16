@@ -96,6 +96,19 @@ export function housingCatalogItems(series: readonly ConnectorSeries[]): readonl
   return items;
 }
 
+/** Корпусов в базе больше полутора тысяч: показываем по страницам, как у справочников с сервера. */
+export const housingPageSize = 60;
+
+/** База разъёмов читается один раз за сессию редактора: повторный выбор «Корпуса, вид сверху» открывается сразу. */
+let housingCache: Promise<readonly EditorCatalogItem[]> | null = null;
+function loadHousingItems(reload: boolean): Promise<readonly EditorCatalogItem[]> {
+  if (reload || !housingCache) {
+    housingCache = techcardsApi.connectorSeries().then((result) => housingCatalogItems(result.series));
+    housingCache.catch(() => { housingCache = null; });
+  }
+  return housingCache;
+}
+
 export function filterHousingItems(items: readonly EditorCatalogItem[], query: string): readonly EditorCatalogItem[] {
   const normalized = query.trim().toLocaleLowerCase("ru");
   return normalized ? items.filter((item) => `${item.title} ${item.subtitle}`.toLocaleLowerCase("ru").includes(normalized)) : items;
@@ -548,15 +561,22 @@ export function useEditorReferenceCatalog(
   const isComponentLibrary = selectedSourceId === componentLibrarySource.id;
   const isHousings = selectedSourceId === housingSource.id;
   const [housingItems, setHousingItems] = useState<readonly EditorCatalogItem[]>([]);
+  const [housingLimit, setHousingLimit] = useState(housingPageSize);
+  const housingReloads = useRef(reloadToken);
+  const filteredHousings = useMemo(() => filterHousingItems(housingItems, query), [housingItems, query]);
+
+  useEffect(() => setHousingLimit(housingPageSize), [query, selectedSourceId]);
 
   useEffect(() => {
     if (!isHousings) return;
     const generation = ++requestGeneration.current;
+    const reload = housingReloads.current !== reloadToken;
+    housingReloads.current = reloadToken;
     setLoadState("loading");
     setMessage(null);
-    void techcardsApi.connectorSeries().then((result) => {
+    void loadHousingItems(reload).then((items) => {
       if (requestGeneration.current !== generation) return;
-      setHousingItems(housingCatalogItems(result.series));
+      setHousingItems(items);
       setLoadState("ready");
     }).catch((error: unknown) => {
       if (requestGeneration.current !== generation) return;
@@ -632,6 +652,10 @@ export function useEditorReferenceCatalog(
   }, [api, debouncedQuery, isComponentLibrary, isHousings, reloadToken, source]);
 
   const loadMore = useCallback(() => {
+    if (isHousings) {
+      setHousingLimit((limit) => limit + housingPageSize);
+      return;
+    }
     if (!source || !nextCursor || loadState === "loading" || loadState === "loading-more") return;
     const generation = ++requestGeneration.current;
     setLoadState("loading-more");
@@ -666,7 +690,7 @@ export function useEditorReferenceCatalog(
       setLoadState("error");
       setMessage(error instanceof Error ? error.message : "Не удалось загрузить следующую страницу.");
     });
-  }, [api, debouncedQuery, loadState, nextCursor, source]);
+  }, [api, debouncedQuery, isHousings, loadState, nextCursor, source]);
 
   return {
     sources: editorCatalogSources,
@@ -674,11 +698,12 @@ export function useEditorReferenceCatalog(
     query,
     items: isComponentLibrary
       ? filterComponentTemplates(componentTemplates, query)
-      : isHousings ? filterHousingItems(housingItems, query)
+      : isHousings ? filteredHousings.slice(0, housingLimit)
       : source ? remoteItems : filterBuiltInConnectors(query),
     loadState,
     message,
-    hasMore: !isComponentLibrary && source !== null && nextCursor !== null,
+    hasMore: isHousings ? filteredHousings.length > housingLimit
+      : !isComponentLibrary && source !== null && nextCursor !== null,
     selectSource: (sourceId) => {
       if (editorCatalogSources.some((item) => item.id === sourceId)) {
         requestGeneration.current += 1;
