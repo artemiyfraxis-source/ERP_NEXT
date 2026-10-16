@@ -111,7 +111,10 @@ export function restoreFromSnapshot(components: Comp[], seed: GenState, snap: Ge
     wrap: { ...S.wrap, slots: S.wrap.slots.map((slot) => ({ ...slot, mat: keep(slot.mat) })) },
     seal: { ...S.seal, mat: keep(S.seal.mat) },
     cap: { ...S.cap, tut: keep(S.cap.tut) },
-    spl: { ...S.spl, tutMat: keep(S.spl.tutMat) },
+    // Способа сростка в снимке до 16.10 нет — это пайка (засев новой формы — опрессовка гильзой, ему не верим).
+    spl: { ...S.spl, tutMat: keep(S.spl.tutMat), method: snap.S.spl?.method ?? "solder",
+      ...(S.spl.sleeves ? { sleeves: Object.fromEntries(Object.entries(S.spl.sleeves).map(([key, id]) => [key, keep(id)])) } : {}),
+      ...(S.spl.band ? { band: keep(S.spl.band) } : {}) },
     ...(S.jacketShrink ? { jacketShrink: Object.fromEntries(Object.entries(S.jacketShrink).map(([side, js]) => [side, js ? { ...js, mat: keep(js.mat) } : js])) } : {}),
   };
   const note = added.length || removed.length

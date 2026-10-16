@@ -55,7 +55,8 @@ it("rebuilds the drawing: every contact, four splices, four tails — nothing le
   expect(S.spl).toMatchObject({ enabled: true, count: "4", wires: "4,4,3,3" });
   expect(gen.freeEnds_()).toBe(4);
   const labels = gen.getActiveOps().map((o) => o.label);
-  expect(labels).toContain("Сростки — 4 шт по 4, 4, 3, 3 провода");
+  // Новая форма — опрессовка гильзой (владелец 16.10: «основа это обжим»); гильз в этом составе нет.
+  expect(labels).toContain("Сростки опрессовкой гильзой — 4 шт по 4, 4, 3, 3 провода");
   expect(labels).toContain("Зачистка концов под сростки — 14 конц.");
 });
 
