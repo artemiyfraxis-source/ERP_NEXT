@@ -1,5 +1,7 @@
 import { useMemo, useState, type DragEvent } from "react";
 import type { EditorCatalogItem, EditorCatalogSource } from "./editor-types";
+import { connectorTopView } from "../../connectorTopView";
+import type { ConnectorHousing } from "../../connectorArt";
 
 export interface CatalogDockProps {
   readonly items: readonly EditorCatalogItem[];
@@ -16,6 +18,13 @@ export interface CatalogDockProps {
   readonly onQueryChange?: (query: string) => void;
   readonly onLoadMore?: () => void;
   readonly onRetry?: () => void;
+}
+
+/** Вид сверху корпуса — та же картинка, что ложится на поле чертежа. */
+function HousingTopThumb({ housing }: { readonly housing: ConnectorHousing }) {
+  const top = connectorTopView(housing, 150, 58, false);
+  if (!top) return <span className="he-catalog-thumbnail" aria-hidden="true">▣</span>;
+  return <svg className="he-catalog-top" viewBox={`0 0 ${top.w} ${top.h}`} aria-hidden="true" dangerouslySetInnerHTML={{ __html: top.body }} />;
 }
 
 export function CatalogDock({
@@ -123,7 +132,7 @@ export function CatalogDock({
               {visibleItems.map((item) => (
               <button
                 type="button"
-                className="he-catalog-card"
+                className={item.housing ? "he-catalog-card has-top" : "he-catalog-card"}
                 role="listitem"
                 key={item.id}
                 draggable={item.placement === "connector"}
@@ -132,7 +141,9 @@ export function CatalogDock({
                 title={`${[item.title, item.subtitle].filter(Boolean).join(" — ")}
 ${item.placement === "reference-only" ? "Справочная позиция. Размещение будет подключено с соответствующим инструментом." : "Перетащить на поле"}`}
               >
-                <span className="he-catalog-thumbnail" style={{ "--catalog-accent": item.accent } as React.CSSProperties} aria-hidden="true">▣</span>
+                {item.housing
+                  ? <HousingTopThumb housing={item.housing} />
+                  : <span className="he-catalog-thumbnail" style={{ "--catalog-accent": item.accent } as React.CSSProperties} aria-hidden="true">▣</span>}
                 <span>
                   <strong>{item.title}</strong>
                   <small>{item.subtitle}</small>

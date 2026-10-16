@@ -2300,7 +2300,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
 .conn-grid-wide { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); margin-top: 8px; }
 .conn-grid-wide .conn-face svg { max-height: 150px; }
-.conn-housing { display: grid; grid-template-columns: 1fr 130px; grid-template-areas: "head model" "face face" "boards boards"; gap: 4px 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+.conn-housing { display: grid; grid-template-columns: 1fr 130px; grid-template-areas: "head model" "top top" "face face" "boards boards"; gap: 4px 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .conn-housing.conn-hit { border-color: var(--primary); box-shadow: 0 0 0 2px var(--accent); }
 .conn-housing-head { grid-area: head; align-self: start; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .conn-housing-head b { font-size: 13px; }
@@ -2309,6 +2309,8 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .conn-housing-model { grid-area: model; display: flex; justify-content: center; }
 .conn-housing .conn-face { grid-area: face; display: flex; justify-content: center; }
 .conn-housing .conn-face svg { max-height: 120px; width: auto; }
+.conn-housing-top { grid-area: top; display: flex; justify-content: center; }
+.conn-housing-top svg { max-width: 100%; height: auto; }
 .conn-housing-model svg { max-height: 84px; width: auto; }
 .conn-headers { grid-area: boards; display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--foreground); }
 .conn-headers i { font-style: normal; color: var(--muted-foreground); }

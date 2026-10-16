@@ -1,5 +1,6 @@
 import type { WireEndStripProfiles } from "./model";
 import type { WireBlankEnd } from "../WireBlankCatalog";
+import type { ConnectorHousing } from "../../connectorArt";
 
 export type HarnessEditorView = "e4" | "drawing";
 
@@ -144,6 +145,8 @@ export interface EditorCatalogItem {
   readonly templateKind?: "series" | "free";
   readonly seriesId?: string;
   readonly defaultPartNumber?: string;
+  /** Корпус из «База данных → Разъёмы»: карточка показывает его вид сверху, на поле ложится он же. */
+  readonly housing?: ConnectorHousing;
   /** Exact immutable persistent template version used for a library placement. */
   readonly componentTemplateId?: string;
   readonly componentTemplateVersion?: number;

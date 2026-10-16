@@ -78,7 +78,10 @@ import { collectE4Diagnostics } from "./e4-diagnostics";
 import {
   builtInConnectorSeries,
   createBuiltInConnectorInstance,
+  freeConnectorTemplateCatalogId,
 } from "./connector-series-demo";
+import { connectorTopView } from "../../connectorTopView";
+import type { ConnectorHousing } from "../../connectorArt";
 import type { E4DifferentialPairState, E4ScreenState } from "./e4-wire-selection-state";
 import { builtInWireColors, createCustomWireColor, resolveWireColorHex } from "./wire-reference-catalog";
 import { buildWireStripProfileGeometry } from "./wire-strip-profile-geometry";
@@ -381,6 +384,12 @@ export function ComponentGraphErrorAlert({
   </div>;
 }
 
+/** Вид сверху корпуса как самостоятельный SVG-файл (для рисования на поле чертежа); null — вида сверху у корпуса нет. */
+export function housingTopViewSvg(housing: ConnectorHousing): string | null {
+  const top = connectorTopView(housing, 480, 300);
+  return top ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${top.w} ${top.h}" width="${top.w}" height="${top.h}">${top.body}</svg>` : null;
+}
+
 export function designToScene(
   document: HarnessDesignDocument,
   view: HarnessEditorView,
@@ -448,6 +457,8 @@ export function designToScene(
         ...(diagnosticObjectIds.has(connector.id) ? { diagnostic: "error" } : {}),
       });
     }
+    const topView = view === "drawing" && connector.housing ? housingTopViewSvg(connector.housing) : null;
+    if (topView) metadata.topViewSvg = topView;
     return {
       id: connector.id,
       layerId: connector.layerIds[view],
@@ -455,8 +466,8 @@ export function designToScene(
       label: connector.designation,
       x: connector.positions[view].x,
       y: connector.positions[view].y,
-      width: geometry?.width ?? 118,
-      height: geometry?.height ?? Math.max(72, 44 + connector.contacts.length * 16),
+      width: geometry?.width ?? (topView ? 300 : 118),
+      height: geometry?.height ?? Math.max(topView ? 230 : 72, 44 + connector.contacts.length * 16),
       color: "#416579",
       metadata,
     };
@@ -1520,6 +1531,19 @@ export function HarnessDesignEditor({
         setMessage(error instanceof Error ? error.message : "Не удалось разместить библиотечный компонент.");
         return;
       }
+    } else if (item.housing) {
+      // Корпус из базы разъёмов: свободный соединитель на n контактов с артикулом корпуса; на чертеже — его вид сверху.
+      const pins = item.housing.grid.flat().filter((pin) => pin > 0).length;
+      preview = {
+        ...createBuiltInConnectorInstance(freeConnectorTemplateCatalogId, {
+          id,
+          designation: `XS${index + 1}`,
+          e4Position: { x: 0, y: 0 },
+          freeContactCount: Math.max(1, Math.min(300, item.housing.n || pins || 1)),
+        }),
+        partNumber: item.defaultPartNumber || item.title,
+        housing: item.housing,
+      };
     } else {
       preview = createBuiltInConnectorInstance(item.id, {
         id,
