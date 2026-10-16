@@ -8,7 +8,7 @@ from decimal import Decimal
 import re
 from typing import Any, Iterable, Mapping
 
-from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork
+from app.modules.references.application import UnitOfWork as ReferencesUnitOfWork, coax_dia_rows
 from app.modules.references.cable_structure import HookupWire, WireGauge, decimal_or_none, gauge_gost_awg, section_key
 from app.modules.references.cables import hookup_series_rest
 from app.modules.references.domain import TechOperationTab, cable_key, gost_awg_map
@@ -48,14 +48,17 @@ def with_technology(
         prov_rows = [record.fields for record in references_uow.tech_operations.list(
             tab=TechOperationTab.WIRE, query="", limit=10_000,
         )]
+        coax = isinstance(config.get("coax"), Mapping)
         coax_rows = [record.fields for record in references_uow.tech_operations.list(
             tab=TechOperationTab.COAX, query="", limit=10_000,
-        )] if isinstance(config.get("coax"), Mapping) else []
+        )] if coax else []
+        dia_rows = coax_dia_rows(references_uow) if coax else []
     enriched = enrich_terminal_norms(config, (TerminalRecord.from_fields(record.fields) for record in records), gost_awg)
     enriched = enrich_marking(enriched, equipment, operation_records)
     enriched = enrich_linear_timing(enriched, operation_records)
     enriched = enrich_wire_diameters(enriched, hookups, gauges, prov_rows)
     enriched = enrich_coax_hex(enriched, coax_rows)
+    enriched = enrich_coax_diameters(enriched, dia_rows)
     return enriched, {
         "schema_version": metadata["schema_version"],
         "source_updated_at": metadata["source_updated_at"].isoformat() if metadata["source_updated_at"] else None,
@@ -277,6 +280,38 @@ def enrich_coax_hex(config: Mapping[str, Any], coax_rows: Iterable[Mapping[str, 
         values = {coax_hex_cell(fields) for fields in (pair or mine)}
         if len(values) == 1 and (value := next(iter(values))):
             end["crimpHex"] = value
+    return enriched
+
+
+COAX_END_DIAMETERS = ("d1", "d2", "d3")
+
+
+def enrich_coax_diameters(config: Mapping[str, Any], dia_rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Copy of the config whose coax ends (`coax.sideA` / `sideB`) carry `d1`–`d3` of the assembly's CABLE only (owner
+    16.10.2026: «разъём тянет L1–L3, а провод — свои данные»): the D-table row (СПР.КАБ · коаксиал and the cable's other
+    names, `coax_dia_rows`) of `cableArt`, else `cableName` — the generator's `coaxCableDiaLookup_` key, the last row of
+    a key wins as in `coaxDiaFromRecords`. A cable without a row — no D on the end (the ETK shows «—»), never the D a
+    saved config took from the connector row."""
+    enriched = deepcopy(dict(config))
+    coax = enriched.get("coax")
+    if not isinstance(coax, dict):
+        return enriched
+    index: dict[str, Mapping[str, Any]] = {}
+    for row in dia_rows:
+        first = next(iter(row.values()), "")
+        if key := cable_key(first):
+            index[key] = row
+    row = index.get(cable_key(coax.get("cableArt") or coax.get("cableName") or ""))
+    for side in ("sideA", "sideB"):
+        end = coax.get(side)
+        if not isinstance(end, dict):
+            continue
+        for name in COAX_END_DIAMETERS:
+            value = str((row or {}).get(name.upper()) or "").strip()
+            if value:
+                end[name] = value
+            else:
+                end.pop(name, None)
     return enriched
 
 

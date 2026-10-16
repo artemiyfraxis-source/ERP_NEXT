@@ -1,5 +1,5 @@
 ﻿import { describe, expect, it } from "vitest";
-import { coaxFromFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
+import { coaxFromFields, coaxRecordFields, savedComplex, applyGrapherGroups, applyOpOrder, grapherLengthText, emptyState, initState, makeGen, opOrderFromConfig, parsePinList_, pluralRu, terFromFields, updateEndpoint, type GenData, type GenState, type OpSpec } from "./tcGenLogic";
 import { genCards } from "./routeCards";
 import { deriveRoute, type RouteOp } from "./routeLogic";
 
@@ -272,7 +272,7 @@ describe("коакс: резка с разделкой на роторном с�
 
 it("takes coax diameters from СПР.КАБ by the BOM cable, lengths from the connector record", () => {
   const rec = { article: "SMA-J", connArticle: "SMA-J", type: "SMA", wire: "RG316", mfr: "", program: "",
-    d1: "9", d2: "9", d3: "9", l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5", pinType: "", shieldType: "" };
+    l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5", pinType: "", shieldType: "" };
   const D = { ...data([
     { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
     { id: "a", type: "Соед", name: "SMA", art: "SMA-J", qty: 1 },
@@ -281,14 +281,25 @@ it("takes coax diameters from СПР.КАБ by the BOM cable, lengths from the c
   const cfg = makeGen(D, S).buildConfig() as Record<string, any>;
   expect(cfg.coax.sideA).toMatchObject({ d1: "0,51", d2: "1,52", d3: "2,5", l1: "4", l2: "3", l3: "2", lPlus: "1", lMinus: "0,5" });
   expect(makeGen(D, S).coaxInfo("A").text).toContain("D1:0,51");
-  // Кабеля нет в СПР.КАБ — запасной вариант: D1–D3 записи разъёма.
-  const noCable = { ...D, coaxCableDia: { byCable: {} } };
-  expect((makeGen(noCable, initState(noCable)).buildConfig() as Record<string, any>).coax.sideA).toMatchObject({ d1: "9", d2: "9", d3: "9" });
+  // Кабеля нет в СПР.КАБ — D нет (владелец 16.10: D у разъёма не берём, даже если в строке листа остались D1–D3).
+  const legacyRow = coaxFromFields({ Артикул: "SMA-J", Провод: "RG316", D1: "9", D2: "9", D3: "9", L1: "4", L2: "3", L3: "2" });
+  expect(legacyRow).not.toHaveProperty("d1");
+  const noCable = { ...D, coaxRecords: [{ ...rec, ...legacyRow, connArticle: "SMA-J" }], coaxCableDia: { byCable: {} } };
+  const g = makeGen(noCable, initState(noCable));
+  expect((g.buildConfig() as Record<string, any>).coax.sideA).toMatchObject({ d1: "", d2: "", d3: "", l1: "4", l2: "3", l3: "2" });
+  expect(g.coaxInfo("A").text).toContain("D1:— D2:— D3:— L1:4");
+});
+
+it("writes no D1–D3 into a new БД.КОАКС record: the diameters are the cable's", () => {
+  const fields = coaxRecordFields({ connArticle: "SMA-J", type: "SMA", wire: "RG316", mfr: "", program: "",
+    l1: "4", l2: "3", l3: "2", lPlus: "", lMinus: "", pinType: "пайка", shieldType: "обжим" });
+  expect(Object.keys(fields).filter((key) => /^d[123]$/i.test(key))).toEqual([]);
+  expect(fields).toMatchObject({ coaxArticle: "SMA-J", coaxWire: "RG316", l1: "4" });
 });
 
 it("finds the БД.КОАКС record whatever the hyphens and case: «MMCX-Male RG316» = «MMCX-male RG-316» (owner 14.10)", () => {
   const rec = { article: "MMCX-male RG-316", connArticle: "", type: "MMCX-male", wire: "RG-316", mfr: "", program: "",
-    d1: "0,5", d2: "1,48", d3: "1,95", l1: "1,8", l2: "4,5", l3: "10", lPlus: "", lMinus: "", pinType: "пайка", shieldType: "обжим" };
+    l1: "1,8", l2: "4,5", l3: "10", lPlus: "", lMinus: "", pinType: "пайка", shieldType: "обжим" };
   const D = { ...data([
     { id: "k", type: "Кабель", name: "RG316", art: "RG316", qty: 0.2 },
     { id: "a", type: "Соед", name: "MMCX-Male RG316", art: "MMCX-Male RG316", qty: 1 },

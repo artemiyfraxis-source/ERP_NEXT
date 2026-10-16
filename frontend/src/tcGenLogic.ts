@@ -19,9 +19,10 @@ export type TerRec = {
   /** The same terminal in BAG packaging (БД.ТЕР «Артикул контакта (BAG)», protocol v5.2): found by it too. */
   articleBag?: string;
 };
+/** Запись БД.КОАКС — данные самого разъёма. D1–D3 у разъёма нет (владелец 16.10.2026): они у кабеля, в СПР.КАБ. */
 export type CoaxRec = {
   article: string; type: string; wire: string; mfr: string; program: string;
-  d1: string; d2: string; d3: string; l1: string; l2: string; l3: string;
+  l1: string; l2: string; l3: string;
   lPlus: string; lMinus: string; pinType: string; shieldType: string; connArticle: string;
   /** «Центральный контакт» карточки разъёма (слова поставщика): «цанговый» — контакт не паяется. */
   centerContact?: string;
@@ -1461,15 +1462,11 @@ export function makeGen(D: GenData, S: GenState) {
     const t = (D.coaxCableDia && D.coaxCableDia.byCable) || {};
     return t[String(coaxBomCable_()).toLowerCase().replace(/[\s-]/g, "")] || null;
   }
-  // Диаметры принадлежат кабелю (владелец 29.09.2026, БД.КОАКС D1–D3 = формула по СПР.КАБ): разделка берёт
-  // D1–D3 из СПР.КАБ по кабелю из BOM, D1–D3 записи разъёма — только запасной вариант. L1–L3, L± — у разъёма.
-  function coaxDia_(rec: CoaxRec | null) {
+  // Диаметры — только у кабеля (владелец 16.10.2026: «разъём тянет L1–L3, а провод — свои данные»): разделка берёт
+  // D1–D3 из СПР.КАБ по кабелю из BOM; нет строки у кабеля — D нет («—»), запись разъёма D не даёт. L1–L3, L± — у разъёма.
+  function coaxDia_() {
     const dia = coaxCableDiaLookup_();
-    return {
-      d1: (dia && dia.d1) || (rec ? rec.d1 : "") || "",
-      d2: (dia && dia.d2) || (rec ? rec.d2 : "") || "",
-      d3: (dia && dia.d3) || (rec ? rec.d3 : "") || "",
-    };
+    return { d1: (dia && dia.d1) || "", d2: (dia && dia.d2) || "", d3: (dia && dia.d3) || "" };
   }
   function matchCoaxRec_(art: string, pin: string, shield: string) {
     if (!art) return null;
@@ -1528,15 +1525,15 @@ export function makeGen(D: GenData, S: GenState) {
     const rec = s ? coaxRecForSide_(side) : null;
     if (!s) return { text: "", rec, missing: false };
     if (rec) {
-      const dia = coaxDia_(rec);
+      const dia = coaxDia_();
       const dims = ["D1:" + (dia.d1 || "—"), "D2:" + (dia.d2 || "—"), "D3:" + (dia.d3 || "—"), "L1:" + (rec.l1 || "—"), "L2:" + (rec.l2 || "—"), "L3:" + (rec.l3 || "—")];
       return { text: `✓ ${rec.type || ""} · ${rec.wire || ""} · ${dims.join(" ")}`, rec, missing: false };
     }
     return { text: `⚠ «${s.art}» нет в БД.КОАКС — добавьте ниже`, rec, missing: true };
   }
-  /** Ø оболочки коакс-кабеля, мм: D3 из СПР.КАБ по кабелю (запасной — запись разъёма), иначе Ø из таблицы проводов; 0 — неизвестен. */
+  /** Ø оболочки коакс-кабеля, мм: D3 из СПР.КАБ по кабелю, иначе Ø из таблицы проводов; 0 — неизвестен. */
   function coaxCableOuterMm_() {
-    const d3 = parseDecimal_(String(coaxDia_(S.coax.sideA ? coaxRecForSide_("A") : null).d3 || "")) || 0;
+    const d3 = parseDecimal_(String(coaxDia_().d3 || "")) || 0;
     return d3 > 0 ? d3 : Number(lookupWireDia_(coaxBomCable_())) || 0;
   }
   /** Станок по Ø кабеля: тонкий (до 5,5 мм, как в карточке CUT_COAX+2strip) — малый, толще или Ø неизвестен — большой. */
@@ -2318,7 +2315,7 @@ export function makeGen(D: GenData, S: GenState) {
     const mkSide = (rec: CoaxRec | null, art: string, pinType: string, connName: string) => (art ? {
       article: art, connName: connName || "",
       type: rec ? rec.type : "", wire: rec ? rec.wire : "", mfr: rec ? rec.mfr : "", program: rec ? rec.program : "",
-      ...coaxDia_(rec), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
+      ...coaxDia_(), l1: rec ? rec.l1 : "", l2: rec ? rec.l2 : "", l3: rec ? rec.l3 : "",
       lPlus: rec ? rec.lPlus : "", lMinus: rec ? rec.lMinus : "", pinType,
     } : null);
     const ops = getActiveOps().map((spec) => {
@@ -3058,7 +3055,7 @@ export function coaxFromFields(f: Record<string, string>): CoaxRec {
   return {
     article: pick(f, "coaxArticle", "Артикул"), type: pick(f, "coaxType", "Тип/Серия", "type"), wire: pick(f, "coaxWire", "Провод", "wire"),
     mfr: pick(f, "coaxMfr", "Производитель", "mfr"), program: pick(f, "program", "Программа"),
-    d1: pick(f, "d1", "D1"), d2: pick(f, "d2", "D2"), d3: pick(f, "d3", "D3"), l1: pick(f, "l1", "L1"), l2: pick(f, "l2", "L2"), l3: pick(f, "l3", "L3"),
+    l1: pick(f, "l1", "L1"), l2: pick(f, "l2", "L2"), l3: pick(f, "l3", "L3"),
     lPlus: pick(f, "lPlus", "L+"), lMinus: pick(f, "lMinus", "L-", "L−"), pinType: pick(f, "pinType", "Тип пина"),
     shieldType: pick(f, "shieldType", "Тип экрана"), connArticle: pick(f, "connArticle", "Артикул разъёма", "Артикул разъема"),
     centerContact: pick(f, "Центральный контакт"),
@@ -3068,7 +3065,7 @@ export function coaxFromFields(f: Record<string, string>): CoaxRec {
 export function coaxRecordFields(p: Omit<CoaxRec, "article">): Record<string, string> {
   const fields: Record<string, string> = {
     coaxArticle: p.connArticle, coaxType: p.type, coaxWire: p.wire, coaxMfr: p.mfr, program: p.program,
-    d1: p.d1, d2: p.d2, d3: p.d3, l1: p.l1, l2: p.l2, l3: p.l3, lPlus: p.lPlus, lMinus: p.lMinus,
+    l1: p.l1, l2: p.l2, l3: p.l3, lPlus: p.lPlus, lMinus: p.lMinus,
     pinType: p.pinType, shieldType: p.shieldType, connArticle: p.connArticle,
   };
   return Object.fromEntries(Object.entries(fields).filter(([, v]) => String(v || "").trim()));

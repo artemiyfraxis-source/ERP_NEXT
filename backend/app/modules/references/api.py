@@ -40,6 +40,7 @@ from .domain import (
 from .technology import (
     TECH_SNAPSHOT_SCHEMA_VERSION,
     TerminalRecord,
+    is_coax_cable_column,
     fold_wire_section,
     import_supplymap_snapshot,
     normalize_terminal_fields,
@@ -192,6 +193,8 @@ def _sheet_columns(tab: TechOperationTab | None, records: Sequence[TechOperation
     keys = schema_keys(tab.value)
     richest = max(records, key=lambda item: sum(1 for key in item.fields if key not in keys))
     sheet = [key for key in richest.fields if key not in keys]
+    if tab == TechOperationTab.COAX:  # D1–D3 are the cable's («Коаксиальные кабели»), not a connector column
+        sheet = [key for key in sheet if not is_coax_cable_column(key)]
     if tab == TechOperationTab.EQUIPMENT:  # the fields ERP adds to the sheet's columns (code, tool, links)
         sheet += [key for key in EXTRA_KEYS if key not in sheet]
     return sheet or list(richest.fields)

@@ -707,8 +707,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const v = (key: string) => (coaxAdd[side]?.[key] || "").trim();
     const payload = {
       connArticle: s.art, type: v("type"), wire: v("wire") || gen.coaxBomCable_(), mfr: "", program: "",
-      // D1–D3 не пишем: диаметры у кабеля (СПР.КАБ), генератор берёт их оттуда.
-      d1: "", d2: "", d3: "",
+      // D1–D3 у разъёма нет: диаметры у кабеля (СПР.КАБ), генератор берёт их оттуда.
       l1: v("l1"), l2: v("l2"), l3: v("l3"), lPlus: v("lPlus"), lMinus: v("lMinus"),
       pinType: side === "A" ? S.coax.pinA : S.coax.pinB, shieldType: S.coax.shield,
     };
