@@ -567,6 +567,7 @@ table.ship-lines td:first-child { width: 1%; }
 .db-tab.active .db-tab-count { color: var(--primary); }
 .db-clamp { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
 .db-clip { display: block; max-width: 30ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-clip.db-clip-narrow { max-width: 16ch; }
 .db-dirty { color: var(--muted-foreground); font-size: 12px; }
 .db-edit { margin-bottom: 14px; padding: 16px 18px; }
 .db-form label { display: grid; gap: 3px; min-width: 180px; }
@@ -3658,11 +3659,13 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .ec-legend { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
 
 /* Обжим по сечениям (вкладка «Терминалы», карточка серии): сечение написано один раз, значения — столбиками. */
-.crimp { display: grid; gap: 1px; }
-.crimp-row { display: grid; grid-template-columns: repeat(var(--crimp-n, 1), minmax(11ch, auto)); gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.crimp-row.has-awg { grid-template-columns: 9ch repeat(var(--crimp-n, 1), minmax(11ch, auto)); }
+/* Owner 16.10: столбцы фиксированной ширины — AWG │ по жиле │ по изоляции │ отрыв, длинное не вылезает в соседние колонки. */
+.crimp { display: grid; gap: 1px; max-width: 100%; overflow: hidden; }
+.crimp-row { display: grid; grid-template-columns: 10ch 11ch 13ch 10ch; gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crimp-row > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .crimp-awg { color: var(--muted-foreground); font-weight: 600; border-right: 1px solid var(--border); padding-right: 8px; }
 .crimp-val { text-align: right; }
+.crimp-none { color: var(--muted-foreground); }
 .crimp-unit { font-style: normal; color: var(--muted-foreground); }
 @media (pointer: coarse) { .crimp-row { font-size: 13px; line-height: 20px; } }
 

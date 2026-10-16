@@ -202,7 +202,8 @@ def terminals_for(keys: Iterable[str], records: Iterable[Mapping[str, Any]]) -> 
             "mm2_from": str(fields.get("mm2From") or "").strip(), "mm2_to": str(fields.get("mm2To") or "").strip(),
             "strip": str(fields.get("terStrip") or "").strip(),
             "applicator": str(fields.get("terApplicator") or "").strip(),
-            **crimp_display(fields.get("terCrimpHeight"), fields.get("terPullForceMin"), fields.get("terPullForceMax")),
+            **crimp_display(fields.get("terCrimpHeight"), fields.get("terPullForceMin"), fields.get("terPullForceMax"),
+                            fields.get("terInsCrimpHeight")),
         })
     return out
 

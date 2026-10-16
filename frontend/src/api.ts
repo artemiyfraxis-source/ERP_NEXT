@@ -1737,6 +1737,8 @@ export interface ConnectorTerminal {
   article: string; maker: string; product: string; series: string; kind: string;
   awg_from: string; awg_to: string; mm2_from: string; mm2_to: string; strip: string; applicator: string; crimp_height: string;
   pull_force: string;
+  /** Высота обжима по изоляции, тем же текстом по AWG, что crimp_height. */
+  ins_crimp_height?: string;
 }
 
 export interface ConnectorSeries {
