@@ -55,6 +55,7 @@ from .application import (
     close_issued,
     free_for_project,
     project_reserve_by_lot,
+    reserve_holders,
     complete_kit,
     complete_return,
     CreateExtraIssueCommand,
@@ -327,15 +328,23 @@ def available_lots(
 ) -> dict:
     """`project` (optional): the kit's project — its own reserves on a lot («Со склада» covers and the techcard
     reserves of any of its КБ) count as available: `available` = ДОСТУПНО + `reserved` (the project's part), the same
-    shape as /api/kitsets/lots."""
+    shape as /api/kitsets/lots. With a project, `reserved_lots` lists the lots with a balance that other projects hold
+    in full — not to take, only to see where the rest lies (`held_by`: «591К.4 КБ2, …»), as the warehouse search shows."""
     with uow_factory() as uow:
         lots = uow.warehouse.filtered(query=q, include_zero=False)
         held = project_reserve_by_lot(uow, lots, project.strip())
+        taken = [lot for lot in lots if free_for_project(lot, held) <= 0 and lot.reserved > 0] if project.strip() else []
+        holders = reserve_holders(uow, taken)
     candidates = [
         lot for lot in lots
         if free_for_project(lot, held) > 0  # portalIssueStock: every lot with a balance, whatever its unit
     ]  # portalIssueStock: the whole warehouse at once, the browser searches
-    return {"lots": [{
+    reserved_lots = [{
+        "id": str(lot.id), "lot_id": str(lot.id), "warehouse": lot.warehouse, "grn": lot.grn, "package": lot.package,
+        "article": lot.article, "name": lot.name, "unit": lot.unit, "storage_location": lot.storage_location,
+        "available": "0", "reserved": _number(lot.reserved), "held_by": ", ".join(holders.get(lot.id, [])),
+    } for lot in taken]
+    return {**({"reserved_lots": reserved_lots} if project.strip() else {}), "lots": [{
         "id": str(lot.id),
         "lot_id": str(lot.id),
         "warehouse": lot.warehouse,

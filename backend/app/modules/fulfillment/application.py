@@ -359,6 +359,26 @@ def project_reserve_by_lot(
     return held
 
 
+def reserve_holders(uow, lots: Sequence[StockLot]) -> dict[UUID, list[str]]:
+    """Who holds the РЕЗЕРВ of each lot: «Со склада» covers by project, techcard reserves by «project КБ» — for the
+    picker to show a lot that is all reserved for other projects (владелец 16.10: «на складе ищет другие позиции, а тут
+    нет»). A lot whose reserve none of them explains (kit lines) gets nothing here. Without the ports → {}."""
+    ids = [lot.id for lot in lots if lot.reserved > 0]
+    holders: dict[UUID, list[str]] = {}
+    if not ids:
+        return holders
+    covers = getattr(uow, "stock_covers", None)
+    if covers is not None:
+        for cover in covers.active_on_lots(ids):
+            if cover.lot_id and cover.project_reference:
+                holders.setdefault(cover.lot_id, []).append(cover.project_reference.strip())
+    reserves = getattr(uow, "kit_reserves", None)
+    if reserves is not None:
+        for reserve in reserves.active_on_lots(ids):
+            holders.setdefault(reserve.lot_id, []).append(f"{reserve.project} {reserve.item_index}".strip())
+    return {lot_id: list(dict.fromkeys(names)) for lot_id, names in holders.items()}
+
+
 def free_for_project(lot: StockLot, held: dict[UUID, Decimal]) -> Decimal:
     """What a kit of the project can take from the lot: ДОСТУПНО plus the project's own reserve on it."""
     return max(lot.available, Decimal("0")) + held.get(lot.id, Decimal("0"))

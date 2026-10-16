@@ -453,3 +453,23 @@ def test_single_bind_takes_only_its_own_kb_reserve(api):
         assert uow.kit_reserves.get(reserve.id).quantity == Decimal("3")
         assert uow.warehouse.get(lot.id).reserved == Decimal("5")
         assert uow.session.scalar(select(func.count()).select_from(WriteOffEntryRow)) == 0
+
+
+def test_picker_shows_lots_other_projects_hold_in_full_only_to_see_them(api):
+    client, factory = api
+    lot = stock("FRX.26.0000002", "200")
+    reserve = kit_reserve(lot, "591К.4", "КБ2", "200")
+    with factory() as uow:
+        uow.warehouse.add(lot.reserve(Decimal("200")))
+        uow.kit_reserves.add(reserve)
+        uow.commit()
+
+    other = client.get("/api/issues/lots", params={"project": "719К.2"}).json()
+    own = client.get("/api/issues/lots", params={"project": "591К.4"}).json()
+    plain = client.get("/api/issues/lots").json()
+
+    assert other["lots"] == []
+    assert [(row["grn"], row["available"], row["reserved"], row["held_by"]) for row in other["reserved_lots"]] == [
+        ("FRX.26.0000002", "0", "200", "591К.4 КБ2")]
+    assert [row["available"] for row in own["lots"]] == ["200"] and own["reserved_lots"] == []
+    assert "reserved_lots" not in plain
