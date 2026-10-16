@@ -23,7 +23,7 @@ export interface CatalogDockProps {
 /** Вид сверху корпуса — та же картинка, что ложится на поле чертежа; считается один раз на корпус. */
 const topThumbs = new WeakMap<ConnectorHousing, ReturnType<typeof connectorTopView>>();
 const HousingTopThumb = memo(function HousingTopThumb({ housing }: { readonly housing: ConnectorHousing }) {
-  if (!topThumbs.has(housing)) topThumbs.set(housing, connectorTopView(housing, 150, 58, false));
+  if (!topThumbs.has(housing)) topThumbs.set(housing, connectorTopView(housing, 150, 58));
   const top = topThumbs.get(housing);
   if (!top) return <span className="he-catalog-thumbnail" aria-hidden="true">▣</span>;
   return <svg className="he-catalog-top" viewBox={`0 0 ${top.w} ${top.h}`} aria-hidden="true" dangerouslySetInnerHTML={{ __html: top.body }} />;

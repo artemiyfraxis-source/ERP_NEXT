@@ -3,7 +3,7 @@
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
 import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, wireColor, type HousingBody } from "./connectorArt";
-import { hasTopView } from "./connectorTopView";
+import { connectorTopView } from "./connectorTopView";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
 
@@ -478,8 +478,9 @@ export function etkDrawHousingOp(operation: Row): string {
     `<g transform="translate(${W - pictureW - 20},${top})">${pic.body}</g>` +
     `<text x="${W - pictureW / 2 - 20}" y="${top + pic.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">${esc(connectorSummary(hs))}</text>`;
   let right = pic.h + 18;
-  if (hasTopView(hs)) {
-    const view = connectorPicture(hs, pictureW, 110, byPin, "top"), vy = top + right + 14;
+  const view = connectorTopView(hs, pictureW, 110, byPin);
+  if (view) {
+    const vy = top + right + 14;
     body += `<g transform="translate(${W - pictureW / 2 - 20 - view.w / 2},${vy})">${view.body}</g>` +
       `<text x="${W - pictureW / 2 - 20}" y="${vy + view.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">вид сверху, провода снизу</text>`;
     right += view.h + 32;
