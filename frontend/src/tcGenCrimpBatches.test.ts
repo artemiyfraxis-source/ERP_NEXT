@@ -41,6 +41,22 @@ it("crimps a side with several terminal types at the cut, one batch per terminal
     + "А и В — SYM-001T-P0.6 / T-DS1071-SC600: 3 пр.; концы в сростках и хвостах не обжимаются");
 });
 
+it("re-picks every cut's template: a key stuck to a plain cut does not follow it onto a crimp batch", () => {
+  // 713К.4 КБ1, ревизия 3: cutWire1 был простой резкой, после партий обжима стал партией SYM, а сохранённый шаблон
+  // «Резка» остался на ключе — карта вышла без опрессовки.
+  const S = fullHarness();
+  const gen = makeGen(DSA, S);
+  const ops = cuts(S);
+  const plain = gen.templateIdFor(ops.find((o) => o.tmplHint === "CUT_WIRE_auto")!);
+  const want = ops.map((o) => gen.templateIdFor(o));
+  expect(new Set(want).size).toBeGreaterThan(1);
+  const stale = { ...S, selectedTemplates: Object.fromEntries(ops.map((o) => [o.opKey, plain])) };
+  expect(cuts(stale).map((o) => makeGen(DSA, stale).templateIdFor(o))).toEqual(want);
+  // Ручной выбор в карточке операции остаётся главнее.
+  const manual = { ...stale, manualTemplates: [ops[0].opKey] };
+  expect(makeGen(DSA, manual).templateIdFor(cuts(manual)[0])).toBe(plain);
+});
+
 it("the build config carries each batch's own wires and terminals — the server sample is this very config", () => {
   const cfg = makeGen(DSA, fullHarness()).buildConfig() as { ops: Array<Record<string, any>> };
   const batches = cfg.ops.filter((o) => o.type === "cutWireCrimp");

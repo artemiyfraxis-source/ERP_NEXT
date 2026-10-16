@@ -2266,9 +2266,10 @@ export function makeGen(D: GenData, S: GenState) {
     return autoPickTemplate(spec);
   }
   /** renderOpsCard: сохранённый шаблон операции (ручной или автоподобранный при первом показе — он «залипает»),
-   *  иначе автоподбор. Резка, лента/оплётка и коакс без ручного выбора пересчитываются всегда. */
+   *  иначе автоподбор. Резка, лента/оплётка и коакс без ручного выбора пересчитываются всегда: ключи резки
+   *  cutWire1…N идут по порядку партий, и при перегруппировке тот же ключ достаётся резке другого вида. */
   function templateIdFor(spec: OpSpec) {
-    const autoRepick = (spec.opKey === "cutWire" || spec.type === "insWrap" || S.tab === "coax")
+    const autoRepick = (/^cutWire\d*$/.test(spec.opKey) || spec.type === "insWrap" || S.tab === "coax")
       && !S.manualTemplates.includes(spec.opKey);
     return (autoRepick ? pickTemplateForOp_(spec) : (S.selectedTemplates[spec.opKey] || pickTemplateForOp_(spec))) || "";
   }
