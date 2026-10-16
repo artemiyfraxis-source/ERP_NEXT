@@ -166,6 +166,29 @@ describe("ETK list by ПФ", () => {
     expect(await screen.findByText("ПФ сохранены · ревизия 3")).toBeInTheDocument();
   });
 
+  it("keeps the kit mark of a ПФ and the items on the arrows through «Сохранить ПФ»", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    mockFetch((body) => bodies.push(body));
+    const v2: EtkRoute = {
+      ...pf,
+      blocks: pf.blocks.map((item) => (item.key === "cut" ? { ...item, kit: true, label: "1" } : item)),
+      edges: pf.edges.map((edge) => (edge.from === "cut" ? { ...edge, item: "ПВ3 0,5 ×1" } : edge)),
+    };
+    const changed = vi.fn();
+    render(<EtkSheet card={techcard(v2)} principal={editor} onChange={changed} />);
+    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
+    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    fireEvent.change(within(nav).getByRole("combobox", { name: "Перенести операцию 04 в ПФ" }), { target: { value: "mount" } });
+    fireEvent.click(within(nav).getByRole("button", { name: "Сохранить ПФ · ревизия 3" }));
+    await waitFor(() => expect(changed).toHaveBeenCalled());
+
+    const saved = bodies[0].route as { blocks: Array<Record<string, unknown>>; edges: unknown[] };
+    expect(saved.blocks.map((item) => [item.key, item.kit ?? false, "label" in item])).toEqual([
+      ["cut", true, false], ["crimp", false, false], ["mount", false, false],
+    ]);
+    expect(saved.edges).toEqual([{ from: "cut", to: "crimp", per_unit: 1, item: "ПВ3 0,5 ×1" }, { from: "crimp", to: "mount", per_unit: 2 }]);
+  });
+
   it("blocks saving a scheme that breaks the rules and says why", async () => {
     mockFetch();
     render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);

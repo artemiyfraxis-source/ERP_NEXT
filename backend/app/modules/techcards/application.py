@@ -216,7 +216,9 @@ def _keep_hand_route(previous: dict[str, Any] | None, document: dict[str, Any]) 
     """A rebuild keeps the ПФ the technologist cut by hand (`document.route`, source manual) while the operations are
     the same ones in the same places and the new build brings no hand-made scheme of its own (`build_config.route`).
     A split by the generator's rule (source generated — an old ETK moved onto ПФ) is kept the same way while the new
-    build has no split of its own (derived); a new generated split replaces it."""
+    build has no split of its own (derived); a new generated split replaces it. A scheme the generator drew in the
+    config (`build_config.route` with source «generated», «Сложная сборка») is a generated one too: the hand-cut ПФ
+    win over it."""
     old = (previous or {}).get("route")
     new = document.get("route") if isinstance(document, dict) else None
     old_source = old.get("source") if isinstance(old, dict) else None

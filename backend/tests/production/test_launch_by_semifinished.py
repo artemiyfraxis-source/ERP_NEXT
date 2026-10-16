@@ -129,6 +129,51 @@ def test_a_semifinished_number_is_its_place_in_the_scheme_not_in_the_operations(
     assert task.final_operation.position == 1
 
 
+def _kit_route(consumers: int, kit: bool = True) -> tuple[dict, list]:
+    """Резка-комплект (ПФ «kit», «Сложная сборка» 16.10) → N ПФ → изделие."""
+    ops = [("CUT", "Резка", 10, 60)] + [(f"OP-{i}", f"Монтаж {i}", 5, 0) for i in range(1, consumers + 1)]
+    ops.append(("FIN", "Сборка", 40, 0))
+    route = {
+        "source": "generated",
+        "blocks": [{"key": "cut", "ops": [1], "kit": kit},
+                   *({"key": f"c{i}", "ops": [i + 1]} for i in range(1, consumers + 1)),
+                   {"key": "fin", "ops": [consumers + 2], "final": True}],
+        "edges": [*({"from": "cut", "to": f"c{i}", "item": f"провод {i}"} for i in range(1, consumers + 1)),
+                  *({"from": f"c{i}", "to": "fin"} for i in range(1, consumers + 1))],
+    }
+    return route, ops
+
+
+@pytest.mark.parametrize("consumers", [3, 7])
+def test_a_kit_semifinished_feeding_several_others_is_planned_once_per_product(consumers):
+    route, ops = _kit_route(consumers)
+    planned = launch_route(_document(route, ops))
+    assert planned.warnings == ()
+    task = _task(launch_operations(planned.steps, 10))
+
+    cut = task.operations[0]
+    assert cut.stage_key == "cut" and task.final_operation.stage_key == "fin"
+    # Доли комплекта по потребителям в сумме — ровно один комплект на изделие.
+    shares = [edge.per_unit for item in task.operations for edge in item.inputs if edge.input_operation_id == cut.id]
+    assert len(shares) == consumers and sum(shares, Decimal(0)) == 1
+    assert task.unit_factors[cut.id] == 1 and task.operation_units(cut.id) == 10
+    assert cut.norm_seconds == 60 + 10 * 10
+    # Без отметки «kit» резка, как прежде, идёт на каждого потребителя.
+    plain, _ = _kit_route(consumers, kit=False)
+    again = _task(launch_operations(launch_route(_document(plain, ops)).steps, 10))
+    assert again.operation_units(again.operations[0].id) == 10 * consumers
+
+
+def test_a_kit_share_follows_how_many_pieces_of_each_consumer_go_into_the_product():
+    route, ops = _kit_route(2)
+    route["edges"][2]["per_unit"] = 2  # c1 → изделие: 2 шт на изделие
+    task = _task(launch_operations(launch_route(_document(route, ops)).steps, 10))
+
+    cut = task.operations[0]
+    assert abs(task.unit_factors[cut.id] - 1) < Decimal("0.00001")
+    assert task.unit_factors[task.operations[1].id] == 2 and task.unit_factors[task.operations[2].id] == 1
+
+
 @pytest.mark.parametrize("route", [
     None,
     {"source": "derived", "blocks": [{"key": "b1", "ops": [1, 2, 3, 4], "final": True}], "edges": []},

@@ -281,3 +281,79 @@ def test_read_survives_documents_without_operations_or_with_odd_time():
     odd = {"operations": [{"code": "10", "time": 10}, {"code": "20", "time": 20, "result": "x"}]}
     route = document_route(odd)
     assert [block["name"] for block in route["blocks"]] == ["10", "20"] and route["blocks"][1]["minutes"] == 0
+
+
+# ── route v2 («Сложная сборка», 16.10): what flows on an edge, kit blocks, level labels ────────────────────────────
+
+V2_OPS = [RouteOp(position, name=f"Операция {position}") for position in range(1, 6)]
+V2 = {
+    "blocks": [
+        {"key": "W", "ops": [1], "kit": True}, {"key": "V", "ops": [2]}, {"key": "X", "ops": [3]},
+        {"key": "Y", "ops": [4]}, {"key": "Z", "ops": [5], "final": True},
+    ],
+    "edges": [
+        {"from": "W", "to": "X", "item": " НВ4 0,12 белый ×2 "},
+        {"from": "W", "to": "Y", "item": "НВ4 0,12 белый ×2; ТТК 8/2 ×1"},
+        {"from": "V", "to": "Y"}, {"from": "X", "to": "Z"}, {"from": "Y", "to": "Z", "item": ""},
+    ],
+}
+
+
+def v2_json(raw: dict) -> dict:
+    route = parse_route(raw, V2_OPS)
+    return route_json(route, route_totals(route, {}, Decimal(1)))
+
+
+def test_edge_items_kit_blocks_and_level_labels_round_trip():
+    payload = v2_json(V2)
+
+    assert [(block["key"], block.get("kit"), block["label"]) for block in payload["blocks"]] == [
+        ("W", True, "1.1"), ("V", None, "1.2"), ("X", None, "2.1"), ("Y", None, "2.2"), ("Z", None, "3"),
+    ]
+    assert [(edge["from"], edge["to"], edge.get("item")) for edge in payload["edges"]] == [
+        ("W", "X", "НВ4 0,12 белый ×2"), ("W", "Y", "НВ4 0,12 белый ×2; ТТК 8/2 ×1"),
+        ("V", "Y", None), ("X", "Z", None), ("Y", "Z", None),
+    ]
+    # Read back (the stored route, «Сохранить ПФ»): the same JSON byte for byte.
+    assert json.dumps(v2_json(payload), ensure_ascii=False) == json.dumps(payload, ensure_ascii=False)
+
+
+def test_a_level_with_one_block_is_its_number_and_the_longest_path_decides_the_level():
+    route = parse_route(_scheme(
+        {"key": "a", "ops": [1]}, {"key": "b", "ops": [2]}, {"key": "c", "ops": [3], "final": True},
+        edges=[("a", "b"), ("a", "c"), ("b", "c")],
+    ), OPS)
+    payload = route_json(route, route_totals(route, {}, Decimal(1)))
+    assert [block["label"] for block in payload["blocks"]] == ["1", "2", "3"]
+
+
+def test_a_route_without_items_or_kits_keeps_its_old_shape_and_reads_back_byte_equal():
+    document = build(kit("345К.2-КБ1"))
+    old = document["route"]
+    assert all(set(block) == {"key", "name", "ops", "final", "components", "outputs", "inputs", "minutes",
+                              "unit_minutes", "rolled_minutes", "rolled_ops", "label"} for block in old["blocks"])
+    assert all(set(edge) == {"from", "to", "per_unit"} for edge in old["edges"])
+    stored = deepcopy(old) | {"source": "manual"}
+    document["route"] = stored
+    assert json.dumps(document_route(document), ensure_ascii=False) == json.dumps(stored, ensure_ascii=False)
+    # A route stored before the labels reads with them added and nothing else changed.
+    unlabelled = deepcopy(stored)
+    for block in unlabelled["blocks"]:
+        del block["label"]
+    document["route"] = unlabelled
+    assert document_route(document) == stored
+
+
+def test_one_edge_per_pair_still_holds_with_items_and_an_item_must_be_text():
+    doubled = deepcopy(V2)
+    doubled["edges"].append({"from": "W", "to": "X", "item": "ТТК 8/2 ×1"})
+    with pytest.raises(RouteError, match="стрелка «Операция 1» → «Операция 3» повторяется"):
+        parse_route(doubled, V2_OPS)
+    numbered = deepcopy(V2)
+    numbered["edges"][0]["item"] = 2
+    with pytest.raises(RouteError, match="подпись стрелки №1 должна быть текстом"):
+        parse_route(numbered, V2_OPS)
+    # Only `true` makes a kit (a string «false» is not one).
+    loose = deepcopy(V2)
+    loose["blocks"][0]["kit"] = "false"
+    assert "kit" not in v2_json(loose)["blocks"][0]

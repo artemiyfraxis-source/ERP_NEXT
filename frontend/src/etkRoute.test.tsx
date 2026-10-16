@@ -45,6 +45,19 @@ describe("etkRouteOf", () => {
     expect(route).toMatchObject({ source: "manual", final: "a", edges: [] });
     expect(route?.blocks[0]).toMatchObject({ key: "a", ops: [1], unit_minutes: 0, rolled_ops: 0 });
   });
+
+  it("reads the level label, the kit mark and the arrow items, and leaves them out when not set", () => {
+    const route = etkRouteOf({ route: { source: "generated", final: "b", blocks: [
+      { key: "a", name: "Резка", ops: [1], final: false, kit: true, label: "1" },
+      { key: "c", name: "Трубки", ops: [2], final: false, kit: "yes", label: "" },
+      { key: "b", name: "Сборка", ops: [3], final: true, label: "2" },
+    ], edges: [{ from: "a", to: "b", per_unit: 1, item: " НВ4 0,12 белый ×2; ТТК 8/2 ×1 " }, { from: "c", to: "b", per_unit: 1, item: 3 }] } });
+
+    expect(route?.source).toBe("generated");
+    expect(route?.blocks.map((block) => [block.key, block.kit, block.label])).toEqual([["a", true, "1"], ["c", undefined, undefined], ["b", undefined, "2"]]);
+    expect(route?.blocks[1]).not.toHaveProperty("kit");
+    expect(route?.edges).toEqual([{ from: "a", to: "b", per_unit: 1, item: "НВ4 0,12 белый ×2; ТТК 8/2 ×1" }, { from: "c", to: "b", per_unit: 1 }]);
+  });
 });
 
 describe("etkRouteBranches", () => {

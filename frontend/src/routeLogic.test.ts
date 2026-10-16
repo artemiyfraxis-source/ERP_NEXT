@@ -129,6 +129,30 @@ it("sends the names only when they were typed and reads back what it sent", () =
   expect(parseRoute({ blocks: [] })).toBeNull();
 });
 
+it("carries the kit mark and the arrow items to the server and back, and merged arrows join their items", () => {
+  const route: Route = {
+    blocks: [{ ...block("cut", [1]), kit: true }, block("a", [2]), block("b", [3]), block("fin", [4], true)],
+    edges: [
+      { from: "cut", to: "a", per_unit: 1, item: " НВ4 0,12 белый ×2 " }, { from: "cut", to: "b", per_unit: 1, item: "ТТК 8/2 ×1" },
+      { from: "a", to: "fin", per_unit: 1, item: "" }, { from: "b", to: "fin", per_unit: 1 },
+    ],
+  };
+  const payload = routePayload(route);
+  expect(payload).toEqual({
+    blocks: [{ key: "cut", ops: [1], final: false, kit: true }, { key: "a", ops: [2], final: false },
+      { key: "b", ops: [3], final: false }, { key: "fin", ops: [4], final: true }],
+    edges: [{ from: "cut", to: "a", per_unit: 1, item: "НВ4 0,12 белый ×2" }, { from: "cut", to: "b", per_unit: 1, item: "ТТК 8/2 ×1" },
+      { from: "a", to: "fin", per_unit: 1 }, { from: "b", to: "fin", per_unit: 1 }],
+  });
+  const back = parseRoute(payload)!;
+  expect(back.blocks[0]).toEqual({ ...block("cut", [1]), kit: true });
+  expect(back.blocks[1]).not.toHaveProperty("kit");
+  expect(back.edges.map((edge) => edge.item)).toEqual(["НВ4 0,12 белый ×2", "ТТК 8/2 ×1", undefined, undefined]);
+  // «a» и «b» склеены: две стрелки из резки стали одной — одна стрелка на пару блоков, подписи через «; ».
+  const merged = mergeBlocks(back, "a", "b");
+  expect(merged.edges).toEqual([{ from: "cut", to: "b", per_unit: 2, item: "НВ4 0,12 белый ×2; ТТК 8/2 ×1" }, { from: "b", to: "fin", per_unit: 2 }]);
+});
+
 it("takes operation norms from the stored ETK only while it was built from the same operations", () => {
   const document = {
     kit: { part_quantity: "5" },
