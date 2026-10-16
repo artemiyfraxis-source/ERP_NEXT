@@ -1,7 +1,7 @@
 import { joinSplice, assignPinJoined, setTail } from "./tcGenSplices";
 import {
   addEndpoint, complexByHand, initState, setSplMethod, setTailMode, toggleLengthMode, updateEndpoint, type Comp, type GenData, type GenState,
-  type SpliceMethod, type TerRec, type Tmpl, type WireEnd,
+  type OpRec, type SpliceMethod, type TerRec, type Tmpl, type WireEnd,
 } from "./tcGenLogic";
 import { newMarkRow } from "./tcGenMarks";
 
@@ -104,13 +104,23 @@ export const FULL_TEMPLATES: Tmpl[] = ([
   ["sdr-w-w-пайка", "SDR_W_W | Пайка", "Пайка"], ["prs-ншви-опрессовка-наконечников", "PRS_НШВИ | Опрессовка наконечников", "Опрессовка наконечников"],
   ["prs-copper-ленточный-обжим", "PRS_COPPER | Ленточный обжим", "Ленточный обжим"], ["us-weld-уз-сварка", "US_WELD | УЗ сварка", "УЗ сварка"],
   ["strip-wire-разделка", "STRIP_WIRE | Разделка", "Разделка"], ["sdr-tin-лужение", "SDR_tin | Лужение", "Лужение"],
+  ["cut-wire-1strip-резка-с-разделкой", "CUT_WIRE+1strip | Резка с разделкой", "Резка с разделкой"],
+  ["cut-wire-2strip-резка-с-разделкой", "CUT_WIRE+2strip | Резка с разделкой", "Резка с разделкой"],
+  ["cut-wire-2strip-tin-резка-с-зачисткой-двух-концов-и-лужением", "CUT_WIRE+2strip+tin | Резка с зачисткой двух концов и лужением", "Автомат резка + опрессовка"],
+  ["ins-mark-tube-auto-печать-и-резка-маркировочной-трубки", "INS_MARK_TUBE_AUTO | Печать и резка маркировочной трубки", "Монтаж маркировки"],
+  ["cut-neylon-резка-линейных-материалов", "CUT_NEYLON | Резка линейных материалов", "Резка линейных материалов"],
   ["prs-terminal-auto-опрессовка-терминалов-a", "PRS_TERMINAL_auto | Опрессовка терминалов (A)", "Опрессовка терминалов"],
   ["prs-terminal-auto-опрессовка-терминалов-b", "PRS_TERMINAL_auto | Опрессовка терминалов (B)", "Опрессовка терминалов"],
   ["ins-terminal-2-54-6-3-монтаж-терминалов-a", "INS_terminal_2,54-6,3 | Монтаж терминалов (A)", "Монтаж терминалов"],
   ["ins-terminal-2-54-6-3-монтаж-терминалов-b", "INS_terminal_2,54-6,3 | Монтаж терминалов (B)", "Монтаж терминалов"],
 ] as const).map(([id, title, category]) => ({ id, title, category }));
+// Строки БД.ОП новых карт (прод, 16.10): маркиратор 4 с / 600 с, резка с зачисткой и лужением 6,5 с / 600 с.
+export const FULL_OPS: OpRec[] = [
+  { opNumber: "INS_MARK_TUBE_AUTO", opName: "Печать и резка маркировочной трубки", tOp: "4", tPrep: "600", tMachine: "" },
+  { opNumber: "CUT_WIRE+2strip+tin", opName: "Резка с зачисткой двух концов и лужением", tOp: "6,5", tPrep: "600", tMachine: "" },
+];
 export const DSA: GenData = {
-  ...DS, components: [...DS.components, ...MARK_COMPS], templates: FULL_TEMPLATES,
+  ...DS, components: [...DS.components, ...MARK_COMPS], templates: FULL_TEMPLATES, ops: FULL_OPS,
   terRecords: [terFull("SYM-001T-P0.6", "SMR, SYP", "S11/M11/A7", "0,08", "0,35"),
     terFull("T-DS1071-SC600", "I-DS1071-SCB01, I-DS1071-SCB02", "M21/A14", "0,08", "0,2"), terFull("shf-001T-0.8BS", "SM", "S8/A5", "0,08", "0,35")],
   wireDia: { marks: [{ name: "НВ-4", norm: "нв4" }], byAwg: {}, gostAwg: {},
@@ -118,14 +128,18 @@ export const DSA: GenData = {
 };
 
 /** Жгут НВ4 так, как его собрал владелец: пары белый/синий «I3» и «C» свиты, сростки паяные с трубкой ТТК 3/1, хвосты
- *  зачищены и облужены, оплётка XP-3 на ветви А, ТТК 8/2 на хвостовики разъёмов А, маркировка трубками у разъёмов А. */
+ *  зачищены и облужены, оплётка XP-3 на ветвях А (отрезки по КД: X1 120, X2 110, X3 110, X4 120 мм), ТТК 8/2 на
+ *  хвостовики разъёмов X1–X3, ТТК 12/4 ×2 на ствол, маркировка трубками у разъёмов А. */
 export function fullHarness(data: GenData = DSA, method: SpliceMethod = "solder"): GenState {
   let S = setTailMode(harness(data), "tin");
   S = setSplMethod(S, method);
   S = { ...S, spl: { ...S.spl, tut: "20", tutMat: "ttk3" } };
   S = { ...S, twist: { ...S.twist, enabled: true, mode: "pairs", pairs: [{ a: String(R.w12), b: String(R.b12) }], pitch: "15" } };
-  S = { ...S, wrap: { enabled: true, slots: S.wrap.slots.map((slot, i) => (i === 0 ? { mat: "xp3", kind: "braid" as const, len: "300" } : { ...slot, mat: "" })) } };
-  S = { ...S, endpoints: S.endpoints.map((e) => (e.side === "A" ? { ...e, shrinkOn: true, shrinkMat: "ttk8", shrinkLen: "15" } : e)) };
+  S = { ...S, wrap: { enabled: true, slots: S.wrap.slots.map((slot, i) => (i === 0 ? { mat: "xp3", kind: "braid" as const, len: "460" } : { ...slot, mat: "" })) } };
+  const braid: Record<string, string> = { "5": "120", I3: "110", C: "110", A6: "120" };
+  S = { ...S, endpoints: S.endpoints.map((e) => (e.side !== "A" ? e : { ...e, braidLen: braid[e.label],
+    ...(e.label === "A6" ? {} : { shrinkOn: true, shrinkMat: "ttk8", shrinkLen: "15" }) })) };
+  S = { ...S, hs: { enabled: true, manual: true, rows: [{ compId: "ttk12", len: "25", cnt: "2" }] } };
   const conn: Record<string, string> = { csmr2: "SMR-02V-B", csmp: "SMP-02V-BC", csmr4: "SMR-04V-B" };
   S = { ...S, mark: true, markRows: S.endpoints.filter((e) => e.side === "A").map((e) => newMarkRow({
     target: `Разъём ${e.label} (${conn[e.connId]})`, text: e.label, material: `Маркировка "${e.label}" 4/2мм`,

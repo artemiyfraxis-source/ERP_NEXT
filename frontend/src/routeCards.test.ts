@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  crimpWires, cutEnds, depthOrder, genArtHeight, genCardHeight, genCards, layoutByDepth, linkGeometry, opStages, opsMinutes, schemeArt, widestRow, EMPTY_ART,
+  blockCards, crimpWires, cutEnds, depthOrder, genArtHeight, genCardHeight, genCards, inputsHeight, layoutByDepth, linkGeometry, opStages, opsMinutes,
+  schemeArt, widestRow, EMPTY_ART,
 } from "./routeCards";
-import { deriveRoute, type RouteOp } from "./routeLogic";
+import { blockTitle, deriveRoute, parseRoute, routeLevels, routeProblem, type RouteOp } from "./routeLogic";
 import type { PinoutEnd, PinUnit } from "./pinoutCheck";
 import { makeGen, type OpSpec } from "./tcGenLogic";
-import { D, harness } from "./tcGenRealHarness.fixture";
+import { DSA, fullHarness } from "./tcGenRealHarness.fixture";
 
 const op = (position: number, type: string, label: string, extra: Partial<RouteOp> = {}): RouteOp =>
   ({ position, key: `${type}${position}`, type, code: "", label, minutes: null, ...extra });
@@ -165,21 +166,30 @@ describe("карточка «Обжатые провода»", () => {
   const titles = (ops: RouteOp[]) => genCards(deriveRoute(ops), ops).cards.map((card) => card.title);
   const linkIds = (ops: RouteOp[]) => genCards(deriveRoute(ops), ops).links.map((link) => link.id);
 
-  it("cuts the owner's НВ4 harness into splices, crimp А, side А, crimp В, side В; marking prepares the crimp of В", () => {
-    // Чертёж «Жгут НВ4» (tcGenRealHarness.fixture.ts) — операции так, как их ставит генератор.
-    const ops: RouteOp[] = makeGen(D, harness(D)).getActiveOps().map((spec, index) =>
-      ({ position: index + 1, key: spec.opKey, type: spec.type, code: "", label: spec.label, minutes: null, ...(spec.side ? { side: spec.side } : {}) }));
-    const { cards, links } = genCards(deriveRoute(ops), ops);
-    const labels = (id: string) => cards.find((card) => card.id === id)!.ops.map((item) => item.label.replace(/ — .*/, ""));
-    expect(cards.map((card) => card.title)).toEqual(["Нарезанные провода", "Провода со сростками", "Обжатые провода, сторона А",
-      "Сторона А собрана", "Обжатые провода, сторона В", "Готовый кабель"]);
-    // Новая форма сращивает опрессовкой гильзой (владелец 16.10).
-    expect(labels("crimped")).toEqual(["Зачистка концов под сростки", "Сростки опрессовкой гильзой"]);
-    expect(labels("crimpedA")).toEqual(["Опрессовка терминалов А1", "Опрессовка терминалов А2", "Опрессовка терминалов А3", "Опрессовка терминалов А4"]);
-    expect(labels("A")).toEqual(["Монтаж в разъём А1", "Монтаж в разъём А2", "Монтаж в разъём А3", "Монтаж в разъём А4"]);
-    expect(labels("crimpedB")).toEqual(["Маркировка", "Опрессовка терминалов В1", "Опрессовка терминалов В2"]);
-    expect(labels("B")).toEqual(["Монтаж в разъём В1", "Монтаж в разъём В2"]);
-    expect(links.map((link) => `${link.id}:${link.qty}`)).toEqual(["wires>crimped:1", "crimped>crimpedA:1", "crimpedA>A:1", "A>crimpedB:1", "crimpedB>B:1"]);
+  it("shows the owner's НВ4 harness («Сложная сборка») as its own ПФ graph: a card per block with its level and what comes in", () => {
+    // 713К.4 КБ1 (tcGenRealHarness.fixture.ts): схема ПФ генератора — карточка на блок, а не стадии генератора.
+    const gen = makeGen(DSA, fullHarness());
+    const specs = gen.getActiveOps().filter((spec) => gen.templateIdFor(spec));
+    const ops: RouteOp[] = specs.map((spec, index) => ({ position: index + 1, key: spec.opKey, type: spec.type, code: spec.tmplHint || "",
+      label: spec.label, minutes: null, ...(spec.side ? { side: spec.side } : {}) }));
+    const route = parseRoute((gen.buildConfig() as { route: unknown }).route)!;
+    expect(routeProblem(route, ops)).toBeNull();
+    const { cards, links } = blockCards(route, ops, (block) => blockTitle(block, ops, "Жгут НВ4"), routeLevels(route));
+    expect(cards.map((card) => `${card.level} ${card.title} [${card.kind}]`)).toEqual([
+      "1.1 Резка с обжимом А (SYM-001T-P0.6) и зачисткой В — 4 кабеля [semiFinished]",
+      "1.2 Резка с обжимом В (T-DS1071-SC600) и зачисткой А — 3 кабеля [semiFinished]",
+      "1.3 Резка с зачисткой двух концов и лужением — 4 кабеля [semiFinished]",
+      "1.4 Резка с обжимом А (SHF-001T-0.8BS) и зачисткой В — 2 кабеля [semiFinished]",
+      "1.5 Резка с обжимом А и В (SYM-001T-P0.6 / T-DS1071-SC600) — 3 кабеля [semiFinished]",
+      "1.6 Нарезанные трубки [semiFinished]", "1.7 Нарезанная оплётка [semiFinished]", "1.8 Маркировка [semiFinished]",
+      "2.1 Ветвь А1 «5» [assembly]", "2.2 Ветвь А2 «I3» [assembly]", "2.3 Ветвь А3 «C» [assembly]", "2.4 Ветвь А4 «A6» [assembly]",
+      "3.1 Пайка С1, С2 [assembly]", "3.2 Пайка С3, С4 [assembly]", "4 Жгут НВ4 [final]",
+    ]);
+    expect(cards.find((card) => card.id === "pf-A1")!.inputs).toEqual([
+      "НВ4 0,5 красный ×1", "НВ4 0,5 черный ×1", "ТТК 8/2 ×1", "XP-3 120 мм ×1", "маркировка «5» ×1"]);
+    expect(inputsHeight(5)).toBe(4 * 16 + 16 + 8);
+    expect(links).toHaveLength(route.edges.length);
+    expect(widestRow(cards.map((card) => card.id), links)).toBe(8);
   });
 
   it("cuts the owner's cable 14.10 as cut, crimp А, side А, crimp В, side В — each fed by the previous one", () => {

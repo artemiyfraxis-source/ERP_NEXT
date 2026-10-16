@@ -237,6 +237,25 @@ it("«Изменить схему» adds «Выше/Ниже» to the opened blo
   expect(screen.getByRole("button", { name: "Изменить схему" })).toBeInTheDocument();
 });
 
+it("«Сложная сборка»: draws the generator's ПФ graph as it is — a card per block with its level, kits, what comes in", () => {
+  // Схема генератора (владелец 16.10): резка провода и резка ТУТ — ПФ-комплекты, «Надеть ТУТ» берёт их, пайка с усадкой — изделие.
+  const graph: Route = {
+    blocks: [{ ...block("cut", [1]), kit: true }, { ...block("tubes", [2]), kit: true, name: "Нарезанные трубки" },
+      { ...block("on", [3]), name: "Ветвь А1" }, block("final", [4, 5], true)],
+    edges: [{ from: "cut", to: "on", per_unit: 1, item: "НВ4 0,5 красный ×1; НВ4 0,5 черный ×1" },
+      { from: "tubes", to: "on", per_unit: 1, item: "ТУТ 3/1 ×2" }, { from: "on", to: "final", per_unit: 1, item: "Ветвь А1" }],
+  };
+  const onChange = mount({ blockView: true, derive: () => graph });
+  expect(cards().map((card) => card.querySelector(".rc-title")?.textContent)).toEqual(["1.1 · Резка провода", "1.2 · Нарезанные трубки", "2 · Ветвь А1", "3 · Жгут XH"]);
+  expect(cards()[0].querySelector(".rc-meta")?.textContent).toContain("комплект на изделие");
+  expect([...cards()[2].querySelectorAll(".rc-inputs li")].map((item) => item.textContent)).toEqual(["НВ4 0,5 красный ×1", "НВ4 0,5 черный ×1", "ТУТ 3/1 ×2"]);
+  expect(screen.getByText(/4 ПФ · 5 операций/)).toBeInTheDocument();
+  // Блок открывается по операции; во входах блока — что идёт по стрелке.
+  fireEvent.click(op(/Надеть ТУТ/));
+  expect(within(screen.getByRole("region", { name: "Блок «Ветвь А1»" })).getByText(/ТУТ 3\/1 ×2/)).toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 it("moves a hand-edited scheme with its blocks: the operations get new numbers, blocks and arrows stay", () => {
   const onMove = vi.fn();
   mount({ value: manual, onMove });

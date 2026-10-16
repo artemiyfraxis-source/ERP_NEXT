@@ -254,6 +254,21 @@ export function routeTotals(route: Route, ops: RouteOp[], quantity: number): Map
   return totals;
 }
 
+/** Уровень блока для схемы — как `route_levels` на сервере: самый длинный путь от источника (источники — 1, изделие —
+    последний); «N», когда на уровне один блок, «N.k», когда несколько (k — по порядку блоков). Схема с циклом — пусто. */
+export function routeLevels(route: Route): Map<string, string> {
+  const order = topoOrder(route);
+  if (!order) return new Map();
+  const level = new Map<string, number>();
+  order.forEach((key) => level.set(key, 1 + Math.max(0, ...route.edges.filter((edge) => edge.to === key).map((edge) => level.get(edge.from) ?? 0))));
+  const sequence = ordered(route).blocks.map((block) => block.key);
+  const members = new Map<number, string[]>();
+  sequence.forEach((key) => members.set(level.get(key)!, [...(members.get(level.get(key)!) || []), key]));
+  const labels = new Map<string, string>();
+  members.forEach((keys, number) => keys.forEach((key, index) => labels.set(key, keys.length === 1 ? String(number) : `${number}.${index + 1}`)));
+  return labels;
+}
+
 /** Линейная схема — одна цепочка блоков (у каждого не больше одного входа и выхода): её рисуем строкой. */
 export function routeChain(route: Route): string[] | null {
   if (route.blocks.length < 2 || route.edges.length !== route.blocks.length - 1) return null;
