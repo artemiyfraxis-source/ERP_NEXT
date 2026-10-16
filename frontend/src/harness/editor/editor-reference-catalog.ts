@@ -78,7 +78,7 @@ export const remoteEditorCatalogSources: readonly RemoteCatalogSource[] = [
 export const housingSource: EditorCatalogSource = {
   id: "connector-housings",
   label: "Корпуса, вид сверху",
-  description: "Корпуса разъёмов из базы: вид сверху с шагом, размерами A и B и контактом 1",
+  description: "Корпуса разъёмов из базы: объёмный корпус, развёрнутый видом сверху",
 };
 
 export function housingCatalogItems(series: readonly ConnectorSeries[]): readonly EditorCatalogItem[] {
