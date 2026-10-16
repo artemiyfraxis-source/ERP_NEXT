@@ -104,13 +104,13 @@ function cavities(hs: ConnectorHousing, pitch: number, wall: number, dsub = fals
   return out;
 }
 
-function faceSize(hs: ConnectorHousing, look: Look, pitch: number): [number, number] {
+export function faceSize(hs: ConnectorHousing, look: Look, pitch: number): [number, number] {
   if (look.shape === "dsub") return [((hs.grid[0]?.length || 9) + 1) * pitch / 2 + look.wall * 2 + pitch * 0.4, 2 * pitch + look.wall * 2 + 0.6];
   if (look.shape === "xt") return [pitch * 2 + look.wall * 2, pitch + look.wall * 2];
   return [hs.cols * pitch + look.wall * 2, hs.rows * pitch + look.wall * 2];
 }
 
-function facePitch(hs: ConnectorHousing, look: Look): number {
+export function facePitch(hs: ConnectorHousing, look: Look): number {
   if (look.shape === "xt") return hs.family === "amass-qs8" ? 12 : /XT90/i.test(hs.art || "") ? 10.9 : /XT30/i.test(hs.art || "") ? 5 : 7.2;
   return hs.pitch || (look.shape === "dsub" ? 2.77 : /superseal/.test(hs.family || "") ? 3.5 : 2.5);
 }

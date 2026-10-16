@@ -2346,6 +2346,15 @@ export function drawEditorSceneObject(
     context.strokeStyle = selected ? "#087bb4" : object.color;
     context.lineWidth = selected ? 3 : 2;
     context.stroke();
+    const topViewSvg = view === "drawing" ? object.metadata?.topViewSvg : undefined;
+    if (topViewSvg) { // корпус из базы разъёмов: его вид сверху (connectorTopView), вписанный в рамку
+      const entry = componentTemplateImageCache.get("data:image/svg+xml;charset=utf-8," + encodeURIComponent(topViewSvg));
+      if (entry.state === "loaded") {
+        const iw = entry.image.naturalWidth || object.width, ih = entry.image.naturalHeight || object.height;
+        const fit = Math.min((object.width - 8) / iw, (object.height - 8) / ih);
+        context.drawImage(entry.image, object.x + (object.width - iw * fit) / 2, object.y + (object.height - ih * fit) / 2, iw * fit, ih * fit);
+      }
+    }
     if(view!=="drawing"){
       context.fillStyle = "#17384b";
       context.font = "700 13px Inter, Arial, sans-serif";

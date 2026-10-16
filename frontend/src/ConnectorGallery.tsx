@@ -7,6 +7,7 @@ import {
 } from "./api";
 import { connectorFace, connectorFaceUnits, connectorSummary, type ConnectorHousing } from "./connectorArt";
 import { connectorModel } from "./connectorModel";
+import { connectorTopView } from "./connectorTopView";
 import { searchRows } from "./searchText";
 
 /* «База данных → Разъёмы» по сериям (владелец, 10.10.2026: «идти по сериям: серия GHR, внутри все доступные разъёмы
@@ -64,6 +65,7 @@ const WIDE_UNITS = 9;
 function HousingCard({ item, hit, wide = false }: { item: ConnectorSeriesHousing; hit: boolean; wide?: boolean }) {
   const hs = item.housing;
   const model = connectorModel(hs, 130, 84);
+  const top = connectorTopView(hs, wide ? 380 : 270, 170);
   return <div className={hit ? "conn-housing conn-hit" : "conn-housing"} id={`conn-${item.article}`}>
     <div className="conn-housing-head">
       <b>{item.article}</b><span>{item.n} конт.</span>
@@ -72,6 +74,7 @@ function HousingCard({ item, hit, wide = false }: { item: ConnectorSeriesHousing
     <div className="conn-housing-model">{model
       ? <Svg box={model} label={`Модель ${item.article}`} />
       : <small className="conn-muted">модель не сверена</small>}</div>
+    {top && <div className="conn-housing-top"><Svg box={top} label={`Вид сверху ${item.article}`} /></div>}
     <div className="conn-face"><Face housing={hs} width={wide ? 400 : 250} /></div>
     {item.headers.length > 0 && <small className="conn-headers">
       {item.headers.map((header) => <span key={header.article} title={header.title}>{header.article}<i> — {header.title.replace("Вилка на плату", "").replace(/^,?\s*/, "")}</i></span>)}

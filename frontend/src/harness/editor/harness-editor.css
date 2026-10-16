@@ -1318,3 +1318,8 @@
   .harness-root .he-controls-section .he-thickness-control input[type="range"] { height: 32px; }
   .harness-root .he-layer-row { min-height: 44px; }
 }
+
+/* Корпус из базы разъёмов: карточка в две строки с видом сверху вместо точки. */
+.harness-root .he-catalog-card.has-top { height: 64px; grid-row: span 2; grid-template-columns: 96px minmax(0, 1fr) 18px; }
+.harness-root .he-catalog-card.has-top .he-catalog-top { width: 96px; height: 56px; }
+.harness-root .he-catalog-card.has-top > span:nth-child(2) { display: grid; gap: 2px; align-content: center; }
