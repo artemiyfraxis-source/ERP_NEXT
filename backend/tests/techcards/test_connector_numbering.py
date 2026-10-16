@@ -47,10 +47,8 @@ CASES = [
     ("502439-0400", "molex-clikmate-20", [[1, 2, 3, 4]], "ramp", "high", "5024391500"),
     # Molex — drawing without contact numbers, or not reachable: unchecked
     ("206461-0800", "molex-microfit-plus", [[1, 2, 3, 4], [5, 6, 7, 8]], "lever", "low", ""),
-    ("09-50-8051", "molex-kk396", [[1, 2, 3, 4, 5]], "ramp", "low", ""),
     ("51163-0400", "molex-minilock", [[1, 2, 3, 4]], "lever", "low", ""),
     ("50-57-9404", "molex-sl-1r", [[1, 2, 3, 4]], "ramp", "low", ""),
-    ("501646-1000", "molex-igrid", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "lever", "low", ""),
     ("35023-0004", "molex-boardin", [[1, 2, 3, 4]], "none", "low", ""),
     # Hirose DF1B (catalogue 01.07.2020): face with the contact-1 mark (or the lock lever) up
     ("DF1B-4S-2.5R", "hirose-df1b", [[1, 2, 3, 4]], "mark", "high", "Single Row Socket"),
@@ -79,6 +77,16 @@ CASES = [
     ("NSHDR-16V-Z", "jst-nshd", [[1, 3, 5, 7, 9, 11, 13, 15], [2, 4, 6, 8, 10, 12, 14, 16]], "ramp", "high", "eNSHD"),
     ("I-DS1066-SCW004", "connfly-ds1066", [[1, 2, 3, 4]], "windows", "high", "C-DS1066"),
     ("PNDP-10V-Z", "jst-pnd", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "lever", "low", ""),
+    # Сверка 16.10.2026 (вторая часть) — чертежи Molex с datasheet.lcsc.com (копии листов Molex)
+    ("5025780600", "molex-clikmate", [[1, 2, 3, 4, 5, 6]], "ramp", "high", "5025780000-SD"),
+    ("502578-1500", "molex-clikmate", [list(range(1, 16))], "ramp", "high", "5025780000-SD"),
+    ("501330-0600", "molex-picoclasp-1r", [[1, 2, 3, 4, 5, 6]], "ramp", "high", "5013300000-SD"),
+    ("501330-0431", "molex-picoclasp-1r", [[1, 2, 3, 4]], "ramp", "high", "5013300000-SD"),
+    ("5011892010", "molex-picoclasp", [[19, 17, 15, 13, 11, 9, 7, 5, 3, 1], [20, 18, 16, 14, 12, 10, 8, 6, 4, 2]], "ramp", "high", "5011890000-SD"),
+    ("501189-2011", "molex-picoclasp", [[19, 17, 15, 13, 11, 9, 7, 5, 3, 1], [20, 18, 16, 14, 12, 10, 8, 6, 4, 2]], "ramp", "high", "5011890000-SD"),
+    ("09-50-8051", "molex-kk396", [[5, 4, 3, 2, 1]], "ramp", "high", "SD-41695"),
+    ("501646-1000", "molex-igrid", [[10, 8, 6, 4, 2], [9, 7, 5, 3, 1]], "lever", "high", "5016460000-SD"),
+    ("501646-4004", "molex-igrid", [list(range(40, 0, -2)), list(range(39, 0, -2))], "lever", "high", "5016460000-SD"),
     # Series of «Терминалы» added 16.10.2026
     ("SHDR-20V-S-B", "jst-shd", [[19, 17, 15, 13, 11, 9, 7, 5, 3, 1], [20, 18, 16, 14, 12, 10, 8, 6, 4, 2]], "mark", "high", "eSHD"),
     ("SHLP-06V-S-B", "jst-shl", [[1, 2, 3, 4, 5, 6]], "mark", "high", "eSHL"),
@@ -145,9 +153,15 @@ def test_checked_molex_series():
                       "molex-microlock-plus", "molex-microlatch", "molex-minispox", "molex-picospox", "molex-microone",
                       "molex-oneblade", "molex-zerohachi", "molex-kk254", "molex-cgrid3", "hirose-df19"):
         assert series[series_id]["checked"], series_id
-    for series_id in ("molex-microfit-plus", "molex-milligrid", "molex-clikmate", "molex-kk396", "molex-minilock",
-                      "molex-sl", "molex-igrid", "molex-boardin"):
+    # 16.10.2026: CLIK-Mate 1,5, Pico-Clasp, KK 396 (41695) and iGrid were read from the Molex drawings.
+    for series_id in ("molex-clikmate", "molex-picoclasp", "molex-kk396", "molex-igrid"):
+        assert series[series_id]["checked"], series_id
+    for series_id in ("molex-microfit-plus", "molex-milligrid", "molex-minilock", "molex-sl", "molex-boardin"):
         assert not series[series_id]["checked"], series_id
+    # The ranges: iGrid's list is complete (10…40, even); CLIK-Mate and Pico-Clasp name housings they did not find.
+    assert series["molex-igrid"]["range_checked"] and series["molex-igrid"]["counts"] == list(range(10, 41, 2))
+    assert [h["n"] for v in series["molex-picoclasp"]["variants"] for h in v["housings"]][-8:] == [20, 30, 40, 50] * 2
+    assert not series["molex-picoclasp"]["range_checked"] and not series["molex-clikmate"]["range_checked"]
 
 
 def test_missing_molex_housings_are_in_the_catalogue():
@@ -156,7 +170,7 @@ def test_missing_molex_housings_are_in_the_catalogue():
     kk396 = series["molex-kk396"]
     assert [h["article"] for v in kk396["variants"] for h in v["housings"]] == ["09-50-8020", "09-50-8051"]
     assert [h["n"] for v in kk396["variants"] for h in v["housings"]] == [2, 5] and not kk396["range_checked"]
-    assert kk396["sources"] and all(source["url"].startswith("https://static.chipdip.ru/") for source in kk396["sources"])
+    assert kk396["sources"] and any("SD-41695" in source["title"] for source in kk396["sources"])
     assert kk396["pitch"] == 3.96
 
     minilock = series["molex-minilock"]

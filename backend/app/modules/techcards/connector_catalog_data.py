@@ -361,11 +361,24 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # Series of БД.ТЕР without a drawing the ERP could read (molex.com did not answer, 13.10.2026): the housing part
     # numbers are those Molex lists (its part sheets, or the LCSC / Heilind pages that quote them); the count comes
     # from the part number, the numbering stays unchecked.
-    _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, latch="ramp", note=NO_DRAWING),
+    # KK 396 41695 — Molex SD-41695 rev. L (datasheet.lcsc.com copy of 0009508041, read 16.10.2026): the front view is the
+    # mating end (square pin entries) with the optional ramps at the top and the contacts numbered from the left; the view
+    # under it (underside, carries «41695» and the moulded circuit «1») has CIRCUIT NUMBER 1 at the same left end, so the
+    # mark is on the face opposite the ramp. From the wire side the view turns over: ramp up, contact 1 on the RIGHT (the
+    # same as KK 254 2695). Parts without a ramp (09-50-8020) have no face cue — the face with the moulded «1» goes down.
+    _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, start="TR", latch="ramp", conf="high",
+            src="Molex SD-41695",
+            note="по чертежу Molex SD-41695: цифра «1» на грани, противоположной рампе; со стороны проводов рампой вверх — контакт 1 справа"),
     _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", note=NO_DRAWING),
     _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, latch="ramp", color=BLACK, note=NO_DRAWING),
-    _family("molex-igrid", "Molex iGrid (2 ряда)", r"^501646-?(\d{2})0[01]$", 2.0, rows=2, order="col", latch="lever",
-            color_by=((r"1$", BLACK),), note=NO_DRAWING),
+    # iGrid 501646 — Molex 5016460000-SD rev. A1 (datasheet.lcsc.com copy of 5016462400, read 16.10.2026): the view of the
+    # wire end (CIRCUIT No.1 ▽, trade mark and cavity numbers moulded on it) has the latch plate at its BOTTOM, circuit 1
+    # at the top-left, 2 under it, N-1 top-right, N bottom-right (columns of two, odd numbers on top). Turned latch up
+    # (the way the sketch draws every latch): 1 bottom-RIGHT, 2 above it, the columns run right to left. The list gives
+    # 10…40 circuits, even only, colours 0 natural, 1 black, 2 red, 4 blue (501646-1000, -1001, -1002, -1004).
+    _family("molex-igrid", "Molex iGrid (2 ряда)", r"^501646-?(\d{2})0[0124]$", 2.0, rows=2, order="col", start="BR", latch="lever",
+            color_by=((r"1$", BLACK), (r"2$", "#c8322d"), (r"4$", "#3b6fb6")), conf="high", src="Molex 5016460000-SD",
+            note="по чертежу Molex 5016460000-SD: на торце проводов защёлка внизу, 1 слева вверху, 2 под ней; защёлкой вверх — 1 справа внизу, 2 над ней"),
     _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, note=NO_DRAWING),
     # TE Mini CT — C-353908: the top view is the wire end; «CIRCUIT No.1» is at its right with the +AMP face (the lock
     # ramp) at the bottom -> from the wire side, lock up, contact 1 on the LEFT.
@@ -558,21 +571,40 @@ MOLEX_SERIES: tuple[dict[str, Any], ...] = (
             contacts=(("50394-8051", "AWG 30–26"), ("50394-8052", "AWG 30–26")),
             note="корпуса 151100, 151098 — чертежи не найдены", range_checked=False),
     _series("molex-clikmate", "Molex CLIK-Mate", "Molex", WTB, ("502578", "CLIK-Mate"),
-            (("Корпус шаг 2,0 (502439)", "molex-clikmate-20", "502439-{:02d}00", _counts(2, 10, 12, 13, 14, 15)),),
-            (("Molex 5024391500", _cd("031162073")),),
+            (("Корпус шаг 2,0 (502439)", "molex-clikmate-20", "502439-{:02d}00", _counts(2, 10, 12, 13, 14, 15)),
+             ("Корпус шаг 1,5 (502578), натуральный", "molex-clikmate", "502578-{:02d}00", _counts(2, 15))),
+            (("Molex 5024391500", _cd("031162073")),
+             ("Molex 5025780000-SD", LCSC.format("7be50b41f1f84bba318ef0e0ecfb8cb8", "C293593"))),
             contacts=(("5024380000", "шаг 2,0, AWG 26–22"),),
-            note="корпуса 502578, 503149, 502380 — чертежи не найдены", range_checked=False),
+            note="корпуса 503149, 502380 — чертежи не найдены; 502578 — по листу 4 чертежа 5025780000-SD (цвета 00–09, 11, 14, 16)",
+            range_checked=False),
     _series("molex-picoclasp", "Molex Pico-Clasp", "Molex", WTB, ("501189", "501330"),
-            (("Корпус, 1 ряд (501330)", "molex-picoclasp-1r", "501330-{:02d}00", _counts(2, 15)),),
-            (("Molex Pico-Clasp 501330, лист каталога", _cd("033381093")),),
-            note="2-рядные корпуса 501189, 501939 — чертежи не найдены", range_checked=False),
+            (("Корпус, 1 ряд (501330), натуральный", "molex-picoclasp-1r", "501330-{:02d}00", _counts(2, 15)),
+             ("Корпус, 1 ряд (501330), чёрный", "molex-picoclasp-1r", "501330-{:02d}31", _counts(2, 15)),
+             ("Корпус, 2 ряда (501189), натуральный", "molex-picoclasp", "501189-{:02d}10", (20, 30, 40, 50)),
+             ("Корпус, 2 ряда (501189), чёрный", "molex-picoclasp", "501189-{:02d}11", (20, 30, 40, 50))),
+            (("Molex Pico-Clasp 501330, лист каталога", _cd("033381093")),
+             ("Molex 5013300000-SD", LCSC.format("ddf2d5d37596f063deba3a4a832cf9f9", "C505120")),
+             ("Molex 5011890000-SD", LCSC.format("e2ea623bef0689ba7a67476abf6409c3", "C505119"))),
+            note="2-рядный корпус 501939 — чертёж не найден; 501330 по листам 1–2 чертежа 5013300000-SD: 2…15 контактов, натуральный и чёрный",
+            range_checked=False),
+    _series("molex-igrid", "Molex iGrid", "Molex", WTB, ("iGrid",),
+            (("Корпус, натуральный", "molex-igrid", "501646-{:02d}00", _even(10, 40)),
+             ("Корпус, чёрный", "molex-igrid", "501646-{:02d}01", _even(10, 40)),
+             ("Корпус, красный", "molex-igrid", "501646-{:02d}02", _even(10, 40)),
+             ("Корпус, синий", "molex-igrid", "501646-{:02d}04", _even(10, 40))),
+            (("Molex 5016460000-SD", LCSC.format("2bba935c69263afb79870b074bbaf90d", "C505342")),),
+            contacts=(("5016471000", "олово, AWG 26–22"), ("5016481000", "олово, AWG 28–26"),
+                      ("5030952201", "золото, AWG 24–22"), ("5030952200", "золото, AWG 28–26")),
+            note="ответные вилки 501645, 501876, 503091, 208659", range_checked=True, range_src="Molex 5016460000-SD, лист 2"),
     # Molex part sheets (static.chipdip.ru copies): each confirms one housing; the series tables and the sales drawings
     # (SD-41695-001, 511630400_sd) were not reachable, so the range and the numbering stay unchecked.
     _series("molex-kk396", "Molex KK 396", "Molex", WTB, ("KK 396 (legacy KK 156)", "KK 396/508"),
             (("Корпус 41695, без защёлки", "molex-kk396", ("09-50-8020",)),
              ("Корпус 41695, с фрикционной защёлкой", "molex-kk396", ("09-50-8051",))),
-            (("Molex 0009508020, лист детали", _cd("011657093")), ("Molex 0009508051, лист детали", _cd("029580511"))),
-            note="известны только корпуса из листов деталей; корпуса 2139 (09-50-3…) — лист не найден; контакты 2478, 2578, 6838",
+            (("Molex 0009508020, лист детали", _cd("011657093")), ("Molex 0009508051, лист детали", _cd("029580511")),
+             ("Molex SD-41695 (2…14 конт.)", LCSC.format("95578245b0df1f54ea5b39f283fac359", "C505033"))),
+            note="нумерация корпуса 41695 сверена по SD-41695; в наборе только корпуса из листов деталей (чертёж даёт 2…14 контактов, но не номера деталей по исполнениям); корпуса 2139 (09-50-3…) — лист не найден; контакты 2478, 2578, 6838",
             range_checked=False),
     _series("molex-minilock", "Molex Mini-Lock", "Molex", WTB, ("Mini-Lock",),
             (("Корпус 51163, натуральный", "molex-minilock", ("51163-0400",)),),
