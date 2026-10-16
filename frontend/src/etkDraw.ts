@@ -3,6 +3,7 @@
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
 import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, wireColor, type HousingBody } from "./connectorArt";
+import { hasTopView } from "./connectorTopView";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
 
@@ -459,8 +460,9 @@ function housingWarn(hs: EtkHousing): string {
   return hs.conf === "high" ? "" : `⚠ нумерация не сверена с чертежом производителя${hs.note ? ` — ${hs.note}` : ""}`;
 }
 
-/** Монтаж в разъём: торец со стороны проводов крупно, рядом вид корпуса, ниже легенда «конт. — провод»
- *  (etkDrawHousingOp_). Без распиновки в генераторе — список проводов «контакт по КД». */
+/** Монтаж в разъём: торец со стороны проводов крупно, рядом вид корпуса и под ним тот же корпус, развёрнутый видом сверху
+ *  (только прямоугольные корпуса; владелец, 16.10: «просто развернуть»), ниже легенда «конт. — провод» (etkDrawHousingOp_).
+ *  Без распиновки в генераторе — список проводов «контакт по КД». */
 export function etkDrawHousingOp(operation: Row): string {
   const hs = operation.housing as EtkHousing, byPin: Record<number, string> = {}, ws = list(obj(operation.fields).wires);
   ws.forEach((w) => (Array.isArray(w.pins) ? w.pins as number[] : []).forEach((p) => { byPin[p] = str(w.art || w.name); }));
@@ -475,7 +477,14 @@ export function etkDrawHousingOp(operation: Row): string {
     `<g transform="translate(${x0},${top + 6})">${g.body}</g>` +
     `<g transform="translate(${W - pictureW - 20},${top})">${pic.body}</g>` +
     `<text x="${W - pictureW / 2 - 20}" y="${top + pic.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">${esc(connectorSummary(hs))}</text>`;
-  let ly = top + Math.max(g.h + 6, pic.h + 18) + 22;
+  let right = pic.h + 18;
+  if (hasTopView(hs)) {
+    const view = connectorPicture(hs, pictureW, 110, byPin, "top"), vy = top + right + 14;
+    body += `<g transform="translate(${W - pictureW / 2 - 20 - view.w / 2},${vy})">${view.body}</g>` +
+      `<text x="${W - pictureW / 2 - 20}" y="${vy + view.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">вид сверху, провода снизу</text>`;
+    right += view.h + 32;
+  }
+  let ly = top + Math.max(g.h + 6, right) + 22;
   const pins = Object.keys(byPin).map(Number).sort((a, b) => a - b);
   if (pins.length) {
     const legend = pinLegend(pins, (pin) => byPin[pin], pinPeers(obj(operation.fields)), ly);

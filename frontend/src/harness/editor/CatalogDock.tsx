@@ -1,4 +1,4 @@
-import { useMemo, useState, type DragEvent } from "react";
+import { memo, useMemo, useState, type DragEvent } from "react";
 import type { EditorCatalogItem, EditorCatalogSource } from "./editor-types";
 import { connectorTopView } from "../../connectorTopView";
 import type { ConnectorHousing } from "../../connectorArt";
@@ -20,12 +20,14 @@ export interface CatalogDockProps {
   readonly onRetry?: () => void;
 }
 
-/** Вид сверху корпуса — та же картинка, что ложится на поле чертежа. */
-function HousingTopThumb({ housing }: { readonly housing: ConnectorHousing }) {
-  const top = connectorTopView(housing, 150, 58, false);
+/** Вид сверху корпуса — та же картинка, что ложится на поле чертежа; считается один раз на корпус. */
+const topThumbs = new WeakMap<ConnectorHousing, ReturnType<typeof connectorTopView>>();
+const HousingTopThumb = memo(function HousingTopThumb({ housing }: { readonly housing: ConnectorHousing }) {
+  if (!topThumbs.has(housing)) topThumbs.set(housing, connectorTopView(housing, 150, 58, false));
+  const top = topThumbs.get(housing);
   if (!top) return <span className="he-catalog-thumbnail" aria-hidden="true">▣</span>;
   return <svg className="he-catalog-top" viewBox={`0 0 ${top.w} ${top.h}`} aria-hidden="true" dangerouslySetInnerHTML={{ __html: top.body }} />;
-}
+});
 
 export function CatalogDock({
   items,
