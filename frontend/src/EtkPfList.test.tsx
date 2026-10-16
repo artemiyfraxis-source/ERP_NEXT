@@ -122,16 +122,35 @@ describe("ETK list by ПФ", () => {
     render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);
     const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
     const groups = within(nav).getAllByRole("region");
-    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["ПФ 1.1 · Резка", "ПФ 2 · Опрессовка", "ПФ 3 · Монтаж", "ПФ 1.2 · Скрутка"]);
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["ПФ 1.1 · Провод отрезанный", "ПФ 2 · Провод с терминалом", "ПФ 3 · Жгут", "ПФ 1.2 · Пара скрученная"]);
     const mount = groups[2];
     expect(within(mount).getAllByRole("button", { name: /^\d\d/ }).map((button) => button.textContent?.slice(0, 2))).toEqual(["05", "03"]);
-    expect(within(mount).getByRole("list", { name: "Вход ПФ 3" })).toHaveTextContent("← ПФ 2 Провод с терминалом×2");
-    expect(within(mount).getByRole("list", { name: "Вход ПФ 3" })).toHaveTextContent("T-13,5");
+    // Вход ПФ — одной строкой номеров («Вход: 2 ×2, 1.2»), а не накопленными названиями; название — в подсказке.
+    const feed = within(mount).getByLabelText("Вход ПФ 3");
+    expect(feed).toHaveTextContent(/^Вход: 2 ×2/);
+    expect(feed).not.toHaveTextContent("←");
+    expect(feed).toHaveAttribute("title", expect.stringContaining("ПФ 2 Провод с терминалом ×2"));
+    expect(within(mount).getByRole("list", { name: "Комплектующие ПФ 3" })).toHaveTextContent("T-13,5");
     expect(within(mount).getByLabelText("Выход ПФ 3")).toHaveTextContent("→ Жгут");
     expect(mount).toHaveTextContent("11,5 мин");
     expect(mount).toHaveTextContent("изделие");
     fireEvent.click(within(mount).getByRole("button", { name: /^05/ }));
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Монтаж");
+  });
+
+  it("titles a ПФ with its name, lists the inputs by number on one line and shows the output name instead of a cumulative text", async () => {
+    const cumulative = operations.map((operation) => (operation.position === 3
+      ? { ...operation, result: [{ name: "Провода нарезаны: НВ4 0,5 красный — 3 шт по 150 мм; НВ4 0,5 черный — 3 шт по 150 мм", norm: "10", unit: "шт" }] } : operation));
+    const card = { ...techcard(), document: { ...techcard().document, operations: cumulative } } as ProjectTechcard;
+    mockFetch();
+    render(<EtkSheet card={card} principal={editor} onChange={() => undefined} />);
+    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
+    const mount = within(nav).getByRole("region", { name: "ПФ 3 · Жгут" });
+    expect(mount.querySelector(".etk-pf-name")).toHaveTextContent("ПФ 3 · Жгут");
+    expect(within(mount).getByLabelText("Вход ПФ 3")).toHaveTextContent("Вход: 2 ×2, 1.2");
+    expect(within(mount).getByLabelText("Выход ПФ 3")).toHaveTextContent("→ Жгут");
+    expect(within(mount).getByLabelText("Выход ПФ 3")).not.toHaveTextContent("нарезаны");
+    expect(within(mount).queryByText(/←/)).toBeNull();
   });
 
   it("moves an operation to another ПФ by drag and by the select, then saves the scheme as a new revision", async () => {

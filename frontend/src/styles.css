@@ -2234,20 +2234,34 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-dag-scroll { margin-top: 8px; overflow-x: auto; }
 .etk-dag { position: relative; }
 .etk-dag svg { position: absolute; inset: 0; }
-.etk-dag-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.4; opacity: .7; }
+.etk-dag-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.6; opacity: .75; transition: opacity .12s; }
+.etk-dag-line.kit { stroke-width: 1; opacity: .3; }
+.etk-dag-line.on { stroke: var(--primary); stroke-width: 2.2; opacity: 1; }
+.etk-dag-line.dim { opacity: .08; }
 .etk-dag-head { fill: var(--muted-foreground); }
-.etk-dag-item { position: absolute; padding: 0 3px; border-radius: 3px; background: var(--card); color: var(--foreground); font-size: 12px; line-height: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: auto; }
-.etk-dag-box { position: absolute; display: flex; flex-direction: column; justify-content: center; gap: 2px; line-height: 1.25; min-height: 0; padding: 5px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 13px; overflow: hidden; }
-.etk-dag-box:hover:not(:disabled) { border-color: var(--primary); }
+.etk-dag-item { position: absolute; padding: 0 4px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--foreground); font-size: 11px; font-weight: 700; line-height: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.etk-dag-item.dim { opacity: .25; }
+.etk-dag-box { position: absolute; display: flex; flex-direction: column; justify-content: flex-start; gap: 1px; line-height: 1.25; min-height: 0; padding: 5px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 13px; overflow: hidden; transition: opacity .12s; }
+.etk-dag-box:hover:not(:disabled), .etk-dag-box:focus-visible { border-color: var(--primary); }
 .etk-dag-box:disabled { cursor: default; opacity: 1; }
 .etk-dag-box.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
 .etk-dag-box.final { border-width: 2px; border-color: var(--primary); }
 .etk-dag-box.kit { border-style: dashed; background: color-mix(in srgb, var(--muted-foreground) 6%, var(--card)); color: var(--muted-foreground); }
+.etk-dag-box.dim { opacity: .35; }
+.etk-dag-box.near { border-color: var(--primary); }
 .etk-dag-box > * { flex: none; }
 .etk-dag-top { display: flex; align-items: center; gap: 6px; }
 .etk-dag-top b { color: var(--primary); font-weight: 800; }
 .etk-dag-top small { color: var(--muted-foreground); font-size: 11px; }
 .etk-dag-top .etk-route-final { margin-left: auto; }
+.etk-dag-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-weight: 600; overflow-wrap: anywhere; }
+.etk-dag-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.etk-dag-ins { display: grid; gap: 0; margin-top: 4px; padding-top: 3px; border-top: 1px solid var(--border); color: var(--foreground); font-size: 12px; font-weight: 400; }
+.etk-dag-in { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 15px; }
+.etk-dag-in b { color: var(--primary); font-weight: 700; font-variant-numeric: tabular-nums; }
+.etk-dag-in i { font-style: normal; font-weight: 700; }
+.etk-dag-in.more { color: var(--muted-foreground); }
+.etk-route-final { margin-left: auto; }
 .etk-dag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .etk-dag-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
 .etk-route-final { flex: none; align-self: center; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); font-size: 11px; font-style: normal; font-weight: 700; }
@@ -3956,6 +3970,8 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .etk-pick td > small { display: block; font-size: 11px; color: var(--muted-foreground); }
 .etk-pick td.num { text-align: right; width: 1%; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 14px; }
 .etk-pick-from { color: var(--muted-foreground); white-space: nowrap; }
+.etk-pick .etk-pick-name { max-width: min(62vw, 640px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etk-pick-src { display: block; }
 .etk-pick-semi td { background: color-mix(in srgb, var(--primary) 6%, transparent); }
 
 /* Параметры операции в шапке ЭТК: Сторона А | Общие | Сторона В. Значения читаются с руки у станка. */
@@ -3974,3 +3990,4 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .etk-params .etk-param-rows dd > span { display: flex; justify-content: flex-end; align-items: baseline; gap: 10px; }
 .etk-params .etk-param-rows small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); white-space: nowrap; }
 @media (max-width: 1100px) { .etk-params { grid-template-columns: 1fr !important; } .etk-params section { border-left: 0; border-top: 1px solid var(--border); } .etk-params section:first-child { border-top: 0; } }
+.etk-result-art { max-width: 640px; margin-top: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }

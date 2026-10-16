@@ -184,6 +184,16 @@ export function etkRouteSummary(chips: EtkRouteChip[]): string {
   ].filter(Boolean).join(" · ");
 }
 
+export interface EtkDiagramInput {
+  /** Уровень ПФ-источника: «1.2». */
+  label: string;
+  /** Что приходит: подпись схемы без «×1» («НВ4 0,5 красный; НВ4 0,5 черный»), иначе название источника. */
+  text: string;
+  /** «×2», когда на штуку нужно больше одной. */
+  times: string;
+  kit: boolean;
+}
+
 export interface EtkDiagramBox {
   key: string;
   label: string;
@@ -193,19 +203,67 @@ export interface EtkDiagramBox {
   perUnit: string;
   final: boolean;
   kit: boolean;
+  /** Входящие передачи — списком внутри блока-потребителя (стрелки комплекта не подписываются). */
+  inputs: EtkDiagramInput[];
 }
 
 export interface EtkDiagramEdge {
   from: string;
   to: string;
-  /** Что идёт по стрелке: подпись схемы, без неё «×N» (старая схема), иначе пусто. */
+  /** Что идёт по стрелке: подпись схемы, без неё «×N» (старая схема), иначе пусто — для подсказки. */
   text: string;
+  /** Источник — блок комплекта: стрелка тонкая и без подписи, содержимое — в блоке-потребителе. */
+  kit: boolean;
+  /** «×N», когда на штуку нужно больше одной; подпись на стрелке не комплекта. */
+  count: string;
 }
 
 export interface EtkDiagram {
-  /** Колонки слева направо — уровни схемы; блоки колонки — по метке («1.1», «1.2»). */
+  /** Колонки слева направо — уровни схемы; блоки колонки — в порядке, где стрелки пересекаются реже всего. */
   columns: Array<{ level: number; boxes: EtkDiagramBox[] }>;
   edges: EtkDiagramEdge[];
+}
+
+/** Подпись передачи для строки внутри блока: «×1» лишнее, «; » — запятой. */
+export function etkInputText(text: string): string {
+  return text.replace(/\s*×\s*1(?![\d,.])/g, "").replace(/;\s*/g, ", ").replace(/\s{2,}/g, " ").trim();
+}
+
+/** Порядок блоков в колонках по барицентру соседей (Сугияма): блок встаёт среди своих связанных, а не по метке — стрелки
+ *  между колонками пересекаются реже. Несколько проходов вперёд и назад, при равенстве — прежний порядок. */
+function orderColumns(columns: string[][], edges: Array<{ from: string; to: string }>): string[][] {
+  const result = columns.map((column) => [...column]);
+  const rank = (index: number, size: number) => (index + 0.5) / size;
+  const place = (column: number, neighbours: (key: string) => string[], side: number) => {
+    const at = new Map(result[side].map((key, index) => [key, rank(index, result[side].length)]));
+    const own = new Map(result[column].map((key, index) => [key, rank(index, result[column].length)]));
+    const score = (key: string) => {
+      const found = neighbours(key).map((other) => at.get(other)).filter((value): value is number => value != null);
+      return found.length ? found.reduce((sum, value) => sum + value, 0) / found.length : own.get(key)!;
+    };
+    const keep = new Map(result[column].map((key, index) => [key, index]));
+    result[column] = [...result[column]].sort((a, b) => score(a) - score(b) || keep.get(a)! - keep.get(b)!);
+  };
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (let column = 1; column < result.length; column += 1) place(column, (key) => edges.filter((edge) => edge.to === key).map((edge) => edge.from), column - 1);
+    for (let column = result.length - 2; column >= 0; column -= 1) place(column, (key) => edges.filter((edge) => edge.from === key).map((edge) => edge.to), column + 1);
+  }
+  return result;
+}
+
+/** Число пересечений стрелок между соседними колонками при данном порядке блоков (проверка порядка и тесты). */
+export function etkDiagramCrossings(diagram: EtkDiagram): number {
+  const index = new Map(diagram.columns.flatMap((column) => column.boxes.map((box, at) => [box.key, { level: column.level, at }] as const)));
+  const arrows = diagram.edges.flatMap((edge) => {
+    const from = index.get(edge.from), to = index.get(edge.to);
+    return from && to && from.level < to.level ? [{ from, to }] : [];
+  });
+  let count = 0;
+  arrows.forEach((a, i) => arrows.slice(i + 1).forEach((b) => {
+    if (a.from.level !== b.from.level || a.to.level !== b.to.level) return;
+    if ((a.from.at - b.from.at) * (a.to.at - b.to.at) < 0) count += 1;
+  }));
+  return count;
 }
 
 /** Схема ПФ как сеть: колонка на уровень, блок на ПФ, стрелка на передачу. */
@@ -216,20 +274,27 @@ export function etkRouteDiagram(route: EtkRoute): EtkDiagram {
   const byLevel = new Map<number, string[]>();
   [...route.blocks].sort((a, b) => levels.get(a.key)!.label.localeCompare(levels.get(b.key)!.label, "ru", { numeric: true }))
     .forEach((block) => { const level = levels.get(block.key)!.level; byLevel.set(level, [...(byLevel.get(level) ?? []), block.key]); });
-  const columns = [...byLevel.keys()].sort((a, b) => a - b).map((level) => ({
+  const keys = [...byLevel.keys()].sort((a, b) => a - b);
+  const ordered = orderColumns(keys.map((level) => byLevel.get(level)!), route.edges);
+  const times = (value: number) => (value === 1 ? "" : `×${String(value).replace(".", ",")}`);
+  const edges = route.edges.map((edge): EtkDiagramEdge => ({
+    from: edge.from, to: edge.to, kit: kit.get(edge.from) === true, count: times(edge.per_unit),
+    text: edge.item || times(edge.per_unit),
+  }));
+  const columns = keys.map((level, at) => ({
     level,
-    boxes: byLevel.get(level)!.map((key): EtkDiagramBox => {
+    boxes: ordered[at].map((key): EtkDiagramBox => {
       const chip = chips.get(key)!;
-      return { key, label: chip.label, name: chip.name, ops: chip.ops, first: chip.first, perUnit: chip.perUnit, final: chip.final, kit: kit.get(key) === true };
+      const inputs = route.edges.filter((edge) => edge.to === key && chips.has(edge.from)).map((edge): EtkDiagramInput => ({
+        label: levels.get(edge.from)?.label ?? "",
+        text: etkInputText(edge.item || "") || chips.get(edge.from)!.name,
+        times: edge.item ? "" : times(edge.per_unit),
+        kit: kit.get(edge.from) === true,
+      })).sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }));
+      return { key, label: chip.label, name: chip.name, ops: chip.ops, first: chip.first, perUnit: chip.perUnit, final: chip.final, kit: kit.get(key) === true, inputs };
     }),
   }));
-  return {
-    columns,
-    edges: route.edges.map((edge) => ({
-      from: edge.from, to: edge.to,
-      text: edge.item || (edge.per_unit !== 1 ? `×${String(edge.per_unit).replace(".", ",")}` : ""),
-    })),
-  };
+  return { columns, edges };
 }
 
 export function etkRouteFeedText(feed: EtkRouteFeed): string {
@@ -367,6 +432,13 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
 /** Номер операции ЭТК в списке: «01», «05». */
 export function opNumber(position: number): string {
   return String(position).padStart(2, "0");
+}
+
+/** «Откуда» входа построчно: общая строка источников («из ПФ 1.2, коробка с операции 02; ПФ 1.6, …») — по строке на
+ *  источник, «ПФ 1.2 · коробка оп. 02». Один источник («с операции 03») — одна строка. */
+export function etkSourceLines(text: string): string[] {
+  return text.replace(/^из\s+/, "").split(/;\s*/).map((part) => part.trim()).filter(Boolean)
+    .map((part) => part.replace(/,\s*коробка с операции\s*/, " · коробка оп. "));
 }
 
 /** Откуда фитеру брать комплектующие операции. */

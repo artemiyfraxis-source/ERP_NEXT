@@ -12,10 +12,10 @@ import {
   type TechcardRevision,
   failureText,
 } from "./api";
-import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
+import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
-import { ETK_PART_SOURCE, etkRouteBranches, etkRouteOf, etkSemiSource, formatMinutes } from "./etkRoute";
+import { ETK_PART_SOURCE, etkRouteBranches, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes } from "./etkRoute";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
 import { ETK_TOOLING_SECTIONS, etkOperationName, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
@@ -31,7 +31,7 @@ import { EtkPfList } from "./EtkPfList";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
    PortalApp kitCardRender_ → mountGen_ / renderTc_ → renderEtk_). */
-type EtkRow = { name?: string; art?: string; kd?: string; grn?: string; norm?: string; unit?: string };
+type EtkRow = { name?: string; art?: string; kd?: string; grn?: string; norm?: string; unit?: string; source?: string };
 type EtkStep = { number?: string; kind?: string; text?: string; tolerance?: string };
 type Housing = {
   title: string; art: string; rows: number; cols: number; n: number; color: string;
@@ -170,11 +170,18 @@ function PickList({ semis, parts, fields, semiFrom }: { semis?: EtkRow[]; parts?
   return <table className="etk-pick" aria-label="Что взять">
     <thead><tr><th>Что взять</th><th className="num">Сколько</th><th>Откуда</th></tr></thead>
     <tbody>
-      {(semis ?? []).map((row, index) => <tr key={`semi:${row.name || row.art}:${index}`} className="etk-pick-semi">
-        <td><b><ProductText text={row.name || row.art || "—"} /></b><small>полуфабрикат</small></td>
-        <td className="num">{quantity(row) || "—"}</td>
-        <td className="etk-pick-from">{semiFrom}</td>
-      </tr>)}
+      {(semis ?? []).map((row, index) => {
+        // Один ПФ-источник на строку входа; если число строк и источников не сошлось — все источники столбиком.
+        const name = row.name || row.art || "—";
+        const sources = etkSourceLines(semiFrom);
+        // Строка с `source` от сервера («ПФ 1.2», «операция 09») — её собственный источник; иначе общая строка схемы.
+        const own = row.source?.trim() ? [row.source.trim()] : sources.length === (semis ?? []).length ? [sources[index]] : sources;
+        return <tr key={`semi:${row.name || row.art}:${index}`} className="etk-pick-semi">
+          <td><b className="etk-pick-name" title={name}>{name}</b><small>полуфабрикат</small></td>
+          <td className="num">{quantity(row) || "—"}</td>
+          <td className="etk-pick-from">{own.map((line) => <span key={line} className="etk-pick-src">{line}</span>)}</td>
+        </tr>;
+      })}
       {(parts ?? []).map((row, index) => <tr key={`part:${row.art || row.name}:${index}`}>
         <td>
           <b>{row.art || row.name || "—"}</b>
@@ -205,7 +212,7 @@ function hoursText(value: number): string {
 /** 6 Результат: компактный блок. Слева главное — полуфабрикат (жирное название, части короткими строками), рядом тесная
  *  пара «подпись над значением»: количество и расчётное время одного размера, на одной базовой линии, цифры
  *  моноширинные. Несколько строк результата — плотная таблица (время по строкам — колонкой, если у каждой своё). */
-function ResultView({ label, result = [], time = [] }: { label: string; result?: EtkRow[]; time?: EtkRow[] }) {
+function ResultView({ label, result = [], time = [], figure = "" }: { label: string; result?: EtkRow[]; time?: EtkRow[]; figure?: string }) {
   const byName = new Map(time.map((row) => [row.name || "", row.norm || ""]));
   const perRow = time.length > 1 && result.length === time.length && result.every((row) => byName.has(row.name || ""));
   const total = time.reduce((sum, row) => sum + minutes(row.norm), 0);
@@ -216,6 +223,8 @@ function ResultView({ label, result = [], time = [] }: { label: string; result?:
   </div>;
   const detail = !perRow && time.length > 1 && <ul className="etk-time-list">{time.map((row, index) =>
     <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>;
+  // Нарезанные трубки — рисунком планок (etkDrawTubeCut): что и сколько получилось, видно без чтения строки.
+  const art = figure && <div className="etk-result-art" aria-hidden="true" dangerouslySetInnerHTML={{ __html: figure }} />;
   if (result.length === 1) {
     const [row] = result;
     return <div className="etk-result etk-result-one">
@@ -225,6 +234,7 @@ function ResultView({ label, result = [], time = [] }: { label: string; result?:
         {timeKv}
       </dl>
       {detail}
+      {art}
     </div>;
   }
   return <div className="etk-result">
@@ -238,6 +248,7 @@ function ResultView({ label, result = [], time = [] }: { label: string; result?:
     </table>}
     {timeKv && <dl className="etk-kv">{timeKv}</dl>}
     {detail}
+    {art}
   </div>;
 }
 
@@ -351,7 +362,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
       </div>
     </EtkSection>}
     {hasResult && <EtkSection label="Результат" number={next()}>
-      <ResultView label={resultLabel} result={operation.result} time={operation.time} />
+      <ResultView label={resultLabel} result={operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} />
     </EtkSection>}
   </article>;
 }
@@ -516,7 +527,7 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
       {sketchUrl && <div className="etk-sketch"><img src={sketchUrl} alt="Эскиз операции" /></div>}
     </div> : undefined,
     result: operation.result?.length || operation.time?.length
-      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={operation.result} time={operation.time} /> : undefined,
+      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} /> : undefined,
   };
 }
 
