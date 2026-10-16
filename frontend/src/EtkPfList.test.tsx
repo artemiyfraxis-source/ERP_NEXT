@@ -52,13 +52,13 @@ const route: Route = { blocks: pf.blocks.map(({ key, name, ops, final, component
 describe("etkPfGroups", () => {
   it("groups the ETK by ПФ in the scheme's order, keeps the order of work and adds up what each ПФ takes", () => {
     const groups = etkPfGroups(pf, operations, 10);
-    expect(groups.map((group) => [group.number, group.key, group.ops])).toEqual([
-      [1, "cut", [1]], [2, "crimp", [2]], [3, "mount", [5, 3]], [4, "twist", [4]],
+    expect(groups.map((group) => [group.number, group.label, group.key, group.ops])).toEqual([
+      [1, "1.1", "cut", [1]], [2, "2", "crimp", [2]], [3, "3", "mount", [5, 3]], [4, "1.2", "twist", [4]],
     ]);
     const mount = groups[2];
     // Терминал из 05 и 03 сложен в одну строку; колодка — своя.
     expect(mount.components).toEqual([{ art: "T-1", name: "Терминал", norm: "3,5", unit: "шт" }, { art: "H-4", name: "Колодка", norm: "10", unit: "шт" }]);
-    expect(mount.inputs).toEqual([{ number: 2, name: "Провод с терминалом", times: "×2" }, { number: 4, name: "Пара скрученная", times: "" }]);
+    expect(mount.inputs).toEqual([{ number: 2, label: "2", name: "Провод с терминалом", times: "×2" }, { number: 4, label: "1.2", name: "Пара скрученная", times: "" }]);
     // Выход — результат последней операции по порядку работы (03), а не по номеру.
     expect(mount.output).toEqual([{ name: "Жгут", norm: "10", unit: "шт" }]);
     expect(mount.minutes).toBe(11.5);
@@ -122,12 +122,12 @@ describe("ETK list by ПФ", () => {
     render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);
     const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
     const groups = within(nav).getAllByRole("region");
-    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["ПФ-1 · Резка", "ПФ-2 · Опрессовка", "ПФ-3 · Монтаж", "ПФ-4 · Скрутка"]);
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["ПФ 1.1 · Резка", "ПФ 2 · Опрессовка", "ПФ 3 · Монтаж", "ПФ 1.2 · Скрутка"]);
     const mount = groups[2];
     expect(within(mount).getAllByRole("button", { name: /^\d\d/ }).map((button) => button.textContent?.slice(0, 2))).toEqual(["05", "03"]);
-    expect(within(mount).getByRole("list", { name: "Вход ПФ-3" })).toHaveTextContent("← ПФ-2 Провод с терминалом×2");
-    expect(within(mount).getByRole("list", { name: "Вход ПФ-3" })).toHaveTextContent("T-13,5");
-    expect(within(mount).getByLabelText("Выход ПФ-3")).toHaveTextContent("→ Жгут");
+    expect(within(mount).getByRole("list", { name: "Вход ПФ 3" })).toHaveTextContent("← ПФ 2 Провод с терминалом×2");
+    expect(within(mount).getByRole("list", { name: "Вход ПФ 3" })).toHaveTextContent("T-13,5");
+    expect(within(mount).getByLabelText("Выход ПФ 3")).toHaveTextContent("→ Жгут");
     expect(mount).toHaveTextContent("11,5 мин");
     expect(mount).toHaveTextContent("изделие");
     fireEvent.click(within(mount).getByRole("button", { name: /^05/ }));

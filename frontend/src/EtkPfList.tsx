@@ -224,7 +224,7 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
   onDrop: (event: DragEvent, to: string | null, at: number) => void; allowDrop: (event: DragEvent) => void; dragging: number | null;
 }) {
   const first = list[group.ops[0] - 1];
-  const label = `ПФ-${group.number}`;
+  const label = `ПФ ${group.label}`;
   const parts = group.components.slice(0, SHOWN_PARTS);
   const more = group.components.length - parts.length;
   const output = group.output[0];
@@ -245,7 +245,7 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
     </header>
     {(group.inputs.length > 0 || parts.length > 0) && <ul className="etk-pf-in" aria-label={`Вход ${label}`}>
       {group.inputs.map((input) => <li key={`pf:${input.number}`} className="etk-pf-semi">
-        <span title={input.name || undefined}>← ПФ-{input.number}{input.name ? ` ${input.name}` : ""}</span><span className="num">{input.times}</span>
+        <span title={input.name || undefined}>← ПФ {input.label}{input.name ? ` ${input.name}` : ""}</span><span className="num">{input.times}</span>
       </li>)}
       {parts.map((row, index) => <li key={`${rowName(row)}:${index}`}><span title={row.name && row.art ? row.name : undefined}>{rowName(row)}</span><span className="num">{rowQty(row)}</span></li>)}
       {more > 0 && <li className="muted"><span>ещё {more}</span></li>}
@@ -275,7 +275,7 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
             onPlace(position, to, to ? (groups.find((item) => item.key === to)?.ops.length ?? 0) : 0);
           }}>
             <option value="">в ПФ…</option>
-            {groups.filter((item) => item.key !== group.key).map((item) => <option key={item.key} value={item.key}>ПФ-{item.number}</option>)}
+            {groups.filter((item) => item.key !== group.key).map((item) => <option key={item.key} value={item.key}>ПФ {item.label}</option>)}
             {group.ops.length > 1 && <option value="new">Новый ПФ</option>}
           </select>
         </span>}
@@ -291,6 +291,6 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
           : thumb.cable ? <span aria-hidden="true"><CableArt wire={thumb.cable} /></span>
           : <span dangerouslySetInnerHTML={{ __html: thumb.figure }} />}
       </button>)}</div>}
-    {editing && into && <button type="button" className="secondary small etk-pf-merge" onClick={() => onMerge(into.key)}>Объединить с ПФ-{into.number}</button>}
+    {editing && into && <button type="button" className="secondary small etk-pf-merge" onClick={() => onMerge(into.key)}>Объединить с ПФ {into.label}</button>}
   </section>;
 }

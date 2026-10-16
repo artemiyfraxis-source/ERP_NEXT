@@ -6,6 +6,8 @@ import type { EtkRoute, EtkRouteBlock } from "./api";
 export interface EtkRouteFeed {
   /** Номер блока-источника в полосе (по топологическому порядку). */
   number: number;
+  /** Уровень источника: «1.2». */
+  label: string;
   name: string;
   /** «×2» только когда на штуку нужно не одна штука источника. */
   times: string;
@@ -15,6 +17,8 @@ export interface EtkRouteChip {
   key: string;
   /** Порядковый номер в полосе: источники раньше потребителей. */
   number: number;
+  /** Уровень на схеме: «2» или «2.1». */
+  label: string;
   name: string;
   ops: number;
   /** 1-based позиция первой операции блока в ЭТК; null — у блока нет операций. */
@@ -86,6 +90,31 @@ export function etkRouteBranches(route: EtkRoute | null): boolean {
   return [...incoming.values(), ...outgoing.values()].some((count) => count > 1) || roots > 1;
 }
 
+type LevelRoute = { blocks: Array<{ key: string; ops: number[] }>; edges: Array<{ from: string; to: string }> };
+
+/** Уровень каждого блока: самый длинный путь от начального блока (начальные — уровень 1, изделие — последний). Метка
+ *  «N», когда на уровне один блок, и «N.k», когда несколько (k — по первой операции). Считается так же, как сервер
+ *  (`route_levels`): старые схемы без `label` показывают те же уровни, а правка ПФ на экране — свежие. */
+export function etkRouteLevels(route: LevelRoute): Map<string, { level: number; label: string }> {
+  const level = new Map(route.blocks.map((block) => [block.key, 1]));
+  for (let pass = 0; pass < route.blocks.length; pass += 1) {
+    let changed = false;
+    route.edges.forEach((edge) => {
+      const from = level.get(edge.from), to = level.get(edge.to);
+      if (from != null && to != null && from + 1 > to) { level.set(edge.to, from + 1); changed = true; }
+    });
+    if (!changed) break;
+  }
+  const first = (ops: number[]) => (ops.length ? Math.min(...ops) : Number.MAX_SAFE_INTEGER);
+  const members = new Map<number, string[]>();
+  [...route.blocks].sort((a, b) => first(a.ops) - first(b.ops) || a.key.localeCompare(b.key))
+    .forEach((block) => members.set(level.get(block.key)!, [...(members.get(level.get(block.key)!) ?? []), block.key]));
+  const result = new Map<string, { level: number; label: string }>();
+  members.forEach((keys, number) => keys.forEach((key, index) =>
+    result.set(key, { level: number, label: keys.length === 1 ? String(number) : `${number}.${index + 1}` })));
+  return result;
+}
+
 /** Блоки в топологическом порядке (Кан): источники раньше потребителей, при равенстве — как в схеме (по первой операции). */
 function topological(route: EtkRoute): EtkRouteBlock[] {
   const left = new Map(route.blocks.map((block) => [block.key, 0]));
@@ -113,9 +142,12 @@ export function etkRouteChips(route: EtkRoute): EtkRouteChip[] {
   const blocks = topological(route);
   const number = new Map(blocks.map((block, index) => [block.key, index + 1]));
   const byKey = new Map(blocks.map((block) => [block.key, block]));
+  const levels = etkRouteLevels(route);
+  const labelOf = (key: string) => levels.get(key)?.label ?? "";
   return blocks.map((block): EtkRouteChip => ({
     key: block.key,
     number: number.get(block.key) ?? 0,
+    label: labelOf(block.key),
     name: block.name.trim() || `Блок ${number.get(block.key)}`,
     ops: block.ops.length,
     first: block.ops.length ? Math.min(...block.ops) : null,
@@ -127,6 +159,7 @@ export function etkRouteChips(route: EtkRoute): EtkRouteChip[] {
       .sort((a, b) => (number.get(a.source.key) ?? 0) - (number.get(b.source.key) ?? 0))
       .map(({ edge, source }) => ({
         number: number.get(source.key) ?? 0,
+        label: labelOf(source.key),
         name: source.name.trim() || `Блок ${number.get(source.key)}`,
         times: edge.per_unit === 1 ? "" : `×${String(edge.per_unit).replace(".", ",")}`,
       })),
@@ -151,8 +184,56 @@ export function etkRouteSummary(chips: EtkRouteChip[]): string {
   ].filter(Boolean).join(" · ");
 }
 
+export interface EtkDiagramBox {
+  key: string;
+  label: string;
+  name: string;
+  ops: number;
+  first: number | null;
+  perUnit: string;
+  final: boolean;
+  kit: boolean;
+}
+
+export interface EtkDiagramEdge {
+  from: string;
+  to: string;
+  /** Что идёт по стрелке: подпись схемы, без неё «×N» (старая схема), иначе пусто. */
+  text: string;
+}
+
+export interface EtkDiagram {
+  /** Колонки слева направо — уровни схемы; блоки колонки — по метке («1.1», «1.2»). */
+  columns: Array<{ level: number; boxes: EtkDiagramBox[] }>;
+  edges: EtkDiagramEdge[];
+}
+
+/** Схема ПФ как сеть: колонка на уровень, блок на ПФ, стрелка на передачу. */
+export function etkRouteDiagram(route: EtkRoute): EtkDiagram {
+  const levels = etkRouteLevels(route);
+  const chips = new Map(etkRouteChips(route).map((chip) => [chip.key, chip]));
+  const kit = new Map(route.blocks.map((block) => [block.key, block.kit === true]));
+  const byLevel = new Map<number, string[]>();
+  [...route.blocks].sort((a, b) => levels.get(a.key)!.label.localeCompare(levels.get(b.key)!.label, "ru", { numeric: true }))
+    .forEach((block) => { const level = levels.get(block.key)!.level; byLevel.set(level, [...(byLevel.get(level) ?? []), block.key]); });
+  const columns = [...byLevel.keys()].sort((a, b) => a - b).map((level) => ({
+    level,
+    boxes: byLevel.get(level)!.map((key): EtkDiagramBox => {
+      const chip = chips.get(key)!;
+      return { key, label: chip.label, name: chip.name, ops: chip.ops, first: chip.first, perUnit: chip.perUnit, final: chip.final, kit: kit.get(key) === true };
+    }),
+  }));
+  return {
+    columns,
+    edges: route.edges.map((edge) => ({
+      from: edge.from, to: edge.to,
+      text: edge.item || (edge.per_unit !== 1 ? `×${String(edge.per_unit).replace(".", ",")}` : ""),
+    })),
+  };
+}
+
 export function etkRouteFeedText(feed: EtkRouteFeed): string {
-  return `${feed.number} ${feed.name}${feed.times ? ` (${feed.times})` : ""}`;
+  return `ПФ ${feed.label} ${feed.name}${feed.times ? ` (${feed.times})` : ""}`;
 }
 
 /** Одна строка для печати под шапкой: та же полоса текстом. Линейная схема и её отсутствие — пустая строка. */
@@ -160,9 +241,9 @@ export function etkRouteLine(route: EtkRoute | null): string {
   if (!route || !etkRouteBranches(route)) return "";
   const chips = etkRouteChips(route);
   return `Маршрут полуфабрикатов (${etkRouteSummary(chips)}): ${chips.map((chip) => {
-    const feeds = chip.feeds.map((feed) => `${feed.number}${feed.times ? ` (${feed.times})` : ""}`).join(", ");
+    const feeds = chip.feeds.map((feed) => `ПФ ${feed.label}${feed.times ? ` (${feed.times})` : ""}`).join(", ");
     const meta = [chip.ops ? `${chip.ops} оп.` : "", chip.perUnit, feeds ? `из ${feeds}` : "", chip.final ? "итог" : ""].filter(Boolean).join(" · ");
-    return `${chip.number} ${chip.name}${meta ? ` (${meta})` : ""}`;
+    return `ПФ ${chip.label} ${chip.name}${meta ? ` (${meta})` : ""}`;
   }).join("; ")}`;
 }
 
@@ -173,8 +254,9 @@ export function etkRouteLine(route: EtkRoute | null): string {
 export type EtkPfRow = { name?: string; art?: string; norm?: string; unit?: string };
 
 export interface EtkPfInput {
-  /** Номер ПФ-источника и его название. */
+  /** Номер ПФ-источника (порядок в списке), его уровень и название. */
   number: number;
+  label: string;
   name: string;
   /** «×2» только когда на штуку нужно не одна штука. */
   times: string;
@@ -182,8 +264,10 @@ export interface EtkPfInput {
 
 export interface EtkPfGroup {
   key: string;
-  /** ПФ-n: по порядку блоков схемы (по первому номеру операции). */
+  /** Порядок блока в списке (по первому номеру операции). */
   number: number;
+  /** Уровень на схеме: «ПФ 1.1» — метка «1.1». */
+  label: string;
   name: string;
   final: boolean;
   /** Позиции операций ЭТК (1-based) в порядке работы. */
@@ -252,12 +336,15 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
   const blocks = [...route.blocks].sort((a, b) => first(a.ops) - first(b.ops) || a.key.localeCompare(b.key));
   const number = new Map(blocks.map((block, index) => [block.key, index + 1]));
   const byKey = new Map(blocks.map((block) => [block.key, block]));
+  const levels = etkRouteLevels(route);
+  const labelOf = (key: string) => levels.get(key)?.label ?? "";
   return blocks.map((block): EtkPfGroup => {
     const own = block.ops.map((position) => operations[position - 1]).filter((operation): operation is EtkPfOperation => !!operation);
     const last = own[own.length - 1];
     return {
       key: block.key,
       number: number.get(block.key) ?? 0,
+      label: labelOf(block.key),
       name: block.name.trim(),
       final: block.final,
       ops: [...block.ops],
@@ -265,6 +352,7 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
       inputs: route.edges.filter((edge) => edge.to === block.key && byKey.has(edge.from))
         .map((edge) => ({
           number: number.get(edge.from) ?? 0,
+          label: labelOf(edge.from),
           // Название входа — результат последней операции ПФ-источника, слово в слово (как в его «Результате»).
           name: resultNameOf(byKey.get(edge.from)!, operations) || byKey.get(edge.from)!.name.trim(),
           times: edge.per_unit === 1 ? "" : `×${String(edge.per_unit).replace(".", ",")}`,
@@ -285,21 +373,19 @@ export function opNumber(position: number): string {
 export const ETK_PART_SOURCE = "со склада по комплектации";
 
 /** Откуда фитеру брать полуфабрикат на входе операции `position`: внутри ПФ — с предыдущей операции этого ПФ; первая
- *  операция ПФ берёт коробки других ПФ («из ПФ-2, коробка с операции 03»). Номера ПФ — как в списке ПФ ЭТК (по первой
- *  операции). Без схемы — с предыдущей операции списка; у самой первой источника нет. */
+ *  операция ПФ берёт коробки других ПФ («из ПФ 1.2, коробка с операции 03»). Номера ПФ — уровни схемы, как в списке ПФ ЭТК. Без схемы — с предыдущей операции списка; у самой первой источника нет. */
 export function etkSemiSource(route: EtkRoute | null, position: number): string {
   const block = route?.blocks.find((item) => item.ops.includes(position));
   if (!route || !block) return position > 1 ? `с операции ${opNumber(position - 1)}` : "";
   const at = block.ops.indexOf(position);
   if (at > 0) return `с операции ${opNumber(block.ops[at - 1])}`;
-  const first = (ops: number[]) => (ops.length ? Math.min(...ops) : Number.MAX_SAFE_INTEGER);
-  const order = [...route.blocks].sort((a, b) => first(a.ops) - first(b.ops) || a.key.localeCompare(b.key));
+  const levels = etkRouteLevels(route);
   const byKey = new Map(route.blocks.map((item) => [item.key, item]));
   const feeds = route.edges.filter((edge) => edge.to === block.key && byKey.has(edge.from)).map((edge) => {
     const source = byKey.get(edge.from)!;
-    const number = order.findIndex((item) => item.key === source.key) + 1;
     const lastOp = source.ops[source.ops.length - 1];
-    return `ПФ-${number}${lastOp ? `, коробка с операции ${opNumber(lastOp)}` : ""}`;
-  });
+    return { label: levels.get(source.key)?.label ?? "", lastOp };
+  }).sort((a, b) => a.label.localeCompare(b.label, "ru", { numeric: true }))
+    .map(({ label, lastOp }) => `ПФ ${label}${lastOp ? `, коробка с операции ${opNumber(lastOp)}` : ""}`);
   return feeds.length ? `из ${feeds.join("; ")}` : position > 1 ? `с операции ${opNumber(position - 1)}` : "";
 }
