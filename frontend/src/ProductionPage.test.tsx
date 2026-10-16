@@ -1183,7 +1183,8 @@ it("puts pause and «Сдать…» on the running card with its timer, and the
   });
   render(<ProductionPage principal={fitter} mine />);
 
-  expect(await screen.findByText(/^в работе с \d\d:\d\d · 0:4[12]$/)).toBeInTheDocument();
+  // Начало 42 мин назад: после полуночи это вчера — тогда с датой («в работе с 16.10 23:58»).
+  expect(await screen.findByText(/^в работе с (\d\d\.\d\d )?\d\d:\d\d · 0:4[12]$/)).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: /Идёт работа/ })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Начать" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Сдать…" })).toBeInTheDocument();

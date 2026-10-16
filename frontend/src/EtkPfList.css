@@ -20,7 +20,8 @@
 .etk-pf-in li, .etk-pf-out { display: flex; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.35; }
 .etk-pf-in li > span:first-child, .etk-pf-out > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .etk-pf-in .num, .etk-pf-out .num { flex: none; font-variant-numeric: tabular-nums; color: var(--foreground); }
-.etk-pf-in .etk-pf-semi { color: var(--foreground); font-weight: 600; }
+.etk-pf-feed { color: var(--foreground); font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etk-pf-feed > span { color: var(--muted-foreground); }
 .etk-pf-out { color: var(--foreground); font-weight: 600; }
 .etk-pf-ops li { display: flex; gap: 4px; align-items: stretch; }
 .etk-pf-ops li > button:first-child { flex: 1; min-width: 0; display: flex; gap: 8px; align-items: flex-start; padding: 6px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 13px; }

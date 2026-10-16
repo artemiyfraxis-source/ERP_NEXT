@@ -235,18 +235,23 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
     const image = sketch(operation), cable = image ? null : cableOf(operation);
     return { position, figure: image || cable ? "" : etkFigure(operation as Record<string, unknown>), image, cable };
   }).filter((item): item is Thumb => !!item && Boolean(item.figure || item.image || item.cable));
+  // Заголовок — название ПФ схемы; без него — первая операция. Результат — название выхода, но не накопленная строка
+  // («Провода нарезаны: …»): та читается только в самой операции.
+  const heading = group.name || (first ? title(first) : "");
+  const outName = output ? (output.name && output.name.length <= 48 && !output.name.includes(": ") ? output.name : group.name || output.name || "") : "";
   const into = target ? groups.find((item) => item.key === target) : undefined;
-  return <section className={`etk-pf-group${group.ops.includes(selected + 1) ? " on" : ""}`} aria-label={`${label} · ${first ? title(first) : ""}`}
+  return <section className={`etk-pf-group${group.ops.includes(selected + 1) ? " on" : ""}`} aria-label={`${label} · ${heading}`}
     onDragOver={allowDrop} onDrop={(event) => onDrop(event, group.key, group.ops.length)}>
     <header className="etk-pf-head">
-      <span className="etk-pf-name"><b>{label}</b>{first ? ` · ${title(first)}` : ""}</span>
+      <span className="etk-pf-name" title={heading}><b>{label}</b>{heading ? ` · ${heading}` : ""}</span>
       {group.final && <em className="etk-pf-final">изделие</em>}
       {group.minutes > 0 && <span className="etk-pf-norm" title="Норма ПФ на партию">{formatMinutes(group.minutes)} мин</span>}
     </header>
-    {(group.inputs.length > 0 || parts.length > 0) && <ul className="etk-pf-in" aria-label={`Вход ${label}`}>
-      {group.inputs.map((input) => <li key={`pf:${input.number}`} className="etk-pf-semi">
-        <span title={input.name || undefined}>← ПФ {input.label}{input.name ? ` ${input.name}` : ""}</span><span className="num">{input.times}</span>
-      </li>)}
+    {group.inputs.length > 0 && <div className="etk-pf-feed" aria-label={`Вход ${label}`}
+      title={group.inputs.map((input) => `ПФ ${input.label}${input.name ? ` ${input.name}` : ""}${input.times ? ` ${input.times}` : ""}`).join("\n")}>
+      <span>Вход:</span> {group.inputs.map((input) => `${input.label}${input.times ? ` ${input.times}` : ""}`).join(", ")}
+    </div>}
+    {parts.length > 0 && <ul className="etk-pf-in" aria-label={`Комплектующие ${label}`}>
       {parts.map((row, index) => <li key={`${rowName(row)}:${index}`}><span title={row.name && row.art ? row.name : undefined}>{rowName(row)}</span><span className="num">{rowQty(row)}</span></li>)}
       {more > 0 && <li className="muted"><span>ещё {more}</span></li>}
     </ul>}
@@ -282,7 +287,7 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
       </li>;
     })}</ol>
     {output && <div className="etk-pf-out" aria-label={`Выход ${label}`}>
-      <span title={group.output.map((row) => row.name).filter(Boolean).join("; ") || undefined}>→ {output.name || "—"}{group.output.length > 1 ? ` и ещё ${group.output.length - 1}` : ""}</span><span className="num">{rowQty(output)}</span>
+      <span title={group.output.map((row) => row.name).filter(Boolean).join("; ") || undefined}>→ {outName || "—"}{group.output.length > 1 ? ` и ещё ${group.output.length - 1}` : ""}</span><span className="num">{rowQty(output)}</span>
     </div>}
     {thumbs.length > 0 && <div className="etk-pf-thumbs">{thumbs.map((thumb) =>
       <button type="button" key={thumb.position} className="etk-pf-thumb" aria-label={`Эскиз операции ${numberOf(thumb.position)}`}

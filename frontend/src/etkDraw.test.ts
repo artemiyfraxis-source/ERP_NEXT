@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  etkParams, etkConnectionRows, etkCutEnds, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTwist, etkDrawWires, etkFigure,
-  etkTolerance, etkWireColor,
+  etkParams, etkConnectionRows, etkCutEnds, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTubeCut, etkDrawTwist, etkDrawWires, etkFigure,
+  etkTolerance, etkTubePieces, etkWireColor,
 } from "./etkDraw";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
@@ -322,5 +322,37 @@ describe("coax operation sketches (796К.2 КБ1, owner 15.10: «эскизов 
     expect(etkFigure({ type: "coaxPin", fields: {} })).toBe("");
     // Резка без длины — «по КД», а не пустой размер.
     expect(etkFigure({ type: "coaxCut", fields: {} })).toContain("L = по КД");
+  });
+});
+
+describe("cut of tubes (owner 16.10, 713К.4 КБ1: no picture)", () => {
+  const cut = { type: "cutTut", code: "CUT_TUT_short", result: [{ name:
+    "Трубки нарезаны: ТТК 8/2мм, черная — 3 шт по 15 мм; ТТК 12/4мм, черная — 2 шт по 25 мм; Маркировка «5» — 4 шт по 12 мм", norm: "3", unit: "шт" }] };
+
+  it("reads the pieces from the result: kind, count, length", () => {
+    expect(etkTubePieces(cut)).toEqual([
+      { label: "ТТК 8/2мм", count: 3, len: "15" }, { label: "ТТК 12/4мм", count: 2, len: "25" }, { label: "Маркировка «5»", count: 4, len: "12" },
+    ]);
+    expect(etkTubePieces({ type: "cutTut", result: [{ name: "Трубка ТТК 3/1 нарезана: 2 шт по 120 мм; 2 шт по 110 мм" }] }))
+      .toEqual([{ label: "ТТК 3/1", count: 2, len: "120" }, { label: "ТТК 3/1", count: 2, len: "110" }]);
+    // Результат строкой на вид и длину («ТТК 8/2мм, черная — 15 мм», 1500 шт на партию).
+    expect(etkTubePieces({ type: "cutTut", result: [{ name: "ТТК 8/2мм, черная — 15 мм", norm: "1500", unit: "шт." }, { name: "ТТК 4,8/1,6мм — 20 мм", norm: "30" }] }))
+      .toEqual([{ label: "ТТК 8/2мм", count: 1500, len: "15" }, { label: "ТТК 4,8/1,6мм", count: 30, len: "20" }]);
+    // Данные сервера (`tutParts`) главнее текста.
+    expect(etkTubePieces({ ...cut, fields: { tutParts: [{ art: "ТТК 5/2", count: 1, len: "40" }] } })).toEqual([{ label: "ТТК 5/2", count: 1, len: "40" }]);
+  });
+
+  it("draws a dark bar per kind with «вид ×число · длина» and goes into the sketch, the ПФ thumbnail and the print", () => {
+    const svg = etkDrawTubeCut(cut);
+    expect(svg).toContain("ТТК 8/2мм ×3 · 15 мм");
+    expect(svg).toContain("ТТК 12/4мм ×2 · 25 мм");
+    expect(svg.match(/<rect /g)?.length).toBeGreaterThanOrEqual(6);
+    expect(etkFigure(cut)).toBe(svg);
+  });
+
+  it("draws nothing for other operations or a result that is not a tube list", () => {
+    expect(etkDrawTubeCut({ type: "cutWire", result: cut.result })).toBe("");
+    expect(etkDrawTubeCut({ type: "cutTut", result: [{ name: "ТУТ" }] })).toBe("");
+    expect(etkDrawTubeCut({ type: "cutTut", result: [{ name: "Оплётка нарезана: 2 шт по 120 мм" }] })).toBe("");
   });
 });

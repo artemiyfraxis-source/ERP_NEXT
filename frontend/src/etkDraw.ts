@@ -394,6 +394,65 @@ export function etkDrawCoaxOp(operation: Row): string {
   return "";
 }
 
+// ── Резка трубок (владелец 16.10, 713К.4 КБ1: «рисунка нет»): отрезки нарезанных трубок — тёмные скруглённые планки,
+// на каждый вид подпись «ТТК 8/2 ×3 · 15 мм». Данные — `fields.tutParts` (если сервер их отдаёт) либо результат операции
+// («Трубки нарезаны: ТТК 8/2мм, черная — 3 шт по 15 мм; …», «Трубка X нарезана: 2 шт по 120 мм; …»).
+export type EtkTubePiece = { label: string; count: number; len: string };
+
+const TUBE_ROWS = 7;
+
+/** «ТТК 4,8/1,6мм прозрачная…, черная» → «ТТК 4,8/1,6мм»: слова до первого с размером (запятая в размере — не разделитель). */
+function tubeLabel(value: string): string {
+  const words = value.split(/,\s+/)[0].trim().split(/\s+/);
+  const at = words.findIndex((word, index) => index > 0 && /\d/.test(word));
+  return (at < 0 ? words : words.slice(0, at + 1)).join(" ");
+}
+
+/** Отрезки трубок операции резки (`cutTut`): вид, число на изделие и длина; не резка трубок — пусто. */
+export function etkTubePieces(operation: Row): EtkTubePiece[] {
+  if (str(operation.type) !== "cutTut") return [];
+  const own = list(obj(operation.fields).tutParts).map((item) => ({ label: tubeLabel(str(item.art) || str(item.name)), count: num(item.count), len: str(item.len).trim() }))
+    .filter((piece) => piece.label && piece.count > 0);
+  if (own.length) return own;
+  // Результат — строка на вид и длину: «ТТК 8/2мм, черная — 15 мм», количество в норме строки (отрезков на партию).
+  const byRow = list(operation.result).flatMap((row) => {
+    const found = str(row.name).trim().match(/^(.+?)\s+—\s+([\d.,]+)\s+мм$/);
+    const count = Number(str(row.norm).replace(",", "."));
+    return found && count > 0 ? [{ label: tubeLabel(found[1]), count, len: found[2] }] : [];
+  });
+  if (byRow.length && byRow.length === list(operation.result).length) return byRow;
+  const text = str(list(operation.result)[0]?.name);
+  const at = text.indexOf(": ");
+  if (at < 0) return [];
+  const head = text.slice(0, at);
+  if (!/^(Трубк|Маркировк)/.test(head)) return [];
+  const material = tubeLabel(head.match(/^Трубка\s+(.+?)\s+нарезана$/)?.[1] ?? (head.startsWith("Маркировк") ? "Маркировка" : "Трубка"));
+  return text.slice(at + 2).split(/;\s*/).flatMap((chunk) => {
+    const found = chunk.trim().match(/^(?:(.+?)\s+—\s+)?(\d+(?:[.,]\d+)?)\s+шт(?:\s+по\s+([\d.,]+)\s+мм)?$/);
+    return found ? [{ label: found[1] ? tubeLabel(found[1]) : material, count: Number(found[2].replace(",", ".")), len: found[3] ?? "" }] : [];
+  });
+}
+
+/** Нарезанные трубки: планка на вид, длина планки — по длине отрезка. */
+export function etkDrawTubeCut(operation: Row): string {
+  const pieces = etkTubePieces(operation);
+  if (!pieces.length) return "";
+  const shown = pieces.slice(0, TUBE_ROWS), rowH = 34, top = 14;
+  const lens = shown.map((piece) => Number(piece.len.replace(",", ".")) || 0), longest = Math.max(1, ...lens);
+  let body = "";
+  shown.forEach((piece, at) => {
+    const cy = top + at * rowH + 12, w = lens[at] ? 70 + (150 * lens[at]) / longest : 120;
+    const count = Number.isInteger(piece.count) ? String(piece.count) : String(piece.count).replace(".", ",");
+    body += coaxSleeve(20, 20 + w, cy, 22, "tube") +
+      `<line x1="${20 + 12}" y1="${cy - 11}" x2="${20 + 12}" y2="${cy + 11}" stroke="#fff" stroke-width="1" opacity=".35"/>` +
+      `<line x1="${20 + w - 12}" y1="${cy - 11}" x2="${20 + w - 12}" y2="${cy + 11}" stroke="#fff" stroke-width="1" opacity=".35"/>` +
+      `<text x="${20 + w + 12}" y="${cy + 5}" font-size="14" fill="${CX.ink}" font-weight="600">${esc(piece.label)} ×${count}${piece.len ? ` · ${esc(mm(piece.len))}` : ""}</text>`;
+  });
+  const more = pieces.length - shown.length;
+  if (more > 0) body += caption(20, top + shown.length * rowH + 12, `и ещё ${more}`);
+  return svg(640, top + shown.length * rowH + (more > 0 ? 24 : 4), body);
+}
+
 /** Опрессовка: обжатый открытый контакт сбоку, высота обжима и отрыв из БД.ТЕР (etkDrawCrimp_). */
 export function etkDrawCrimp(operation: Row): string {
   const f = obj(operation.fields);
@@ -596,7 +655,7 @@ export function etkDrawTwist(operation: Row): string {
 
 /** Эскиз операции — первый подходящий, в порядке renderEtk_/etkPrintHtml_. */
 export function etkFigure(operation: Row): string {
-  return etkDrawWires(operation) || etkDrawCoax(operation) || etkDrawCoaxOp(operation) || (operation.type !== "prsTerm" ? etkDrawPinout(operation) : "") ||
+  return etkDrawWires(operation) || etkDrawTubeCut(operation) || etkDrawCoax(operation) || etkDrawCoaxOp(operation) || (operation.type !== "prsTerm" ? etkDrawPinout(operation) : "") ||
     etkDrawCrimp(operation) || etkDrawTwist(operation);
 }
 
