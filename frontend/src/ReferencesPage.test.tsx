@@ -343,7 +343,7 @@ it("БД-1: terminals show Russian headers and «гнездо/штырь» inste
   expect(headers.join("|")).not.toMatch(/Product|Series|REEL|DATASHEET|, N/);
   // Обжим: по строке на сечение, сечение один раз; пустой обжим — одно «—»; «От/До AWG» — одна колонка «30–26».
   const crimpRows = Array.from(document.querySelectorAll(".crimp-row")).map((row) => row.textContent);
-  expect(crimpRows).toEqual(["28 AWG0,52–0,5810 Н", "26 AWG0,56–0,6220 Н"]);
+  expect(crimpRows).toEqual(["28 AWG0,52–0,58—10 Н", "26 AWG0,56–0,62—20 Н"]);
   expect(screen.getByText("30–26")).toBeInTheDocument();
   expect(headers).not.toContain("От AWG");
   // Female/Male → гнездо/штырь (значение в форме правки остаётся как на листе).

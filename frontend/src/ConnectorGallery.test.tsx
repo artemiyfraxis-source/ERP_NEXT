@@ -119,7 +119,7 @@ describe("ConnectorGallery — разъёмы по сериям", () => {
     expect(screen.getByText("SSHL-002T-P0.2")).toBeInTheDocument();
     expect(screen.getByText(CRIMP_COLUMN_TITLE)).toBeInTheDocument();
     const rows = Array.from(document.querySelectorAll(".crimp-row")).map((row) => row.textContent);
-    expect(rows).toEqual(["26 AWG0,6215 Н", "28 AWG0,7012 Н"]);
+    expect(rows).toEqual(["26 AWG0,62—15 Н", "28 AWG0,70—12 Н"]);
     expect(screen.getAllByRole("img", { name: /^Вид сверху GHR/ })).toHaveLength(3);
     fireEvent.click(screen.getByRole("button", { name: "← Все серии" }));
     expect(await screen.findByRole("button", { name: "Серия JST GH" })).toBeInTheDocument();
