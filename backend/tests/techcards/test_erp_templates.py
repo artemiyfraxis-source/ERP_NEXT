@@ -13,6 +13,7 @@ from .test_operation_card_api import SOURCE_COMMIT, _template, operation_library
 
 ERP_LIBRARY = json.loads((Path(__file__).resolve().parents[2] / "data" / "techcard-library-erp.json").read_text(encoding="utf-8"))
 TIN_ID = "cut-wire-1crimp-tin-автомат-резка-опрессовка-лужение"
+COAX_CUT_ID = "cut-coax-auto-резка"
 NOW = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 
 
@@ -22,16 +23,28 @@ def _seed(templates) -> dict[str, list[str]]:
 
 
 def test_bundled_erp_template_is_the_cut_crimp_and_tin_card():
-    [card] = parse_operation_library(ERP_LIBRARY["templates"])
+    card, _ = parse_operation_library(ERP_LIBRARY["templates"])
     assert (card.source_id, card.code) == (TIN_ID, "CUT_WIRE+1crimp+tin")
     assert [tool.inventory_number for tool in card.tooling if tool.section == "Оборудование"] == ["ОБ.098"]
     steps = " ".join(step.text for step in card.steps)
     assert "штангенциркул" in steps and "микрометр" in steps and "лужени" in steps
 
 
+def test_bundled_coax_cut_card_speaks_of_coax_not_of_wire_twists():
+    """Резка коаксиала без разделки (владелец 16.10): своя карта вместо CUT_WIRE_auto с «проводом» и «скруткой»."""
+    _, card = parse_operation_library(ERP_LIBRARY["templates"])
+    assert (card.source_id, card.code, card.category) == (COAX_CUT_ID, "CUT_COAX_auto", "Резка")
+    assert [(tool.name, tool.inventory_number) for tool in card.tooling if tool.section == "Оборудование"] == [
+        ("EW-05F+M | Автомат мерной резки проводов", "ОБ.015")]
+    text = " ".join([card.defects, *(step.text for step in card.steps)]).casefold()
+    assert "коаксиальн" in text and "оплёт" in text and "диэлектрик" in text and "волновое сопротивление" in text
+    assert "скрутк" not in text and "провод" not in text.replace("проводов", "")
+    assert [step.kind for step in card.steps] == ["Операция"] * 3 + ["Контроль"] * 2 + ["Операция"] * 2 + ["Контроль"]
+
+
 def test_seed_creates_the_template_once_and_it_survives_a_supplymap_snapshot(operation_library_api):
     assert "добавлены" in seed_erp(app.state.techcards_uow_factory, NOW)
-    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (1)"
+    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (2)"
 
     reimport = operation_library_api.put(
         "/api/techcards/templates/supplymap-library",
@@ -40,7 +53,7 @@ def test_seed_creates_the_template_once_and_it_survives_a_supplymap_snapshot(ope
     assert reimport.status_code == 200, reimport.text
 
     ids = {item["id"] for item in operation_library_api.get("/api/techcards/templates").json()["items"]}
-    assert ids == {"cut-wire", TIN_ID}
+    assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID}
     detail = operation_library_api.get(f"/api/techcards/templates/{TIN_ID}").json()
     assert detail["code"] == "CUT_WIRE+1crimp+tin"
 

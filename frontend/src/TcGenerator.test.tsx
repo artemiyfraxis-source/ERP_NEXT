@@ -141,6 +141,21 @@ it("chooses coax stripping on the rotary machine or separately and keeps the cho
   expect(config.gen_state.S.coax).toMatchObject({ stripMode: "separate", machine: "small" });
 });
 
+it("a collet centre contact from БД.КОАКС selects «Цанга, без пайки» and drops the pin soldering (16.10)", async () => {
+  mockApi((path) => (path.startsWith("/api/references/tech-operations?") && path.includes("tab=coax") ? json({ metadata: null, columns: [],
+    records: [{ id: "c1", tab: "coax", display_text: "N-111C/8D", source_sheet: "", fields: {
+      coaxArticle: "N-111C/8D", coaxWire: "8D-FB", "Тип экрана": "обжим", "Центральный контакт": "цанговый, не требует пайки", L1: "9" } }] }) : undefined));
+  render(<TcGenerator card={{ ...card, product_name: "Сборка 8D-FB 1m" }} busy={false} onBuild={vi.fn()} onDiscard={vi.fn()} kit={kitOf("Сборка 8D-FB 1m", [
+    { type: "Кабель", name: "8D-FB", art: "8D-FB", qty: 1 },
+    { type: "Соед", name: "N", art: "N-111C/8D", qty: 1 },
+  ])} />);
+
+  const pin = await screen.findByRole("radiogroup", { name: "Тип пина А" });
+  await waitFor(() => expect(within(pin).getByRole("radio", { name: "Цанга, без пайки" })).toHaveAttribute("aria-checked", "true"));
+  expect(screen.queryByText("Пайка центрального контакта (А)")).toBeNull();
+  expect(screen.getAllByText("Монтаж корпуса (А) — цанговый контакт, без пайки")[0]).toBeInTheDocument();
+});
+
 it("takes cut lengths and tinning from the КБn sheet of the calculation (tcCalcOps_)", async () => {
   mockApi();
   const onBuild = vi.fn();

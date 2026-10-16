@@ -817,6 +817,38 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
     }}
 
 
+HEX_MISSING = "HEX не задан — по чертежу разъёма"
+_COLLET_PIN = re.compile(r"припаянн\w*\s+центральн\w*\s+контакт\w*", re.IGNORECASE)
+_PLAIN_NUMBER = re.compile(r"^\d+(?:[.,]\d+)?$")
+
+
+def coax_crimp_hex(config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """HEX матрицы обжима втулки экрана по концам коакс-сборки (владелец 16.10): `crimpHex` конца — из БД.КОАКС пары
+    «разъём × кабель» (workflows.techcard_build), пусто — «HEX не задан — по чертежу разъёма», никогда не догадка."""
+    coax = _coax(config)
+    result = []
+    for key, label in (("sideA", "А"), ("sideB", "В")):
+        end = coax.get(key)
+        if not isinstance(end, Mapping) or not str(end.get("article") or "").strip():
+            continue
+        value = str(end.get("crimpHex") or "").strip()
+        if value and _PLAIN_NUMBER.match(value):
+            value += " мм"
+        result.append({"side": label, "connector": str(end.get("article") or "").strip(), "hex": value})
+    return result
+
+
+def _hex_phrase(items: list[Mapping[str, str]]) -> str:
+    """«HEX 5,41 мм» — один размер на все концы; иначе по концам: «А (S-111F) — HEX 5,41 мм; В (N-111F) — HEX не
+    задан — по чертежу разъёма»."""
+    values = {item["hex"] for item in items}
+    if len(values) <= 1:
+        value = next(iter(values), "")
+        return f"HEX {value}" if value else HEX_MISSING
+    return "; ".join(f"{item['side']} ({item['connector']}) — " + (f"HEX {item['hex']}" if item["hex"] else HEX_MISSING)
+                     for item in items)
+
+
 def _coax_machine(op: Mapping[str, Any]) -> dict[str, str]:
     """The rotary machine the technologist chose for cutting coax with stripping (generator, owner 14.10): model,
     inventory number and name from БД.ОБ; {} — no choice (the card's equipment stays as it is)."""
@@ -909,6 +941,11 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
             if side_b["connector"]:
                 fields["coaxB"] = side_b
     fields.update(coax_sketch_fields(op, config))
+    if operation_type == "coaxShield":
+        fields["crimpHex"] = coax_crimp_hex(config)
+    if operation_type == "coaxHousing" and "цанг" in str(_coax_end(op, config).get("pinType") or "").casefold():
+        # Цанговый центральный контакт (владелец 16.10): пайки пина не было — карта корпуса не говорит «припаянный».
+        fields["collet"] = True
     machine = _coax_machine(op)
     if machine:
         fields["machine"] = machine
@@ -1144,6 +1181,11 @@ def _resolve_card(
         if tolerance.strip() == "мм":
             # «[L КД] мм» без длины в генераторе — единица без числа не допуск.
             tolerance = "по КД"
+        if fields.get("collet"):
+            text = _COLLET_PIN.sub("центральный контакт (цанговый, без пайки)", text)
+        if isinstance(fields.get("crimpHex"), list) and step.kind == "Контроль" and "hex" in text.casefold():
+            # Обжим втулки экрана: размер HEX по разъёму и кабелю из БД.КОАКС, нет — явно «не задан».
+            text = f"{text.rstrip()} Размер: {_hex_phrase(fields['crimpHex'])}."
         steps.append({"number": step.number, "kind": step.kind, "text": text, "tolerance": "" if tolerance in {"-", "—"} else tolerance})
     tooling = []
     applicator_set = False
@@ -1153,8 +1195,11 @@ def _resolve_card(
         if not applicator_set and fields.get("applicator") and tool.section == "Оборудование" and free_program:
             program = str(fields["applicator"])
             applicator_set = True
+        name = substitute(tool.name)
+        if isinstance(fields.get("crimpHex"), list) and tool.section == "Матрицы":
+            name = f"{name.rstrip()} — {_hex_phrase(fields['crimpHex'])}"
         tooling.append({
-            "section": tool.section, "number": tool.number, "name": substitute(tool.name),
+            "section": tool.section, "number": tool.number, "name": name,
             "inventory_number": tool.inventory_number, "program": program,
             "parameters": substitute(tool.parameters), "norm": tool.norm, "unit": tool.unit,
         })

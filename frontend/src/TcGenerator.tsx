@@ -53,6 +53,7 @@ import {
   WIRE_DIA_MISSING_,
   WIRE_DIA_OLD_,
   COAX_MACHINES,
+  COAX_PIN_COLLET,
   type CableRec,
   type Comp,
   type Endpoint,
@@ -952,12 +953,12 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     const add = coaxAdd[side] || {};
     const addValue = (key: string, fallback = "") => add[key] ?? fallback;
     const setAdd = (key: string, value: string) => setCoaxAdd((current) => ({ ...current, [side]: { ...(current[side] || {}), [key]: value } }));
-    const pin = S.coax[pinKey] === "внутри корпуса" ? "внутри корпуса" : "пайка";
+    const pin = S.coax[pinKey] === "внутри корпуса" || S.coax[pinKey] === COAX_PIN_COLLET ? S.coax[pinKey] : "пайка";
     return <div className="ep-card">
       <div className="ep-head"><span className="ep-title">{s ? s.art : side === "A" ? "в составе нет разъёма" : "—"}</span><span className="ep-kind">из состава</span></div>
       <div className="ep-grid coax">
         <div className="gfield"><span className="gfield-label">Тип пина</span>
-          <Seg label={`Тип пина ${sideRu_(side)}`} value={pin} options={[["пайка", "Пайка"], ["внутри корпуса", "Пайка внутри корпуса"]]}
+          <Seg label={`Тип пина ${sideRu_(side)}`} value={pin} options={[["пайка", "Пайка"], ["внутри корпуса", "Пайка внутри корпуса"], [COAX_PIN_COLLET, "Цанга, без пайки"]]}
             onChange={(value) => update((current) => syncCoverRow_({ ...current, coax: { ...current.coax, [pinKey]: value } }, side))} /></div>
         {S.coax[pinKey] === "внутри корпуса" && <div className="gfield"><span className="gfield-label">Крышка (угловой разъём)</span>
           <Seg label={`Крышка ${sideRu_(side)}`} value={S.coax[coverKey]} options={[["", "Без крышки"], ["обжим", "Обжим"], ["винт", "Винт"]]}
