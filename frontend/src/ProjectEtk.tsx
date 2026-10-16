@@ -256,7 +256,8 @@ function EtkParamBlock({ params }: { params: EtkParams }) {
   return <div className="etk-params" aria-label="Параметры операции" style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }}>
     {columns.map((column) => column && <section key={column.key} aria-label={column.title}>
       <strong>{column.title}</strong>
-      <dl>{column.items.map(([label, value]) => <div key={label}><dt>{label}</dt><dd><MarkMissing text={value} /></dd></div>)}</dl>
+      <dl>{column.items.map(([label, value, rows]) => <div key={label} className={rows ? "etk-param-rows" : undefined}><dt>{label}</dt>
+        <dd>{rows ? rows.map(([sub, line]) => <span key={sub}><small>{sub}</small><MarkMissing text={line} /></span>) : <MarkMissing text={value} />}</dd></div>)}</dl>
     </section>)}
   </div>;
 }

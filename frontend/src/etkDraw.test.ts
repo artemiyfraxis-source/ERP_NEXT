@@ -11,7 +11,7 @@ const housing = { title: "JST XH", art: "XHP-2", rows: 1, cols: 2, n: 2, kind: "
   cavity: "square", labels: null, grid: [[1, 2]], round: null, conf: "medium", note: "", pitch: 2.5 };
 
 describe("etkParams (шапка: Сторона А | Общие | Сторона В)", () => {
-  const find = (items: Array<[string, string]>) => Object.fromEntries(items);
+  const find = (items: ReadonlyArray<readonly [string, string, ...unknown[]]>) => Object.fromEntries(items.map(([label, value]) => [label, value]));
 
   it("fills both side columns of the crimp-both operation", () => {
     const params = etkParams({
@@ -53,6 +53,27 @@ describe("etkParams (шапка: Сторона А | Общие | Сторона
     expect(find(params.sides[0].items)).toMatchObject({ "Высота обжима": "0,43–0,47 мм", "Отрыв": "не задано" });
     const bare = etkParams({ type: "cutWireCrimp", code: "CUT_WIRE+1crimp", side: "A", fields: { ...fields, strip: { a: true, b: false, lenA: "1,2", lenB: "" } } });
     expect(bare.sides.map((side) => side.title)).toEqual(["Сторона А"]);
+  });
+
+  it("a cut batch of two sections: crimp height, pull force and diameters a line per section, all lengths (713К.4, 16.10)", () => {
+    const fields = {
+      lengthKd: "130мм", strip: { a: true, b: false, lenA: "2,5", lenB: "" },
+      wires: [{ art: "НВ4 0,12 синий", length: 130, outerDiameter: 1.3, conductorDiameter: 0.41 },
+        { art: "НВ4 0,12 белый", length: 120, outerDiameter: 1.3, conductorDiameter: 0.41 },
+        { art: "НВ4 0,5 красный", length: 120, outerDiameter: 1.8, conductorDiameter: 0.81 }],
+      crimpEnds: [
+        { ends: ["A"], art: "SYM-001T-P0.6", wire: "НВ4 0,12", section: "0,12 мм² (26 AWG)", applicator: "A7", crimpHeight: "0,80 - 0,90", pullForce: "14,7", strip: "2,5" },
+        { ends: ["A"], art: "SYM-001T-P0.6", wire: "НВ4 0,5", section: "0,5 мм² (20 AWG)", applicator: "A7", crimpHeight: "", pullForce: "", strip: "2,5" }],
+    };
+    const params = etkParams({ type: "cutWireCrimp", code: "CUT_WIRE+1crimp", side: "A", fields });
+    const side = Object.fromEntries(params.sides[0].items.map(([label, , rows]) => [label, rows]));
+    expect(side["Аппликатор"]).toBeUndefined();
+    expect(side["Высота обжима"]).toEqual([["0,12 мм² (26 AWG)", "0,80–0,90 мм"], ["0,5 мм² (20 AWG)", "не задано"]]);
+    expect(side["Отрыв"]).toEqual([["0,12 мм² (26 AWG)", "≥ 14,7 Н"], ["0,5 мм² (20 AWG)", "не задано"]]);
+    const common = Object.fromEntries(params.common.map(([label, value, rows]) => [label, rows ?? value]));
+    expect(common["Длина по КД"]).toBe("120, 130 мм");
+    expect(common["Внешний диаметр"]).toEqual([["0,12 мм² (26 AWG)", "1,3 мм"], ["0,5 мм² (20 AWG)", "1,8 мм"]]);
+    expect(common["Диаметр жилы"]).toEqual([["0,12 мм² (26 AWG)", "0,41 мм"], ["0,5 мм² (20 AWG)", "0,81 мм"]]);
   });
 
   it("marks the tinned end and keeps side В of an issued ETK without lengths as «не задано»", () => {

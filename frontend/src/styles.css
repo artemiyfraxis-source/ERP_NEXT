@@ -3954,4 +3954,9 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .etk-params dl > div:first-child { border-top: 0; }
 .etk-params dt { font-size: 12px; color: var(--muted-foreground); flex: none; }
 .etk-params dd { margin: 0; font-size: 16px; font-weight: 600; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+/* Значение по сечениям партии — строка на сечение: сечение мелко слева, значение крупно справа. */
+.etk-params dl > div.etk-param-rows { align-items: flex-start; }
+.etk-params .etk-param-rows dd { display: grid; gap: 2px; }
+.etk-params .etk-param-rows dd > span { display: flex; justify-content: flex-end; align-items: baseline; gap: 10px; }
+.etk-params .etk-param-rows small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); white-space: nowrap; }
 @media (max-width: 1100px) { .etk-params { grid-template-columns: 1fr !important; } .etk-params section { border-left: 0; border-top: 1px solid var(--border); } .etk-params section:first-child { border-top: 0; } }
