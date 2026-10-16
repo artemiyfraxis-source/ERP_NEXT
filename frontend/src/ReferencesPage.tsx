@@ -21,7 +21,7 @@ import {
   MATERIAL_FALLBACK, MATERIAL_GROUP_FIELD, MATERIAL_TABS, isMaterialTab, materialCounts, materialRows, type MaterialTab,
 } from "./materialSections";
 import { operationCardCount } from "./TechcardsPage";
-import { cleanHeader, fieldTitle, headerLabel, valueLabel } from "./referenceLabels";
+import { cleanHeader, fieldTitle, headerLabel, terFieldHint, valueLabel } from "./referenceLabels";
 import {
   failureText,
   referencesApi,
@@ -444,7 +444,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
       const inCell = own || (Boolean(fixed) && index > 0 && !fixed?.has(cleanHeader(field).toLocaleLowerCase("ru-RU"))
         && !(values.length > 0 && values.every((value) => BOOLEAN.test(value.trim()))));
       return {
-        key: field, title: fieldTitle(field), value: shown,
+        key: field, title: fieldTitle(field), value: shown, hint: techTab === "ter" ? terFieldHint(field) : undefined,
         // Long text (datasheet links, sources) is one line cut with «…», full text on hover: a row stays 30 px, not 66.
         render: long ? (record) => <span className="db-clip" title={record.fields[field] ?? ""}>{shown(record)}</span> : undefined,
         edit: canEdit && inCell ? (own ? ownCellEdit<TechOperationRecord>(field, (record) => record) : fieldCellEdit<TechOperationRecord>(field, (record) => record)) : undefined,
@@ -558,7 +558,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     {techTab && <>
       {canEdit && editing && techTab !== "ob" && <PageWindow label={editing.id === null ? "Новая запись" : "Правка записи"} width={860} close={() => setEditing(null)}><div className="panel db-edit">
         <div className="manual-stock-head"><h2>{editing.id === null ? "Новая запись" : `Правка: ${(editingRecord?.display_text ?? "").replace(/^[\s/]+|[\s/]+$/g, "")}`}</h2></div>
-        <RowForm values={editing.values} onChange={(values) => setEditing({ ...editing, values })} />
+        <RowForm values={editing.values} hint={techTab === "ter" ? terFieldHint : undefined} onChange={(values) => setEditing({ ...editing, values })} />
         <div className="form-actions"><button className="primary" disabled={busy} onClick={() => void saveRow()}>Сохранить запись</button> <button className="secondary" onClick={() => setEditing(null)}>Отмена</button></div>
         {editing.id !== null && <div className="db-edit-stock">
           <h3>Со склада</h3>
@@ -696,8 +696,13 @@ function MapTable({ tab, rows, disabled, onChange, toolbar }: {
   </>;
 }
 
-function RowForm({ values, onChange }: { values: Record<string, string>; onChange: (values: Record<string, string>) => void }) {
-  return <div className="reference-fields db-form">{Object.entries(values).map(([key, value]) => <label key={key}><small>{fieldTitle(key)}</small>
+function RowForm({ values, hint, onChange }: {
+  values: Record<string, string>; hint?: (field: string) => string | undefined; onChange: (values: Record<string, string>) => void;
+}) {
+  return <div className="reference-fields db-form">{Object.entries(values).map(([key, value]) => {
+    const meaning = hint?.(key)?.replace(/^L[+−] — /, "");
+    return <label key={key}><small>{fieldTitle(key)}{meaning && <span className="muted"> · {meaning}</span>}</small>
     <input aria-label={`Поле ${key}`} value={value} onChange={(event) => onChange({ ...values, [key]: event.target.value })} />
-  </label>)}</div>;
+  </label>;
+  })}</div>;
 }

@@ -79,6 +79,7 @@ import {
 import { ComplexCables } from "./ComplexCables";
 import { CableCoreColors } from "./CableCoreColors";
 import { CardSelect, CheckMark, Chip, Field, Seg, Toggle, UnitInput, type CardOption } from "./GenControls";
+import { TER_L_MINUS_HINT, TER_L_PLUS_HINT } from "./referenceLabels";
 import { lMinusMissing, lMinusSuggestion, terChanges, terEditProblem, terLost, terNewFields, terSaved, terSavedText, withTerRecord } from "./terDbSave";
 import { MarkTable, markTotal } from "./GenMarkTable";
 import { DrawingButton, DrawingNoteView, configDrawingProblem } from "./GenDrawing";
@@ -109,6 +110,8 @@ const WRAP_KINDS: Array<[WrapKind, string]> = [
 const MEASURE_MODES = [
   ["inner", "Между разъёмами", "+L+"], ["outer", "От краёв разъёмов", "−L−"], ["cut", "Длина реза по КД", "без припуска"],
 ] as const;
+/** Подсказка к нормам терминала в карточке разъёма (шаг — без подсказки). */
+const TER_HINT: Partial<Record<"lPlus" | "lMinus" | "step", string>> = { lPlus: TER_L_PLUS_HINT, lMinus: TER_L_MINUS_HINT };
 const OP_TIMES = [["tPrep", "Подготовка", "Подготовка, сек"], ["tOp", "На штуку", "Операция, сек/шт"], ["tMachine", "Машинное", "Машинное, сек/шт"]] as const;
 
 function plural(n: number, one: string, few: string, many: string) {
@@ -884,7 +887,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       </div>
       {crimp && term && <div className="ep-ter" aria-label={`Нормы терминала ${name}`}>
         {([["lPlus", "L+", "мм"], ["lMinus", "L−", "мм"], ["step", "Шаг", "мм"]] as const).map(([key, label, unit]) =>
-          <Field key={key} label={label}><UnitInput unit={unit} value={terValues[key]} placeholder="—" onChange={(event) => setTer(key, event.target.value)} /></Field>)}
+          <Field key={key} label={label} title={TER_HINT[key]}><UnitInput unit={unit} value={terValues[key]} placeholder="—" onChange={(event) => setTer(key, event.target.value)} /></Field>)}
         <Field label="Зачистка" className="mid" hint={stripOwn ? undefined : stripDb ? "из БД" : stripNeeded ? <span className="tone-danger">нет в БД</span> : undefined}>
           <UnitInput unit="мм" value={ep.stripLen || ""} placeholder={stripDb || "—"} aria-invalid={stripNeeded || undefined} onChange={(event) => set({ stripLen: event.target.value })} /></Field>
         <Field label="Аппликатор" className="wide"><input value={terValues.applicator} placeholder="—" onChange={(event) => setTer("applicator", event.target.value)} /></Field>

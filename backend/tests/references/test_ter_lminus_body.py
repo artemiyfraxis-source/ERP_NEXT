@@ -90,7 +90,7 @@ def test_the_sources_name_each_terminal_once_and_keep_the_ones_left_empty_out_of
     for article in ("8500063", "SPND-001T-C0.5"):  # no housing length / two housings: not guessed
         assert article in left
     for article in ("SZH-002T-P0.5", "500798001", "DF13-2630SCF", "2147205000"):  # housing shorter than the stored L+
-        assert article not in left and article in _estimates()  # now corrected by the estimates body
+        assert article in left and article not in _estimates()  # no drawing shows where the wire ends: not guessed
 
 
 def test_a_terminal_whose_housing_is_not_longer_than_its_l_plus_is_refused_by_the_builder():
@@ -154,47 +154,45 @@ def test_the_committed_estimates_body_is_what_the_builder_makes_from_the_sources
     assert rows == BUILDER.build_estimates(_sources(), BUILDER.catalogue_terminals())
 
 
-def test_estimates_put_l_plus_inside_the_housing_and_say_that_they_are_approximate():
+def test_estimates_take_l_plus_only_from_a_drawing_of_the_wire_in_the_housing_or_keep_the_bases_own():
+    # L+ is the depth of the conductor end from the housing's wire-side face (owner 16.10.2026), not the contact length
     rows = _estimates()
-    assert len(rows) == 48
+    assert set(rows) == {"SSHL-002T-P0.2", "8500113"}
     for article, row in rows.items():
         fields, old = row["fields"], row["old"]
         note = fields[BUILDER.NOTE_FIELD]
-        assert note.startswith("примерно: ") and "http" in note, article
+        assert note.startswith(("примерно: ", "по чертежу: ")) and "http" in note, article
         l_minus = Decimal(fields["terLMinus"].replace(",", "."))
         l_plus = Decimal(fields.get("terLPlus", old["terLPlus"]).replace(",", "."))
         assert l_minus > 0 and l_plus > 0 and l_plus + l_minus > l_plus, article
         assert old["terArticle"] == article and old[BUILDER.NOTE_FIELD] == ""
-    # the four contradictions the owner named (14.10.2026)
-    assert rows["SZH-002T-P0.5"]["fields"]["terLPlus"] == "4" and rows["SZH-002T-P0.5"]["old"]["terLPlus"] == "5"
-    assert rows["SZH-002T-P0.5"]["fields"]["terLMinus"] == "0,8"  # ZHR 4,8 − contact 4,0 (JST eZH)
-    assert rows["500798001"]["fields"]["terLPlus"] == "3,3" and rows["500798001"]["fields"]["terLMinus"] == "0,65"
-    assert rows["DF13-2630SCF"]["fields"]["terLPlus"] == "3,3" and rows["DF13-2630SCF"]["fields"]["terLMinus"] == "0,7"
-    assert rows["2147205000"]["fields"]["terLPlus"] == "2,6" and rows["2147205000"]["fields"]["terLMinus"] == "0,55"
     gh = rows["SSHL-002T-P0.2"]
     assert gh["old"]["terLMinus"] == "10" and gh["fields"]["terLMinus"] == "0,7" and "terLPlus" not in gh["fields"]
-    # the terminals that had no L+ at all
-    assert rows["DF1B-2022SCF"]["fields"]["terLPlus"] == "9,5" and rows["DF1B-2022SCF"]["fields"]["terLMinus"] == "2"
-    assert rows["DF1B-2022PCF"]["fields"]["terLPlus"] == "13,9" and rows["DF1B-2022PCF"]["fields"]["terLMinus"] == "4,6"
-    assert rows["8500113"]["fields"]["terLMinus"] == "2,2"
-    assert rows["1053002200"]["fields"]["terLMinus"] == "2,7" and rows["2014472300"]["fields"]["terLMinus"] == "3,2"
-    assert rows["L-KLS1-2.50-T"]["fields"]["terLMinus"] == "1,5"
+    kk = rows["8500113"]  # Molex SD-2695: «WIRE INTO HOUSING 6.73 REF» from the rear face of the 12,7 mm housing
+    assert kk["fields"]["terLPlus"] == "6,73" and kk["fields"]["terLMinus"] == "5,97" and kk["old"]["terLPlus"] == ""
+    left = {article for item in _sources()["not_filled"] for article in item["terminals"]}
+    assert {"DF1B-2022SCF", "DF1B-2022PCF", "1053002200", "2014472300", "L-KLS1-2.50-T"} <= left
 
 
-def test_a_proportional_estimate_is_refused_when_l_plus_is_not_the_stated_share_of_the_housing():
+def test_an_estimate_from_the_contact_length_or_a_share_of_the_housing_is_refused():
     terminals = {"X": {"terArticle": "X", "terLPlus": "", "terLMinus": ""}}
-    group = {"maker": "M", "housing": "H", "length_mm": "10", "l_plus": "5", "basis": "proportion", "doc": "d", "url": "u",
+    group = {"maker": "M", "housing": "H", "length_mm": "10", "l_plus": "8.3", "basis": "proportion", "doc": "d", "url": "u",
              "terminals": ["X"]}
-    with pytest.raises(ValueError, match="0,83"):
+    for basis in ("proportion", "contact"):
+        group.update(basis=basis, contact_mm="8.3")
+        with pytest.raises(ValueError, match="только с чертежа"):
+            BUILDER.build_estimates({"estimates": [group]}, terminals)
+    group.update(basis="drawing", wire_depth_mm="6")
+    with pytest.raises(ValueError, match="глубине провода"):
         BUILDER.build_estimates({"estimates": [group]}, terminals)
-    group.update(l_plus="8.3")
-    assert BUILDER.build_estimates({"estimates": [group]}, terminals)[0]["fields"]["terLMinus"] == "1,7"
-    group.update(l_plus="12", basis="contact", contact_mm="12")
+    group.update(l_plus="6")
+    assert BUILDER.build_estimates({"estimates": [group]}, terminals)[0]["fields"]["terLMinus"] == "4"
+    group.update(l_plus="12", wire_depth_mm="12")
     with pytest.raises(ValueError, match="вне корпуса"):
         BUILDER.build_estimates({"estimates": [group]}, terminals)
 
 
-def test_on_the_production_base_the_estimates_correct_l_plus_and_refuse_a_cell_changed_meanwhile(refs_api):
+def test_on_the_production_base_the_estimates_fill_l_plus_and_refuse_a_cell_changed_meanwhile(refs_api):
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -202,7 +200,6 @@ def test_on_the_production_base_the_estimates_correct_l_plus_and_refuse_a_cell_c
     sessions, tokens = refs_api
     uow = SqlAlchemyReferencesUnitOfWork(sessions)
     load_mirror(default_source(), uow, dry_run=False, now=NOW)
-    df1b = json.loads(BUILDER.DF1B_BODY.read_text(encoding="utf-8"))["rows"]
     client = TestClient(app)
 
     def load(rows: list[dict], dry_run: int) -> dict:
@@ -211,23 +208,21 @@ def test_on_the_production_base_the_estimates_correct_l_plus_and_refuse_a_cell_c
         assert response.status_code == 200, response.text
         return response.json()
 
-    assert len(load(df1b, 0)["created"]) == 12  # the DF1B contacts exist before their lengths are written
-    with uow:  # somebody typed another L+ for one terminal after the body was built
+    with uow:  # somebody typed another L− for one terminal after the body was built
         record = next(item for item in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=100_000)
-                      if item.fields.get("terArticle") == "DF13-3032SCF")
-        uow.tech_operations.save(replace(record, fields={**record.fields, "terLPlus": "3", "L+": "3"}))
+                      if item.fields.get("terArticle") == "SSHL-002T-P0.2")
+        uow.tech_operations.save(replace(record, fields={**record.fields, "terLMinus": "1", "L-": "1"}))
         uow.commit()
     rows = list(_estimates().values())
     check = load(rows, 1)
-    assert check["created"] == [] and check["refused"] == [{"key": "DF13-3032SCF", "reason": STALE_REASON}]
+    assert check["created"] == [] and check["refused"] == [{"key": "SSHL-002T-P0.2", "reason": STALE_REASON}]
     assert len(check["updated"]) == len(rows) - 1
     applied = load(rows, 0)
     assert len(applied["updated"]) == len(rows) - 1 and applied["created"] == []
     with uow:
         stored = {item.fields.get("terArticle"): item.fields
                   for item in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=100_000)}
-    assert stored["SZH-002T-P0.5"]["terLPlus"] == "4" and stored["SZH-002T-P0.5"]["terLMinus"] == "0,8"
-    assert stored["SSHL-002T-P0.2"]["terLMinus"] == "0,7" and stored["SSHL-002T-P0.2"]["terLPlus"] == "5"
-    assert stored["DF1B-2022SCF"]["terLPlus"] == "9,5"
-    assert stored["DF13-3032SCF"]["terLPlus"] == "3"  # the value entered meanwhile stays
-    assert stored["SZH-002T-P0.5"][BUILDER.NOTE_FIELD].startswith("примерно: ")
+    assert stored["8500113"]["terLPlus"] == "6,73" and stored["8500113"]["terLMinus"] == "5,97"
+    assert stored["8500113"][BUILDER.NOTE_FIELD].startswith("по чертежу: ")
+    assert stored["SSHL-002T-P0.2"]["terLMinus"] == "1"  # the value entered meanwhile stays
+    assert stored["SZH-002T-P0.5"]["terLPlus"] == "5"  # no drawing of the wire end: left as it was

@@ -143,3 +143,11 @@ it("подсказывает L− по той же серии БД.ТЕР, не 
   await waitFor(() => expect(patches).toEqual([{ edits: [{ field: "terLMinus", old: "", value: "2,5" }] }]));
   expect(await screen.findByText("345 мм")).toBeInTheDocument();
 });
+
+it("L+ и L− в нормах терминала подсказывают, что они меряют: конец жилы в корпусе", async () => {
+  mockApi(true);
+  await openOuter350();
+  expect(norms("А1").getByLabelText("L+").closest("label")).toHaveAttribute("title", "L+ — глубина конца жилы от торца корпуса со стороны провода");
+  expect(norms("А1").getByLabelText("L−").closest("label")).toHaveAttribute("title", "L− — от конца жилы до стыковочного торца");
+  expect(norms("А1").getByLabelText("Шаг").closest("label")).not.toHaveAttribute("title");
+});

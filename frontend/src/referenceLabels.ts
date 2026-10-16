@@ -73,5 +73,15 @@ export const FIELD_TITLES: Record<string, string> = {
   coaxArticle: "Артикул", coaxType: "Тип/серия", coaxMfr: "Производитель", supplier: "Поставщик", coaxWire: "Провод", program: "Программа",
 };
 
+/* Смысл L+ / L− терминала БД.ТЕР (владелец 16.10.2026): генератор прибавляет L+ к длине между корпусами и вычитает L−
+   из длины от краёв разъёмов, поэтому L+ + L− = длина корпуса. Длина контакта — не L+. */
+export const TER_L_PLUS_HINT = "L+ — глубина конца жилы от торца корпуса со стороны провода";
+export const TER_L_MINUS_HINT = "L− — от конца жилы до стыковочного торца";
+const TER_HINTS: Record<string, string> = {
+  terLPlus: TER_L_PLUS_HINT, "L+": TER_L_PLUS_HINT, terLMinus: TER_L_MINUS_HINT, "L-": TER_L_MINUS_HINT, "L−": TER_L_MINUS_HINT,
+};
+/** Подсказка к полю БД.ТЕР (ключ схемы или колонка листа), если она есть. */
+export const terFieldHint = (field: string): string | undefined => TER_HINTS[cleanHeader(field)];
+
 /** Русский заголовок поля записи: ключ схемы → карта, иначе заголовок листа. */
 export const fieldTitle = (field: string) => FIELD_TITLES[field] ?? headerLabel(field);
