@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ConnectorSeries } from "./api";
 import type { TerminalRow } from "./TerminalCard";
-import { NO_SERIES, seriesCaption, sortBySeries, terminalGroups } from "./terminalSeries";
+import { NO_SERIES, makerOrder, seriesCaption, sortBySeries, terminalGroups } from "./terminalSeries";
 
 const row = (id: string, maker: string, series: string, article: string): TerminalRow => ({
   id, tab: "ter", display_text: `${maker} ${series} ${article}`, source_sheet: "БД.ТЕР", sort_key: id,
@@ -65,6 +65,13 @@ describe("«Терминалы» по сериям", () => {
     ]);
     const lugs = sortBySeries(ROWS, groups).filter((item) => groups.get(item.id)?.name === "Наконечники и гильзы");
     expect(lugs.map((item) => item.fields.terArticle)).toEqual(["НШВИ 0,5-8", "НШВИ 1,5-8"]);
+  });
+
+  it("производители — в порядке каталога «Разъёмы» (Molex раньше JST, если так в каталоге), сборные группы после них", () => {
+    const order = sortBySeries(ROWS, groups, ["Molex", "JST"]).map((item) => groups.get(item.id)?.name);
+    expect(order.slice(0, 6)).toEqual(["Molex Micro-Fit 3.0", "Molex Mini-Fit Jr.", "JST JWPF", "JST PA", "JST PHD", "JST SH"]);
+    expect(order.slice(-2)).toEqual([NO_SERIES, NO_SERIES]);
+    expect(makerOrder([{ maker: "JST" }, { maker: "Molex" }, { maker: "JST" }, { maker: "" }] as never)).toEqual(["JST", "Molex"]);
   });
 
   it("подпись группы называет производителей, которых нет в имени серии", () => {

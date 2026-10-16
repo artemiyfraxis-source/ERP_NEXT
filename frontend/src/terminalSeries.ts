@@ -120,10 +120,19 @@ export function terminalGroups(rows: TerminalRow[], series: ConnectorSeries[]): 
 // Латиница раньше кириллицы, числа — как числа: «JST GH» < «JST PH» < «Molex Micro-Fit 3.0» < «Наконечники и гильзы».
 const natural = (a: string, b: string) => a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
 
-/** Порядок строк: группы по имени (производитель, затем серия), «Без серии» в конце; внутри — по артикулу. */
-export function sortBySeries(rows: TerminalRow[], groups: Map<string, TerminalGroup>): TerminalRow[] {
+/** Производители в порядке каталога «Разъёмы» (сервер сортирует серии по MAKERS: JST, Molex, Hirose, JAE, TE, Connfly…). */
+export const makerOrder = (series: ConnectorSeries[]): string[] => [...new Set(series.map((item) => item.maker).filter(Boolean))];
+
+/** Порядок строк (владелец 16.10: «реши» — JST, Molex, TE первыми): группы по производителю в порядке каталога, затем
+ *  остальные производители и сборные группы, внутри производителя — по имени серии; «Без серии» в конце; внутри — по артикулу. */
+export function sortBySeries(rows: TerminalRow[], groups: Map<string, TerminalGroup>, makers: string[] = []): TerminalRow[] {
   const name = (row: TerminalRow) => groups.get(row.id)?.name ?? NO_SERIES;
+  const rank = (row: TerminalRow) => {
+    const index = makers.indexOf(groups.get(row.id)?.maker ?? "");
+    return index >= 0 ? index : makers.length;
+  };
   return [...rows].sort((a, b) => Number(name(a) === NO_SERIES) - Number(name(b) === NO_SERIES)
+    || rank(a) - rank(b)
     || natural(name(a), name(b))
     || Number(!terminalArticle(a)) - Number(!terminalArticle(b))
     || natural(terminalArticle(a), terminalArticle(b)));
