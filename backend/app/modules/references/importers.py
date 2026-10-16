@@ -69,7 +69,7 @@ from .domain import (
     normalized_supplier_key, validate_entries,
 )
 from .technology import (
-    _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, contact_gender, normalize_material,
+    _TECH_SCHEMA, _normalized_article, _range_indexes, _resolve_schema, contact_gender, is_coax_cable_column, normalize_material,
     pull_force_newtons, schema_display_text, schema_keys, sync_schema_fields, terminal_card_fields,
     terminal_card_indexes, terminal_card_problems,
 )
@@ -796,7 +796,9 @@ def _sheet_columns(table: _TechTable, records: Sequence[TechOperationRecord]) ->
     if not table.sheet_columns:
         return list(BASE_COLUMNS[table.tab])
     keys = schema_keys(table.tab.value)
-    return list(dict.fromkeys([*(name for record in records for name in record.fields if name not in keys),
+    coax = table.tab == TechOperationTab.COAX  # the cable's D1–D3 are no column of a connector row (owner 16.10.2026)
+    return list(dict.fromkeys([*(name for record in records for name in record.fields
+                                 if name not in keys and not (coax and is_coax_cable_column(name))),
                                *table.card_columns]))
 
 

@@ -25,8 +25,8 @@ from .equipment import (
     prepare_equipment,
 )
 from .technology import (
-    TECH_SNAPSHOT_SCHEMA_VERSION, schema_columns, schema_display_text, schema_keys, stored_schema_keys, sync_schema_fields,
-    terminal_card_problems,
+    COAX_CABLE_DIAMETERS_REASON, TECH_SNAPSHOT_SCHEMA_VERSION, is_coax_cable_column, schema_columns, schema_display_text, schema_keys, stored_schema_keys,
+    sync_schema_fields, terminal_card_problems,
 )
 
 
@@ -250,6 +250,13 @@ def _editable(record_id: UUID, uow: UnitOfWork) -> TechOperationRecord:
     return record
 
 
+def _without_empty_cable_columns(tab: TechOperationTab, fields: dict[str, str]) -> dict[str, str]:
+    """БД.КОАКС (owner 16.10.2026): a connector row carries no D1–D3 — an emptied one leaves the row's fields."""
+    if tab != TechOperationTab.COAX:
+        return fields
+    return {key: value for key, value in fields.items() if not (is_coax_cable_column(key) and not str(value or "").strip())}
+
+
 def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: UnitOfWork) -> tuple[TechOperationRecord, TechOperationRecord]:
     """The row edit inside an open unit of work (nothing committed): returns the record before and after."""
     record = _editable(record_id, uow)
@@ -274,6 +281,9 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
         if fields.get(edit.field, "") != str(edit.old or "").strip():
             refused.append(f"{edit.field}: запись уже поменяли — откройте её заново")
             continue
+        if record.tab == TechOperationTab.COAX and is_coax_cable_column(edit.field) and value:
+            refused.append(f"{edit.field}: {COAX_CABLE_DIAMETERS_REASON}")
+            continue
         if display == fields.get(edit.field) and value:
             display = value
         fields[edit.field] = value
@@ -294,6 +304,7 @@ def _edit_in(record_id: UUID, edits: tuple[FieldEdit, ...], now: datetime, uow: 
     synced = sync_schema_fields(record.tab.value, fields)
     keys = schema_keys(record.tab.value)
     fields = {key: (fields[key] if key in keys and key in edited else value) for key, value in synced.items()}
+    fields = _without_empty_cable_columns(record.tab, fields)
     _check_terminal_card(record.tab, fields)
     if record.tab == TechOperationTab.OPERATION:
         _check_operation_code(record, fields, uow)
@@ -513,10 +524,13 @@ def _create_in(tab: TechOperationTab, fields: dict[str, str], uow: UnitOfWork) -
     if tab == TechOperationTab.EQUIPMENT:
         # Number, row and code are checked and given under this same transaction as the save.
         fields = prepare_equipment(fields, _equipment_rows(uow), creating=True)
+    if tab == TechOperationTab.COAX and any(is_coax_cable_column(key) and value for key, value in fields.items()):
+        raise ReferenceValidationError(COAX_CABLE_DIAMETERS_REASON)
     filled = [value for value in fields.values() if value]
     if not filled:
         raise ReferenceValidationError("Заполни хотя бы одно поле")
-    fields = {**{name: "" for name in custom_columns(tab, uow)}, **sync_schema_fields(tab.value, fields)}
+    fields = _without_empty_cable_columns(
+        tab, {**{name: "" for name in custom_columns(tab, uow)}, **sync_schema_fields(tab.value, fields)})
     _check_terminal_card(tab, fields)
     if tab == TechOperationTab.OPERATION:
         _check_operation_code(None, fields, uow)

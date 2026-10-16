@@ -617,6 +617,16 @@ def import_sheet_table(tab: str, table: object) -> tuple[ImportedTechnologyRecor
 # tab → (sheet, header row number).
 TECH_SHEETS = {"ob": ("БД.ОБ", 2), "op": ("БД.ОП", 2), "ter": ("БД.ТЕР", 1), "coax": ("БД.КОАКС", 2)}
 
+# БД.КОАКС keeps the connector's own data only (owner 16.10.2026: «разъём тянет L1–L3, а провод — свои данные»): the
+# cable's D1–D3 live in СПР.КАБ / «Коаксиальные кабели» and are never a column of a connector row (folded names).
+COAX_CABLE_COLUMNS = frozenset({"d1", "d2", "d3"})
+COAX_CABLE_DIAMETERS_REASON = "D1–D3 — данные кабеля: правятся во вкладке «Коаксиальные кабели», не в строке разъёма"
+
+
+def is_coax_cable_column(name: object) -> bool:
+    """A БД.КОАКС sheet column that is the cable's (D1–D3, any case): not kept, shown or edited on a connector row."""
+    return str(name or "").strip().casefold() in COAX_CABLE_COLUMNS
+
 
 @dataclass(frozen=True)
 class _SchemaField:
@@ -925,7 +935,8 @@ def sheet_snapshot_records(tab: str, rows: Sequence[Sequence[object]]) -> tuple[
     if len(rows) < 2 or len(rows) < header_row:
         return [], []
     header = list(rows[header_row - 1])
-    named = [(str(name or "").strip(), index) for index, name in enumerate(header) if str(name or "").strip()]
+    named = [(str(name or "").strip(), index) for index, name in enumerate(header) if str(name or "").strip()
+             and not (tab == "coax" and is_coax_cable_column(name))]  # the sheet's D1–D3 formula is the cable's
     resolved = _resolve_schema(fields, header)
 
     def cell(row: Sequence[object], index: int) -> str:

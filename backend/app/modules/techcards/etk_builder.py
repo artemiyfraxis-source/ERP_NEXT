@@ -870,7 +870,8 @@ def _is_mm(value: object) -> bool:
 
 
 def _coax_strip_sizes(config: Mapping[str, Any], side_name: str) -> dict[str, Any]:
-    """Strip sizes of one coax end (L1–L3, D1–D3 of БД.КОАКС) for the sketch etkDrawCoax."""
+    """Strip sizes of one coax end for the sketch etkDrawCoax: L1–L3, L± of the БД.КОАКС connector, D1–D3 of the cable
+    (СПР.КАБ, put on the end by `techcard_build.enrich_coax_diameters`)."""
     coax = config.get("coax") if isinstance(config.get("coax"), Mapping) else {}
     side = coax.get("sideB" if side_name == "B" else "sideA")
     side = side if isinstance(side, Mapping) else {}
@@ -1023,7 +1024,7 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
             fields["lengthKd"] = f"{length}мм"
             fields["cutTolerance"] = _cut_tolerance(op, {"length": length.replace(",", ".")})
     if operation_type == "coaxStrip":
-        # SUPPLYMAP TcBuild.gs etkFields_: размеры разделки стороны (L1–L3, D1–D3 из БД.КОАКС) для эскиза etkDrawCoax_.
+        # Размеры разделки стороны для эскиза etkDrawCoax_: L1–L3 — разъёма (БД.КОАКС), D1–D3 — кабеля (СПР.КАБ).
         fields["coax"] = _coax_strip_sizes(config, "B" if op.get("side") == "B" else "A")
     if operation_type == "coaxCut" and isinstance(op.get("stripSides"), list):
         # Резка с разделкой на роторном станке (владелец 14.10): размеры разделки обоих концов — в эскиз операции;

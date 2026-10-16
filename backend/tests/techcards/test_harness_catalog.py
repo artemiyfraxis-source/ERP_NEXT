@@ -136,14 +136,19 @@ def test_coax_terminations_keep_strip_layers_and_split_shared_articles(catalog, 
     assert bare[0] == {"index": 1, "diameterMm": 0.48, "stripLengthMm": None}
 
 
-def test_coax_termination_takes_missing_diameters_from_spr_kab():
+def test_coax_termination_takes_diameters_only_from_spr_kab():
+    # Владелец 16.10.2026: D1–D3 — у кабеля; D, оставшиеся в строке разъёма, не читаются.
     catalog = build_harness_catalog({
         "kab_coax": [{"Кабель": "RG-316", "D1": "0,51", "D2": "1,52", "D3": "2,5"}],
-        "coax": [{"coaxArticle": "SMA-X", "coaxWire": "RG 316", "D1": "Не найдено", "L1": "2", "L2": "4", "L3": "9"}],
+        "coax": [{"coaxArticle": "SMA-X", "coaxWire": "RG 316", "D1": "9", "D2": "Не найдено", "L1": "2", "L2": "4", "L3": "9"},
+                 {"coaxArticle": "SMA-Y", "coaxWire": "RG-213", "D1": "9", "D2": "9", "D3": "9", "L1": "3"}],
     }, captured_utc="")
     payload = _record(catalog, COAX_TERMINATIONS, "SMA-X")["payload"]
     assert [layer["diameterMm"] for layer in payload["layers"]] == [0.51, 1.52, 2.5]
     assert payload["diametersFrom"] == "СПР.КАБ"
+    no_cable = _record(catalog, COAX_TERMINATIONS, "SMA-Y")["payload"]
+    assert no_cable["layers"] == [{"index": 1, "diameterMm": None, "stripLengthMm": 3.0}]
+    assert not no_cable.get("diametersFrom")
     assert _snapshot(catalog, COAX_TERMINATIONS)["diagnostics"] == []
 
 

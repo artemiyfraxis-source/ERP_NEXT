@@ -7,7 +7,7 @@
 - БД.ТЕР → `terminal` (L+ / L− — поправки длины резки, зачистка, сечения, Ø изоляции);
 - БД.ПРОВ → `wire` (одна жила) и `cable` (жил больше одной);
 - СПР.КАБ (коаксиал) → `coax-cable` со слоями D1–D3;
-- БД.КОАКС → `coax-termination` со слоями D/L разделки (пустой D берётся из СПР.КАБ по кабелю, как в генераторе ЭТК);
+- БД.КОАКС → `coax-termination` со слоями D/L разделки: L — разъёма, D — только кабеля из СПР.КАБ (владелец 16.10.2026);
 - БД.МАТ (термоусадка, оплётка, лента, гофра, кембрик) → `protective-covering`;
 - семейства корпусов разъёмов (`connector_housings`) → `connector-family`, правила аналогов → `connector-alias`.
 
@@ -215,13 +215,17 @@ def _wires(rows: Iterable[Mapping[str, Any]], out: _Collector) -> None:
 
 
 def _coax_layers(fields: Mapping[str, Any], out: _Collector, *, entity: str, key: str, sheet: str,
-                 lengths: bool, fallback: Mapping[int, float] | None = None) -> tuple[list[dict[str, Any]], bool]:
+                 lengths: bool, cable: Mapping[int, float] | None = None) -> tuple[list[dict[str, Any]], bool]:
+    """Layers of a coax cable (its own D1–D3) or of a connector end (`lengths`): the end's L1–L3 with the D1–D3 of
+    its cable (`cable`, from СПР.КАБ) only — a connector row's D is never read (owner 16.10.2026)."""
     layers: list[dict[str, Any]] = []
     filled = False
     for index in (1, 2, 3):
-        diameter = _measure(out, fields, f"D{index}", entity_type=entity, key=key, sheet=sheet)
-        if diameter is None and fallback and index in fallback:
-            diameter, filled = fallback[index], True
+        if lengths:
+            diameter = (cable or {}).get(index)
+            filled = filled or diameter is not None
+        else:
+            diameter = _measure(out, fields, f"D{index}", entity_type=entity, key=key, sheet=sheet)
         length = _measure(out, fields, f"L{index}", entity_type=entity, key=key, sheet=sheet) if lengths else None
         if diameter is None and length is None:
             continue
@@ -263,7 +267,7 @@ def _coax_terminations(rows: Iterable[Mapping[str, Any]], out: _Collector,
         if keys[key] > 1:
             key = f"{key} ({keys[key]})"
         layers, filled = _coax_layers(fields, out, entity="coax-termination", key=key, sheet=sheet, lengths=True,
-                                      fallback=cable_diameters.get(cable_key(cable)))
+                                      cable=cable_diameters.get(cable_key(cable)))
         out.record("coax-termination", key, _payload(
             article=article, connectorType=_text(fields, "coaxType", "Тип/Серия"),
             manufacturer=_text(fields, "coaxMfr", "Производитель"), cable=cable,
