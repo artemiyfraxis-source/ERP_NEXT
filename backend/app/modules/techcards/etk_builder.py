@@ -177,8 +177,48 @@ def _sleeve_suffix(op: Mapping[str, Any]) -> str:
     return f"на месте разделки {letter}{f' ({number})' if number else ''}".rstrip()
 
 
+# Free tails of a complex harness (generator «Сложная сборка», 16.10): their own stripping and tinning, next to the
+# stripping under the splices and the tinning of the main ends — the ETK title says whose ends they are.
+TAIL_KEYS = frozenset({"stripTail", "tinTail"})
+TAIL_SUFFIX = "свободные концы"
+
+# How the splices are joined (generator «Сложная сборка», owner 16.10: «основа это обжим»): crimp with a sleeve, solder
+# or band crimp. A config without `method` (before 16.10) builds as it did — no words added, no parts.
+SPLICE_DONE = {
+    "solder": "провода спаяны",
+    "sleeve": "провода опрессованы гильзой",
+    "band": "провода соединены ленточным обжимом",
+}
+
+
+def _splice_method(op: Mapping[str, Any]) -> str:
+    """The splice op's joining method, "" — not given or unknown (an old config: soldered, built as before)."""
+    method = str(op.get("method") or "").strip() if op.get("type") == "splice" else ""
+    return method if method in SPLICE_DONE else ""
+
+
+def _splice_parts(op: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Sleeves (or the band material) the splices use, folded by article: `count` — splices per item. Solder takes
+    none: a sleeve left over from another method is not issued."""
+    if _splice_method(op) not in {"sleeve", "band"}:
+        return []
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in op.get("sleeves") or []:
+        if not isinstance(item, Mapping):
+            continue
+        art = str(item.get("art") or item.get("name") or "").strip()
+        count = _decimal(item.get("count"))
+        if not art or count <= 0:
+            continue
+        row = grouped.setdefault(art, {"art": art, "name": str(item.get("name") or art).strip(), "count": Decimal(0)})
+        row["count"] += count
+    return list(grouped.values())
+
+
 def _suffix(op: Mapping[str, Any]) -> str:
     operation_type = op.get("type")
+    if op.get("opKey") in TAIL_KEYS:
+        return TAIL_SUFFIX
     if operation_type == "cutWireStrip":
         return "разделка"
     if operation_type == "cutWireCrimp":
@@ -273,7 +313,15 @@ def _result_name(
         return f"{previous}; {done}" if previous else "Термоусадка усажена"
     if operation_type == "stripCable":
         count = int(_decimal(op.get("tutCount")))
-        return f"{previous}; концы разделаны" if previous else f"Концы разделаны: {count}"
+        ends = f"{TAIL_SUFFIX} разделаны" if op.get("opKey") == "stripTail" else "концы разделаны"
+        return f"{previous}; {ends}" if previous else f"{ends[:1].upper()}{ends[1:]}: {count}"
+    if operation_type == "tin" and op.get("opKey") == "tinTail":
+        return f"{previous}; {TAIL_SUFFIX} облужены" if previous else previous
+    method = _splice_method(op)
+    if method:
+        parts = ", ".join(row["art"] for row in _splice_parts(op))
+        done = SPLICE_DONE[method] + (f" {parts}" if parts and method == "sleeve" else "")
+        return f"{previous}; {done}" if previous else done[:1].upper() + done[1:]
     labels = {
         "twist": "провода скручены", "tin": "концы облужены", "insMark": "маркировка нанесена",
         "seal": "место загерметизировано",
@@ -426,10 +474,14 @@ def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[st
 
 
 def _components(op: Mapping[str, Any], config: Mapping[str, Any], code: str) -> list[dict[str, str]]:
+    quantity = _part_quantity(config)
+    if _splice_method(op):
+        # Sleeves of the splices — by the method, whatever the card (PRS_COPPER of the band crimp lists no parts).
+        return [{"art": row["art"], "name": row["name"], "norm": _format(row["count"] * quantity), "unit": "Шт."}
+                for row in _splice_parts(op)]
     if code in NO_COMPONENTS:
         return []
     operation_type = str(op.get("type") or "")
-    quantity = _part_quantity(config)
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
         rows = _group_cut_components(_wires(op, config), quantity)
         endpoint = _endpoint(op)
@@ -684,7 +736,10 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
             and 0 <= pair[0] < len(config_wires) and 0 <= pair[1] < len(config_wires)
         ), Decimal(0)) or Decimal(1)
     counters = {
-        "twist": twist_count, "tin": sum((_number(item.get("qty"), Decimal(1)) for item in wires), Decimal(0)) or 1,
+        # Лужение свободных концов (tinTail): `units` — сколько концов; без него — по проводам, как раньше.
+        "twist": twist_count,
+        "tin": _decimal(op.get("units")) if _decimal(op.get("units")) > 0
+        else sum((_number(item.get("qty"), Decimal(1)) for item in wires), Decimal(0)) or 1,
         "cutTut": _number(op.get("tutCount"), Decimal(1)), "insTut": _number(op.get("tutCount"), Decimal(1)),
         "endCap": _number(op.get("tutCount"), Decimal(1)), "foldCore": _number(op.get("tutCount"), Decimal(1)),
         "stripCable": _number(op.get("tutCount"), Decimal(1)),
