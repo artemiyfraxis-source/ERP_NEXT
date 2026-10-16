@@ -229,6 +229,10 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),
     _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED),
     _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED),
+    # DS1071-01 (Dupont 2,0): rows × holes per row in the part number, like DS1071; the housing is symmetric, no key, no mark.
+    _family("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", r"^I-DS1071-01-SC[A-Z]0?(\d)X0?(\d{1,2})", 2.0, grid=True,
+            order="col", start="TR", color=BLACK,
+            note="на чертеже Connfly DS1071-01 корпус симметричный, без ключа и метки контакта 1 — вставляется любой стороной"),
     # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing, front view of the housing: 6 … 1 moulded at the wire end, but
     # the drawing does not say which end that view shows, so the numbering stays unchecked.
     _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", note=UNCHECKED),
@@ -405,7 +409,8 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "jae-fis": "FI-S10S", "jae-fir": "FI-RE31HL",
     "kls-2-50": "L-KLS1-2.50-04-H", "molex-picoezmate": "78172-0004",
     "connfly-ds1070": "I-DS1070-SCV04", "connfly-ds1072": "I-DS1072-SCT004", "connfly-ds1073": "I-DS1073-SCW004",
-    "connfly-ds1074": "I-DS1074-SCT004", "samtec-isd2": "ISD2-05-D-M", "te-minict": "353908-4", "te-sl156": "770849-4",
+    "connfly-ds1074": "I-DS1074-SCT004", "connfly-ds1071-01": "I-DS1071-01-SCB02X5", "samtec-isd2": "ISD2-05-D-M",
+    "te-minict": "353908-4", "te-sl156": "770849-4",
     "molex-minifit-jr-bk": "39-03-9082", "molex-nanofit-1r": "105307-1204", "molex-nanofit": "105308-1208",
     "molex-nanofit-plug-1r": "200277-1104", "molex-nanofit-plug": "201444-1108", "molex-microfit-plus": "206461-0800",
     "molex-minifit-tpa2": "172708-0008", "molex-minifit-tpa2-1r": "200453-1004", "molex-minifit-max-1r": "215913-1004",
@@ -822,12 +827,29 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
              ("Корпус, оранжевый", "connfly-ds1066", "I-DS1066-SCE0{:02d}", _counts(2, 15))),
             (("Connfly C-DS1066-XXXXX-C", CONNFLY_PDF.format("DS1066")),),
             contacts=(("T-DS1066-SC600", "AWG 30–24"),), note="тип PH; на складе — I-DS1066-SCW02 / SCW03"),
-    _series("connfly-ds1071", "Connfly DS1071 (Dupont 2,54)", "Connfly", WTB, ("I-DS1071-SCB01", "I-DS1071-SCB02", "BLD2, BLS2"),
+    # DS1071 — Connfly C-DS1071-XXXXX-B rev. B (read 16.10.2026): pitch 2.54, «FEMALE TERMINAL» T-DS1071-SCX00 (6 tin,
+    # 8 full gold flash), wire 0.09–0.3 mm², AWG 28–22, insulation OD 1.2–1.6; mates the 2.54 headers DS1021 / DS1022.
+    # The 2.0 mm contact T-DS1071-01-SC… («BLD2, BLS2») belongs to DS1071-01, not here.
+    _series("connfly-ds1071", "Connfly DS1071 (Dupont 2,54)", "Connfly", WTB, ("I-DS1071-SCB01", "I-DS1071-SCB02"),
             (("Корпус, 1 ряд", "connfly-ds1071", "I-DS1071-SCB01X{}", _counts(1, 40)),
              ("Корпус, 2 ряда", "connfly-ds1071", "I-DS1071-SCB02X{}", _counts(2, 40))),
-            (("Connfly C-DS1071-XXXXX-B", CONNFLY_PDF.format("DS1071")),),
-            contacts=(("T-DS1071-SC600", "AWG 28–22"),),
-            note="номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40)"),
+            (("Connfly C-DS1071-XXXXX-B", CONNFLY_PDF.format("DS1071")),
+             ("Connfly C-DS1021 (вилка 2,54 прямая)", CONNFLY_PDF.format("DS1021")),
+             ("Connfly C-DS1022 (вилка 2,54 угловая)", CONNFLY_PDF.format("DS1022"))),
+            contacts=(("T-DS1071-SC600", "олово, AWG 28–22, 0,09–0,3 мм², изоляция Ø 1,2–1,6"),
+                      ("T-DS1071-SC800", "золото, AWG 28–22, 0,09–0,3 мм², изоляция Ø 1,2–1,6")),
+            note="шаг 2,54; номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40); ответные вилки DS1021, DS1022"),
+    # DS1071-01 — Connfly C-DS1071-01-XXXXX-A (2.00mm TJC8, en.connfly.com/static/upload/file/DS1071-01.pdf, read 16.10.2026):
+    # housing I-DS1071-01-SCB0 + holes 1x1…1x40, 2x2…2x40; terminal T-DS1071-01-SCX00 (0 selective gold, 6 tin, 8 full
+    # gold), the sheet gives no wire range.
+    _series("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", "Connfly", WTB, ("I-DS1071-01-SCB01", "I-DS1071-01-SCB02"),
+            (("Корпус, 1 ряд", "connfly-ds1071-01", "I-DS1071-01-SCB01X{}", _counts(1, 40)),
+             ("Корпус, 2 ряда", "connfly-ds1071-01", "I-DS1071-01-SCB02X{}", _counts(2, 40))),
+            (("Connfly C-DS1071-01-XXXXX-A", "https://en.connfly.com/static/upload/file/DS1071-01.pdf"),),
+            contacts=(("T-DS1071-01-SC000", "выборочное золото; провод на чертеже не указан"),
+                      ("T-DS1071-01-SC600", "олово; провод на чертеже не указан"),
+                      ("T-DS1071-01-SC800", "золото; провод на чертеже не указан")),
+            note="шаг 2,0; номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40)"),
     # --- Samtec, TE -------------------------------------------------------------------------------------------------
     _series("samtec-isd2", "Samtec ISD2", "Samtec", WTB, ("ISD2, ITD2", "ISD2"),
             (("Корпус с защёлкой (M)", "samtec-isd2", "ISD2-{:02d}-D-M", (5, 7, 10, 15, 20, 25, 30)),
