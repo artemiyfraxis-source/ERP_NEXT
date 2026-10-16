@@ -292,5 +292,5 @@ def test_molex_sales_drawing_tables():
     # A family whose drawing was not found keeps the ERP's own housing, and the series says «диапазон не сверен».
     clik = series["molex-clikmate"]
     assert [variant["family"] for variant in clik["variants"]] == ["molex-clikmate-20", "molex-clikmate"]
-    assert not clik["range_checked"] and _articles(clik, 1) == ["5025780600"]
+    assert not clik["range_checked"] and _articles(clik, 1) == [f"502578-{n:02d}00" for n in range(2, 16)]
     assert [h["n"] for h in series["molex-clikmate"]["variants"][0]["housings"]] == [*range(2, 11), 12, 13, 14, 15]

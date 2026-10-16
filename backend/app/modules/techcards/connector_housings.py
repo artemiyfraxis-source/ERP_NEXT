@@ -202,9 +202,23 @@ FAMILIES: tuple[dict[str, Any], ...] = (
      "src": "Molex 43020, лист каталога MX01 F-126", "note": "по листу Molex 43020: со стыковки упором защёлки вверх CIRCUIT 1 внизу справа; со стороны проводов — 1 внизу слева"},
     {"id": "molex-microfit-plug-1r", "title": "Molex Micro-Fit 3.0 (вилка, 1 ряд)", "pattern": r"^43640-?0?(\d{1,2})0\d$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TL", "latch": "lever", "color": BLACK, "erp_only": True, "conf": "high",
      "src": "Molex SD-43640-001", "note": "по чертежу Molex SD-43640-001: на лицевой грани с упором защёлки последний контакт слева, «1» справа; со стороны проводов упором вверх — контакт 1 слева"},
-    {"id": "molex-clikmate", "title": "Molex CLIK-Mate 1,5", "pattern": r"^502578-?0?(\d{1,2})00$", "pitch": 1.5, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
-    {"id": "molex-picoclasp", "title": "Molex Pico-Clasp (2 ряда)", "pattern": r"^501189-?(\d{2})10$", "pitch": 1.0, "rows": 2, "order": "col", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
-    {"id": "molex-picoclasp-1r", "title": "Molex Pico-Clasp", "pattern": r"^501330-?0?(\d{1,2})00$", "pitch": 1.0, "rows": 1, "order": "row", "start": "TR", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "low"},
+    # CLIK-Mate 1.5 502578 — Molex 5025780000-SD rev. A (datasheet.lcsc.com copy of 5025780600, read 16.10.2026): the front
+    # view (mating end) has CIRCUIT 1 at the right; the rear view — the wire end with the moulded CIRCUIT 1 MARK ▽, trade
+    # mark and cavity numbers — shows the latch lever on top and CIRCUIT 1 at the LEFT (as CLIK-Mate 2.0). Was TR (mirrored).
+    # Orders: 502578 + count 02…15 + colour 00…09, 11, 14, 16 (sheet 4).
+    {"id": "molex-clikmate", "title": "Molex CLIK-Mate 1,5", "pattern": r"^502578-?(\d{2})(?:0\d|1[146])$", "max": 15, "pitch": 1.5, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "erp_only": True, "conf": "high",
+     "src": "Molex 5025780000-SD", "note": "по чертежу Molex 5025780000-SD: на торце проводов (метка ▽, номера гнёзд) защёлкой вверх контакт 1 слева"},
+    # Pico-Clasp 501189 (2 rows) — Molex 5011890000-SD rev. E (datasheet.lcsc.com copy of 5011894010, read 16.10.2026): the
+    # wire-end view (CIRCUIT 1 / 2 indicator marks, trade mark) has the lock on top, circuit 1 at the top-RIGHT, 2 under
+    # it, N at the bottom-left — the columns of two run right to left. Orders 501189-nn10 (natural) / -nn11 (black), nn = 20, 30, 40, 50.
+    {"id": "molex-picoclasp", "title": "Molex Pico-Clasp (2 ряда)", "pattern": r"^501189-?(\d{2})1[01]$", "pitch": 1.0, "rows": 2, "order": "col", "start": "TR", "latch": "ramp", "color": IVORY, "color_by": ((r"11$", BLACK),), "erp_only": True, "conf": "high",
+     "src": "Molex 5011890000-SD", "note": "по чертежу Molex 5011890000-SD: на торце проводов защёлкой вверх 1 справа вверху, 2 под ней, колонки справа налево"},
+    # Pico-Clasp 501330 (1 row) — Molex 5013300000-SD rev. D (datasheet.lcsc.com copy of 5013300800, read 16.10.2026): the
+    # wire-end view (CIRCUIT 1 INDICATOR MARK, trade mark, cavity numbers) sits under the top view with the lock bump, so
+    # lock up, CIRCUIT 1 at the LEFT, CIRCUIT N at the right; the mating end (small square entries) is the right-hand view.
+    # Was TR (mirrored). Orders 501330-nn00 (natural) / -nn31 (black).
+    {"id": "molex-picoclasp-1r", "title": "Molex Pico-Clasp", "pattern": r"^501330-?0?(\d{1,2})(?:00|31)$", "pitch": 1.0, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": IVORY, "color_by": ((r"31$", BLACK),), "erp_only": True, "conf": "high",
+     "src": "Molex 5013300000-SD", "note": "по чертежу Molex 5013300000-SD: на торце проводов (метка CIRCUIT 1, номера гнёзд) защёлкой вверх контакт 1 слева"},
     {"id": "molex-milligrid", "title": "Molex Milli-Grid 2,0", "pattern": r"^51110-?(\d{2})[56][01]$", "pitch": 2.0, "rows": 2, "order": "col", "start": "TL", "latch": "friction", "color": BLACK, "erp_only": True, "conf": "low"},
     # Hirose drawings (third-angle; copies of the HRS PDFs from datasheet.lcsc.com — hirose.com blocks downloads): the
     # top view shows the mating face (square pin entries), the front view has the wire end DOWN, the view under it is the
@@ -229,7 +243,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     {"id": "jae-fix", "title": "JAE FI-X", "pattern": r"^FI-X(\d+)H", "pitch": 1.0, "rows": 1, "order": "row", "start": "TL", "latch": "ramp", "color": "#b9c0c6", "erp_only": True, "conf": "low",
      "note": "на чертеже JAE SJ111287 (FI-X30HL-B) номеров контактов нет — сверить по детали"},
     # D-Sub: two staggered rows; the standard numbering is mirrored between the socket and the pin side.
-    {"id": "dsub", "title": "D-Sub", "pattern": r"^I?-?DS1033-0?(\d+)([FM])|^D-?SUB-?0?(\d+)([FM])|^D[BE]-?0?(9|15|25)([FMPS])", "kind": "dsub", "count_groups": (1, 3, 5), "gender_groups": (2, 4, 6), "pitch": 2.77, "color": "#c9ccd0", "erp_only": True, "conf": "low", "note": "по стандарту D-Sub; на чертеже Connfly C-DS1033 номеров контактов нет — сверить по цифрам на изоляторе"},
+    {"id": "dsub", "title": "D-Sub", "pattern": r"^I?-?DS1033-0?(\d+)([FM])|^D-?SUB-?0?(\d+)([FM])|^D[BE]-?0?(9|15|25)([FMPS])", "kind": "dsub", "count_groups": (1, 3, 5), "gender_groups": (2, 4, 6), "pitch": 2.77, "color": "#c9ccd0", "erp_only": True, "conf": "high", "src": "DIN 41652 / IEC 60807-3", "note": "по стандарту D-Sub (номера отлиты на изоляторе): со стороны пайки у вилки контакт 1 справа в широком ряду, у розетки — слева; на чертеже Connfly C-DS1033 номеров нет"},
     {"id": "deutsch-dt", "title": "Deutsch DT", "pattern": r"^DT0([46])-(\d+)([PS])", "kind": "dt", "count_group": 2, "pitch": 4.0, "rows": 2, "order": "row", "start": "TL", "snake": True, "latch": "lever", "color": "#8d9297", "cavity": "round", "erp_only": True, "conf": "low", "note": "нумерация по кругу; сверить с цифрами на корпусе"},
     {"id": "te-superseal", "title": "TE Superseal 1.5", "pattern": r"^(28210[4-8]|28208[0789]|282090)-1$", "table": {"282104": 2, "282105": 3, "282106": 4, "282107": 5, "282108": 6, "282080": 2, "282087": 3, "282088": 4, "282089": 5, "282090": 6}, "pitch": 3.5, "rows": 1, "order": "row", "start": "TL", "latch": "lever", "color": BLACK, "cavity": "round", "erp_only": True, "conf": "low"},
     {"id": "aviation-gx", "title": "Авиационный GX", "pattern": r"^GX(12|16|20)M?-(\d+)", "kind": "round", "count_group": 2, "round_auto": True, "color": "#b9c0c6", "erp_only": True, "conf": "low",
