@@ -274,13 +274,21 @@ def test_every_mating_pair_has_two_different_sourced_sides():
 
 
 def test_jst_sm_sides_follow_the_esm_sheet():
-    # eSM p. 3: «Receptacle housing (for pin contact)» SMR is the shroud, «Plug housing (for socket contact)» SMP has the
-    # hooked arms on both ends.
+    # eSM p. 3: «Receptacle housing (for pin contact)» SMR is the hood with the lock lever on top (p. 1), «Plug housing
+    # (for socket contact)» SMP goes in, the catch on its top, the panel arms on both row ends.
     smr, smp = housing_of("SMR-04V-B"), housing_of("SMP-04V-BC")
     assert {key: smr["mate"][key] for key in ("gender", "contacts", "shell", "lock")} == {
-        "gender": "receptacle", "contacts": "pin", "shell": "outer", "lock": "catch"}
-    assert (smp["mate"]["gender"], smp["mate"]["contacts"], smp["mate"]["shell"], smp["mate"]["lock"]) == ("plug", "socket", "inner", "arm")
-    assert "eSM" in smr["mate"]["src"] and smr["roof"]["at"] == smp["roof"]["at"] == "ends"
+        "gender": "receptacle", "contacts": "pin", "shell": "outer", "lock": "arm"}
+    assert (smp["mate"]["gender"], smp["mate"]["contacts"], smp["mate"]["shell"], smp["mate"]["lock"]) == ("plug", "socket", "inner", "catch")
+    assert "eSM" in smr["mate"]["src"] and smr["roof"]["at"] == smp["roof"]["at"] == "center"
+    # Outlines from the eSM housing table (4 contacts: SMR hood 13 × 7.5, body 10.5, 18.2 long; SMP 10.5 × 7.4 × 11.7).
+    a = (smr["n"] - 1) * smr["pitch"]
+    assert (a + smr["body"]["hood"]["extra"], smr["body"]["hood"]["h"], a + smr["body"]["extra"], smr["body"]["len"]) == (13.0, 7.5, 10.5, 18.2)
+    assert (a + smp["body"]["extra"], smp["body"]["h"], smp["body"]["len"]) == (10.5, 7.4, 11.7)
+    assert smp["body"]["wings"]["out"] > 0 and "wings" not in smr["body"] and "hood" not in smp["body"]
+    assert (smr["model"], smp["model"]) == ("hood", "arms")
+    two = housing_of("SMR-02V-B")
+    assert (two["n"] - 1) * two["pitch"] + two["body"]["hood"]["extra"] == 8.0  # eSM: SMR-02V hood 8
     # The analogue BL2018P is drawn as the SMP plug.
     assert housing_of("BL2018P-04")["mate"]["contacts"] == "socket"
 

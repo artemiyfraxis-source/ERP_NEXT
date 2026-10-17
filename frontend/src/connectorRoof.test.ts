@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectorFace, connectorPicture, connectorSummary, topFeature, type ConnectorHousing } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, topFeature, type ConnectorHousing } from "./connectorArt";
 import { connectorModel, hasModel } from "./connectorModel";
 import { connectorTopView, hasTopView } from "./connectorTopView";
 import { etkDrawHarness, etkDrawPinout } from "./etkDraw";
@@ -75,8 +75,8 @@ describe("крыша корпуса: замок или прорези — тол
     expect(roof("jst-gh")).toMatchObject({ kind: "latch", at: "center" });
     expect(roof("jst-sh")).toMatchObject({ kind: "slots", at: "contacts" });
     expect(roof("jst-suh")).toMatchObject({ kind: "slots", at: "contacts" });
-    expect(roof("jst-sm-r")).toMatchObject({ kind: "latch", at: "ends" });
-    expect(roof("jst-sm-p")).toMatchObject({ kind: "latch", at: "ends" });
+    expect(roof("jst-sm-r")).toMatchObject({ kind: "latch", at: "center" });
+    expect(roof("jst-sm-p")).toMatchObject({ kind: "latch", at: "center" });
     expect(roof("molex-picolock-20")).toMatchObject({ kind: "latch", at: "ends" });
     expect(roof("molex-zerohachi")).toMatchObject({ kind: "latch", at: "ends" });
     expect(roof("molex-milligrid-151192")).toMatchObject({ kind: "latch", at: "ends" });
@@ -140,19 +140,46 @@ describe("вилка и розетка одной серии нарисован�
     expect(connectorPicture(a, 150, 90).body).not.toBe(connectorPicture(b, 150, 90).body);
   });
 
-  it("draws JST SM by eSM: SMR — штыри в кожухе с упорами на торцах, SMP — гнёзда, входит, плечи с зацепами", () => {
+  it("draws JST SM by eSM: SMR — штыри в кожухе с рычагом замка, SMP — гнёзда, входит, упор замка и плечи в панель", () => {
     const sm = pairs.find((p) => p.series === "JST SM")!, smr = sm.a!, smp = sm.b!;
     expect(smr.art).toBe("SMR-04V-B");
-    expect(smr.mate).toMatchObject({ gender: "receptacle", contacts: "pin", shell: "outer", lock: "catch" });
-    expect(smp.mate).toMatchObject({ gender: "plug", contacts: "socket", shell: "inner", lock: "arm" });
+    expect(smr.mate).toMatchObject({ gender: "receptacle", contacts: "pin", shell: "outer", lock: "arm" });
+    expect(smp.mate).toMatchObject({ gender: "plug", contacts: "socket", shell: "inner", lock: "catch" });
     expect(smr.mate!.src).toContain("eSM");
     expect(connectorSummary(smr)).toContain("штыри");
     expect(connectorSummary(smp)).toContain("гнёзда");
     const pinout = (hs: ConnectorHousing) => etkDrawPinout({ type: "insTerm", housing: hs, fields: { wires: [{ art: "красный", pins: [1] }] } });
-    expect(pinout(smr)).toContain("упоры замка по торцам сверху");
-    expect(pinout(smp)).toContain("замок-плечи по торцам сверху");
+    expect(pinout(smr)).toContain("рычаг замка сверху");
+    expect(pinout(smp)).toContain("упор замка сверху, плечи крепления в панель по торцам");
     expect(pinout(smr)).toContain('data-contact="pin"');
     expect(pinout(smp)).toContain('data-contact="socket"');
+  });
+
+  it("draws SMR and SMP as different parts by the eSM outlines, not only by the contacts", () => {
+    // eSM с. 3 (4 конт.): SMR — кожух 13 × 7,5 × 8 и корпус 10,5 за ним (длина 18,2), рычаг замка на 1,2 над кожухом;
+    // SMP — 10,5 × 7,4 × 11,7 и плечи крепления в панель по 3,2 с каждого торца ряда.
+    const sm = pairs.find((p) => p.series === "JST SM")!, smr = sm.a!, smp = sm.b!;
+    const ratio = (box: { w: number; h: number }) => box.w / box.h;
+    const parts = (svg: string) => attr(svg, "part");
+    const views = (hs: ConnectorHousing) => ({
+      face: connectorFace(hs, 0, 0, 24, null), top: connectorTopView(hs, 200, 140)!,
+      iso: connectorModel(hs, 150, 90)!, picture: connectorPicture(hs, 150, 90),
+    });
+    const r = views(smr), p = views(smp);
+    for (const view of ["face", "top", "iso", "picture"] as const) {
+      expect(parts(r[view].body)).toEqual(['data-part="hood"']);
+      expect(parts(p[view].body)).toEqual(['data-part="wings"']);
+      expect(attr(r[view].body, "lock")).toEqual(['data-lock="arm"']);
+      expect(attr(p[view].body, "lock")).toEqual(['data-lock="catch"']);
+    }
+    // Торец: розетка почти квадратная (кожух 13 × 8,7 с рычагом), вилка широкая (16,9 с плечами × 7,4).
+    expect(ratio(p.face) / ratio(r.face)).toBeGreaterThan(1.3);
+    expect(connectorFaceUnits(smr)).toBeCloseTo(13 / 2.5, 5);
+    expect(connectorFaceUnits(smp)).toBeCloseTo((10.5 + 6.4) / 2.5, 5);
+    // Вид сверху: розетка вытянута вдоль провода (18,2 × 13), вилка шире своей длины (16,9 × 11,7).
+    expect(ratio(r.top)).toBeLessThan(0.9);
+    expect(ratio(p.top)).toBeGreaterThan(1.1);
+    expect(r.top.body).not.toBe(p.top.body);
   });
 
   it("draws Molex Micro-Fit by the Molex sheets: 43025 — гнёзда и защёлка, 43020 — штыри в кожухе с упором", () => {

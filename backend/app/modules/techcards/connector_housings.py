@@ -110,8 +110,25 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     _jst("jst-rcy-p", "RCY (SYP, гнёзда)", r"^SYP-0*(\d+)T", 2.5, "mark", color="#c8322d",
          color_by=((r"\dTV", IVORY),), conf="high", src="JST eRCY, Housing",
          note="по чертежу JST eRCY: грань с цифрами 1, 2 сверху — контакт 1 слева"),
-    _jst("jst-sm-r", "SM (розетка)", r"^SMR-0*(\d+)V", 2.5, "lever", max=12, start="TL", conf="high", color_by=((r"V-B", BLACK),)),
-    _jst("jst-sm-p", "SM (вилка)", r"^SMP-0*(\d+)V", 2.5, "lever", max=12, start="TR", conf="high", color_by=((r"V-B", BLACK),)),
+    # SM — JST eSM (read 17.10.2026 via Web Archive), p. 3 «Housing» (A = (n−1)·2.5) and p. 1 (picture of the mated pair,
+    # «Panel Layout and Assembly layout»); cross-checked with the owner's product photos of SMR-05V-B and SMP-02.
+    # SMR «Receptacle housing (for pin contact)»: the HOOD at the mating end — B = A + 5.5, 7.5 thick, 8 long — and the
+    # narrower stepped body at the wire end — B = A + 3.0, 10.2 long (18.2 overall); on top in the middle the rocker
+    # lock lever with longitudinal ribs (end view: the tab 3.8 wide; side view: from the mouth 14.5 back; assembly:
+    # 8.7 over the lever, i.e. 1.2 above the hood). The body thickness behind the hood is not dimensioned — 6.0 is read
+    # off the assembly sketch (`h`).
+    # SMP «Plug housing (for socket contact)»: B = A + 3.0, 7.4 thick, 11.7 long; a flange at the wire end and a thinner
+    # nose (panel hole 5.15 high on p. 1) that goes into the SMR hood, the lock catch on its top at the mating end
+    # (top view: the small block on the mating edge), and on BOTH row ends the flexible panel arms flaring out 3.2 with the
+    # stepped grips at the wire end (panel thickness 0.5–2.0 → three steps; end view: arms 4 wide).
+    _jst("jst-sm-r", "SM (розетка)", r"^SMR-0*(\d+)V", 2.5, "lever", max=12, start="TL", conf="high", color_by=((r"V-B", BLACK),),
+         src="JST eSM, Housing", model="hood",
+         body={"extra": 3.0, "h": 6.0, "len": 18.2, "win": (1.0, 1.0), "lock_w": 3.8, "lock_h": 1.2, "lock_len": 14.5,
+               "hood": {"extra": 5.5, "h": 7.5, "len": 8.0, "wall": 0.8}}),
+    _jst("jst-sm-p", "SM (вилка)", r"^SMP-0*(\d+)V", 2.5, "lever", max=12, start="TR", conf="high", color_by=((r"V-B", BLACK),),
+         src="JST eSM, Housing", model="arms",
+         body={"extra": 3.0, "h": 7.4, "len": 11.7, "win": (1.1, 1.1), "lock_w": 3.0, "lock_h": 0.6, "lock_len": 1.3,
+               "nose_h": 5.2, "front_len": 1.4, "wings": {"out": 3.2, "w": 4.0, "root": 4.3, "tip": 1.1}}),
     # PicoBlade 51021 — Molex 510210000-SD (third angle): the top view is the wire end, with the face of the contact
     # windows (front view) at the bottom, the friction-lock bumps on the opposite face and CIRCUIT 1 (moulded «1» mark)
     # on the right; the bottom view has CIRCUIT 1 on the right too. From the wire side, windows down: contact 1 on the
@@ -270,10 +287,11 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     "jst-shd": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHD") + " (с. 2, Housing)"},
     "jst-shl": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHL") + " (с. 2, Socket housing)"},
     "jst-shj": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHJ") + " (с. 3, Socket housing)"},
-    # eSM p. 1 «Arm lock mechanism»; p. 3 «Housing»: the plug SMP carries the hooked lock arms at both ends, the
-    # receptacle SMR takes them on the ends of its shroud (MATING says which side has the arm and which the catch).
-    "jst-sm-r": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 3, Receptacle housing: ответные упоры плеч на торцах)"},
-    "jst-sm-p": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 3, Plug housing: плечи замка с зацепами на торцах)"},
+    # eSM p. 1 «Arm lock mechanism» (picture and assembly side view) and p. 3 «Housing»: the receptacle SMR carries the
+    # ribbed rocker lock lever in the middle of its top; the plug SMP the lock catch in the middle of its nose top. The
+    # SMP arms on the row ends are the panel arms (p. 1 panel hole for the plug housing) — `body.wings`, not the roof.
+    "jst-sm-r": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eSM") + " (с. 1 рисунок и вид в сборе, с. 3 Receptacle housing: рычаг замка с рифлением по центру крыши)"},
+    "jst-sm-p": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eSM") + " (с. 3, Plug housing: упор замка по центру у стыковочного торца; плечи по торцам ряда — крепление в панель)"},
     # eJWPF p. 2 «Housing»: the tab housing (T) has the lock window in the middle of its shroud, the receptacle housing
     # (R) the lock lever on that face.
     "jst-jwpf": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eJWPF") + " (с. 2, Tab housing: окно замка)"},
@@ -373,10 +391,11 @@ EEL_2 = JST_SHEET.format("eEL") + " (с. 2–3: Receptacle housing for pin conta
 EJWPF_2 = JST_SHEET.format("eJWPF") + " (с. 2: Tab housing for Tab contact, Receptacle housing for Receptacle contact)"
 DF1B_CAT = "Hirose DF1B, каталог 01.07.2020 (штыревой корпус на провод — кожух 7 мм с рычагом, гнездовой — с зацепом)"
 MATING: dict[str, dict[str, str]] = {
-    # eSM p. 3: «Receptacle housing (for pin contact)» SMR — 7.5 × 8 shroud around the pins, the plug body 5.5 goes in;
-    # «Plug housing (for socket contact)» SMP — the hooked arms on both ends.
-    "jst-sm-r": _mate("receptacle", "pin", "outer", "catch", ESM_3),
-    "jst-sm-p": _mate("plug", "socket", "inner", "arm", ESM_3),
+    # eSM p. 3: «Receptacle housing (for pin contact)» SMR — the hood (B = A + 5.5, 7.5 thick) around the pins, with the
+    # rocker lock lever on top (p. 1); «Plug housing (for socket contact)» SMP — its nose goes into the hood, the lever
+    # hooks the catch on the nose top.
+    "jst-sm-r": _mate("receptacle", "pin", "outer", "arm", ESM_3 + ", с. 1 (рычаг замка на розетке)"),
+    "jst-sm-p": _mate("plug", "socket", "inner", "catch", ESM_3 + ", с. 1 (упор замка на вилке, плечи — крепление в панель)"),
     # eRCY p. 2: SYR (for pin contact) 6.7 high with a 5.9 opening, SYP (for socket contact) 5.3 at the mating part.
     "jst-rcy": _mate("receptacle", "pin", "outer", "", ERCY_2),
     "jst-rcy-p": _mate("plug", "socket", "inner", "", ERCY_2),

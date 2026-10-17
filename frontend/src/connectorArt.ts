@@ -34,6 +34,16 @@ export type Mate = {
 export type HousingBody = {
   extra: number; h: number; rear_h?: number; len: number; front_len?: number; ears?: number; ear_len?: number;
   win?: [number, number] | number[]; lock_w?: number; lock_inset?: number; lock_h?: number;
+  /** Длина замка вдоль корпуса от стыковочного торца, мм (JST SM: рычаг SMR 14,5, упор SMP 1,3). */
+  lock_len?: number;
+  /** Толщина «носа», входящего в кожух ответной части, за фланцем длиной front_len (JST SMP). */
+  nose_h?: number;
+  /** Кожух розетки у стыковочного торца — шире и толще корпуса: ширина (колонок−1)·шаг + extra, толщина h, длина len,
+   *  стенка wall (JST SMR: 13 × 7,5 × 8 при корпусе 10,5 для 4 конт.). */
+  hood?: { extra: number; h: number; len: number; wall?: number };
+  /** Гибкие плечи на торцах ряда (JST SMP: крепление в панель): вылет out, ширина w по толщине, корень в root от
+   *  стыковочного торца, концы со ступенями в tip от торца проводов, мм. */
+  wings?: { out: number; w: number; root: number; tip: number };
 };
 
 export type Pt = [number, number];
@@ -298,6 +308,7 @@ export function connectorPicture(hs: ConnectorHousing, maxW: number, maxH: numbe
     }
     return { w: 2 * r + ox + 2, h: 2 * r - oy + 2, body };
   }
+  if (isPairBody(hs.body) && hs.rows === 1) return pairModel(hs, hs.body, maxW, maxH, view);
   if (hs.body && hs.rows === 1) return bodyPicture(hs, hs.body, maxW, maxH, byPin, view);
   const { dx, dz, sy } = VIEWS[view];
   const pitch = facePitch(hs, look);
@@ -384,6 +395,7 @@ export function connectorFace(hs: ConnectorHousing, x: number, y: number, s: num
   }
   const color = hs.color || "#efe6cf", dark = isDark(color), fs = Math.max(6.5, s * 0.34);
   if (look.shape === "round" || look.shape === "barrel") return roundFace(hs, look, x, y, s, byPin, hits);
+  if (isPairBody(hs.body)) return pairFace(hs, hs.body, x, y, s, byPin, hits);
   if (hs.body) return bodyFace(hs, hs.body, x, y, s, byPin, hits);
   const pitch = facePitch(hs, look), k = s / pitch;
   const [W, H] = faceSize(hs, look, pitch);
@@ -507,13 +519,23 @@ function roundFace(hs: ConnectorHousing, look: Look, x: number, y: number, s: nu
 /** Ширина торца в шагах контактов — по ней эскиз и база подбирают масштаб, чтобы корпус влез целиком. */
 export function connectorFaceUnits(hs: ConnectorHousing): number {
   const pitch = hs.pitch || 2.5;
-  if (hs.body) return bodyWidth(hs, hs.body, pitch) / pitch;
+  if (hs.body) return bodySpan(hs, hs.body, pitch).W / pitch;
   return Math.max(hs.cols + (hs.kind === "dsub" ? 1 : 0), 1) / (hs.kind === "dsub" ? 2 : 1);
 }
 
 export function bodyWidth(hs: ConnectorHousing, b: HousingBody, pitch: number): number {
   return (hs.cols - 1) * pitch + b.extra + 2 * (b.ears || 0);
 }
+
+/** Полная ширина корпуса с кожухом или плечами (W), ширина самого корпуса (core) и его сдвиг от левого края (off), мм. */
+export function bodySpan(hs: ConnectorHousing, b: HousingBody, pitch: number): { W: number; core: number; off: number } {
+  const core = bodyWidth(hs, b, pitch), hood = b.hood ? (hs.cols - 1) * pitch + b.hood.extra : 0;
+  const W = Math.max(core, hood, b.wings ? core + 2 * b.wings.out : 0);
+  return { W, core, off: (W - core) / 2 };
+}
+
+/** Корпус пары с кожухом (розетка JST SMR) или с плечами по торцам (вилка JST SMP) — рисуется своим контуром. */
+export const isPairBody = (b: HousingBody | null | undefined): b is HousingBody => Boolean(b && (b.hood || b.wings));
 
 /** Центры окон по x (мм от левого края корпуса) в порядке колонок сетки. */
 export function bodyColumns(hs: ConnectorHousing, b: HousingBody, pitch: number): number[] {
@@ -640,6 +662,142 @@ function bodyPicture(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: n
     }
   });
   return { w: W * k + ox * L + 2, h: top + H * k * sy + 2, body };
+}
+
+/** Метка контакта 1 у крайнего окна: красный треугольник снаружи корпуса, остриём к окну. */
+function pinOneArrow(right: boolean, edgeX: number, cy: number, t: number): string {
+  const ex = right ? edgeX + 2 : edgeX - 2, d = right ? 1 : -1;
+  return `<path d="M${f(ex + d * t * 1.5)},${f(cy - t)} L${f(ex + d * t * 1.5)},${f(cy + t)} L${f(ex)},${f(cy)} z" fill="#d7322d"/>`;
+}
+
+/** Торец пары по чертежу (JST eSM, владелец 17.10: «так и не решена проблема, почему в базе одинаково выглядят SMP и SMR»).
+ *  Розетка SMR: вокруг корпуса — обод кожуха (кожух шире и толще корпуса), над ним рычаг замка с рифлением. Вилка SMP:
+ *  корпус без обода, по торцам ряда — плечи крепления в панель со ступенями; упор замка вилки стоит на «носе» за фланцем,
+ *  со стороны проводов его не видно — показан штрихом. `data-part` — hood (кожух) или wings (плечи): по ним тесты видят,
+ *  что контуры половин разные. */
+function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s: number, byPin: Record<number, string> | null, hits?: FaceHit[]): Box {
+  const pitch = hs.pitch || 1, k = s / pitch, color = hs.color || "#efe6cf", dark = isDark(color);
+  const fs = Math.max(6.5, Math.min(s * 0.34, 15));
+  const { W, core, off } = bodySpan(hs, b, pitch), hood = b.hood, wings = b.wings;
+  const outerH = hood ? hood.h : b.h, H = b.h, by = (outerH - H) / 2;
+  const lw = hs.roof?.kind === "latch" ? lockWidth(b, core) : 0, lift = hood && lw ? b.lock_h || 0 : 0;
+  const X = (mm: number) => x + mm * k, Y = (mm: number) => y + 1 + (mm + lift) * k;
+  const [winW, winH] = b.win && b.win.length === 2 ? b.win : [pitch * 0.6, H * 0.45];
+  const rib = shade(color, dark ? 0.42 : -0.38);
+  let body = gradient(gradId(color), color);
+  if (hood) {
+    // Кожух: толстый обод с внутренней кромкой (на чертеже торца SMR — двойной контур).
+    const hw = (hs.cols - 1) * pitch + hood.extra, hx = (W - hw) / 2, wall = hood.wall || 0.8;
+    body += `<g data-shell="outer" data-part="hood"><rect x="${f(X(hx))}" y="${f(Y(0))}" width="${f(hw * k)}" height="${f(hood.h * k)}" rx="${f(Math.min(4, k * 0.6))}" fill="${shade(color, dark ? 0.1 : -0.2)}" stroke="${EDGE}" stroke-width="1.3"/>` +
+      `<rect x="${f(X(hx + wall / 2))}" y="${f(Y(wall / 2))}" width="${f((hw - wall) * k)}" height="${f((hood.h - wall) * k)}" rx="${f(Math.min(3, k * 0.4))}" fill="none" stroke="${rib}" stroke-width=".9"/></g>`;
+  }
+  if (wings) {
+    // Плечи по торцам ряда: с торца проводов видна их ширина и вылет, ступени — вертикальными рёбрами.
+    const wy = by + (H - wings.w) / 2, fill = shade(color, dark ? 0.16 : -0.08);
+    const side = (edge: number, dir: number) => {
+      const a = X(edge), b2 = X(edge + dir * wings.out), lx = Math.min(a, b2), wpx = Math.abs(b2 - a);
+      let g = `<rect x="${f(lx)}" y="${f(Y(wy))}" width="${f(wpx)}" height="${f(wings.w * k)}" rx="${f(Math.min(2, k * 0.2))}" fill="${fill}" stroke="${EDGE}" stroke-width="1.1"/>`;
+      for (const t of [0.35, 0.6, 0.82]) g += `<line x1="${f(a + (b2 - a) * t)}" y1="${f(Y(wy) + 2)}" x2="${f(a + (b2 - a) * t)}" y2="${f(Y(wy + wings.w) - 2)}" stroke="${rib}" stroke-width="1"/>`;
+      return g;
+    };
+    body += `<g data-part="wings">${side(off, -1)}${side(off + core, 1)}</g>`;
+  }
+  body += `<rect x="${f(X(off))}" y="${f(Y(by))}" width="${f(core * k)}" height="${f(H * k)}" rx="${f(Math.min(2, k * 0.15))}" fill="url(#${gradId(color)})" stroke="${EDGE}" stroke-width="1.2"/>`;
+  if (lift) {
+    // Рычаг замка розетки над кожухом: кнопка с продольным рифлением (фото SMR, eSM с. 1).
+    const lx = X(off + (core - lw) / 2), w = lw * k, top = Y(-lift), h = (lift + by) * k;
+    let g = `<rect x="${f(lx)}" y="${f(top)}" width="${f(w)}" height="${f(h)}" rx="${f(Math.min(2, k * 0.2))}" fill="${shade(color, dark ? 0.2 : 0.06)}" stroke="${EDGE}" stroke-width="1.1"/>`;
+    for (const t of [0.28, 0.5, 0.72]) g += `<line x1="${f(lx + w * t)}" y1="${f(top + 2)}" x2="${f(lx + w * t)}" y2="${f(top + h - 2)}" stroke="${rib}" stroke-width="1"/>`;
+    body += roofMark("latch", lockMark(hs, g));
+  } else if (lw && b.nose_h) {
+    const ny = by + (H - b.nose_h) / 2, lh = b.lock_h || 0.5;
+    body += roofMark("latch", lockMark(hs, `<rect x="${f(X(off + (core - lw) / 2))}" y="${f(Y(ny - lh))}" width="${f(lw * k)}" height="${f(lh * k)}" fill="none" stroke="${rib}" stroke-width="1" stroke-dasharray="3 2"/>`));
+  }
+  const row = hs.grid[0] || [];
+  bodyColumns(hs, b, pitch).forEach((cxMm, c) => {
+    const pin = row[c];
+    if (!pin) return;
+    const cx = X(off + cxMm), cy = Y(by + H / 2), wn = byPin && byPin[pin];
+    hits?.push({ pin, x: cx, y: cy, r: s * 0.5 });
+    body += contactGlyph(hs.mate?.contacts, cx, cy, winW * k / 2, winH * k / 2, false, dark ? "#5d666b" : "#2f3336", 1, Math.min(2, k * 0.06));
+    if (wn) {
+      const wc = wireColor(wn);
+      body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(Math.min(winW, winH) * k * 0.46)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
+        `<text x="${f(cx)}" y="${f(cy + fs * 0.36)}" text-anchor="middle" font-size="${f(fs)}" font-weight="700" fill="${DARK_WIRE.test(wc) ? "#fff" : EDGE}">${pin}</text>`;
+    } else if (s >= 14) {
+      body += `<text x="${f(cx)}" y="${f(cy + fs * 0.36)}" text-anchor="middle" font-size="${f(fs)}" fill="${hs.mate?.contacts === "pin" ? EDGE : "#e9eef0"}">${pin}</text>`;
+    }
+    if (pin === 1) {
+      const right = c > (hs.cols - 1) / 2;
+      body += pinOneArrow(right, right ? X(W) : X(0), cy, Math.max(3, s * 0.2));
+    }
+  });
+  return { w: W * k, h: (outerH + lift) * k + 8, body };
+}
+
+/** Объёмная модель пары по чертежу (JST eSM), ракурс «iso» или «top» (вид сверху, провода снизу). Розетка SMR: узкий
+ *  корпус у торца проводов, за ним кожух шире и толще, по центру крыши — рычаг замка с рифлением от кожуха почти до
+ *  торца проводов. Вилка SMP: фланец у торца проводов, «нос» тоньше, на нём у стыковочного торца — упор замка, по торцам
+ *  ряда — плечи крепления в панель, расходятся от носа к торцу проводов, на концах ступени. */
+export function pairModel(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: number, view: PictureView = "iso"): Box {
+  const pitch = hs.pitch || 1, color = hs.color || "#efe6cf", dark = isDark(color);
+  const { W, core, off } = bodySpan(hs, b, pitch), hood = b.hood, wings = b.wings, L = b.len, H = b.h;
+  const outerH = hood ? hood.h : H, by = (outerH - H) / 2;
+  const lw = hs.roof?.kind === "latch" ? lockWidth(b, core) : 0, lift = hood && lw ? b.lock_h || 0 : 0;
+  const flat = view === "top", DX = flat ? 0 : 0.62, DY = flat ? -0.87 : -0.4, SY = flat ? 0.5 : 1;
+  const k = Math.min(maxW / (W + L * DX), maxH / ((outerH + lift) * SY + L * -DY), 18);
+  const top = 1 + L * -DY * k + lift * k * SY;
+  const P = (px: number, py: number, d: number): Pt => [px * k + 1 + DX * k * d, py * k * SY + top + DY * k * d];
+  const quad = (x0: number, x1: number, py: number, d0: number, d1: number): Pt[] => [P(x0, py, d0), P(x1, py, d0), P(x1, py, d1), P(x0, py, d1)];
+  const box = (x0: number, y0: number, x1: number, y1: number, d0: number, d1: number, fill: string, width = 0.8) => {
+    const front = [P(x0, y0, d0), P(x1, y0, d0), P(x1, y1, d0), P(x0, y1, d0)];
+    return prism(front, DX * k * (d1 - d0), DY * k * (d1 - d0), fill, width) + poly(front, fill, EDGE, width);
+  };
+  const line = (a: Pt, c: Pt, stroke: string) => `<line x1="${f(a[0])}" y1="${f(a[1])}" x2="${f(c[0])}" y2="${f(c[1])}" stroke="${stroke}" stroke-width="${f(Math.max(0.6, k * 0.12))}"/>`;
+  const rib = shade(color, dark ? 0.42 : -0.38), mid = off + core / 2;
+  let body = gradient(gradId(color), color), faceY = 0;
+  if (hood) {
+    const hw = (hs.cols - 1) * pitch + hood.extra, hx = (W - hw) / 2, d0 = L - hood.len;
+    let g = box(hx, 0, hx + hw, hood.h, d0, L, shade(color, dark ? 0.06 : -0.06));
+    if (lw) g += poly(quad(mid - lw / 2 - 0.35, mid + lw / 2 + 0.35, 0, d0, L), shade(color, dark ? -0.4 : -0.5), EDGE, 0.4);
+    body += `<g data-shell="outer" data-part="hood">${g}</g>` + box(off, by, off + core, by + H, 0, d0, color);
+    faceY = by;
+    if (lw) {
+      // Рычаг замка: от устья кожуха назад, кнопка у торца проводов; рифление вдоль рычага и поперёк на кнопке.
+      const d0l = L - Math.min(b.lock_len || L * 0.8, L - 0.5), x0 = mid - lw / 2, x1 = mid + lw / 2;
+      let lever = box(x0, -lift, x1, by, d0l, L, shade(color, dark ? 0.16 : 0.05), 0.6);
+      for (const t of [0.28, 0.5, 0.72]) lever += line(P(x0 + lw * t, -lift, d0l + 2), P(x0 + lw * t, -lift, L - 0.4), rib);
+      for (const dd of [0.4, 0.9, 1.4]) lever += line(P(x0 + 0.25, -lift, d0l + dd), P(x1 - 0.25, -lift, d0l + dd), rib);
+      body += roofMark("latch", lockMark(hs, lever));
+    }
+  } else if (wings) {
+    const fl = Math.min(b.front_len || 1.4, L), nh = Math.min(b.nose_h || H, H), ny = (H - nh) / 2;
+    body += `<g data-shell="inner">${box(off, ny, off + core, ny + nh, fl, L, shade(color, dark ? 0.04 : -0.04))}</g>`;
+    if (lw) body += roofMark("latch", lockMark(hs, box(mid - lw / 2, ny - (b.lock_h || 0.5), mid + lw / 2, ny, L - (b.lock_len || 1.3), L, shade(color, dark ? 0.18 : 0.06), 0.6)));
+    const wy0 = (H - wings.w) / 2, wy1 = wy0 + wings.w, o = wings.out, t = wings.tip, r = L - wings.root;
+    // Плечо: планка от носа (корень у стыковочного торца) наружу к торцу проводов, на конце — три ступени под панель.
+    const shape: Pt[] = [[0, r], [o - 0.7, t + 1.5], [o - 0.7, t + 1.0], [o - 0.35, t + 1.0], [o - 0.35, t + 0.5], [o, t + 0.5], [o, t], [o - 1.0, t], [0, r - 1.4]];
+    const wing = (edge: number, dir: number) => {
+      const pts = shape.map(([u, d]) => P(edge + dir * u, wy0, d));
+      return `<g data-part="wings">${prism(pts, 0, (wy1 - wy0) * k * SY, shade(color, dark ? 0.02 : -0.12), 0.6)}${poly(pts, shade(color, dark ? 0.2 : 0.04), EDGE, 0.7)}</g>`;
+    };
+    body += wing(off, -1) + box(off, 0, off + core, H, 0, fl, color) + wing(off + core, 1);
+  }
+  // Торец проводов: окна контактов (штыри или гнёзда по стороне пары), контакт 1 — красная метка.
+  body += poly([P(off, faceY, 0), P(off + core, faceY, 0), P(off + core, faceY + H, 0), P(off, faceY + H, 0)], `url(#${gradId(color)})`, EDGE, 0.9);
+  const [winW, winH] = b.win && b.win.length === 2 ? b.win : [pitch * 0.6, H * 0.45], row = hs.grid[0] || [];
+  bodyColumns(hs, b, pitch).forEach((cxMm, c) => {
+    const [px, py] = P(off + cxMm, faceY + H / 2, 0);
+    body += contactGlyph(hs.mate?.contacts, px, py, winW * k / 2, winH * k * SY / 2, false, dark ? "#5d666b" : "#2f3336", SY);
+    if (row[c] === 1) {
+      const right = c > (hs.cols - 1) / 2;
+      // У вилки — за концами плеч, у розетки — у торца корпуса (кожух за ним дальше по проводу).
+      const edge = wings ? (right ? W : 0) : right ? off + core : off;
+      body += pinOneArrow(right, P(edge, 0, 0)[0], py, Math.max(2.5, Math.min(winW, winH) * k * 0.45));
+    }
+  });
+  const pad = Math.max(6, Math.min(winW, winH) * k * 0.7);
+  return { w: W * k + DX * k * L + 2 + pad * 2, h: top + outerH * k * SY + 2, body: `<g transform="translate(${f(pad)},0)">${body}</g>` };
 }
 
 /** Подпись под рисунком: серия, шаг, число контактов — «JST GH · 1,25 мм · 4 конт.». */
