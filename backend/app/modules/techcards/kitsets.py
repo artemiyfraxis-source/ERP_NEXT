@@ -425,6 +425,7 @@ class SupplyStock:
     name: str
     quantity: Decimal
     off_book: bool = False
+    issued: Decimal = Decimal("0")  # a kit line: of `quantity`, issued (less what came back good) — the rest is reserved
 
 
 @dataclass(frozen=True)
@@ -441,6 +442,7 @@ class SupplyLine:
     ordered: Decimal = Decimal("0")  # «В закупке»: open requests and procurement lines of the project
     free: Decimal = Decimal("0")  # «Свободно»: free stock (with the project's own reserves) under this item
     kitted: Decimal = Decimal("0")  # reserved or issued to the project's kits
+    issued: Decimal = Decimal("0")  # of `kitted`, already issued from the warehouse (less what came back good)
     # «Без ГРН»: procurement covered it «Есть на складе, без ГРН» — on the shelf, in no lot, reserved nowhere; less
     # what the project's kits already issued «есть, не заведено» (the same unbooked goods, never counted twice).
     off_book: Decimal = Decimal("0")
@@ -461,7 +463,7 @@ class SupplyLine:
 class SupplyState:
     """One word of «Стадия» on «Снабжение», its tone and a tooltip with the numbers behind it."""
 
-    key: str  # short | kitting | procurement | received | outside | stock | none
+    key: str  # short | issued | kitting | procurement | received | outside | stock | none
     label: str
     tone: str  # ok | warn | danger | info | neutral
     hint: str
@@ -475,7 +477,9 @@ def supply_state(line: SupplyLine) -> SupplyState:
     системы»), first that holds:
 
     - «Не хватает N» — need − free − without ГРН − in procurement − in the kits is still above zero (the checkbox);
-    - «В комплектации» — the project's kits already hold (reserved or issued) the whole need;
+    - «Выдано в производство» — the project's kits already issued the whole need from the warehouse (owner 17.10.2026:
+      «почему пишется в комплектации, если оно уже выдано»);
+    - «В комплектации» — the project's kits hold the whole need, part of it still reserved on the shelf;
     - «В закупке» — an ERP procurement line of the position is still open;
     - «Принято на склад» — procurement brought it and receiving accepted it;
     - «Куплено вне системы» — only purchase requests, none handed to procurement («В закупку» never pressed);
@@ -494,10 +498,16 @@ def supply_state(line: SupplyLine) -> SupplyState:
         return SupplyState(
             "short", f"Не хватает {n(line.short)}", "danger", f"{numbers} → не хватает {n(line.short)}",
         )
+    if line.issued >= line.need:
+        return SupplyState(
+            "issued", "Выдано в производство", "ok",
+            f"Выдано со склада по комплектации проекта: {n(line.issued)} из {n(line.need)} · {numbers}",
+        )
     if line.kitted >= line.need:
         return SupplyState(
             "kitting", "В комплектации", "ok",
-            f"В резерве или выдано по комплектации проекта: {n(line.kitted)} из {n(line.need)} · {numbers}",
+            f"По комплектации проекта: выдано {n(line.issued)}, в резерве {n(line.kitted - line.issued)} из {n(line.need)}"
+            f" · {numbers}",
         )
     procurement = [row for row in line.rows if row.where in _PROCUREMENT_PLACES]
     rows_text = "; ".join(f"{row.source_id} · {row.where} · {row.status}" for row in line.rows if row.source_id)
@@ -571,7 +581,7 @@ def supply_lines(
                     "link": component.link.strip(),
                     "need": Decimal("0"), "grn": "", "rows": (), "used": set(), "names": set(),
                     "free": Decimal("0"), "kitted": Decimal("0"), "off_book": Decimal("0"),
-                    "kitted_off_book": Decimal("0"), "absent": Decimal("0"),
+                    "kitted_off_book": Decimal("0"), "absent": Decimal("0"), "issued": Decimal("0"),
                 }
             used = _article_key(kit_article(component.article, component.name)["art"])
             if used != key:
@@ -596,6 +606,8 @@ def supply_lines(
                 lines[key][field_name] += item.quantity
                 if field_name == "kitted" and item.off_book:
                     lines[key]["kitted_off_book"] += item.quantity
+                if field_name == "kitted":
+                    lines[key]["issued"] += min(item.issued, item.quantity)
     result = []
     for line in lines.values():
         found = line["rows"]
@@ -612,7 +624,7 @@ def supply_lines(
             grn=line["grn"], stage=stage, received=any(row.where == "Приёмка" and row.received for row in found),
             rows=found, item_type=line["type"],
             ordered=sum((row.open_quantity for row in found), Decimal("0")),
-            free=max(line["free"] - line["absent"], Decimal("0")), kitted=line["kitted"],
+            free=max(line["free"] - line["absent"], Decimal("0")), kitted=line["kitted"], issued=line["issued"],
             off_book=max(line["off_book"] - line["kitted_off_book"], Decimal("0")), link=line["link"],
         ))
     return tuple(result)

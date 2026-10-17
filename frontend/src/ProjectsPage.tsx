@@ -854,7 +854,8 @@ function SostavTab({ card, canEdit, reload, setNote, setError, openGen, openTc, 
 /* «Стадия» одним словом (владелец 12.10.2026): счётчики сверху идут в том же порядке и тех же цветах. */
 const SUPPLY_STATES: Array<[key: string, label: string, tone: string]> = [
   ["short", "Не хватает", "danger"], ["procurement", "В закупке", "warn"], ["outside", "Куплено вне системы", "neutral"],
-  ["stock", "Со склада", "info"], ["kitting", "В комплектации", "ok"], ["received", "Принято на склад", "ok"],
+  ["stock", "Со склада", "info"], ["kitting", "В комплектации", "ok"], ["issued", "Выдано в производство", "ok"],
+  ["received", "Принято на склад", "ok"],
 ];
 
 type Maybe = { items: FulfillmentCandidate[]; more: number };

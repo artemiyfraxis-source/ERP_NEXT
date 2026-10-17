@@ -357,6 +357,9 @@ def _row(where: str, status: str, source: str, **values) -> SupplyRow:
     (_position(free=Decimal("5")), "short", "Не хватает 15", "danger"),
     (_position(free=Decimal("5"), ordered=Decimal("2.5")), "short", "Не хватает 12,5", "danger"),
     (_position(kitted=Decimal("20")), "kitting", "В комплектации", "ok"),
+    (_position(kitted=Decimal("20"), issued=Decimal("12")), "kitting", "В комплектации", "ok"),
+    # Everything the project needs is already issued from the warehouse (owner 17.10.2026): not «в комплектации».
+    (_position(kitted=Decimal("20"), issued=Decimal("20")), "issued", "Выдано в производство", "ok"),
     (_position(ordered=Decimal("20"), rows=(_row("Закупка", "В работе", "ЗК-1", open_quantity=Decimal("20")),)),
      "procurement", "В закупке", "warn"),
     (_position(free=Decimal("20"), rows=(_row("Приёмка", "Готово", "ЗК-1", received=True),)),
@@ -392,3 +395,11 @@ def test_supply_lines_carry_the_first_link_of_the_position():
     ])
     (line,) = supply_lines(kitset, [])
     assert line.link == "https://shop.example/xhp"
+
+
+def test_supply_lines_count_the_issued_part_of_the_kits_apart_from_the_reserve():
+    """A kit line holding 9, of it issued 5 (the rest reserved) — the position keeps both numbers (owner 17.10.2026)."""
+    kitset = _replaced_wire_kitset()
+    line = {item.article: item for item in supply_lines(kitset, [], kitted=[
+        SupplyStock("GHR-04V-S", "Колодка 4pin 1.25мм", Decimal("9"), issued=Decimal("5"))])}["GHR-04V-S"]
+    assert (line.kitted, line.issued) == (Decimal("9"), Decimal("5"))
