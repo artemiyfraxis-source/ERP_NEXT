@@ -1,4 +1,4 @@
-from app.modules.techcards.connector_housings import attach_housings, housing_grid, housing_of
+from app.modules.techcards.connector_housings import MATING_PAIRS, attach_housings, housing_grid, housing_of, mating_pairs
 
 
 def test_current_supplymap_connector_families_resolve_wire_side_layouts():
@@ -255,3 +255,43 @@ def test_picoblade_plug_51047_is_split_from_the_checked_receptacle():
     assert plug["conf"] == receptacle["conf"] == "high"
     # 510470000-SD: CIRCUIT 1 INDICATOR MARK on the wire end at contact 1 — mark face up, 1 on the LEFT (was TR, no cue).
     assert (plug["grid"], plug["latch"], plug["src"]) == ([[1, 2, 3]], "mark", "Molex 510470000-SD")
+
+
+def test_every_mating_pair_has_two_different_sourced_sides():
+    # Owner 17.10: «а почему у тебя розетка и вилка одинаково выглядит» — each half of a pair carries its side by the
+    # maker's sheet: pins vs sockets, the shroud vs the housing that goes in, the lock arm vs its catch / window.
+    pairs = mating_pairs()
+    assert len(pairs) == len(MATING_PAIRS)
+    for pair in pairs:
+        a, b = pair["a"], pair["b"]
+        assert a and b, pair["series"]
+        assert a["mate"]["src"] and b["mate"]["src"], pair["series"]
+        assert {a["mate"]["contacts"], b["mate"]["contacts"]} == {"pin", "socket"}, pair["series"]
+        if a["mate"].get("shell") or b["mate"].get("shell"):
+            assert {a["mate"].get("shell"), b["mate"].get("shell")} == {"outer", "inner"}, pair["series"]
+        if a["mate"].get("lock") or b["mate"].get("lock"):
+            assert a["mate"].get("lock") != b["mate"].get("lock"), pair["series"]
+
+
+def test_jst_sm_sides_follow_the_esm_sheet():
+    # eSM p. 3: «Receptacle housing (for pin contact)» SMR is the shroud, «Plug housing (for socket contact)» SMP has the
+    # hooked arms on both ends.
+    smr, smp = housing_of("SMR-04V-B"), housing_of("SMP-04V-BC")
+    assert {key: smr["mate"][key] for key in ("gender", "contacts", "shell", "lock")} == {
+        "gender": "receptacle", "contacts": "pin", "shell": "outer", "lock": "catch"}
+    assert (smp["mate"]["gender"], smp["mate"]["contacts"], smp["mate"]["shell"], smp["mate"]["lock"]) == ("plug", "socket", "inner", "arm")
+    assert "eSM" in smr["mate"]["src"] and smr["roof"]["at"] == smp["roof"]["at"] == "ends"
+    # The analogue BL2018P is drawn as the SMP plug.
+    assert housing_of("BL2018P-04")["mate"]["contacts"] == "socket"
+
+
+def test_jst_el_sides_come_from_the_article_and_picoblade_plug_windows_pair_up():
+    assert housing_of("ELR-03V")["mate"]["contacts"] == "pin" and housing_of("ELP-03V")["mate"]["contacts"] == "socket"
+    assert housing_of("51047-0300")["roof"]["at"] == "center" and housing_of("51047-0400")["roof"]["at"] == "pair"
+    assert "pair_from" not in housing_of("51047-0400")["roof"]
+
+
+def test_series_without_a_sheet_for_the_side_get_no_mate():
+    assert housing_of("GHR-04V-S")["mate"] is None
+    assert housing_of("DT06-4S")["mate"] is None  # Deutsch DT: te.com sheet not reachable — `male` only, no mating side
+    assert housing_of("DS1033-09M")["mate"]["contacts"] == "pin" and housing_of("DS1033-09F")["mate"]["contacts"] == "socket"

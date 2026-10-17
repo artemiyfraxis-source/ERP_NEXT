@@ -2,7 +2,7 @@
 // Одни и те же строки идут и на экран (блок «Эскиз»), и в печать (etkPrint.ts): печатное окно — отдельный
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
-import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Roof } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Mate, type Roof } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
@@ -13,7 +13,7 @@ export type EtkHousing = {
   art?: string; title?: string; pitch?: number | null; rows: number; cols: number; n?: number;
   kind?: string; color: string; latch?: string; cavity?: string; labels?: string[] | null;
   grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null; conf?: string; note?: string;
-  family?: string; male?: boolean | null; body?: HousingBody | null; model?: string; roof?: Roof | null;
+  family?: string; male?: boolean | null; body?: HousingBody | null; model?: string; roof?: Roof | null; mate?: Mate | null;
 };
 
 export type EtkTopologyData = {
@@ -541,7 +541,13 @@ export function etkHousingSvg(hs: EtkHousing, x: number, y: number, s: number, b
 /** Что у корпуса сверху — только подтверждённое листом производителя (hs.roof); метка ▽ и окна снизу — как в базе. */
 function roofCaption(hs: EtkHousing): string {
   const roof = hs.roof, mark = hs.latch === "mark" ? ", метка ▽ сверху, над контактом 1" : "";
-  if (roof?.kind === "latch") return `${roof.at === "ends" ? ", замок-плечи по торцам сверху" : ", защёлка сверху"}${mark}`;
+  if (roof?.kind === "latch") {
+    // Сторона пары по листу (hs.mate.lock): у вилки и розетки одной серии на крыше разное — плечо, упор или окно.
+    const lock = hs.mate?.lock, ends = roof.at === "ends", two = roof.at === "pair";
+    const what = lock === "catch" ? (ends ? "упоры замка по торцам" : "упор замка") : lock === "window" ? (two ? "окна замка" : "окно замка")
+      : ends ? "замок-плечи по торцам" : "защёлка";
+    return `, ${what} сверху${mark}`;
+  }
   if (roof?.kind === "slots") return `${roof.at === "keys" ? ", кнопки поляризации сверху" : ", окна фиксаторов сверху"}${mark}`;
   return mark || (hs.latch === "windows" ? ", окна фиксаторов снизу" : "");
 }

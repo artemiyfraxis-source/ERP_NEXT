@@ -270,9 +270,17 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     "jst-shd": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHD") + " (с. 2, Housing)"},
     "jst-shl": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHL") + " (с. 2, Socket housing)"},
     "jst-shj": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHJ") + " (с. 3, Socket housing)"},
-    # eSM p. 1: «Arm lock mechanism» — the plug and the receptacle lock with arms at the sides of the housing.
-    "jst-sm-r": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 1, «Arm lock mechanism»)"},
-    "jst-sm-p": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 1, «Arm lock mechanism»)"},
+    # eSM p. 1 «Arm lock mechanism»; p. 3 «Housing»: the plug SMP carries the hooked lock arms at both ends, the
+    # receptacle SMR takes them on the ends of its shroud (MATING says which side has the arm and which the catch).
+    "jst-sm-r": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 3, Receptacle housing: ответные упоры плеч на торцах)"},
+    "jst-sm-p": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 3, Plug housing: плечи замка с зацепами на торцах)"},
+    # eJWPF p. 2 «Housing»: the tab housing (T) has the lock window in the middle of its shroud, the receptacle housing
+    # (R) the lock lever on that face.
+    "jst-jwpf": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eJWPF") + " (с. 2, Tab housing: окно замка)"},
+    "jst-jwpf-r": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eJWPF") + " (с. 2, Receptacle housing: рычаг замка)"},
+    # PicoBlade 51047 — Molex 510470000-SD note 4: a locking window in the shroud, one for 2–3 circuits, two from 4 on.
+    "molex-picoblade-plug": {"kind": "latch", "at": "center", "pair_from": 4,
+                             "src": "Molex 510470000-SD, л. 1, прим. 4 «LOCKING WINDOW» (2–3 конт. — одно, от 4 — два)"},
     # ePHD «Socket housing»: the locks are hooks on the end walls (the ▽ face is only the face cue).
     "jst-phd": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("ePHD") + " (с. 2, Socket housing: замки на торцах)"},
     # Zero-Hachi sheet 2 «LOCK SHAPE»: side lock for 2–10 circuits (11–20 have the two-sided lock).
@@ -320,13 +328,17 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
 }
 
 
-def roof_of(family: Mapping[str, Any]) -> dict[str, str] | None:
+def roof_of(family: Mapping[str, Any], count: int = 0) -> dict[str, str] | None:
     """The sourced roof feature of a family, or None. Besides the explicit table, a series whose drawing was read (high
     confidence + a named source) keeps what that drawing shows: lock lever/ramp -> latch in the middle; contact-lance
-    windows face (JST SH/PH/ZH, Connfly DS1066, Mini-SPOX, PicoBlade) -> a slot per contact."""
+    windows face (JST SH/PH/ZH, Connfly DS1066, Mini-SPOX, PicoBlade) -> a slot per contact. `pair_from`: from that many
+    contacts the sheet shows two lock features instead of one (at "pair")."""
     explicit = ROOF_EXPLICIT.get(family["id"])
     if explicit:
-        return dict(explicit)
+        roof = {key: value for key, value in explicit.items() if key != "pair_from"}
+        if count and count >= int(explicit.get("pair_from") or 10**6):
+            roof["at"] = "pair"
+        return roof
     src = family.get("src")
     if not src or family.get("conf") != "high":
         return None
@@ -335,6 +347,126 @@ def roof_of(family: Mapping[str, Any]) -> dict[str, str] | None:
     if family.get("latch") in {"lever", "ramp"}:
         return {"kind": "latch", "at": "center", "src": src}
     return None
+
+
+# Mating side of the wire-to-wire pairs (owner, 17.10.2026: «а почему у тебя розетка и вилка одинаково выглядит»): what
+# the maker's sheet shows for each housing of a pair, so the two halves of one series are drawn apart.
+# `gender` — the maker's name of the housing: "receptacle" (розетка) or "plug" (вилка). The name does not say which
+# contacts it takes (JST: the receptacle SMR takes the pins; Molex: the receptacle 43025 takes the sockets), hence
+# `contacts` — "pin" (штыри) or "socket" (гнёзда). `shell` — "outer": its shroud takes the other housing in; "inner":
+# it goes into the other one. `lock` — "arm": the flexible lock arm / lever; "catch": the rigid ramp or hook the arm
+# grips; "window": the opening the other housing's lock snaps into; absent — the sheet shows no lock between the two.
+# Where the lock sits (middle, ends) is the roof's `at` (ROOF_EXPLICIT / roof_of). `src` — the sheet it was read from.
+def _mate(gender: str, contacts: str, shell: str, lock: str, src: str) -> dict[str, str]:
+    mate = {"gender": gender, "contacts": contacts, "shell": shell, "lock": lock, "src": src}
+    return {key: value for key, value in mate.items() if value}
+
+
+ESM_3 = JST_SHEET.format("eSM") + " (с. 3, Housing)"
+ERCY_2 = JST_SHEET.format("eRCY") + " (с. 2, Housing: SYP входит в SYR, замка на листе нет)"
+EEL_2 = JST_SHEET.format("eEL") + " (с. 2–3: Receptacle housing for pin contact, Plug housing for socket contact)"
+EJWPF_2 = JST_SHEET.format("eJWPF") + " (с. 2: Tab housing for Tab contact, Receptacle housing for Receptacle contact)"
+DF1B_CAT = "Hirose DF1B, каталог 01.07.2020 (штыревой корпус на провод — кожух 7 мм с рычагом, гнездовой — с зацепом)"
+MATING: dict[str, dict[str, str]] = {
+    # eSM p. 3: «Receptacle housing (for pin contact)» SMR — 7.5 × 8 shroud around the pins, the plug body 5.5 goes in;
+    # «Plug housing (for socket contact)» SMP — the hooked arms on both ends.
+    "jst-sm-r": _mate("receptacle", "pin", "outer", "catch", ESM_3),
+    "jst-sm-p": _mate("plug", "socket", "inner", "arm", ESM_3),
+    # eRCY p. 2: SYR (for pin contact) 6.7 high with a 5.9 opening, SYP (for socket contact) 5.3 at the mating part.
+    "jst-rcy": _mate("receptacle", "pin", "outer", "", ERCY_2),
+    "jst-rcy-p": _mate("plug", "socket", "inner", "", ERCY_2),
+    # eJWPF p. 2: the tab housing T (tab = pin contacts) is the shroud with the lock window; the receptacle housing R
+    # (receptacle = socket contacts) goes in with its lock lever (the photo on p. 1 shows R entering T).
+    "jst-jwpf": _mate("", "pin", "outer", "window", EJWPF_2),
+    "jst-jwpf-r": _mate("receptacle", "socket", "inner", "arm", EJWPF_2),
+    # PicoBlade 510470000-SD: «WTW PLUG HOUSING», applicable plug terminal 501258, the shroud with the locking windows;
+    # it mates with 51021 (receptacle terminals 50079 / 50058; MX01 A-119 «Friction locks» — the bumps on its top).
+    "molex-picoblade-plug": _mate("plug", "pin", "outer", "window", "Molex 510470000-SD, л. 1–2"),
+    "molex-picoblade": _mate("receptacle", "socket", "inner", "", "Molex 510470000-SD, л. 2 «MATE WITH 51021»; Molex MX01 A-119"),
+    # Micro-Fit 3.0: the receptacles 43025 / 43645 take the female terminals 43030 / 46235 and carry the latch arm
+    # (SDA-43025, SDA-43645); the plugs 43020 / 43640 take the male terminals 43031, their shroud has the latch ramp on
+    # top (MX01 F-126 photo, SD-43640-001 «MALE TERMINAL»).
+    "molex-microfit": _mate("receptacle", "socket", "inner", "arm", "Molex SDA-43025 («RECEPTACLE … FEMALE TERMINAL SERIES 43030 OR 46235»)"),
+    "molex-microfit-1r": _mate("receptacle", "socket", "inner", "arm", "Molex SDA-43645 («RECEPTACLE ACCEPTS MOLEX MICRO FIT FEMALE TERMINAL»)"),
+    "molex-microfit-plug": _mate("plug", "pin", "outer", "catch", "Molex 43020, лист каталога MX01 F-126 («Mates With 43025, Use With 43031», фото: упор защёлки на кожухе)"),
+    "molex-microfit-plug-1r": _mate("plug", "pin", "outer", "catch", "Molex SD-43640-001 («PLUG … MALE TERMINAL», упор защёлки на лицевой грани)"),
+    # Nano-Fit: 2002771000-SD / 2014441000-SD «PLUG HOUSING», terminal 201447, mated view — the receptacle goes into the
+    # plug and its lever grips the plug's catch frame; SD-105307-100 / SD-105308-100: receptacle, terminal 105300.
+    "molex-nanofit-plug-1r": _mate("plug", "pin", "outer", "catch", "Molex 2002771000-SD, л. 1–2 (терминал 201447, ответная 105307)"),
+    "molex-nanofit-plug": _mate("plug", "pin", "outer", "catch", "Molex 2014441000-SD (терминал 201447, ответная 105308)"),
+    "molex-nanofit-1r": _mate("receptacle", "socket", "inner", "arm", "Molex SD-105307-100 (терминал 105300); 2002771000-SD, л. 2 — вид в сборе"),
+    "molex-nanofit": _mate("receptacle", "socket", "inner", "arm", "Molex SD-105308-100 (терминал 105300); 2014441000-SD — вид в сборе"),
+    # Micro-Lock Plus 1.25 W/W: 2145250000-SD «PLUG HOUSING», plug terminal 2145241000, the shroud with the lock window
+    # (sheet 2 mated view); 2145260000-SD «RECEPTACLE HOUSING», terminal 5054311000, its lock goes into that window.
+    "molex-microlock-125-p": _mate("plug", "pin", "outer", "window", "Molex 2145250000-SD, л. 1–3"),
+    "molex-microlock-125-s": _mate("receptacle", "socket", "inner", "arm", "Molex 2145260000-SD; 2145250000-SD, л. 2 — вид в сборе"),
+    # Hirose DF1B: the in-line plugs EP / DEP take the pin contacts in a 7 mm shroud with the lock lever, the in-line
+    # sockets ES / DES the socket contacts with the lock hook (on the back face — not on the roof); S / DS go onto the
+    # DF1BZ headers; DF1BA (simple lock) — the panel plug without the lever.
+    "hirose-df1b-p": _mate("plug", "pin", "outer", "arm", DF1B_CAT),
+    "hirose-df1b-p2r": _mate("plug", "pin", "outer", "arm", DF1B_CAT),
+    "hirose-df1ba-p": _mate("plug", "pin", "outer", "", DF1B_CAT),
+    "hirose-df1ba-p2r": _mate("plug", "pin", "outer", "", DF1B_CAT),
+    "hirose-df1b-es": _mate("receptacle", "socket", "inner", "catch", DF1B_CAT),
+    "hirose-df1b-des": _mate("receptacle", "socket", "inner", "catch", DF1B_CAT),
+    "hirose-df1b": _mate("receptacle", "socket", "inner", "", DF1B_CAT),
+    "hirose-df1b-2r": _mate("receptacle", "socket", "inner", "", DF1B_CAT),
+}
+# Families that hold both halves of a pair under one pattern: (family id, article regex, entry); first match wins.
+MATING_BY_ARTICLE: tuple[tuple[str, str, dict[str, str]], ...] = (
+    # eEL p. 2–3: ELR «Receptacle housing (for pin contact)» — the shroud with the lock catch (and the panel arms);
+    # ELP «Plug housing (for socket contact)» — goes in, the lock lever on its face.
+    ("jst-el", r"^ELR", _mate("receptacle", "pin", "outer", "catch", EEL_2)),
+    ("jst-el", r"^ELP", _mate("plug", "socket", "inner", "arm", EEL_2)),
+    ("jst-el-n", r"^ELR", _mate("receptacle", "pin", "outer", "catch", EEL_2)),
+    ("jst-el-n", r"^ELP", _mate("plug", "socket", "inner", "arm", EEL_2)),
+    # The shop's own servo housings: «Корпус под гнёзда JR-T-Female» / «Корпус под штыри JR-T-Male» (no maker sheet,
+    # so no shell or lock).
+    ("jr-servo", r"FEMALE$", _mate("", "socket", "", "", "каталог ERP: JR-H-Female — под гнёзда JR-T-Female (Pololu 1924)")),
+    ("jr-servo", r"MALE$", _mate("", "pin", "", "", "каталог ERP: JR-H-Male — под штыри JR-T-Male (Pololu 1925)")),
+)
+# Pairs whose two halves differ only by the part number's gender letter: contacts from it, by the family's standard.
+MATING_BY_MALE: dict[str, str] = {
+    "dsub": "DIN 41652 / IEC 60807-3: вилка (M) — штыри, розетка (F) — гнёзда",
+}
+
+
+def mate_of(family: Mapping[str, Any], article: str, male: bool | None) -> dict[str, str] | None:
+    """The mating side of a housing (MATING), or None when no sheet says it. A family whose part number carries the
+    gender (D-Sub) gets the contact kind only; DT, Weipu SA8 and LP-12 keep `male` without a sourced mating side."""
+    for family_id, pattern, entry in MATING_BY_ARTICLE:
+        if family_id == family["id"] and re.search(pattern, article, flags=re.I):
+            return dict(entry)
+    if family["id"] in MATING:
+        return dict(MATING[family["id"]])
+    if family["id"] in MATING_BY_MALE and male is not None:
+        return _mate("plug" if male else "receptacle", "pin" if male else "socket", "", "", MATING_BY_MALE[family["id"]])
+    return None
+
+
+# The wire-to-wire pairs the catalogue holds both halves of, one sample article per half: (series, one half, other half).
+MATING_PAIRS: tuple[tuple[str, str, str], ...] = (
+    ("JST SM", "SMR-04V-B", "SMP-04V-BC"),
+    ("JST RCY", "SYR-02T", "SYP-02T-1"),
+    ("JST EL", "ELR-03V", "ELP-03V"),
+    ("JST EL (4 конт. в 2 ряда)", "ELR-04NV", "ELP-04NV"),
+    ("JST JWPF", "04T-JWPF-VSLE-S", "04R-JWPF-VSLE-S"),
+    ("Molex PicoBlade", "51021-0400", "51047-0400"),
+    ("Molex Micro-Fit 3.0 (2 ряда)", "43025-0400", "43020-0400"),
+    ("Molex Micro-Fit 3.0 (1 ряд)", "43645-0400", "43640-0400"),
+    ("Molex Nano-Fit", "105307-1204", "200277-1104"),
+    ("Molex Nano-Fit (2 ряда)", "105308-1208", "201444-1108"),
+    ("Molex Micro-Lock Plus 1,25", "2145260600", "2145252060"),
+    ("Hirose DF1B", "DF1B-5ES-2.5RC", "DF1B-5EP-2.5RC"),
+    ("Hirose DF1B (2 ряда)", "DF1B-10DES-2.5RC", "DF1B-10DEP-2.5RC"),
+    ("Сервоконнектор JR", "JR-H-Female", "JR-H-Male"),
+    ("D-Sub", "DS1033-09F", "DS1033-09M"),
+)
+
+
+def mating_pairs() -> list[dict[str, Any]]:
+    """Both halves of every pair in MATING_PAIRS, drawn by housing_of — the base of the «plug ≠ receptacle» checks."""
+    return [{"series": series, "a": housing_of(first), "b": housing_of(second)} for series, first, second in MATING_PAIRS]
 
 
 def normalize_article(value: object) -> str:
@@ -471,7 +603,8 @@ def _layout(
         "src": family.get("src", ""),
         # Gallery model template matched against the maker drawing (connectorModel.ts); "" — no checked model.
         "model": family.get("model", ""),
-        "roof": roof_of(family),
+        "roof": roof_of(family, count),
+        "mate": mate_of(family, normalize_article(article), male),
     }
 
 
