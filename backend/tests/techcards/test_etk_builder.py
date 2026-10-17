@@ -606,6 +606,43 @@ def test_cut_length_tolerance_entered_by_hand_stays_as_entered():
     assert build_etk(config, CARDS, operation_library_commit="x")["operations"][0]["fields"]["cutTolerance"] == "(+/-)1мм"
 
 
+def _mixed_cut_config(lengths: list[int]) -> dict:
+    colors = ["красный", "красный", "черный", "черный"]
+    wires = [{"name": f"НВ4 0,2 {colors[index % 4]}", "art": f"НВ4 0,2 {colors[index % 4]}", "qty": 1, "length": length}
+             for index, length in enumerate(lengths)]
+    return {
+        "assemblyName": "713К.4 КБ1", "partQty": 500, "wires": wires,
+        "ops": [{
+            "type": "cutWireCrimp", "opNum": "CUT_WIRE+1crimp", "side": "B", "tPrep": 600, "tOp": 6, "wires": wires,
+            "strip": {"a": True, "lenA": "5", "b": True, "lenB": "2,5"},
+            "ep": {"connArt": "DS1071", "termArt": "T-DS1071-SC600", "termName": "Терминал"},
+        }],
+    }
+
+
+def test_cut_batch_of_mixed_lengths_keeps_every_length_with_its_count():
+    # Владелец 17.10, 713К.4 X5/X6: «тут один чёрный 200 мм» — партия 180, 180, 180, 200, а ЭТК показывала одну длину.
+    operation = build_etk(_mixed_cut_config([180, 180, 180, 200]), CARDS, operation_library_commit="x")["operations"][0]
+    fields = operation["fields"]
+    assert fields["lengthKd"] == "180 мм ×3, 200 мм ×1"
+    assert fields["cutTolerance"] == "±3 мм"
+    assert [wire["length"] for wire in fields["wires"]] == [180, 180, 180, 200]
+    # Провод в метрах и время — по длине каждого провода, не по первой.
+    meters = {row["art"]: row["norm"] for row in operation["components"] if row["unit"] == "М."}
+    assert meters == {"НВ4 0,2 красный": "180", "НВ4 0,2 черный": "190"}
+    assert "НВ4 0,2 черный 200мм" in operation["result"][-1]["name"]
+    assert len(operation["time"]) == 4
+
+
+def test_cut_batch_of_mixed_lengths_gives_each_length_its_tolerance_when_they_differ():
+    fields = build_etk(_mixed_cut_config([180, 600, 180, 200]), CARDS, operation_library_commit="x")["operations"][0]["fields"]
+    assert fields["lengthKd"] == "180 мм ×2, 200 мм ×1, 600 мм ×1"
+    assert fields["cutTolerance"] == "180, 200 мм ±3 мм; 600 мм ±5 мм"
+    # Одна длина — как раньше.
+    single = build_etk(_mixed_cut_config([180, 180]), CARDS, operation_library_commit="x")["operations"][0]["fields"]
+    assert (single["lengthKd"], single["cutTolerance"]) == ("180мм", "±3 мм")
+
+
 def test_cut_cards_list_the_measuring_tools_their_steps_use():
     config = {
         "assemblyName": "Жгут", "partQty": 10,
