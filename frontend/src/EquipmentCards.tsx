@@ -1,19 +1,23 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { failureText, referencesApi, type CrimpCodes, type TechOperationRecord } from "./api";
 import { PageWindow } from "./PageWindow";
 import { CrimpLinks } from "./CrimpLinks";
 import { DataTable, type DataColumn } from "./DataTable";
 import {
-  CODE_KEY, CRIMP_TOOL_TYPE, MATRIX_TYPE, OP_LINK_COLUMNS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
-  inventoryRange, invOf, nameOf, norm, operationField, operationsOfModel, pick, placeOf, typeOf,
+  CODE_KEY, CRIMP_TOOL_TYPE, INV_KEY, MATRIX_TYPE, NAME_KEYS, TARGETS_KEY, TOOL_KEY, crimpRecord, groupModels,
+  inventoryRange, invOf, nameOf, operationsOfModel, pick, placeOf, typeOf,
   type EquipmentModel,
 } from "./equipmentModel";
 import "./equipmentPanel.css";
 import { headerLabel, valueLabel } from "./referenceLabels";
 
 /** БД.ОБ: the list is one row per model (owner 12.10.2026: «дубли одного и того же свернуть»), a row opens the machine
-    card in a right-hand panel beside the list (master–detail; the pick lives in `?equipment=`) — instances with «Ещё такой же», the БД.ОП operations tied to the model (link / unlink), what a crimp tool or a
-    matrix crimps, the economics. The raw 21-column row stays under «Прочее». */
+    card in a window over the list (the pick lives in `?equipment=`) — instances with «Ещё такой же», the БД.ОП operations
+    tied to the model, what a crimp tool or a matrix crimps, the economics. The raw 21-column row stays under «Прочее».
+    Owner 17.10.2026: every value is edited right in the card on a click, no «Править» form; a model value (name, article,
+    economy, «Прочее») is written to every unit of the model at once, a unit's own value (inv. №, №, place, code) — to that
+    unit. Operations are tied in the operation's card (БД.ОП «Машина» / «Инструмент» / «Апликаторы / модули»): here they
+    are only listed. */
 
 // DB_SCHEMA keys the importer stores next to the sheet's own columns — shown once, by the sheet header.
 const SCHEMA_KEYS = new Set(["baseValue", "obType"]);
@@ -24,6 +28,32 @@ const isEconomy = (key: string) => ECONOMY.test(key.trim());
 const CRIMP_TYPES = [CRIMP_TOOL_TYPE, MATRIX_TYPE];
 const opNumber = (op: TechOperationRecord) => pick(op.fields, "Номер", "opNumber");
 const opName = (op: TechOperationRecord) => pick(op.fields, "Название", "opName");
+// Passport of the model: the sheet column each line edits (the first one the record has).
+const PASSPORT: Array<[string, string[]]> = [["Наименование", NAME_KEYS], ["Артикул", ["Артикул"]], ["Производитель", ["Производитель"]],
+  ["Тип", ["Тип"]], ["Описание", ["Описание"]]];
+
+type SaveValue = (key: string, value: string) => Promise<void>;
+
+/** A value edited in place: a click turns it into a field; Enter or leaving the field writes it, Esc puts it back. */
+export function InlineValue({ label, value, display, editable, multiline, onSave }: {
+  label: string; value: string; display?: ReactNode; editable: boolean; multiline?: boolean; onSave: (value: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  if (!editable) return <>{display ?? (value || "—")}</>;
+  if (draft === null) {
+    return <button type="button" className="eq-val" aria-label={`${label}: ${value || "не задано"} — править`} onClick={() => setDraft(value)}>
+      {display ?? (value || <span className="cell-empty">—</span>)}
+    </button>;
+  }
+  const commit = () => { const next = draft.trim(); setDraft(null); if (next !== value.trim()) void onSave(next); };
+  const keys = (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDraft(null); }
+    if (event.key === "Enter" && !(multiline && event.shiftKey)) { event.preventDefault(); commit(); }
+  };
+  return multiline
+    ? <textarea className="eq-input" aria-label={label} autoFocus rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={keys} />
+    : <input className="eq-input" aria-label={label} autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={commit} onKeyDown={keys} />;
+}
 
 function filled(fields: Record<string, string>, keep: (key: string) => boolean): Array<[string, string]> {
   return Object.entries(fields).filter(([key, value]) => keep(key) && !SCHEMA_KEYS.has(key) && String(value ?? "").trim()
@@ -31,18 +61,20 @@ function filled(fields: Record<string, string>, keep: (key: string) => boolean):
 }
 // Values the sheet computes: read-only, marked as derived.
 const DERIVED = /окупаемост|стоимость 1 сек/i;
-function EconomyList({ items }: { items: Array<[string, string]> }) {
+function EconomyList({ items, save }: { items: Array<[string, string]>; save?: SaveValue }) {
   return <dl className="eq-econ">{items.map(([key, value]) => {
     const derived = DERIVED.test(key);
     return <div key={key} className={derived ? "derived" : undefined}>
       <dt>{headerLabel(key)}</dt>
-      <dd className="tnum">{valueLabel(key, value)}{derived && <span className="eq-calc" title="Считается по таблице, здесь не правится">расчёт</span>}</dd>
+      <dd className="tnum"><InlineValue label={headerLabel(key)} value={value} display={valueLabel(key, value)} editable={Boolean(save) && !derived}
+        onSave={(next) => save!(key, next)} />{derived && <span className="eq-calc" title="Считается по таблице, здесь не правится">расчёт</span>}</dd>
     </div>;
   })}</dl>;
 }
-function FieldList({ items }: { items: Array<[string, string]> }) {
+function FieldList({ items, save }: { items: Array<[string, string]>; save?: SaveValue }) {
   return <dl className="op-fields">{items.map(([key, value]) => <div key={key}><dt>{headerLabel(key)}</dt><dd className="pre-line">{
-    /^https?:\/\//.test(value.trim()) ? <a href={value.trim()} target="_blank" rel="noreferrer">{value.trim()}</a> : valueLabel(key, value)
+    /^https?:\/\//.test(value.trim()) && !save ? <a href={value.trim()} target="_blank" rel="noreferrer">{value.trim()}</a>
+      : <InlineValue label={headerLabel(key)} value={value} display={valueLabel(key, value)} editable={Boolean(save)} multiline={value.length > 60} onSave={(next) => save!(key, next)} />
   }</dd></div>)}</dl>;
 }
 
@@ -68,11 +100,9 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const [openId, setOpenId] = useState(() => focusId || new URLSearchParams(window.location.search).get("equipment") || "");
   const [busy, setBusy] = useState(false);
   const [codes, setCodes] = useState<CrimpCodes | null>(null);
-  const [opQuery, setOpQuery] = useState("");
   // The picked machine stays in the address, so a reload reopens its card (same as «Проекты» → `?project=`).
   const select = (id: string) => {
     setOpenId(id);
-    setOpQuery("");
     onSelect?.();
     try {
       const url = new URL(window.location.href);
@@ -112,21 +142,28 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
       <article className="panel eq-card eq-editor">{editor}</article>
     </PageWindow>;
   } else if (open) {
-    const field = operationField(open.type);
+    const model = open;
     const linked = opsOf(open);
-    const linkedIds = new Set(linked.map((op) => op.id));
-    const text = opQuery.trim() ? norm(opQuery) : "";
-    const candidates = text.length < 2 ? [] : operations.filter((op) => !linkedIds.has(op.id)
-      && norm(`${opNumber(op)} ${opName(op)}`).includes(text)).slice(0, 8);
     const last = open.items[open.items.length - 1];
     const crimp = CRIMP_TYPES.includes(open.type) ? crimpRecord(open) : undefined;
     const economy = filled(last.fields, isEconomy);
     const rest = filled(last.fields, (key) => !SHOWN_KEYS.has(key) && !isEconomy(key));
     const place = open.places.map((item) => valueLabel("Расположение", item)).join(", ");
     const subtitle = [open.article, open.maker, open.type, place].filter(Boolean).join(" · ");
-    const setOperation = (op: TechOperationRecord, column: string, value: string) =>
-      referencesApi.editRecord(op.id, [{ field: column, old: op.fields[column] ?? "", value }]);
-    const edit = onEdit;
+    // A model value goes to every unit that differs (each with its own old value); a unit's own value — to that unit.
+    const saveModel: SaveValue = (key, value) => guarded(async () => {
+      for (const item of model.items) {
+        const old = item.fields[key] ?? "";
+        if (old.trim() !== value) await referencesApi.editRecord(item.id, [{ field: key, old, value }]);
+      }
+    }, model.items.length > 1 ? `Записано на все экземпляры: ${model.items.length}` : "Записано");
+    const saveUnit = (item: TechOperationRecord): SaveValue => (key, value) =>
+      guarded(() => referencesApi.editRecord(item.id, [{ field: key, old: item.fields[key] ?? "", value }]), `${invOf(item) || "Экземпляр"}: записано`);
+    const passport = PASSPORT.map(([label, keys]) => [label, keys.find((key) => key in last.fields)] as const)
+      .filter((entry): entry is readonly [string, string] => Boolean(entry[1]));
+    const unitCell = (item: TechOperationRecord, key: string, label: string, shown?: string) => key in item.fields
+      ? <InlineValue label={`${label} ${invOf(item)}`} value={pick(item.fields, key)} display={shown} editable={canEdit} onSave={(next) => saveUnit(item)(key, next)} />
+      : (shown || "—");
 
     // Коды терминалов есть только у обжимного инструмента и матриц (owner 12.10.2026).
     const withCodes = open.type === CRIMP_TOOL_TYPE || open.type === MATRIX_TYPE;
@@ -135,43 +172,31 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
         <header className="eq-head">
           <div className="eq-title"><b>{open.name || "—"}</b>{subtitle && <span className="muted">{subtitle}</span>}</div>
           <div className="eq-head-act">
-            {canEdit && <button className="secondary small" onClick={() => edit(open.items[0])}>Править{open.items.length > 1 ? ` ${invOf(open.items[0])}` : ""}</button>}
             {canEdit && invOf(last) && <button className="secondary small" disabled={busy}
               onClick={() => void guarded(async () => { const copy = await referencesApi.duplicateRecord(last.id); select(copy.id); }, "Добавлен ещё один экземпляр")}>Ещё такой же</button>}
             <button type="button" className="eq-close" aria-label="Закрыть карточку" title="Закрыть (Esc)" onClick={() => select("")}>×</button>
           </div>
         </header>
-        {pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
+        {canEdit && passport.length > 0 && <div className="tr-block"><h4>Модель{open.items.length > 1 && <span>правка — на все экземпляры</span>}</h4>
+          <dl className="op-fields">{passport.map(([label, key]) => <div key={key}><dt>{label}</dt><dd className="pre-line">
+            <InlineValue label={label} value={pick(last.fields, key)} display={key === "Тип" ? valueLabel(key, pick(last.fields, key)) : undefined} editable
+              multiline={key === "Описание"} onSave={(next) => saveModel(key, next)} /></dd></div>)}</dl></div>}
+        {!canEdit && pick(last.fields, "Описание") && <p className="eq-line pre-line">{pick(last.fields, "Описание")}</p>}
 
         <div className="tr-block"><h4>Экземпляры <span>{open.items.length}</span></h4>
           <table className="eq-table"><thead><tr><th>Инв. №</th><th className="num">№</th><th>Расположение</th>{withCodes && <th>Код терминалов</th>}</tr></thead>
-            <tbody>{open.items.map((item) => <tr key={item.id} className={canEdit ? "eq-row" : undefined} onClick={canEdit ? () => edit(item) : undefined}
-              title={canEdit ? `Править ${invOf(item)}` : undefined}>
-              <td className="tnum"><b>{invOf(item) || "—"}</b></td><td className="tnum num">{pick(item.fields, "№") || "—"}</td>
-              <td>{valueLabel("Расположение", placeOf(item)) || "—"}</td>{withCodes && <td className="tnum">{pick(item.fields, CODE_KEY) || "—"}</td>}
+            <tbody>{open.items.map((item) => <tr key={item.id}>
+              <td className="tnum"><b>{unitCell(item, INV_KEY, "Инв. №", invOf(item))}</b></td><td className="tnum num">{unitCell(item, "№", "№")}</td>
+              <td>{unitCell(item, "Расположение", "Расположение", valueLabel("Расположение", placeOf(item)))}</td>
+              {withCodes && <td className="tnum">{unitCell(item, CODE_KEY, "Код терминалов")}</td>}
             </tr>)}</tbody></table>
         </div>
 
         <div className="tr-block"><h4>Операции <span>{linked.length}</span></h4>
           {linked.length ? <ul className="eq-ops">{linked.map((op) => <li key={op.id}>
-            <span><b className="tnum">{opNumber(op)}</b>{opName(op) && <> — {opName(op)}</>}</span>
-            {canEdit && <button type="button" className="eq-x" disabled={busy} aria-label={`Отвязать операцию ${opNumber(op)}`} title="Отвязать"
-              onClick={() => void guarded(async () => {
-                for (const column of OP_LINK_COLUMNS) if (norm(op.fields[column] ?? "") === norm(open.base)) await setOperation(op, column, "");
-              }, `Операция ${opNumber(op)} отвязана`)}>✕</button>}</li>)}</ul>
-            : <div className="empty">{operations.length ? "Ни одна операция БД.ОП не привязана к этой модели." : "БД.ОП не загружена."}</div>}
-          {canEdit && open.base && operations.length > 0 && <div className="eq-add">
-            <input type="search" aria-label="Найти операцию" placeholder="Привязать операцию: номер или название…" value={opQuery} onChange={(event) => setOpQuery(event.target.value)} />
-            {candidates.map((op) => {
-              const current = (op.fields[field] ?? "").trim();
-              return <div className="eq-hit" key={op.id}>
-                <span><b className="tnum">{opNumber(op)}</b> {opName(op)}{current && <span className="muted"> · сейчас: {current}</span>}</span>
-                <button type="button" className="secondary small" disabled={busy}
-                  onClick={() => void guarded(async () => { await setOperation(op, field, open.base); setOpQuery(""); }, `Операция ${opNumber(op)} привязана`)}>{current ? "Заменить" : "Привязать"}</button>
-              </div>;
-            })}
-            {text.length >= 2 && candidates.length === 0 && <div className="empty">Операции не найдены.</div>}
-          </div>}
+            <span><b className="tnum">{opNumber(op)}</b>{opName(op) && <> — {opName(op)}</>}</span></li>)}</ul>
+            : <div className="empty">{operations.length ? "Операций с этой моделью нет." : "БД.ОП не загружена."}</div>}
+          <p className="eq-hint">Привязка — в карточке операции: «Машина», «Инструмент», «Апликаторы / модули».</p>
         </div>
 
         {open.type !== MATRIX_TYPE && matricesOf(open).length > 0 && <div className="tr-block"><h4>Матрицы к этому инструменту <span>{matricesOf(open).length}</span></h4>
@@ -180,8 +205,8 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
 
         {crimp && <CrimpLinks model={open} tool={crimp} siblings={records} canEdit={canEdit} onChanged={onChanged} onEditTool={onEdit} />}
 
-        {economy.length > 0 && <div className="tr-block"><h4>Экономика</h4><EconomyList items={economy} /></div>}
-        {rest.length > 0 && <details className="tr-block eq-rest"><summary>Прочее <span className="muted">({rest.length})</span></summary><FieldList items={rest} /></details>}
+        {economy.length > 0 && <div className="tr-block"><h4>Экономика</h4><EconomyList items={economy} save={canEdit ? saveModel : undefined} /></div>}
+        {rest.length > 0 && <details className="tr-block eq-rest"><summary>Прочее <span className="muted">({rest.length})</span></summary><FieldList items={rest} save={canEdit ? saveModel : undefined} /></details>}
       </article>
     </PageWindow>;
   }
