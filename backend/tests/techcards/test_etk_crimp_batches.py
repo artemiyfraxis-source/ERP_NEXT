@@ -195,8 +195,8 @@ def test_the_generator_draws_the_semi_finished_graph_kits_branches_splice_groups
                 for block in route["blocks"]]
 
     def branch(n: int, *, tube: bool = True, twist: bool = True) -> list[str]:
-        return [f"insTermA{n}", f"braidA{n}", *([f"onTubesA{n}"] if tube else []), f"onMarkA{n}",
-                *([f"heatShrA{n}"] if tube else []), f"heatMarkA{n}", *([f"twistA{n}"] if twist else [])]
+        return [f"insTermA{n}", *([f"twistA{n}"] if twist else []), f"braidA{n}", *([f"onTubesA{n}"] if tube else []),
+                f"onMarkA{n}", *([f"heatShrA{n}"] if tube else []), f"heatMarkA{n}"]
 
     # Короткие разные имена ПФ (владелец 16.10): партии резки — что делает станок и на какие разъёмы по КД.
     assert by_label == [
@@ -268,10 +268,10 @@ def test_the_first_operation_of_a_pf_takes_one_row_per_arrow_of_the_scheme():
 
 def test_inside_a_pf_each_operation_takes_the_previous_one_and_the_last_hands_on_the_pf():
     document = build()
-    keys = ["insTermA2", "braidA2", "onTubesA2", "onMarkA2", "heatShrA2", "heatMarkA2", "twistA2"]
+    keys = ["insTermA2", "twistA2", "braidA2", "onTubesA2", "onMarkA2", "heatShrA2", "heatMarkA2"]
     branch = [op_by_key(document, key) for key in keys]
-    results = ["Контакты установлены в разъём", "Оплётка надета", "ТТК надета", "Маркировка надета", "ТТК усажена",
-               "Маркировка усажена", "Ветвь X2 «I3», сторона А"]
+    results = ["Контакты установлены в разъём", "Пара свита", "Оплётка надета", "ТТК надета", "Маркировка надета",
+               "ТТК усажена", "Ветвь X2 «I3», сторона А"]
     assert [rows(op, "result") for op in branch] == [[(name, "500", "")] for name in results]
     assert [rows(op) for op in branch[1:]] == [
         [(name, "500", f"операция {op['position'] - 1:02d}")] for name, op in zip(results, branch[1:])]
@@ -284,7 +284,7 @@ def test_inside_a_pf_each_operation_takes_the_previous_one_and_the_last_hands_on
     assert (last["result"], last["result_label"]) == ([{"name": "Кабельная сборка Жгут НВ4", "norm": "500", "unit": "Шт."}], "Изделие")
     # Имена ПФ схемы — это и есть то, что отдают их последние операции.
     keys_all = [op["opKey"] for op in CONFIG["ops"]]
-    assert _chain_results(CONFIG)[keys_all.index("twistA2")] == "Ветвь X2 «I3», сторона А"
+    assert _chain_results(CONFIG)[keys_all.index("heatMarkA2")] == "Ветвь X2 «I3», сторона А"
 
 
 def test_a_scheme_drawn_before_reads_its_arrows_and_names_unnamed_blocks_by_their_product():

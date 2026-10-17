@@ -2291,8 +2291,8 @@ export function makeGen(D: GenData, S: GenState) {
    *  1. Источники — ПФ-комплекты: каждая партия резки (обжим при резке зачищает и концы под сростки), хвосты «сросток →
    *     облуженный конец» (CUT_WIRE+2strip+tin), одна резка всех трубок, одна резка оплётки (отрезок на ветвь), печать и
    *     резка маркировки.
-   *  2. Ветви — разъём стороны А с трубкой, оплёткой, маркировкой или свитой парой: монтаж контактов в разъём → надеть
-   *     оплётку → надеть ТТК → надеть маркировку → усадка ТТК на разъёме → усадка маркировки → свивка своей пары.
+   *  2. Ветви — разъём стороны А с трубкой, оплёткой, маркировкой или свитой парой: монтаж контактов в разъём → свивка своей пары → надеть
+   *     оплётку → надеть ТТК → надеть маркировку → усадка ТТК на разъёме → усадка маркировки.
    *  3. Группы сростков — сростки, провода которых приходят с одних и тех же разъёмов стороны А: свивка пар с разных
    *     разъёмов → сросток → трубка на готовый сросток → усадка (владелец 17.10).
    *  4. «ТУТ на месте Б» (владелец 17.10) — есть термоусадка на жгут: сростки и ветви прямо на сторону В → надеть её по КД
@@ -2540,8 +2540,8 @@ export function makeGen(D: GenData, S: GenState) {
     }
 
     // ── 2. Ветви ──
-    // Порядок ветви (владелец 16.10, окончательно): монтаж контактов в разъём → надеть оплётку → надеть ТТК → надеть
-    // маркировку → усадка ТТК на разъёме → усадка маркировки → свивка своей пары. Каждая — своя операция со своей картой;
+    // Порядок ветви (владелец 16.10, 17.10): монтаж контактов в разъём → свивка своей пары → надеть оплётку → надеть ТТК → надеть
+    // маркировку → усадка ТТК на разъёме → усадка маркировки. Каждая — своя операция со своей картой;
     // детали корпуса паяльного разъёма надеваются до пайки — первыми.
     const branchOps: OpSpec[] = branches.flatMap((ep) => {
       const key = epKey(ep), side = ep.side, ord = endpointOrdinal_(ep), name = xTag(ep);
@@ -2555,6 +2555,10 @@ export function makeGen(D: GenData, S: GenState) {
           branch: name, label: `Надеть детали корпуса ${name}` });
       }
       out.push(...kept.filter((o) => blockOf(o) === key));
+      const pairs = twistAt.get(`ep:${ep.id}`) || 0;
+      if (pairs) out.push({ type: "twist", opKey: `twist${side}${ord}`, cat: "Свивка", units: pairs, side, ord, branch: name,
+        twistPairs: twistPairsAt.get(`ep:${ep.id}`) || [],
+        label: `Свивка ${name} — ${pairs} ${pluralRu(pairs, "пара", "пары", "пар")}` });
       if (braided.includes(ep)) braids.forEach((slot, i) => {
         const len = braidLenOf_(ep, slot.len);
         out.push({ type: "insWrap", opKey: `braid${side}${ord}${i ? i + 1 : ""}`, tmplHint: "INS_BRAID", cat: "Монтаж", wrapKind: "braid", wrapCut: true,
@@ -2579,10 +2583,6 @@ export function makeGen(D: GenData, S: GenState) {
         out.push({ type: "heatTut", opKey: `heatMark${side}${ord}`, tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, side, ord,
           tutCount: shrunk.reduce((n, t) => n + t.spec.qty, 0), branch: name, label: `Усадка маркировки ${name} — ${shrunk.map(markTitle).join(", ")}` });
       }
-      const pairs = twistAt.get(`ep:${ep.id}`) || 0;
-      if (pairs) out.push({ type: "twist", opKey: `twist${side}${ord}`, cat: "Свивка", units: pairs, side, ord, branch: name,
-        twistPairs: twistPairsAt.get(`ep:${ep.id}`) || [],
-        label: `Свивка ${name} — ${pairs} ${pluralRu(pairs, "пара", "пары", "пар")}` });
       return out.map((o) => ({ ...o, pf: key }));
     });
 

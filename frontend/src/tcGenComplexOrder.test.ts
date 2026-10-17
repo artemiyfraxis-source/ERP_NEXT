@@ -29,7 +29,7 @@ const GRAPH_ORDER = [
   "Резка трубок — ТТК 8/2 3×15 мм, ТТК 12/4 2×25 мм, ТТК 3/1 4×20 мм",
   "Резка оплётки XP-3 — X1 «5» 120 мм, X2 «I3» 110 мм, X3 «C» 110 мм, X4 «A6» 120 мм",
   "Печать и резка маркировки — «5» 15 мм, «I3» 15 мм, «C» 15 мм, «A6» 15 мм",
-  // 2. Ветви X1–X4: монтаж → оплётка → ТТК → маркировка → усадка ТТК → усадка маркировки → свивка
+  // 2. Ветви X1–X4: монтаж → свивка → оплётка → ТТК → маркировка → усадка ТТК → усадка маркировки
   "Монтаж контактов в разъём X1 «5» — SMR-02V-B",
   "Надеть оплётку X1 «5» — XP-3, 120 мм",
   "Надеть ТТК X1 «5» — ТТК 8/2",
@@ -37,19 +37,19 @@ const GRAPH_ORDER = [
   "Усадка ТТК на разъёме X1 «5» — ТТК 8/2",
   "Усадка маркировки X1 «5» — «5»",
   "Монтаж контактов в разъём X2 «I3» — SMR-02V-B",
+  "Свивка X2 «I3» — 1 пара",
   "Надеть оплётку X2 «I3» — XP-3, 110 мм",
   "Надеть ТТК X2 «I3» — ТТК 8/2",
   "Надеть маркировку X2 «I3» — «I3»",
   "Усадка ТТК на разъёме X2 «I3» — ТТК 8/2",
   "Усадка маркировки X2 «I3» — «I3»",
-  "Свивка X2 «I3» — 1 пара",
   "Монтаж контактов в разъём X3 «C» — SMP-02V-BC",
+  "Свивка X3 «C» — 1 пара",
   "Надеть оплётку X3 «C» — XP-3, 110 мм",
   "Надеть ТТК X3 «C» — ТТК 8/2",
   "Надеть маркировку X3 «C» — «C»",
   "Усадка ТТК на разъёме X3 «C» — ТТК 8/2",
   "Усадка маркировки X3 «C» — «C»",
-  "Свивка X3 «C» — 1 пара",
   "Монтаж контактов в разъём X4 «A6» — SMR-04V-B",
   "Надеть оплётку X4 «A6» — XP-3, 120 мм",
   "Надеть маркировку X4 «A6» — «A6»",
@@ -93,8 +93,8 @@ it("the build config carries the graph as a generated route: every op in one blo
   const route = routeOf(S);
   const opKeys = keys(S);
   expect(route.source).toBe("generated");
-  const branch = (n: number, twist = true, tube = true) => [`insTermA${n}`, `braidA${n}`, ...(tube ? [`onTubesA${n}`] : []), `onMarkA${n}`,
-    ...(tube ? [`heatShrA${n}`] : []), `heatMarkA${n}`, ...(twist ? [`twistA${n}`] : [])];
+  const branch = (n: number, twist = true, tube = true) => [`insTermA${n}`, ...(twist ? [`twistA${n}`] : []), `braidA${n}`, ...(tube ? [`onTubesA${n}`] : []), `onMarkA${n}`,
+    ...(tube ? [`heatShrA${n}`] : []), `heatMarkA${n}`];
   // Короткие разные имена ПФ: что делает станок и на какие разъёмы по КД (X1…X6: сторона А, потом В).
   expect(route.blocks.map((b) => [b.key, b.name ?? "", b.ops.map((p) => opKeys[p - 1]), !!b.kit, b.final])).toEqual([
     ["pf-cutWire", "Резка + обжим SYM, зачистка — X1, X2", ["cutWire"], true, false],
@@ -115,12 +115,12 @@ it("the build config carries the graph as a generated route: every op in one blo
   ]);
   expect(route.blocks.every((b) => (b.name ?? "").length <= 41)).toBe(true);
   expect(route.blocks.flatMap((b) => b.ops).sort((a, b) => a - b)).toEqual(opKeys.map((_, i) => i + 1));
-  // Каждая операция ветви — своя карта: монтаж контактов, оплётка, ТТК, маркировка, усадка ТТК, усадка маркировки, свивка.
+  // Каждая операция ветви — своя карта: монтаж контактов, свивка, оплётка, ТТК, маркировка, усадка ТТК, усадка маркировки.
   const gen = makeGen(DSA, S);
   const ops = gen.getActiveOps();
   expect(branch(2).map((key) => gen.templateIdFor(ops.find((o) => o.opKey === key)!))).toEqual([
-    "ins-terminal-2-54-6-3-монтаж-терминалов-a", "ins-braid-монтаж-оплётки", "ins-tut-монтаж", "ins-tut-монтаж",
-    "heat-ttk-short-усадка", "heat-tyt-short-усадка", "twist-свивка"]);
+    "ins-terminal-2-54-6-3-монтаж-терминалов-a", "twist-свивка", "ins-braid-монтаж-оплётки", "ins-tut-монтаж", "ins-tut-монтаж",
+    "heat-ttk-short-усадка", "heat-tyt-short-усадка"]);
   const edge = (from: string, to: string) => route.edges.find((e) => e.from === from && e.to === to)?.item;
   // Партия SYM отдаёт провода двум ветвям; провода с обжимом В и хвосты — в группы сростков. Провода партии — одной строкой.
   expect(edge("pf-cutWire", "pf-A1")).toBe("НВ4 0,5 красный, черный — 2 шт");
