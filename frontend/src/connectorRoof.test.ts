@@ -14,14 +14,20 @@ const plain = items.filter((i) => hasTopView(i.housing) && !i.housing.roof);
 
 // Серии с видом сверху, у которых лист производителя крыши не показал (или не получен): голая крыша, ничего не выдумываем.
 // Закрыть серию = найти лист, записать roof в connector_housings.py (ROOF_EXPLICIT) и убрать её отсюда.
+// Почему ещё без крыши (17.10, второй проход): JST RCY, JWPF, RA — на листе окно/ничего не видно (RA: eRA недоступен);
+// Hirose DF13-2R, DF11, DF1B (гнездо, 2 ряда, ES, DES), DF1BA, DF1B-DEP — по каталогу замок на обратной грани, на крыше только метка ▽;
+// DF20 — на листе у колодки замка нет (металл только у вилки на плате), DF61 — «swing lock» без ясной формы крыши;
+// JAE FI-X (в серии и FI-X30H без замка, и FI-X30HL), FI-S («friction lock» без формы); Connfly DS1070/DS1071/-01/1072/1074 —
+// на чертеже корпус гладкий (DS1070 — лист на вилку); Molex SL 2 ряда, Board-in, Milli-Grid 51110 (замки только у 14–32 цепей),
+// Mini50 негерметичный 34791 — листа с видом нет; HSM MX (Y/N: ребро есть не у всех), HSM HC и Samtec ISD2 (M/S: у S винты) —
+// серия смешивает исполнения; Deutsch DT, TE Superseal — te.com не отдаёт лист, в Web Archive его нет; JR servo — листа
+// производителя нет; USB-A, Amass XT/QS8 — замка на крыше нет, прорезей по листу тоже.
 const UNSOURCED = [
-  "jst-rcy", "jst-rcy-p", "molex-sl-2r", "te-multilock-040", "connfly-ds1071", "amass-xt", "amass-qs8", "molex-milligrid",
-  "jst-el", "jst-el-n", "jst-gvh", "jst-lbt", "jst-pnd", "jst-sqs", "jst-vb", "jst-ghd", "jst-znd", "jst-jwpf", "jst-ra",
-  "hirose-df13-2r", "hirose-df19", "hirose-df20", "hirose-df61", "hirose-df1b", "hirose-df1b-2r", "hirose-df1b-es",
-  "hirose-df1b-des", "hirose-df1b-p2r", "hirose-df1ba-p", "hirose-df1ba-p2r", "hirose-df11", "jae-fix", "jae-fis", "jae-fir",
-  "connfly-ds1070", "connfly-ds1072", "connfly-ds1073", "connfly-ds1074", "connfly-ds1071-01", "kls-2-50", "molex-picoezmate",
-  "molex-mini50-s", "molex-mini50-u", "hsm-mx508", "hsm-hc", "jr-servo", "samtec-isd2", "molex-microfit-plus", "molex-minilock",
-  "molex-sl-1r", "molex-boardin", "deutsch-dt", "te-superseal", "usb-a",
+  "jst-rcy", "jst-rcy-p", "molex-sl-2r", "connfly-ds1071", "amass-xt", "amass-qs8", "molex-milligrid", "jst-jwpf",
+  "jst-ra", "hirose-df13-2r", "hirose-df20", "hirose-df61", "hirose-df1b", "hirose-df1b-2r", "hirose-df1b-es",
+  "hirose-df1b-des", "hirose-df1b-p2r", "hirose-df1ba-p", "hirose-df1ba-p2r", "hirose-df11", "jae-fix", "jae-fis",
+  "connfly-ds1070", "connfly-ds1072", "connfly-ds1074", "connfly-ds1071-01", "molex-mini50-u", "hsm-mx508", "hsm-hc",
+  "jr-servo", "samtec-isd2", "molex-boardin", "deutsch-dt", "te-superseal", "usb-a",
 ];
 
 describe("крыша корпуса: замок или прорези — только по листу производителя (владелец 17.10)", () => {
@@ -73,7 +79,14 @@ describe("крыша корпуса: замок или прорези — тол
     expect(roof("molex-picoblade")).toMatchObject({ kind: "slots", at: "contacts" });
     expect(roof("molex-minispox")).toMatchObject({ kind: "slots", at: "contacts" });
     expect(roof("molex-cgrid3-1r")).toMatchObject({ kind: "slots", at: "keys" });
-    expect(roof("hirose-df19")).toBeFalsy();
+    expect(roof("jst-el")).toMatchObject({ kind: "latch", at: "center" });
+    expect(roof("jst-lbt")).toMatchObject({ kind: "latch", at: "ends" });
+    expect(roof("jae-fir")).toMatchObject({ kind: "latch", at: "ends" });
+    expect(roof("hirose-df19")).toMatchObject({ kind: "latch", at: "ends" });
+    expect(roof("molex-microfit-plus")).toMatchObject({ kind: "latch", at: "center" });
+    expect(roof("molex-picoezmate")).toMatchObject({ kind: "slots", at: "contacts" });
+    expect(roof("kls-2-50")).toMatchObject({ kind: "slots", at: "contacts" });
+    expect(roof("hirose-df20")).toBeFalsy();
   });
 
   it("draws different geometry for different features", () => {

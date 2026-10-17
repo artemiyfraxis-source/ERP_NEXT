@@ -285,6 +285,36 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     "molex-picolock-10": {"kind": "latch", "at": "ends", "src": "Molex SD-503764-001, замки-плечи на торцах"},
     # C-Grid III SD-90123: the face with the polarising buttons («90123») is the one that goes up.
     "molex-cgrid3-1r": {"kind": "slots", "at": "keys", "src": "Molex SD-90123, грань с кнопками поляризации"},
+    # Second pass (17.10.2026, sheets read via Web Archive / datasheet.lcsc.com / chipdip): only what the sheet's text or
+    # its picture of the housing shows. JST catalogue pages are cited by their first page (feature list + photo).
+    "jst-el": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eEL") + " (с. 1, «Durable arm lock mechanism», рычаг замка на вилке)"},
+    "jst-el-n": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eEL") + " (с. 1, «Durable arm lock mechanism»)"},
+    "jst-gvh": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eGVH") + " (с. 1, «Secure locking structure», как у GVH side feed)"},
+    "jst-lbt": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eLBT") + " (с. 1, фото вилки: петли замка на обоих торцах)"},
+    "jst-pnd": {"kind": "latch", "at": "center", "src": JST_SHEET.format("ePND") + " (с. 1, «Secure lock mechanism», рычаг на вилке)"},
+    "jst-sqs": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eSQS") + " (с. 1, «Intelligent CPA»: ползунок-фиксатор на корпусе)"},
+    "jst-vb": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eVB") + " (с. 1, рисунок розетки: скосы замка на торцах корпуса)"},
+    "jst-ghd": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eGHD") + " (с. 1, «Secure lock device»)"},
+    "jst-znd": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eZND") + " (с. 1, «Secure lock mechanism»)"},
+    # JAE FI-R MB-0153-4 p. 1: «Mechanical lock», the 3D picture of the plug shows the lock arms at both ends; every FI-RE…HL
+    # is the «L: Locking Latches» plug (JAE Board-to-Cable overview v2.2).
+    "jae-fir": {"kind": "latch", "at": "ends", "src": "JAE MB-0153-4 (FI-R), с. 1, «Mechanical lock», " + LCSC_SHEET.format("c8110807488e21f4fc506aaa43b04ed7", "C570465")},
+    # Hirose DF19 catalogue 01.01.2024, cover photo of the cable sockets: the metal shell carries lock tabs at both ends.
+    "hirose-df19": {"kind": "latch", "at": "ends", "src": "Hirose DF19, каталог 01.01.2024, с. 1 (фото кабельных колодок: лапки замка на торцах), " + LCSC_SHEET.format("d0e6797f2ca3f8a48e9b5ce30acf807e", "C3268449")},
+    # Connfly C-DS1073-XXXXX-E «Female Housing»: a lock tab with its window in the middle of the long face.
+    "connfly-ds1073": {"kind": "latch", "at": "center", "src": "Connfly C-DS1073-XXXXX-E, «Female Housing» (https://www.connfly.com/static/upload/file/pdf/DS1073.pdf)"},
+    # Molex part sheets / drawings: 2064610000-SD sheet 1 (lock lever on the top of the housing), 0511630400 («Positive Lock»,
+    # photo with the lock tab in the middle), 0050579404 («Positive Latch», photo), 0349671005 (photo with the lock arm on top).
+    "molex-microfit-plus": {"kind": "latch", "at": "center", "src": "Molex 2064610000-SD, л. 1 (рычаг замка сверху), https://static.chipdip.ru/lib/869/DOC034869295.pdf"},
+    "molex-minilock": {"kind": "latch", "at": "center", "src": "Molex 0511630400, лист детали: «Positive Lock», https://static.chipdip.ru/lib/341/DOC012341229.pdf"},
+    "molex-sl-1r": {"kind": "latch", "at": "center", "src": "Molex 0050579404, лист детали: «Positive Latch», https://pccomponents.com/datasheets/MOLEX-50579404.pdf"},
+    "molex-mini50-s": {"kind": "latch", "at": "center", "src": "Molex 0349671005, лист детали (фото: рычаг замка сверху), https://cdn.eicom.ru/media/PDF/1030948.pdf"},
+    # Pico-EZmate 78172-0002 part sheet picture: a lance cut-out at every cavity on the top face next to the ▽ mark.
+    "molex-picoezmate": {"kind": "slots", "at": "contacts", "src": "Molex 78172-0002, лист детали (рисунок: окно под каждый контакт сверху), https://static.chipdip.ru/lib/211/DOC015211617.pdf"},
+    # TE 174047-2 product photos (te.com.cn datasheet via Web Archive): the integral lock block in the middle of the top.
+    "te-multilock-040": {"kind": "latch", "at": "center", "src": "TE 174047-2, лист изделия (фото: блок замка по центру, «外壳集成»), https://www.te.com.cn/chn-zh/product-174047-2.datasheet.pdf"},
+    # KLS L-KLS1-2.50-XX-H drawing: a lance window per cavity on the long face (ZH type).
+    "kls-2-50": {"kind": "slots", "at": "contacts", "src": "KLS L-KLS1-2.50-XX-H, чертёж, https://static.chipdip.ru/lib/526/DOC059526514.pdf"},
     # RJ45 8P8C: the latch tab on the plug body (IEC 60603-7).
     "rj45": {"kind": "latch", "at": "center", "src": "IEC 60603-7 (8P8C): защёлка на корпусе вилки"},
 }
