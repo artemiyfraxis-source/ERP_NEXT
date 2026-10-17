@@ -54,6 +54,14 @@ export type GenData = {
   cableRecords?: CableRec[];
 };
 
+/** Строка «Термоусадки на жгут». `auto` (владелец 17.10, 713К.4 КБ1): true — засев из состава, владелец её не трогал:
+ *  трубка, которая уже стоит поверх разъёмов, на сростках, на заделке или на срезе оболочки, на ствол не идёт; false —
+ *  строку задал владелец, она считается всегда; нет поля — строка формы до 17.10 (считается, как считалась).
+ *  `compId` — строка состава или трубка БД.МАТ (`REF_TUBE_` + наименование). */
+export type HsRow = { compId: string; len: string; cnt: string; auto?: boolean };
+/** Трубка «Термоусадки на жгут» не из состава, а из справочника материалов (БД.МАТ). */
+export const REF_TUBE_ = "bd-mat:";
+
 export type Side = "A" | "B";
 /** manual — «Ручная сборка» (manualAssembly.ts): свой список операций, формы кабелей и разъёмов не участвуют. */
 export type Tab = "inter" | "complex" | "coax" | "manual";
@@ -185,7 +193,7 @@ export type GenState = {
    *  `band` — материал ленточного обжима из того же списка, необязателен. */
   spl: { enabled: boolean; count: string; wires: string; tut: string; tutMat: string; strip: string; fold: boolean;
     method?: SpliceMethod; sleeves?: Record<string, string>; band?: string };
-  hs: { enabled: boolean; manual: boolean; rows: Array<{ compId: string; len: string; cnt: string }> };
+  hs: { enabled: boolean; manual: boolean; rows: HsRow[] };
   mark: boolean;
   /** Метки по КД (tcGenMarks); пусто — в маркировку идут бирки из состава, как раньше. */
   markRows: MarkRow[];
@@ -1242,19 +1250,46 @@ export function makeGen(D: GenData, S: GenState) {
     if (s === CRIMP_BOTH_) return ["A", "B"];
     return s && crimpCutSides_().includes(s) ? [s] : [];
   }
+  /** Трубка строки «Термоусадки на жгут»: строка состава или трубка БД.МАТ, которой в составе нет. */
+  function hsComp_(id: string): Comp | null {
+    const own = getCompById(id);
+    if (own || !id.startsWith(REF_TUBE_)) return own;
+    const name = id.slice(REF_TUBE_.length);
+    const mat = (D.markMats || []).find((m) => m.name === name);
+    const type = mat?.group || (/ттк/i.test(name) ? "ТТК" : "ТУТ");
+    return name ? { id, type, name, art: name, qty: 0 } : null;
+  }
+  /** Чем уже занята трубка строки (рукав поверх разъёма, сростки, заделка концов, срез оболочки): "" — ничем. */
+  function hsBusyOf_(c: Comp, onConnectors = true): string {
+    if (onConnectors && S.endpoints.some((e) => shrinkOf_(e)?.comp.id === c.id)) return "уже на разъёмах";
+    if (spliceEnds_() && S.spl.tutMat === c.id) return "уже на сростках";
+    if (capTube_()?.id === c.id) return "уже на заделке концов";
+    return jacketShrinkItems_().some((x) => x.comp.id === c.id) ? "уже на срезе оболочки" : "";
+  }
+  /** Строка на ствол не идёт: засев, а трубка занята (и строка формы до 17.10 — со старым правилом: сростки, заделка,
+   *  срез оболочки). Ответ — чем занята, для подсказки в форме; "" — строка считается. */
+  function hsRowSkip_(row: HsRow): string {
+    const c = hsComp_(row.compId);
+    if (!c || row.auto === false) return "";
+    return hsBusyOf_(c, !!row.auto);
+  }
   function harnessSleeves_() {
     if (!S.hs.enabled) return [];
-    const cap = capTube_();
-    const spl = spliceEnds_() ? getCompById(S.spl.tutMat) : null;
-    // Трубка на место разделки считается своей операцией — не второй раз как термоусадка на жгут.
-    const jackets = new Set(jacketShrinkItems_().map((x) => x.comp.id));
     return S.hs.rows.map((row) => {
-      const c = getCompById(row.compId);
-      if (c && ((cap && c.id === cap.id) || (spl && c.id === spl.id) || jackets.has(c.id))) return null;
+      const c = hsComp_(row.compId);
+      if (!c || hsRowSkip_(row)) return null;
       const len = (row.len || "").trim();
       const cnt = Math.max(0, parseInt(row.cnt, 10) || 0);
-      return c && cnt ? { comp: c, len, cnt } : null;
+      return cnt ? { comp: c, len, cnt } : null;
     }).filter((x): x is { comp: Comp; len: string; cnt: number } => !!x);
+  }
+  /** «Добавить трубку»: трубки состава, которых ещё нет в строках, и трубки БД.МАТ, которых нет в составе. */
+  function hsTubeOptions_() {
+    const taken = new Set(S.hs.rows.map((row) => row.compId));
+    const kit = shrinkCandidates_().filter((c) => !taken.has(c.id));
+    const names = new Set(comps().flatMap((c) => [c.art, c.name]).filter(Boolean).map((x) => String(x).trim().toLowerCase()));
+    const ref = (D.markMats || []).filter((m) => /^(тут|ттк)$/i.test(m.group) && !names.has(m.name.trim().toLowerCase()) && !taken.has(REF_TUBE_ + m.name));
+    return { kit, ref };
   }
 
   // ── Длины ──
@@ -3108,7 +3143,7 @@ export function makeGen(D: GenData, S: GenState) {
     cutLengthInfo, sharedLength, getLengthAdjustment_, twistWireIndices_, tinWireIndices_, getTwistPairs, twistProblems_, autoDetectTwistPairs,
     twistGeom_, twistDiaValue, twistDiaMissing_, twistDiaOld_, twistNote, complexWarning, isComplexKit_, isCoaxAssembly_, coaxBomConnectors_, coaxBomCable_,
     coaxBomTut_, coaxCableDiaLookup_, matchCoaxRec_, coaxInfo, coaxMachineAuto_, coaxMachine_, coaxCableOuterMm_, getActiveOps, templateIdFor, stickTemplates, opRow, buildConfig, validate,
-    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
+    harnessSleeveComps_, rjEndsInBom_, hsDefaultOn_, hsComp_, hsRowSkip_, hsTubeOptions_, markComps_, bomTut_, shrinkCandidates_, defaultShrinkComp_, shrinkOf_,
     defaultJacketShrinkComp_, cableJacketShrink_, jacketShrinkItems_, freeJacketShrinkComp_, housingOn_, housingDefault_, sleeveWarning_,
     /** Разъёмы сторон для меток: обозначение (подпись разъёма, иначе А1/В1) и артикул. */
     markConnectors_: () => (["A", "B"] as Side[]).flatMap((side) => endpointsOnSide_(side).filter((e) => e.connId).map((e) => {
@@ -3194,7 +3229,7 @@ export function initState(D: GenData, base: GenState = emptyState()): GenState {
     const per = rjEnds > 1 ? rjEnds : 1;
     const rows = hs.map((c) => {
       const mm = Math.round((Number(String(c.qty).replace(",", ".")) || 0) * 1000 / per);
-      return { compId: c.id, len: mm ? String(mm) : "", cnt: String(per) };
+      return { compId: c.id, len: mm ? String(mm) : "", cnt: String(per), auto: true };
     });
     S = { ...S, hs: { enabled: g.hsDefaultOn_(hs, rjEnds), manual: false, rows }, mark: g.markComps_().length > 0 };
   }
@@ -3563,6 +3598,20 @@ export function setWireCores(S: GenState, idx: number, cores: number, per: numbe
   const n = Math.max(1, Math.round(cores) || 1), qty = Math.max(1, Math.round(Number(w.qty) || 1));
   const regroup = per <= 1 && n > 1 && qty % n === 0;
   return updateWire(S, idx, { cores: n, ...(regroup ? { qty: qty / n } : {}) });
+}
+
+/** Строку «Термоусадки на жгут» правит владелец: с этого момента она его — считается, даже если трубка занята ещё где-то. */
+export function setHsRow(S: GenState, index: number, patch: Partial<Omit<HsRow, "auto">>): GenState {
+  return { ...S, hs: { ...S.hs, rows: S.hs.rows.map((row, i) => (i === index ? { ...row, ...patch, auto: false } : row)) } };
+}
+/** «Добавить трубку»: своя строка владельца, длину и количество он вводит сам. */
+export function addHsRow(S: GenState, compId: string): GenState {
+  if (!compId) return S;
+  return { ...S, hs: { ...S.hs, enabled: true, rows: [...S.hs.rows, { compId, len: "", cnt: "1", auto: false }] } };
+}
+/** «×» у строки: трубка уходит с жгута. */
+export function removeHsRow(S: GenState, index: number): GenState {
+  return { ...S, hs: { ...S.hs, rows: S.hs.rows.filter((_, i) => i !== index) } };
 }
 
 /** Оплётка включена/сменена — термоусадка на жгут следует за ней, пока галочку не трогали руками (syncHsWithBraid_). */

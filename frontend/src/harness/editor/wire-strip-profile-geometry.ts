@@ -116,6 +116,41 @@ export function buildWireStripStepGeometry(
   });
 }
 
+/**
+ * Same geometry at the drawing's own length scale: `axial` is the new total length along the wire, `cross` the new
+ * widest diameter (both in drawing units). Layer proportions stay; the origin and direction do not move.
+ */
+export function scaleWireStripProfileGeometry(
+  geometry: WireStripProfileGeometry,
+  axial: number,
+  cross: number,
+  /** Сдвиг вдоль провода от конца (например, за точку узла, что закрывает конец). */
+  shift = 0,
+): WireStripProfileGeometry {
+  const kx = axial / geometry.totalLength;
+  const maxHalf = Math.max(...geometry.primitives.map((primitive) => Math.hypot(
+    primitive.polygon[0].x - primitive.centerline[0].x, primitive.polygon[0].y - primitive.centerline[0].y)));
+  const ky = maxHalf > 0 ? cross / 2 / maxHalf : 1;
+  const map = (point: Point): Point => {
+    const dx = point.x - geometry.origin.x, dy = point.y - geometry.origin.y;
+    const along = (dx * geometry.direction.x + dy * geometry.direction.y) * kx + shift;
+    const side = (dx * geometry.normal.x + dy * geometry.normal.y) * ky;
+    return Object.freeze({
+      x: cleanCoordinate(geometry.origin.x + geometry.direction.x * along + geometry.normal.x * side),
+      y: cleanCoordinate(geometry.origin.y + geometry.direction.y * along + geometry.normal.y * side),
+    });
+  };
+  return Object.freeze({
+    ...geometry,
+    totalLength: cleanCoordinate(axial),
+    primitives: Object.freeze(geometry.primitives.map((primitive) => Object.freeze({
+      ...primitive,
+      centerline: Object.freeze([map(primitive.centerline[0]), map(primitive.centerline[1])] as const),
+      polygon: Object.freeze(primitive.polygon.map(map) as unknown as [Point, Point, Point, Point]),
+    }))),
+  });
+}
+
 function endpointDirection(
   points: readonly Point[],
   end: WireStripProfileEnd,

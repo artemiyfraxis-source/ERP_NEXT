@@ -284,8 +284,8 @@ it("«Термоусадка на жгут»: ТТК из состава даё�
   (await screen.findAllByText("Резка — МГТФ 0,12"))[0];
   const toggle = screen.getByRole("switch", { name: /Термоусадка на жгут/ });
   if (!(toggle as HTMLInputElement).checked) fireEvent.click(toggle);
-  expect(await screen.findByText(/ТТК 6\/3 — отрезок/)).toBeInTheDocument();
-  expect(screen.getByText("Отрезков на изделие")).toBeInTheDocument();
+  expect(await screen.findByLabelText("ТТК 6/3: отрезок")).toHaveValue("2000");
+  expect(screen.getByLabelText("ТТК 6/3: отрезков на изделие")).toHaveValue("1");
   expect(screen.queryByText(/В составе проекта нет термоусадки/)).toBeNull();
 });
 

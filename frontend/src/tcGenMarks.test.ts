@@ -173,3 +173,15 @@ it("«Сложная сборка»: a branch's marking tube is put on and shrun
   expect(ops.filter((o) => o.markTube).map((o) => [o.opKey, o.tmplHint, o.tutCount])).toEqual([["onMarkA4", "INS_TUT", 1], ["heatMarkA4", "HEAT_TYT_short", 1]]);
   expect(gen.pfGraph()!.blocks.find((b) => b.key === "pf-A4")!.name).toBe("Ветвь X4 «A6», сторона А");
 });
+
+it("«По разъёмам» on 713К.4 КБ1: each mark gets its own kit tube by the quoted text, 15 mm by default", () => {
+  const gen = makeGen(DSA, fullHarness());
+  const rows = markRowsByConnectors(gen.markConnectors_(), "Маркировка \"5\" 4/2мм", gen.markComps_());
+  expect(rows.map((row) => [row.text, row.material, row.len])).toEqual([
+    ["5", "Маркировка \"5\" 4/2мм", "15"], ["I3", "Маркировка \"I3\" 4/2мм", "15"], ["C", "Маркировка \"C\" 4/2мм", "15"],
+    ["A6", "Маркировка \"A6\" 4/2мм", "15"], ["В1", "Термотрубка", "15"], ["В2", "Термотрубка", "15"],
+  ]);
+  // Метки состава без надписи — как раньше: один материал на все строки, у бирки длины нет.
+  const tags = markRowsByConnectors([{ name: "X1", art: "DB-9F" }], "Бирка ТМ", [{ art: "Бирка ТМ", name: "Бирка ТМ" }]);
+  expect(tags.map((row) => [row.material, row.len])).toEqual([["Бирка ТМ", undefined]]);
+});
