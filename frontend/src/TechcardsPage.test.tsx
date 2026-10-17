@@ -428,18 +428,9 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   });
 
   render(<TechcardsPage principal={engineer} view="templates" />);
+  // У технолога щелчок по строке открывает шаблон сразу в правке (владелец 17.10).
   fireEvent.click(await screen.findByText("CUT_WIRE_auto"));
-  expect(await screen.findByText("Автомат резки")).toBeInTheDocument();
-  expect(screen.getByText("ОБ.001")).toBeInTheDocument();
-  expect(screen.getByText("прогр. 5")).toBeInTheDocument();
-  expect(screen.getByText("3,50 с")).toBeInTheDocument();
-  expect(screen.getByText("180 с")).toBeInTheDocument();
-  expect(screen.queryByText(/Перенесено из шаблона/)).toBeNull();
-  expect(screen.queryByText("Вход и результат")).toBeNull();
-  expect(screen.getByText("Контроль", { selector: ".op-ctl-chip" })).toBeInTheDocument();
-
-  fireEvent.click(screen.getByRole("button", { name: /Править/ }));
-  expect(screen.getByText("Работать в очках")).toHaveClass("tc-preview");
+  expect(await screen.findByText("Работать в очках")).toHaveClass("tc-preview");
   fireEvent.change(screen.getByLabelText("Шаг 1"), { target: { value: "Отрезать провод в размер" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
 
@@ -452,6 +443,13 @@ it("shows a template as a techcard sheet and saves an edit with who/when (portal
   });
   expect(await screen.findByText(/Изменено .* · Инженер/)).toBeInTheDocument();
   expect(screen.getByText("Отрезать провод в размер")).toBeInTheDocument();
+  // После записи — лист: оснастка, нормы, контроль.
+  expect(screen.getByText("ОБ.001")).toBeInTheDocument();
+  expect(screen.getByText("прогр. 5")).toBeInTheDocument();
+  expect(screen.getByText("3,50 с")).toBeInTheDocument();
+  expect(screen.getByText("180 с")).toBeInTheDocument();
+  expect(screen.queryByText(/Перенесено из шаблона/)).toBeNull();
+  expect(screen.getByText("Контроль", { selector: ".op-ctl-chip" })).toBeInTheDocument();
 });
 
 it("edits a template sheet through a draft and saves it (portalTcTplDraft → portalTcTplSave)", async () => {
@@ -590,6 +588,44 @@ const opRows = [
   { id: "o2", tab: "op", display_text: "Лазерная маркировка", source_sheet: "БД.ОП", fields: { opNumber: "LASER_MARK", opName: "Лазерная маркировка", tOp: "12", "Номер": "LASER_MARK", "Название": "Лазерная маркировка", "Машина": "Лазер", "Время Операции": "12" } },
 ];
 
+it("edits БД.ОП right in the operations table: the time cell and the machine picked from БД.ОБ (owner 17.10: «как в Экселе»)", async () => {
+  const patches: Array<{ id: string; edits: Array<Record<string, string>> }> = [];
+  const ob = [
+    { id: "e1", tab: "ob", display_text: "x", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.015", "Наменование": "Автомат резки", "Для базы": "EW-05F" } },
+    { id: "e2", tab: "ob", display_text: "y", source_sheet: "БД.ОБ", fields: { "Тип": "Оборудование", "Инв. номер": "ОБ.016", "Наменование": "Автомат резки большой", "Для базы": "EW-09" } },
+  ];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/techcards/templates") return json({ metadata: null, items: libraryItems });
+    if (path.startsWith("/api/references/tech-operations?tab=ob")) return json({ metadata: null, records: ob });
+    if (path.startsWith("/api/references/tech-operations?")) return json({ metadata: null, records: opRows });
+    const id = path.match(/tech-operations\/(o\d)$/)?.[1];
+    if (id && init?.method === "PATCH") {
+      patches.push({ id, ...JSON.parse(String(init.body)) });
+      return json(opRows.find((row) => row.id === id));
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
+  const row = (await screen.findByText("LASER_MARK")).closest("tr") as HTMLElement;
+  const cell = (key: string) => row.querySelector(`td[data-col="${key}"]`) as HTMLElement;
+  fireEvent.doubleClick(cell("seconds"));
+  const time = within(row).getByRole("textbox");
+  fireEvent.change(time, { target: { value: "15" } });
+  fireEvent.keyDown(time, { key: "Enter" });
+  await waitFor(() => expect(patches).toHaveLength(1));
+  expect(patches[0]).toEqual({ id: "o2", edits: [{ field: "Время Операции", old: "12", value: "15" }] });
+
+  await waitFor(() => expect(screen.getByText("LASER_MARK").closest("tr")?.querySelector('td[data-col="machine"]')).toBeTruthy());
+  const machineRow = screen.getByText("LASER_MARK").closest("tr") as HTMLElement;
+  fireEvent.doubleClick(machineRow.querySelector('td[data-col="machine"]') as HTMLElement);
+  const pick = within(machineRow).getByRole("combobox");
+  expect([...(pick as HTMLSelectElement).options].map((option) => option.value)).toEqual(["", "EW-05F", "EW-09", "Лазер"]);
+  fireEvent.change(pick, { target: { value: "EW-09" } });
+  await waitFor(() => expect(patches).toHaveLength(2));
+  expect(patches[1]).toEqual({ id: "o2", edits: [{ field: "Машина", old: "Лазер", value: "EW-09" }] });
+});
+
 it("an operation without a template opens, edits its parameters and sends only the changed fields", async () => {
   const patches: Array<{ edits: Array<Record<string, string>> }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -637,13 +673,11 @@ it("one «Править» edits the template and the parameters; an unchanged t
   });
   render(<TechcardsPage principal={{ ...engineer, permissions: { ...engineer.permissions, erpref: "edit" } }} view="templates" />);
   fireEvent.click(await screen.findByText("CUT_WIRE_auto"));
-  expect(await screen.findByText("Отрезать провод")).toBeInTheDocument();
-  expect(screen.getByText("Исходные данные расчёта (ERP не использует)")).toBeInTheDocument();
-  expect(screen.getByText("Цвет")).toBeInTheDocument();
-  expect(screen.getByText("Погонный")).toBeInTheDocument();
+  // Сразу правка: шаблон и параметры строки БД.ОП одной формой.
+  const type = await screen.findByLabelText("Тип операции");
+  expect(type).toHaveValue("Погонный");
   expect(screen.getByText("по длине провода")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Править" }));
-  fireEvent.change(screen.getByLabelText("Тип операции"), { target: { value: "Статичный" } });
+  fireEvent.change(type, { target: { value: "Статичный" } });
   expect(screen.getByText("фиксированное на штуку")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(patches).toHaveLength(1));

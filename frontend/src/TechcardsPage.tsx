@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { DataTable, type DataColumn } from "./DataTable";
+import { DataTable, type DataCellEdit, type DataCellOption, type DataColumn } from "./DataTable";
 import { formatDayMonth } from "./format";
 import { EtkSheet, GeneratorPane } from "./ProjectEtk";
 import { OperationCard } from "./OperationCard";
@@ -19,6 +19,8 @@ import {
 } from "./api";
 import { TcTemplateSheets } from "./TcTemplateSheets";
 import { AddColumnButton, filledIn, ownCellEdit, useColumnRemoval } from "./CustomColumn";
+import { groupModels, operationField } from "./equipmentModel";
+import { OP_TYPES } from "./opFields";
 
 const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name), "Прочее"])];
 // Где стороны (A)/(B) расходятся, чья сторона — запись (backend operation_cards.RECORD_SIDE_PICK).
@@ -42,10 +44,56 @@ type OperationEntry = { key: string; code: string; name: string; template?: Oper
     с записью БД.ОП (у шаблона без строки БД.ОП ячейка не правится). */
 type OwnColumns = { names: string[]; canEdit: boolean; onEdited: () => Promise<unknown> | void; removeOf: (name: string) => (() => void) | undefined };
 
+/** Правка строки БД.ОП прямо в таблице операций (владелец 17.10.2026: «все правки как в Экселе»): у кого право на базу.
+    Машина / инструмент / аппликатор выбираются из БД.ОБ — там привязка операции к оборудованию (карточка оборудования
+    её только показывает). */
+type OpEditing = { canEdit: boolean; equipment: TechOperationRecord[] };
+
+const findKey = (pattern: RegExp) => (fields: Record<string, string>) => Object.keys(fields).find((key) => pattern.test(key.trim()));
+const TIME_KEY = findKey(/^время операции/i);
+const PREP_KEY = findKey(/^время подготовки/i);
+
+/** Ячейка поля строки БД.ОП: старое значение сверяется, как в окне записи; поля нет у строки — не правится. */
+function opCell(keyOf: (fields: Record<string, string>) => string | undefined, options?: (entry: OperationEntry) => DataCellOption[]): DataCellEdit<OperationEntry> {
+  return {
+    enabled: (entry) => Boolean(entry.record && keyOf(entry.record.fields)),
+    value: (entry) => (entry.record ? entry.record.fields[keyOf(entry.record.fields) ?? ""] ?? "" : ""),
+    save: async (entry, value) => {
+      const key = entry.record && keyOf(entry.record.fields);
+      if (!entry.record || !key) throw new Error("Нет строки БД.ОП");
+      await referencesApi.editRecord(entry.record.id, [{ field: key, old: entry.record.fields[key] ?? "", value }]);
+    },
+    options,
+  };
+}
+
+/** Варианты оборудования для колонки БД.ОП: модели БД.ОБ того типа, что идёт в эту колонку, плюс стоящее значение. */
+function equipmentChoices(equipment: TechOperationRecord[], column: string) {
+  const bases = [...new Map(groupModels(equipment).filter((model) => model.base && operationField(model.type) === column)
+    .map((model) => [model.base, model])).values()].sort((a, b) => a.base.localeCompare(b.base, "ru"));
+  return (entry: OperationEntry): DataCellOption[] => {
+    const current = (entry.record?.fields[column] ?? "").trim();
+    const options: DataCellOption[] = [{ value: "", label: "не задано" },
+      ...bases.map((model) => ({ value: model.base, label: model.base, aliases: [model.name] }))];
+    if (current && !bases.some((model) => model.base === current)) options.push({ value: current, label: `${current} (нет в БД.ОБ)` });
+    return options;
+  };
+}
+
 /** Операции таблицей (аудит БД-2: 139 карточек — это 6 500 px прокрутки, справочник читается строками): шаблоны ТК +
     операции БД.ОП без шаблона; категории — чипы с числом, строка целиком открывает карточку операции. */
-function OperationsTable({ entries, onOpen, toolbar, own }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode; own?: OwnColumns }) {
-  const seconds = (entry: OperationEntry) => entry.template?.norms?.operation_seconds || entry.op?.tOp || "";
+function OperationsTable({ entries, onOpen, toolbar, own, editing }: { entries: OperationEntry[]; onOpen: (entry: OperationEntry) => void; toolbar?: ReactNode; own?: OwnColumns; editing?: OpEditing }) {
+  // Время — из строки БД.ОП (её правят в ячейке), у шаблона без строки — из его норм.
+  const seconds = (entry: OperationEntry) => entry.op?.tOp || entry.template?.norms?.operation_seconds || "";
+  const can = Boolean(editing?.canEdit);
+  const equipment = editing?.equipment ?? [];
+  const choices = useMemo(() => Object.fromEntries(["Машина", "Инструмент", "Апликаторы / модули"]
+    .map((column) => [column, equipmentChoices(equipment, column)])), [equipment]);
+  const equipColumn = (key: string, column: string, title: string): DataColumn<OperationEntry> => ({
+    key, title, value: (entry) => entry.op?.[column]?.trim() ?? "",
+    render: (entry) => entry.op?.[column]?.trim() ? <span className="db-clip" title={entry.op[column]}>{entry.op[column].trim()}</span> : <span className="cell-empty">—</span>,
+    edit: can ? opCell((fields) => (column in fields ? column : undefined), choices[column]) : undefined,
+  });
   const columns: DataColumn<OperationEntry>[] = [
     { key: "name", title: "Операция", value: (entry) => entry.name || recordCategory(entry.code) },
     { key: "code", title: "Код", value: (entry) => entry.code, render: (entry) => <span className="tr-code">{entry.code}</span> },
@@ -60,10 +108,15 @@ function OperationsTable({ entries, onOpen, toolbar, own }: { entries: Operation
     { key: "tooling", title: "Оснастки", numeric: true, value: (entry) => entry.template?.tooling ?? "" },
     { key: "seconds", title: "Время, с", numeric: true, value: (entry) => seconds(entry),
       render: (entry) => seconds(entry) ? seconds(entry)
-        : entry.template && entry.template.norms_known && !entry.template.norms ? <b className="danger-text">нет норм</b> : <span className="cell-empty">—</span> },
-    { key: "machine", title: "Машина", value: (entry) => entry.op?.["Машина"]?.trim() ?? "",
-      render: (entry) => entry.op?.["Машина"]?.trim() ? <span className="db-clip" title={entry.op["Машина"]}>{entry.op["Машина"].trim()}</span> : <span className="cell-empty">—</span> },
-    { key: "type", title: "Тип операции", value: (entry) => entry.op?.["Тип операции"]?.trim() ?? "", hidden: true },
+        : entry.template && entry.template.norms_known && !entry.template.norms ? <b className="danger-text">нет норм</b> : <span className="cell-empty">—</span>,
+      edit: can ? opCell(TIME_KEY) : undefined },
+    { key: "prep", title: "Подготовка, с", numeric: true, hidden: true, value: (entry) => entry.op?.tPrep ?? "", edit: can ? opCell(PREP_KEY) : undefined },
+    equipColumn("machine", "Машина", "Машина"),
+    equipColumn("tool", "Инструмент", "Инструмент"),
+    equipColumn("apl", "Апликаторы / модули", "Аппликаторы / модули"),
+    { key: "type", title: "Тип операции", value: (entry) => entry.op?.["Тип операции"]?.trim() ?? "",
+      edit: can ? opCell((fields) => ("Тип операции" in fields ? "Тип операции" : undefined),
+        () => [{ value: "", label: "не задано" }, ...OP_TYPES.map((type) => ({ value: type.value, label: `${type.value} — ${type.hint}` }))]) : undefined },
     { key: "template", title: "Шаблон ТК", filter: true, value: (entry) => entry.template ? "есть" : "нет шаблона",
       render: (entry) => entry.template ? <span className="muted">есть</span> : <StatusChip status="нет шаблона" tone="warning" /> },
     { key: "changed", title: "Правка", value: (entry) => entry.template?.changed_at ?? "",
@@ -175,6 +228,14 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
   const canEditOps = principal.permissions.erpref === "edit";
   const canCreateOp = canEditTemplates && canEditOps;
   const [opOwn, setOpOwn] = useState<string[]>([]);
+  // БД.ОБ — варианты «Машина / Инструмент / Аппликаторы» в ячейках таблицы операций.
+  const [equipment, setEquipment] = useState<TechOperationRecord[]>([]);
+  useEffect(() => {
+    if (!showLibrary || !canEditOps) return;
+    void referencesApi.techOperations("ob", "", 5000).then((result) => setEquipment(result.records)).catch(() => setEquipment([]));
+  }, [showLibrary, canEditOps]);
+  // Щелчок по строке у технолога открывает шаблон сразу в правке (владелец 17.10: «по нажатию — правка техкарты сразу»).
+  const [editOnOpen, setEditOnOpen] = useState(false);
   async function loadOps() {
     const result = await referencesApi.techOperations("op", "", 5000);
     setOpRows(result.records);
@@ -286,13 +347,14 @@ export function TechcardsPage({ principal, view, embedded = false }: { principal
     }} /> : selectedOp ? <OperationCard code={opCode(selectedOp.fields)} name={selectedOp.fields.opName || selectedOp.fields["Название"] || ""} op={selectedOp}
       canEditTemplate={false} canEditOp={canEditOps} initialEdit={freshCode === selectedOpCode} onBack={() => { setSelectedOpCode(""); setFreshCode(""); }} onSaveTemplate={async () => undefined} onOpSaved={replaceOp}
     /> : templateDetail && selectedTemplateId ? <OperationCard code={templateDetail.code} name={templateDetail.name} template={templateDetail} op={opByCode.get(templateDetail.code)}
-      canEditTemplate={canEditTemplates} canEditOp={canEditOps} initialEdit={freshCode === templateDetail.code} onBack={() => { setSelectedTemplateId(""); setFreshCode(""); }} onSaveTemplate={saveTemplate} onOpSaved={replaceOp}
+      canEditTemplate={canEditTemplates} canEditOp={canEditOps} initialEdit={editOnOpen || freshCode === templateDetail.code} onBack={() => { setSelectedTemplateId(""); setFreshCode(""); setEditOnOpen(false); }} onSaveTemplate={saveTemplate} onOpSaved={replaceOp}
     /> : <>
     <OperationsTable entries={operationEntries}
       own={{ names: opOwn, canEdit: canEditOps, onEdited: () => loadOps().catch(() => undefined), removeOf: opRemoval.removeOf }}
+      editing={{ canEdit: canEditOps, equipment }}
       toolbar={<>{canCreateOp && <button type="button" className="primary small" onClick={() => setNewOpOpen(true)}>Новая операция</button>}<button type="button" className="secondary small" title="Каталог листов БД.ТК, из которого собирает генератор" onClick={() => setSheetsOpen(true)}>Шаблоны-листы</button>
         {canEditOps && opRows.length > 0 && <AddColumnButton tab="op" onAdded={async (name) => { await loadOps().catch(() => undefined); setError(""); setNotice(`Столбец «${name}» добавлен`); }} />}</>} onOpen={(entry) => {
-      if (entry.template) { setSelectedOpCode(""); setSelectedTemplateId(entry.template.id); } else setSelectedOpCode(entry.code);
+      if (entry.template) { setSelectedOpCode(""); setEditOnOpen(canEditTemplates); setSelectedTemplateId(entry.template.id); } else setSelectedOpCode(entry.code);
     }} />
     </>}
     {opRemoval.dialog}
