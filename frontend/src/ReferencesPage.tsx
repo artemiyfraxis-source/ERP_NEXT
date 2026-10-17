@@ -62,8 +62,6 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
     { id: "coax", label: "Коаксиальные разъёмы", base: "coax" },
     { id: "ter", label: "Терминалы", base: "ter" },
     // Owner 15.10.2026: «Материалы» расформированы — уплотнители, заглушки, гильзы и втулки идут на концы проводов.
-    { id: "mat_seal", label: MATERIAL_TABS.mat_seal.label },
-    { id: "mat_sleeve", label: MATERIAL_TABS.mat_sleeve.label },
   ] },
   // Owner 04.10.2026: «объединить провода и кабели и коаксиальные … три вкладки»; 10.10.2026: сечения — отдельной
   // таблицей, у монтажных жила из неё, многожильные — в отдельную вкладку. БД.ПРОВ, the coax D1·D2·D3 table and the coax

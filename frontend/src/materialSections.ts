@@ -6,12 +6,11 @@ import type { TechOperationRecord } from "./api";
    names (or an empty one) lands in «Расходники», where the chip «Без группы» finds the empty ones. Nothing is moved or
    rewritten in the data: the tab is derived from the row's own «Группа». */
 
-export type MaterialTab = "mat_fix" | "mat_seal" | "mat_sleeve" | "mat_use";
+export type MaterialTab = "mat_fix" | "mat_use";
 export const MATERIAL_TABS: Record<MaterialTab, { label: string; groups: string[] }> = {
   // Тройники — для гофры (Schlemmer NW…), рядом с хомутами и стяжками.
   mat_fix: { label: "Крепёж и тройники", groups: ["стяжка", "хомут", "тройник"] },
-  mat_seal: { label: "Уплотнители и заглушки", groups: ["уплотнитель", "заглушка"] },
-  mat_sleeve: { label: "Гильзы и втулки", groups: ["гильза", "втулка"] },
+  // «Уплотнители и заглушки», «Гильзы и втулки» убраны (владелец 17.10: «не нужны сейчас») — их строки в «Расходниках».
   mat_use: { label: "Расходники", groups: ["клей/герметик", "лак", "припой/флюс", "нитки", "бирка", "феррит"] },
 };
 export const MATERIAL_FALLBACK: MaterialTab = "mat_use";
@@ -35,7 +34,7 @@ export function materialRows(records: TechOperationRecord[], coverings: Readonly
 
 /** Counts on the tabs: every БД.МАТ row is counted once — in «Оболочки» (`cov`) or in its own tab. */
 export function materialCounts(records: TechOperationRecord[], coverings: ReadonlySet<string>): Record<MaterialTab | "cov", number> {
-  const counts: Record<MaterialTab | "cov", number> = { cov: 0, mat_fix: 0, mat_seal: 0, mat_sleeve: 0, mat_use: 0 };
+  const counts: Record<MaterialTab | "cov", number> = { cov: 0, mat_fix: 0, mat_use: 0 };
   for (const record of records) counts[coverings.has(record.id) ? "cov" : materialTab(record.fields)] += 1;
   return counts;
 }
