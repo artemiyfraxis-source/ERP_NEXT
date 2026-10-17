@@ -7,17 +7,22 @@ permissions:
 jobs:
   fetch:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Download documents listed in urls.txt (name<TAB>url)
+      - name: Download documents listed in urls.txt (name<TAB>url), with retries and a pause
         run: |
           mkdir -p out
           UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36"
           while IFS=$'\t' read -r name url; do
             [ -z "$name" ] && continue
-            code=$(curl -sL -m 90 -A "$UA" -H "Accept-Language: en-US,en;q=0.9" -o "out/$name" -w "%{http_code} %{content_type} %{size_download}" "$url" || echo "ERR")
-            echo -e "$name\t$code" | tee -a out/_status.tsv
+            for try in 1 2 3 4; do
+              code=$(curl -sL -m 120 -A "$UA" -H "Accept-Language: en-US,en;q=0.9" -o "out/$name" -w "%{http_code} %{content_type} %{size_download}" "$url" || echo "ERR")
+              case "$code" in 2*|404*|403*) break;; esac
+              sleep $((try * 15))
+            done
+            echo -e "$name\t$code\t$url" | tee -a out/_status.tsv
+            sleep 4
           done < urls.txt
       - uses: actions/upload-artifact@v4
         with:
