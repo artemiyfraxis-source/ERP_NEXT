@@ -13,6 +13,7 @@ import {
   type ProductionTask,
 } from "./api";
 import { formatDayMonth, kbLabel } from "./format";
+import { MachineLoadGrid, MachineWarning } from "./MachineLoad";
 import { LoadCell, LoadLegend, shiftCapacity } from "./PeopleLoad";
 import { periodWords } from "./PlanLoadSheet";
 import { KitTile } from "./ProjectCard";
@@ -483,6 +484,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const dayCount = board.width >= TWO_WEEKS_FROM ? WEEK_DAYS * 2 : WEEK_DAYS;
   const days = Array.from({ length: dayCount }, (_, index) => addDays(weekStart, index));
   const free = task && operation ? remainderOf(task, operation) : 0;
+  // Сетка станков перечитывает занятость после каждого назначения (версии заданий меняются).
+  const planVersion = tasks.map((item) => `${item.id}:${item.version}`).join(",");
   const quantity = task ? Math.min(task.quantity, Math.max(0, Math.floor(Number(pieces) || 0))) : 0;
 
   function select(item: ProductionTask, op: ProductionOperation | null) {
@@ -514,6 +517,10 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
     ? firstFreeStart(onlyPerson.id, onlyDay || today, task, operation, tasks, workShift, holidays, absences)
     : null;
   const onlyBlock = task && operation && onlyPerson ? onlyBlocker(operation, onlyPerson.id, operators) : "";
+  // Окно «Назначить только …» — для предупреждения о занятом станке.
+  const onlyFinish = task && operation && onlyPerson && onlySlot
+    ? workFinish(onlySlot.start, Number(operation.setup_seconds) + Number(operation.seconds_per_unit) * task.quantity / rateOf(skills, operation.code, onlyPerson.id), workShift, holidays)
+    : null;
   function assignOnly() {
     if (!task || !operation || !onlyPerson || !onlySlot) return;
     const date = new Date(onlySlot.start);
@@ -657,6 +664,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
             </button>
             {(onlyBlock || !onlySlot) && <small className="danger-text">{onlyBlock || "Свободного времени в ближайшие 60 дней нет — выберите другой день или монтажника."}</small>}
             {!onlyBlock && onlySlot && operation.operator_ids.some((id) => id !== onlyPerson.id) && <small>Остальные исполнители будут сняты — все {task.quantity} шт получит {onlyPerson.name}.</small>}
+            {!onlyBlock && onlySlot && <MachineWarning taskId={task.id} operationId={operation.id} operatorId={onlyPerson.id} quantity={task.quantity} start={onlySlot.start} finish={onlyFinish} />}
           </div>}
           <button className="link-button" onClick={() => openTask(task.id, operation.id)}>Точное время — на Ганте</button></div>
         : <div className="mb-target muted">{canEdit ? "Выберите операцию в списке выше, затем день и час у монтажника." : "Нажмите на день — раскладка по часам."}</div>}
@@ -711,6 +719,9 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                 const locked = Boolean(placed && (placed.started_at || placed.finished_at));
                 // Уже стоит в этом дне — двигают кликом по часу, отдельная кнопка не нужна.
                 const here = Boolean(placed && isoDay(new Date(placed.planned_start!)) <= expanded && expanded <= isoDay(new Date(placed.planned_finish!)));
+                // Окно для проверки станков: уже стоит в этом дне — его окно, иначе то, что предлагает кнопка.
+                const machineWindow = placed && here ? { start: new Date(placed.planned_start!).getTime(), finish: new Date(placed.planned_finish!).getTime(), quantity: placed.quantity }
+                  : !locked && append != null && until != null ? { start: append, finish: until, quantity } : null;
                 return <>
                   <div className="mb-hours">{slots.map((slot) => {
                     const can = Boolean(operation && canEdit && quantity && !locked && !past(slot) && !slot.rest && !slot.busy.length);
@@ -732,6 +743,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
                         <b className="mb-until">до {isoDay(new Date(until)) === expanded ? at(until) : `${formatDay(isoDay(new Date(until)))} ${at(until)}`}</b></>
                       : <span className="danger-text">{hasFree ? "После работы этого дня места нет — нажмите свободный час или выберите другой день." : "Свободных часов в этот день нет — выберите другой день."}</span>}
                     <span>Не влезает в день — хвост уйдёт на следующий рабочий день, работа монтажника после неё сдвинется.</span>
+                    {task && machineWindow && <MachineWarning taskId={task.id} operationId={operation.id} operatorId={person.id}
+                      quantity={machineWindow.quantity} start={machineWindow.start} finish={machineWindow.finish} />}
                   </div>}
                 </>;
               })()}
@@ -741,6 +754,10 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
         })}</tbody>
       </table>}
       {site !== HANDOVER_SITE && <LoadLegend capacity={capacity} late={false} />}
+      {site !== HANDOVER_SITE && <section className="mb-machines" aria-label="Загрузка станков" style={{ marginTop: 18 }}>
+        <div className="mb-head"><h2>Загрузка станков</h2><span className="mb-count">процент смены всех единиц станка</span></div>
+        <MachineLoadGrid days={days} holidays={holidays} shift={workShift} refreshKey={planVersion} />
+      </section>}
     </aside>
     {(() => {
       const item = removing ? live.find((entry) => entry.id === removing.taskId) : undefined;
