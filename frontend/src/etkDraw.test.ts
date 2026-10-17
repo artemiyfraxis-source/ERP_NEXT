@@ -72,7 +72,7 @@ describe("etkParams (шапка: Сторона А | Общие | Сторона
     expect(side["Высота обжима"]).toEqual([["0,12 мм² (26 AWG)", "0,80–0,90 мм"], ["0,5 мм² (20 AWG)", "не задано"]]);
     expect(side["Отрыв"]).toEqual([["0,12 мм² (26 AWG)", "≥ 14,7 Н"], ["0,5 мм² (20 AWG)", "не задано"]]);
     const common = Object.fromEntries(params.common.map(([label, value, rows]) => [label, rows ?? value]));
-    expect(common["Длина по КД"]).toBe("120, 130 мм");
+    expect(common["Длина по КД"]).toBe("120 мм ×2, 130 мм ×1");
     expect(common["Внешний диаметр"]).toEqual([["0,12 мм² (26 AWG)", "1,3 мм"], ["0,5 мм² (20 AWG)", "1,8 мм"]]);
     expect(common["Диаметр жилы"]).toEqual([["0,12 мм² (26 AWG)", "0,41 мм"], ["0,5 мм² (20 AWG)", "0,81 мм"]]);
   });
@@ -171,6 +171,44 @@ describe("etkDrawWires — ends of the cut wire per automat combination", () => 
     expect(svg).not.toContain("лужение");
     expect(svg).not.toContain("обжат");
     expect(kinds({ type: "cutWire", code: "CUT_WIRE_auto", fields: { wires: [{ art: "ПВ3" }] } })).toEqual(["none", "none"]);
+  });
+});
+
+describe("etkDrawWires — a cut batch of mixed lengths (owner 17.10, 713К.4 X5/X6: «тут один чёрный 200 мм»)", () => {
+  const wire = (art: string, length: number, qty = 1) => ({ name: art, art, qty, length, pins: [] });
+  const batch = (wires: unknown[], cutTolerance = "±3 мм") => ({
+    type: "cutWireCrimp", code: "CUT_WIRE+1crimp", side: "B",
+    components: [{ art: "T-DS1071-SC600", name: "Терминал", norm: "2000", unit: "Шт." }],
+    fields: { cutTolerance, lengthKd: "180 мм ×3, 200 мм ×1", strip: { a: true, b: true, lenA: "5", lenB: "2,5" }, wires },
+  });
+  const marks = (svg: string) => [...svg.matchAll(/data-end="([AB]:\w+)"/g)].map((m) => m[1]);
+  const dims = (svg: string) => [...svg.matchAll(/data-cut-length="(\d*)">.*?<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[2]);
+
+  it("draws a dimension line per length with its count, shorter wires shorter", () => {
+    const op = batch([wire("НВ4 0,2 красный", 180), wire("НВ4 0,2 красный", 180), wire("НВ4 0,2 черный", 180), wire("НВ4 0,2 черный", 200)]);
+    const svg = etkDrawWires(op);
+    expect(dims(svg)).toEqual(["L = 180 мм ±3 мм · 3 шт.", "L = 200 мм ±3 мм · 1 шт."]);
+    expect(svg).not.toContain("L = 180 мм ±3 мм<");
+    expect(marks(svg)).toEqual(["A:strip", "B:crimp", "A:strip", "B:crimp", "A:strip", "B:crimp", "A:strip", "B:crimp"]);
+    const widths = [...svg.matchAll(/<rect x="[\d.]+" y="[\d.]+" width="([\d.]+)" height="12"/g)].map((m) => Number(m[1]));
+    expect(widths).toHaveLength(4);
+    expect(widths[0]).toBe(widths[2]);
+    expect(widths[3]).toBeGreaterThan(widths[0]);
+    expect(etkParams(op).common).toContainEqual(["Длина по КД", "180 мм ×3, 200 мм ×1"]);
+  });
+
+  it("takes each length's own tolerance, counts wire qty and keeps every length on an 8-row sketch", () => {
+    const many = [wire("ПВ3 красный", 600), ...Array.from({ length: 9 }, () => wire("ПВ3 черный", 150)), wire("ПВ3 синий", 300, 2)];
+    const svg = etkDrawWires(batch(many, "150, 300 мм ±3 мм; 600 мм ±5 мм"));
+    expect(dims(svg)).toEqual(["L = 150 мм ±3 мм · 9 шт.", "L = 300 мм ±3 мм · 2 шт.", "L = 600 мм ±5 мм · 1 шт."]);
+    expect(svg.match(/height="12"/g)).toHaveLength(8);
+  });
+
+  it("one length stays one dimension in the operation's order", () => {
+    const svg = etkDrawWires(batch([wire("НВ4 0,2 красный", 180), wire("НВ4 0,2 черный", 180)]));
+    expect(svg).toContain("L = 180 мм ±3 мм");
+    expect(svg).not.toContain("data-cut-length");
+    expect(svg).not.toContain("шт.");
   });
 });
 

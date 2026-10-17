@@ -116,17 +116,43 @@ function endStrip(key: "A" | "B", end: CutEnd, note = false): string {
   return `${key} ${mm(end.len) || "?"}${core}${note && end.kind === "tin" ? " (лужение)" : ""}`;
 }
 
+const lengthText = (n: number) => String(Math.round(n * 100) / 100).replace(".", ",");
+
+/** Длины реза партии по возрастанию и сколько штук каждой (qty провода): [{ length: 180, count: 3 }, { length: 200, count: 1 }].
+ *  Считается при показе из `fields.wires`, поэтому выданные ЭТК перевыпускать не нужно. */
+export function etkCutLengths(fields: Row): Array<{ length: number; count: number }> {
+  const counts = new Map<number, number>();
+  list(fields.wires).forEach((wire) => {
+    const length = num(wire.length);
+    if (length > 0) counts.set(length, (counts.get(length) ?? 0) + (num(wire.qty) || 1));
+  });
+  return [...counts].sort((a, b) => a[0] - b[0]).map(([length, count]) => ({ length, count }));
+}
+
+/** Допуск реза длины `length`: у партии, где допуски длин разные, сборка ЭТК пишет «150, 300 мм ±3 мм; 600 мм ±5 мм»,
+ *  иначе допуск один на все длины. */
+function cutToleranceFor(fields: Row, length: number): string {
+  const raw = str(fields.cutTolerance).trim();
+  const parts = raw.split(";").map((part) => part.trim().match(/^(\d+(?:[.,]\d+)?(?:,\s+\d+(?:[.,]\d+)?)*)\s*мм\s+(.+)$/));
+  if (parts.length < 2 || parts.some((part) => !part)) return etkTolerance(raw);
+  const own = parts.find((part) => part![1].split(/,\s+/).some((item) => num(item) === length));
+  return own ? etkTolerance(own[2]) : "";
+}
+
 /** Провода резки: полоса на провод, концы — как их отдаёт операция: зачищенная медь, лужёный конец, обжатый терминал
- *  (рисунки библиотеки дефектов), длина реза от торца до торца жилы с допуском (etkDrawWires_). */
+ *  (рисунки библиотеки дефектов), длина реза от торца до торца жилы с допуском (etkDrawWires_). Партия проводов разной
+ *  длины (владелец 17.10, 713К.4: «тут один чёрный 200 мм»): провода по длинам от короткой к длинной, у каждой длины
+ *  своя размерная линия с числом штук, короче — короче нарисован (не короче 60 % самой длинной). */
 export function etkDrawWires(operation: Row): string {
   const f = obj(operation.fields), ws = list(f.wires).slice(0, 8);
   if (!ws.length || !/^cutWire/.test(str(operation.type))) return "";
   const ends = etkCutEnds(operation);
   const crimped = ends.a.kind === "crimp" || ends.b.kind === "crimp";
   const W = 640, x0 = 40, x1 = W - 40, rowH = crimped ? 30 : 26, top = 34, S = 1, END = 26;
-  // Геометрия конца: где кончается изоляция, торец жилы и зона зачистки (под размер «A …» / «B …»).
-  const geo = (key: "a" | "b") => {
-    const e = ends[key], dir = key === "a" ? -1 : 1, edge = key === "a" ? x0 : x1;
+  // Геометрия конца: где кончается изоляция, торец жилы и зона зачистки (под размер «A …» / «B …»); `edgeB` — правый
+  // торец провода этой длины.
+  const geo = (key: "a" | "b", edgeB = x1) => {
+    const e = ends[key], dir = key === "a" ? -1 : 1, edge = key === "a" ? x0 : edgeB;
     if (e.kind === "crimp") {
       const attach = edge - dir * 92 * S, at = (local: number) => attach + dir * local * S;
       return { ins: at(26), tip: at(52), zone: [at(26), at(52)], attach, dir }; // изоляция выходит из крыльев в зазор
@@ -134,9 +160,10 @@ export function etkDrawWires(operation: Row): string {
     const inner = edge - dir * END;
     return e.kind === "none" ? { ins: edge, tip: edge, zone: null, attach: 0, dir } : { ins: inner, tip: edge, zone: [inner, edge], attach: 0, dir };
   };
-  const ga = geo("a"), gb = geo("b");
-  const endArt = (key: "a" | "b", cy: number) => {
-    const e = ends[key], g = key === "a" ? ga : gb, edge = key === "a" ? x0 : x1;
+  type Geo = ReturnType<typeof geo>;
+  const ga = geo("a");
+  const endArt = (key: "a" | "b", g: Geo, edge: number, cy: number) => {
+    const e = ends[key];
     if (e.kind === "crimp") return `<g data-end="${key.toUpperCase()}:crimp" transform="translate(${g.attach.toFixed(1)},${cy}) scale(${g.dir * S},${S})">${wireEndArt.crimp(0)}</g>`;
     if (e.kind === "strip") return `<g data-end="${key.toUpperCase()}:strip">${wireEndArt.copper(Math.min(edge, g.ins), Math.max(edge, g.ins), cy)}</g>`;
     if (e.kind === "tin") {
@@ -146,26 +173,61 @@ export function etkDrawWires(operation: Row): string {
     }
     return "";
   };
-  let body = "";
-  ws.forEach((w, i) => {
-    const y = top + i * rowH, cy = y + rowH / 2 - 3, c = etkWireColor(w.name || w.art);
-    body += `<rect x="${ga.ins.toFixed(1)}" y="${cy - 6}" width="${(gb.ins - ga.ins).toFixed(1)}" height="12" rx="3" fill="${c}" stroke="#17272b" stroke-width=".8"/>` +
-      endArt("a", cy) + endArt("b", cy) +
-      `<text x="${((ga.ins + gb.ins) / 2).toFixed(1)}" y="${cy + 3.5}" text-anchor="middle" font-size="10.5" fill="${LIGHT_TEXT.test(c) ? "#fff" : "#17272b"}">` +
-      `${esc(`${str(w.art || w.name)} × ${str(w.qty)}`)}</text>`;
-  });
+  // Провода по длинам: одна длина — одна группа в порядке операции (как было); разные — от короткой к длинной, провода
+  // без длины — последней группой «по КД». Рисуется до 8 проводов, но у каждой длины хотя бы один; штуки — всей партии.
+  const all = list(f.wires), lengths = etkCutLengths(f), mixed = lengths.length > 1, longest = mixed ? lengths[lengths.length - 1].length : 0;
+  const groups = mixed
+    ? [...lengths.map(({ length, count }) => ({ length, count, wires: all.filter((w) => num(w.length) === length) })),
+      { length: 0, count: 0, wires: all.filter((w) => !(num(w.length) > 0)) }].filter((group) => group.wires.length)
+    : [{ length: 0, count: 0, wires: ws }];
+  if (mixed) {
+    const shown = groups.map((_, gi): number => (gi < 8 ? 1 : 0));
+    let budget = 8 - Math.min(8, groups.length);
+    groups.forEach((group, gi) => {
+      const more = shown[gi] ? Math.min(budget, group.wires.length - 1) : 0;
+      shown[gi] += more;
+      budget -= more;
+    });
+    groups.forEach((group, gi) => { group.wires = group.wires.slice(0, shown[gi]); });
+  }
+  const drawn = groups.filter((group) => group.wires.length);
   // Что с концом сделано — подписью под проводами: обжатый терминал и лужение.
   const caption = (end: CutEnd) => end.kind === "crimp" ? `обжат терминал${end.terminal ? ` ${end.terminal}` : ""}` : end.kind === "tin" ? "лужение" : "";
   const notes = [caption(ends.a), caption(ends.b)];
-  let yd = top + ws.length * rowH + 16;
-  if (notes.some(Boolean)) {
-    const yc = top + ws.length * rowH + 6;
-    if (notes[0]) body += `<text x="${x0}" y="${yc}" font-size="10.5" fill="#5f7470">${esc(notes[0])}</text>`;
-    if (notes[1]) body += `<text x="${x1}" y="${yc}" text-anchor="end" font-size="10.5" fill="#5f7470">${esc(notes[1])}</text>`;
-    yd = yc + 22;
-  }
-  const L = ws[0].length ? `${str(ws[0].length)} мм` : "по КД", tolerance = etkTolerance(f.cutTolerance);
-  body += dim(ga.tip, gb.tip, yd, `L = ${L}${tolerance ? ` ${tolerance}` : ""}`);
+  let body = "", y = top, yd = 0;
+  const gbs = drawn.map((group, gi) => {
+    const edgeB = mixed && group.length > 0 ? x0 + (x1 - x0) * Math.max(0.6, group.length / longest) : x1;
+    const gb = geo("b", edgeB);
+    group.wires.forEach((w) => {
+      const cy = y + rowH / 2 - 3, c = etkWireColor(w.name || w.art);
+      body += `<rect x="${ga.ins.toFixed(1)}" y="${cy - 6}" width="${(gb.ins - ga.ins).toFixed(1)}" height="12" rx="3" fill="${c}" stroke="#17272b" stroke-width=".8"/>` +
+        endArt("a", ga, x0, cy) + endArt("b", gb, edgeB, cy) +
+        `<text x="${((ga.ins + gb.ins) / 2).toFixed(1)}" y="${cy + 3.5}" text-anchor="middle" font-size="10.5" fill="${LIGHT_TEXT.test(c) ? "#fff" : "#17272b"}">` +
+        `${esc(`${str(w.art || w.name)} × ${str(w.qty)}`)}</text>`;
+      y += rowH;
+    });
+    yd = y + 16;
+    if (gi === drawn.length - 1 && notes.some(Boolean)) {
+      const yc = y + 6;
+      if (notes[0]) body += `<text x="${x0}" y="${yc}" font-size="10.5" fill="#5f7470">${esc(notes[0])}</text>`;
+      if (notes[1]) body += `<text x="${x1}" y="${yc}" text-anchor="end" font-size="10.5" fill="#5f7470">${esc(notes[1])}</text>`;
+      yd = yc + 22;
+    }
+    let label: string;
+    if (!mixed) {
+      const tolerance = etkTolerance(f.cutTolerance);
+      label = `L = ${ws[0].length ? `${str(ws[0].length)} мм` : "по КД"}${tolerance ? ` ${tolerance}` : ""}`;
+    } else if (group.length) {
+      const tolerance = cutToleranceFor(f, group.length);
+      label = `L = ${lengthText(group.length)} мм${tolerance ? ` ${tolerance}` : ""} · ${lengthText(group.count)} шт.`;
+    } else {
+      label = "L = по КД";
+    }
+    body += mixed ? `<g data-cut-length="${group.length || ""}">${dim(ga.tip, gb.tip, yd, label)}</g>` : dim(ga.tip, gb.tip, yd, label);
+    y = yd + 12;
+    return gb;
+  });
+  const gb = gbs[0];
   if (ga.zone) body += dim(Math.min(ga.zone[0], ga.zone[1]), Math.max(ga.zone[0], ga.zone[1]), top - 10, endStrip("A", ends.a));
   if (gb.zone) body += dim(Math.min(gb.zone[0], gb.zone[1]), Math.max(gb.zone[0], gb.zone[1]), top - 10, endStrip("B", ends.b));
   return svg(W, yd + 14, body);
@@ -891,9 +953,9 @@ export function etkParams(operation: Row): EtkParams {
     if ("crimpHeight" in f) common.push(["Высота обжима", f.crimpHeight ? `${crimpText(f.crimpHeight)} мм` : ETK_NOT_SET]);
     if (f.pullForce) common.push(["Отрыв", `${crimpText(f.pullForce)} Н`]);
   }
-  // Партия резки — провода разной длины: все длины, а не первая.
-  const lengths = [...new Set(list(f.wires).map((wire) => Number(wire.length)).filter((n) => n > 0))].sort((a, b) => a - b);
-  if (lengths.length > 1) common.push(["Длина по КД", `${lengths.join(", ")} мм`]);
+  // Партия резки — провода разной длины: каждая длина со своим числом штук «180 мм ×3, 200 мм ×1», а не первая.
+  const lengths = etkCutLengths(f);
+  if (lengths.length > 1) common.push(["Длина по КД", lengths.map(({ length, count }) => `${lengthText(length)} мм ×${lengthText(count)}`).join(", ")]);
   else if (f.lengthKd) common.push(["Длина по КД", str(f.lengthKd)]);
   if (f.cutTolerance) common.push(["Допуск реза", etkTolerance(f.cutTolerance)]);
   // Диаметры провода приходят из БД.ПРОВ при сборке ЭТК (techcard_build.enrich_wire_diameters); нет в базе — «—», не выдумываем.

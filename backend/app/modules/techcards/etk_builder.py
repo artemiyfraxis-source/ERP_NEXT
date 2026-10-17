@@ -833,17 +833,47 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
     return [{"name": result_name, "norm": _format(norm, 2)}]
 
 
-def _cut_tolerance(op: Mapping[str, Any], wire_data: Mapping[str, Any]) -> str:
-    """Допуск длины реза: введённый технологом в операции — как есть; иначе 0,7 % длины (SUPPLYMAP, вверх до мм), но не
-    строже ±3 мм до 500 мм длины и ±5 мм длиннее (владелец 04.10: «(+/-)1мм» — перебор, «хотя бы 3–5»)."""
+def _length_tolerance(length: Decimal) -> str:
+    """0,7 % длины (SUPPLYMAP, вверх до мм), но не строже ±3 мм до 500 мм длины и ±5 мм длиннее (владелец 04.10:
+    «(+/-)1мм» — перебор, «хотя бы 3–5»)."""
+    by_length = max(1, int((length * Decimal(7) / 1000).to_integral_value(rounding="ROUND_CEILING")))
+    return f"±{max(3 if length <= 500 else 5, by_length)} мм"
+
+
+def _cut_lengths(wires: Sequence[Mapping[str, Any]]) -> list[tuple[Decimal, Decimal]]:
+    """Длины реза партии по возрастанию и сколько штук каждой (qty провода): [(180, 3), (200, 1)]; без длины — не в счёт."""
+    counts: dict[Decimal, Decimal] = {}
+    for wire in wires:
+        length = _decimal(wire.get("length"))
+        if length > 0:
+            counts[length] = counts.get(length, Decimal(0)) + _number(wire.get("qty"), Decimal(1))
+    return sorted(counts.items())
+
+
+def _cut_tolerance(op: Mapping[str, Any], lengths: Sequence[Decimal]) -> str:
+    """Допуск длины реза: введённый технологом в операции — как есть; иначе по длине (_length_tolerance). Партия проводов
+    разной длины (владелец 17.10, 713К.4: «тут один чёрный 200 мм»): допуски длин совпали — один, иначе длины по допускам
+    «150, 300 мм ±3 мм; 600 мм ±5 мм» (эскиз ЭТК подписывает так каждую размерную линию)."""
     manual = str(op.get("cutTolerance") or "").strip()
     if manual:
         return manual
-    length = _decimal(str(wire_data.get("length") or "").split("\n", 1)[0])
-    if not length:
-        return ""
-    by_length = max(1, int((length * Decimal(7) / 1000).to_integral_value(rounding="ROUND_CEILING")))
-    return f"±{max(3 if length <= 500 else 5, by_length)} мм"
+    by_tolerance: dict[str, list[Decimal]] = {}
+    for length in sorted(item for item in lengths if item > 0):
+        by_tolerance.setdefault(_length_tolerance(length), []).append(length)
+    if len(by_tolerance) <= 1:
+        return next(iter(by_tolerance), "")
+    return "; ".join(
+        f"{', '.join(_format(length) for length in group)} мм {tolerance}" for tolerance, group in by_tolerance.items()
+    )
+
+
+def _length_kd(wires: Sequence[Mapping[str, Any]]) -> str:
+    """Длина по КД резки: одна длина — «180мм»; партия разной длины — каждая со своим числом штук «180 мм ×3, 200 мм ×1»."""
+    lengths = _cut_lengths(wires)
+    if len(lengths) > 1:
+        return ", ".join(f"{_format(length)} мм ×{_format(count)}" for length, count in lengths)
+    first = str(wires[0].get("length") or "") if wires else ""
+    return f"{first}мм" if first else ""
 
 
 def _tin_strip_length(config: Mapping[str, Any], end: str) -> str:
@@ -1030,13 +1060,13 @@ def _machine_tooling(tooling: list[dict[str, Any]], machine: Mapping[str, str]) 
     return result
 
 
-def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping[str, Any]) -> dict[str, Any]:
+def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
     operation_type = str(op.get("type") or "")
     fields: dict[str, Any] = {}
     if operation_type in {"cutWire", "cutWireStrip", "cutWireCrimp"}:
-        fields["cutTolerance"] = _cut_tolerance(op, wire_data)
-        first_length = str(wire_data.get("length") or "").split("\n", 1)[0]
-        fields["lengthKd"] = f"{first_length}мм" if first_length else ""
+        cut_wires = _wires(op, config)
+        fields["cutTolerance"] = _cut_tolerance(op, [length for length, _ in _cut_lengths(cut_wires)])
+        fields["lengthKd"] = _length_kd(cut_wires)
     strip = config.get("strip") if operation_type == "cutWire" else op.get("strip") if operation_type in {"cutWireStrip", "cutWireCrimp", "stripCable"} else None
     if isinstance(strip, Mapping):
         fields["strip"] = {"a": bool(strip.get("a")), "b": bool(strip.get("b")), "lenA": strip.get("lenA") or "", "lenB": strip.get("lenB") or ""}
@@ -1066,7 +1096,7 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         length = _format(coax_data.get("cableLength"))
         if length != "0":
             fields["lengthKd"] = f"{length}мм"
-            fields["cutTolerance"] = _cut_tolerance(op, {"length": length.replace(",", ".")})
+            fields["cutTolerance"] = _cut_tolerance(op, [_decimal(length)])
     if operation_type == "coaxStrip":
         # Размеры разделки стороны для эскиза etkDrawCoax_: L1–L3 — разъёма (БД.КОАКС), D1–D3 — кабеля (СПР.КАБ).
         fields["coax"] = _coax_strip_sizes(config, "B" if op.get("side") == "B" else "A")
@@ -1358,8 +1388,8 @@ def _wire_data(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, An
     return _combined_wire_data(_wires(op, config)) if op.get("type") in CUT_TYPES else {}
 
 
-def _typed_fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping[str, Any]) -> dict[str, Any]:
-    fields = _fields(op, config, wire_data)
+def _typed_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    fields = _fields(op, config)
     if op.get("type") == "cutWireCrimp":
         fields["cutCrimp"] = True
         if fields.get("applicator"):
@@ -1409,7 +1439,7 @@ def _typed_operation(
     generator chain (card placeholders), `single` — the name of the one piece it hands on, `semis` — its input,
     `result_rows` — its result rows when the chain set them (a ПФ of the generator's scheme)."""
     wire_data = _wire_data(op, config)
-    fields = _typed_fields(op, config, wire_data)
+    fields = _typed_fields(op, config)
     terminal_warning = _terminal_warning(op, position, code)
     if terminal_warning:
         warnings.append(terminal_warning)
