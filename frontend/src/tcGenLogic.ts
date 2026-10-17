@@ -2699,7 +2699,14 @@ export function makeGen(D: GenData, S: GenState) {
    *  иначе автоподбор. Резка, лента/оплётка и коакс без ручного выбора пересчитываются всегда: ключи резки
    *  cutWire1…N идут по порядку партий, и при перегруппировке тот же ключ достаётся резке другого вида. */
   function templateIdFor(spec: OpSpec) {
-    const autoRepick = (/^cutWire\d*$/.test(spec.opKey) || spec.type === "insWrap" || S.tab === "coax")
+    // Залипший (не ручной) шаблон с другим кодом, чем просит правило генератора, тоже пересчитывается, если карта с
+    // нужным кодом есть: 713К.4 КБ1 (17.10) — резка маркировки ушла на INS_MARK_TUBE_AUTO, а у ключа cutMark остался
+    // CUT_TUT_short (резка трубок: не тот станок, не те дефекты).
+    const stuck = S.selectedTemplates[spec.opKey];
+    const want = (spec.tmplWant || spec.tmplHint || "").trim();
+    const stuckCode = stuck ? String((D.templates || []).find((t) => t.id === stuck)?.title || "").split("|")[0].trim() : "";
+    const outdated = !!stuck && !!want && !!stuckCode && stuckCode.toLowerCase() !== want.toLowerCase() && hasTemplateCode_(want);
+    const autoRepick = (/^cutWire\d*$/.test(spec.opKey) || spec.type === "insWrap" || S.tab === "coax" || outdated)
       && !S.manualTemplates.includes(spec.opKey);
     return (autoRepick ? pickTemplateForOp_(spec) : (S.selectedTemplates[spec.opKey] || pickTemplateForOp_(spec))) || "";
   }
