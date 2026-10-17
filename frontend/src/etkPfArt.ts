@@ -5,7 +5,9 @@
 // сросток под трубкой, ветвь (владелец 17.10: «визуал полуфабриката оставляет желать лучшего» — разъём с проводами,
 // свитая пара, оплётка с длиной, ТТК у разъёма, метка с надписью) и слои на пучке — рисуется здесь, тем же стилем.
 // Считается при показе: выданные ЭТК перевыпускать не нужно.
-import { connectorFace, connectorFaceUnits, wireColorKnown } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, topFeature, wireColorKnown, type TopFeature } from "./connectorArt";
+import { connectorTopView } from "./connectorTopView";
+import { twistedPairSvg } from "./twistArt";
 import { etkCutEnds, etkDrawHarness, etkFigure, etkWireColor, type CutEndKind, type EtkHousing, type EtkTopologyData } from "./etkDraw";
 import { formatMinutes, type EtkPfGroup } from "./etkRoute";
 import type { WireBlankEnd } from "./harness/WireBlankCatalog";
@@ -289,11 +291,17 @@ export function pfBranch(operations: Row[], source: (operation: Row) => Row, con
  *  веером и сходятся в пучок; ТТК — тёмной трубкой у разъёма; метка — белой трубкой с надписью на своём месте; оплётка —
  *  сеткой с размером длины; свитая пара — двумя жилами в своих цветах на открытом конце. */
 export function pfBranchSvg(branch: PfBranch): string {
-  const W = 700, H = 228, cy = 100, faceW = 190, faceH = 112, x0 = 12;
+  const W = 700, H = 218, cy = 100, faceW = 190, faceH = 112, x0 = 12;
   let body = "";
-  // Разъём: торец по раскладке серии, вписанный в рамку; без корпуса — тёмный корпус-прямоугольник.
-  let faceRight = x0 + 70, faceTop = cy - 30, faceBottom = cy + 30;
-  if (branch.housing) {
+  // Разъём: вид сверху (как в базе — развёрнутая объёмная модель), провода уходят вправо; серии без вида сверху —
+  // торец по раскладке серии, вписанный в рамку; без корпуса — тёмный корпус-прямоугольник.
+  let faceRight = x0 + 70, faceTop = cy - 30, faceBottom = cy + 30, topView = false, topSide: TopFeature | null = null;
+  const view = branch.housing ? connectorTopView(branch.housing, 84, faceW - 40, branch.byPin) : null;
+  if (branch.housing && view) {
+    const fx = x0 + (faceW - 40 - view.h) / 2, fy = cy - view.w / 2;
+    body += `<g data-part="connector" data-view="top" transform="matrix(0,1,1,0,${fx.toFixed(1)},${fy.toFixed(1)})">${view.body}</g>`;
+    faceRight = fx + view.h; faceTop = fy; faceBottom = fy + view.w; topView = true; topSide = branch.housing ? topFeature(branch.housing) : null;
+  } else if (branch.housing) {
     const units = Math.max(1, connectorFaceUnits(branch.housing));
     let s = Math.min(30, faceW / units / 1.15);
     let face = connectorFace(branch.housing, 0, 0, s, branch.byPin);
@@ -307,7 +315,7 @@ export function pfBranchSvg(branch: PfBranch): string {
   const label = (x: number, y: number, text: string, size = 14, weight = 600, color = INK) =>
     `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="middle" font-size="${size}" font-weight="${weight}" fill="${color}">${esc(text)}</text>`;
   body += `<text x="${x0}" y="22" font-size="20" font-weight="700" fill="${INK}">${esc(cut(branch.name || "Разъём", 40))}</text>` +
-    `<text x="${x0}" y="${H - 6}" font-size="14" fill="${MUTED}">${esc(`разъём — вид со стороны проводов${branch.housing?.title ? `, ${branch.housing.title}` : ""}`)}</text>`;
+    `<text x="${x0}" y="${H - 6}" font-size="14" fill="${MUTED}">${esc(`разъём — ${topView ? `вид сверху, провода справа, ${topSide === "latch" ? "защёлка сверху" : "прорези вверх"}` : "вид со стороны проводов"}${branch.housing?.title ? `, ${branch.housing.title}` : ""}`)}</text>`;
   // Провода: веер от разъёма к пучку.
   const colors = (branch.wires.length ? branch.wires : ["", ""]).slice(0, 10).map((name) => etkWireColor(name));
   const fanFrom = faceRight + 4, fanTo = fanFrom + 60, bundleEnd = W - 14, k = 2.8;
@@ -321,53 +329,85 @@ export function pfBranchSvg(branch: PfBranch): string {
   colors.forEach((color, index) => {
     body += `<line x1="${fanTo.toFixed(1)}" y1="${strandY(index).toFixed(1)}" x2="${bundleEnd}" y2="${strandY(index).toFixed(1)}" stroke="${color}" stroke-width="${k - 0.6}"/>`;
   });
-  // Что надето: ТТК у разъёма, метка, оплётка (или лента), открытый конец со свитой парой.
-  let x = fanTo + 10;
-  if (branch.sleeve) {
-    const w = 100, sx = faceRight - 2;
-    body += `<rect data-part="sleeve" x="${sx.toFixed(1)}" y="${cy - 20}" width="${w}" height="40" rx="10" fill="#2f3b40" opacity=".93" stroke="${INK}" stroke-width="1.2"/>` +
-      label(sx + w / 2, cy - 29, cut(branch.sleeve.label, 16), 17, 700) +
-      label(sx + w / 2, cy + 40, branch.sleeve.heat ? "усажена на разъёме" : "у разъёма", 15, 400, MUTED);
-    x = sx + w + 30;
-  }
-  branch.marks.slice(0, 2).forEach((mark) => {
-    const w = Math.max(64, Math.min(130, mark.text.length * 14 + 28));
-    body += `<rect data-part="mark" x="${x.toFixed(1)}" y="${cy - 18}" width="${w}" height="36" rx="6" fill="#fffef6" stroke="${INK}" stroke-width="1.3"/>` +
-      label(x + w / 2, cy + 7, cut(mark.text, 9), 24, 800) +
-      label(x + w / 2, cy - 27, "маркировка", 15, 400, MUTED) +
-      (mark.place ? label(x + w / 2, cy + 66, cut(mark.place, 22), 15, 400, MUTED) : "");
-    x += w + 26;
-  });
-  const cover = branch.braid ?? branch.wrap;
-  if (cover) {
-    const x1 = bundleEnd - (branch.twist ? 150 : 36), fill = branch.braid ? "url(#pfBraid)" : "url(#pfWrap)";
-    if (x1 - x > 80) {
-      body += `<rect data-part="${branch.braid ? "braid" : "wrap"}" x="${x.toFixed(1)}" y="${cy - 15}" width="${(x1 - x).toFixed(1)}" height="30" rx="8" fill="${fill}" stroke="${INK}" stroke-width="1"/>` +
-        label((x + x1) / 2, cy - 24, cut(cover.label, 30), 17, 700);
-      if (cover.len) {
-        const yd = cy + 46;
-        body += `<line x1="${x.toFixed(1)}" y1="${cy + 16}" x2="${x.toFixed(1)}" y2="${yd + 6}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-          `<line x1="${x1}" y1="${cy + 16}" x2="${x1}" y2="${yd + 6}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-          `<line x1="${x.toFixed(1)}" y1="${yd}" x2="${x1}" y2="${yd}" stroke="${INK}" stroke-width="1"/>` +
-          `<path d="M${x.toFixed(1)},${yd} l10,-4 v8 z M${x1},${yd} l-10,-4 v8 z" fill="${INK}"/>` +
-          `<rect x="${((x + x1) / 2 - 58).toFixed(1)}" y="${yd - 11}" width="116" height="22" fill="#fff"/>` +
-          label((x + x1) / 2, yd + 5, cover.len, 17, 700);
+  // Что надето. Оплётка начинается у тыла разъёма и идёт под ТТК; ТТК надета на тыл разъёма поверх начала оплётки;
+  // метка — поверх оплётки чуть дальше ТТК; свивка — внутри оплётки (видна сквозь сетку). Без оплётки — ТТК, метка
+  // вплотную, лента, и свивка отдельным участком на открытом конце.
+  const twistPairs = branch.twist ? branch.twist.pairs.filter((item) => item[0]).length : 0;
+  const pitchMm = num(branch.twist?.pitch);
+  const pairColors = (): [string, string] => {
+    const pair = branch.twist?.pairs[0] ?? ["", ""];
+    return [etkWireColor(pair[0]), etkWireColor(pair[1])];
+  };
+  const sleeveX = faceRight - 12, sleeveW = 104, sleeveEnd = sleeveX + sleeveW;
+  const braidX1 = bundleEnd - 36;
+  const coverLen = branch.braid?.len ?? "";
+  const lenMm = /^\d+(?:[.,]\d+)?\s*мм$/.test(coverLen) ? num(coverLen.replace("мм", "")) : 0;
+  const drawSleeve = () => {
+    // Подпись ТТК — под трубкой, чтобы не лезла на метку и оплётку.
+    if (!branch.sleeve) return;
+    const tx = faceRight + 6;
+    body += `<rect data-part="sleeve" x="${sleeveX.toFixed(1)}" y="${cy - 20}" width="${sleeveW}" height="40" rx="10" fill="#2f3b40" opacity=".96" stroke="${INK}" stroke-width="1.2"/>` +
+      `<text x="${tx.toFixed(1)}" y="${cy + 70}" font-size="17" font-weight="700" fill="${INK}">${esc(cut(branch.sleeve.label, 16))}</text>` +
+      `<text x="${tx.toFixed(1)}" y="${cy + 88}" font-size="15" fill="${MUTED}">${branch.sleeve.heat ? "усажена на разъёме" : "у разъёма"}</text>`;
+  };
+  const drawMarks = (from: number): number => {
+    let mx = from;
+    branch.marks.slice(0, 2).forEach((mark) => {
+      const w = Math.max(64, Math.min(130, mark.text.length * 14 + 28));
+      body += `<rect data-part="mark" x="${mx.toFixed(1)}" y="${cy - 18}" width="${w}" height="36" rx="6" fill="#fffef6" stroke="${INK}" stroke-width="1.3"/>` +
+        label(mx + w / 2, cy + 7, cut(mark.text, 9), 24, 800) +
+        label(mx + w / 2, cy - 27, "маркировка", 15, 400, MUTED) +
+        (mark.place ? label(mx + w / 2, cy - 45, cut(mark.place, 22), 15, 400, MUTED) : "");
+      mx += w + 4;
+    });
+    return mx;
+  };
+  const dimension = (xa: number, xb: number, text: string) => {
+    const yd = cy + 46, top = Math.max(cy + 22, faceBottom + 2);
+    body += `<line x1="${xa.toFixed(1)}" y1="${top.toFixed(1)}" x2="${xa.toFixed(1)}" y2="${yd + 6}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+      `<line x1="${xb.toFixed(1)}" y1="${cy + 16}" x2="${xb.toFixed(1)}" y2="${yd + 6}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+      `<line x1="${xa.toFixed(1)}" y1="${yd}" x2="${xb.toFixed(1)}" y2="${yd}" stroke="${INK}" stroke-width="1"/>` +
+      `<path d="M${xa.toFixed(1)},${yd} l10,-4 v8 z M${xb.toFixed(1)},${yd} l-10,-4 v8 z" fill="${INK}"/>` +
+      `<rect x="${((xa + xb) / 2 - 58).toFixed(1)}" y="${yd - 11}" width="116" height="22" fill="#fff"/>` +
+      label((xa + xb) / 2, yd + 5, text, 17, 700);
+  };
+  let x = fanTo + 10, inside = false;
+  if (branch.braid) {
+    const bx = faceRight, braid = branch.braid;
+    // Свивка внутри оплётки: пара под полупрозрачной сеткой; шаг — в масштабе длины оплётки, если она в мм.
+    if (branch.twist) {
+      const px = pitchMm > 0 ? (lenMm > 0 ? (pitchMm * (braidX1 - bx)) / lenMm : pitchMm * 3.5) : 60;
+      body += twistedPairSvg(bx + 4, braidX1 - 6, cy, Math.max(26, Math.min(110, px)), 7, pairColors());
+      inside = true;
+    }
+    body += `<g${inside ? ' opacity=".5"' : ""}><rect data-part="braid" x="${bx.toFixed(1)}" y="${cy - 15}" width="${(braidX1 - bx).toFixed(1)}" height="30" rx="8" fill="url(#pfBraid)" stroke="${INK}" stroke-width="1"/></g>`;
+    drawSleeve();
+    const markEnd = branch.marks.length ? drawMarks(branch.sleeve ? sleeveEnd + 12 : faceRight + 24) : (branch.sleeve ? sleeveEnd : faceRight);
+    // Название оплётки — над свободной частью оплётки, правее метки; длина — от тыла разъёма до конца оплётки.
+    const nameFrom = Math.max(markEnd + (branch.marks.length ? 50 : 0), faceRight + 20);
+    body += label((nameFrom + braidX1) / 2, cy - 24, cut(braid.label, 30), 17, 700);
+    if (braid.len) dimension(bx, braidX1, braid.len);
+    if (branch.wrap) body += label((bx + braidX1) / 2, cy + 66, `под оплёткой ${cut(branch.wrap.label, 24)}`, 15, 400, MUTED);
+    if (inside) body += `<text x="${(braidX1 - 4).toFixed(1)}" y="${cy + 88}" text-anchor="end" font-size="15" fill="${MUTED}">${esc(`свивка${twistPairs > 1 ? ` ×${twistPairs}` : ""} внутри оплётки, ${branch.twist!.pitch ? `шаг ${branch.twist!.pitch} мм` : "шаг по КД"}`)}</text>`;
+  } else {
+    drawSleeve();
+    if (branch.sleeve) x = sleeveEnd + 4;
+    x = drawMarks(x);
+    if (branch.wrap) {
+      const x1 = bundleEnd - (branch.twist ? 150 : 36);
+      if (x1 - x > 80) {
+        body += `<rect data-part="wrap" x="${x.toFixed(1)}" y="${cy - 15}" width="${(x1 - x).toFixed(1)}" height="30" rx="8" fill="url(#pfWrap)" stroke="${INK}" stroke-width="1"/>` +
+          label((x + x1) / 2, cy - 24, cut(branch.wrap.label, 30), 17, 700);
+        if (branch.wrap.len) dimension(x, x1, branch.wrap.len);
+        x = x1;
       }
-      if (branch.braid && branch.wrap) body += label((x + x1) / 2, cy + 84, `под оплёткой ${cut(branch.wrap.label, 24)}`, 15, 400, MUTED);
-      x = x1;
     }
   }
-  if (branch.twist) {
-    // Свитая пара — на открытом конце, в цветах первой пары.
-    const pair = branch.twist.pairs[0], from = x + 14, to = bundleEnd + 2, span = to - from;
-    [0, 1].forEach((phase) => {
-      let d = "";
-      for (let at = 0; at <= span; at += 3) d += `${at ? "L" : "M"}${(from + at).toFixed(1)},${(cy + 8 * Math.sin((at / 34) * 2 * Math.PI + phase * Math.PI)).toFixed(1)}`;
-      body += `<path data-part="twist" d="${d}" fill="none" stroke="${INK}" stroke-width="6.4" stroke-linecap="round"/>` +
-        `<path d="${d}" fill="none" stroke="${etkWireColor(pair[phase])}" stroke-width="4.4" stroke-linecap="round"/>`;
-    });
-    const pairs = branch.twist.pairs.filter((item) => item[0]).length;
-    body += label(from + span / 2, cy - 22, `свивка${pairs > 1 ? ` ×${pairs}` : ""}`, 16, 700) +
+  if (branch.twist && !inside) {
+    // Свитая пара без оплётки — отдельным участком на открытом конце, в цветах первой пары.
+    const from = x + 14, to = bundleEnd + 2, span = to - from;
+    body += twistedPairSvg(from, to, cy, Math.max(30, Math.min(90, pitchMm * 3.5 || 60)), 7, pairColors()) +
+      label(from + span / 2, cy - 22, `свивка${twistPairs > 1 ? ` ×${twistPairs}` : ""}`, 16, 700) +
       label(from + span / 2, cy + 38, branch.twist.pitch ? `шаг ${branch.twist.pitch} мм` : "шаг по КД", 15, 400, MUTED);
   }
   return svg(W, H, body);

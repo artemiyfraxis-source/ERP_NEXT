@@ -91,7 +91,23 @@ describe("etkPfArt — эскиз полуфабриката в схеме ПФ"
     expect(svg).toContain('data-part="mark"');
     expect(svg).toContain(">A6<");
     expect(svg).toContain('data-part="twist"');
-    expect(svg).toContain("шаг 25 мм");
+    // Разъём — видом сверху из базы (прорези вверх), провода уходят вправо.
+    expect(svg).toContain('data-view="top"');
+    expect(svg).toContain("вид сверху, провода справа, прорези вверх");
+    // Оплётка начинается у тыла разъёма и идёт под ТТК; метка — поверх оплётки, после ТТК.
+    const at = (part: string) => svg.indexOf(`data-part="${part}"`);
+    expect(at("connector")).toBeLessThan(at("braid"));
+    expect(at("braid")).toBeLessThan(at("sleeve"));
+    expect(at("sleeve")).toBeLessThan(at("mark"));
+    const x = (part: string) => Number(new RegExp(`data-part="${part}" x="([\\d.]+)"`).exec(svg)![1]);
+    const w = (part: string) => Number(new RegExp(`data-part="${part}" x="[\\d.]+" y="[\\d.-]+" width="([\\d.]+)"`).exec(svg)![1]);
+    expect(x("braid")).toBeLessThanOrEqual(x("sleeve") + 12); // нет зазора между разъёмом и оплёткой
+    expect(x("mark")).toBeGreaterThanOrEqual(x("sleeve") + w("sleeve"));
+    expect(x("mark") + w("mark")).toBeLessThanOrEqual(x("braid") + w("braid"));
+    // Свивка внутри оплётки: рисуется под её сеткой, отдельного участка и подписи «шаг» после неё нет.
+    expect(svg).toContain("свивка внутри оплётки, шаг 25 мм");
+    expect(svg.indexOf('data-part="twist"')).toBeLessThan(at("braid"));
+    expect(svg).not.toContain(">шаг 25 мм<");
     // Всё на одном рисунке — полосы слоёв под ним нет.
     expect(art.layers).toBe("");
     // Без свивки — ни свитой пары, ни её подписи.
@@ -100,6 +116,18 @@ describe("etkPfArt — эскиз полуфабриката в схеме ПФ"
     const second = plain.main && "svg" in plain.main ? plain.main.svg : "";
     expect(second).not.toContain('data-part="twist"');
     expect(second).toContain(">A6<");
+    // Без оплётки свивка — отдельным участком со своей подписью; без ТТК и метки оплётка смыкается с разъёмом.
+    const noBraid = etkPfArt({ group: group({ ops: [1, 2] }), operations: operations.slice(0, 2), document: { operations: operations.slice(0, 2), build_config: config } })!;
+    const third = noBraid.main && "svg" in noBraid.main ? noBraid.main.svg : "";
+    expect(third).toContain(">шаг 25 мм<");
+    expect(third).not.toContain("внутри оплётки");
+    // Серия без вида сверху — торец, как был.
+    const round = { ...housing, kind: "round", grid: [[1, 2, 3, 4]] };
+    const roundOps = [{ ...operations[0], housing: round }, operations[2]];
+    const faced = etkPfArt({ group: group({ ops: [1, 3] }), operations: roundOps, document: {} })!;
+    const fsvg = faced.main && "svg" in faced.main ? faced.main.svg : "";
+    expect(fsvg).toContain('data-part="connector"');
+    if (!fsvg.includes('data-view="top"')) expect(fsvg).toContain("вид со стороны проводов");
     // Монтаж в разъём без ничего на проводах — рисунок монтажа как был.
     const bare = etkPfArt({ group: group(), operations: [operations[0]], document: {} })!;
     expect(bare.main && "svg" in bare.main ? bare.main.svg : "").not.toContain('data-part="connector"');

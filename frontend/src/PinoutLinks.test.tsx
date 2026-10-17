@@ -63,6 +63,8 @@ it.each([[[["0", "1"], ["2", "3"]]], [[["0", "2"], ["1", "3"]]]])("two twisted p
   const { container } = render(<LinkSchemeSvg scheme={scheme} layout={L} />);
   expect([...container.querySelectorAll(".pin-links-twist")].map((t) => t.textContent)).toEqual(["свитая пара", "свитая пара"]);
   expect(container.querySelectorAll('[data-twisted="true"]')).toHaveLength(4);
+  // Спираль с пересечениями: участки «спереди» нарисованы поверх проводов группы.
+  expect(container.querySelectorAll(".pin-links-front").length).toBe(4);
 });
 
 it("a wire outside any twist group stays a plain line; the scheme is read-only without onNet", () => {
