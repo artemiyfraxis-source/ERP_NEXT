@@ -227,6 +227,14 @@ def search_text(value: str) -> str:
     return _DECIMAL_COMMA.sub(".", text)
 
 
+def _word_found(word: str, haystack: str) -> bool:
+    """A query word without digits matches from the start of a word («male» no longer finds «female»); a word with
+    digits (article, size, ГРН) stays a substring — «0.35», «33н», «000001» are found inside longer codes."""
+    if any(char.isdigit() for char in word):
+        return word in haystack
+    return re.search(rf"(?<![^\W_]){re.escape(word)}", haystack) is not None
+
+
 def _domain(row: StockLotRow) -> StockLot:
     return StockLot(
         id=row.id,
@@ -403,7 +411,7 @@ class SqlAlchemyWarehouseRepository:
             lot.purpose,
             lot.storage_location,
         )))
-        return all(word in haystack for word in words)
+        return all(_word_found(word, haystack) for word in words)
 
     def audit_trail(self, lot_id: UUID) -> list[tuple[str, dict]]:
         """(event_type, details) of every audit event on the lot, oldest first."""
