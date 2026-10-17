@@ -17,17 +17,19 @@ const plain = items.filter((i) => hasTopView(i.housing) && !i.housing.roof);
 // Закрыть серию = найти лист, записать roof в connector_housings.py (ROOF_EXPLICIT) и убрать её отсюда.
 // Почему ещё без крыши (17.10, второй проход): JST RCY, RA — на листе окно/ничего не видно (RA: eRA недоступен; JWPF T —
 // окно замка по eJWPF с. 2, закрыт третьим проходом);
-// Hirose DF13-2R, DF11, DF1B (гнездо, 2 ряда, ES, DES), DF1BA, DF1B-DEP — по каталогу замок на обратной грани, на крыше только метка ▽;
-// DF20 — на листе у колодки замка нет (металл только у вилки на плате), DF61 — «swing lock» без ясной формы крыши;
+// Hirose DF13-2R, DF11, DF1B (гнездо, 2 ряда, ES, DES), DF1BA — по каталогу замок на обратной грани, на крыше только метка ▽
+// (DF1B DEP закрыт 17.10: чертёж EDC3-160056-01 показывает рычаг на грани сверху; DF61 закрыт: EDC3-336116-04, рычаг по центру);
+// DF20 — на листе у колодки замка нет (металл только у вилки на плате);
 // JAE FI-X (в серии и FI-X30H без замка, и FI-X30HL), FI-S («friction lock» без формы); Connfly DS1070/DS1071/-01/1072/1074 —
 // на чертеже корпус гладкий (DS1070 — лист на вилку); Molex SL 2 ряда, Board-in, Milli-Grid 51110 (замки только у 14–32 цепей),
-// Mini50 негерметичный 34791 — листа с видом нет; HSM MX (Y/N: ребро есть не у всех), HSM HC и Samtec ISD2 (M/S: у S винты) —
-// серия смешивает исполнения; Deutsch DT, TE Superseal — te.com не отдаёт лист, в Web Archive его нет; JR servo — листа
+// Mini50 негерметичный 34791 — лист SD-34791-001 (347910040_sd.pdf, Web Archive 2019) есть, но серия смешивает исполнения
+// (с мостом замка / без, мостовые, ключ A–D, шарнирная крышка «hinge»): общего замка на крыше нет; HSM MX (Y/N: ребро есть не у всех), HSM HC и Samtec ISD2 (M/S: у S винты) —
+// серия смешивает исполнения (в каталоге один id на M и S); Deutsch DT, TE Superseal — te.com не отдаёт лист, в Web Archive его нет; JR servo — листа
 // производителя нет; USB-A, Amass XT/QS8 — замка на крыше нет, прорезей по листу тоже.
 const UNSOURCED = [
   "jst-rcy", "jst-rcy-p", "molex-sl-2r", "connfly-ds1071", "amass-xt", "amass-qs8", "molex-milligrid",
-  "jst-ra", "hirose-df13-2r", "hirose-df20", "hirose-df61", "hirose-df1b", "hirose-df1b-2r", "hirose-df1b-es",
-  "hirose-df1b-des", "hirose-df1b-p2r", "hirose-df1ba-p", "hirose-df1ba-p2r", "hirose-df11", "jae-fix", "jae-fis",
+  "jst-ra", "hirose-df13-2r", "hirose-df20", "hirose-df1b", "hirose-df1b-2r", "hirose-df1b-es",
+  "hirose-df1b-des", "hirose-df1ba-p", "hirose-df1ba-p2r", "hirose-df11", "jae-fix", "jae-fis",
   "connfly-ds1070", "connfly-ds1072", "connfly-ds1074", "connfly-ds1071-01", "molex-mini50-u", "hsm-mx508", "hsm-hc",
   "jr-servo", "samtec-isd2", "molex-boardin", "deutsch-dt", "te-superseal", "usb-a",
 ];
@@ -89,6 +91,10 @@ describe("крыша корпуса: замок или прорези — тол
     expect(roof("molex-picoezmate")).toMatchObject({ kind: "slots", at: "contacts" });
     expect(roof("kls-2-50")).toMatchObject({ kind: "slots", at: "contacts" });
     expect(roof("hirose-df20")).toBeFalsy();
+    expect(roof("hirose-df61")).toMatchObject({ kind: "latch", at: "center" });
+    expect(roof("hirose-df1b-p2r")).toMatchObject({ kind: "latch", at: "center" });
+    expect(roof("molex-mini50-u")).toBeFalsy();
+    expect(roof("samtec-isd2")).toBeFalsy();
   });
 
   it("draws different geometry for different features", () => {

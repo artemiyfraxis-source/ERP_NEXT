@@ -323,6 +323,11 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     "te-multilock-040": {"kind": "latch", "at": "center", "src": "TE 174047-2, лист изделия (фото: блок замка по центру, «外壳集成»), https://www.te.com.cn/chn-zh/product-174047-2.datasheet.pdf"},
     # KLS L-KLS1-2.50-XX-H drawing: a lance window per cavity on the long face (ZH type).
     "kls-2-50": {"kind": "slots", "at": "contacts", "src": "KLS L-KLS1-2.50-XX-H, чертёж, https://static.chipdip.ru/lib/526/DOC059526514.pdf"},
+    # Hirose drawings from hirose.com API (read 17.10.2026, drawing_2d, third angle): DF61 EDC3-336116-04 (DF61-2S-2.2C(11)): the plan view
+    # shows a lock lever along the middle of the face (side view: its hook), ▽ «Contact No.1 marking» on that face;
+    # DF1B DEP EDC3-160056-01: the plan view shows the lock lever between two guide rails (side view: hook).
+    "hirose-df61": {"kind": "latch", "at": "center", "src": "Hirose EDC3-336116-04 (DF61-2S-2.2C), https://www.hirose.com/api/v1/products/CL0666-5002-4-11/documents/drawing_2d/content (вид сверху: рычаг замка по центру грани, на виде сбоку — зацеп)"},
+    "hirose-df1b-p2r": {"kind": "latch", "at": "center", "src": "Hirose EDC3-160056-01 (DF1B-*DEP-2.5RC), https://www.hirose.com/api/v1/products/CL0541-0366-9-00/documents/drawing_2d/content (вид сверху: рычаг замка между двумя направляющими, на виде сбоку — зацеп)"},
     # RJ45 8P8C: the latch tab on the plug body (IEC 60603-7).
     "rj45": {"kind": "latch", "at": "center", "src": "IEC 60603-7 (8P8C): защёлка на корпусе вилки"},
 }
