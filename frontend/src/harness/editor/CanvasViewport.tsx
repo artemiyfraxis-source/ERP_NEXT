@@ -53,6 +53,7 @@ import {
   buildWireStripProfileGeometry,
   type WireStripProfileGeometry,
 } from "./wire-strip-profile-geometry";
+import { collectStripCallouts, drawStripCallouts, drawStripNotes, stripNotesLine } from "./strip-callouts";
 import {
   ComponentTemplateImageCache,
   drawProjectedComponentTemplateView,
@@ -1935,6 +1936,8 @@ function drawE4Connector(
 
 const stripProfilePalette = ["#d6ad65", "#e4ebef", "#a9b7c0", "#7a929e", "#b8c9c2"] as const;
 const stripProfileOutline = "#344b59";
+/** Зачищенная жила — голая медь, а не цвет изоляции (белый провод закрашен так же). */
+const stripConductorColor = "#c9824a";
 const stripProfileStrokeWidth = 1.5;
 
 export interface FreeWireEndpointRef {
@@ -2120,7 +2123,7 @@ function drawWireDrawingEndStyles(context: CanvasRenderingContext2D, object: Edi
   context.restore();
 }
 
-function drawWireStripProfiles(
+export function drawWireStripProfiles(
   context: CanvasRenderingContext2D,
   object: EditorSceneObject,
   selected: boolean,
@@ -2138,7 +2141,7 @@ function drawWireStripProfiles(
         : context.lineTo(point.x, point.y));
       context.closePath();
       context.fillStyle = index === geometry.primitives.length - 1
-        ? object.color
+        ? stripConductorColor
         : stripProfilePalette[(primitive.layerIndex - 1) % stripProfilePalette.length]!;
       context.fill();
       if (object.metadata?.volumeShading === "true") {
@@ -2926,6 +2929,14 @@ export function redrawCanvas(
       componentTemplateImageCache,
       view === "drawing" ? ratio * .9 : 0,
     );
+  }
+  if (view === "drawing") {
+    // Зачистка поверх пучка и чужих проводов: полоса меди у конца и подпись длины (сросток — одна на узел).
+    const painted = objectsInPaintOrder(objects, layers, view);
+    for (const object of painted) if (object.kind === "wire" && object.stripProfiles) drawWireStripProfiles(context, object, selectedObjectIds.has(object.id));
+    const callouts = collectStripCallouts(painted);
+    drawStripCallouts(context, callouts);
+    drawStripNotes(context, painted, stripNotesLine(callouts));
   }
   if (physicalNodePreview) {
     context.save();

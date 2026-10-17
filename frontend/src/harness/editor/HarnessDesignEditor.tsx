@@ -26,6 +26,7 @@ import { PhysicalTopologyPanel } from "./PhysicalTopologyPanel";
 import { routePhysicalWires } from "./physical-wire-routing";
 import { physicalRouteEndPoint, physicalWireDisplay, physicalWirePoints } from "./physical-wire-geometry";
 import { openWireEndMetadata } from "./open-wire-ends";
+import { stripEndMetadata } from "./strip-callouts";
 import { ensureConnectorExits, branchPhysicalSegment, connectPhysicalNodeToSegment } from "./physical-topology";
 import { physicalNodePoint } from "./physical-ports";
 import { joiningPipeEndpoint, joiningPipeExit, migrateJoiningPipes } from "./physical-joining-pipes";
@@ -523,6 +524,7 @@ export function designToScene(
         freeTo: String(!!wire.drawingEndpoints && !document.connectors.some(connector => connector.id === wire.to.connectorId)),
         detachedDrawing: String(!!wire.drawingEndpoints),
         ...openWireEndMetadata(wire),
+        ...(view === "drawing" ? stripEndMetadata(wire) : {}),
         drawingPairId: document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.id ?? "",
         drawingPairWireIds: JSON.stringify(document.diffPairs.find(pair => pair.wireIds.includes(wire.id))?.wireIds ?? []),
         materialSourceKey: wire.materialBinding?.sourceKey ?? "",

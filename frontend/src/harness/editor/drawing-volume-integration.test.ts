@@ -28,7 +28,7 @@ it.each([false,true])("shades strip layers on %s multi-path wire without changin
  const flat=recorder(),lit=recorder();
  drawEditorSceneObject(flat.context,{...object,metadata:{volumeShading:"false"}},false,"drawing");
  drawEditorSceneObject(lit.context,{...object,metadata:{volumeShading:"true"}},false,"drawing");
- expect(flat.fills.map(f=>f.color)).toEqual(["#d6ad65",wire.color,"#d6ad65",wire.color]);
+ expect(flat.fills.map(f=>f.color)).toEqual(["#d6ad65","#c9824a","#d6ad65","#c9824a"]);
  expect(lit.fills.filter(f=>f.color==="rgba(0,0,0,.25)")).toHaveLength(4);
  expect(lit.strokes.filter(s=>s.color==="#344b59")).toEqual(flat.strokes.filter(s=>s.color==="#344b59"));
  const e4=recorder();drawEditorSceneObject(e4.context,{...object,metadata:{volumeShading:"true"}},false,"e4");
