@@ -65,7 +65,8 @@ def test_each_terminal_is_crimped_at_cut_in_its_own_batch_with_its_own_norm():
     tails = op_by_key(document, "cutWire2")
     assert (tails["code"], [row["name"] for row in tails["result"]]) == ("CUT_WIRE+2strip+tin", [
         "НВ4 0,2 красный 60мм", "НВ4 0,2 черный 60мм", "НВ4 0,12 белый 60мм", "НВ4 0,12 синий 60мм"])
-    assert tails["fields"]["strip"] == {"a": True, "b": True, "lenA": "", "lenB": "3"}
+    # Конец под сросток — 5 мм по умолчанию (владелец 17.10), хвост — 3 мм.
+    assert tails["fields"]["strip"] == {"a": True, "b": True, "lenA": "5", "lenB": "3"}
     assert _chain_results(CONFIG)[2].endswith("; концы зачищены, свободные концы облужены")
     keys = {op["opKey"] for op in document["build_config"]["ops"]}
     assert not keys & {"stripSpl", "stripTail", "tinTail"}

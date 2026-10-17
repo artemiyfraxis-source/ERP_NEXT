@@ -184,7 +184,7 @@
         "a": true,
         "lenA": "2,5",
         "b": true,
-        "lenB": ""
+        "lenB": "5"
       },
       "side": "A",
       "ep": {
@@ -231,7 +231,7 @@
       ],
       "strip": {
         "a": true,
-        "lenA": "",
+        "lenA": "5",
         "b": true,
         "lenB": "2,5"
       },
@@ -286,7 +286,7 @@
       ],
       "strip": {
         "a": true,
-        "lenA": "",
+        "lenA": "5",
         "b": true,
         "lenB": "3"
       },
@@ -319,7 +319,7 @@
         "a": true,
         "lenA": "2,5",
         "b": true,
-        "lenB": ""
+        "lenB": "5"
       },
       "side": "A",
       "ep": {

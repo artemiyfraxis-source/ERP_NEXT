@@ -708,6 +708,7 @@ def _remaining(task: ProductionTask, operation, viewed: UUID, outputs, result: d
 def my_operations(
     principal: Annotated[Principal, Depends(production_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     operator_id: UUID | None = None,
 ) -> dict:
     with uow_factory() as uow:
@@ -724,6 +725,8 @@ def my_operations(
         logged: dict[UUID, list[WorkTimeEntry]] = {}
         for entry in uow.work_log.entries(operator_id=viewed, operation_ids=own_operations):
             logged.setdefault(entry.operation_id, []).append(entry)
+        # Версии карточек ЭТК, записанные на первом «Начать» операции.
+        started_cards = uow.work.card_versions(own_operations)
         # Свои задания — сам; чужие — работает ли за него смотрящий (иначе экран остаётся только просмотром).
         # Действия идут через гейт правки «Заданий» (production_view_work_principal) — без неё только просмотр.
         can_act = section_allowed(principal, ("myops",), "edit") and (viewed == principal.actor.id or _may_act_for(
@@ -732,6 +735,9 @@ def my_operations(
     boxes_by_task: dict[UUID, list[ProductionBox]] = {}
     for box in boxes:
         boxes_by_task.setdefault(box.task_id, []).append(box)
+    etk_views = _issued_etk_views(techcards_factory, [
+        (task.project, task.item) for task in mine if any(viewed in item.operator_ids for item in task.operations)
+    ])
     operations = []
     for task in mine:
         result = _result(task, facts)
@@ -752,6 +758,11 @@ def my_operations(
                     ),
                     "remaining": _remaining(task, operation, viewed, outputs, result["operations"][index]),
                     "time_fact": _time_fact_result(logged.get(operation.id, ())),
+                    # «по шаблону от 17.10» / «правлена в ТК» по операциям ЭТК этого ПФ: как сейчас и как на начале.
+                    "etk_cards": {
+                        "live": _card_versions(etk_views.get((task.project, task.item)), operation.etk_positions),
+                        "started": started_cards.get(operation.id),
+                    },
                 }]})
     operations.sort(key=lambda item: (
         (item["operations"][0]["my_share"] or {}).get("planned_start") or item["operations"][0]["planned_start"] or "9999",
@@ -808,6 +819,52 @@ def available_inputs(
             "reserved": _number(item.reserved), "available": _number(item.available),
         } for item in materials],
     }
+
+
+def _card_versions(view: dict | None, positions: tuple[int, ...]) -> list[dict]:
+    """Откуда сейчас карточки операций ЭТК операции задания (etk_live): номер операции в ЭТК, источник (template /
+    edited / snapshot) и дата шаблона или правки. Своя операция ручной сборки (без шаблона) строки не даёт."""
+    document = view.get("document") if isinstance(view, dict) else None
+    ops = document.get("operations") if isinstance(document, dict) else None
+    if not isinstance(ops, list):
+        return []
+    rows = []
+    for position in positions:
+        op = ops[position - 1] if 1 <= position <= len(ops) else None
+        source = str(op.get("card_source") or "") if isinstance(op, dict) else ""
+        if source:
+            rows.append({"position": position, "source": source, "changed_at": str(op.get("card_changed_at") or "")})
+    return rows
+
+
+def _issued_etk_views(
+    techcards_factory: Callable[[], TechcardsUnitOfWork] | None, items: list[tuple[str, str]],
+) -> dict[tuple[str, str], dict]:
+    """Выданные ЭТК позиций (проект, изделие) с живыми карточками операций — одно чтение шаблонов на все."""
+    keys = list(dict.fromkeys(items))
+    if techcards_factory is None or not keys:
+        return {}
+    with techcards_factory() as techcards:
+        cards = {key: issued_card_for_item(techcards, *key) for key in keys}
+        found = [(key, card) for key, card in cards.items() if card is not None]
+        views = card_views(techcards, [card for _, card in found]) if found else []
+    return {key: view for (key, _), view in zip(found, views)}
+
+
+def _start_card_versions(
+    task_id: UUID, operation_id: UUID, uow_factory: Callable[[], UnitOfWork],
+    techcards_factory: Callable[[], TechcardsUnitOfWork] | None,
+) -> tuple[dict, ...] | None:
+    """Версии карточек ЭТК для первого «Начать» операции; уже записаны или ЭТК не прочитать — None (нечего писать)."""
+    if techcards_factory is None:
+        return None
+    with uow_factory() as uow:
+        task = uow.production.get(task_id)
+        operation = next((item for item in task.operations if item.id == operation_id), None) if task else None
+        if operation is None or uow.work.card_versions((operation_id,)):
+            return None
+    view = _issued_etk_views(techcards_factory, [(task.project, task.item)]).get((task.project, task.item))
+    return tuple(_card_versions(view, operation.etk_positions))
 
 
 def _etk_task_access(task_id: UUID, operation_id: UUID, principal: Principal, uow_factory: Callable[[], UnitOfWork]):
@@ -1007,16 +1064,18 @@ def start_execution(
     principal: Annotated[Principal, Depends(production_view_work_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     on_behalf_of: UUID | None = None,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict:
     performer = _performer(uow_factory, principal, on_behalf_of)
+    card_versions = _start_card_versions(task_id, operation_id, uow_factory, techcards_factory)
     session = _execution(lambda: start_work(StartWorkCommand(
         task_id=task_id, operation_id=operation_id,
         box_numbers=tuple(payload.inputs),
         actor=principal.actor, now=now,
         materials=tuple(MaterialInput(item.fulfillment_line_id, item.quantity) for item in payload.materials),
-        performer=performer, idempotency_key=_replay_key(idempotency_key),
+        performer=performer, idempotency_key=_replay_key(idempotency_key), card_versions=card_versions,
     ), uow_factory()))
     return {"session": _session_result(session)}
 

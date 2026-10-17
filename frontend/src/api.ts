@@ -711,6 +711,9 @@ export interface ProductionOperator {
   department?: string;
 }
 
+/** Откуда карточка операции ЭТК (`position` — номер в ЭТК): template / edited / snapshot и дата шаблона или правки. */
+export interface EtkCardVersion { position: number; source: string; changed_at: string }
+
 export interface ProductionOperation {
   id: string;
   position: number;
@@ -737,6 +740,9 @@ export interface ProductionOperation {
   remaining?: string;
   /** «Факт / норма» сданного исполнителем по журналу времени: факт без пауз, норма на сданные штуки. */
   time_fact?: { actual_seconds: number; norm_seconds: number; percent: number | null; finishes: number } | null;
+  /** «Мои задания»: откуда карточки операций ЭТК этой операции сейчас (`live`) и на первом «Начать» (`started`;
+   *  null — ещё не начинали). Записанное на начале не меняется. */
+  etk_cards?: { live: EtkCardVersion[]; started: EtkCardVersion[] | null };
   // Сетевой график: блок схемы, этапы-входы, финальная ли операция (её выход идёт в ОТК и на склад ГП) и сколько
   // штук она сдаёт по заданию (тираж × штук её полуфабриката на изделие; в цепочке — тираж).
   stage_key?: string | null;

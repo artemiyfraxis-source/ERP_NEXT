@@ -112,6 +112,13 @@ export const SPLICE_METHODS: ReadonlyArray<readonly [SpliceMethod, string]> = [
 export const SPLICE_REST_ = "*";
 /** Длина зачистки хвоста под лужение по умолчанию, мм (владелец 16.10: «2–3 мм»). */
 export const TAIL_STRIP_MM_ = "3";
+/** Длина зачистки конца под сросток по умолчанию, мм (владелец 17.10: «5 мм»): пустая «Зачистка под сросток» — и в
+ *  сохранённых раньше конфигах — даёт её, а не «A ?» на эскизе резки. */
+export const SPLICE_STRIP_MM_ = "5";
+/** Длина зачистки конца под сросток: из формы, иначе SPLICE_STRIP_MM_. */
+export const spliceStripMm = (S: Pick<GenState, "spl">) => (S.spl?.strip || "").trim() || SPLICE_STRIP_MM_;
+/** Длина зачистки хвоста под лужение: из формы, иначе TAIL_STRIP_MM_. */
+export const tailStripMm = (S: Pick<GenState, "tailTin">) => (S.tailTin?.strip || "").trim() || TAIL_STRIP_MM_;
 /** Хвост «сросток → облуженный свободный конец» режется станком BZW-5.0+Z одной операцией: резка, зачистка обоих концов,
  *  лужение хвоста (БД.ОП, ОБ.098). */
 export const TAIL_CUT_CODE_ = "CUT_WIRE+2strip+tin";
@@ -955,7 +962,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (!tailTinOn_()) return null;
     const ends = tailLeft_().filter((e) => !freeEndStripped_(e));
     if (!ends.length) return null;
-    const len = (S.tailTin?.strip || "").trim() || TAIL_STRIP_MM_;
+    const len = tailStripMm(S);
     const a = ends.some((e) => e.side === "A"), b = ends.some((e) => e.side === "B");
     return { type: "stripCable", opKey: "stripTail", tmplHint: "STRIP_WIRE", cat: "Разделка", tutCount: ends.length,
       label: `Зачистка хвостов (${len.replace(".", ",")} мм) — ${ends.length} конц.`,
@@ -1843,7 +1850,7 @@ export function makeGen(D: GenData, S: GenState) {
       const nameOf = (w: WireEntry) => { const c = getCompById(w.compId); return c ? (c.name || c.art) : "?"; };
       const cutLabel = (ws: WireEntry[], pfx: string) => { const ns = ws.map(nameOf); return ns.length === 1 ? `${pfx} — ${ns[0]}` : `${pfx} — ${ns.length} ${pluralRu(ns.length, "кабель", "кабеля", "кабелей")}`; };
       const splAtCut = spliceStripAtCut_();
-      const splLen = (S.spl.strip || "").trim() || "—";
+      const splLen = spliceStripMm(S);
       const tinIdx = tinWireIndices_();
       // Кусок провода: его жилы, концы которых стоят на одних и тех же разъёмах сторон (провод ×2: одна жила — к «I3»,
       // другая — к «C»). Кабель в оболочке и провод без распиновки по разъёмам — целиком, по всем разъёмам стороны.
@@ -1869,7 +1876,7 @@ export function makeGen(D: GenData, S: GenState) {
           }
         }
       });
-      const tailLen = (S.tailTin?.strip || "").trim() || TAIL_STRIP_MM_;
+      const tailLen = tailStripMm(S);
       const stripOf = (w: WireEntry, piece: Piece) => {
         let a = "", b = "";
         const ends = piece.ends;

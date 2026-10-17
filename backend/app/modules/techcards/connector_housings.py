@@ -256,6 +256,57 @@ FAMILIES: tuple[dict[str, Any], ...] = (
 ) + CATALOG_FAMILIES  # series added from the makers' catalogues (connector_catalog_data.py, 12.10.2026)
 
 
+# Roof feature of the housing (owner, 17.10.2026: «сверху всегда замок или прорези, по детали»): what the top face of the
+# real part carries, so the top view tells the side. `kind`: "latch" — lock lever/ramp/arms, "slots" — lance windows or
+# polarising ribs; `at`: "center" (latch in the middle), "ends" (lock arms at both ends), "contacts" (a slot per contact),
+# "keys" (polarising buttons/ribs, position approximate); `src` — the maker's sheet the feature was read from.
+# A series with no sourced feature has NO roof (None): the drawing shows a plain top, never a guessed one.
+JST_SHEET = "JST {0}, https://www.jst-mfg.com/product/pdf/eng/{0}.pdf"
+LCSC_SHEET = "https://datasheet.lcsc.com/datasheet/pdf/{}.pdf?productCode={}"
+ROOF_EXPLICIT: dict[str, dict[str, str]] = {
+    # eSUH / eSHD / eSHL / eSHJ «Housing» (read 17.10.2026 via Web Archive): the front face of the housing carries a lance
+    # window at every contact and the ▽ circuit-1 mark, no latch (like SH).
+    "jst-suh": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSUH") + " (с. 2, Housing)"},
+    "jst-shd": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHD") + " (с. 2, Housing)"},
+    "jst-shl": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHL") + " (с. 2, Socket housing)"},
+    "jst-shj": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSHJ") + " (с. 3, Socket housing)"},
+    # eSM p. 1: «Arm lock mechanism» — the plug and the receptacle lock with arms at the sides of the housing.
+    "jst-sm-r": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 1, «Arm lock mechanism»)"},
+    "jst-sm-p": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eSM") + " (с. 1, «Arm lock mechanism»)"},
+    # ePHD «Socket housing»: the locks are hooks on the end walls (the ▽ face is only the face cue).
+    "jst-phd": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("ePHD") + " (с. 2, Socket housing: замки на торцах)"},
+    # Zero-Hachi sheet 2 «LOCK SHAPE»: side lock for 2–10 circuits (11–20 have the two-sided lock).
+    "molex-zerohachi": {"kind": "latch", "at": "ends", "src": "Molex 2147190000-SD, л. 2 «LOCK SHAPE», " + LCSC_SHEET.format("c7076ff0722df1ed5ce187d7673c4af7", "C7603638")},
+    # Milli-Grid 151192 sheet 1: «LATCH» callout at the end of the front face, «single latch for 4 CKTS to 12 CKTS only».
+    "molex-milligrid-151192": {"kind": "latch", "at": "ends", "src": "Molex 1511921001, л. 1 «LATCH», " + LCSC_SHEET.format("045b3c208df0ef4741b42924f908715d", "C3269195")},
+    # Pico-Lock: the locks are arms at both ends of the housing (note read from the maker sheets, see connector_catalog_data.py).
+    "molex-picolock-20": {"kind": "latch", "at": "ends", "src": "Molex 2053410000-SD, замки-плечи на торцах"},
+    "molex-picolock-15": {"kind": "latch", "at": "ends", "src": "Molex 5040510000-SD, замки-плечи на торцах"},
+    "molex-picolock-10": {"kind": "latch", "at": "ends", "src": "Molex SD-503764-001, замки-плечи на торцах"},
+    # C-Grid III SD-90123: the face with the polarising buttons («90123») is the one that goes up.
+    "molex-cgrid3-1r": {"kind": "slots", "at": "keys", "src": "Molex SD-90123, грань с кнопками поляризации"},
+    # RJ45 8P8C: the latch tab on the plug body (IEC 60603-7).
+    "rj45": {"kind": "latch", "at": "center", "src": "IEC 60603-7 (8P8C): защёлка на корпусе вилки"},
+}
+
+
+def roof_of(family: Mapping[str, Any]) -> dict[str, str] | None:
+    """The sourced roof feature of a family, or None. Besides the explicit table, a series whose drawing was read (high
+    confidence + a named source) keeps what that drawing shows: lock lever/ramp -> latch in the middle; contact-lance
+    windows face (JST SH/PH/ZH, Connfly DS1066, Mini-SPOX, PicoBlade) -> a slot per contact."""
+    explicit = ROOF_EXPLICIT.get(family["id"])
+    if explicit:
+        return dict(explicit)
+    src = family.get("src")
+    if not src or family.get("conf") != "high":
+        return None
+    if family.get("model") == "slots" or family.get("latch") == "windows":
+        return {"kind": "slots", "at": "contacts", "src": src}
+    if family.get("latch") in {"lever", "ramp"}:
+        return {"kind": "latch", "at": "center", "src": src}
+    return None
+
+
 def normalize_article(value: object) -> str:
     article = str(value or "").strip().upper()
     article = re.sub(r"^(MOLEX|JST|HIROSE|JAE|TE(?:\s+CONNECTIVITY)?|CONNFLY|AMASS|AMP)\s+", "", article)
@@ -390,6 +441,7 @@ def _layout(
         "src": family.get("src", ""),
         # Gallery model template matched against the maker drawing (connectorModel.ts); "" — no checked model.
         "model": family.get("model", ""),
+        "roof": roof_of(family),
     }
 
 

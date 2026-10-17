@@ -60,6 +60,8 @@ class WorkRepository(Protocol):
     def save(self, session: WorkSession) -> None: ...
     def add_inputs(self, session_id: UUID, inputs: tuple[WorkInput, ...]) -> None: ...
     def add_material_inputs(self, session_id: UUID, inputs: tuple[MaterialInput, ...]) -> None: ...
+    def record_card_versions(self, operation_id: UUID, versions: Sequence[dict]) -> bool: ...
+    def card_versions(self, operation_ids: Sequence[UUID]) -> dict[UUID, list[dict]]: ...
 
 
 class OutputRepository(Protocol):
@@ -161,6 +163,9 @@ class StartWorkCommand:
     performer: Actor | None = field(default=None, kw_only=True)
     # Ключ повтора: тот же ключ второй раз ничего не делает и отдаёт уже записанное (двойной клик, повтор запроса).
     idempotency_key: str | None = field(default=None, kw_only=True)
+    # Откуда карточки операций ЭТК этой операции сейчас ([{position, source, changed_at}], etk_live): первое начало
+    # операции записывает их один раз. None — ЭТК не читали (база техкарт не настроена): ничего не пишется.
+    card_versions: tuple[dict, ...] | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -430,6 +435,9 @@ def start_work(command: StartWorkCommand, uow: ExecutionUnitOfWork) -> WorkSessi
             "materials": {str(item.fulfillment_line_id): str(item.quantity) for item in command.materials},
         }, uow, worker)
         _log(uow, command, session, WorkEvent.START, task, operation)
+        if command.card_versions is not None:
+            # Версия шаблона, по которой начали (владелец 17.10): только первое начало, дальше запись не меняется.
+            uow.work.record_card_versions(operation.id, command.card_versions)
         # «Взял»: окно доли начинается сейчас, работа после неё сдвигается или подтягивается.
         record_fact(
             uow, task_id=task.id, operation_id=operation.id, operator_id=worker.id,

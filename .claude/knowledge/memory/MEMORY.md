@@ -28,3 +28,5 @@
 - [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
 - [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
+- [Connector 3D only on card](connector-3d-only-on-card.md) — 3D connector picture only on the catalog series card; ETK sketches: top view + mounting side
+- [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1

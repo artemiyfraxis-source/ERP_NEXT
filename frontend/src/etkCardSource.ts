@@ -1,3 +1,4 @@
+import type { EtkCardVersion } from "./api";
 import { formatDayMonth } from "./format";
 
 /* Откуда карточка операции ЭТК (владелец 17.10: «если карта берётся без изменений — она должна идти из базы данных, а не
@@ -16,6 +17,37 @@ export function etkCardSourceNote(operation: EtkCardSourceFields): string {
     case "snapshot": return "копия на момент сборки";
     default: return "";
   }
+}
+
+const SOURCE_ORDER = ["template", "edited", "snapshot"];
+
+/** Одна строка на все операции ЭТК задания («Мои задания»): «по шаблону от 15.10» (разные даты — через запятую),
+ *  «правлена в ТК 16.10», «копия на момент сборки», через « · ». Нет операций с источником — пусто. */
+export function etkCardsNote(cards: EtkCardVersion[]): string {
+  return SOURCE_ORDER.map((source) => {
+    const rows = cards.filter((item) => item.source === source);
+    if (!rows.length) return "";
+    const days = [...new Set(rows.map((item) => formatDayMonth(item.changed_at)).filter(Boolean))].join(", ");
+    switch (source) {
+      case "template": return days ? `по шаблону от ${days}` : "по шаблону";
+      case "edited": return days ? `правлена в ТК ${days}` : "правлена в ТК";
+      default: return "копия на момент сборки";
+    }
+  }).filter(Boolean).join(" · ");
+}
+
+/** Изменилась ли карточка операции ЭТК после первого «Начать»: записанная на начале версия той же операции ЭТК
+ *  расходится с нынешней. «шаблон изменён после начала» / «правлена в ТК после начала»; не начинали, на начале ЭТК не
+ *  было или всё как было — пусто. */
+export function etkCardsChangedNote(cards?: { live: EtkCardVersion[]; started: EtkCardVersion[] | null }): string {
+  if (!cards?.started) return "";
+  const started = new Map(cards.started.map((item) => [item.position, item]));
+  const changed = cards.live.filter((item) => {
+    const was = started.get(item.position);
+    return was && (was.source !== item.source || was.changed_at !== item.changed_at);
+  });
+  if (!changed.length) return "";
+  return changed.some((item) => item.source === "template") ? "шаблон изменён после начала" : "правлена в ТК после начала";
 }
 
 /** Подтверждение «Сохранить также в шаблон»: правка шаблона видна во всех ЭТК с этой операцией. */

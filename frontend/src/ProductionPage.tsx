@@ -23,6 +23,7 @@ import {
 } from "./api";
 import { canAct, canSee, hasFullAccess } from "./navigation";
 import { EtkSheet } from "./ProjectEtk";
+import { etkCardsChangedNote, etkCardsNote } from "./etkCardSource";
 import type { MarkSerialRange } from "./markSerial";
 import { PfCardBlocks, isPfOperation, operationName, pfOpsText } from "./PfTaskBlocks";
 import { Gantt, type GanttBar, type GanttRow } from "./Gantt";
@@ -765,11 +766,16 @@ function MyQueue({ principal, tasks, session, busy, mutate, readOnly = false, on
       share?.finished_at ? `закончил ${formatMoment(share.finished_at)}` : "",
     ].filter(Boolean);
     const stateId = `mo-state-${key}`;
+    // Версия шаблона (владелец 17.10): откуда карточки операций ЭТК сейчас и не поменялись ли после первого «Начать».
+    const cardNote = etkCardsNote(operation.etk_cards?.live ?? []);
+    const cardChanged = etkCardsChangedNote(operation.etk_cards);
+    // Версия на начале — только с датой: «на начале: по шаблону» без даты ничего не говорит.
+    const startedNote = etkCardsNote(operation.etk_cards?.started ?? []);
     return <div key={key}>
       {header}
       <div className={`mo-card${late ? " late" : ""}${done ? " done" : ""}${running ? " run" : ""}`}>
         <div className="mo-h">
-          <div className="mo-name"><b>{stage}</b>{pf ? <small className="op-code">{pfOpsText(operation)}</small> : showCodes && operation.code && <small className="op-code">{operation.code}</small>}</div>
+          <div className="mo-name"><b>{stage}</b>{cardChanged && <span className="mo-state tone-warn">{cardChanged}</span>}{pf ? <small className="op-code">{pfOpsText(operation)}</small> : showCodes && operation.code && <small className="op-code">{operation.code}</small>}{cardNote && <small className="op-code">{cardNote}{cardChanged && /\d/.test(startedNote) ? ` · на начале: ${startedNote}` : ""}</small>}</div>
           <div className="mo-side">
             {state && <span id={stateId} className={`mo-state ${state.tone}`} role="status">{state.text}</span>}
             {!readOnly && running && <>
