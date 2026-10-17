@@ -284,7 +284,7 @@ def test_ds1071_offers_only_its_2_54_contacts_and_the_2_0_contact_goes_to_ds1071
     ds1071, ds1071_01 = series["connfly-ds1071"], series["connfly-ds1071-01"]
     assert [t["article"] for t in ds1071["terminals"]] == ["T-DS1071-SC600"]
     assert ds1071["wire"] == {"awg_thin": 28.0, "awg_thick": 22.0, "mm2_min": 0.09, "mm2_max": 0.3}
-    assert ds1071["pitch"] == 2.54 and ds1071["checked"]  # owner checked it on the part, 17.10.2026
+    assert ds1071["pitch"] == 2.54 and ds1071["checked"] and ds1071["checked_on_part"]  # owner, by the part, 17.10.2026
     assert [t["article"] for t in ds1071_01["terminals"]] == ["T-DS1071-01-SC600"]
     assert ds1071_01["pitch"] == 2.0 and ds1071_01["counts"][0] == 1 and ds1071_01["counts"][-1] == 80
     assert housing_of("I-DS1071-01-SCB01X40")["family"] == "connfly-ds1071-01"
