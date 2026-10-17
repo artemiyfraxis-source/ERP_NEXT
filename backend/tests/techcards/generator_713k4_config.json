@@ -680,6 +680,23 @@
       "epKey": "А2"
     },
     {
+      "type": "twist",
+      "opKey": "twistA2",
+      "templateId": "twist-свивка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "units": 1,
+      "twistPairs": [
+        [
+          7,
+          9
+        ]
+      ],
+      "branch": "X2 «I3»"
+    },
+    {
       "type": "insWrap",
       "opKey": "braidA2",
       "templateId": "ins-braid-монтаж-оплётки",
@@ -751,23 +768,6 @@
       "branch": "X2 «I3»"
     },
     {
-      "type": "twist",
-      "opKey": "twistA2",
-      "templateId": "twist-свивка",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "units": 1,
-      "twistPairs": [
-        [
-          7,
-          9
-        ]
-      ],
-      "branch": "X2 «I3»"
-    },
-    {
       "type": "insTerm",
       "opKey": "insTermA3",
       "templateId": "ins-terminal-2-54-6-3-монтаж-терминалов-a",
@@ -811,6 +811,23 @@
         "2"
       ],
       "epKey": "А3"
+    },
+    {
+      "type": "twist",
+      "opKey": "twistA3",
+      "templateId": "twist-свивка",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "units": 1,
+      "twistPairs": [
+        [
+          7,
+          9
+        ]
+      ],
+      "branch": "X3 «C»"
     },
     {
       "type": "insWrap",
@@ -881,23 +898,6 @@
       "tutName": "",
       "tutCount": 1,
       "markTube": true,
-      "branch": "X3 «C»"
-    },
-    {
-      "type": "twist",
-      "opKey": "twistA3",
-      "templateId": "twist-свивка",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "units": 1,
-      "twistPairs": [
-        [
-          7,
-          9
-        ]
-      ],
       "branch": "X3 «C»"
     },
     {
