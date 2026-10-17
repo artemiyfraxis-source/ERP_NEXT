@@ -182,3 +182,45 @@ export function recordCategory(code: string): string {
   const prefix = String(code).split("_")[0];
   return RECORD_CATEGORIES.find(([key]) => key === prefix)?.[1] ?? "Прочее";
 }
+
+/** Строка допуска шага: подпись («Сторона В», «Время», «Зазор») и значение («2–3 мм», «≤ 2,0 сек»). */
+export type ToleranceLine = { label: string; value: string };
+
+/** Допуск шага строками — каждое значение своей строкой (владелец 17.10: «почему допуски так мелко»): «Допуск:» в начале
+ *  лишнее, «(+/-) 10 °C» → «± 10 °C», «0,5 - 1,5 мм» → «0,5–1,5 мм»; части по переносу строки и «; ». Пусто и «-» —
+ *  допуска нет. Тот же разбор — на экране и в печати. */
+export function etkToleranceLines(raw: unknown): ToleranceLine[] {
+  const text = str(raw).trim();
+  if (!text || text === "-") return [];
+  return text.replace(/^допуск\s*:\s*/i, "").split(/\n|;\s+/).map((part) => part.trim()).filter((part) => part && part !== "-")
+    .map((part) => (etkToleranceIsReference(part) ? part : part
+      .replace(/\(\s*\+\s*\/\s*-\s*\)|\+\s*\/\s*-/g, "±")
+      .replace(/(\d)\s*-\s*(?=\d)/g, "$1–")
+      .replace(/\s{2,}/g, " ")))
+    .map((part) => {
+      const found = part.match(/^([^:\d]{1,40}):\s*(.+)$/);
+      return found ? { label: found[1].trim(), value: found[2].trim() } : { label: "", value: part };
+    });
+}
+
+/** Ссылка на стандарт или КД («IPC/WHMA-A-620F (Раздел 13)», «ГОСТ 23592-96», «Согласно КД») — не размер: цифры в
+ *  ней не выделяются. */
+export function etkToleranceIsReference(value: string): boolean {
+  return /IPC|WHMA|ГОСТ|ОСТ\b|\bКД\b|Раздел|ТУ\b/i.test(value);
+}
+
+/** Значение допуска кусками: числа с единицей и знаком (± 10 °C, 2–3 мм, ≤ 2,0 сек) — `strong`, остальное — текст. */
+export function etkToleranceParts(value: string): Array<{ text: string; strong: boolean }> {
+  if (etkToleranceIsReference(value)) return [{ text: value, strong: false }];
+  const pattern = /(?:[±≤≥<>]\s?)?\d+(?:[.,]\d+)?(?:\s?[–-]\s?\d+(?:[.,]\d+)?)?(?:\s?(?:мм|°\s?[CС]|сек|мин|с|%|Н|кгс|м))?(?![\p{L}\d])/gu;
+  const parts: Array<{ text: string; strong: boolean }> = [];
+  let at = 0;
+  for (const match of value.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (start > at) parts.push({ text: value.slice(at, start), strong: false });
+    parts.push({ text: match[0], strong: true });
+    at = start + match[0].length;
+  }
+  if (at < value.length) parts.push({ text: value.slice(at), strong: false });
+  return parts.length ? parts : [{ text: value, strong: false }];
+}

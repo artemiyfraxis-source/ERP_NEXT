@@ -696,7 +696,6 @@ table.ship-lines td:first-child { width: 1%; }
 .stock-metrics dd { margin: 4px 0 0; font-size: 18px; font-weight: 800; }
 
 .project-etk { margin-top: 18px; }
-.etk-route { display: grid; gap: 14px; margin: 14px 0; }
 .etk-operation { border: 1px solid var(--border); border-radius: 12px; padding: 16px; background: #fbfcfb; }
 .etk-operation > header { display: flex; align-items: center; gap: 12px; }
 .etk-operation > header div { display: grid; gap: 2px; }
@@ -712,9 +711,7 @@ table.ship-lines td:first-child { width: 1%; }
 .etk-fig svg { max-width: 760px; height: auto; }
 .etk-steps { display: grid; gap: 8px; margin: 12px 0 0; padding-left: 28px; }
 .etk-steps li { padding-left: 4px; white-space: pre-line; font-size: 12px; }
-.etk-steps li > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
-.etk-steps li > small { display: block; margin-top: 3px; color: var(--muted-foreground); }
-.etk-steps li > small.tone-danger { color: var(--tone-danger); font-weight: 600; }
+.etk-step-text > span { margin-right: 8px; color: var(--primary); font-weight: 700; }
 .housing-view { display: grid; justify-items: center; gap: 6px; margin-top: 14px; padding: 12px; border-radius: 10px; background: #f0f3f0; }
 .housing-view > small { color: var(--muted-foreground); text-align: center; }
 .housing-grid { display: grid; gap: 5px; padding: 12px; border: 2px solid #17272b; border-radius: 8px; }
@@ -2228,44 +2225,6 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-revs > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--border); }
 .etk-sheet .etk-wrap { grid-template-columns: minmax(210px, 250px) minmax(0, 1fr); }
 .etk-sheet .etk-nav-route button { padding: 8px 10px; font-size: 13px; }
-/* Полоса «Маршрут» у ветвящейся схемы полуфабрикатов: чипы блоков по порядку «источники → потребители». */
-.etk-route { border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 8px 12px 10px; }
-.etk-route-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
-.etk-route-head small { color: var(--muted-foreground); font-size: 12px; }
-.etk-dag-scroll { margin-top: 8px; overflow-x: auto; }
-.etk-dag { position: relative; }
-.etk-dag svg { position: absolute; inset: 0; }
-.etk-dag-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.6; opacity: .75; transition: opacity .12s; }
-.etk-dag-line.kit { stroke-width: 1; opacity: .3; }
-.etk-dag-line.on { stroke: var(--primary); stroke-width: 2.2; opacity: 1; }
-.etk-dag-line.dim { opacity: .08; }
-.etk-dag-head { fill: var(--muted-foreground); }
-.etk-dag-item { position: absolute; padding: 0 4px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--foreground); font-size: 11px; font-weight: 700; line-height: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.etk-dag-item.dim { opacity: .25; }
-.etk-dag-box { position: absolute; display: flex; flex-direction: column; justify-content: flex-start; gap: 1px; line-height: 1.25; min-height: 0; padding: 5px 9px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); text-align: left; font-size: 13px; overflow: hidden; transition: opacity .12s; }
-.etk-dag-box:hover:not(:disabled), .etk-dag-box:focus-visible { border-color: var(--primary); }
-.etk-dag-box:disabled { cursor: default; opacity: 1; }
-.etk-dag-box.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
-.etk-dag-box.final { border-width: 2px; border-color: var(--primary); }
-.etk-dag-box.kit { border-style: dashed; background: color-mix(in srgb, var(--muted-foreground) 6%, var(--card)); color: var(--muted-foreground); }
-.etk-dag-box.dim { opacity: .35; }
-.etk-dag-box.near { border-color: var(--primary); }
-.etk-dag-box > * { flex: none; }
-.etk-dag-top { display: flex; align-items: center; gap: 6px; }
-.etk-dag-top b { color: var(--primary); font-weight: 800; }
-.etk-dag-top small { color: var(--muted-foreground); font-size: 11px; }
-.etk-dag-top .etk-route-final { margin-left: auto; }
-.etk-dag-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-weight: 600; overflow-wrap: anywhere; }
-.etk-dag-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
-.etk-dag-ins { display: grid; gap: 0; margin-top: 4px; padding-top: 3px; border-top: 1px solid var(--border); color: var(--foreground); font-size: 12px; font-weight: 400; }
-.etk-dag-in { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 15px; }
-.etk-dag-in b { color: var(--primary); font-weight: 700; font-variant-numeric: tabular-nums; }
-.etk-dag-in i { font-style: normal; font-weight: 700; }
-.etk-dag-in.more { color: var(--muted-foreground); }
-.etk-route-final { margin-left: auto; }
-.etk-dag-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.etk-dag-meta { color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
-.etk-route-final { flex: none; align-self: center; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); font-size: 11px; font-style: normal; font-weight: 700; }
 .etk-op { display: grid; gap: 14px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
 .etk-op-head { display: flex; align-items: flex-start; gap: 12px; }
 .etk-op-head > div { display: grid; gap: 3px; flex: 1; min-width: 0; }
@@ -2283,7 +2242,21 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-op .etk-steps { margin: 0; gap: 6px; padding-left: 22px; }
 .etk-op .etk-steps li { font-size: 13px; line-height: 1.45; }
 .etk-op .etk-steps li.ctl { padding: 4px 8px; border-left: 3px solid #d93025; background: #fdf4f4; border-radius: 0 6px 6px 0; }
-.etk-op .etk-steps li > span { color: #b91c1c; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.etk-op .etk-step-text > span { color: #b91c1c; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+/* Допуск шага — колонкой справа, размером текста шага (владелец 17.10: «почему допуски так мелко»): строка на значение,
+   подпись серым, цифры жирно. Шаг без допуска занимает всю ширину. */
+.etk-step { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 30%); gap: 4px 18px; align-items: start; }
+.etk-step-text:last-child { grid-column: 1 / -1; }
+.etk-step-tol { display: grid; gap: 2px; margin: 0; padding-left: 12px; border-left: 2px solid var(--border); font-size: 13px; line-height: 1.45; white-space: normal; }
+.etk-step-tol > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.etk-step-tol dt { color: var(--muted-foreground); }
+.etk-step-tol dd { margin: 0; color: var(--foreground); }
+.etk-step-tol b { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.etk-step-tol.tone-danger dd { color: var(--tone-danger); font-weight: 600; }
+@media (max-width: 900px) {
+  .etk-step { grid-template-columns: minmax(0, 1fr); }
+  .etk-step-tol { padding-left: 8px; }
+}
 .etk-op .etk-fig { display: flex; justify-content: center; border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
 .etk-fig-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
 .etk-fig-row > .etk-fig { flex: 1 1 520px; }

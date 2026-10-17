@@ -3,16 +3,16 @@
 // (1 Вход · 2 Оснастка · 3 Ход операции · 4 Типовые дефекты · 5 Эскиз · 6 Результат), подписи. Через общий print.ts.
 // Схема жгута (титул) и эскизы операций — SVG-строки из etkDraw.ts (порт etkDrawHarness_ / etkDraw*). Есть распиновка или
 // таблица соединений — на титуле схема связей Э4, та же, что на экране ЭТК и в генераторе (etkLinkScheme.tsx).
-import type { ProjectTechcard, TechcardRevision } from "./api";
+import type { EtkRoute, ProjectTechcard, TechcardRevision } from "./api";
 import { etkLinkScheme, etkLinkSchemeMarkup } from "./etkLinkScheme";
 import {
   ETK_CONNECTION_COLUMNS, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, etkOperationName, solderMode, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
 import { etkCardSourceNote } from "./etkCardSource";
-import { etkPartSource, etkRouteLine, etkRouteOf, etkSemiSource } from "./etkRoute";
+import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatMinutes, opNumber, type EtkPfRow } from "./etkRoute";
 import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
@@ -118,6 +118,28 @@ function toolingRows(items: Row[]): string[][] {
   });
 }
 
+function pfQty(row: EtkPfRow): string {
+  return row.norm ? `${row.norm} ${unitLabel(row.unit || "")}`.trim() : "";
+}
+
+/** Полуфабрикаты на титуле — компактной таблицей «ПФ · операции · вход · выход» (владелец 17.10: схема ПФ стала
+ *  навигацией ЭТК, список ПФ слева убран). ПФ один или схемы нет — таблицы нет. */
+function pfTable(route: EtkRoute | null, operations: Row[], batch: number): PrintBlock[] {
+  if (!route || route.blocks.length < 2) return [];
+  const groups = etkPfGroups(route, operations, batch);
+  const inputs = new Map(etkRouteDiagram(route).columns.flatMap((column) => column.boxes).map((box) => [box.key, box.inputs]));
+  return [{ heading: "Полуфабрикаты" }, { table: {
+    columns: ["ПФ", "Операции", "Вход", "Выход"],
+    rows: groups.map((group) => [
+      [`ПФ ${group.label}${group.final ? " · изделие" : ""}`, group.name, group.minutes > 0 ? `${formatMinutes(group.minutes)} мин на партию` : ""].filter(Boolean).join("\n"),
+      group.ops.map((position) => `${opNumber(Number(operations[position - 1]?.position) || position)} ${operations[position - 1] ? etkOperationTitle(operations[position - 1]) : ""}`.trim()).join("\n"),
+      [...(inputs.get(group.key) ?? []).map((input) => `ПФ ${input.label}: ${input.text}${input.times ? ` ${input.times}` : ""}`),
+        ...group.components.map((row) => [row.art || row.name || "", pfQty(row)].filter(Boolean).join(" — "))].join("\n"),
+      [etkPfOutName(group), group.output[0] ? pfQty(group.output[0]) : ""].filter(Boolean).join(" — "),
+    ]),
+  } }];
+}
+
 function table(columns: string[], body: string[][]): PrintBlock[] {
   return body.length ? [{ table: { columns, rows: body } }] : [];
 }
@@ -137,14 +159,14 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
   const harness = linkSvg ? "" : etkDrawHarness(document.topology as EtkTopologyData | undefined, harnessPinsOf(operations));
   const connections = linkSvg ? [] : etkConnectionRows(document.connections);
   const route = etkRouteOf(card.document);
-  const routeLine = etkRouteLine(route);
+  const batch = Number(String(object(document.kit).part_quantity ?? "").replace(",", ".")) || 1;
   const cover: PrintPage = {
     title: "Технологическая карта сборки",
     subtitle: `${text(kit.name)} · ${text(kit.project)} ${text(kit.index)} · ревизия ${revision}`,
     blocks: [
       ...head(kit, revision, ""),
-      // Схема полуфабрикатов одной строкой под шапкой — только у ветвящегося маршрута.
-      ...(routeLine ? [{ text: routeLine }] as PrintBlock[] : []),
+      // Полуфабрикаты — таблицей под шапкой, как боксы схемы ПФ на экране.
+      ...pfTable(route, operations, batch),
       ...(linkSvg ? [{ heading: "Схема связей" }, { figure: linkSvg }] as PrintBlock[] : []),
       ...(harness ? [{ heading: "Схема жгута" }, { figure: harness }] as PrintBlock[] : []),
       ...(connections.length ? [{ heading: "Таблица соединений" }, { table: { columns: ETK_CONNECTION_COLUMNS, rows: connections } }] as PrintBlock[] : []),
@@ -194,8 +216,11 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       text(mark.target), markSerialText(text(mark.text), serial), text(mark.material), text(mark.place), ...(withLength ? [text(mark.length)] : []), text(mark.qty), text(mark.batch),
     ]);
     // Допуска нет в данных («длина не задана») — со знаком внимания, как «нет данных» у высоты обжима.
-    const steps = rows(opCard.steps).map((step) => [text(step.kind), text(step.number), text(step.text),
-      /не задан/i.test(text(step.tolerance)) ? `⚠ ${text(step.tolerance)}` : text(step.tolerance)]);
+    // Допуск — строка на значение («Сторона В: 2–3 мм», «± 10 °C»), как колонка допусков на экране.
+    const steps = rows(opCard.steps).map((step) => {
+      const tolerance = etkToleranceLines(step.tolerance).map((line) => (line.label ? `${line.label}: ${line.value}` : line.value)).join("\n");
+      return [text(step.kind), text(step.number), text(step.text), /не задан/i.test(tolerance) ? `⚠ ${tolerance}` : tolerance];
+    });
     const defects = text(opCard.defects);
     const figure = etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]);
     const result = numbered(rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
