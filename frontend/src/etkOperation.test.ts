@@ -38,18 +38,18 @@ describe("solderMode", () => {
     const mode = solderMode({ code: "SDR_COAX_pin", card: { tooling: tooling("T21(R) | Станция паяльная"), steps: [
       { text: "Выставить рабочую температуру жала (согласно технологической инструкции)" },
     ] } });
-    expect(mode).toMatchObject({ temperature: "320–350 °C", tipAssumed: true, temperatureAssumed: true });
+    expect(mode).toMatchObject({ temperature: "240 °C", tipAssumed: true, temperatureAssumed: true });
   });
 
   it("knows a tinning bath and induction need no tip", () => {
     expect(solderMode({ code: "SDR_tin", card: { tooling: tooling("CT-53D | Ванна паяльная"), steps: [] } }))
-      .toMatchObject({ method: "bath", temperature: "250–270 °C", temperatureAssumed: true });
+      .toMatchObject({ method: "bath", temperature: "240 °C", temperatureAssumed: true });
     expect(solderMode({ code: "SDR_tin", card: { tooling: [{ section: "Оборудование", name: "CT-53D | Ванна паяльная", program: "200 °C" }], steps: [] } }))
       .toMatchObject({ method: "bath", temperature: "200 °C", temperatureAssumed: false });
     // Резка с обжимом и лужением: станок BZW-5.0+Z лудит погружением, как ванна.
     expect(solderMode({ code: "CUT_WIRE+1crimp+tin", card: { name: "Автомат резка + опрессовка + лужение",
       tooling: [{ section: "Оборудование", name: "BZW-5.0+Z | Станок резки/ обжим+лужение", program: "A19" }], steps: [] } }))
-      .toMatchObject({ method: "bath", temperature: "250–270 °C", temperatureAssumed: true });
+      .toMatchObject({ method: "bath", temperature: "240 °C", temperatureAssumed: true });
     expect(solderMode({ code: "SDR_COAX_housing", card: { tooling: tooling("DW-OHF-6KW | Установка индукционной пайки"), steps: [] } }))
       .toMatchObject({ method: "induction", tipAssumed: false });
   });

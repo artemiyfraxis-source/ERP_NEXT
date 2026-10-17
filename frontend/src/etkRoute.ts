@@ -444,6 +444,12 @@ export function etkSourceLines(text: string): string[] {
 /** Откуда фитеру брать комплектующие операции. */
 export const ETK_PART_SOURCE = "со склада по комплектации";
 
+/** То же с номером заявки комплектации (`kit_request` строки; несколько — через «, »): «… REQ.26.0000123». Нет заявки — без номера. */
+export function etkPartSource(row: { kit_request?: unknown }): string {
+  const request = String(row.kit_request ?? "").trim();
+  return request ? `${ETK_PART_SOURCE} ${request}` : ETK_PART_SOURCE;
+}
+
 /** Откуда фитеру брать полуфабрикат на входе операции `position`: внутри ПФ — с предыдущей операции этого ПФ; первая
  *  операция ПФ берёт коробки других ПФ («из ПФ 1.2, коробка с операции 03»). Номера ПФ — уровни схемы, как в списке ПФ ЭТК. Без схемы — с предыдущей операции списка; у самой первой источника нет. */
 export function etkSemiSource(route: EtkRoute | null, position: number): string {

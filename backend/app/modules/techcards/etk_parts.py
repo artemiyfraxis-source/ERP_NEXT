@@ -75,6 +75,7 @@ class EtkLot:
     name: str
     grn: str
     package: str = ""
+    request: str = ""  # number of the fulfillment request the lot was issued by (issued lots only)
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,13 @@ def _bound_grn(row: Mapping[str, Any], lots: Sequence[tuple[frozenset[str], EtkL
     return lots_text([lot for lot_keys, lot in lots if lot_keys & keys]) if keys else ""
 
 
+def _bound_requests(row: Mapping[str, Any], lots: Sequence[tuple[frozenset[str], EtkLot]]) -> str:
+    """Numbers of the kit requests (main and «Довыдача») that issued the row's article, each once, joined by «, »."""
+    keys = _article_keys(row.get("art"), row.get("kd"))
+    found = dict.fromkeys(lot.request.strip() for lot_keys, lot in lots if keys and lot_keys & keys and lot.request.strip())
+    return ", ".join(found)
+
+
 def attach_parts(
     document: Mapping[str, Any] | None,
     identify: Callable[[str], str] | None = None,
@@ -140,6 +148,10 @@ def attach_parts(
                 grn = _bound_grn(converted, issued) or _bound_grn(converted, kitset)
                 if grn:
                     converted["grn"] = grn
+                converted.pop("kit_request", None)
+                request = _bound_requests(converted, issued)
+                if request:
+                    converted["kit_request"] = request
             rows.append(converted)
         if "components" in operation:
             operation["components"] = rows

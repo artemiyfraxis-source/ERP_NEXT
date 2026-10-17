@@ -4,7 +4,7 @@ import type { EtkRoute, EtkRouteBlock, Principal, ProjectTechcard } from "./api"
 import { EtkSheet } from "./ProjectEtk";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
-import { etkDiagramCrossings, etkSourceLines, etkPfGroups, etkRouteBranches, etkRouteChips, etkRouteDiagram, etkRouteLevels, etkRouteLine, etkRouteOf, etkRouteSummary, etkSemiSource, pluralBlocks } from "./etkRoute";
+import { etkDiagramCrossings, etkPartSource, etkSourceLines, etkPfGroups, etkRouteBranches, etkRouteChips, etkRouteDiagram, etkRouteLevels, etkRouteLine, etkRouteOf, etkRouteSummary, etkSemiSource, pluralBlocks } from "./etkRoute";
 
 function block(key: string, name: string, ops: number[], extra: Partial<EtkRouteBlock> = {}): EtkRouteBlock {
   return { key, name, ops, final: false, components: [], outputs: 1, inputs: 0, minutes: 0, unit_minutes: 0, rolled_minutes: 0, rolled_ops: ops.length, ...extra };
@@ -334,5 +334,14 @@ describe("level labels (ПФ 1.1, ПФ 3)", () => {
       .toEqual(["ПФ 1.2 · коробка оп. 02", "ПФ 1.6 · коробка оп. 03", "ПФ 1.7 · коробка оп. 04"]);
     expect(etkSourceLines("с операции 03")).toEqual(["с операции 03"]);
     expect(etkSourceLines("")).toEqual([]);
+  });
+});
+
+describe("etkPartSource", () => {
+  it("names the kit request, joins several, and stays plain without one", () => {
+    expect(etkPartSource({ kit_request: "REQ.26.0000123" })).toBe("со склада по комплектации REQ.26.0000123");
+    expect(etkPartSource({ kit_request: "REQ.26.0000123, REQ.26.0000130" })).toBe("со склада по комплектации REQ.26.0000123, REQ.26.0000130");
+    expect(etkPartSource({})).toBe("со склада по комплектации");
+    expect(etkPartSource({ kit_request: " " })).toBe("со склада по комплектации");
   });
 });

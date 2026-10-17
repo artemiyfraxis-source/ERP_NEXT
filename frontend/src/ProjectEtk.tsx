@@ -15,7 +15,7 @@ import {
 import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
-import { ETK_PART_SOURCE, etkRouteBranches, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes } from "./etkRoute";
+import { etkPartSource, etkRouteBranches, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes } from "./etkRoute";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
 import { ETK_TOOLING_SECTIONS, etkOperationName, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
@@ -31,7 +31,7 @@ import { EtkPfList } from "./EtkPfList";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
    PortalApp kitCardRender_ → mountGen_ / renderTc_ → renderEtk_). */
-type EtkRow = { name?: string; art?: string; kd?: string; grn?: string; norm?: string; unit?: string; source?: string };
+type EtkRow = { name?: string; art?: string; kd?: string; grn?: string; kit_request?: string; norm?: string; unit?: string; source?: string };
 type EtkStep = { number?: string; kind?: string; text?: string; tolerance?: string };
 type Housing = {
   title: string; art: string; rows: number; cols: number; n: number; color: string;
@@ -190,7 +190,7 @@ function PickList({ semis, parts, fields, semiFrom }: { semis?: EtkRow[]; parts?
           {etkContactSpecs(crimp, row.art).map((spec) => <small key={spec} className="etk-spec"><MarkMissing text={spec} /></small>)}
         </td>
         <td className="num">{quantity(row) || "—"}</td>
-        <td className="etk-pick-from">{ETK_PART_SOURCE}</td>
+        <td className="etk-pick-from">{etkPartSource(row)}</td>
       </tr>)}
     </tbody>
   </table>;

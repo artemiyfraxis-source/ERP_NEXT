@@ -159,3 +159,20 @@ def test_binding_matches_the_kd_article_and_the_article_to_apply_either_way_roun
     lots = EtkLots(kitset=(EtkLot(article="BL2018TS ", name="SHF-001T-0.8BS", grn="Г-55"),))
 
     assert _grn(attach_parts(etk, None, lots)) == ["Г-55", "Г-55"]
+
+
+def test_kit_request_numbers_of_issued_lots_are_unique_and_joined_none_for_kitset_only():
+    etk = _etk({"art": "43025-0400"}, {"art": "GHR-04V-S"}, {"name": "Термоусадка"})
+    lots = EtkLots(
+        issued=(
+            EtkLot(article="43025-0400", name="", grn="Г-7", request="REQ.26.0000001"),
+            EtkLot(article="43025-0400", name="", grn="Г-3", request="REQ.26.0000002"),
+            EtkLot(article="43025-0400", name="", grn="Г-4", request="REQ.26.0000001"),
+        ),
+        kitset=(EtkLot(article="GHR-04V-S", name="", grn="Г-103"),),
+    )
+
+    rows = attach_parts(etk, None, lots)["operations"][0]["components"]
+
+    assert [row.get("kit_request") for row in rows] == ["REQ.26.0000001, REQ.26.0000002", None, None]
+
