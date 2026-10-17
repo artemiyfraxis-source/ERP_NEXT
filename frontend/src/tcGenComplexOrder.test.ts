@@ -9,8 +9,9 @@ import { DSA, fullHarness, harness, R } from "./tcGenRealHarness.fixture";
  * «Сложная сборка» строит схему ПФ сама (владелец 16.10, 713К.4 КБ1): ПФ-комплекты (партии резки, резка всех трубок, резка
  * оплётки по ветвям, печать и резка маркировки) → ветви разъёмов А (монтаж контактов в разъём → надеть оплётку → надеть
  * ТТК → надеть маркировку → усадка ТТК на разъёме → усадка маркировки → свивка своей пары) → группы сростков по разъёмам
- * А, с которых приходят провода (трубка → пайка → усадка) → изделие (трубки на ствол → усадка → разъёмы В). Операции
- * стоят в порядке схемы; схема уходит в build_config.route с короткими разными именами ПФ.
+ * А, с которых приходят провода (пайка → трубка на готовый сросток → усадка, владелец 17.10) → «ТУТ на месте Б» (трубки на
+ * жгут → усадка) → изделие (разъёмы В). Операции стоят в порядке схемы; схема уходит в build_config.route с короткими
+ * разными именами ПФ.
  */
 const labels = (S: GenState, data: GenData = DSA) => makeGen(data, S).getActiveOps().map((o) => o.label);
 const keys = (S: GenState, data: GenData = DSA) => makeGen(data, S).getActiveOps().map((o) => o.opKey);
@@ -53,16 +54,17 @@ const GRAPH_ORDER = [
   "Надеть оплётку X4 «A6» — XP-3, 120 мм",
   "Надеть маркировку X4 «A6» — «A6»",
   "Усадка маркировки X4 «A6» — «A6»",
-  // 3. Группы сростков
-  "Надеть трубку на провода сростков С1, С2 — 2 шт",
+  // 3. Группы сростков: пайка → трубка на готовый сросток → усадка
   "Сростки С1, С2 — 2 шт по 4 провода",
+  "Надеть трубку на сростки С1, С2 — 2 шт",
   "Усадка трубки на сростках С1, С2 — 2 шт",
-  "Надеть трубку на провода сростков С3, С4 — 2 шт",
   "Сростки С3, С4 — 2 шт по 3 провода",
+  "Надеть трубку на сростки С3, С4 — 2 шт",
   "Усадка трубки на сростках С3, С4 — 2 шт",
-  // 4. Изделие
+  // 4. ТУТ на месте Б
   "Надеть трубки: ТТК 12/4мм, черная на жгут — 2 шт",
   "Усадка термоусадки на жгуте — 2 шт",
+  // 5. Изделие — только разъёмы стороны В
   "Монтаж контактов в разъём X5 — I-DS1071-SCB01X3",
   "Монтаж контактов в разъём X6 — I-DS1071-SCB02X3",
 ];
@@ -106,9 +108,10 @@ it("the build config carries the graph as a generated route: every op in one blo
     ["pf-A2", "Ветвь X2 «I3», сторона А", branch(2), false, false],
     ["pf-A3", "Ветвь X3 «C», сторона А", branch(3), false, false],
     ["pf-A4", "Ветвь X4 «A6», сторона А", branch(4, false, false), false, false],
-    ["pf-spl1", "Пайка С1, С2", ["insSpl1", "splice1", "heatSpl1"], false, false],
-    ["pf-spl2", "Пайка С3, С4", ["insSpl2", "splice2", "heatSpl2"], false, false],
-    ["pf-final", "Кабельная сборка Жгут НВ4", ["insSleeves", "heatHs", "insTermB1", "insTermB2"], false, true],
+    ["pf-spl1", "Пайка С1, С2", ["splice1", "insSpl1", "heatSpl1"], false, false],
+    ["pf-spl2", "Пайка С3, С4", ["splice2", "insSpl2", "heatSpl2"], false, false],
+    ["pf-hs", "ТУТ на месте Б", ["insSleeves", "heatHs"], false, false],
+    ["pf-final", "Кабельная сборка Жгут НВ4", ["insTermB1", "insTermB2"], false, true],
   ]);
   expect(route.blocks.every((b) => (b.name ?? "").length <= 41)).toBe(true);
   expect(route.blocks.flatMap((b) => b.ops).sort((a, b) => a - b)).toEqual(opKeys.map((_, i) => i + 1));
@@ -126,13 +129,16 @@ it("the build config carries the graph as a generated route: every op in one blo
   expect(edge("pf-cutWire2", "pf-spl2")).toBe("НВ4 0,12 белый, синий — 2 шт");
   expect(edge("pf-cutWire4", "pf-A4")).toBe("НВ4 0,2 белый, зеленый, желтый — 3 шт");
   // Каждая трубка — своей стрелкой к тому, кто её надевает.
-  expect(["pf-A1", "pf-A4", "pf-spl1", "pf-final"].map((to) => edge("pf-tubes", to))).toEqual(["ТТК 8/2 — 1 шт", undefined, "ТТК 3/1 — 2 шт", "ТТК 12/4 — 2 шт"]);
+  expect(["pf-A1", "pf-A4", "pf-spl1", "pf-hs", "pf-final"].map((to) => edge("pf-tubes", to)))
+    .toEqual(["ТТК 8/2 — 1 шт", undefined, "ТТК 3/1 — 2 шт", "ТТК 12/4 — 2 шт", undefined]);
   expect(["pf-A1", "pf-A2"].map((to) => edge("pf-braid", to))).toEqual(["Оплётка XP-3 120 мм — 1 шт", "Оплётка XP-3 110 мм — 1 шт"]);
   expect(edge("pf-mark", "pf-A4")).toBe("Маркировка «A6» — 1 шт");
   expect(edge("pf-A2", "pf-spl2")).toBe("Ветвь X2 «I3», сторона А");
-  // Ветви X1–X3 — в сростки, X4 — прямо в изделие; группы — в изделие.
-  expect(route.edges.filter((e) => /^pf-(A|spl)/.test(e.from)).map((e) => `${e.from}>${e.to}`).sort()).toEqual([
-    "pf-A1>pf-spl1", "pf-A2>pf-spl2", "pf-A3>pf-spl2", "pf-A4>pf-final", "pf-spl1>pf-final", "pf-spl2>pf-final"]);
+  // Ветви X1–X3 — в сростки, X4 и группы сростков — в «ТУТ на месте Б», оттуда — в изделие (владелец 17.10).
+  expect(route.edges.filter((e) => /^pf-(A|spl|hs)/.test(e.from)).map((e) => `${e.from}>${e.to}`).sort()).toEqual([
+    "pf-A1>pf-spl1", "pf-A2>pf-spl2", "pf-A3>pf-spl2", "pf-A4>pf-hs", "pf-hs>pf-final", "pf-spl1>pf-hs", "pf-spl2>pf-hs"]);
+  expect(route.edges.filter((e) => e.to === "pf-final").map((e) => `${e.from}: ${e.item}`)).toEqual(["pf-hs: ТУТ на месте Б"]);
+  expect(edge("pf-spl1", "pf-hs")).toBe("Пайка С1, С2");
   expect(route.edges.every((e) => e.per_unit === 1)).toBe(true);
 });
 
@@ -170,11 +176,34 @@ it("a pair from two connectors into one splice group is twisted in that group, b
     : e.label === "C" ? { ...e, pins: { [R.w12]: "_, 1", [R.b12]: "2" } } : e)) };
   const order = keys(crossed);
   expect(order.filter((key) => /^twist/.test(key))).toEqual(["twistS2"]);
-  expect(order.indexOf("twistS2")).toBe(order.indexOf("insSpl2") - 1);
+  expect(order.indexOf("twistS2")).toBe(order.indexOf("splice2") - 1);
   expect(labels(crossed)).toContain("Свивка перед сростками С3, С4 — 2 пары");
   expect(routeOf(crossed).blocks.find((b) => b.key === "pf-spl2")!.ops).toContain(order.indexOf("twistS2") + 1);
   // В родной разводке пара лежит внутри ветви — свивка у ветви.
   expect(keys(S0).filter((key) => /^twist/.test(key))).toEqual(["twistA2", "twistA3"]);
+});
+
+it("each twist carries only its own pairs into the config; the pitch stays the form's (713К.4 КБ1, 17.10)", () => {
+  // Вторая пара — хвосты белый/синий (из сростков С3, С4 на облуженные концы): свивается в группе сростков, не в ветвях.
+  const S0 = fullHarness();
+  const S = { ...S0, twist: { ...S0.twist, pairs: [...S0.twist.pairs, { a: String(R.w12t), b: String(R.b12t) }] } };
+  const cfg = makeGen(DSA, S).buildConfig() as { ops: Array<Record<string, unknown>>; twist: { pairs: number[][]; pitch: string } };
+  expect(cfg.twist).toMatchObject({ pairs: [[R.w12, R.b12], [R.w12t, R.b12t]], pitch: "20" });
+  expect(cfg.ops.filter((o) => o.type === "twist").map((o) => [o.opKey, o.units, o.twistPairs])).toEqual([
+    ["twistA2", 1, [[R.w12, R.b12]]], ["twistA3", 1, [[R.w12, R.b12]]], ["twistS2", 1, [[R.w12t, R.b12t]]]]);
+  // 713К.4 как есть: у каждой свивки ветви — одна своя пара.
+  const own = makeGen(DSA, S0).buildConfig() as { ops: Array<Record<string, unknown>> };
+  expect(own.ops.filter((o) => o.type === "twist").map((o) => o.twistPairs)).toEqual([[[R.w12, R.b12]], [[R.w12, R.b12]]]);
+});
+
+it("no harness shrink — no «ТУТ на месте Б»: splice groups and branches go straight into the product", () => {
+  const S0 = fullHarness();
+  const S = { ...S0, hs: { ...S0.hs, enabled: false } };
+  const route = routeOf(S);
+  const opKeys = keys(S);
+  expect(route.blocks.map((b) => b.key)).not.toContain("pf-hs");
+  expect(route.blocks.find((b) => b.final)!.ops.map((p) => opKeys[p - 1])).toEqual(["insTermB1", "insTermB2"]);
+  expect(route.edges.filter((e) => e.to === "pf-final").map((e) => e.from).sort()).toEqual(["pf-A4", "pf-spl1", "pf-spl2"]);
 });
 
 it("the technologist's own order still wins; the route follows the new positions", () => {

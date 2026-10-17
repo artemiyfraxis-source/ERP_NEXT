@@ -1053,7 +1053,9 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any], wire_data: Mapping
         twist = config.get("twist") if isinstance(config.get("twist"), Mapping) else {}
         wires = config.get("wires") or []
         pairs = []
-        for index, pair in enumerate(twist.get("pairs") or []):
+        # Свивка ветви или группы сростков (генератор, 17.10) — только свои пары (`twistPairs`), шаг — общий, формы.
+        own = op.get("twistPairs")
+        for index, pair in enumerate(own if isinstance(own, list) and own else twist.get("pairs") or []):
             names = [str(wires[item].get("art") or wires[item].get("name") or "") for item in pair if 0 <= item < len(wires)]
             if names:
                 pairs.append(f"{index + 1}) {' + '.join(names)}")
@@ -2164,7 +2166,7 @@ def _scheme_step(op: Mapping[str, Any]) -> str:
         on = operation_type == "insTut"
         tube = _tube_word(op)
         if str(op.get("opKey") or "").startswith(("insSpl", "heatSpl")):
-            return "Трубка надета на провода сростков" if on else "Трубка на сростках усажена"
+            return "Трубка надета на сростки" if on else "Трубка на сростках усажена"
         if tube:
             return f"{tube} надета" if on else f"{tube} усажена"
         if op.get("harness"):

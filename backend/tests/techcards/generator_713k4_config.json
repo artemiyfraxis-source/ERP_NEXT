@@ -51,7 +51,7 @@
       "name": "НВ4 0,12 белый",
       "art": "НВ4 0,12 белый",
       "qty": 2,
-      "length": 158
+      "length": 157
     },
     {
       "name": "НВ4 0,12 белый",
@@ -63,7 +63,7 @@
       "name": "НВ4 0,12 синий",
       "art": "НВ4 0,12 синий",
       "qty": 2,
-      "length": 158
+      "length": 157
     },
     {
       "name": "НВ4 0,12 синий",
@@ -115,7 +115,7 @@
       12,
       13
     ],
-    "pitch": "15",
+    "pitch": "20",
     "wireDia": "0,95"
   },
   "tin": {
@@ -170,13 +170,13 @@
           "name": "НВ4 0,12 белый",
           "art": "НВ4 0,12 белый",
           "qty": 1,
-          "length": 158
+          "length": 157
         },
         {
           "name": "НВ4 0,12 синий",
           "art": "НВ4 0,12 синий",
           "qty": 1,
-          "length": 158
+          "length": 157
         }
       ],
       "strip": {
@@ -302,13 +302,13 @@
           "name": "НВ4 0,12 белый",
           "art": "НВ4 0,12 белый",
           "qty": 1,
-          "length": 158
+          "length": 157
         },
         {
           "name": "НВ4 0,12 синий",
           "art": "НВ4 0,12 синий",
           "qty": 1,
-          "length": 158
+          "length": 157
         }
       ],
       "strip": {
@@ -660,13 +660,13 @@
           "name": "НВ4 0,12 белый",
           "art": "НВ4 0,12 белый",
           "qty": 1,
-          "length": 158
+          "length": 157
         },
         {
           "name": "НВ4 0,12 синий",
           "art": "НВ4 0,12 синий",
           "qty": 1,
-          "length": 158
+          "length": 157
         }
       ],
       "wireSources": [
@@ -759,6 +759,12 @@
       "tOp": "",
       "tMachine": "",
       "units": 1,
+      "twistPairs": [
+        [
+          7,
+          9
+        ]
+      ],
       "branch": "X2 «I3»"
     },
     {
@@ -787,13 +793,13 @@
           "name": "НВ4 0,12 белый",
           "art": "НВ4 0,12 белый",
           "qty": 1,
-          "length": 158
+          "length": 157
         },
         {
           "name": "НВ4 0,12 синий",
           "art": "НВ4 0,12 синий",
           "qty": 1,
-          "length": 158
+          "length": 157
         }
       ],
       "wireSources": [
@@ -886,6 +892,12 @@
       "tOp": "",
       "tMachine": "",
       "units": 1,
+      "twistPairs": [
+        [
+          7,
+          9
+        ]
+      ],
       "branch": "X3 «C»"
     },
     {
@@ -985,19 +997,6 @@
       "branch": "X4 «A6»"
     },
     {
-      "type": "insTut",
-      "opKey": "insSpl1",
-      "templateId": "ins-tut-монтаж",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
-      "branch": "С1, С2"
-    },
-    {
       "type": "splice",
       "opKey": "splice1",
       "templateId": "sdr-w-w-пайка",
@@ -1009,6 +1008,19 @@
       "branch": "С1, С2",
       "method": "solder",
       "sleeves": []
+    },
+    {
+      "type": "insTut",
+      "opKey": "insSpl1",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 2,
+      "branch": "С1, С2"
     },
     {
       "type": "heatTut",
@@ -1024,19 +1036,6 @@
       "branch": "С1, С2"
     },
     {
-      "type": "insTut",
-      "opKey": "insSpl2",
-      "templateId": "ins-tut-монтаж",
-      "opNum": "",
-      "tPrep": "",
-      "tOp": "",
-      "tMachine": "",
-      "tutArt": "",
-      "tutName": "",
-      "tutCount": 2,
-      "branch": "С3, С4"
-    },
-    {
       "type": "splice",
       "opKey": "splice2",
       "templateId": "sdr-w-w-пайка",
@@ -1048,6 +1047,19 @@
       "branch": "С3, С4",
       "method": "solder",
       "sleeves": []
+    },
+    {
+      "type": "insTut",
+      "opKey": "insSpl2",
+      "templateId": "ins-tut-монтаж",
+      "opNum": "",
+      "tPrep": "",
+      "tOp": "",
+      "tMachine": "",
+      "tutArt": "",
+      "tutName": "",
+      "tutCount": 2,
+      "branch": "С3, С4"
     },
     {
       "type": "heatTut",
@@ -1390,11 +1402,18 @@
         "final": false
       },
       {
+        "key": "pf-hs",
+        "name": "ТУТ на месте Б",
+        "ops": [
+          39,
+          40
+        ],
+        "final": false
+      },
+      {
         "key": "pf-final",
         "name": "Кабельная сборка Жгут НВ4",
         "ops": [
-          39,
-          40,
           41,
           42
         ],
@@ -1415,22 +1434,10 @@
         "item": "Ветвь X2 «I3», сторона А"
       },
       {
-        "from": "pf-spl1",
-        "to": "pf-final",
-        "per_unit": 1,
-        "item": "Пайка С1, С2"
-      },
-      {
         "from": "pf-A3",
         "to": "pf-spl2",
         "per_unit": 1,
         "item": "Ветвь X3 «C», сторона А"
-      },
-      {
-        "from": "pf-A4",
-        "to": "pf-final",
-        "per_unit": 1,
-        "item": "Ветвь X4 «A6», сторона А"
       },
       {
         "from": "pf-cutWire",
@@ -1494,7 +1501,7 @@
       },
       {
         "from": "pf-tubes",
-        "to": "pf-final",
+        "to": "pf-hs",
         "per_unit": 1,
         "item": "ТТК 12/4 — 2 шт"
       },
@@ -1559,8 +1566,26 @@
         "item": "Маркировка «A6» — 1 шт"
       },
       {
-        "from": "pf-spl2",
+        "from": "pf-hs",
         "to": "pf-final",
+        "per_unit": 1,
+        "item": "ТУТ на месте Б"
+      },
+      {
+        "from": "pf-spl1",
+        "to": "pf-hs",
+        "per_unit": 1,
+        "item": "Пайка С1, С2"
+      },
+      {
+        "from": "pf-A4",
+        "to": "pf-hs",
+        "per_unit": 1,
+        "item": "Ветвь X4 «A6», сторона А"
+      },
+      {
+        "from": "pf-spl2",
+        "to": "pf-hs",
         "per_unit": 1,
         "item": "Пайка С3, С4"
       }

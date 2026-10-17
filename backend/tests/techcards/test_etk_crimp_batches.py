@@ -2,7 +2,8 @@
 (SYM and SHF on side А, T-DS1071 on side В, SYM + T-DS1071 on both ends of the A6 wires), splice ends stripped at the cut,
 tails cut + stripped + tinned on one machine, one cut for every tube, one for every braid piece, the marking printed and
 cut, and the ПФ graph the generator drew itself (`build_config.route`, source «generated»): kits → branches X1–X4 →
-splice groups → the product. The config is the generator's own output for the НВ4 fixture (frontend
+splice groups (solder first, then the tube on the finished splice, owner 17.10) → «ТУТ на месте Б» (the harness tubes)
+→ the product (only the side-В connectors X5, X6). The config is the generator's own output for the НВ4 fixture (frontend
 tcGenRealHarness.fixture.ts `fullHarness`, kept equal by frontend/src/tcGenCrimpBatches.test.ts)."""
 
 from __future__ import annotations
@@ -55,9 +56,10 @@ def test_each_terminal_is_crimped_at_cut_in_its_own_batch_with_its_own_norm():
         {"SYM-001T-P0.6": "1500", "T-DS1071-SC600": "1500"},
     ]
     # Провод ×2 «белый 0,12»: одна жила — к SYM («I3»), другая — к SHF («C»): в каждой партии по одной.
+    # 157 мм: припуск на свивку по шагу 713К.4 — 20 мм (владелец 17.10).
     assert [row["name"] for row in cuts[2]["result"]] == [
-        "НВ4 0,12 белый 158мм, обжатый терминал SHF-001T-0.8BS", "НВ4 0,12 синий 158мм, обжатый терминал SHF-001T-0.8BS"]
-    assert cuts[0]["result"][2] == {"name": "НВ4 0,12 белый 158мм, обжатый терминал SYM-001T-P0.6", "norm": "500", "unit": "Шт."}
+        "НВ4 0,12 белый 157мм, обжатый терминал SHF-001T-0.8BS", "НВ4 0,12 синий 157мм, обжатый терминал SHF-001T-0.8BS"]
+    assert cuts[0]["result"][2] == {"name": "НВ4 0,12 белый 157мм, обжатый терминал SYM-001T-P0.6", "norm": "500", "unit": "Шт."}
     # Хвосты «сросток → облуженный конец» станок не обжимает: резка, зачистка обоих концов и лужение хвоста — одной
     # операцией (BZW-5.0+Z), без отдельных зачистки и лужения хвостов и без зачистки концов под сростки.
     tails = op_by_key(document, "cutWire2")
@@ -138,6 +140,16 @@ def test_a_branch_twists_its_own_pairs_only():
     document = build()
     assert [op["opKey"] for op in document["build_config"]["ops"] if op["type"] == "twist"] == ["twistA2", "twistA3"]
     assert op_by_key(document, "twistA2")["connector"] == "X2 «I3»"
+    # Owner 17.10: each branch twist carried both pairs of the form («1) … 2) …», count 2) — now its own pair, shared pitch.
+    for key in ("twistA2", "twistA3"):
+        assert op_by_key(document, key)["fields"]["twist"] == {
+            "pitch": "20", "pairs": "1) НВ4 0,12 белый + НВ4 0,12 синий", "count": 1}
+    both = deepcopy(CONFIG)
+    both["twist"]["pairs"] = [[7, 9], [8, 10]]
+    assert op_by_key(build(both), "twistA2")["fields"]["twist"]["count"] == 1
+    for op in both["ops"]:
+        op.pop("twistPairs", None)
+    assert op_by_key(build(both), "twistA2")["fields"]["twist"]["count"] == 2
     # Время свивки — по своим парам (`units`), не по всем парам формы.
     config = {"partQty": 2, "wires": [{"qty": 1}] * 4, "twist": {"mode": "pairs", "pairs": [[0, 1], [2, 3]]}}
     assert _time({"type": "twist", "units": 1, "tOp": "60", "tPrep": "0"}, config, "x")[0]["norm"] == "2"
@@ -172,7 +184,8 @@ def test_the_card_is_accepted_with_unique_etk_keys():
 def test_the_generator_draws_the_semi_finished_graph_kits_branches_splice_groups_product():
     # Owner 16.10: «нам нужно понимать иерархию». The generator draws the ПФ graph itself (source «generated»): every
     # cut batch, the tube cut, the braid cut and the marking are kits (made once per product); the branches X1–X4 take
-    # them; the splice groups take the branches and the cut wires of the other ends; the product takes the rest.
+    # them; the splice groups take the branches and the cut wires of the other ends; owner 17.10: the harness tubes go
+    # on at place Б as their own ПФ (splice groups, X4, the tubes), and the product only mounts X5, X6.
     document = build()
     route = document["route"]
     assert route["source"] == "generated"
@@ -198,22 +211,23 @@ def test_the_generator_draws_the_semi_finished_graph_kits_branches_splice_groups
         ("2.2", "Ветвь X2 «I3», сторона А", branch(2), False),
         ("2.3", "Ветвь X3 «C», сторона А", branch(3), False),
         ("2.4", "Ветвь X4 «A6», сторона А", branch(4, tube=False, twist=False), False),
-        ("3.1", "Пайка С1, С2", ["insSpl1", "splice1", "heatSpl1"], False),
-        ("3.2", "Пайка С3, С4", ["insSpl2", "splice2", "heatSpl2"], False),
-        ("4", "Кабельная сборка Жгут НВ4", ["insSleeves", "heatHs", "insTermB1", "insTermB2"], False),
+        ("3.1", "Пайка С1, С2", ["splice1", "insSpl1", "heatSpl1"], False),
+        ("3.2", "Пайка С3, С4", ["splice2", "insSpl2", "heatSpl2"], False),
+        ("4", "ТУТ на месте Б", ["insSleeves", "heatHs"], False),
+        ("5", "Кабельная сборка Жгут НВ4", ["insTermB1", "insTermB2"], False),
     ]
     assert blocks["pf-final"]["final"] and sum(len(block["ops"]) for block in route["blocks"]) == len(keys)
     edges = {(edge["from"], edge["to"]): edge.get("item", "") for edge in route["edges"]}
     assert edges[("pf-cutWire", "pf-A1")] == "НВ4 0,5 красный, черный — 2 шт"
     assert edges[("pf-cutWire1", "pf-spl1")] == "НВ4 0,2 красный ×2, черный ×2 — 4 шт"
     assert edges[("pf-tubes", "pf-A1")] == "ТТК 8/2 — 1 шт"
-    assert edges[("pf-tubes", "pf-final")] == "ТТК 12/4 — 2 шт"
+    assert edges[("pf-tubes", "pf-hs")] == "ТТК 12/4 — 2 шт"
     assert edges[("pf-tubes", "pf-spl1")] == "ТТК 3/1 — 2 шт"
     assert edges[("pf-braid", "pf-A2")] == "Оплётка XP-3 110 мм — 1 шт"
     assert edges[("pf-mark", "pf-A1")] == "Маркировка «5» — 1 шт"
-    assert {pair for pair in edges if pair[0].startswith(("pf-A", "pf-spl"))} == {
-        ("pf-A1", "pf-spl1"), ("pf-A2", "pf-spl2"), ("pf-A3", "pf-spl2"), ("pf-A4", "pf-final"),
-        ("pf-spl1", "pf-final"), ("pf-spl2", "pf-final")}
+    assert {pair for pair in edges if pair[0].startswith(("pf-A", "pf-spl", "pf-hs"))} == {
+        ("pf-A1", "pf-spl1"), ("pf-A2", "pf-spl2"), ("pf-A3", "pf-spl2"), ("pf-A4", "pf-hs"),
+        ("pf-spl1", "pf-hs"), ("pf-spl2", "pf-hs"), ("pf-hs", "pf-final")}
     assert document["warnings"] == []
 
 
@@ -241,12 +255,13 @@ def test_the_first_operation_of_a_pf_takes_one_row_per_arrow_of_the_scheme():
         ("Оплётка XP-3 110 мм — 1 шт", "500", "ПФ 1.7"), ("Маркировка «I3» — 1 шт", "500", "ПФ 1.8")]
     assert all(row["unit"] == "Шт." for row in mount["semis"])
     assert mount["components"] == [{"art": "SMR-02V-B", "name": "SMR-02V-B", "norm": "500", "unit": "Шт."}]
-    assert rows(op_by_key(document, "insSpl2")) == [
+    assert rows(op_by_key(document, "splice2")) == [
         ("НВ4 0,12 белый, синий — 2 шт", "1000", "ПФ 1.3"), ("ТТК 3/1 — 2 шт", "1000", "ПФ 1.6"),
         ("Ветвь X2 «I3», сторона А", "500", "ПФ 2.2"), ("Ветвь X3 «C», сторона А", "500", "ПФ 2.3")]
     assert rows(op_by_key(document, "insSleeves")) == [
         ("ТТК 12/4 — 2 шт", "1000", "ПФ 1.6"), ("Ветвь X4 «A6», сторона А", "500", "ПФ 2.4"),
         ("Пайка С1, С2", "500", "ПФ 3.1"), ("Пайка С3, С4", "500", "ПФ 3.2")]
+    assert rows(op_by_key(document, "insTermB1")) == [("ТУТ на месте Б", "500", "ПФ 4")]
     # Комплекты ни из чего не делаются — входа нет.
     assert [op_by_key(document, key)["semis"] for key in ("cutWire", "cutTubes", "cutBraid", "cutMark")] == [[], [], [], []]
 
@@ -261,7 +276,10 @@ def test_inside_a_pf_each_operation_takes_the_previous_one_and_the_last_hands_on
     assert [rows(op) for op in branch[1:]] == [
         [(name, "500", f"операция {op['position'] - 1:02d}")] for name, op in zip(results, branch[1:])]
     assert [row["name"] for row in op_by_key(document, "heatSpl2")["result"]] == ["Пайка С3, С4"]
+    # Owner 17.10: solder first, then the tube on the finished splice, then shrink.
     assert [row["name"] for row in op_by_key(document, "splice2")["result"]] == ["Провода спаяны"]
+    assert rows(op_by_key(document, "insSpl2"), "result") == [("Трубка надета на сростки", "500", "")]
+    assert [row["name"] for row in op_by_key(document, "heatHs")["result"]] == ["ТУТ на месте Б"]
     last = document["operations"][-1]
     assert (last["result"], last["result_label"]) == ([{"name": "Кабельная сборка Жгут НВ4", "norm": "500", "unit": "Шт."}], "Изделие")
     # Имена ПФ схемы — это и есть то, что отдают их последние операции.
