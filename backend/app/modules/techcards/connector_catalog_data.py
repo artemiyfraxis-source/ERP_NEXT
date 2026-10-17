@@ -270,8 +270,14 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # Arrow 349674021 «4 Circuits … Terminal Position 2 Plugged», Molex 349674006 «4 Circuits, without CPA, Polarization
     # Option B, Light Gray», Molex part sheet 0349671005 «without CPA, 10 Circuits … Pitch 1.80mm»); unsealed 34791 (Heilind / RS 34791-0020 «2 Circuits», 34791-0040 and -0140 «4 Circuits»,
     # -0140 bridged). No drawing with circuit numbers was reachable (molex.com does not answer).
-    _family("molex-mini50-s", "Molex Mini50 (герметичный 34967)", r"^0?34967-?(\d{4})$", 1.8, latch="lever", color=BLACK,
-            table=MINI50_SEALED, color_by=((r"4006$", "#c9cccf"),), note=NO_DRAWING),
+    # Sealed 34967 — Molex sales drawings 349674001 and 349671001 (molex.com copies in the Web Archive, read 17.10.2026),
+    # sheet 3: the front view is the mating face (the receptacle boxes inside the oval shroud of the ring seal; the mat
+    # seal sits at the wire end, sheet 4 «KEY CONFIGURATIONS» keys that face) with the CPA / lock up, «1» moulded at the
+    # left, «4» / «10» at the right (TERMINAL POSITION 1 / 4 / 10). From the wire side the view mirrors: lock up,
+    # contact 1 on the RIGHT, one row for 2, 4 and 10 circuits.
+    _family("molex-mini50-s", "Molex Mini50 (герметичный 34967)", r"^0?34967-?(\d{4})$", 1.8, start="TR", latch="lever",
+            color=BLACK, table=MINI50_SEALED, color_by=((r"4006$", "#c9cccf"),), conf="high", src="Molex 349674001 / 349671001 SD",
+            note="по чертежам Molex 349674001 и 349671001: со стороны стыковки замком (CPA) вверх «1» слева; со стороны проводов — контакт 1 справа"),
     _family("molex-mini50-u", "Molex Mini50 (негерметичный 34791)", r"^0?34791-?(\d{4})$", 1.8, latch="lever", color=BLACK,
             table=MINI50_UNSEALED, note=NO_DRAWING),
     # Hsuan Mao (HSM) — drawings on definum.ru (the HSM distributor; hsuanmao.com does not answer), read 16.10.2026.
@@ -438,7 +444,11 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-igrid", "Molex iGrid (2 ряда)", r"^501646-?(\d{2})0[0124]$", 2.0, rows=2, order="col", start="BR", latch="lever",
             color_by=((r"1$", BLACK), (r"2$", "#c8322d"), (r"4$", "#3b6fb6")), conf="high", src="Molex 5016460000-SD",
             note="по чертежу Molex 5016460000-SD: на торце проводов защёлка внизу, 1 слева вверху, 2 под ней; защёлкой вверх — 1 справа внизу, 2 над ней"),
-    _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, note=NO_DRAWING),
+    # Board-in 35023 — Molex SD-35023-001 (Web Archive copy of 350230004_sd.pdf, third angle, read 17.10.2026): the front
+    # view is the face with the slots the right-angle contacts 35021 lead their wires out of; «CKT NO.1» (and the CAV NO.
+    # mark) at its right end, the top face (the entries of the straight contacts 35044) up. No latch.
+    _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, start="TR", conf="high", src="Molex SD-35023-001",
+            note="по чертежу Molex SD-35023-001: метка CKT NO.1 у правого края грани с прорезями под провода; этой гранью к себе, верхом вверх — контакт 1 справа"),
     # TE Mini CT — C-353908: the top view is the wire end; «CIRCUIT No.1» is at its right with the +AMP face (the lock
     # ramp) at the bottom -> from the wire side, lock up, contact 1 on the LEFT.
     _family("te-minict", "TE AMP Mini CT", r"^((?:\d-)?353908-\d)$", 1.5, latch="ramp", table=MINI_CT_TABLE, conf="high",

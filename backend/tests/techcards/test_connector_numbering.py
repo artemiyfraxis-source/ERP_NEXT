@@ -49,7 +49,6 @@ CASES = [
     ("206461-0800", "molex-microfit-plus", [[1, 2, 3, 4], [5, 6, 7, 8]], "lever", "low", ""),
     ("51163-0400", "molex-minilock", [[1, 2, 3, 4]], "lever", "low", ""),
     ("50-57-9404", "molex-sl-1r", [[1, 2, 3, 4]], "ramp", "low", ""),
-    ("35023-0004", "molex-boardin", [[1, 2, 3, 4]], "none", "low", ""),
     # Hirose DF1B (catalogue 01.07.2020): face with the contact-1 mark (or the lock lever) up
     ("DF1B-4S-2.5R", "hirose-df1b", [[1, 2, 3, 4]], "mark", "high", "Single Row Socket"),
     ("DF1B-10DS-2.5RC", "hirose-df1b-2r", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", "high", "Double Row Socket"),
@@ -100,6 +99,10 @@ CASES = [
     ("06T-JWPF-VSLE-D", "jst-jwpf", [[1, 3, 5], [2, 4, 6]], "lever", "low", ""),
     # JAE housing drawings from products.jae.com (17.10.2026)
     ("FI-S10S", "jae-fis", [[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]], "none", "high", "SJ031451"),
+    # Molex sales drawings from the Web Archive (17.10.2026)
+    ("34967-4001", "molex-mini50-s", [[4, 3, 2, 1]], "lever", "high", "349674001"),
+    ("34967-1001", "molex-mini50-s", [[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]], "lever", "high", "349671001"),
+    ("35023-0004", "molex-boardin", [[4, 3, 2, 1]], "none", "high", "SD-35023-001"),
 ]
 
 
@@ -168,7 +171,9 @@ def test_checked_molex_series():
     # 16.10.2026: CLIK-Mate 1,5, Pico-Clasp, KK 396 (41695) and iGrid were read from the Molex drawings.
     for series_id in ("molex-clikmate", "molex-picoclasp", "molex-kk396", "molex-igrid"):
         assert series[series_id]["checked"], series_id
-    for series_id in ("molex-microfit-plus", "molex-milligrid", "molex-minilock", "molex-sl", "molex-boardin"):
+    # 17.10.2026: Board-in from SD-35023-001 (Web Archive copy of the molex.com drawing).
+    assert series["molex-boardin"]["checked"]
+    for series_id in ("molex-microfit-plus", "molex-milligrid", "molex-minilock", "molex-sl"):
         assert not series[series_id]["checked"], series_id
     # The ranges: iGrid's list is complete (10…40, even); CLIK-Mate and Pico-Clasp name housings they did not find.
     assert series["molex-igrid"]["range_checked"] and series["molex-igrid"]["counts"] == list(range(10, 41, 2))
