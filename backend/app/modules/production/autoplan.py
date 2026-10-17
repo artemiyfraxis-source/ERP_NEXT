@@ -14,7 +14,10 @@
 Наладка живёт на станке: у станка в одном экземпляре — общая для всех (кто бы ни работал на нём последним), у станков
 в нескольких экземплярах — своя у каждого монтажника («его» станок остаётся настроенным, пока он на нём не сменит
 наладку). Станков одного типа одновременно занято не больше, чем единиц в БД.ОБ с этим префиксом (нет в БД.ОБ — одна);
-операции без станка (только инструмент) по станкам не ограничены.
+операции без станка (только инструмент) по станкам не ограничены. Станок занимает каждая операция ЭТК со станком — у ПФ
+каждая своим станком, — на время по правилу загрузки станков (machine_load: подготовка карты + машинное время × штуки,
+подряд с начала окна операции): два ПФ на одном станке в один день не превысят его единиц. Нет шагов ЭТК во входе —
+станок ключа наладки на всё окно операции.
 
 Расчёт — жадное списочное расписание. Готовые операции (все их входы по схеме задания уже стоят в плане) берутся по
 приоритету: дедлайн задания, потом номер ПЗ, потом порядок этапов. Операция встаёт на монтажника с допуском, у
@@ -37,7 +40,7 @@ from __future__ import annotations
 
 import re
 from bisect import insort
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from math import ceil
@@ -55,6 +58,7 @@ from .domain import (
     next_working_moment,
 )
 from .launchable import route_from_document, stage_name
+from .machine_load import MachineStep, inventory_prefix, lay_out, operation_occupancies, planned_windows
 from .scheduling import (
     ScheduledOperation,
     _allowed,
@@ -83,7 +87,6 @@ CUT_TYPES = frozenset({"cutWire", "cutWireStrip"})
 COAX_TYPES = frozenset({"coaxCut", "coaxStrip"})
 SOLDER_TYPES = frozenset({"tin", "solderConn", "coaxSolderShield", "coaxPin"})
 _COAX_SIZES = ("l1", "l2", "l3", "d1", "d2", "d3")
-_INVENTORY = re.compile(r"([ОO]Б)\s*\.\s*(\d+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -105,12 +108,6 @@ def changeover_seconds(previous: SetupKey | None, current: SetupKey, setup_secon
     if previous.exact == current.exact:
         return 0
     return min(full, ADJUSTMENT_SECONDS)
-
-
-def inventory_prefix(value: object) -> str:
-    """«ОБ.027.2» / «ОБ.027.X» / «ОБ.027» → «ОБ.027»: тип станка, общий для всех его единиц."""
-    match = _INVENTORY.search(str(value or ""))
-    return f"ОБ.{match.group(2)}" if match else ""
 
 
 def equipment_units(inventory_numbers: Iterable[str]) -> dict[str, int]:
@@ -266,8 +263,9 @@ def operation_keys(task: ProductionTask, document: Mapping[str, Any] | None) -> 
 
 def semifinished_key(parts: Sequence[SetupKey]) -> SetupKey:
     """Наладка ПФ из наладок его операций ЭТК по порядку: семейство и точный ключ — их цепочки (переналадка между
-    двумя ПФ нулевая, только если все их операции налажены одинаково). Станок — первый учётный станок ПФ (его
-    занятость ограничена единицами БД.ОБ), без него — станок первой операции."""
+    двумя ПФ нулевая, только если все их операции налажены одинаково). Станок — первый учётный станок ПФ (по нему
+    живёт наладка), без него — станок первой операции. Занятость станков ПФ — по каждой его операции ЭТК
+    (AutoplanInput.steps)."""
     machine = next((part for part in parts if part.limited), parts[0])
     return SetupKey(
         machine.machine,
@@ -292,6 +290,9 @@ class AutoplanInput:
     end: datetime
     holidays: frozenset[date]
     shift: WorkShift
+    # Станки операций по шагам ЭТК (machine_load.task_steps): операция занимает каждый свой станок своей операцией ЭТК.
+    # У операции без шагов — станок ключа наладки (limited) на всё окно.
+    steps: Mapping[UUID, tuple[MachineStep, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -401,10 +402,15 @@ class _Planner:
         # Календарь — общий для всех копий расчёта (прогнозы дедлайнов считают одни и те же окна много раз).
         self._moments: dict[datetime, datetime] = {}
         self._finishes: dict[tuple[datetime, int], datetime] = {}
+        self._layouts: dict[tuple[UUID, datetime, datetime], tuple[tuple[str, datetime, datetime], ...]] = {}
         for task in data.tasks:
             for operation in task.operations:
                 if operation.id in data.free:
                     continue
+                steps = data.steps.get(operation.id)
+                if steps:
+                    for item in operation_occupancies(task, operation, steps, planned_windows(operation), data.holidays, data.shift):
+                        insort(self.machines.setdefault(item.machine, []), (item.start, item.finish))
                 if operation.planned_start is not None and operation.planned_finish is not None:
                     self.plans[operation.id] = (
                         ScheduledOperation(
@@ -419,7 +425,7 @@ class _Planner:
                 for share in operation.shares:
                     if share.planned_start is None or share.planned_finish is None:
                         continue
-                    if key.limited:
+                    if key.limited and not steps:
                         insort(self.machines.setdefault(key.machine, []), (share.planned_start, share.planned_finish))
                     insort(
                         self.streams.setdefault(self._stream(key, share.operator_id), []),
@@ -450,8 +456,34 @@ class _Planner:
             self._finishes[(start, seconds)] = add_work_seconds(start, seconds, self.data.holidays, self.data.shift)
         return self._finishes[(start, seconds)]
 
+    def _units(self, machine: str) -> int:
+        return max(1, self.data.capacity.get(machine, 1))
+
     def _capacity(self, key: SetupKey) -> int | None:
-        return max(1, self.data.capacity.get(key.machine, 1)) if key.limited else None
+        return self._units(key.machine) if key.limited else None
+
+    def _machine_use(self, operation: ProductionOperation, start: datetime, finish: datetime) -> tuple[tuple[str, datetime, datetime], ...]:
+        """Какие станки и когда занимает операция в окне [start, finish): по шагам ЭТК — тем же расчётом, что загрузка
+        станков; без шагов — станок ключа наладки на всё окно."""
+        steps = self.data.steps.get(operation.id)
+        if not steps:
+            key = self.data.keys[operation.id]
+            return ((key.machine, start, finish),) if key.limited else ()
+        cache = (operation.id, start, finish)
+        if cache not in self._layouts:
+            units = self.task_of[operation.id].operation_units(operation.id)
+            self._layouts[cache] = tuple(
+                (step.machine, begin, end)
+                for step, begin, end in lay_out(steps, start, finish, units, self.data.holidays, self.data.shift)
+            )
+        return self._layouts[cache]
+
+    def _machine_names(self, operation_id: UUID) -> frozenset[str]:
+        steps = self.data.steps.get(operation_id)
+        if steps:
+            return frozenset(step.machine for step in steps)
+        key = self.data.keys[operation_id]
+        return frozenset((key.machine,)) if key.limited else frozenset()
 
     def _stream(self, key: SetupKey, operator_id: UUID) -> tuple:
         # Станок в одном экземпляре помнит наладку для всех; в нескольких — у каждого монтажника «свой».
@@ -491,7 +523,6 @@ class _Planner:
         task = self.task_of[operation.id]
         rate = _rate(data.skills, operation.skill_codes, (operator_id,))
         items = self.streams.get(self._stream(key, operator_id), [])
-        capacity = self._capacity(key)
         start = self._next(earliest)
         unit = operation.seconds_per_unit * task.operation_units(operation.id) / (rate if rate > 0 else Decimal(1))
         for _ in range(_SLOT_ATTEMPTS):
@@ -507,12 +538,12 @@ class _Planner:
                     break
                 if busy_finish > start:
                     moves.append(busy_finish)
-            if capacity is not None:
+            for machine, begin, end in self._machine_use(operation, start, finish):
                 overlapping = [
-                    (item_start, item_finish) for item_start, item_finish in self.machines.get(key.machine, ())
-                    if item_start < finish and item_finish > start
+                    (item_start, item_finish) for item_start, item_finish in self.machines.get(machine, ())
+                    if item_start < end and item_finish > begin
                 ]
-                if overlapping and _peak(overlapping, start, finish) >= capacity:
+                if overlapping and _peak(overlapping, begin, end) >= self._units(machine):
                     moves.append(min(item_finish for _, item_finish in overlapping))
             following = min((item for item in items if item.start >= finish), key=lambda item: (item.start, item.finish), default=None)
             if (
@@ -530,8 +561,8 @@ class _Planner:
         operation = self.ops[operation_id]
         key = self.data.keys[operation_id]
         insort(self.busy.setdefault(operator_id, []), (slot.start, slot.finish))
-        if key.limited:
-            insort(self.machines.setdefault(key.machine, []), (slot.start, slot.finish))
+        for machine, begin, end in self._machine_use(operation, slot.start, slot.finish):
+            insort(self.machines.setdefault(machine, []), (begin, end))
         insort(
             self.streams.setdefault(self._stream(key, operator_id), []),
             _Item(slot.start, slot.finish, key, ceil(max(Decimal(0), operation.setup_seconds)), slot.changeover),
@@ -683,12 +714,12 @@ class _Planner:
         on_time = {task_id for task_id in watched if not late(task_id, before.get(task_id))}
         if not on_time:
             return True
-        key = self.data.keys[operation_id]
+        machines = self._machine_names(operation_id)
         # Расчёт детерминирован: если без подтяжки ни одна срочная операция не встала к этому монтажнику и не делила с
         # подтяжкой станок, подтяжка их не меняет — пересчитывать незачем.
         if not any(
             item.operator_id == operator_id
-            or (key.limited and item.key.machine == key.machine)
+            or not machines.isdisjoint(self._machine_names(item.operation_id))
             for item in placed
         ):
             return True

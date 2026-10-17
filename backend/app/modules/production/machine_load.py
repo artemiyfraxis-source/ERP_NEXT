@@ -25,7 +25,6 @@ from math import ceil
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import UUID
 
-from .autoplan import inventory_prefix
 from .domain import (
     EtkOperation,
     ProductionOperation,
@@ -38,6 +37,14 @@ from .launchable import _seconds, route_from_document, stage_name
 from .scheduling import work_seconds_between
 
 EQUIPMENT_SECTION = "Оборудование"
+_INVENTORY = re.compile(r"([ОO]Б)\s*\.\s*(\d+)", re.IGNORECASE)
+
+
+def inventory_prefix(value: object) -> str:
+    """«ОБ.027.2» / «ОБ.027.X» / «ОБ.027» → «ОБ.027»: тип станка, общий для всех его единиц (и ключ наладки
+    автоплана, и станок загрузки)."""
+    match = _INVENTORY.search(str(value or ""))
+    return f"ОБ.{match.group(2)}" if match else ""
 
 
 @dataclass(frozen=True)
