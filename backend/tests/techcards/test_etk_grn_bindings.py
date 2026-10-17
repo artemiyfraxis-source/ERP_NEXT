@@ -79,7 +79,7 @@ def _bind_in_kitset(sessions, lots: dict[str, KitLot | None], index: str = "КБ
 
 
 def _hand_out(sessions, purpose: str, issued: list[tuple[str, str, str, Decimal]], *,
-              kind: FulfillmentKind = FulfillmentKind.MAIN, created: datetime = NOW) -> None:
+              kind: FulfillmentKind = FulfillmentKind.MAIN, created: datetime = NOW) -> str:
     """A kit request with lines issued from lots: (article, grn, package, issued)."""
     lines = []
     for article, grn, package, quantity in issued:
@@ -97,6 +97,7 @@ def _hand_out(sessions, purpose: str, issued: list[tuple[str, str, str, Decimal]
             status=FulfillmentStatus.ISSUED, lines=tuple(lines), kind=kind,
         ))
         uow.commit()
+    return number
 
 
 def _grn(client: TestClient, card_id: str) -> list[str]:
@@ -125,6 +126,35 @@ def test_lots_issued_to_the_shop_beat_the_kitset_binding_and_extra_issues_add_up
     )
 
     assert _grn(client, card_id) == ["Г-202, Г-303", ""]
+
+
+def _kit_requests(client: TestClient, card_id: str) -> list[str | None]:
+    document = client.get(f"/api/techcards/projects/{card_id}").json()["document"]
+    return [row.get("kit_request") for row in document["operations"][0]["components"]]
+
+
+def test_kit_request_number_shows_next_to_the_issued_component(world):
+    client, sessions, _ = world
+    card_id = _issued_card(client)
+    number = _hand_out(sessions, "180К.11 · КБ1 · Жгут", [(MOLEX, "Г-202", "1", Decimal("4"))])
+
+    assert _kit_requests(client, card_id) == [number, None]
+
+
+def test_several_requests_of_a_component_are_joined_and_none_leaves_it_plain(world):
+    client, sessions, _ = world
+    card_id = _issued_card(client)
+    assert _kit_requests(client, card_id) == [None, None]
+    _bind_in_kitset(sessions, {MOLEX: KitLot(lot_id=uuid4(), warehouse="ЦАР", grn="Г-101", package="1")})
+    assert _kit_requests(client, card_id) == [None, None]  # kitset binding alone is not a request
+
+    main = _hand_out(sessions, "180К.11 · КБ1 · Жгут", [(MOLEX, "Г-202", "1", Decimal("4"))])
+    extra = _hand_out(
+        sessions, "180К.11 · КБ1 · Довыдача", [(MOLEX, "Г-303", "", Decimal("1"))],
+        kind=FulfillmentKind.EXTRA, created=datetime(2026, 10, 12, 11, 0),
+    )
+
+    assert _kit_requests(client, card_id) == [f"{main}, {extra}", None]
 
 
 def test_another_kb_lots_are_not_mixed_in(world):

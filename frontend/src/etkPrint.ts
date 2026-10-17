@@ -11,7 +11,7 @@ import {
 } from "./etkDraw";
 import { ETK_TOOLING_SECTIONS, etkOperationName, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
-import { ETK_PART_SOURCE, etkRouteLine, etkRouteOf, etkSemiSource } from "./etkRoute";
+import { etkPartSource, etkRouteLine, etkRouteOf, etkSemiSource } from "./etkRoute";
 import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
@@ -182,7 +182,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
       text(item.art) + (item.kd ? ` (по КД: ${text(item.kd)}, аналог)` : ""),
       // Обжимаемый контакт: под наименованием — спецификация обжима своего конца (как на экране).
       [text(item.name), ...etkContactSpecs(object(operation.fields), item.art)].filter(Boolean).join("\n"), text(item.grn),
-      text(item.norm), "", unitLabel(text(item.unit)), ETK_PART_SOURCE,
+      text(item.norm), "", unitLabel(text(item.unit)), etkPartSource(item),
     ]);
     // «Что взять»: полуфабрикат — то же название, что в «Результате» прошлой операции, и откуда его брать.
     const semiFrom = etkSemiSource(route, Number(operation.position) || index + 1);

@@ -55,9 +55,12 @@ function isSoldering(operation: Row): boolean {
   return /^SDR/i.test(str(operation.code)) || /пайк|лужен/i.test(names);
 }
 
+/** Температура пайки и лужения по умолчанию (владелец 17.10: 240 °C, допуск ±10 °C). */
+export const SOLDER_DEFAULT_TEMPERATURE = "240 °C";
+
 /** Режим пайки операции: жало паяльника и температура. Сначала — параметры оборудования и текст шагов карты
  *  (параметры/программа ванны «200 °C»; в шагах «Паяльная станция, тонкое жало; t° 320–350 °C», допуск «(+/-) 10 °C»); чего в карте нет — по умолчанию
- *  для Sn63Pb37: паяльник 320–350 °C (от 370 °C — массивное жало), ванна лужения 250–270 °C. */
+ *  для Sn63Pb37: паяльник 240 °C, ванна лужения — те же 240 °C (владелец 17.10: «на пайке 240»). */
 export function solderMode(operation: Row): SolderMode | null {
   if (!isSoldering(operation)) return null;
   const card = obj(operation.card);
@@ -78,7 +81,7 @@ export function solderMode(operation: Row): SolderMode | null {
   const tolerance = toleranceMatch ? `±${toleranceMatch[1]} °C` : "±10 °C";
   const tipLine = stepText.split("\n").find((line) => /жал/i.test(line) && TIP_CLASSES.some(([pattern]) => pattern.test(line.split(/жал/i)[0])));
   if (method === "bath") {
-    return { method, tip: "Не требуется — лужение погружением в ванну", temperature: temperature || "250–270 °C", tolerance,
+    return { method, tip: "Не требуется — лужение погружением в ванну", temperature: temperature || SOLDER_DEFAULT_TEMPERATURE, tolerance,
       tipAssumed: false, temperatureAssumed: !temperature };
   }
   if (method === "induction") {
@@ -88,7 +91,7 @@ export function solderMode(operation: Row): SolderMode | null {
   const upper = Number((temperature.match(/(\d{3})\s*°/) || [])[1] || 0);
   const tipFromCard = tipLine ? TIP_CLASSES.find(([pattern]) => pattern.test(tipLine.split(/жал/i)[0]))?.[1] || "" : "";
   const tip = tipFromCard || (upper >= 370 ? TIP_CLASSES[2][1] : upper >= 350 ? TIP_CLASSES[3][1] : "Клиновидное, 1,6–2,4 мм");
-  return { method, tip, temperature: temperature || (upper >= 370 ? "350–380 °C" : "320–350 °C"), tolerance,
+  return { method, tip, temperature: temperature || SOLDER_DEFAULT_TEMPERATURE, tolerance,
     tipAssumed: !tipFromCard, temperatureAssumed: !temperature };
 }
 
