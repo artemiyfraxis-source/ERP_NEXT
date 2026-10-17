@@ -3659,6 +3659,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 /* Owner 16.10: столбцы фиксированной ширины — AWG │ по жиле │ по изоляции │ отрыв, длинное не вылезает в соседние колонки. */
 .crimp { display: grid; gap: 1px; max-width: 100%; overflow: hidden; }
 .crimp-row { display: grid; grid-template-columns: 10ch 11ch 13ch 10ch; gap: 0 12px; font-size: 13px; line-height: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.crimp-row.crimp-one { grid-template-columns: 10ch 11ch; }
 .crimp-row > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .crimp-awg { color: var(--muted-foreground); font-weight: 600; border-right: 1px solid var(--border); padding-right: 8px; }
 .crimp-val { text-align: right; }

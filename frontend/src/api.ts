@@ -1740,6 +1740,9 @@ export interface ConnectorSeriesHousing {
 }
 
 export interface ConnectorTerminal {
+  /** Запись БД.ТЕР и то, что она хранит в правимых ячейках (старое значение для правки). */
+  id?: string;
+  raw?: Record<string, string>;
   article: string; maker: string; product: string; series: string; kind: string;
   awg_from: string; awg_to: string; mm2_from: string; mm2_to: string; strip: string; applicator: string; crimp_height: string;
   pull_force: string;

@@ -69,7 +69,7 @@ from .grapher_import import GrapherComponent, GrapherImportError, read_export
 from .harness import SheetRow
 from .harness.rules import to_decimal
 from .connector_housings import attach_housings, connector_catalog, housing_of
-from .connector_series import connector_series, find_in_series
+from .connector_series import RECORD_ID_KEY, connector_series, find_in_series
 from .assembly_schema import generator_to_assembly
 from .scheme_corrections import list_scheme_corrections
 from .assembly_drafts import AssemblyDraftError, AssemblyDraftNotFound, draft_for_card, finalise_draft
@@ -989,7 +989,8 @@ def connector_series_view(
     coax: list[dict] = []
     if references_factory is not None:
         with references_factory() as uow:
-            records = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
+            records = [{**record.fields, RECORD_ID_KEY: str(record.id)}
+                       for record in uow.tech_operations.list(tab=TechOperationTab.TERMINAL, query="", limit=10_000)]
             coax = [record.fields for record in uow.tech_operations.list(tab=TechOperationTab.COAX, query="", limit=10_000)]
     series = connector_series(records, coax)
     return {"series": series, "match": find_in_series(article[:255], series) if article.strip() else None}

@@ -95,6 +95,16 @@ def test_terminals_match_the_housing_prefix_not_a_substring():
     assert wire_range([]) is None
 
 
+def test_terminal_carries_its_record_id_and_stored_cells_for_in_place_editing():
+    rows = [{**TERMINALS[0], "__id": "rec-1", "terCrimpHeight": "26 AWG: 0,62"}]
+    terminal = terminals_for(("GHR",), rows)[0]
+
+    assert terminal["id"] == "rec-1"
+    assert terminal["raw"]["terCrimpHeight"] == "26 AWG: 0,62"
+    assert "terArticle" not in terminal["raw"] and "__id" not in terminal["raw"]
+    assert terminals_for(("GHR",), TERMINALS)[0]["id"] == ""  # a row without an id is not editable
+
+
 def test_terminals_reach_the_series_view():
     series = _series(TERMINALS)
     assert [t["article"] for t in series["jst-nsh"]["terminals"]] == ["SSHL-003T-P0.2"]
