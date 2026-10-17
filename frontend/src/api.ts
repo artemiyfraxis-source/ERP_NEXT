@@ -1772,6 +1772,7 @@ export interface ConnectorSeries {
   pitch: number | null;
   color: string | null;
   checked: boolean;
+  checked_on_part?: boolean;
   sample: ConnectorSeriesHousing | null;
   /** Раздел галереи: «Провод — плата», «Автомобильные», … — у каждой серии ровно один. */
   category: string;

@@ -253,10 +253,11 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),
     _family("connfly-ds1073", "Connfly DS1073", r"^I-DS1073-SC[A-Z]0(\d{2})$", 3.96, latch="lever", note=UNCHECKED),
     _family("connfly-ds1074", "Connfly DS1074", r"^I-DS1074-SC[A-Z]0(\d{2})$", 5.08, latch="ramp", color="#e6e8ea", note=UNCHECKED),
-    # DS1071-01 (Dupont 2,0): rows × holes per row in the part number, like DS1071; the housing is symmetric, no key, no mark.
+    # DS1071-01 (Dupont 2,0): rows × holes per row in the part number, like DS1071. The sheet draws it symmetric; the real
+    # part (owner, 17.10.2026): lance windows on top, circuit-1 arrow at the left end.
     _family("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", r"^I-DS1071-01-SC[A-Z]0?(\d)X0?(\d{1,2})", 2.0, grid=True,
-            order="col", start="TR", color=BLACK,
-            note="на чертеже Connfly DS1071-01 корпус симметричный, без ключа и метки контакта 1 — вставляется любой стороной"),
+            order="col", start="TL", color=BLACK, conf="high", src="сверено владельцем по детали, 17.10.2026",
+            note="сверено владельцем по детали 17.10.2026: прорезями вверх контакт 1 слева — у стрелки на корпусе"),
     # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing (chipdip copy, third angle, re-read 17.10.2026): the front view
     # is the face with the lance windows and the ▽ mark at its right end; the view below it is the wire end (the rim, the
     # crimp-contact entries) with «6 … 1», «1» at the right, the window face at its top edge; the side view puts the lock

@@ -27,10 +27,10 @@ const plain = items.filter((i) => hasTopView(i.housing) && !i.housing.roof);
 // серия смешивает исполнения (в каталоге один id на M и S); Deutsch DT, TE Superseal — te.com не отдаёт лист, в Web Archive его нет; JR servo — листа
 // производителя нет; USB-A, Amass XT/QS8 — замка на крыше нет, прорезей по листу тоже.
 const UNSOURCED = [
-  "jst-rcy", "jst-rcy-p", "molex-sl-2r", "connfly-ds1071", "amass-xt", "amass-qs8", "molex-milligrid",
+  "jst-rcy", "jst-rcy-p", "molex-sl-2r", "amass-xt", "amass-qs8", "molex-milligrid",
   "jst-ra", "hirose-df13-2r", "hirose-df20", "hirose-df1b", "hirose-df1b-2r", "hirose-df1b-es",
   "hirose-df1b-des", "hirose-df1ba-p", "hirose-df1ba-p2r", "hirose-df11", "jae-fix", "jae-fis",
-  "connfly-ds1070", "connfly-ds1072", "connfly-ds1074", "connfly-ds1071-01", "molex-mini50-u", "hsm-mx508", "hsm-hc",
+  "connfly-ds1070", "connfly-ds1072", "connfly-ds1074", "molex-mini50-u", "hsm-mx508", "hsm-hc",
   "jr-servo", "samtec-isd2", "molex-boardin", "deutsch-dt", "te-superseal", "usb-a",
 ];
 

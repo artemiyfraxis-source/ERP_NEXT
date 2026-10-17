@@ -261,6 +261,8 @@ def _summary(series: dict[str, Any]) -> dict[str, Any]:
         housing_count=len(housings), counts=counts,
         pitch=first.get("pitch"), color=first.get("color"),
         checked=bool(layouts) and all(layout.get("conf") == "high" for layout in layouts),
+        # checked by the owner on the real part, not on a maker drawing (Connfly Dupont, 17.10.2026)
+        checked_on_part=bool(layouts) and all(str(layout.get("src") or "").startswith("сверено владельцем") for layout in layouts),
         sample=housings[0] if housings else _picture(series.get("pic")),
     )
     series.pop("pic", None)

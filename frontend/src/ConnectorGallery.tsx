@@ -170,7 +170,7 @@ function SeriesView({ series, match, onBack, canEdit, onSaved }: {
         ? <span className="order-chip tone-warn" title="Каталога корпусов серии в ERP нет — показаны только данные из баз «Терминалы» и «Коакс»">корпуса не добавлены</span>
         : <>
           {series.checked
-            ? <span className="order-chip tone-ok">нумерация сверена с чертежом</span>
+            ? <span className="order-chip tone-ok">{series.checked_on_part ? "нумерация сверена по детали" : "нумерация сверена с чертежом"}</span>
             : <span className="order-chip tone-warn">нумерация не сверена с чертежом</span>}
           {series.range_checked
             ? <span className="order-chip tone-neutral">ряд корпусов по каталогу {series.range_src.replace(", Housing", "")}</span>

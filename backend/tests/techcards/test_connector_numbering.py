@@ -252,9 +252,9 @@ def test_kk396_and_sl_terminals_reach_their_series():
     ("SMP-02V-BC", "jst-sm-p", [[2, 1]], "lever"),
     ("SMP-06V-NC", "jst-sm-p", [[6, 5, 4, 3, 2, 1]], "lever"),
     # Connfly DS1071 (Dupont): rows × contacts per row from the part number; no circuit-1 mark on the drawing.
-    ("I-DS1071-SCB01X3", "connfly-ds1071", [[3, 2, 1]], "none"),
-    ("I-DS1071-SCB02X3", "connfly-ds1071", [[5, 3, 1], [6, 4, 2]], "none"),
-    ("I-DS1071-01-SCB02X3", "connfly-ds1071-01", [[5, 3, 1], [6, 4, 2]], "none"),
+    ("I-DS1071-SCB01X3", "connfly-ds1071", [[1, 2, 3]], "none"),
+    ("I-DS1071-SCB02X3", "connfly-ds1071", [[1, 3, 5], [2, 4, 6]], "none"),
+    ("I-DS1071-01-SCB02X3", "connfly-ds1071-01", [[1, 3, 5], [2, 4, 6]], "none"),
 ])
 def test_the_owners_harness_housings_have_a_view(article, family, grid, latch):
     layout = housing_of(article)
@@ -284,7 +284,7 @@ def test_ds1071_offers_only_its_2_54_contacts_and_the_2_0_contact_goes_to_ds1071
     ds1071, ds1071_01 = series["connfly-ds1071"], series["connfly-ds1071-01"]
     assert [t["article"] for t in ds1071["terminals"]] == ["T-DS1071-SC600"]
     assert ds1071["wire"] == {"awg_thin": 28.0, "awg_thick": 22.0, "mm2_min": 0.09, "mm2_max": 0.3}
-    assert ds1071["pitch"] == 2.54 and not ds1071["checked"]
+    assert ds1071["pitch"] == 2.54 and ds1071["checked"] and ds1071["checked_on_part"]  # owner, by the part, 17.10.2026
     assert [t["article"] for t in ds1071_01["terminals"]] == ["T-DS1071-01-SC600"]
     assert ds1071_01["pitch"] == 2.0 and ds1071_01["counts"][0] == 1 and ds1071_01["counts"][-1] == 80
     assert housing_of("I-DS1071-01-SCB01X40")["family"] == "connfly-ds1071-01"
