@@ -6,6 +6,7 @@ import { linkWires } from "./tcGenSplices";
 import type { Branch, GenState } from "./tcGenLogic";
 import { canonicalColor } from "./wireColors";
 import "./pinoutLinks.css";
+import { pointsPath, twistWire } from "./twistArt";
 
 /*
  * Схема связей под торцами разъёмов (владелец 13.10: «не рисуются связи»; 14.10: «примерно такое, что бы и чертёжик был и
@@ -21,7 +22,7 @@ import "./pinoutLinks.css";
 
 const ROW = 20, TITLE = 22, COLS_H = 18, FOOT = 18, GAP_Y = 16, STUB = 22, SPLICE_GAP = 30, TAIL_DROP = 13, TAIL_STUB = 74;
 /** Свивка на схеме: шаг и размах волны, px. */
-const TWIST_PITCH = 18, TWIST_AMP = 4, TWIST_LANE = 24;
+const TWIST_PITCH = 22, TWIST_AMP = 3.4, TWIST_LANE = 24;
 const NEUTRAL = "#8a94a6", OUTLINE = "#3b4652";
 /** Средняя ширина знака подписи 11 px — для обрезки текста по колонке. */
 const CHAR = 5.6;
@@ -112,7 +113,7 @@ export function pinoutScheme(ends: PinoutEnd[], units: PinUnit[], housings: Reco
 
 type Box = { end: SchemeConnector; x: number; y: number; rows: number; height: number };
 type Pt = { x: number; y: number };
-export type LinkLine = { w: SchemeWire; a: Pt; b: Pt; free: null | "tail" | "open"; left: boolean; d: string; twisted: boolean };
+export type LinkLine = { w: SchemeWire; a: Pt; b: Pt; free: null | "tail" | "open"; left: boolean; d: string; twisted: boolean; front?: string[] };
 
 const cut = (text: string, width: number) => {
   const room = Math.max(2, Math.floor((width - 8) / CHAR));
@@ -209,13 +210,13 @@ export function schemeLayout(M: LinkScheme, room = 1200, showNet = false) {
     const span = bx - ax;
     const x0 = ax + span * 0.2, x1 = bx - span * 0.2;
     members.forEach((l, i) => {
-      const phase = (2 * Math.PI * i) / members.length;
-      const yAt = (x: number) => c0 + (c1 - c0) * ((x - x0) / (x1 - x0)) + TWIST_AMP * Math.sin((2 * Math.PI * (x - x0)) / TWIST_PITCH + phase);
-      const wave: string[] = [];
-      for (let x = x0; x <= x1; x += 2) wave.push(`${x.toFixed(1)},${yAt(x).toFixed(1)}`);
-      const lx = l.a.x + STUB, rx = l.b.x - STUB, y0 = yAt(x0), y1 = yAt(x1);
-      l.d = `M${l.a.x},${l.a.y} H${lx} C${(lx + x0) / 2},${l.a.y} ${(lx + x0) / 2},${y0} ${x0},${y0} L${wave.join(" L")} `
+      // Общая спираль twistArt (та же, что в эскизе ПФ): провода пересекаются, на пересечении один поверх другого.
+      const axis = (x: number) => c0 + (c1 - c0) * ((x - x0) / (x1 - x0));
+      const wire = twistWire(x0, x1, axis, TWIST_PITCH, TWIST_AMP, i, members.length);
+      const lx = l.a.x + STUB, rx = l.b.x - STUB, y0 = wire.points[0][1], y1 = wire.points[wire.points.length - 1][1];
+      l.d = `M${l.a.x},${l.a.y} H${lx} C${(lx + x0) / 2},${l.a.y} ${(lx + x0) / 2},${y0} ${x0},${y0} L${pointsPath(wire.points).slice(1)} `
         + `C${(x1 + rx) / 2},${y1} ${(x1 + rx) / 2},${l.b.y} ${rx},${l.b.y} H${l.b.x}`;
+      l.front = wire.front.map(pointsPath);
       l.twisted = true;
     });
     return { keys: members.map((l) => l.w.key), x: (x0 + x1) / 2, y: Math.min(c0, c1) - TWIST_AMP - 6, count: members.length };
@@ -366,6 +367,13 @@ export function LinkSchemeSvg({ scheme: M, layout: L, onNet, onColor }: { scheme
         {l.w.stripe && <path d={l.d} fill="none" stroke={l.w.stripe} strokeWidth={2.4} strokeDasharray="4 4" />}
       </g>;
     })}
+    {/* Свитая пара: участки «спереди» поверх обоих проводов — на пересечении видно, кто сверху. */}
+    {L.lines.filter((l) => l.front?.length).map((l, i) => <g key={i} className="pin-links-front" pointerEvents="none">
+      {l.front!.map((d, k) => <g key={k}>
+        <path d={d} fill="none" stroke={OUTLINE} strokeWidth={4.2} strokeLinecap="butt" strokeLinejoin="round" />
+        <path d={d} fill="none" stroke={l.w.color ?? NEUTRAL} strokeWidth={2.6} strokeLinecap="butt" strokeLinejoin="round" />
+      </g>)}
+    </g>)}
     {/* Номер провода — у начала линии, над ней; провод с двух концов на одной стороне — у каждого конца. */}
     {L.lines.filter((l, i, all) => all.findIndex((x) => x.w === l.w && x.a.x === l.a.x && x.a.y === l.a.y) === i).map((l, i) =>
       <text key={i} x={l.left ? l.a.x - 6 : l.a.x + 6} y={l.a.y - 3} textAnchor={l.left ? "end" : "start"} className="pin-links-label">{l.w.num}</text>)}
