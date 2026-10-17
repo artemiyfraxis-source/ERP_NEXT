@@ -47,9 +47,6 @@ CASES = [
     ("502439-0400", "molex-clikmate-20", [[1, 2, 3, 4]], "ramp", "high", "5024391500"),
     # Molex — drawing without contact numbers, or not reachable: unchecked
     ("206461-0800", "molex-microfit-plus", [[1, 2, 3, 4], [5, 6, 7, 8]], "lever", "low", ""),
-    ("51163-0400", "molex-minilock", [[1, 2, 3, 4]], "lever", "low", ""),
-    ("50-57-9404", "molex-sl-1r", [[1, 2, 3, 4]], "ramp", "low", ""),
-    ("35023-0004", "molex-boardin", [[1, 2, 3, 4]], "none", "low", ""),
     # Hirose DF1B (catalogue 01.07.2020): face with the contact-1 mark (or the lock lever) up
     ("DF1B-4S-2.5R", "hirose-df1b", [[1, 2, 3, 4]], "mark", "high", "Single Row Socket"),
     ("DF1B-10DS-2.5RC", "hirose-df1b-2r", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", "high", "Double Row Socket"),
@@ -98,7 +95,25 @@ CASES = [
     ("06R-JWPF-VSLE-D", "jst-jwpf-r", [[3, 2, 1], [6, 5, 4]], "lever", "high", "KiCad JST_JWPF"),
     ("03R-JWPF-VSLE-S", "jst-jwpf-r", [[3, 2, 1]], "lever", "high", "EasyEDA C2983882"),
     ("06T-JWPF-VSLE-D", "jst-jwpf", [[1, 3, 5], [2, 4, 6]], "lever", "low", ""),
+    # JAE housing drawings from products.jae.com (17.10.2026)
+    ("FI-S10S", "jae-fis", [[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]], "none", "high", "SJ031451"),
+    # Molex sales drawings from the Web Archive (17.10.2026)
+    ("34967-4001", "molex-mini50-s", [[4, 3, 2, 1]], "lever", "high", "349674001"),
+    ("34967-1001", "molex-mini50-s", [[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]], "lever", "high", "349671001"),
+    ("35023-0004", "molex-boardin", [[4, 3, 2, 1]], "none", "high", "SD-35023-001"),
+    ("L-KLS1-2.50-04-H", "kls-2-50", [[1, 2, 3, 4]], "ramp", "high", "L-KLS1-2.50-XX-H"),
+    ("51163-0400", "molex-minilock", [[1, 2, 3, 4]], "lever", "high", "511630000-SD"),
+    ("50-57-9404", "molex-sl-1r", [[4, 3, 2, 1]], "ramp", "high", "SD-70066-0176-0199"),
+    ("78172-0004", "molex-picoezmate", [[1, 2, 3, 4]], "none", "high", "781720000-SD"),
 ]
+
+
+def test_jae_fi_r_wire_end_is_two_staggered_rows_with_contact_1_bottom_right():
+    """JAE SJ103279: from the wire side, top face up — 1 bottom-right, 2 above it, odd contacts in the lower row."""
+    layout = housing_of("FI-RE21HL")
+    assert (layout["family"], layout["rows"], layout["cols"], layout["n"], layout["conf"]) == ("jae-fir", 2, 11, 21, "high")
+    assert "SJ103279" in layout["src"] and "сверить" not in layout["note"]
+    assert layout["grid"] == [[0] + list(range(20, 0, -2)), list(range(21, 0, -2))]
 
 
 @pytest.mark.parametrize(("article", "family", "grid", "latch", "conf", "source"), CASES, ids=[case[0] for case in CASES])
@@ -158,7 +173,11 @@ def test_checked_molex_series():
     # 16.10.2026: CLIK-Mate 1,5, Pico-Clasp, KK 396 (41695) and iGrid were read from the Molex drawings.
     for series_id in ("molex-clikmate", "molex-picoclasp", "molex-kk396", "molex-igrid"):
         assert series[series_id]["checked"], series_id
-    for series_id in ("molex-microfit-plus", "molex-milligrid", "molex-minilock", "molex-sl", "molex-boardin"):
+    # 17.10.2026: Board-in, Mini-Lock from the Molex drawings (Web Archive copies of molex.com); SL keeps the warning
+    # while its 2-row housing 22-55-2xx1 is unchecked.
+    for series_id in ("molex-boardin", "molex-minilock"):
+        assert series[series_id]["checked"], series_id
+    for series_id in ("molex-microfit-plus", "molex-milligrid", "molex-sl"):
         assert not series[series_id]["checked"], series_id
     # The ranges: iGrid's list is complete (10…40, even); CLIK-Mate and Pico-Clasp name housings they did not find.
     assert series["molex-igrid"]["range_checked"] and series["molex-igrid"]["counts"] == list(range(10, 41, 2))
@@ -198,7 +217,7 @@ def test_missing_molex_housings_are_in_the_catalogue():
     ez = series["molex-picoezmate"]
     assert [h["article"] for v in ez["variants"] for h in v["housings"]] == [
         *(f"78172-000{n}" for n in (2, 3, 4, 5)), "78172-5006", "78172-5007"]
-    assert ez["counts"] == [2, 3, 4, 5, 6, 7] and ez["range_checked"] and not ez["checked"]
+    assert ez["counts"] == [2, 3, 4, 5, 6, 7] and ez["range_checked"] and ez["checked"]  # 781720000/0001-SD, 17.10.2026
     assert ez["pitch"] == 1.2 and ez["sources"]
     kls = series["kls"]
     assert [h["n"] for v in kls["variants"] for h in v["housings"]] == list(range(2, 21))

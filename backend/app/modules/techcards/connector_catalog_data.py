@@ -232,9 +232,22 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             2.5, rows=2, order="col", start="TR", latch="mark", conf="high",
             src=DF1B_SRC.format("Double Row In-line Plug (Simple Lock Type)"),
             note="по каталогу Hirose DF1B: у DF1BA на торце проводов 1, 3, 5 справа у грани с меткой контакта 1, 2, 4, 6 под ними — 1 справа вверху"),
-    # JAE
-    _family("jae-fis", "JAE FI-S", r"^FI-S(\d+)S$", 1.25, latch="ramp", color="#b9c0c6", note=UNCHECKED),
-    _family("jae-fir", "JAE FI-R", r"^FI-RE(\d+)HL$", 0.5, latch="ramp", color="#b9c0c6", note=UNCHECKED),
+    # JAE — housing drawings from products.jae.com (product records → drawingSj PDF, third-angle projection), read
+    # 17.10.2026. FI-S — SJ031451 rev. 4 «FI-S※※S HOUSING»: the right-side view puts the 1.8 mm block at the face of the
+    # front view (the wire end, the thin 1.32 mm part mates into the header); that face carries the contact numbers in
+    # raised letters (NOTE 1) — «N» at the left, «1» at the right — with the top view (the face with a window over every
+    # contact) above it. The housing has no latch (friction lock), so the face cue is the window face: up -> contact 1
+    # on the RIGHT.
+    _family("jae-fis", "JAE FI-S", r"^FI-S(\d+)S$", 1.25, start="TR", color="#b9c0c6", conf="high",
+            src="JAE SJ031451 (FI-S※※S Housing)",
+            note="по чертежу JAE SJ031451: номера контактов отлиты на торце проводов, «1» справа при грани с окнами сверху; замка нет — гранью с окнами вверх контакт 1 справа"),
+    # FI-R — SJ103279 rev. 3 «FI-RE※※HL»: the main view is the top face (the windows over the contacts, the 0.5 mm comb of
+    # the mating tongue at its bottom, the lock buttons at the rear ends); the view above it is the wire end with the top
+    # face at its lower edge: NO.1 top-left, NO.2 under it half a pitch on, N top-right, N-1 under it — two staggered rows.
+    # Turned top face up: 1 bottom-RIGHT, 2 above it, the columns run right to left (odd contacts in the lower row).
+    _family("jae-fir", "JAE FI-R", r"^FI-RE(\d+)HL$", 0.5, rows=2, order="col", start="BR", latch="ramp",
+            color="#b9c0c6", conf="high", src="JAE SJ103279 (FI-RE※※HL)",
+            note="по чертежу JAE SJ103279: на торце проводов два ряда в шахматку, NO.1 и нечётные — в ряду дальше от верхней грани; верхней гранью вверх — 1 справа внизу, 2 над ним"),
     # Connfly (drawings C-DS10xx: the female housing is drawn without a circuit-1 mark that can be placed)
     _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED),
     _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),
@@ -244,21 +257,37 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", r"^I-DS1071-01-SC[A-Z]0?(\d)X0?(\d{1,2})", 2.0, grid=True,
             order="col", start="TR", color=BLACK,
             note="на чертеже Connfly DS1071-01 корпус симметричный, без ключа и метки контакта 1 — вставляется любой стороной"),
-    # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing, front view of the housing: 6 … 1 moulded at the wire end, but
-    # the drawing does not say which end that view shows, so the numbering stays unchecked.
-    _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", note=UNCHECKED),
+    # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing (chipdip copy, third angle, re-read 17.10.2026): the front view
+    # is the face with the lance windows and the ▽ mark at its right end; the view below it is the wire end (the rim, the
+    # crimp-contact entries) with «6 … 1», «1» at the right, the window face at its top edge; the side view puts the lock
+    # bump on the opposite face. Windows up -> contact 1 on the right; lock bump up -> on the LEFT, the same as JST ZH.
+    _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", conf="high",
+            src="KLS L-KLS1-2.50-XX-H, чертёж",
+            note="по чертежу KLS L-KLS1-2.50-XX-H: на торце проводов «1» справа при грани с окнами сверху; выступом защёлки (обратная грань) вверх — контакт 1 слева, как у JST ZH"),
     # Molex Pico-EZmate 78172 — 78172-0002…0005 (Molex part sheets 78172-0002 / -0004, Farnell, Heilind) and 78172-5006 /
     # -5007 (6 and 7 circuits, Molex series chart 78172; drawing SD-78172-001). The part sheets print no circuit numbers and
     # the sales drawing SD-78172-007 did not open, so the numbering stays unchecked.
-    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?[05]00(\d)$", 1.2, color=BLACK, note=NO_DRAWING),
+    # 781720000-SD rev. A (Web Archive copy of 781720004_sd.pdf, third angle, read 17.10.2026): the main view is the top
+    # face (the open slots, «CIRCUIT 1 INDICATOR MARK» ▽ and «MXL 1A» on the strip at the far end); the view under it is the
+    # end with the contact cavities (the wire end, the top face at its upper edge) — CIRCUIT 1 at the left, CIRCUIT N at the
+    # right; 781720001-SD (6 and 7 circuits, 781725006 copy) draws the same. Top face up -> contact 1 on the LEFT.
+    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?[05]00(\d)$", 1.2, color=BLACK, conf="high",
+            src="Molex 781720000-SD / 781720001-SD",
+            note="по чертежам Molex 781720000-SD (2–5 конт.) и 781720001-SD (6–7): на торце проводов верхней гранью (с прорезями и меткой ▽ CIRCUIT 1) вверх — CIRCUIT 1 слева"),
     # Molex Mini50 (CTX50 terminals), 1.80 mm: the circuit count is not a plain digit of the part number, so each housing a
     # distributor listing names is in the table. Sealed 34967 with CPA (Heilind / element14 349672001 «2 Circuits,
     # Polarization Option A, Black», RS 34967-4001 «4 way», RS 34967-1001 «10 way», Mouser 0349671131 «10 Circuits»,
     # Arrow 349674021 «4 Circuits … Terminal Position 2 Plugged», Molex 349674006 «4 Circuits, without CPA, Polarization
     # Option B, Light Gray», Molex part sheet 0349671005 «without CPA, 10 Circuits … Pitch 1.80mm»); unsealed 34791 (Heilind / RS 34791-0020 «2 Circuits», 34791-0040 and -0140 «4 Circuits»,
     # -0140 bridged). No drawing with circuit numbers was reachable (molex.com does not answer).
-    _family("molex-mini50-s", "Molex Mini50 (герметичный 34967)", r"^0?34967-?(\d{4})$", 1.8, latch="lever", color=BLACK,
-            table=MINI50_SEALED, color_by=((r"4006$", "#c9cccf"),), note=NO_DRAWING),
+    # Sealed 34967 — Molex sales drawings 349674001 and 349671001 (molex.com copies in the Web Archive, read 17.10.2026),
+    # sheet 3: the front view is the mating face (the receptacle boxes inside the oval shroud of the ring seal; the mat
+    # seal sits at the wire end, sheet 4 «KEY CONFIGURATIONS» keys that face) with the CPA / lock up, «1» moulded at the
+    # left, «4» / «10» at the right (TERMINAL POSITION 1 / 4 / 10). From the wire side the view mirrors: lock up,
+    # contact 1 on the RIGHT, one row for 2, 4 and 10 circuits.
+    _family("molex-mini50-s", "Molex Mini50 (герметичный 34967)", r"^0?34967-?(\d{4})$", 1.8, start="TR", latch="lever",
+            color=BLACK, table=MINI50_SEALED, color_by=((r"4006$", "#c9cccf"),), conf="high", src="Molex 349674001 / 349671001 SD",
+            note="по чертежам Molex 349674001 и 349671001: со стороны стыковки замком (CPA) вверх «1» слева; со стороны проводов — контакт 1 справа"),
     _family("molex-mini50-u", "Molex Mini50 (негерметичный 34791)", r"^0?34791-?(\d{4})$", 1.8, latch="lever", color=BLACK,
             table=MINI50_UNSEALED, note=NO_DRAWING),
     # Hsuan Mao (HSM) — drawings on definum.ru (the HSM distributor; hsuanmao.com does not answer), read 16.10.2026.
@@ -415,8 +444,19 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, start="TR", latch="ramp", conf="high",
             src="Molex SD-41695",
             note="по чертежу Molex SD-41695: цифра «1» на грани, противоположной рампе; со стороны проводов рампой вверх — контакт 1 справа"),
-    _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", note=NO_DRAWING),
-    _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, latch="ramp", color=BLACK, note=NO_DRAWING),
+    # Mini-Lock 51163 — 511630000-SD rev. B (Web Archive copy of 511630400_sd.pdf, read 17.10.2026): the front view is the
+    # mating face (the square pin entries); the view at the far right is the wire end with the terminals in, the lock up,
+    # «CIRCUIT 1 INDICATOR MARK» and CIRCUIT 1 at the left, CIRCUIT N at the right.
+    _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", conf="high",
+            src="Molex 511630000-SD",
+            note="по чертежу Molex 511630000-SD: на торце проводов замком вверх CIRCUIT 1 слева"),
+    # SL 70066 — SD-70066-0176-0199 rev. M (Web Archive copy of molex.com/pdm_docs/sd/050579404_sd.pdf, third angle, read
+    # 17.10.2026): the top view is the mating end (the square pin entries) with the latch arm on the far face; the side
+    # view puts that arm on the back face; the front (plain) face carries «CIRCUIT NO. 1 IDENTIFICATION» ▽ at its left.
+    # From the wire end, plain face up: 1 on the left -> latch face up: contact 1 on the RIGHT.
+    _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, start="TR", latch="ramp", color=BLACK,
+            conf="high", src="Molex SD-70066-0176-0199",
+            note="по чертежу Molex SD-70066-0176-0199: метка ▽ CIRCUIT NO. 1 слева на гладкой грани, защёлка на обратной; со стороны проводов защёлкой вверх — контакт 1 справа"),
     # iGrid 501646 — Molex 5016460000-SD rev. A1 (datasheet.lcsc.com copy of 5016462400, read 16.10.2026): the view of the
     # wire end (CIRCUIT No.1 ▽, trade mark and cavity numbers moulded on it) has the latch plate at its BOTTOM, circuit 1
     # at the top-left, 2 under it, N-1 top-right, N bottom-right (columns of two, odd numbers on top). Turned latch up
@@ -425,7 +465,11 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-igrid", "Molex iGrid (2 ряда)", r"^501646-?(\d{2})0[0124]$", 2.0, rows=2, order="col", start="BR", latch="lever",
             color_by=((r"1$", BLACK), (r"2$", "#c8322d"), (r"4$", "#3b6fb6")), conf="high", src="Molex 5016460000-SD",
             note="по чертежу Molex 5016460000-SD: на торце проводов защёлка внизу, 1 слева вверху, 2 под ней; защёлкой вверх — 1 справа внизу, 2 над ней"),
-    _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, note=NO_DRAWING),
+    # Board-in 35023 — Molex SD-35023-001 (Web Archive copy of 350230004_sd.pdf, third angle, read 17.10.2026): the front
+    # view is the face with the slots the right-angle contacts 35021 lead their wires out of; «CKT NO.1» (and the CAV NO.
+    # mark) at its right end, the top face (the entries of the straight contacts 35044) up. No latch.
+    _family("molex-boardin", "Molex Board-in", r"^0?35023-?00(\d{2})$", 2.0, start="TR", conf="high", src="Molex SD-35023-001",
+            note="по чертежу Molex SD-35023-001: метка CKT NO.1 у правого края грани с прорезями под провода; этой гранью к себе, верхом вверх — контакт 1 справа"),
     # TE Mini CT — C-353908: the top view is the wire end; «CIRCUIT No.1» is at its right with the +AMP face (the lock
     # ramp) at the bottom -> from the wire side, lock up, contact 1 on the LEFT.
     _family("te-minict", "TE AMP Mini CT", r"^((?:\d-)?353908-\d)$", 1.5, latch="ramp", table=MINI_CT_TABLE, conf="high",
