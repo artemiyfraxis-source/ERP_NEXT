@@ -1,11 +1,6 @@
-cdx_sd_206461.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/206/206461/&matchType=prefix&limit=300
-cdx_sd_206832.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/206/206832/&matchType=prefix&limit=300
-cdx_sd_212528.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/212/212528/&matchType=prefix&limit=300
-cdx_sd_215922.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/215/215922/&matchType=prefix&limit=300
-cdx_sd_206460.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/206/206460/&matchType=prefix&limit=300
-cdx_ps_206460.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/productspecificationpdf/206/206460/&matchType=prefix&limit=300
-cdx_as_206460.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/applicationspecificationpdf/206/206460/&matchType=prefix&limit=300
-cdx_pdm_2068.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/pdm_docs/sd/2068&matchType=prefix&limit=200
-cdx_pdm_2064.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/pdm_docs/sd/2064&matchType=prefix&limit=200
-cdx_pdm_ps2064.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/pdm_docs/ps/PS-2064&matchType=prefix&limit=200
-cdx_sd_350230.txt	https://web.archive.org/cdx/search/cdx?url=www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/350/35023/&matchType=prefix&limit=50
+m_2064610800_sd.pdf	https://web.archive.org/web/20240703032321id_/https://www.molex.com/pdm_docs/sd/2064610800_sd.pdf
+m_2068320801_sd.pdf	https://web.archive.org/web/20240712010738id_/https://www.molex.com/pdm_docs/sd/2068320801_sd.pdf
+m_2125281000_sd.pdf	https://web.archive.org/web/20250807075543id_/https://www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/212/212528/2125281000_sd.pdf
+m_2064600000-PS-000.pdf	https://web.archive.org/web/20261001000139id_/https://www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/productspecificationpdf/206/206460/2064600000-PS-000.pdf
+m_350230004_sd.pdf	https://web.archive.org/web/20240721073424id_/https://www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/350/35023/350230004_sd.pdf
+m_2159220800_sd.pdf	https://web.archive.org/web/20240716153916id_/https://www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/215/215922/2159220800_sd.pdf
