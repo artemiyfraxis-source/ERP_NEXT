@@ -3460,10 +3460,10 @@ tr:hover .row-actions-more, tr:focus-within .row-actions-more { max-height: 96px
 
 /* Чертёж жгута на весь экран: шапка в одну строку, редактор занимает остальную высоту. */
 .harness-page { display: flex; flex-direction: column; height: 100vh; overflow: hidden; padding: 8px 12px 0; background: var(--background); }
-.harness-page-head { display: flex; align-items: center; gap: 10px; padding-bottom: 8px; min-width: 0; }
+.harness-page-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding-bottom: 8px; min-width: 0; }
 .harness-page-head h1 { margin: 0; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .harness-page-head > .muted, .harness-save { white-space: nowrap; }
-.harness-page-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; min-width: 0; flex-shrink: 0; }
+.harness-page-actions { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px 8px; min-width: 0; }
 .harness-page-note { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .harness-conflict { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; padding: 6px 10px; border: 1px solid var(--warn-border); border-radius: 6px; background: var(--warn-soft); color: var(--foreground); font-size: 13px; }
 .harness-conflict > span { flex: 1; min-width: 0; }
@@ -3662,6 +3662,7 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .block-icon { display: block; }
 
 .quality-page .box-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.quality-page .qc-review .box-grid { grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr)); }
 .quality-page .production-box { gap: 6px; padding: 10px; }
 .quality-page .production-box > strong { font-size: 15px; }
 .quality-page .danger-text { color: var(--tone-danger); }

@@ -181,7 +181,7 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
         <label>Годные ОТК<input aria-label={`Годные ОТК ${box.number}`} type="number" min="0" step="1" value={draft.accepted} onChange={(event) => update(box, { accepted: event.target.value })} /></label>
         <label>Брак ОТК<input aria-label={`Брак ОТК ${box.number}`} type="number" min="0" step="1" value={draft.rejected} onChange={(event) => update(box, { rejected: event.target.value })} /></label>
         {Number(draft.rejected) > 0 && <><label>Характер<input value={draft.character} onChange={(event) => update(box, { character: event.target.value })} /></label><label>Описание<textarea value={draft.description} onChange={(event) => update(box, { description: event.target.value })} /></label></>}
-        <label>Средства измерения<select multiple aria-label={`Средства измерения ${box.number}`} value={draft.instrumentIds} onChange={(event) => update(box, { instrumentIds: Array.from(event.target.selectedOptions, (option) => option.value) })}>{instruments.filter((item) => item.status === "Действует").map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · поверка до {formatDay(item.verification_due)}</option>)}</select></label>
+        <label>Средства измерения<select multiple aria-label={`Средства измерения ${box.number}`} value={draft.instrumentIds} onChange={(event) => update(box, { instrumentIds: Array.from(event.target.selectedOptions, (option) => option.value) })}>{instruments.filter((item) => item.status === "Действует").map((item) => <option key={item.id} value={item.id}>{item.inventory_number} · {item.name} · до {formatDay(item.verification_due)}</option>)}</select></label>
         {!totalMatches && <small className="danger-text">Сумма должна быть {box.available}.</small>}
         <button className="primary small" disabled={busy || !totalMatches || (Number(draft.rejected) > 0 && (!draft.character.trim() || !draft.description.trim()))} onClick={() => void mutate(`qc:${box.id}`, () => productionApi.inspectBox(box.id, {
           version: box.version, accepted: Number(draft.accepted), rejected: Number(draft.rejected),
@@ -193,7 +193,7 @@ function QualityPanel({ boxes, tasks, instruments, busy, mutate }: {
             <label>Причина возврата<textarea aria-label={`Причина возврата ${box.number}`} value={reasons[box.id] ?? ""} onChange={(event) => setReasons((current) => ({ ...current, [box.id]: event.target.value }))} /></label>
             <div className="box-return-act">
               <button className="secondary small" disabled={busy || !(reasons[box.id] ?? "").trim()} onClick={() => void mutate(`qc-return:${box.id}`, () => productionApi.returnBox(box.id, box.version, (reasons[box.id] ?? "").trim()))}>Вернуть монтажнику</button>
-              <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: false }))}>Отмена</button>
+              <button className="link-button" onClick={() => { setReturning((current) => ({ ...current, [box.id]: false })); setReasons((current) => ({ ...current, [box.id]: "" })); }}>Отмена</button>
             </div>
           </>
           : <button className="link-button" onClick={() => setReturning((current) => ({ ...current, [box.id]: true }))}>Вернуть…</button>)}

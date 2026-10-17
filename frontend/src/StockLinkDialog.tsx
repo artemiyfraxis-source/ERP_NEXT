@@ -131,7 +131,7 @@ export function StockLinkDialog({ lot, onClose }: { lot: WarehouseLot; onClose: 
             : <div className="stock-link-results" role="group" aria-label="Найденные записи">
               {records.map((record) => <button key={record.id} type="button" aria-pressed={picked === record.id} onClick={() => setPicked(record.id)}>{record.display_text}</button>)}
             </div>}
-        </> : <div className="move-grid two">
+        </> : <div className={slots.length === 3 ? "move-grid three" : "move-grid two"}>
           {slots.map((slot) => <label key={slot}>{FIELD_LABELS[slot]}<input aria-label={FIELD_LABELS[slot]} value={fields[keyOf(slot)] ?? ""} onChange={(event) => setFields((current) => ({ ...current, [keyOf(slot)]: event.target.value }))} /></label>)}
         </div>}
         {error && <div className="error-banner" role="alert">{error}</div>}

@@ -7,3 +7,4 @@
 .stock-link-dialog .stock-link-done { display: grid; gap: 6px; }
 .stock-link-dialog .stock-link-changes { margin: 0; padding-left: 18px; font-size: 13px; }
 @media (pointer: coarse) { .stock-link-dialog .stock-link-results button { min-height: 40px; } }
+@media (max-width: 560px) { .stock-link-dialog .move-grid { grid-template-columns: 1fr; } }
