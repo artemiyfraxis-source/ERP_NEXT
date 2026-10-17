@@ -28,5 +28,8 @@ leaving a gutted directory.
 - Before rebasing/releasing the main checkout's branch, check `git reflog` for fresh merges: a live peer session may be
   orchestrating on it (17.10: batch-1017b was rebased under erp-next-23). Release from a separate branch + worktree.
 - `erp-worker` / `isolation: "worktree"` can refuse to start when the session cwd's drive letter case (`c:` vs `C:`)
-  differs from git's path. Workaround: `git worktree add ../erp-<task>` + junctions, run a general-purpose agent there.
+  differs from git's path. Workaround: `git worktree add ../erp-<task>` + junctions, run a general-purpose agent there;
+  unlink the junctions before removing that worktree ([[worktree-symlink-removal]]).
+- Workers that start the app need their own ports (14.10: three workers collided on 8021/8031/8047) — give each
+  `ERP_API_PORT` / `ERP_WEB_PORT` in the brief (defaults 8021/5176 belong to the owner's preview, [[erp-local-demo]]).
 - Related: [[erp-merge-gotchas]], [[owner-working-rules]].

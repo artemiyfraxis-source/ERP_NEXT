@@ -15,7 +15,7 @@ wiped, restored with `npm ci`; `.venv` survived by luck).
 **How to apply:** before removing a worker worktree by hand, run
 `cmd /c rmdir "<wt>\frontend\node_modules"` and `cmd /c rmdir "<wt>\backend\.venv"`, then
 `git worktree remove --force <wt>` and `git branch -D <branch>`. Never add your own junctions to a throwaway
-worktree — run `npm ci` there instead. Cross-project version: brain note worktree-junction-wipe.
+worktree — run `npm ci` there instead. Cross-project version: brain note [[worktree-junction-wipe]].
 Hub: [[erp-next-hub]]. Related: [[parallel-sessions-worktrees]], [[erp-merge-gotchas]].
 
 Second trap (10.10.2026, PR #285 → fixed by #286): `git add -A` inside a worker worktree staged those two junctions as

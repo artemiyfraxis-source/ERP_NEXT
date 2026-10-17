@@ -5,7 +5,6 @@ metadata:
   type: project
 ---
 
-- Has its own sync scripts: `npm run sync:techcards`, `npm run sync:techcard-library`.
 - Coax: D1–D3 come from the cable (СПР.КАБ), the connector carries only lengths L1–L3, L+, L− (PR #65, generator PR #67) → [[module-reference-db]].
 - Templates «Шаблоны техкарт» moved under «База данных» → [[module-reference-db]].
 - Bulk generation for all projects and SUPPLYMAP issued ТК import → [[techcards-bulk]].
