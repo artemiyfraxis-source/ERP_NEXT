@@ -134,7 +134,7 @@ export function fullHarness(data: GenData = DSA, method: SpliceMethod = "solder"
   let S = setTailMode(harness(data), "tin");
   S = setSplMethod(S, method);
   S = { ...S, spl: { ...S.spl, tut: "20", tutMat: "ttk3" } };
-  S = { ...S, twist: { ...S.twist, enabled: true, mode: "pairs", pairs: [{ a: String(R.w12), b: String(R.b12) }], pitch: "15" } };
+  S = { ...S, twist: { ...S.twist, enabled: true, mode: "pairs", pairs: [{ a: String(R.w12), b: String(R.b12) }], pitch: "20" } };
   S = { ...S, wrap: { enabled: true, slots: S.wrap.slots.map((slot, i) => (i === 0 ? { mat: "xp3", kind: "braid" as const, len: "460" } : { ...slot, mat: "" })) } };
   const braid: Record<string, string> = { "5": "120", I3: "110", C: "110", A6: "120" };
   S = { ...S, endpoints: S.endpoints.map((e) => (e.side !== "A" ? e : { ...e, braidLen: braid[e.label],

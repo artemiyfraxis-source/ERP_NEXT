@@ -218,7 +218,7 @@ export type OpSpec = {
    *  оболочке под обжим или пайку (ротор снимает оболочку и зачищает жилы одним проходом, владелец 15.10). */
   strip?: { a: boolean; lenA: string; b: boolean; lenB: string; coreA?: string; coreB?: string }; stripCount?: number;
   tutArt?: string; tutName?: string; tutCount?: number; tutSegs?: Array<{ len: string; count: number }>;
-  harness?: boolean; units?: number; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
+  harness?: boolean; units?: number; twistPairs?: number[][]; wrapKind?: "tape" | "braid"; under?: boolean; wrapArt?: string; wrapName?: string;
   wrapLen?: string; marks?: Array<{ art: string; name: string; qty: number } | MarkSpec>;
   sealArt?: string; sealName?: string; sealQty?: string; sealPlaces?: number; tin?: boolean;
   /** Коакс, резка с разделкой на станке: модель станка (COAX_MACHINES) и разделываемые концы. */
@@ -1070,9 +1070,9 @@ export function makeGen(D: GenData, S: GenState) {
     }
     return items;
   }
-  /** Операции одной группы сростков (владелец 16.10): надеть трубку → пайка / опрессовка / сварка → усадка. `names` —
-   *  «С1, С2» (пусто — сростки без точки на схеме), `n` — номер группы в ключах операций (0 — группа одна). Зачищает концы
-   *  станок резки. */
+  /** Операции одной группы сростков (владелец 17.10, окончательно): пайка / опрессовка / сварка → надеть трубку на готовый
+   *  сросток → усадка. `names` — «С1, С2» (пусто — сростки без точки на схеме), `n` — номер группы в ключах операций (0 —
+   *  группа одна). Зачищает концы станок резки. */
   function spliceGroupOps_(sizes: number[], names: string, n: number, sleeves: Array<{ comp: Comp; count: number }>): OpSpec[] {
     const cnt = sizes.length;
     if (!cnt) return [];
@@ -1081,10 +1081,6 @@ export function makeGen(D: GenData, S: GenState) {
     const tube = spliceTube_();
     const where = names ? ` ${names}` : "";
     const ops: OpSpec[] = [];
-    if (tube) {
-      ops.push({ type: "insTut", opKey: "insSpl" + suffix, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: cnt,
-        label: `Надеть трубку на провода сростк${cnt > 1 ? "ов" : "а"}${where} — ${cnt} шт` });
-    }
     // Пайка — как до 16.10 (название и карта те же); опрессовка гильзой и ленточный обжим — со способом и гильзами.
     const method = splMethod_();
     const how = { sleeve: " опрессовкой гильзой", band: " ленточным обжимом", ultrasonic: " ультразвуковой сваркой", solder: "" }[method];
@@ -1096,6 +1092,8 @@ export function makeGen(D: GenData, S: GenState) {
       sleeveItems: sleeves.map((x) => ({ art: x.comp.art || x.comp.name || "", name: x.comp.name || x.comp.art || "", count: x.count })),
       label: `Сростки${where}${how} — ${cnt} шт по ${wires} провода${used.length ? `: ${used.join(", ")}` : ""}${noCard}` });
     if (tube) {
+      ops.push({ type: "insTut", opKey: "insSpl" + suffix, tmplHint: "INS_TUT", cat: "Монтаж", tutCount: cnt,
+        label: `Надеть трубку на ${cnt > 1 ? "сростки" : "сросток"}${where} — ${cnt} шт` });
       ops.push({ type: "heatTut", opKey: "heatSpl" + suffix, tmplHint: "HEAT_TTK_short", cat: "Усадка", tutCount: cnt,
         label: `Усадка трубки на сростках${where} — ${cnt} шт` });
     }
@@ -2296,8 +2294,10 @@ export function makeGen(D: GenData, S: GenState) {
    *  2. Ветви — разъём стороны А с трубкой, оплёткой, маркировкой или свитой парой: монтаж контактов в разъём → надеть
    *     оплётку → надеть ТТК → надеть маркировку → усадка ТТК на разъёме → усадка маркировки → свивка своей пары.
    *  3. Группы сростков — сростки, провода которых приходят с одних и тех же разъёмов стороны А: свивка пар с разных
-   *     разъёмов → трубка → сросток → усадка.
-   *  4. Изделие — трубки на ствол → усадка → разъёмы стороны В (и разъёмы А без ветви) → остальное.
+   *     разъёмов → сросток → трубка на готовый сросток → усадка (владелец 17.10).
+   *  4. «ТУТ на месте Б» (владелец 17.10) — есть термоусадка на жгут: сростки и ветви прямо на сторону В → надеть её по КД
+   *     → усадка. Нет её — нет и ПФ.
+   *  5. Изделие — прочие трубки на ствол → усадка → разъёмы стороны В (и разъёмы А без ветви) → остальное.
    *  Стрелки — что идёт из ПФ в ПФ на одно изделие («НВ4 0,5 красный, черный — 2 шт», «ТТК 8/2 — 1 шт», «Оплётка XP-3
    *  120 мм — 1 шт», «Маркировка «5» — 1 шт»; из ветви и группы — их имя): сервер строит по ним «Вход» первой операции ПФ. */
   function complexGraph_(generic: OpSpec[]): OpSpec[] {
@@ -2306,7 +2306,7 @@ export function makeGen(D: GenData, S: GenState) {
     const artOf = (c: Comp | null) => (c ? c.art || c.name || "" : "");
     const short = (art: string) => { const m = /^(.*?\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?)/.exec(art); return m ? m[1].replace(/\s+/g, " ").trim() : art; };
     const mm = (len: string) => (len ? `${len.replace(".", ",")} мм` : "? мм");
-    const FINAL = "pf-final", TUBES = "pf-tubes", BRAID = "pf-braid", MARK = "pf-mark";
+    const FINAL = "pf-final", TUBES = "pf-tubes", BRAID = "pf-braid", MARK = "pf-mark", HS = "pf-hs";
     const epKey = (ep: Endpoint) => `pf-${ep.side}${endpointOrdinal_(ep)}`;
     // Разъёмы по КД — X1, X2… подряд: сначала сторона А, потом В (владелец 16.10, 713К.4: ветви X1–X4, «А и В — X4→X6»).
     const xOrder = [...endpointsOnSide_("A"), ...endpointsOnSide_("B")];
@@ -2358,6 +2358,13 @@ export function makeGen(D: GenData, S: GenState) {
     const twistSets = !S.twist.enabled || !getTwistSelectionCount() ? []
       : S.twist.mode === "pairs" ? getTwistPairs() : [twistWireIndices_()];
     const twistAt = new Map<string, number>(); // "ep:<id>" | ключ группы | FINAL → пар
+    // Свои пары каждой свивки (владелец 17.10: «Свивка X2 «I3» — 1 пара» несла в ЭТК обе пары формы) — номера проводов.
+    const twistPairsAt = new Map<string, number[][]>();
+    const addPairs = (at: string, list: number[][]) => {
+      const own = twistPairsAt.get(at) || [];
+      list.forEach((p) => { if (!own.some((x) => x.join() === p.join())) own.push(p); });
+      twistPairsAt.set(at, own);
+    };
     twistSets.forEach((positions) => {
       const ws = positions.map((i) => active[i]).filter((w): w is WireEntry => !!w);
       if (ws.length < 2) return;
@@ -2371,6 +2378,7 @@ export function makeGen(D: GenData, S: GenState) {
           if (hit.length === 1) at = hit[0]!;
         }
         twistAt.set(at, (twistAt.get(at) || 0) + 1);
+        addPairs(at, [positions]);
       }
     });
 
@@ -2381,6 +2389,8 @@ export function makeGen(D: GenData, S: GenState) {
       return S.endpoints.find((ep) => { const name = (ep.label || "").trim() || endKey_(ep); return target === `Разъём ${name}` || target.startsWith(`Разъём ${name} (`); }) || null;
     };
     const sleeves = sleeveItems_();
+    // Термоусадка на жгут — свой ПФ «ТУТ на месте Б» перед разъёмами стороны В (владелец 17.10); нет её — нет и ПФ.
+    const hsOn = sleeves.harness.some((x) => x.cnt > 0);
 
     // ── Ветви стороны А ──
     const branches = endpointsOnSide_("A").filter((ep) => !!ep.connId && (!!shrinkOf_(ep) || braidEp_(ep) || twistAt.has(`ep:${ep.id}`)
@@ -2390,6 +2400,8 @@ export function makeGen(D: GenData, S: GenState) {
       if (!at.startsWith("ep:") || branches.some((ep) => `ep:${ep.id}` === at)) return;
       twistAt.set(FINAL, (twistAt.get(FINAL) || 0) + twistAt.get(at)!);
       twistAt.delete(at);
+      addPairs(FINAL, twistPairsAt.get(at) || []);
+      twistPairsAt.delete(at);
     });
     const branchOf = (ep: Endpoint | null) => (ep && branches.includes(ep) ? ep : null);
     const blockOfEp = (ep: Endpoint | null) => (branchOf(ep) ? epKey(ep!) : FINAL);
@@ -2428,7 +2440,8 @@ export function makeGen(D: GenData, S: GenState) {
       return m ? { ...o, label: `Монтаж контактов в разъём ${xTag(ep!)} — ${m[1]}` } : o;
     };
     const kept = generic.filter((o) => !/^cutWire/.test(o.type) && !rebuilt(o))
-      .map((o) => mounted(o.opKey === "twist" && finalTwist < total ? { ...o, units: finalTwist } : o));
+      .map((o) => mounted(o.opKey === "twist"
+        ? { ...o, ...(finalTwist < total ? { units: finalTwist } : {}), twistPairs: twistPairsAt.get(FINAL) || [] } : o));
 
     /** Имя ПФ партии резки: что делает станок и на какие разъёмы по КД («Резка + обжим SYM, зачистка — X1, X2»,
      *  «Резка + обжим А и В — X4→X6», «Резка хвостов + лужение»). */
@@ -2482,7 +2495,7 @@ export function makeGen(D: GenData, S: GenState) {
     const tubeOf = (c: Comp) => ({ art: c.art || c.name || "", name: c.name || c.art || "", glue: isGlueSleeve_(c) });
     sleeves.conn.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: 1, to: blockOfEp(x.ep) }));
     sleeves.jacket.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.count, to: FINAL }));
-    sleeves.harness.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.cnt, to: FINAL }));
+    sleeves.harness.forEach((x) => tubes.push({ ...tubeOf(x.comp), len: x.len, count: x.cnt, to: hsOn ? HS : FINAL }));
     const splTube = spliceTube_();
     if (splTube) groups.forEach((g) => tubes.push({ ...tubeOf(splTube.comp), len: splTube.len, count: g.splices.length + g.rest, to: g.key }));
     generic.filter((o) => o.opKey === "cutCap" || o.opKey === "cutTut").forEach((o) => (o.tutSegs || []).forEach((seg) => tubes.push({
@@ -2568,6 +2581,7 @@ export function makeGen(D: GenData, S: GenState) {
       }
       const pairs = twistAt.get(`ep:${ep.id}`) || 0;
       if (pairs) out.push({ type: "twist", opKey: `twist${side}${ord}`, cat: "Свивка", units: pairs, side, ord, branch: name,
+        twistPairs: twistPairsAt.get(`ep:${ep.id}`) || [],
         label: `Свивка ${name} — ${pairs} ${pluralRu(pairs, "пара", "пары", "пар")}` });
       return out.map((o) => ({ ...o, pf: key }));
     });
@@ -2576,7 +2590,7 @@ export function makeGen(D: GenData, S: GenState) {
     const groupOps: OpSpec[] = groups.flatMap((g, i) => {
       const out: OpSpec[] = [];
       const pairs = twistAt.get(g.key) || 0;
-      if (pairs) out.push({ type: "twist", opKey: `twistS${i + 1}`, cat: "Свивка", units: pairs,
+      if (pairs) out.push({ type: "twist", opKey: `twistS${i + 1}`, cat: "Свивка", units: pairs, twistPairs: twistPairsAt.get(g.key) || [],
         label: `Свивка перед сростками${g.names ? ` ${g.names}` : ""} — ${pairs} ${pluralRu(pairs, "пара", "пары", "пар")}` });
       const groupSizes = g.splices.length ? g.splices.map((s) => Math.max(2, s.ends.length)) : sizes.slice(drawn.length);
       out.push(...spliceGroupOps_(groupSizes, g.names, groups.length > 1 ? i + 1 : 0, groupSleeves_(g.splices.map((s) => s.id), g.rest)));
@@ -2587,11 +2601,20 @@ export function makeGen(D: GenData, S: GenState) {
       return out.map((o) => ({ ...o, pf: g.key }));
     });
 
-    // ── 4. Изделие: трубки на ствол → усадка → разъёмы В и разъёмы А без ветви → остальное ──
+    // ── 4. ТУТ на месте Б (владелец 17.10): сростки, ветви прямо на сторону В и трубки на жгут → надеть по КД → усадка ──
+    const heatHs = kept.find((o) => o.opKey === "heatHs");
+    const hsOps: OpSpec[] = [];
+    if (hsOn) {
+      const pieces = sleeves.harness.reduce((n, s) => n + s.cnt, 0);
+      hsOps.push({ type: "insTut", opKey: "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true, tutCount: pieces,
+        label: `Надеть трубки: ${sleeves.harness.map((s) => `${artOf(s.comp)} на жгут — ${s.cnt} шт`).join("; ")}` });
+      if (heatHs) hsOps.push(heatHs);
+    }
+
+    // ── 5. Изделие: трубки на ствол (без ПФ «ТУТ на месте Б») → усадка → разъёмы В и разъёмы А без ветви → остальное ──
     const finalOn: string[] = [];
     let finalPieces = 0;
     const tube = (c: Comp) => { const name = artOf(c); return /^\s*(?:тут|ттк)/i.test(name) ? name : `${tubeKind_(c)} ${name}`; };
-    sleeves.harness.forEach((s) => { finalOn.push(`${artOf(s.comp)} на жгут — ${s.cnt} шт`); finalPieces += s.cnt; });
     sleeves.jacket.forEach((x) => { finalOn.push(`${tube(x.comp)} на место разделки ${sideRu_(x.side)} — ${x.count} шт`); finalPieces += x.count; });
     sleeves.conn.filter((x) => !branchOf(x.ep)).forEach((x) => { finalOn.push(`${tube(x.comp)} поверх разъёма ${x.tag}`); finalPieces += 1; });
     const finalMarks = markTubes.filter((t) => markBlock(t) === FINAL);
@@ -2599,19 +2622,32 @@ export function makeGen(D: GenData, S: GenState) {
     const tubesOn = finalOn.length;
     sleeves.housings.filter((ep) => !branchOf(ep)).forEach((ep) => { const c = getCompById(ep.connId); finalOn.push(`детали корпуса ${endKey_(ep)}${c ? ` (${artOf(c)})` : ""}`); });
     const finalOps: OpSpec[] = [...kept.filter((o) => blockOf(o) === FINAL && prepKeys(o))];
-    if (finalOn.length) finalOps.push({ type: "insTut", opKey: "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true, tutCount: finalPieces || 1,
+    // При ПФ «ТУТ на месте Б» трубки изделия — своим ключом и подписью «перед разъёмами»: ключ ЭТК «на жгут» уже занят.
+    if (finalOn.length) finalOps.push({ type: "insTut", opKey: hsOn ? "insSleevesB" : "insSleeves", tmplHint: "INS_TUT", cat: "Монтаж", harness: true,
+      tutCount: finalPieces || 1, ...(hsOn ? { branch: "перед разъёмами" } : {}),
       label: `${tubesOn ? "Надеть трубки" : "Надеть детали корпуса"}: ${finalOn.join("; ")}` });
-    const heatHs = kept.find((o) => o.opKey === "heatHs");
-    if (heatHs) finalOps.push(heatHs);
+    if (heatHs && !hsOn) finalOps.push(heatHs);
     finalOps.push(...kept.filter((o) => blockOf(o) === FINAL && !prepKeys(o) && o !== heatHs));
     const markHeat = finalMarks.filter((t) => t.shrink).reduce((n, t) => n + t.spec.qty, 0);
     if (markHeat) finalOps.push({ type: "heatTut", opKey: "heatMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", markTube: true, tutCount: markHeat,
       label: `Усадка маркировки — ${markHeat} шт` });
 
     // Ветвь, которая никуда не ведёт, и любой ПФ без выхода — в изделие.
-    const ordered = [...sources, ...branchOps, ...groupOps, ...finalOps.map((o) => ({ ...o, pf: FINAL }))];
+    const ordered = [...sources, ...branchOps, ...groupOps, ...hsOps.map((o) => ({ ...o, pf: HS })), ...finalOps.map((o) => ({ ...o, pf: FINAL }))];
     const used = new Set(ordered.map((o) => o.pf!));
+    if (used.has(HS)) names.set(HS, "ТУТ на месте Б");
     used.forEach((key) => { if (key !== FINAL && ![...edgeItems.keys()].some((id) => id.startsWith(`${key}>`))) link(key, FINAL, names.get(key) || ""); });
+    // Ветви и группы сростков идут в изделие через ПФ «ТУТ на месте Б»: трубка на жгут надевается на собранный ствол.
+    if (used.has(HS)) {
+      const kits = new Set([TUBES, BRAID, MARK, ...cutOps.map((o) => `pf-${o.opKey}`)]);
+      [...edgeItems.entries()].forEach(([id, items]) => {
+        const [from, to] = id.split(">");
+        if (to !== FINAL || from === HS || kits.has(from)) return;
+        edgeItems.delete(id);
+        items.forEach((count, item) => link(from, HS, item, count));
+        if (!items.size) link(from, HS);
+      });
+    }
     // Короткие разные имена ПФ (владелец 16.10): «Резка + обжим SYM, зачистка — X1, X2», «Резка хвостов + лужение»,
     // «Резка трубок», «Резка оплётки», «Маркировка», ветви, группы сростков; изделие — наименование сборки.
     names.set(TUBES, "Резка трубок"); names.set(BRAID, "Резка оплётки"); names.set(MARK, "Маркировка");
@@ -2946,6 +2982,8 @@ export function makeGen(D: GenData, S: GenState) {
       if (spec.type === "splice" || spec.type === "insHousing") op.units = spec.units || 1;
       // Свивка ветви или группы сростков — своих пар (без числа — все пары формы, как раньше).
       if (spec.type === "twist" && spec.units) op.units = spec.units;
+      // …и только свои пары в ЭТК (поле «Свивка»: число, провода); шаг — общий, формы.
+      if (spec.type === "twist" && spec.twistPairs?.length) op.twistPairs = spec.twistPairs;
       if (spec.branch) op.branch = spec.branch;
       // Сростки: способ и гильзы из состава (ленточный обжим — его материал) с числом сростков на каждую.
       if (spec.type === "splice") {
