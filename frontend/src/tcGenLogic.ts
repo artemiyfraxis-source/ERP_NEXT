@@ -2955,6 +2955,8 @@ export function makeGen(D: GenData, S: GenState) {
       const op: Record<string, unknown> = {
         type: spec.type, opKey: spec.opKey, templateId: row.templateId, opNum: row.matched ? (row.matched.opNumber || "") : "",
         tPrep: row.times.tPrep, tOp: row.times.tOp, tMachine: row.times.tMachine,
+        // Сложная сборка: своё название операции («Надеть ТТК X2 «I3» — ТТК 8/2») — в блоке схемы ПФ ЭТК вместо имени карты.
+        ...(route && spec.label ? { label: spec.label } : {}),
       };
       if (spec.wireIdxs) {
         const set = new Set(spec.wireIdxs);
