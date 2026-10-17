@@ -661,16 +661,20 @@ export function makeGen(D: GenData, S: GenState) {
       const comp = getCompById(w.compId);
       const wire = comp ? (comp.art || comp.name || "") : "";
       const n = Math.max(...ends.map((x) => x.cores.length));
-      let paired = 0;
+      let paired = 0, shared = 0;
       for (let k = 0; k < n; k++) {
         const at = ends.filter((x) => x.cores[k] != null);
         if (at.length < 2) continue;
+        shared++;
         // Экран на контактах двух разъёмов — тоже соединение; на одном (заземлён с одного конца) — не ошибка.
         const shield = isShieldPos_(w, k);
         if (!shield) paired++;
         const name = shield ? `${wire || "Кабель"} · экран` : wire;
         at.slice(1).forEach((x) => list.push({ wire: name, from: end(at[0].ep, at[0].cores[k]!), to: end(x.ep, x.cores[k]!), ...(shield ? { shield: true as const } : {}) }));
       }
+      // Ни одна жила не стоит на двух разъёмах: кабель расходится по разъёмам, у каждой жилы свой контакт — пар нет и
+      // сравнивать нечего (по порядку здесь ничего не связывается).
+      if (!shared) return;
       const [from, ...rest] = ends;
       const count = (x: typeof from) => x.cores.filter((p, k) => p != null && !isShieldPos_(w, k)).length;
       const onRest = rest.reduce((s, x) => s + count(x), 0);

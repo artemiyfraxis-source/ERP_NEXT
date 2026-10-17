@@ -71,6 +71,7 @@ function HousingCard({ item, hit, wide = false }: { item: ConnectorSeriesHousing
   return <div className={hit ? "conn-housing conn-hit" : "conn-housing"} id={`conn-${item.article}`}>
     <div className="conn-housing-head">
       <b>{item.article}</b><span>{item.n} конт.</span>
+      {hs.mate && <span title={hs.mate.src}>{hs.mate.contacts === "pin" ? "штыри" : "гнёзда"}</span>}
       {hs.conf !== "high" && <small className="conn-warn" title={hs.note || undefined}>нумерация не сверена</small>}
     </div>
     <div className="conn-housing-views">
@@ -148,6 +149,8 @@ function SeriesView({ series, match, onBack, canEdit, onSaved }: {
   } : undefined), [canEdit, onSaved]);
   const hit = match?.series === series.id ? match.article : null;
   const range = countsText(series.counts);
+  // Вилка и розетка серии различаются контактами (штыри / гнёзда) — легенда рисунка, только где сторона пары известна.
+  const mated = series.variants.some((variant) => variant.housings.some((item) => item.housing.mate));
   useEffect(() => {
     if (hit) document.getElementById(`conn-${hit}`)?.scrollIntoView?.({ block: "center" });
   }, [hit]);
@@ -175,7 +178,7 @@ function SeriesView({ series, match, onBack, canEdit, onSaved }: {
         </>}
       {series.wire && <span className="order-chip tone-info">провод {wireText(series.wire)}</span>}
       {series.housing_count > 0
-        ? <span className="muted">вид со стороны проводов, контакт 1 — красная метка{series.note ? ` · ${series.note}` : ""}</span>
+        ? <span className="muted">вид со стороны проводов, контакт 1 — красная метка{mated ? ", штырь — металл, гнездо — окно с кольцом" : ""}{series.note ? ` · ${series.note}` : ""}</span>
         : series.note && <span className="muted">{series.note}</span>}
     </div>
     {match?.series === series.id && !match.article && <div className="warning-inline">

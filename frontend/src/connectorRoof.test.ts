@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { connectorFace, connectorPicture, topFeature, type ConnectorHousing } from "./connectorArt";
+import { connectorFace, connectorPicture, connectorSummary, topFeature, type ConnectorHousing } from "./connectorArt";
 import { connectorModel, hasModel } from "./connectorModel";
 import { connectorTopView, hasTopView } from "./connectorTopView";
 import { etkDrawHarness, etkDrawPinout } from "./etkDraw";
 import catalog from "./fixtures/connectorCatalog.json";
+import pairData from "./fixtures/connectorPairs.json";
 
 // Каталог серий из backend (connector_catalog(): семейство → образцовый артикул → корпус, в том числе roof с листом-источником).
 // Обновить: backend connector_housings.py `connector_catalog()` → этот JSON (одна строка, ensure_ascii=False).
@@ -14,7 +15,8 @@ const plain = items.filter((i) => hasTopView(i.housing) && !i.housing.roof);
 
 // Серии с видом сверху, у которых лист производителя крыши не показал (или не получен): голая крыша, ничего не выдумываем.
 // Закрыть серию = найти лист, записать roof в connector_housings.py (ROOF_EXPLICIT) и убрать её отсюда.
-// Почему ещё без крыши (17.10, второй проход): JST RCY, JWPF, RA — на листе окно/ничего не видно (RA: eRA недоступен);
+// Почему ещё без крыши (17.10, второй проход): JST RCY, RA — на листе окно/ничего не видно (RA: eRA недоступен; JWPF T —
+// окно замка по eJWPF с. 2, закрыт третьим проходом);
 // Hirose DF13-2R, DF11, DF1B (гнездо, 2 ряда, ES, DES), DF1BA, DF1B-DEP — по каталогу замок на обратной грани, на крыше только метка ▽;
 // DF20 — на листе у колодки замка нет (металл только у вилки на плате), DF61 — «swing lock» без ясной формы крыши;
 // JAE FI-X (в серии и FI-X30H без замка, и FI-X30HL), FI-S («friction lock» без формы); Connfly DS1070/DS1071/-01/1072/1074 —
@@ -23,7 +25,7 @@ const plain = items.filter((i) => hasTopView(i.housing) && !i.housing.roof);
 // серия смешивает исполнения; Deutsch DT, TE Superseal — te.com не отдаёт лист, в Web Archive его нет; JR servo — листа
 // производителя нет; USB-A, Amass XT/QS8 — замка на крыше нет, прорезей по листу тоже.
 const UNSOURCED = [
-  "jst-rcy", "jst-rcy-p", "molex-sl-2r", "connfly-ds1071", "amass-xt", "amass-qs8", "molex-milligrid", "jst-jwpf",
+  "jst-rcy", "jst-rcy-p", "molex-sl-2r", "connfly-ds1071", "amass-xt", "amass-qs8", "molex-milligrid",
   "jst-ra", "hirose-df13-2r", "hirose-df20", "hirose-df61", "hirose-df1b", "hirose-df1b-2r", "hirose-df1b-es",
   "hirose-df1b-des", "hirose-df1b-p2r", "hirose-df1ba-p", "hirose-df1ba-p2r", "hirose-df11", "jae-fix", "jae-fis",
   "connfly-ds1070", "connfly-ds1072", "connfly-ds1074", "connfly-ds1071-01", "molex-mini50-u", "hsm-mx508", "hsm-hc",
@@ -38,7 +40,7 @@ describe("крыша корпуса: замок или прорези — тол
   it.each(roofed.map((i) => [i.family, i] as const))("%s: замок/прорези есть на 3D-грани, виде сверху и торце, лист указан", (_family, item) => {
     const hs = item.housing, feature = topFeature(hs), roof = hs.roof!;
     expect(roof.src.trim().length).toBeGreaterThan(5);
-    expect(["center", "ends", "contacts", "keys"]).toContain(roof.at);
+    expect(["center", "ends", "pair", "contacts", "keys"]).toContain(roof.at);
     expect(feature).toBe(roof.kind);
     const want = `data-top="${feature}"`;
     expect(connectorPicture(hs, 150, 90).body).toContain(want);
@@ -93,6 +95,70 @@ describe("крыша корпуса: замок или прорези — тол
     const by = (family: string) => connectorFace(items.find((i) => i.family === family)!.housing, 0, 0, 24, null).body;
     expect(by("jst-sm-r")).not.toBe(by("jst-pa"));
     expect(by("jst-suh")).not.toBe(by("jst-sh"));
+  });
+});
+
+// Пары «вилка — розетка» из backend (connector_housings.py `mating_pairs()` → connectorPairs.json, обновлять вместе с
+// connectorCatalog.json): обе половины одной серии, у каждой — сторона пары по листу производителя (mate.src).
+const pairs = pairData as unknown as Array<{ series: string; a: ConnectorHousing | null; b: ConnectorHousing | null }>;
+const attr = (svg: string, name: string) => [...new Set((svg.match(new RegExp(`data-${name}="([a-z]+)"`, "g")) || []))];
+
+describe("вилка и розетка одной серии нарисованы по-разному — по листу производителя (владелец 17.10)", () => {
+  it("covers the wire-to-wire pairs of the catalogue", () => {
+    expect(pairs.map((p) => p.series)).toEqual(expect.arrayContaining(["JST SM", "JST RCY", "JST EL", "JST JWPF",
+      "Molex PicoBlade", "Molex Micro-Fit 3.0 (2 ряда)", "Molex Micro-Fit 3.0 (1 ряд)", "Molex Nano-Fit", "Hirose DF1B", "D-Sub"]));
+  });
+
+  it.each(pairs.map((p) => [p.series, p] as const))("%s: штыри и гнёзда, кожух и входящий корпус, плечо и упор — разные, лист указан", (_series, pair) => {
+    const a = pair.a!, b = pair.b!;
+    expect(a.mate && b.mate).toBeTruthy();
+    [a, b].forEach((hs) => expect(hs.mate!.src.trim().length).toBeGreaterThan(5));
+    expect(a.mate!.contacts).not.toBe(b.mate!.contacts);
+    for (const hs of [a, b]) {
+      const want = `data-contact="${hs.mate!.contacts}"`;
+      const face = connectorFace(hs, 0, 0, 24, null).body, picture = connectorPicture(hs, 150, 90).body;
+      expect(attr(face, "contact")).toEqual([want]);
+      expect(attr(picture, "contact")).toEqual([want]);
+      const top = connectorTopView(hs, 200, 140);
+      if (top) expect(attr(top.body, "contact")).toEqual([want]);
+      if (hs.mate!.shell) expect(picture).toContain(`data-shell="${hs.mate!.shell}"`);
+      if (hs.mate!.shell === "outer") expect(face).toContain('data-shell="outer"');
+      if (hs.mate!.lock && hs.roof?.kind === "latch") {
+        expect(attr(face, "lock")).toEqual([`data-lock="${hs.mate!.lock}"`]);
+        expect(attr(picture, "lock")).toEqual([`data-lock="${hs.mate!.lock}"`]);
+      }
+    }
+    if (a.mate!.shell || b.mate!.shell) expect(a.mate!.shell).not.toBe(b.mate!.shell);
+    if (a.mate!.lock || b.mate!.lock) expect(a.mate!.lock).not.toBe(b.mate!.lock);
+    expect(connectorFace(a, 0, 0, 24, null).body).not.toBe(connectorFace(b, 0, 0, 24, null).body);
+    expect(connectorPicture(a, 150, 90).body).not.toBe(connectorPicture(b, 150, 90).body);
+  });
+
+  it("draws JST SM by eSM: SMR — штыри в кожухе с упорами на торцах, SMP — гнёзда, входит, плечи с зацепами", () => {
+    const sm = pairs.find((p) => p.series === "JST SM")!, smr = sm.a!, smp = sm.b!;
+    expect(smr.art).toBe("SMR-04V-B");
+    expect(smr.mate).toMatchObject({ gender: "receptacle", contacts: "pin", shell: "outer", lock: "catch" });
+    expect(smp.mate).toMatchObject({ gender: "plug", contacts: "socket", shell: "inner", lock: "arm" });
+    expect(smr.mate!.src).toContain("eSM");
+    expect(connectorSummary(smr)).toContain("штыри");
+    expect(connectorSummary(smp)).toContain("гнёзда");
+    const pinout = (hs: ConnectorHousing) => etkDrawPinout({ type: "insTerm", housing: hs, fields: { wires: [{ art: "красный", pins: [1] }] } });
+    expect(pinout(smr)).toContain("упоры замка по торцам сверху");
+    expect(pinout(smp)).toContain("замок-плечи по торцам сверху");
+    expect(pinout(smr)).toContain('data-contact="pin"');
+    expect(pinout(smp)).toContain('data-contact="socket"');
+  });
+
+  it("draws Molex Micro-Fit by the Molex sheets: 43025 — гнёзда и защёлка, 43020 — штыри в кожухе с упором", () => {
+    const mf = pairs.find((p) => p.series === "Molex Micro-Fit 3.0 (2 ряда)")!;
+    expect(mf.a!.mate).toMatchObject({ gender: "receptacle", contacts: "socket", shell: "inner", lock: "arm" });
+    expect(mf.b!.mate).toMatchObject({ gender: "plug", contacts: "pin", shell: "outer", lock: "catch" });
+  });
+
+  it("keeps the drawing of a series without a mating side as it was", () => {
+    const gh = items.find((i) => i.family === "jst-gh")!.housing;
+    expect(gh.mate).toBeFalsy();
+    expect(connectorFace(gh, 0, 0, 24, null).body).not.toMatch(/data-(contact|shell|lock)/);
   });
 });
 
