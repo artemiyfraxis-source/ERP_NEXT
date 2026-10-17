@@ -17,7 +17,7 @@
  *  • buildGeneratorDrawing — всё вместе для кнопки.
  */
 import { wireColorKnown, type ConnectorHousing } from "./connectorArt";
-import { endJoined, JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, type GenData, type GenState, type Side } from "./tcGenLogic";
+import { endJoined, JACKET_STRIP_MM_, makeGen, parseDecimal_, sideRu_, spliceStripMm, tailStripMm, type GenData, type GenState, type Side } from "./tcGenLogic";
 import { spliceLabel, spliceOf } from "./tcGenSplices";
 import { coreColor, SHIELD_COLOR, wireSectionOf } from "./pinoutCheck";
 import { planTwist } from "./twistGroups";
@@ -38,6 +38,7 @@ import {
   createFreeEndpoint,
   createJunctionEndpoint,
   isFreeEndpoint,
+  isJunctionEndpoint,
   wireEndpointE4Anchor,
   parseHarnessDesignDocument,
   templateTerminalChoices,
@@ -45,6 +46,7 @@ import {
   type HarnessDesignDocument,
   type Point,
   type WireEndpoint,
+  type WireStripProfileBinding,
 } from "./harness/editor/model";
 import type { CoveringKind, PhysicalCovering } from "./harness/editor/physical-coverings";
 import { physicalNodeLocalPoint, physicalNodePoint } from "./harness/editor/physical-ports";
@@ -145,6 +147,10 @@ export interface GeneratorDrawingPlan {
   readonly twistGroups?: readonly (readonly string[])[];
   readonly twistPitchMm: number | null;
   readonly coverings: readonly PlanCovering[];
+  /** Зачистка концов в сростках, мм (форма, по умолчанию 5 мм); нет сростков — не задана. */
+  readonly spliceStripMm?: number | null;
+  /** Зачистка хвостов под лужение, мм (по умолчанию 3 мм); хвосты не лудятся — не задана. */
+  readonly tailStripMm?: number | null;
   readonly warnings: readonly string[];
 }
 
@@ -305,8 +311,10 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
     if (got.loose.length) warnings.push(`Сросток ${label}: ${got.loose.join(", ")} — на чертеже не показан, задайте второй конец.`);
     return got.wires.length ? [{ key: sp.id, label, wires: got.wires, tails: got.tails }] : [];
   });
+  const tailed = tails.length > 0 || planSplices.some((sp) => sp.tails.length > 0);
   return { connectors, wires, cables, pairs, ...(twist.groups.length ? { twistGroups: twist.groups } : {}), twistPitchMm: positive(S.twist.pitch), coverings, warnings,
-    ...(planSplices.length ? { splices: planSplices } : {}), ...(tails.length ? { tails } : {}) };
+    ...(planSplices.length ? { splices: planSplices, spliceStripMm: positive(spliceStripMm(S)) } : {}), ...(tails.length ? { tails } : {}),
+    ...(tailed && S.tailTin?.enabled ? { tailStripMm: positive(tailStripMm(S)) } : {}) };
 }
 
 // ── Разъём по артикулу: библиотека компонентов или свободный корпус ─────────────────────────────────────────────────
@@ -399,6 +407,26 @@ const SHIELD_HEX = hex6(SHIELD_COLOR);
 
 function run(document: HarnessDesignDocument, command: EditorCommand): HarnessDesignDocument {
   return applyEditorCommand(document, command);
+}
+
+/** Диаметр жилы по сечению из марки («0,2 мм²», «24 AWG»), мм; сечение не прочитано — 1 мм. */
+export function coreDiameterMm(section: string): number {
+  const awg = /^(\d+)\s*AWG$/i.exec(section.trim());
+  const mm2 = parseDecimal_(section.replace(/\s*мм².*$/, ""));
+  const d = awg ? 0.127 * 92 ** ((36 - Number(awg[1])) / 39) : mm2 > 0 ? 2 * Math.sqrt(mm2 / Math.PI) : 1;
+  return Math.max(0.01, Math.round(d * 100) / 100);
+}
+
+/** Зачистка конца провода на чертеже (владелец 17.10: зачистку под сросток «так же в чертеже надо обновить»): профиль
+ *  разделки из одного слоя — жила, L1 — длина зачистки. Профиль рисует генератор, а не справочник БД.КОАКС: источник
+ *  «генератор ТК», снимок и запись — постоянные. */
+const GEN_STRIP_SNAPSHOT = "4f2a9c61-0d3e-4b57-9a18-7c5e2b0d1f17";
+const GEN_STRIP_RECORD = "0".repeat(64);
+export function generatorStripProfile(lengthMm: number, section: string, title: string): WireStripProfileBinding {
+  const mm = String(lengthMm).replace(".", ",");
+  return { sourceId: "генератор ТК", snapshotId: GEN_STRIP_SNAPSHOT, snapshotSha256: GEN_STRIP_RECORD, recordId: GEN_STRIP_RECORD,
+    entityType: "coax-termination", sourceKey: `${title} ${mm} мм`, displayName: `${title} ${mm} мм`,
+    layers: [{ index: 1, diameterMm: coreDiameterMm(section), stripLengthMm: lengthMm }] };
 }
 
 /** Документ чертежа по плану. Разъёмы — по `sources` (нет записи — свободный корпус по наибольшему контакту). Бросает
@@ -608,6 +636,8 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     const room = Math.max(24, (right ? bLeft - from.x : from.x - aRight) / 2);
     return createFreeEndpoint({ x: Math.round(from.x + (right ? 1 : -1) * Math.min(TAIL_E4, room)), y: Math.round(from.y + index * TAIL_E4_STEP) });
   };
+  /** Провода сростков и хвостов → сечение (диаметр жилы в профиле зачистки их концов). */
+  const stripped = new Map<string, string>();
   (plan.splices || []).forEach((sp, index) => {
     const tag = `gen-sp${index + 1}`;
     const contact = (w: PlanSpliceWire) => ({ connectorId: ids.get(w.end.connector)!, contactId: contactOf(w.end.connector, w.end.pin).id });
@@ -637,6 +667,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       next = run(next, { type: "reconnect-wire", wireId: first, end: "to", endpoint: node });
       members.forEach((m, j) => { if (j && j !== branchAt) next = run(next, { type: "add-wire", wire: memberWire(m, `${tag}-w${j + 1}`, position) }); });
       doc = next;
+      members.forEach((m, j) => stripped.set(`${tag}-w${j + 1}`, (m.wire ?? m.tail)!.section));
     } catch (reason) {
       warnings.push(`Сросток ${sp.label}: узел на схему не лёг (${reason instanceof Error ? reason.message : "ошибка"}) — дорисуйте его в редакторе.`);
     }
@@ -647,9 +678,22 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     try {
       doc = run(doc, { type: "add-wire", wire: createWire(`gen-t${index + 1}`, from, tailEnd(e4At(from), 0), tail.lengthMm, tail.circuit,
         tail.color || "#334155", 0, 0, 1, tail.color ? from : undefined) });
+      stripped.set(`gen-t${index + 1}`, tail.section);
     } catch (reason) {
       warnings.push(`${tail.mark || "Провод"} ${tail.end.pin}→хвост: не лёг на схему (${reason instanceof Error ? reason.message : "ошибка"}).`);
     }
+  });
+
+  // Зачистка концов на чертеже — та же, что у станка резки: конец в сростке (5 мм по умолчанию), хвост под лужение (3 мм).
+  stripped.forEach((section, wireId) => {
+    const wire = doc.wires.find((w) => w.id === wireId);
+    if (!wire) return;
+    (["from", "to"] as const).forEach((end) => {
+      const at = wire[end];
+      const [mm, title] = isJunctionEndpoint(at) && at.junctionId.startsWith("gen-sp") ? [plan.spliceStripMm, "Зачистка под сросток"]
+        : isFreeEndpoint(at) ? [plan.tailStripMm, "Зачистка хвоста"] : [null, ""];
+      if (mm) doc = run(doc, { type: "set-wire-strip-profile", wireId, end, profile: generatorStripProfile(mm, section, title) });
+    });
   });
 
   // 4б. Кабели в оболочке: жилы — провода чертежа, собранные в кабель (длина реза и снятие оболочки — у кабеля).

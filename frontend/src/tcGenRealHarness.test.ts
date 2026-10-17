@@ -7,8 +7,8 @@ import tailsSample from "../../backend/tests/techcards/harness_generated_tails_s
 import { pinoutEnds, pinoutRecord, pinUnits, restorePinout, routingWarnings } from "./pinoutCheck";
 import { linkLayout } from "./PinoutLinks";
 import { assignPinJoined, leaveJoin, linkWires, setTail, spliceLabel } from "./tcGenSplices";
-import { complexByHand, initState, makeGen, updateEndpoint, type GenData, type GenState } from "./tcGenLogic";
-import { BARE, D, end, harness, id, R } from "./tcGenRealHarness.fixture";
+import { complexByHand, initState, makeGen, setTailMode, updateEndpoint, type GenData, type GenState } from "./tcGenLogic";
+import { BARE, D, DSA, end, fullHarness, harness, id, R } from "./tcGenRealHarness.fixture";
 
 // Чертёж заказчика «Жгут НВ4» (tcGenRealHarness.fixture.ts) — набран руками через генератор.
 const termOf = (data: GenData, S: GenState) => S.endpoints.map((e) => `${e.label || e.id}:${makeGen(data, S).getCompById(e.termId)?.art ?? "—"}`);
@@ -159,4 +159,23 @@ it("the editor model keeps an open end: one per wire, parsed back with its point
   expect(parsed.wires.find((w) => w.id === tail.id)!.to).toEqual(tail.to);
   const both = { ...drawing.document, wires: drawing.document.wires.map((w) => (w.id === tail.id ? { ...w, from: createFreeEndpoint({ x: 0, y: 0 }) } : w)) };
   expect(() => parseHarnessDesignDocument(JSON.parse(JSON.stringify(both)))).toThrow(/только один конец/);
+});
+
+it("the drawing strips each splice end 5 mm and each tinned tail 3 mm — as the cut machine does (713К.4, owner 17.10)", () => {
+  const ends = (S: GenState) => {
+    const plan = planFromGenerator(DSA, S);
+    const doc = parseHarnessDesignDocument(JSON.parse(JSON.stringify(buildHarnessDocument(plan, freeSources(plan)).document)));
+    return doc.wires.flatMap((w) => (["from", "to"] as const).map((side) => {
+      const at = w[side], profile = w.stripProfiles?.[side];
+      const kind = isJunctionEndpoint(at) ? "сросток" : isFreeEndpoint(at) ? "хвост" : "контакт";
+      return `${kind}:${profile ? `${profile.displayName}/${profile.layers.map((l) => `L${l.index}=${l.stripLengthMm}`).join(",")}` : "—"}`;
+    }));
+  };
+  const count = (list: string[]) => list.reduce<Record<string, number>>((acc, x) => ({ ...acc, [x]: (acc[x] || 0) + 1 }), {});
+  // Четыре сростка (4+4+3+3 провода) — 14 концов по 5 мм; хвосты облужены — 4 конца по 3 мм; на контактах — без профиля.
+  const S = fullHarness();
+  expect(count(ends(S))).toEqual({ "сросток:Зачистка под сросток 5 мм/L1=5": 14, "хвост:Зачистка хвоста 3 мм/L1=3": 4, "контакт:—": 16 });
+  // Своя длина в форме — на чертеже она; хвосты под трубку (без лужения) не зачищаются.
+  const own = { ...setTailMode(S, "cap"), spl: { ...S.spl, strip: "4" } };
+  expect(count(ends(own))).toEqual({ "сросток:Зачистка под сросток 4 мм/L1=4": 14, "хвост:—": 4, "контакт:—": 16 });
 });

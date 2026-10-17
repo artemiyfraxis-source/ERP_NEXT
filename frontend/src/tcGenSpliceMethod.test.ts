@@ -74,7 +74,7 @@ it("with the CUT_WIRE+2strip+tin card the tails of the splices are cut, stripped
   const S = setTailMode(harness(data), "tin");
   const list = ops(S, data);
   expect(list.filter((o) => ["stripTail", "tinTail", "stripSpl"].includes(String(o.opKey)))).toEqual([]);
-  expect(list.find((o) => o.templateId === "t-tail")).toMatchObject({ type: "cutWireStrip", tin: true, strip: { a: true, lenA: "", b: true, lenB: "3" },
+  expect(list.find((o) => o.templateId === "t-tail")).toMatchObject({ type: "cutWireStrip", tin: true, strip: { a: true, lenA: "5", b: true, lenB: "3" },
     wires: [R.r2t, R.k2t, R.w12t, R.b12t].map(() => expect.objectContaining({ length: 60 })) });
   // Без лужения хвостов (заделка трубкой) хвост при резке не трогают — зачищается только конец под сросток.
   const cap = setTailMode(harness(data), "cap");

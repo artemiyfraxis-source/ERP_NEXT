@@ -38,12 +38,16 @@ it("crimps a side with several terminal types at the cut, one batch per terminal
   expect(ops.filter((o) => o.type === "insTerm").map((o) => o.opKey)).toEqual(["insTermA1", "insTermA2", "insTermA3", "insTermA4", "insTermB1", "insTermB2"]);
   // Партия обжимает концы на всех разъёмах своего терминала; зачистка — длина терминала из БД.ТЕР.
   const [sym, tds, tails] = cuts(S);
-  // Конец под сросток («Зачистка под сросток» пуста — длина по КД) зачищает станок при резке.
+  // Конец под сросток станок зачищает при резке: «Зачистка под сросток» пуста — 5 мм (владелец 17.10), не «A ?».
   expect(sym).toMatchObject({ side: "A", crimpEpIds: [S.endpoints.find((e) => e.label === "5")!.id, S.endpoints.find((e) => e.label === "I3")!.id],
-    strip: { a: true, lenA: "2,5", b: true, lenB: "" } });
-  expect(tds).toMatchObject({ side: "B", strip: { a: true, lenA: "", b: true, lenB: "2,5" } });
-  // Хвост: конец под сросток (А) и хвост 3 мм (В), лужение хвоста тем же станком.
-  expect(tails).toMatchObject({ type: "cutWireStrip", strip: { a: true, lenA: "", b: true, lenB: "3" }, tin: true });
+    strip: { a: true, lenA: "2,5", b: true, lenB: "5" } });
+  expect(tds).toMatchObject({ side: "B", strip: { a: true, lenA: "5", b: true, lenB: "2,5" } });
+  // Хвост: конец под сросток (А) 5 мм и хвост 3 мм (В), лужение хвоста тем же станком.
+  expect(tails).toMatchObject({ type: "cutWireStrip", strip: { a: true, lenA: "5", b: true, lenB: "3" }, tin: true });
+  // Своя длина в форме главнее; хвост остаётся 3 мм.
+  const own = cuts({ ...S, spl: { ...S.spl, strip: "4" } });
+  expect([own[0].strip, own[1].strip, own[2].strip]).toEqual([{ a: true, lenA: "2,5", b: true, lenB: "4" },
+    { a: true, lenA: "4", b: true, lenB: "2,5" }, { a: true, lenA: "4", b: true, lenB: "3" }]);
   // Отдельных «Зачистки концов под сростки», «Зачистки хвостов» и «Лужения хвостов» нет.
   expect(ops.filter((o) => ["stripSpl", "stripTail", "tinTail"].includes(o.opKey))).toEqual([]);
   expect(gen.crimpCutBatchNote_()).toBe("Партии: А — SYM-001T-P0.6: 4 пр., SHF-001T-0.8BS: 2 пр.; В — T-DS1071-SC600: 4 пр.; "

@@ -54,6 +54,7 @@ import {
   tailModeOf,
   SPLICE_REST_,
   TAIL_STRIP_MM_,
+  SPLICE_STRIP_MM_,
   updateEndpoint,
   updateWire,
   wireDiaFromRecords,
@@ -1185,7 +1186,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         <Field label="Проводов в сростке" hint="разные — через запятую"><input value={S.spl.wires} placeholder="3 или 4, 2, 2" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, wires: event.target.value } }))} /></Field>
         <Field label="Трубка сростка, длина"><UnitInput unit="мм" value={S.spl.tut} placeholder="40" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, tut: event.target.value } }))} /></Field>
         <Field label="Трубка сростка из состава" className="span2">{selectComps(capTubes, S.spl.tutMat, (id) => update((current) => ({ ...current, spl: { ...current.spl, tutMat: id } })), "Трубка сростка")}</Field>
-        <Field label="Зачистка под сросток"><UnitInput unit="мм" value={S.spl.strip} placeholder="по КД" onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, strip: event.target.value } }))} /></Field>
+        <Field label="Зачистка под сросток"><UnitInput unit="мм" aria-label="Зачистка под сросток" value={S.spl.strip} placeholder={SPLICE_STRIP_MM_} onChange={(event) => update((current) => ({ ...current, spl: { ...current.spl, strip: event.target.value } }))} /></Field>
       </div>
       <div className="chip-row"><Chip checked={S.spl.fold} onChange={(on) => update((current) => ({ ...current, spl: { ...current.spl, fold: on } }))}>Складывание жилы перед гильзой<small>663К.1 КБ4: ГС 2,5, «Схема увеличения сечения»</small></Chip></div>
     </Toggle>,
