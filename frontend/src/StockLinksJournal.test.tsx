@@ -12,7 +12,7 @@ const admin: Principal = {
   permissions: { erpref: "edit", procurement: "edit" },
 };
 
-const RECORD = { id: "rec-1", tab: "mat", display_text: "Контакт SXH", source_sheet: "", fields: { "Наименование": "Контакт SXH", "Производитель": "JST" } };
+const RECORD = { id: "rec-1", tab: "mat", display_text: "Контакт SXH", source_sheet: "", fields: { "Наименование": "Контакт SXH", "Производитель": "JST", "Группа": "припой/флюс" } }; // «Расходники» показывают только припои и флюсы
 const ENTRY = (over: Partial<StockLinkEntry>): StockLinkEntry => ({
   id: "e1", occurred_at: "2026-10-13T11:30:00", event: "linked", lot_id: "lot-1", warehouse: "ЦАР", grn: "FRX.26.0000042",
   package: "2", article: "SXH-001T-P0.6", name: "Контакт обжимной", record_id: "rec-1", record_tab: "mat",
