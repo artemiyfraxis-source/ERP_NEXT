@@ -9,7 +9,7 @@ import json
 from typing import Sequence
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, aliased, mapped_column, sessionmaker, validates
 
@@ -179,6 +179,10 @@ class ProductionOperationRow(Base):
     # Задание по ПФ (0120): операции ЭТК полуфабриката [{position, code, stage}] в порядке ПФ; NULL — операция
     # задания и есть одна операция ЭТК (запуск без схемы, задания до 0120).
     etk_ops: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    # Версии карточек операций ЭТК на первом «Начать» (0126): [{position, source, changed_at}]; NULL — ещё не начинали.
+    # Пишет только SqlAlchemyWorkRepository.record_card_versions (условно, один раз); add() задания её не трогает.
+    # deferred: чтение задания её не выбирает (читается отдельным запросом card_versions).
+    card_versions: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, deferred=True)
 
 
 def _etk_ops_json(operation: ProductionOperation) -> list[dict] | None:
@@ -1322,6 +1326,27 @@ class SqlAlchemyWorkRepository:
             session_id=session_id, fulfillment_line_id=item.fulfillment_line_id,
             quantity=item.quantity,
         ) for item in inputs)
+
+    def record_card_versions(self, operation_id: UUID, versions: Sequence[dict]) -> bool:
+        """Версии карточек ЭТК операции на первом начале: пишутся, только пока их нет (условный UPDATE), — повторное
+        начало, продолжение и гонка двух начал ничего не перезаписывают. True — записано сейчас."""
+        result = self.session.execute(
+            update(ProductionOperationRow)
+            .where(ProductionOperationRow.id == operation_id, ProductionOperationRow.card_versions.is_(None))
+            .values(card_versions=[dict(item) for item in versions])
+        )
+        return result.rowcount == 1
+
+    def card_versions(self, operation_ids: Sequence[UUID]) -> dict[UUID, list[dict]]:
+        """Записанные на первом начале версии карточек ЭТК по операциям (нет записи — нет ключа)."""
+        ids = list(operation_ids)
+        if not ids:
+            return {}
+        rows = self.session.execute(
+            select(ProductionOperationRow.id, ProductionOperationRow.card_versions)
+            .where(ProductionOperationRow.id.in_(ids), ProductionOperationRow.card_versions.is_not(None))
+        )
+        return {row.id: list(row.card_versions) for row in rows if isinstance(row.card_versions, list)}
 
 
 class SqlAlchemyOutputRepository:

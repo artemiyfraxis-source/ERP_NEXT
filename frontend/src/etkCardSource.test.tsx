@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
 import { etkPrintPages } from "./etkPrint";
-import { etkCardSourceNote } from "./etkCardSource";
+import { etkCardSourceNote, etkCardsChangedNote, etkCardsNote } from "./etkCardSource";
 
 /* Владелец 17.10: карточка операции без правок идёт из базы (шаблона), а не копией; у операции видно, откуда она, а
    «Править операцию» может сохранить правку и в шаблон. */
@@ -81,4 +81,27 @@ it("without the right to edit templates the checkbox is not offered; a plain edi
   expect(confirm).not.toHaveBeenCalled();
   const put = fetch.mock.calls.find(([, init]) => init?.method === "PUT");
   expect(JSON.parse(String(put?.[1]?.body))).not.toHaveProperty("to_template");
+});
+
+/* «Мои задания» (владелец 17.10): у ПФ — откуда карточки его операций ЭТК, и не изменился ли шаблон после первого «Начать». */
+const tpl = (position: number, at = "") => ({ position, source: "template", changed_at: at });
+
+it("одна строка на операции ЭТК ПФ: даты шаблонов через запятую, правленные и копии отдельно", () => {
+  expect(etkCardsNote([tpl(1, "2026-10-15T09:00:00"), tpl(2, "2026-10-15T11:00:00"), tpl(3, "2026-10-16T08:00:00")]))
+    .toBe("по шаблону от 15.10, 16.10");
+  expect(etkCardsNote([tpl(1), { position: 2, source: "edited", changed_at: "2026-10-16T14:30:00" }, { position: 3, source: "snapshot", changed_at: "" }]))
+    .toBe("по шаблону · правлена в ТК 16.10 · копия на момент сборки");
+  expect(etkCardsNote([])).toBe("");
+});
+
+it("шаблон, изменённый после начала, виден; не начинали или всё как было — пусто", () => {
+  const started = [tpl(1, "2026-10-15T09:00:00"), tpl(2)];
+  expect(etkCardsChangedNote({ live: started, started })).toBe("");
+  expect(etkCardsChangedNote({ live: [tpl(1, "2026-10-17T15:20:00"), tpl(2)], started })).toBe("шаблон изменён после начала");
+  expect(etkCardsChangedNote({ live: [tpl(1, "2026-10-15T09:00:00"), { position: 2, source: "edited", changed_at: "2026-10-17T10:00:00" }], started }))
+    .toBe("правлена в ТК после начала");
+  expect(etkCardsChangedNote({ live: [tpl(1, "2026-10-17T15:20:00")], started: null })).toBe("");
+  // На начале ЭТК не было (записан пустой список) — сравнивать не с чем.
+  expect(etkCardsChangedNote({ live: [tpl(1, "2026-10-17T15:20:00")], started: [] })).toBe("");
+  expect(etkCardsChangedNote(undefined)).toBe("");
 });
