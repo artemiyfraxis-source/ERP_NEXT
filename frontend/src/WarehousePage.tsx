@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { LoadMore } from "./LoadMore";
 import { SuggestInput } from "./SuggestInput";
 import { useLatestSearch } from "./useLatestSearch";
 import {
@@ -382,7 +383,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       </div>}
       {cursor && <div className="table-more">
         <span className="page-sub" role="status">Показано {lots.length} из {total}.{totalsState.error ? ` ${totalsState.error}.` : ""}</span>
-        <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(false)}>{loadingMore ? "Загружаем…" : "Показать ещё"}</button>
+        <LoadMore busy={loadingMore || loading} token={lots.length} onMore={() => void loadMore(false)} />
         <button className="secondary small" disabled={loadingMore || loading} onClick={() => void loadMore(true)}>Загрузить всё</button>
       </div>}
       {!lots.length && !loading && <div className="empty">{includeZero ? "Склад пуст." : "Позиций с остатком нет. Включите «показывать нулевые», чтобы увидеть израсходованные партии."}</div>}

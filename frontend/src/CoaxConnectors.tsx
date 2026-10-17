@@ -7,13 +7,13 @@ import "./coaxConnectors.css";
 
 /* «База данных → Коаксиальные разъёмы» (owner 13.10.2026): БД.КОАКС — разъёмы базы и 311 разъёмов gsm-repiteri.ru —
    одной плотной таблицей по сериям (SMA, N, TNC…), строка = разъём × кабель, как в листе. Клик по строке — карточка
-   разъёма окном поверх таблицы (владелец 14.10: правка и карточки — окнами, не панелью сбоку): тип, кабель с его D1–D3, разделка, пин и экран, параметры сайта, ссылка, другие кабели того же
-   артикула; правка — кнопкой в карточке. D1–D3 — у кабеля (вкладка «Коаксиальные кабели»), не у разъёма.
+   разъёма окном поверх таблицы (владелец 14.10: правка и карточки — окнами, не панелью сбоку): тип, подходящий кабель, разделка, пин и экран, параметры сайта, ссылка, другие кабели того же
+   артикула; правка — кнопкой в карточке. D1–D3 в этой таблице нет (владелец 17.10): они у кабеля, вкладка «Коаксиальные кабели».
+   HEX обжима — сразу после L1–L3; ссылка на карточку товара и цена поставщика — своими колонками (владелец 17.10).
    Ячейки с простым текстом и числами (тип, монтаж, пин, экран, L1–L3, производитель…) правятся прямо в таблице тем же
    путём, что окно записи; артикул и кабель (ключ строки), пол, исполнение и поставщик (выводятся) — только в окне. */
 
 type Fields = Record<string, string>;
-type CableDia = (record: TechOperationRecord) => Fields | undefined;
 
 const pick = (fields: Fields, ...names: string[]) => {
   for (const name of names) {
@@ -79,7 +79,6 @@ export const coaxMaker = (fields: Fields) => pick(fields, "coaxMfr", "Произ
 
 const joinDots = (values: string[]) => (values.some(Boolean) ? values.map((value) => value || "—").join(" · ") : "");
 const stripping = (fields: Fields) => joinDots([pick(fields, "L1", "l1"), pick(fields, "L2", "l2"), pick(fields, "L3", "l3")]);
-const cableDia = (dia: Fields | undefined) => (dia ? joinDots([dia.D1 ?? "", dia.D2 ?? "", dia.D3 ?? ""]) : "");
 
 // Внутри серии: тип без «RP-», обычная полярность раньше обратной (SMA-female, затем RP-SMA-female).
 const typeOrder = (fields: Fields) => coaxType(fields).replace(/^RP[-\s]?/i, "") + (/^RP/i.test(coaxType(fields)) ? " ~RP" : "");
@@ -102,9 +101,20 @@ const PRESETS: DataPreset<TechOperationRecord>[] = [
   { label: "Без L1–L3", test: (record) => !stripping(record.fields) },
 ];
 
-export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn }: {
+// Поля, у которых в таблице своя колонка: такой же «свой столбец» («+ Столбец») второй раз не показывается.
+const BUILT_IN = new Set(["Артикул поставщика", "HEX обжима, мм", "Ссылка", "Цена, ₽", "Дата цены", "Монтаж", "Производитель",
+  "Волновое сопротивление, Ом", "Частота до, ГГц", "Наименование", "Источник данных", "Тип пина", "Тип экрана"].map((name) => name.toLowerCase()));
+
+/** Ссылка на карточку товара: видно сайт, полный адрес — в подсказке; клик открывает карточку, строку не выбирает. */
+function SiteLink({ href }: { href: string }) {
+  if (!/^https?:\/\//i.test(href)) return <>{href || "—"}</>;
+  let host = href;
+  try { host = new URL(href).hostname.replace(/^www\./, ""); } catch { /* не адрес — как есть */ }
+  return <a href={href} target="_blank" rel="noreferrer" title={href} onClick={(event) => event.stopPropagation()}>{host}</a>;
+}
+
+export function CoaxConnectors({ records, canEdit, onEdit, toolbar, ownColumns = [], onEdited, removeColumn }: {
   records: TechOperationRecord[];
-  cableOf: CableDia;
   canEdit: boolean;
   onEdit: (record: TechOperationRecord) => void;
   toolbar?: ReactNode;
@@ -135,21 +145,24 @@ export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar, own
     { key: "mount", title: "Монтаж", value: text("Монтаж"), hidden: true, edit: cell("Монтаж") },
     { key: "pin", title: "Тип пина", value: text("Тип пина", "pinType"), wrap: true, maxWidth: 80, edit: cell("Тип пина") },
     { key: "shield", title: "Тип экрана", value: text("Тип экрана", "shieldType"), edit: cell("Тип экрана") },
-    {
-      key: "dia", title: "D1 · D2 · D3 кабеля", value: (record) => cableDia(cableOf(record)),
-      render: (record) => cableDia(cableOf(record))
-        || <span className="muted" title={`У кабеля «${coaxWire(record.fields)}» нет D1–D3 — задайте их во вкладке «Коаксиальные кабели»`}>нет у кабеля</span>,
-    },
-    // Разделка — тремя колонками, как D1–D3 у кабелей: каждую длину можно вписать прямо в таблицу.
+    // Разделка — тремя колонками: каждую длину можно вписать прямо в таблицу; HEX обжима втулки — сразу за ними.
     length("L1"), length("L2"), length("L3"),
+    { key: "hex", title: "HEX, мм", hint: "HEX обжима втулки экрана, мм", numeric: true, value: text("HEX обжима, мм"), edit: cell("HEX обжима, мм") },
     { key: "mfr", title: "Производитель", value: (record) => coaxMaker(record.fields), render: (record) => coaxMaker(record.fields) || "—", wrap: true, maxWidth: 120, edit: cell("Производитель") },
     { key: "supplier", title: "Поставщик", value: (record) => coaxSupplier(record.fields), render: (record) => coaxSupplier(record.fields) || "—", wrap: true, maxWidth: 130 },
-    { key: "vendorArticle", title: "Артикул поставщика", value: text("Артикул поставщика"), hidden: true, edit: cell("Артикул поставщика") },
+    { key: "vendorArticle", title: "Артикул поставщика", value: text("Артикул поставщика"), wrap: true, maxWidth: 160, edit: cell("Артикул поставщика") },
+    { key: "link", title: "Карточка на сайте", value: text("Ссылка"), render: (record) => <SiteLink href={pick(record.fields, "Ссылка")} />, edit: cell("Ссылка") },
+    {
+      key: "price", title: "Цена, ₽", numeric: true, value: text("Цена, ₽"), edit: cell("Цена, ₽"),
+      render: (record) => pick(record.fields, "Цена, ₽")
+        ? <span title={pick(record.fields, "Дата цены") ? `Цена на ${pick(record.fields, "Дата цены")}` : undefined}>{pick(record.fields, "Цена, ₽")}</span> : "—",
+    },
+    { key: "priceDate", title: "Дата цены", value: text("Дата цены"), hidden: true, edit: cell("Дата цены") },
     { key: "ohm", title: "Ом", value: text("Волновое сопротивление, Ом"), numeric: true, hidden: true, edit: cell("Волновое сопротивление, Ом") },
     { key: "ghz", title: "До, ГГц", value: text("Частота до, ГГц"), numeric: true, hidden: true, edit: cell("Частота до, ГГц") },
     { key: "name", title: "Наименование", value: text("Наименование"), hidden: true, edit: cell("Наименование") },
     { key: "source", title: "Источник данных", value: text("Источник данных"), hidden: true, edit: cell("Источник данных") },
-    ...ownColumns.map((name): DataColumn<TechOperationRecord> => ({
+    ...ownColumns.filter((name) => !BUILT_IN.has(name.trim().toLowerCase())).map((name): DataColumn<TechOperationRecord> => ({
       key: `own:${name}`, title: name, value: text(name), wrap: true, maxWidth: 140,
       edit: canEdit ? ownCellEdit<TechOperationRecord>(name, (record) => record) : undefined,
       remove: removeColumn?.(name),
@@ -179,7 +192,6 @@ export function CoaxConnectors({ records, cableOf, canEdit, onEdit, toolbar, own
     {selected && <CoaxCard
       record={selected}
       siblings={rows.filter((record) => record.id !== selected.id && coaxArticle(record.fields) === coaxArticle(selected.fields))}
-      dia={cableDia(cableOf(selected))}
       canEdit={canEdit}
       onEdit={() => { setSelectedId(""); onEdit(selected); }}
       onSelect={(record) => setSelectedId(record.id)}
@@ -198,6 +210,7 @@ const CARD_ROWS: Array<[string, (fields: Fields) => string, boolean?]> = [
   ["Полярность", (fields) => pick(fields, "Полярность")],
   ["Разделка L1 · L2 · L3", stripping, true],
   ["L+ · L−", (fields) => joinDots([pick(fields, "L+", "lPlus"), pick(fields, "L-", "L−", "lMinus")])],
+  ["HEX обжима", (fields) => (pick(fields, "HEX обжима, мм") ? `${pick(fields, "HEX обжима, мм")} мм` : "")],
   ["Тип пина", (fields) => pick(fields, "Тип пина", "pinType"), true],
   ["Тип экрана", (fields) => pick(fields, "Тип экрана", "shieldType"), true],
   ["Монтаж", (fields) => pick(fields, "Монтаж")],
@@ -210,15 +223,16 @@ const CARD_ROWS: Array<[string, (fields: Fields) => string, boolean?]> = [
   ["Габариты", (fields) => pick(fields, "Габариты")],
   ["Производитель", coaxMaker],
   ["Поставщик", coaxSupplier],
+  ["Артикул поставщика", (fields) => pick(fields, "Артикул поставщика")],
+  ["Цена", (fields) => (pick(fields, "Цена, ₽") ? `${pick(fields, "Цена, ₽")} ₽${pick(fields, "Дата цены") ? ` на ${pick(fields, "Дата цены")}` : ""}` : "")],
   ["Программа", (fields) => pick(fields, "program", "Программа")],
   ["Примечание", (fields) => pick(fields, "Примечание")],
   ["Источник данных", (fields) => pick(fields, "Источник данных")],
 ];
 
-function CoaxCard({ record, siblings, dia, canEdit, onEdit, onSelect, onClose }: {
+function CoaxCard({ record, siblings, canEdit, onEdit, onSelect, onClose }: {
   record: TechOperationRecord;
   siblings: TechOperationRecord[];
-  dia: string;
   canEdit: boolean;
   onEdit: () => void;
   onSelect: (record: TechOperationRecord) => void;
@@ -237,8 +251,6 @@ function CoaxCard({ record, siblings, dia, canEdit, onEdit, onSelect, onClose }:
     <dl className="coax-card-grid">
       <dt>Кабель</dt>
       <dd><strong>{wire || "—"}</strong></dd>
-      <dt>D1 · D2 · D3 кабеля</dt>
-      <dd>{dia || <span className="coax-missing">нет у кабеля</span>}</dd>
       {CARD_ROWS.map(([label, value, required]) => {
         const shown = value(fields);
         if (!shown && !required) return null;

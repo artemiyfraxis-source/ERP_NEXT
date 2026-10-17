@@ -3991,3 +3991,6 @@ tr.wt-off td { background: color-mix(in srgb, var(--muted-foreground) 7%, var(--
 .etk-params .etk-param-rows small { font-size: 12px; font-weight: 400; color: var(--muted-foreground); white-space: nowrap; }
 @media (max-width: 1100px) { .etk-params { grid-template-columns: 1fr !important; } .etk-params section { border-left: 0; border-top: 1px solid var(--border); } .etk-params section:first-child { border-top: 0; } }
 .etk-result-art { max-width: 640px; margin-top: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+
+/* Подгрузка в конце списка (LoadMore): метка без кнопки, «Загружаем…» — пока идёт порция. */
+.load-more { min-height: 1px; padding: 4px 0; text-align: center; font-size: 12px; color: var(--muted-foreground); }

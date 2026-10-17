@@ -242,7 +242,7 @@ it("lets the buyer edit supplier maps and shows no separate ГОСТ→AWG map (
   expect(screen.getByRole("button", { name: "Сохранить справочники" })).toBeInTheDocument();
 });
 
-it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them out of the edit form", async () => {
+it("shows no D1–D3 at the connectors (they are the cable's) and keeps them out of the edit form", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
@@ -262,10 +262,9 @@ it("takes the connector's D1–D3 from the cable in СПР.КАБ and keeps them
   });
 
   render(<ReferencesPage principal={admin} initialTab="coax" />);
-  expect(await screen.findByText("1 · 2,95 · 3,5")).toBeInTheDocument(); // D of RG58, not the connector's own «9»
-  expect(screen.queryByText(/9 · 9/)).toBeNull();
-  expect(screen.getAllByText("нет у кабеля")).toHaveLength(1);
-  expect(screen.getByRole("columnheader", { name: "D1 · D2 · D3 кабеля" })).toBeInTheDocument();
+  expect(await screen.findByText("BNC-C58P")).toBeInTheDocument();
+  expect(screen.queryByText(/2,95/)).toBeNull(); // D кабеля в таблице разъёмов нет (владелец 17.10)
+  expect(screen.queryByRole("columnheader", { name: /D1/ })).toBeNull();
   // Строка открывает карточку разъёма, правка — кнопкой в ней.
   fireEvent.click(screen.getByText("BNC-C58P"));
   fireEvent.click(screen.getByRole("button", { name: "Править запись" }));

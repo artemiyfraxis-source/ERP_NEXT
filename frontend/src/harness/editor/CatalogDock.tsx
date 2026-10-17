@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, type DragEvent } from "react";
 import type { EditorCatalogItem, EditorCatalogSource } from "./editor-types";
 import { connectorTopView } from "../../connectorTopView";
+import { LoadMore } from "../../LoadMore";
 import type { ConnectorHousing } from "../../connectorArt";
 
 export interface CatalogDockProps {
@@ -153,11 +154,7 @@ ${item.placement === "reference-only" ? "Справочная позиция. Р
                 <span className="he-catalog-add" aria-hidden="true">＋</span>
               </button>
               ))}
-              {hasMore && (
-                <button className="he-catalog-more" type="button" disabled={loadState === "loading-more"} onClick={onLoadMore}>
-                  {loadState === "loading-more" ? "Загружаем…" : "Показать ещё"}
-                </button>
-              )}
+              {hasMore && <LoadMore className="he-catalog-more" busy={loadState === "loading-more"} token={items.length} onMore={() => onLoadMore?.()} />}
             </>}
           </div>
         </div>
