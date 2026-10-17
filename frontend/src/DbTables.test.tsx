@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ReferencesPage } from "./ReferencesPage";
+import { ReferencesPage, type DbTab } from "./ReferencesPage";
 import type { Principal, TechOperationRecord } from "./api";
 
 /* «База данных» по всей базе (владелец 14.10: «пройдись по базе в целом, улучши её»): правка ячеек по месту тем же
@@ -172,7 +172,7 @@ it("Терминалы: a viewer gets no editable cells, no «+ Столбец»
 
 it("«Расходники» — only solders and fluxes (owner 17.10): other groups are in no tab; the name, group and purchases are not cells to edit; chips «Без …»", async () => {
   const calls = mockDb();
-  render(<ReferencesPage principal={admin} initialTab="mat_fix" />); // the old key opens «Расходники»
+  render(<ReferencesPage principal={admin} initialTab={"mat_fix" as DbTab} />); // the old key opens «Расходники»
   await screen.findByText("Припой ПОС61 1,0 мм");
   const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
   expect(groups).toEqual(["припой/флюс · 2"]);
