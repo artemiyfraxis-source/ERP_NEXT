@@ -21,6 +21,9 @@
   sudo -n docker compose ... run --rm -T api python - apply < этот файл
   sudo -n docker compose ... run --rm -T api python - dry   < этот файл   → всё «уже так»
 Откат: вернуть ячейкам журнала значение «было» (тот же скрипт с переставленными old/new).
+
+Записано 17.10.2026 ~15:40: бэкап перед записью /backups/daily/erp_2026-10-17_153818.dump (5,5 МБ, sha256 0850af18…923b330f);
+dry до записи — 44 «проверено», apply — 44 «записано», повторный dry — 44 «уже так». БД.КОАКС 591 строка до и после.
 """
 import json
 import os
