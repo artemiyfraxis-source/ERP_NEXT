@@ -265,3 +265,13 @@ it("braid pieces per branch: own length, an equal share of the length per item, 
   expect(cfg.ops.find((o) => o.opKey === "cutBraid")).toMatchObject({ type: "cutTut", wrapKind: "braid", tutArt: "XP-3", tutCount: 4 });
   expect(cfg.ops.find((o) => o.opKey === "braidA1")).toMatchObject({ type: "insWrap", wrapKind: "braid", wrapCut: true, wrapLen: "120", branch: "X1 «5»" });
 });
+
+it("a stuck template of another code than the rule asks is re-picked; a hand-picked one stays (713К.4 КБ1 marking, 17.10)", () => {
+  const S0 = fullHarness();
+  const mark = makeGen(DSA, S0).getActiveOps().find((o) => o.opKey === "cutMark")!;
+  expect(makeGen(DSA, S0).templateIdFor(mark)).toBe("ins-mark-tube-auto-печать-и-резка-маркировочной-трубки");
+  const stuck = { ...S0, selectedTemplates: { ...S0.selectedTemplates, cutMark: "cut-tut-short-резка" } };
+  expect(makeGen(DSA, stuck).templateIdFor(mark)).toBe("ins-mark-tube-auto-печать-и-резка-маркировочной-трубки");
+  const byHand = { ...stuck, manualTemplates: ["cutMark"] };
+  expect(makeGen(DSA, byHand).templateIdFor(mark)).toBe("cut-tut-short-резка");
+});
