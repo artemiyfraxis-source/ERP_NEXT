@@ -10,6 +10,8 @@ export type ConnectorHousing = {
   kind?: string; color: string; latch?: string; cavity?: string; labels?: string[] | null; male?: boolean | null;
   grid: number[][]; round?: Array<{ pin: number; x: number; y: number }> | null; conf?: string; note?: string;
   body?: HousingBody | null; src?: string; model?: string; roof?: Roof | null; mate?: Mate | null;
+  /** Лист производителя показал голую крышу (без замка и окон): его название; пусто — листа нет. */
+  roof_plain?: string;
 };
 
 /** Признак на крыше корпуса, прочитанный с листа производителя (connector_housings.py `roof_of`): «latch» — замок

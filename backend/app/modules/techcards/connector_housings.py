@@ -164,7 +164,13 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # carries the FIRST CIRCUIT IDENTIFIER rib on that side. From the wire side, latch up: contact 1 on the RIGHT.
     {"id": "molex-microfit-1r", "title": "Molex Micro-Fit 3.0 (1 ряд)", "pattern": r"^43645-?0?(\d{1,2})00$", "pitch": 3.0, "rows": 1, "order": "row", "start": "TR", "latch": "lever", "color": BLACK, "conf": "high",
      "src": "Molex 436450000-SD (SDA-43645)", "note": "по чертежу Molex 436450000-SD: со стыковки защёлкой вверх CIRCUIT #1 слева; со стороны проводов защёлкой вверх — контакт 1 справа"},
-    {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "pattern": r"^22-?55-?2(\d{2})1$", "pitch": 2.54, "rows": 2, "order": "col", "start": "TR", "latch": "friction", "color": BLACK, "conf": "low"},
+    # SL dual row 22-55-2xx1 — Molex SD-70450-0001-0026 (pdm_docs copy of 022552081_sd.pdf in the Web Archive, read
+    # 17.10.2026, third angle): the top view is the mating end (square post entries), the front view the face with the
+    # ▽ «CKT. NO. 1» at its LEFT and a window over every column. From the wire side (bottom view, left and right kept),
+    # that face up: contact 1 top-LEFT. Where circuit 2 is the drawing does not say — under 1, by the Molex rule for
+    # dual-row housings (C-Grid), hence "medium". Was TR with no face cue (mirrored against the ▽).
+    {"id": "molex-sl-2r", "title": "Molex SL (2 ряда)", "pattern": r"^22-?55-?2(\d{2})1$", "pitch": 2.54, "rows": 2, "order": "col", "start": "TL", "latch": "friction", "color": BLACK, "conf": "medium", "src": "Molex SD-70450-0001-0026",
+     "note": "по чертежу Molex SD-70450-0001-0026: ▽ CKT. NO. 1 слева на грани с окнами; этой гранью вверх — контакт 1 слева вверху; № 2 под ним — по правилу Molex, на чертеже не показан"},
     {"id": "te-multilock-040", "title": "TE Multilock 040", "pattern": r"^1740(?:47|45|46|44)-\d$", "fixed": 20, "pitch": 2.5, "rows": 2, "order": "col", "start": "TR", "latch": "lever", "color": BLACK, "conf": "low"},
     # DS1071 — Connfly C-DS1071-XXXXX-B rev. B (connfly.com/static/upload/file/pdf/DS1071.pdf, read 16.10.2026): pitch
     # 2.54; the female housing is drawn symmetric — no key, no circuit-1 mark — and the mating headers C-DS1021 / C-DS1022
@@ -284,6 +290,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
 # A series with no sourced feature has NO roof (None): the drawing shows a plain top, never a guessed one.
 JST_SHEET = "JST {0}, https://www.jst-mfg.com/product/pdf/eng/{0}.pdf"
 LCSC_SHEET = "https://datasheet.lcsc.com/datasheet/pdf/{}.pdf?productCode={}"
+DF1B_CAT_SRC = "Hirose DF1B, каталог 01.07.2020, {}"
 ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     # Connfly Dupont 2,54 / 2,0 (DS1071, DS1071-01): the Connfly sheet draws the housing symmetric, the real part carries a
     # lance window over every contact on the top face and the circuit-1 arrow at the left end (owner, 17.10.2026, by the part).
@@ -356,15 +363,99 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     "hirose-df1b-p2r": {"kind": "latch", "at": "center", "src": "Hirose EDC3-160056-01 (DF1B-*DEP-2.5RC), https://www.hirose.com/api/v1/products/CL0541-0366-9-00/documents/drawing_2d/content (вид сверху: рычаг замка между двумя направляющими, на виде сбоку — зацеп)"},
     # RJ45 8P8C: the latch tab on the plug body (IEC 60603-7).
     "rj45": {"kind": "latch", "at": "center", "src": "IEC 60603-7 (8P8C): защёлка на корпусе вилки"},
+    # Third pass (17.10.2026, evening): every series that had no sourced roof. Hirose catalogue pages (third angle) show
+    # the face with the «Contact No.1» mark as the front view: DF13 / DF20 / DF11 sockets and DF1B S / DS / ES / DES
+    # draw a window over every contact on it (the photos «Contact inserted» show the contacts through them); the locks
+    # of the in-line sockets are hooks on the back face, not on this face.
+    "hirose-df13-2r": {"kind": "slots", "at": "contacts", "src": "Hirose DF13, каталог B242, Double Row Socket (вид спереди — грань с меткой ▽ Contact No.1: окно над каждым контактом)"},
+    "hirose-df20": {"kind": "slots", "at": "contacts", "src": "Hirose DF20, каталог B266 (01.11.2016), Double Row Socket (вид спереди — грань с меткой Contact No.1: окно над каждым контактом; фото с контактами)"},
+    "hirose-df11": {"kind": "slots", "at": "contacts", "src": "Hirose DF11, каталог B220 (01.06.2020), Crimping Socket (вид спереди — грань с Polarization Mark: окно над каждым столбцом; фото «Contact insertion status»)"},
+    "hirose-df1b": {"kind": "slots", "at": "contacts", "src": DF1B_CAT_SRC.format("Single Row Socket (вид спереди — грань с меткой ① Contact No1.: окно над каждым контактом)")},
+    "hirose-df1b-2r": {"kind": "slots", "at": "contacts", "src": DF1B_CAT_SRC.format("Double Row Socket (вид спереди — грань с меткой «1»: окно над каждым столбцом)")},
+    "hirose-df1b-es": {"kind": "slots", "at": "contacts", "src": DF1B_CAT_SRC.format("Single Row In-line Socket (Full Lock Type) (вид спереди: окно над каждым контактом; зацеп замка — на обратной грани)")},
+    "hirose-df1b-des": {"kind": "slots", "at": "contacts", "src": DF1B_CAT_SRC.format("Double Row In-line Socket (Full Lock Type) (вид спереди — грань с меткой Contact No1.: окно над каждым столбцом; зацеп — на обратной грани)")},
+    # DF1BA (simple lock): the front face with the «Contact No1. mark» is smooth — two shallow recesses, no lock, no window
+    # per contact; the panel arms sit on the end walls.
+    "hirose-df1ba-p": {"kind": "none", "src": DF1B_CAT_SRC.format("Single Row In-line Plug (Simple Lock Type) (вид спереди: грань гладкая, две выемки; замок — плечи на торцах)")},
+    "hirose-df1ba-p2r": {"kind": "none", "src": DF1B_CAT_SRC.format("Double Row In-line Plug (Simple Lock Type) (вид спереди: грань гладкая; замок — плечи на торцах)")},
+    # JST eRCY p. 2 (and the p. 1 picture): SYR — a smooth top with «JST 1 2» moulded, no lock; SYP — open windows over the
+    # two contacts on top.
+    "jst-rcy": {"kind": "none", "src": JST_SHEET.format("eRCY") + " (с. 2, Receptacle housing: верх гладкий, отлито «JST 1 2», замка и окон нет)"},
+    "jst-rcy-p": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eRCY") + " (с. 1 рисунок и с. 2 Plug housing: сверху открытое окно над каждым контактом)"},
+    # Molex SL dual row 22-55-2xx1 — SD-70450-0001-0026 (pdm_docs copy of 022552081_sd.pdf in the Web Archive): the face
+    # with the ▽ CKT. NO. 1 has a window over every column. Milli-Grid 51110 — SD-51110-XX5X rev. B11 (511101051_sd.pdf):
+    # the face with the ▽ «1ST CIRCUIT IDENTIFICATION» has a window over every column; the centre polarisation key and
+    # the side latches are options (-XX51 / -XX50, sheet 2), the windows are on every housing.
+    "molex-sl-2r": {"kind": "slots", "at": "contacts", "src": "Molex SD-70450-0001-0026 (022552081_sd.pdf, Web Archive): грань с меткой ▽ CKT. NO. 1 — окно над каждым столбцом"},
+    "molex-milligrid": {"kind": "slots", "at": "contacts", "src": "Molex SD-51110-XX5X rev. B11 (511101051_sd.pdf): грань с меткой ▽ 1ST CIRCUIT — окно над каждым столбцом; ключ и боковые защёлки — по исполнению"},
+    # Mini50 unsealed 34791 — SD-34791-001 rev. L7 (347910040_sd.pdf, Web Archive), sheets 1–3: the lock in the middle of
+    # the top on every housing (the «bridge» option only adds a guard over it).
+    "molex-mini50-u": {"kind": "latch", "at": "center", "src": "Molex SD-34791-001 rev. L7, л. 1–3 (замок по центру верхней грани; «мост» — защита над ним), 347910040_sd.pdf"},
+    # Board-in 35023 — SD-35023-001: the top face carries the entry of a straight contact 35044 over every cavity, no lock.
+    "molex-boardin": {"kind": "slots", "at": "contacts", "src": "Molex SD-35023-001 (350230004_sd.pdf): верхняя грань — вход прямого контакта 35044 над каждым гнездом, замка нет"},
+    # JAE FI-S SJ031451: the top view is the face with a window over every contact (friction lock, no latch).
+    "jae-fis": {"kind": "slots", "at": "contacts", "src": "JAE SJ031451 (FI-S※※S Housing): вид сверху — окно над каждым контактом, замка нет"},
+    # FI-X: SJ033913 (FI-X※※H) — a window over every contact on top, no lock; the HL housings are in ROOF_BY_ARTICLE.
+    "jae-fix": {"kind": "slots", "at": "contacts", "src": "JAE SJ033913 (FI-X※※H Housing): вид сверху — окно над каждым контактом, замка нет"},
+    # Connfly drawings (connfly.com): DS1070 rev. D sheet 2 «Female Housing» — smooth faces with a step, no lock;
+    # DS1072 rev. D and DS1074 rev. D «Female Housing» — the side view has the lock ramp on top at the mating end, the
+    # front view a raised strip along the whole top.
+    "connfly-ds1070": {"kind": "none", "src": "Connfly C-DS1070-XXXXXX-D, л. 2 «Female Housing»: грани гладкие, ступенька; замка и окон нет (https://www.connfly.com/static/upload/file/pdf/DS1070.pdf)"},
+    "connfly-ds1072": {"kind": "latch", "at": "center", "src": "Connfly C-DS1072-XXXXX-D «Female Housing»: рампа замка сверху у стыковочного торца, по всей ширине (https://www.connfly.com/static/upload/file/pdf/DS1072.pdf)"},
+    "connfly-ds1074": {"kind": "latch", "at": "center", "src": "Connfly C-DS1074-XXXXX-D «Female Housing»: рампа замка сверху у стыковочного торца, по всей ширине (https://www.connfly.com/static/upload/file/pdf/DS1074.pdf)"},
+    # Hsuan Mao (definum.ru copies): H2011-XXPW0000R — the lock block in the middle of the top (dimension C), as JST PA;
+    # H5080-XXPXW000 — «Y: with locking rib» on the top face, «N: without» (ROOF_BY_ARTICLE).
+    "hsm-hc": {"kind": "latch", "at": "center", "src": "Hsuan Mao H2011-XXPW0000R rev. A: блок замка по центру верхней грани (размер C)"},
+    "hsm-mx508": {"kind": "latch", "at": "center", "src": "Hsuan Mao H5080-XXPXW000 rev. A: Body Option Y — ребро замка (locking rib) на верхней грани"},
+    # Samtec ISD2 (samtec.com S2SD / ISD2 sheet F-226): the face with the ▽ has a window over every column; the -M metal
+    # retention latch and the -S screws are on the end walls.
+    "samtec-isd2": {"kind": "slots", "at": "contacts", "src": "Samtec ISD2 / S2SD, лист F-226 (вид грани с меткой ▽: окно над каждым столбцом; защёлка -M и винты -S — на торцах)"},
+    # Deutsch DT (TE drawings DT04-2P/-4P/-6P «Receptacle», DT06-2S/-4S/-08SA/-12S «Plug»): the plug's latch arm runs along
+    # the middle of its top, the receptacle's shroud carries the latch ramp in the middle of its top.
+    "deutsch-dt": {"kind": "latch", "at": "center", "src": "Deutsch DT04-2P rev. C / DT04-4P rev. B (рампа замка по центру верха), DT06-2S rev. C / DT06-4S rev. B1 (рычаг замка по центру верха)"},
+    # TE Superseal 1.5 — C-282106 rev. B4 «4 positions tab ass'y» (the lock rail on top, section B-B) and C-282088 rev. F4
+    # «4 positions plug ass'y» (the lock lever in the middle of the top).
+    "te-superseal": {"kind": "latch", "at": "center", "src": "TE C-282106 rev. B4 (Tab ass'y: направляющая замка по центру верха, сечение B-B), C-282088 rev. F4 (Plug ass'y: рычаг замка по центру верха)"},
+    # USB 2.0 Specification fig. 6-9: the Series A plug shell has two latch windows in its face; fig. 6-7: the receptacle
+    # shell has two spring latches there.
+    "usb-a": {"kind": "latch", "at": "pair", "src": "USB 2.0 Specification, рис. 6-9 (вилка A: два окна фиксации в оболочке) и рис. 6-7 (розетка A: два пружинных фиксатора)"},
+    # Amass XT60 / XT60H product specifications 2021V1 (views of -M and -F): smooth housings, no lock, no windows.
+    "amass-xt": {"kind": "none", "src": "Amass XT60 / XT60H, Product Specification 2021V1 (виды -M и -F: корпус гладкий, замка и окон нет)"},
 }
+# Roof features that differ inside one family by the part number: (family id, article regex, roof); first match wins.
+# "kind": "none" — the sheet shows a plain top (no lock, no window), recorded with its source.
+ROOF_BY_ARTICLE: tuple[tuple[str, str, dict[str, str]], ...] = (
+    ("jae-fix", r"^FI-X\d+HL", {"kind": "latch", "at": "ends", "src": "JAE SJ037012 rev. 3 (FI-X30HL Housing): рычаги замка (LOCK LEVER, нерж. сталь) на обоих торцах"}),
+    ("hsm-mx508", r"^(?:HSM)?H5080-\d{2}PN", {"kind": "none", "src": "Hsuan Mao H5080-XXPXW000 rev. A: Body Option N — без ребра замка, верх гладкий"}),
+)
+# Series still without a sourced roof, and why no maker document exists (the frontend list UNSOURCED mirrors this):
+# - jst-ra: eRA.pdf is gone from jst-mfg.com (404) and the Web Archive holds no copy (CDX empty, 17.10.2026);
+# - amass-qs8: QS8 is not in the Amass catalogues (china-amass.com downloads 2026) — the maker of the housing is unknown;
+# - jr-servo: the shop's JR / Futaba servo housings have no maker and no part number.
 
 
-def roof_of(family: Mapping[str, Any], count: int = 0) -> dict[str, str] | None:
-    """The sourced roof feature of a family, or None. Besides the explicit table, a series whose drawing was read (high
+def _roof_entry(family: Mapping[str, Any], article: str) -> dict[str, str] | None:
+    for family_id, pattern, entry in ROOF_BY_ARTICLE:
+        if family_id == family["id"] and re.search(pattern, article, flags=re.I):
+            return entry
+    return ROOF_EXPLICIT.get(family["id"])
+
+
+def roof_plain_of(family: Mapping[str, Any], article: str = "") -> str:
+    """The source of a sheet that shows a plain top (no lock, no window) for this housing, or ""."""
+    entry = _roof_entry(family, article)
+    return entry["src"] if entry and entry.get("kind") == "none" else ""
+
+
+def roof_of(family: Mapping[str, Any], count: int = 0, article: str = "") -> dict[str, str] | None:
+    """The sourced roof feature of a family, or None. Besides the explicit tables (ROOF_BY_ARTICLE, ROOF_EXPLICIT; an
+    entry of kind "none" is a sourced plain top — no roof, see roof_plain_of), a series whose drawing was read (high
     confidence + a named source) keeps what that drawing shows: lock lever/ramp -> latch in the middle; contact-lance
     windows face (JST SH/PH/ZH, Connfly DS1066, Mini-SPOX, PicoBlade) -> a slot per contact. `pair_from`: from that many
     contacts the sheet shows two lock features instead of one (at "pair")."""
-    explicit = ROOF_EXPLICIT.get(family["id"])
+    explicit = _roof_entry(family, article)
+    if explicit and explicit.get("kind") == "none":
+        return None
     if explicit:
         roof = {key: value for key, value in explicit.items() if key != "pair_from"}
         if count and count >= int(explicit.get("pair_from") or 10**6):
@@ -456,6 +547,31 @@ MATING_BY_ARTICLE: tuple[tuple[str, str, dict[str, str]], ...] = (
     # so no shell or lock).
     ("jr-servo", r"FEMALE$", _mate("", "socket", "", "", "каталог ERP: JR-H-Female — под гнёзда JR-T-Female (Pololu 1924)")),
     ("jr-servo", r"MALE$", _mate("", "pin", "", "", "каталог ERP: JR-H-Male — под штыри JR-T-Male (Pololu 1925)")),
+    # Deutsch DT (TE/Deutsch drawings): DT04-xP «x way receptacle» takes the pins, its shroud takes the plug in («plug
+    # inserts into recept.», DT06-2S) and carries the latch ramp; DT06-xS «x way plug» takes the sockets, its latch arm
+    # grips that ramp.
+    ("deutsch-dt", r"^DT04", _mate("receptacle", "pin", "outer", "catch", "Deutsch DT04-2P rev. C, DT04-4P rev. B («2/4 WAY RECEPTACLE», штыри; DT06-2S: «PLUG INSERTS INTO RECEPT.»)")),
+    ("deutsch-dt", r"^DT06", _mate("plug", "socket", "inner", "arm", "Deutsch DT06-2S rev. C («2 WAY PLUG … MATES WITH THE DT04-2P RECEPTACLE»), DT06-4S rev. B1")),
+    # TE Superseal 1.5: C-282104 / C-282106 «tab ass'y» — the tab (pin) housing, its shroud with the lock rail takes the
+    # plug; C-282080 / C-282088 «plug ass'y» — receptacle contacts, goes in with the lock lever.
+    ("te-superseal", r"^28210", _mate("", "pin", "outer", "catch", "TE C-282104 rev. B2, C-282106 rev. B4 («Superseal 1.5 … tab ass'y», направляющая замка сверху)")),
+    ("te-superseal", r"^2820[89]", _mate("plug", "socket", "inner", "arm", "TE C-282080 rev. D5, C-282088 rev. F4 («Superseal 1.5 … plug ass'y», рычаг замка, уплотнение снаружи)")),
+    # Amass XT60 / XT60H Product Specification 2021V1: -M (公头) — the pins inside the housing; -F (母头) — the sockets in
+    # a narrower nose that goes into it. No lock.
+    ("amass-xt", r"-M$", _mate("", "pin", "outer", "", "Amass XT60 / XT60H, Product Specification 2021V1 (вид XT60-M: штыри внутри корпуса)")),
+    ("amass-xt", r"-F$", _mate("", "socket", "inner", "", "Amass XT60 / XT60H, Product Specification 2021V1 (вид XT60-F: гнёзда в узкой части корпуса, входит в -M)")),
+    # Weipu SA8 (WEIPU Circular Connector Catalog 2026.6, p. P05-03): SA810 «cable connector» (Ø12.6, the push-pull
+    # sleeve over the mate) mates with SA811 in-line, SA812 rear-nut, SA815 front-nut (Ø9.4 front part); P — male
+    # contact, S — female contact, in either housing.
+    ("weipu-sa8", r"^SA810/P", _mate("plug", "pin", "outer", "", "WEIPU Circular Connector Catalog 2026.6, с. P05-03 (SA810 Cable connector, P — Male contact)")),
+    ("weipu-sa8", r"^SA810/S", _mate("plug", "socket", "outer", "", "WEIPU Circular Connector Catalog 2026.6, с. P05-03 (SA810 Cable connector, S — Female contact)")),
+    ("weipu-sa8", r"^SA81[125]/P", _mate("receptacle", "pin", "inner", "", "WEIPU Circular Connector Catalog 2026.6, с. P05-03 (SA811/812/815 — Mate with SA810, P — Male contact)")),
+    ("weipu-sa8", r"^SA81[125]/S", _mate("receptacle", "socket", "inner", "", "WEIPU Circular Connector Catalog 2026.6, с. P05-03 (SA811/812/815 — Mate with SA810, S — Female contact)")),
+    # CNLINKO LP-12 (Linko drawing LP-12-xxxPE-02-0xxx, part-number rules; catalogue p. 17–18): C — male pins, J — female;
+    # PE «Plug» (the male plug carries the snap lock, catalogue «reinforce lock»), SX «Receptacle», PP «Floating connector».
+    ("cnlinko-lp12", r"^LP-12-C0?\dPE", _mate("plug", "pin", "", "arm", "Linko LP-12-xxxPE-02-0xxx (C = male pin, PE = Plug); каталог CNLINKO LP-12, с. 17 (Male plug, замок на вилке)")),
+    ("cnlinko-lp12", r"^LP-12-J0?\dSX", _mate("receptacle", "socket", "", "", "Linko LP-12-xxxPE-02-0xxx, правила номера (J = female pin, SX = Receptacle); каталог CNLINKO LP-12, с. 18")),
+    ("cnlinko-lp12", r"^LP-12-J0?\dPP", _mate("", "socket", "", "", "Linko LP-12-xxxPE-02-0xxx, правила номера (J = female pin, PP = Floating connector); каталог CNLINKO LP-12, с. 18")),
 )
 # Pairs whose two halves differ only by the part number's gender letter: contacts from it, by the family's standard.
 MATING_BY_MALE: dict[str, str] = {
@@ -465,7 +581,8 @@ MATING_BY_MALE: dict[str, str] = {
 
 def mate_of(family: Mapping[str, Any], article: str, male: bool | None) -> dict[str, str] | None:
     """The mating side of a housing (MATING), or None when no sheet says it. A family whose part number carries the
-    gender (D-Sub) gets the contact kind only; DT, Weipu SA8 and LP-12 keep `male` without a sourced mating side."""
+    gender (D-Sub) gets the contact kind only; DT, Superseal, Amass XT, Weipu SA8 and LP-12 read it from the part
+    number (MATING_BY_ARTICLE)."""
     for family_id, pattern, entry in MATING_BY_ARTICLE:
         if family_id == family["id"] and re.search(pattern, article, flags=re.I):
             return dict(entry)
@@ -516,7 +633,11 @@ MATING_PAIRS: tuple[tuple[str, str, str], ...] = (
     ("Hirose DF1B (2 ряда)", "DF1B-10DES-2.5RC", "DF1B-10DEP-2.5RC"),
     ("Сервоконнектор JR", "JR-H-Female", "JR-H-Male"),
     ("D-Sub", "DS1033-09F", "DS1033-09M"),
+    ("Deutsch DT", "DT04-4P", "DT06-4S"),
+    ("TE Superseal 1.5", "282106-1", "282088-1"),
 )
+# Amass XT, Weipu SA8 and CNLINKO LP-12 carry their mating side (MATING_BY_ARTICLE) but are not pairs here: the round and
+# XT bodies are drawn without the contact / shroud marks the pair checks need.
 
 
 def mating_pairs() -> list[dict[str, Any]]:
@@ -658,7 +779,9 @@ def _layout(
         "src": family.get("src", ""),
         # Gallery model template matched against the maker drawing (connectorModel.ts); "" — no checked model.
         "model": family.get("model", ""),
-        "roof": roof_of(family, count),
+        "roof": roof_of(family, count, normalize_article(article)),
+        # The maker's sheet shows a plain top for this housing (no lock, no window): its source, else "".
+        "roof_plain": roof_plain_of(family, normalize_article(article)),
         "mate": mate_of(family, normalize_article(article), male),
     }
 

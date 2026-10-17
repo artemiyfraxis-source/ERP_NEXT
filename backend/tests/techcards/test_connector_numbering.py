@@ -45,15 +45,17 @@ CASES = [
     ("90123-0106", "molex-cgrid3-1r", [[6, 5, 4, 3, 2, 1]], "none", "high", "SD-90123"),
     ("1511920010", "molex-milligrid-151192", [[9, 7, 5, 3, 1], [10, 8, 6, 4, 2]], "mark", "high", "1511921001"),
     ("502439-0400", "molex-clikmate-20", [[1, 2, 3, 4]], "ramp", "high", "5024391500"),
-    # Molex — drawing without contact numbers, or not reachable: unchecked
-    ("206461-0800", "molex-microfit-plus", [[1, 2, 3, 4], [5, 6, 7, 8]], "lever", "low", ""),
+    # Micro-Fit+ (17.10.2026): read from the mating headers 2125280000 / 2068320000-SD
+    ("206461-0800", "molex-microfit-plus", [[8, 7, 6, 5], [4, 3, 2, 1]], "lever", "high", "2125280000"),
     # Hirose DF1B (catalogue 01.07.2020): face with the contact-1 mark (or the lock lever) up
     ("DF1B-4S-2.5R", "hirose-df1b", [[1, 2, 3, 4]], "mark", "high", "Single Row Socket"),
     ("DF1B-10DS-2.5RC", "hirose-df1b-2r", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", "high", "Double Row Socket"),
     ("DF1B-4ES-2.5RC", "hirose-df1b-es", [[1, 2, 3, 4]], "mark", "high", "Single Row In-line Socket"),
     ("DF1B-10DES-2.5RC", "hirose-df1b-des", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "mark", "high", "Double Row In-line Socket"),
     ("DF1B-5EP-2.5RC", "hirose-df1b-p", [[1, 2, 3, 4, 5]], "lever", "high", "Single Row In-line Plug (Full Lock"),
-    ("DF1B-10DEP-2.5RC", "hirose-df1b-p2r", [[1, 3, 5, 7, 9], [2, 4, 6, 8, 10]], "lever", "low", ""),
+    ("DF1B-10DEP-2.5RC", "hirose-df1b-p2r", [[2, 4, 6, 8, 10], [1, 3, 5, 7, 9]], "lever", "high", "EDC3-160056-01"),
+    # Hirose DF61 (EDC3-336116-04, 17.10.2026): lever face up, ▽ Contact No.1 on the right
+    ("DF61-2S-2.2C", "hirose-df61", [[2, 1]], "lever", "high", "EDC3-336116-04"),
     ("DF1BA-5EP-2.5RC", "hirose-df1ba-p", [[5, 4, 3, 2, 1]], "mark", "high", "Simple Lock"),
     ("DF1BA-10DEP-2.5RC", "hirose-df1ba-p2r", [[9, 7, 5, 3, 1], [10, 8, 6, 4, 2]], "mark", "high", "Simple Lock"),
     # Hirose DF19 (catalogue 01.01.2024): ▽ face up
@@ -100,6 +102,7 @@ CASES = [
     # Molex sales drawings from the Web Archive (17.10.2026)
     ("34967-4001", "molex-mini50-s", [[4, 3, 2, 1]], "lever", "high", "349674001"),
     ("34967-1001", "molex-mini50-s", [[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]], "lever", "high", "349671001"),
+    ("34791-0040", "molex-mini50-u", [[4, 3, 2, 1]], "lever", "high", "SD-34791-001"),
     ("35023-0004", "molex-boardin", [[4, 3, 2, 1]], "none", "high", "SD-35023-001"),
     ("L-KLS1-2.50-04-H", "kls-2-50", [[1, 2, 3, 4]], "ramp", "high", "L-KLS1-2.50-XX-H"),
     ("51163-0400", "molex-minilock", [[1, 2, 3, 4]], "lever", "high", "511630000-SD"),
@@ -154,13 +157,21 @@ def test_df1b_in_line_socket_and_plug_mirror_with_the_lock_on_one_side():
     assert socket_hook_up == _mirror(housing_of("DF1B-5EP-2.5RC")["grid"]) == [[5, 4, 3, 2, 1]]
 
 
+def test_df1b_double_row_in_line_socket_and_plug_mirror_with_the_lock_on_one_side():
+    # DES drawn ▽ face up (hook on the back face); turned hook up while still seen from its wire end (180° about the
+    # wire axis) and mirrored face to face, it reads as the DEP plug from its wire side, lever up (EDC3-160056-01).
+    des = housing_of("DF1B-10DES-2.5RC")["grid"]
+    des_hook_up = [list(reversed(row)) for row in reversed(des)]
+    assert _mirror(des_hook_up) == housing_of("DF1B-10DEP-2.5RC")["grid"]
+
+
 def test_df1ba_simple_lock_plugs_are_split_from_the_full_lock_plugs():
     df1b = {item["id"]: item for item in connector_series()}["hirose-df1b"]
     families = {variant["title"]: variant["family"] for variant in df1b["variants"]}
     assert families["Штыревой корпус (простой замок), 1 ряд"] == "hirose-df1ba-p"
     assert families["Штыревой корпус (простой замок), 2 ряда"] == "hirose-df1ba-p2r"
     assert families["Штыревой корпус (полный замок), 1 ряд"] == "hirose-df1b-p"
-    assert not df1b["checked"]  # DEP (full lock) has no numbers on its wire end — the series keeps the warning
+    assert df1b["checked"]  # 17.10.2026: DEP read from EDC3-160056-01 — every DF1B housing is checked now
     assert housing_of("DF1B-5EP-2.5RC")["grid"] != housing_of("DF1BA-5EP-2.5RC")["grid"]
 
 
@@ -177,7 +188,8 @@ def test_checked_molex_series():
     # while its 2-row housing 22-55-2xx1 is unchecked.
     for series_id in ("molex-boardin", "molex-minilock"):
         assert series[series_id]["checked"], series_id
-    for series_id in ("molex-microfit-plus", "molex-milligrid", "molex-sl"):
+    assert series["molex-microfit-plus"]["checked"]  # 17.10.2026: from the header drawings 2125280000 / 2068320000-SD
+    for series_id in ("molex-milligrid", "molex-sl"):
         assert not series[series_id]["checked"], series_id
     # The ranges: iGrid's list is complete (10…40, even); CLIK-Mate and Pico-Clasp name housings they did not find.
     assert series["molex-igrid"]["range_checked"] and series["molex-igrid"]["counts"] == list(range(10, 41, 2))
@@ -211,7 +223,8 @@ def test_missing_molex_housings_are_in_the_catalogue():
     # CTX50 (16.10.2026): the Mini50 housings the distributor listings name, the count from a table (not the number).
     ctx = series["molex-ctx50"]
     assert [h["n"] for v in ctx["variants"] for h in v["housings"]] == [2, 4, 4, 10, 10, 10, 4, 2, 4, 4]
-    assert ctx["pitch"] == 1.8 and not ctx["range_checked"] and not ctx["checked"]
+    # 17.10.2026: both Mini50 housings are read from the Molex drawings (349674001 / 349671001, SD-34791-001).
+    assert ctx["pitch"] == 1.8 and not ctx["range_checked"] and ctx["checked"]
     assert {c["article"] for c in ctx["contacts"]} == {"349052447", "560023-0721"}
     # Owner's reference-data gaps, 14.10.2026 (closed 16.10.2026): 78172-000x and the 6/7-circuit 78172-500x.
     ez = series["molex-picoezmate"]
@@ -348,7 +361,7 @@ def test_old_gaps_have_housings():
     assert mx["variants"][0]["housings"][2]["headers"][0]["article"] == "W4508-04PSYTW0"
     assert hc["counts"] == list(range(2, 17)) and hc["pitch"] == 2.0 and hc["range_checked"]
     assert jr["counts"] == [3] and jr["pitch"] == 2.54 and {c["article"] for c in jr["contacts"]} == {"JR-T-Female", "JR-T-Male"}
-    assert mf["range_checked"] and mf["counts"] == list(range(2, 25, 2)) and not mf["checked"]
+    assert mf["range_checked"] and mf["counts"] == list(range(2, 25, 2)) and mf["checked"]  # contact 1: 2125280000, 17.10
     assert housing_of("206461-0402")["color"] == "#c8322d" and housing_of("206461-0200")["color"] == "#2b2b2b"
     connectors = connector_series()
     assert find_in_series("HSM H2011-08PWA000R", connectors)["housing"]["n"] == 8
