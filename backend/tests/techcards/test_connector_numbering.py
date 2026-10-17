@@ -95,7 +95,9 @@ CASES = [
     ("GHDR-10V-S-1(F)", "jst-ghd", [[9, 7, 5, 3, 1], [10, 8, 6, 4, 2]], "mark", "high", "eGHD"),
     ("VBR-3(4)", "jst-vb", [[1, 2, 3]], "none", "low", ""),
     ("ZNDP-08V-A-S", "jst-znd", [[1, 3, 5, 7], [2, 4, 6, 8]], "lever", "low", ""),
-    ("06R-JWPF-VSLE-D", "jst-jwpf", [[1, 3, 5], [2, 4, 6]], "lever", "low", ""),
+    ("06R-JWPF-VSLE-D", "jst-jwpf-r", [[3, 2, 1], [6, 5, 4]], "lever", "high", "KiCad JST_JWPF"),
+    ("03R-JWPF-VSLE-S", "jst-jwpf-r", [[3, 2, 1]], "lever", "high", "EasyEDA C2983882"),
+    ("06T-JWPF-VSLE-D", "jst-jwpf", [[1, 3, 5], [2, 4, 6]], "lever", "low", ""),
 ]
 
 
