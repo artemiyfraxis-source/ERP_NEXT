@@ -1,1 +1,0 @@
-"""Request intake bounded context."""

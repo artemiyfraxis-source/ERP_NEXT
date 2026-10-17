@@ -1,9 +1,0 @@
-/* «Кабели» на «Сложной сборке»: у каждого кабеля своя длина (владелец 14.10). */
-.tcgen .cc-row { display: grid; grid-template-columns: minmax(0, 1fr) 124px 76px 28px 52px 28px; gap: 8px; align-items: center; }
-.tcgen .cc-row.cores { grid-template-columns: minmax(0, 1fr) 124px 76px 64px 100px 28px 52px 28px; }
-.tcgen .cc-row.head { margin-bottom: -3px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
-.tcgen .cc-act { display: inline-grid; place-items: center; height: 28px; min-width: 28px; border: 0; border-radius: 6px; padding: 0 4px; background: none; color: var(--muted-foreground); font-size: 13px; cursor: pointer; }
-.tcgen .cc-act:hover:not(:disabled) { background: var(--accent); color: var(--primary); }
-.tcgen .cc-act:disabled { opacity: .35; cursor: default; }
-.tcgen .cc-act:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-@media (pointer: coarse) { .tcgen .cc-act { height: 40px; min-width: 40px; } }

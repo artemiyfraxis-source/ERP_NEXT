@@ -1,1 +1,0 @@
-"""Procurement bounded context."""

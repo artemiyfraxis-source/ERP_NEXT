@@ -1,9 +1,0 @@
-{
- "exportedAt": "2026-10-04T18:00:00.000Z",
- "source": "синтетическая выгрузка для репетиции запуска (tests/workflows/test_launch_rehearsal.py)",
- "sheets": {
-  "ЦАР": {"file": "ЦАР.csv", "rows": 5, "cols": 21},
-  "ЖУК": {"file": "ЖУК.csv", "rows": 2, "cols": 23},
-  "СПИСАНИЕ": {"file": "СПИСАНИЕ.csv", "rows": 5, "cols": 13}
- }
-}
