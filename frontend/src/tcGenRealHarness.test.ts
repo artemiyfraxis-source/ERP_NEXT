@@ -13,6 +13,12 @@ import { BARE, D, DSA, end, fullHarness, harness, id, R } from "./tcGenRealHarne
 // Чертёж заказчика «Жгут НВ4» (tcGenRealHarness.fixture.ts) — набран руками через генератор.
 const termOf = (data: GenData, S: GenState) => S.endpoints.map((e) => `${e.label || e.id}:${makeGen(data, S).getCompById(e.termId)?.art ?? "—"}`);
 
+it("a cable split over two connectors of one side (one core to each, pins assigned) gets no «соединения по порядку» warning", () => {
+  const S = harness(D), gen = makeGen(D, S);
+  expect(gen.connections_().warnings).toEqual([]);
+  expect(gen.validate().warnings.filter((w) => w.includes("соединения по порядку"))).toEqual([]);
+});
+
 it("a new «Сложная сборка» card starts with no wire configuration: no cables, lengths or twist picked by the generator", () => {
   expect(initState(D).wires.length).toBeGreaterThan(1);
   const S = complexByHand(initState(D));

@@ -93,6 +93,7 @@ export function MarkTable({ enabled, onEnabled, hint, rows, onChange, targets, k
             {options.map((name) => <option key={name} value={name}>{name}</option>)}
             {!options.includes(row.material) && <option value={row.material}>{row.material || "— не задан —"}</option>}
           </select>
+            {row.material.length > 24 && <small className="gen-marks-matname">{row.material}</small>}
             {missing && <small className="tone-warn">нет в справочнике</small>}</td>
           <td><span className="gen-marks-place">
             <select aria-label={`Где ${n}`} value={row.place} onChange={(event) => set(index, { place: event.target.value as MarkPlace })}>

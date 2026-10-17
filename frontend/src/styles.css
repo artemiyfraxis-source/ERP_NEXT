@@ -1457,7 +1457,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks-head .muted { font-size: 12px; }
 .tcgen .gen-marks-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .tcgen .gen-marks .gtable-wrap { max-height: none; overflow-x: auto; }
-.tcgen .gen-marks .gtable { table-layout: fixed; min-width: 640px; }
+.tcgen .gen-marks .gtable { table-layout: fixed; min-width: 700px; }
 .tcgen .gen-marks .gtable td { padding: 3px 4px; vertical-align: top; }
 .tcgen .gen-marks .gtable td:first-child { padding: 9px 6px 0 10px; color: var(--muted-foreground); }
 .tcgen .gen-marks .gtable input, .tcgen .gen-marks .gtable select { width: 100%; height: 28px; }
@@ -1473,7 +1473,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks col.c-n { width: 30px; }
 .tcgen .gen-marks col.c-target { width: 120px; }
 .tcgen .gen-marks col.c-text { width: auto; }
-.tcgen .gen-marks col.c-mat { width: 124px; }
+.tcgen .gen-marks col.c-mat { width: 184px; }
 .tcgen .gen-marks col.c-place { width: 120px; }
 .tcgen .gen-marks col.c-qty { width: 50px; }
 .tcgen .gen-marks col.c-len { width: 58px; }
@@ -1481,15 +1481,16 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .gen-marks .gtable td:last-child { padding-left: 2px; padding-right: 2px; }
 @container (min-width: 900px) {
   .tcgen .gen-marks .gtable th { padding: 6px 8px; }
-  .tcgen .gen-marks col.c-target { width: 17%; }
-  .tcgen .gen-marks col.c-mat { width: 14%; }
-  .tcgen .gen-marks col.c-place { width: 18%; }
+  .tcgen .gen-marks col.c-target { width: 14%; }
+  .tcgen .gen-marks col.c-mat { width: 21%; }
+  .tcgen .gen-marks col.c-place { width: 16%; }
   .tcgen .gen-marks col.c-qty { width: 64px; }
   .tcgen .gen-marks col.c-len { width: 84px; }
   .tcgen .gen-marks col.c-x { width: 32px; }
   .tcgen .gen-marks-place > select { flex: 3 1 0; }
   .tcgen .gen-marks-place > :not(select) { flex: 2 1 0; }
 }
+.tcgen .gen-marks .gen-marks-matname { display: block; padding: 1px 2px 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
 .tcgen .gen-marks-place { display: flex; flex-wrap: wrap; gap: 4px; }
 .tcgen .gen-marks-place > * { flex: 1 1 100%; min-width: 0; }
 .tcgen .gen-marks .btn-x { width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--muted-foreground); font-size: 16px; cursor: pointer; }
