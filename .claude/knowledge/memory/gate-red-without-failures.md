@@ -15,11 +15,10 @@ metadata:
   never created. It also calls `gc.collect()` before deleting that dir, otherwise open SQLite files keep it
   locked. If exit 1 comes back with green tests, check that conftest first.
 - `npm run check` is one `&&` chain — it stops at the first red stage, so backend/frontend never run after an
-  architecture drift failure; run the stages separately to get real counts.
-- Architecture drift tests only go red for modules whose `SOURCE.json` `sourceRef` is a moving branch (`main`):
-  production and the techcards operation library/grapher. Side-branch, sha-pinned, stale `origin/main` and
-  `merge-base --is-ancestor` checks never fail — the SessionStart hook is the only drift signal for the other 9.
+  architecture failure; run the stages separately to get real counts.
+- SUPPLYMAP drift is no longer a thing: since 05.10.2026 the architecture tests only check module boundaries and that
+  each `SOURCE.json` keeps its frozen `sourceCommit` (nothing reads `../SUPPLYMAP`); the drift hook is not wired.
+  History of the old drift checks: `docs/audit/codex-port.md`.
 
-**Why:** a green architecture suite is not evidence of no drift.
-**How to apply:** judge drift from the hook output, not from `npm test`. Full audit: `docs/audit/codex-port.md`
-(commit b04dfd2).
+**Why:** exit 1 with green tests wastes a debugging round. **How to apply:** check conftest first, then run the
+stages one by one. Hub: [[erp-next-hub]].
