@@ -183,7 +183,9 @@ def test_copy_of_an_edited_record_survives_a_forced_reload(operation_library_api
     assert kept["document"]["steps"][0]["text"] == "Новый шаг"
 
 
-def test_issued_etk_keeps_its_document_when_the_card_template_is_edited(operation_library_api):
+def test_issued_etk_shows_the_edited_template_live_and_keeps_its_stored_revision(operation_library_api):
+    """Owner 17.10: an operation card taken without changes comes from the library, not a copy — a template edit is
+    seen in the issued ETK at once, without a rebuild; the stored document and its revision stay as they were."""
     _seed(operation_library_api, [_template("cut-wire", "CUT_WIRE")])
     card = operation_library_api.post("/api/techcards/operations", json={
         "code": "NEW_OP", "name": "Новая", "copy_of": "CUT_WIRE",
@@ -207,6 +209,11 @@ def test_issued_etk_keeps_its_document_when_the_card_template_is_edited(operatio
     edited = operation_library_api.put(f"/api/techcards/templates/{card['id']}", json=EDIT)
     after = operation_library_api.get(f"/api/techcards/projects/{created['id']}").json()
 
+    revisions = operation_library_api.get(f"/api/techcards/projects/{created['id']}/revisions").json()["items"]
+
     assert edited.status_code == 200 and edited.json()["document"]["steps"][0]["text"] == "Новый шаг"
-    assert after["document"] == issued.json()["document"]
+    shown = after["document"]["operations"][0]
+    assert shown["card"]["steps"][0]["text"] == "Новый шаг"
+    assert shown["card_source"] == "template" and shown["card_changed_at"].startswith("2026-")
     assert (after["version"], after["revision"]) == (issued.json()["version"], issued.json()["revision"])
+    assert revisions[-1]["document"]["operations"][0]["card"]["steps"][0]["text"] == "Выполнить операцию"

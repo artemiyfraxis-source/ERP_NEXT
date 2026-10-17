@@ -28,6 +28,7 @@ import { EtkHarnessE4, wireMapModel } from "./EtkHarnessE4";
 import { etkLinkScheme } from "./etkLinkScheme";
 import { LinkSchemeView, type LinkScheme } from "./PinoutLinks";
 import { EtkPfList } from "./EtkPfList";
+import { ETK_TO_TEMPLATE_CONFIRM, etkCardSourceNote } from "./etkCardSource";
 
 /* Электронная ТК сборки проекта и её генератор — вкладки «Генератор» и «ТК КБn» карточки проекта (SUPPLYMAP
    PortalApp kitCardRender_ → mountGen_ / renderTc_ → renderEtk_). */
@@ -53,6 +54,9 @@ type EtkOperation = {
   connector?: string;
   connector_article?: string;
   edited?: { at?: string; by?: string };
+  /** Откуда карточка (backend etk_live): шаблон из базы, правка в этой ТК, копия на момент сборки. */
+  card_source?: string;
+  card_changed_at?: string;
   card?: null | { name?: string; safety?: string; defects?: string; steps?: EtkStep[]; tooling?: EtkTool[] };
   components?: EtkRow[];
   semis?: EtkRow[];
@@ -334,6 +338,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
         <h3>{etkTitle(operation)}{operation.connector && !/^\d+$/.test(operation.connector) && <span className="etk-conn"> — {operation.connector}</span>}</h3>
         <small>{opCode(operation) && <><code>{opCode(operation)}</code> · </>}операция {number} из {total}
           {operation.edited && <b className="tr-edited"> · правлена {operation.edited.at}{operation.edited.by ? ` · ${operation.edited.by}` : ""}</b>}</small>
+        {etkCardSourceNote(operation) && <small className="etk-card-source">{etkCardSourceNote(operation)}</small>}
       </div>
       {actions}
     </header>
@@ -570,14 +575,15 @@ export function focusOperations(list: EtkOperation[], focus?: EtkFocus): number[
 /** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_).
  *  В задании монтажника (`task`) — только операция задания: без списка операций слева, без «← Назад / Далее» и
  *  полосы маршрута (владелец 13.10: «слева не должно быть следующих операций»). */
-function EtkView({ card, canEdit, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false }: {
-  card: ProjectTechcard; canEdit: boolean; onSaved: (updated: ProjectTechcard) => void; onRouteSaved: (updated: ProjectTechcard) => void;
+function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false }: {
+  card: ProjectTechcard; canEdit: boolean; canTemplate?: boolean; onSaved: (updated: ProjectTechcard) => void; onRouteSaved: (updated: ProjectTechcard) => void;
   sketches: OperationSketch[]; onSketches: () => void; sketchUrl: (key: string, at: string) => string; focus?: EtkFocus;
   task?: boolean;
 }) {
   const list = operations(card.document);
   const [selected, setSelected] = useState(() => focusIndex(list, focus));
   const [editing, setEditing] = useState(false);
+  const [toTemplate, setToTemplate] = useState(false);
   const main = useRef<HTMLDivElement>(null);
   if (!list.length) return null;
   const index = Math.min(selected, list.length - 1);
@@ -613,11 +619,13 @@ function EtkView({ card, canEdit, onSaved, onRouteSaved, sketches, onSketches, s
   }
 
   async function save(draft: OperationRecordEdit) {
+    if (toTemplate && !window.confirm(ETK_TO_TEMPLATE_CONFIRM)) throw new Error("Не сохранено — правка в шаблон отменена");
     const updated = await techcardsApi.editOperation(card.id, card.version, etkOperationKey(operation), {
       ...operation,
       card: { ...operation.card, safety: draft.safety, defects: draft.defects, steps: draft.steps, tooling: draft.tooling },
-    });
+    }, toTemplate);
     setEditing(false);
+    setToTemplate(false);
     onSaved(updated);
   }
 
@@ -639,6 +647,9 @@ function EtkView({ card, canEdit, onSaved, onRouteSaved, sketches, onSketches, s
         nameEditable={false}
         initial={editDraft(etkTitle(operation) + (operation.connector ? ` — ${operation.connector}` : ""), operation.card)}
         saveNote={`Сохранение — ревизия ${card.revision + 1}`}
+        extra={canTemplate && record(operation).template_id && operation.card_source !== "snapshot" ? <label className="tc-to-template">
+          <input type="checkbox" checked={toTemplate} onChange={(event) => setToTemplate(event.target.checked)} /> Сохранить также в шаблон
+        </label> : null}
         context={editContext(operation, String(record(card.document?.kit).part_quantity ?? ""),
           uploaded ? sketchUrl(etkOperationKey(operation), uploaded.uploaded_at) : "")}
         onCancel={() => setEditing(false)}
@@ -734,7 +745,7 @@ export function EtkSheet({ card, principal, title, focus, task = false, taskId, 
       {warnings(card.document).map((warning) => <div key={warning}>{warning}</div>)}</details>}
     <HarnessView value={topology(card.document)} list={list} connections={etkConnectionRows(card.document?.connections)}
       raw={card.document?.connections} scheme={linkScheme} task={task ? { project: card.project, index: card.item_index, taskId } : undefined} />
-    <EtkView key={card.id} card={card} canEdit={canEdit} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
+    <EtkView key={card.id} card={card} canEdit={canEdit} canTemplate={principal.permissions.erptctpl === "edit"} focus={focus} task={task} sketches={sketches} onSketches={loadSketches} sketchUrl={source.url} onSaved={(updated) => {
       onChange(updated);
       setNotice(`Операция сохранена${updated.status === "Выдана" ? ` · ревизия ${updated.revision}` : ""}`);
     }} onRouteSaved={(updated) => {

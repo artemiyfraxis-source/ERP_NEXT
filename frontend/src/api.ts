@@ -3430,10 +3430,11 @@ export const techcardsApi = {
     api<{ dropped: boolean }>(`/api/techcards/template-sheets/drafts/${draftId}`, { method: "DELETE" }),
   deleteTemplateSheet: (templateId: string) =>
     api<{ deleted: boolean; id: string; title: string }>(`/api/techcards/template-sheets/${encodeURIComponent(templateId)}`, { method: "DELETE" }),
-  editOperation: (cardId: string, version: number, operationKey: string, operation: Record<string, unknown>) =>
+  /** «Править операцию»; `toTemplate` — «Сохранить также в шаблон»: правка уходит и в шаблон операции. */
+  editOperation: (cardId: string, version: number, operationKey: string, operation: Record<string, unknown>, toTemplate = false) =>
     api<ProjectTechcard>(`/api/techcards/projects/${cardId}/operations/${encodeURIComponent(operationKey)}`, {
       method: "PUT",
-      body: JSON.stringify({ version, operation }),
+      body: JSON.stringify(toTemplate ? { version, operation, to_template: true } : { version, operation }),
     }),
   /** «Сохранить ПФ»: операции ЭТК по полуфабрикатам (блоки схемы, порядок операций в блоке — порядок работы). */
   saveRoute: (cardId: string, version: number, route: Record<string, unknown>) =>
