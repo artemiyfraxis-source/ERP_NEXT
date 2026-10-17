@@ -18,7 +18,7 @@ import { CoaxConnectors } from "./CoaxConnectors";
 import { StockLinksJournal } from "./StockLinksJournal";
 import { ReferenceRoundtrip } from "./ReferenceRoundtrip";
 import {
-  MATERIAL_FALLBACK, MATERIAL_GROUP_FIELD, MATERIAL_TABS, isMaterialTab, materialCounts, materialRows, type MaterialTab,
+  MATERIAL_TABS, isMaterialTab, materialCounts, materialRows, type MaterialTab,
 } from "./materialSections";
 import { operationCardCount } from "./TechcardsPage";
 import { cleanHeader, fieldTitle, headerLabel, terFieldHint, valueLabel } from "./referenceLabels";
@@ -79,7 +79,6 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
   // 15.10.2026: вкладку «Материалы» расформировать — каждая строка БД.МАТ в одной вкладке по назначению (materialSections.ts).
   { title: "Материалы", tabs: [
     { id: "cov", label: "Оболочки" },
-    { id: "mat_fix", label: MATERIAL_TABS.mat_fix.label },
     { id: "mat_use", label: MATERIAL_TABS.mat_use.label },
   ] },
   { title: "Соответствия", tabs: [
@@ -91,7 +90,7 @@ const GROUPS: Array<{ title: string; tabs: TabDef[] }> = [
 const CABLE_TABS: Record<CableTab, CableKind> = { cab_coax: "coax", cab_wire: "wire", cab_multi: "multi", cab_other: "other" };
 // Keys of the tabs these replaced (saved tab, `initialTab`): «Провода и кабели» → монтажные, «Коаксиальные кабели:
 // D1 · D2 · D3» → коаксиальные кабели; «Материалы» (15.10.2026) → «Оболочки», куда ушла бóльшая часть строк.
-const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire", mat: "cov" };
+const TAB_ALIASES: Partial<Record<string, DbTab>> = { prov: "cab_wire", kab_coax: "cab_coax", kab_awg: "cab_wire", mat: "cov", mat_fix: "mat_use", mat_seal: "mat_use", mat_sleeve: "mat_use" };
 const MAP_TABS: Record<MapTab, { keyLabel: string; valueLabel: string }> = {
   suppliers: { keyLabel: "Домен или ссылка", valueLabel: "Поставщик" },
   countries: { keyLabel: "Изготовитель", valueLabel: "Страна" },
@@ -472,7 +471,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     ? [["Без высоты обжима", fieldOf("высота обжима проводника", "tercrimpheight")], ["Без аппликатора", fieldOf("аппликатор", "terapplicator")]]
     : techTab === "mat" ? [["Без производителя", fieldOf("производитель")], ["Без поставщика", fieldOf("поставщик")]] : [];
   // «Расходники» take every row whose «Группа» names no tab — «Без группы» finds the empty ones to sort out.
-  if (matTab === MATERIAL_FALLBACK) presetFields.unshift([NO_GROUP, MATERIAL_GROUP_FIELD]);
   // Порядок по умолчанию: материалы — по группам листа (ТУТ, лента, стяжка…), внутри — по названию с числами как числа;
   // терминалы — по серии разъёмов (владелец 16.10.2026: «группировку по серии, а не по производителю»; terminalSeries.ts),
   // группы по имени (производитель, серия), «Без серии» в конце, внутри — по артикулу.

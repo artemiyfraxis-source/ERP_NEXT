@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ReferencesPage } from "./ReferencesPage";
+import { ReferencesPage, type DbTab } from "./ReferencesPage";
 import type { Principal, TechOperationRecord } from "./api";
 
 /* «База данных» по всей базе (владелец 14.10: «пройдись по базе в целом, улучши её»): правка ячеек по месту тем же
@@ -36,6 +36,8 @@ const MAT = [
   rec("m8", "mat", { Наименование: "Нечто без группы", Группа: "", Производитель: "", Цвет: "", Закупок: "0", Поставщик: "" }),
   rec("m9", "mat", { Наименование: "Нечто новое", Группа: "что-то новое", Производитель: "", Цвет: "", Закупок: "0", Поставщик: "" }),
   rec("m10", "mat", { Наименование: "Уплотнитель MCP", Группа: "уплотнитель", Производитель: "TE", Цвет: "", Закупок: "1", Поставщик: "" }),
+  rec("m11", "mat", { Наименование: "Припой ПОС61 1,0 мм", Группа: "припой/флюс", Производитель: "Felder", Цвет: "", Закупок: "3", Поставщик: "chipdip.ru" }),
+  rec("m12", "mat", { Наименование: "Флюс ФКСп", Группа: "припой/флюс", Производитель: "", Цвет: "", Закупок: "0", Поставщик: "" }),
 ];
 // «Оболочки» — the server's classifier: the shrink tubes and the tape.
 const COVERED = ["m2", "m3", "m4"];
@@ -168,43 +170,29 @@ it("Терминалы: a viewer gets no editable cells, no «+ Столбец»
   expect(screen.queryByRole("button", { name: /^Удалить столбец/ })).toBeNull();
 });
 
-it("«Материалы» расформированы: «Крепёж и тройники» — by the sheet's group, natural order; the name, group and purchases are not cells to edit; chips «Без …»", async () => {
+it("«Расходники» — only solders and fluxes (owner 17.10): other groups are in no tab; the name, group and purchases are not cells to edit; chips «Без …»", async () => {
   const calls = mockDb();
-  render(<ReferencesPage principal={admin} initialTab="mat_fix" />);
-  await screen.findByText("Стяжка 100 мм");
+  render(<ReferencesPage principal={admin} initialTab={"mat_fix" as DbTab} />); // the old key opens «Расходники»
+  await screen.findByText("Припой ПОС61 1,0 мм");
   const groups = screen.getAllByRole("row").filter((row) => row.classList.contains("group-row")).map((row) => row.textContent);
-  expect(groups).toEqual(["стяжка · 2", "хомут · 1"]);
-  const names = screen.getAllByRole("row").filter((row) => !row.classList.contains("group-row")).map((row) => row.textContent ?? "").filter((text) => text.startsWith("Стяжка "));
-  expect(names[0]).toMatch(/^Стяжка 3x60/); // 3x60 до 100 мм: числа как числа
-  // the coverings and the other purposes are in their own tabs
-  for (const elsewhere of ["ТУТ 2/1", "Изолента", "Клей БФ-4", "Уплотнитель MCP"]) expect(screen.queryByText(elsewhere)).toBeNull();
+  expect(groups).toEqual(["припой/флюс · 2"]);
+  for (const elsewhere of ["ТУТ 2/1", "Изолента", "Клей БФ-4", "Уплотнитель MCP", "Стяжка 3x60", "Нечто без группы", "Нечто новое"]) expect(screen.queryByText(elsewhere)).toBeNull();
 
   expect(headers()).not.toContain("Группа"); // группа — заголовок группы строк, не колонка
-  for (const fixed of ["Наименование", "Закупок"]) expect(cellOf("Стяжка 3x60", fixed)).not.toHaveClass("dt-editable");
+  for (const fixed of ["Наименование", "Закупок"]) expect(cellOf("Припой ПОС61 1,0 мм", fixed)).not.toHaveClass("dt-editable");
   expect(screen.getByRole("button", { name: "+ Столбец" })).toBeInTheDocument();
-  typeInCell(cellOf("Стяжка 3x60", "Цвет"), "белый");
-  await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({ edits: [{ field: "Цвет", old: "чёрный", value: "белый" }] }));
+  typeInCell(cellOf("Припой ПОС61 1,0 мм", "Производитель"), "Изагри");
+  await waitFor(() => expect(calls.find((call) => call.method === "PATCH")?.body).toEqual({ edits: [{ field: "Производитель", old: "Felder", value: "Изагри" }] }));
 
   fireEvent.click(screen.getByRole("button", { name: /^Без производителя · 1/ }));
-  expect(screen.getByText("Стяжка 100 мм")).toBeInTheDocument();
-  expect(screen.queryByText("Хомут 3x300мм")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: /^Без поставщика · 2/ }));
-  expect(screen.getByText("Хомут 3x300мм")).toBeInTheDocument();
-  expect(screen.queryByText("Стяжка 3x60")).toBeNull();
-});
+  expect(screen.getByText("Флюс ФКСп")).toBeInTheDocument();
+  expect(screen.queryByText("Припой ПОС61 1,0 мм")).toBeNull();
 
-it("«Расходники» take the groups no tab names, «Без группы» finds the empty ones; every БД.МАТ row is counted in one tab", async () => {
-  mockDb();
-  render(<ReferencesPage principal={admin} initialTab="mat_use" />);
-  await screen.findByText("Клей БФ-4");
-  expect(screen.getByText("Нечто новое")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: /^Без группы · 1/ }));
-  expect(screen.getByText("Нечто без группы")).toBeInTheDocument();
-  expect(screen.queryByText("Клей БФ-4")).toBeNull();
   const nav = screen.getByRole("navigation", { name: "Вкладки базы данных" });
   const count = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name}`) }).querySelector(".db-tab-count")?.textContent;
   await waitFor(() => expect(count("Оболочки")).toBe("3"));
-  expect([count("Крепёж и тройники"), count("Расходники")]).toEqual(["3", "4"]); // уплотнитель — в «Расходниках»
+  expect(count("Расходники")).toBe("2");
+  expect(within(nav).queryByRole("button", { name: /^Крепёж и тройники/ })).toBeNull();
 });
 
 it("Домен → поставщик: sorted by domain with new empty rows last; a column pasted from Excel fills every row before one save", async () => {
