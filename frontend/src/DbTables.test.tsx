@@ -204,7 +204,7 @@ it("«Расходники» take the groups no tab names, «Без группы
   const nav = screen.getByRole("navigation", { name: "Вкладки базы данных" });
   const count = (name: string) => within(nav).getByRole("button", { name: new RegExp(`^${name}`) }).querySelector(".db-tab-count")?.textContent;
   await waitFor(() => expect(count("Оболочки")).toBe("3"));
-  expect([count("Крепёж и тройники"), count("Расходники"), count("Уплотнители и заглушки"), count("Гильзы и втулки")]).toEqual(["3", "3", "1", "0"]);
+  expect([count("Крепёж и тройники"), count("Расходники")]).toEqual(["3", "4"]); // уплотнитель — в «Расходниках»
 });
 
 it("Домен → поставщик: sorted by domain with new empty rows last; a column pasted from Excel fills every row before one save", async () => {

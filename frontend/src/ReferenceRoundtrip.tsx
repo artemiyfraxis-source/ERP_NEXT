@@ -24,8 +24,6 @@ const TARGETS: Record<string, { table: string; kind?: string }> = {
   mat: { table: "mat" },
   // «Материалы» расформированы (15.10.2026): вкладки по назначению выгружают всю БД.МАТ — файл тот же, строки по ID.
   mat_fix: { table: "mat" },
-  mat_seal: { table: "mat" },
-  mat_sleeve: { table: "mat" },
   mat_use: { table: "mat" },
   suppliers: { table: "suppliers" },
   countries: { table: "countries" },
