@@ -257,9 +257,13 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("connfly-ds1071-01", "Connfly DS1071-01 (Dupont 2,0)", r"^I-DS1071-01-SC[A-Z]0?(\d)X0?(\d{1,2})", 2.0, grid=True,
             order="col", start="TR", color=BLACK,
             note="на чертеже Connfly DS1071-01 корпус симметричный, без ключа и метки контакта 1 — вставляется любой стороной"),
-    # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing, front view of the housing: 6 … 1 moulded at the wire end, but
-    # the drawing does not say which end that view shows, so the numbering stays unchecked.
-    _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", note=UNCHECKED),
+    # KLS L-KLS1-2.50-XX-H (2,5 мм, тип JST ZH) — KLS drawing (chipdip copy, third angle, re-read 17.10.2026): the front view
+    # is the face with the lance windows and the ▽ mark at its right end; the view below it is the wire end (the rim, the
+    # crimp-contact entries) with «6 … 1», «1» at the right, the window face at its top edge; the side view puts the lock
+    # bump on the opposite face. Windows up -> contact 1 on the right; lock bump up -> on the LEFT, the same as JST ZH.
+    _family("kls-2-50", "KLS KLS1-2.50", r"^L-KLS1-2\.50-(\d{2})-H$", 2.5, latch="ramp", conf="high",
+            src="KLS L-KLS1-2.50-XX-H, чертёж",
+            note="по чертежу KLS L-KLS1-2.50-XX-H: на торце проводов «1» справа при грани с окнами сверху; выступом защёлки (обратная грань) вверх — контакт 1 слева, как у JST ZH"),
     # Molex Pico-EZmate 78172 — 78172-0002…0005 (Molex part sheets 78172-0002 / -0004, Farnell, Heilind) and 78172-5006 /
     # -5007 (6 and 7 circuits, Molex series chart 78172; drawing SD-78172-001). The part sheets print no circuit numbers and
     # the sales drawing SD-78172-007 did not open, so the numbering stays unchecked.
