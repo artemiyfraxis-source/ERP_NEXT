@@ -174,4 +174,25 @@ describe("defect picture library", () => {
       expect(panels[0]).not.toEqual(panels[1]);
     }
   });
+  it("draws every defect of the marking-tube card (INS_MARK_TUBE_AUTO) with its own printed-tube scene, never «!»", () => {
+    const code = "INS_MARK_TUBE_AUTO";
+    expect(defectContext(code)).toBe("markAuto");
+    const cases: Array<[string, string]> = [
+      ["Текст не соответствует КД", "autoText"], ["Нечитаемый текст", "autoBlur"], ["Текст сдвинут", "autoShift"],
+      ["Длина вне допуска по КД", "autoLength"], ["Косой или рваный рез", "autoCut"], ["Загрязнение и деформация", "autoDirt"],
+      ["Не тот типоразмер или цвет", "autoSize"], ["Отрезки разных текстов смешаны в одной таре", "autoMix"],
+    ];
+    for (const [name, scene] of cases) {
+      expect([name, defectSceneId(name, "", code)]).toEqual([name, scene]);
+      expect(defectArt(name, "", code)).not.toContain('data-scene="generic"');
+      const panels = [...defectSceneArt(scene).matchAll(/<svg x="[^"]+" y="1" [^>]*>(.*?)<\/svg>/g)].map((m) => m[1]);
+      expect(panels).toHaveLength(2);
+      expect(panels[0]).not.toEqual(panels[1]); // норма и брак различаются
+    }
+    // Сцены только у этой карты: те же слова у других операций рисуются прежними картинками.
+    expect(defectSceneId("Нечитаемый текст", "", "INS_MARK")).toBe("markText");
+    expect(defectSceneId("Длина вне допуска", "", "CUT_TUT_auto")).toBe("tubeLength");
+    expect(defectSceneId("Косой рез", "", "CUT_TUT_auto")).toBe("tubeSkew");
+    expect(defectSceneId("Загрязнение и деформация", "", "CUT_WIRE_auto")).not.toBe("autoDirt");
+  });
 });

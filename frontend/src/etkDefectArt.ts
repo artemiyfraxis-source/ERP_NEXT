@@ -12,7 +12,7 @@ const PLAST = "#efe6cf", PLAST_E = "#8a7d5c";
 const TUBE = "#3b4147";
 const RED = "#d93025", GREEN = "#188038", MUTED = "#5f7470";
 
-type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "coaxAsm" | "coaxCrimp" | "tin" | "crimp" | "lug" | "solder" | "shrink" | "mark"
+type Ctx = "cut" | "tube" | "strip" | "coax" | "coaxSolder" | "coaxAsm" | "coaxCrimp" | "tin" | "crimp" | "lug" | "solder" | "shrink" | "mark" | "markAuto"
   | "assembly" | "mold" | "weld" | "other" | MarkCtx;
 /** Маркировка по видам меток (etk_marking, владелец 12.10): своя группа дефектов на вид — свои рисунки. */
 type MarkCtx = "markFlag" | "markHeat" | "markPvc" | "markTag" | "markRing" | "markPrint";
@@ -349,6 +349,62 @@ const MARK_SCENES: Record<string, () => Scene> = {
     ng: ins(4, 112, 34, 14) + text(58, 37.5, "X1-3", "#a9b4ba", 9, "middle", 700) + path("M44,36 q7,-6 14,0 t14,0", "none", "#c3cbd0", 2.4) +
       mark(58, 34, 18, 10) + text(58, 62, "стёрлась", RED),
   }),
+};
+
+// ── печать и резка маркировочной трубки (INS_MARK_TUBE_AUTO, маркиратор ZCUT-RT660; владелец 17.10): светлые отрезки с
+// напечатанным текстом, не тёмная трубка резки ────────────────────────────────────────────────────────────────
+/** Отрезок маркировочной трубки с текстом x1..x2 (y 34, высота 15) — уже отрезанный, без провода. */
+const autoPiece = (x1: number, x2: number, o: Ink & { y?: number; h?: number } = {}) => {
+  const y = o.y ?? 34, h = o.h ?? 15;
+  return rect(x1, y - h / 2, x2 - x1, h, LABEL, ` rx="3" stroke="${LABEL_E}" stroke-width=".8"`) +
+    rect(x1 + 2, y - h / 2 + 1.6, x2 - x1 - 4, 1.8, "#fff", ` rx="1" opacity=".7"`) + inscription((x1 + x2) / 2, y + 3.2, o);
+};
+const AUTO_TEXT = "A6";
+const MARK_AUTO_SCENES: Record<string, () => Scene> = {
+  autoText: () => ({
+    ok: autoPiece(30, 86, { text: AUTO_TEXT }) + text(58, 60, "текст по КД", GREEN),
+    ng: autoPiece(30, 86, { text: "A9", ink: RED }) + mark(58, 34, 24, 12) + text(58, 60, "по КД: A6", RED),
+  }),
+  autoBlur: () => ({
+    ok: autoPiece(30, 86, { text: AUTO_TEXT }) + text(58, 60, "печать чёткая", GREEN),
+    ng: autoPiece(30, 86, { text: AUTO_TEXT, blur: true }) + mark(58, 34, 24, 12) + text(58, 60, "смазано, бледно", RED),
+  }),
+  autoShift: () => ({
+    ok: autoPiece(24, 92, { text: AUTO_TEXT }) + line(58, 20, 58, 48, GREEN, 0.7, ' stroke-dasharray="3 2"') + text(58, 60, "по центру отрезка", GREEN),
+    ng: rect(24, 26.5, 68, 15, LABEL, ` rx="3" stroke="${LABEL_E}" stroke-width=".8"`) + text(82, 37.2, AUTO_TEXT, E, 8.5, "middle", 700) +
+      line(92, 20, 92, 48, RED, 1, ' stroke-dasharray="2 2"') + mark(84, 34, 12, 12) + text(58, 60, "у самого реза", RED),
+  }),
+  autoLength: () => ({
+    ok: autoPiece(20, 96, { text: AUTO_TEXT }) + dim(20, 96, 54, "L по КД", GREEN),
+    ng: autoPiece(20, 70, { text: AUTO_TEXT }) + rect(70, 26.5, 26, 15, "none", ` rx="3" stroke="${RED}" stroke-dasharray="3 2"`) + dim(20, 70, 54, "L ≠ КД", RED),
+  }),
+  autoCut: () => ({
+    ok: autoPiece(14, 92, { text: AUTO_TEXT }) + text(58, 58, "торец ровный, под 90°", GREEN),
+    ng: path("M14,26.5 L96,26.5 L91,29.5 L93.5,32.5 L88,35.5 L89,38.5 L80,41.5 L14,41.5 z", LABEL, LABEL_E, 0.8, ' stroke-linejoin="round"') +
+      text(50, 37.2, AUTO_TEXT, E, 8.5, "middle", 700) + mark(88, 34, 11, 12) + text(58, 58, "косой, рваный рез", RED),
+  }),
+  autoDirt: () => ({
+    ok: autoPiece(30, 86, { text: AUTO_TEXT }) + text(58, 60, "чистая, ровная", GREEN),
+    ng: autoPiece(30, 86, { text: AUTO_TEXT }) + `<ellipse cx="44" cy="31" rx="5" ry="2.4" fill="#5c6166" opacity=".55"/>` +
+      `<ellipse cx="74" cy="38" rx="4" ry="2" fill="#5c6166" opacity=".55"/>` + path("M56,26.5 q4,5.5 8,0", "#e8e8e4", "#8a8f94", 1) +
+      mark(58, 34, 28, 12) + text(58, 60, "следы ленты, вмятины", RED),
+  }),
+  autoSize: () => ({
+    ok: ins(4, 112, 34, 9) + autoPiece(38, 82, { text: AUTO_TEXT }) + text(58, 60, "размер и цвет по КД", GREEN),
+    ng: ins(4, 112, 34, 7) + rect(34, 21, 52, 26, "#f2c200", ` rx="4" stroke="${E}" stroke-width=".8"`) + text(60, 37.5, AUTO_TEXT, E, 9, "middle", 700) +
+      mark(60, 34, 30, 17) + text(58, 62, "не тот размер и цвет", RED),
+  }),
+  autoMix: () => {
+    const piece = (x: number, y: number, label: string, ink = E) =>
+      rect(x, y, 24, 10, LABEL, ` rx="2" stroke="${LABEL_E}" stroke-width=".7"`) + text(x + 12, y + 7.2, label, ink, 7, "middle", 700);
+    const tray = rect(10, 24, 96, 32, "#e3e6e8", ` rx="3" stroke="${E}" stroke-width=".8"`) + rect(10, 24, 96, 5, "#c9ced2", ` rx="2"`);
+    return {
+      ok: tray + piece(16, 32, AUTO_TEXT) + piece(44, 32, AUTO_TEXT) + piece(72, 32, AUTO_TEXT) + piece(30, 44, AUTO_TEXT) + piece(58, 44, AUTO_TEXT) +
+        text(58, 68, "в таре один текст", GREEN),
+      ng: tray + piece(16, 32, AUTO_TEXT) + piece(44, 32, "I3", RED) + piece(72, 32, AUTO_TEXT) + piece(30, 44, "C", RED) + piece(58, 44, AUTO_TEXT) +
+        mark(58, 40, 46, 17) + text(58, 68, "тексты вперемешку", RED),
+    };
+  },
 };
 
 // ── коаксиальный кабель (резка, разделка, корпус, втулка экрана; владелец 15.10 о ТК КБ1 796К.2: «картинки говно» —
@@ -983,6 +1039,7 @@ const SCENES: Record<string, () => Scene> = {
     };
   },
   ...MARK_SCENES,
+  ...MARK_AUTO_SCENES,
   ...COAX_SCENES,
   generic: () => ({ ok: "", ng: "" }),
 };
@@ -991,7 +1048,17 @@ const SCENES: Record<string, () => Scene> = {
 type Rule = [string, RegExp, Ctx[]?];
 
 const MARK_TUBES: Ctx[] = ["markHeat", "markPvc"];
+const MARK_AUTO: Ctx[] = ["markAuto"];
 const RULES: Rule[] = [
+  // Печать и резка маркировочной трубки (INS_MARK_TUBE_AUTO): свои рисунки на каждый дефект карты, «!» не остаётся.
+  ["autoText", /^текст не соответств|не соответствует кд/i, MARK_AUTO],
+  ["autoBlur", /нечитаем|смазан|бледн/i, MARK_AUTO],
+  ["autoShift", /сдвинут|смещ/i, MARK_AUTO],
+  ["autoLength", /длина вне допуск|длин/i, MARK_AUTO],
+  ["autoCut", /\sрез|рваный|косой|заусен/i, MARK_AUTO],
+  ["autoDirt", /загрязн|деформац|вмятин/i, MARK_AUTO],
+  ["autoSize", /типоразмер|не тот.*цвет/i, MARK_AUTO],
+  ["autoMix", /разных текстов|смешан|в одной таре/i, MARK_AUTO],
   ["flagText", /не соответств/i, ["markFlag"]],
   ["flagBlur", /нечитаем|смазан/i, ["markFlag"]],
   ["flagShift", /позици|смещ/i, ["markFlag"]],
@@ -1170,6 +1237,7 @@ export function defectContext(code: string): Ctx {
   if (/^SDR_TIN$/.test(c)) return "tin";
   if (/^SDR/.test(c)) return "solder";
   if (/^HEAT|^INS_TUT|_TUT/.test(c)) return "shrink";
+  if (/^INS_MARK_TUBE_AUTO/.test(c)) return "markAuto";
   if (/^INS_MARK|MARK$/.test(c)) return "mark";
   if (/^(MOLD|PLASM)/.test(c)) return "mold";
   if (/^US_WELD/.test(c)) return "weld";

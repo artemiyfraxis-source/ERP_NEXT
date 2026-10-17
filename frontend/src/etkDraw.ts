@@ -2,7 +2,7 @@
 // Одни и те же строки идут и на экран (блок «Эскиз»), и в печать (etkPrint.ts): печатное окно — отдельный
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
-import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, wireColor, type HousingBody } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
@@ -433,10 +433,38 @@ export function etkTubePieces(operation: Row): EtkTubePiece[] {
   });
 }
 
-/** Нарезанные трубки: планка на вид, длина планки — по длине отрезка. */
+/** Печать и резка маркировочной трубки (INS_MARK_TUBE_AUTO, маркиратор ZCUT-RT660): трубка печатается текстом и режется. */
+const MARK_PRINT_CODE = "INS_MARK_TUBE_AUTO";
+
+/** Текст на отрезке маркировки: «Маркировка «I3»» → «I3»; без кавычек — пусто. */
+export function etkMarkText(label: string): string {
+  return label.match(/[«"]([^»"]+)[»"]/)?.[1].trim() ?? "";
+}
+
+/** Отрезок маркировочной трубки: светлая планка с напечатанным текстом НА трубке (не тёмная трубка резки), число и длина справа. */
+function markPrintFigure(pieces: EtkTubePiece[]): string {
+  const shown = pieces.slice(0, TUBE_ROWS), rowH = 38, top = 16;
+  const lens = shown.map((piece) => Number(piece.len.replace(",", ".")) || 0), longest = Math.max(1, ...lens);
+  let body = "";
+  shown.forEach((piece, at) => {
+    const cy = top + at * rowH + 12, w = lens[at] ? 60 + (140 * lens[at]) / longest : 110, x1 = 20, x2 = x1 + w;
+    const count = Number.isInteger(piece.count) ? String(piece.count) : String(piece.count).replace(".", ",");
+    const printed = etkMarkText(piece.label);
+    body += `<rect x="${x1}" y="${cy - 12}" width="${w}" height="24" rx="5" fill="#fbfaf5" stroke="#8a8f94" stroke-width="1"/>` +
+      `<rect x="${x1 + 4}" y="${cy - 9}" width="${w - 8}" height="3" rx="1.5" fill="#fff" opacity=".8"/>` +
+      (printed ? `<text x="${(x1 + x2) / 2}" y="${cy + 5.5}" text-anchor="middle" font-size="16" font-weight="700" fill="${CX.ink}">${esc(printed)}</text>` : "") +
+      `<text x="${x2 + 12}" y="${cy + 5}" font-size="14" fill="${CX.ink}" font-weight="600">${esc(piece.label)} ×${count}${piece.len ? ` · ${esc(mm(piece.len))}` : ""}</text>`;
+  });
+  const more = pieces.length - shown.length;
+  if (more > 0) body += caption(20, top + shown.length * rowH + 12, `и ещё ${more}`);
+  return svg(640, top + shown.length * rowH + (more > 0 ? 24 : 4), body);
+}
+
+/** Нарезанные трубки: планка на вид, длина планки — по длине отрезка. Маркировочная трубка с печатью — светлые отрезки с текстом. */
 export function etkDrawTubeCut(operation: Row): string {
   const pieces = etkTubePieces(operation);
   if (!pieces.length) return "";
+  if (str(operation.code).toUpperCase().startsWith(MARK_PRINT_CODE) || str(operation.tmplHint).toUpperCase().startsWith(MARK_PRINT_CODE)) return markPrintFigure(pieces);
   const shown = pieces.slice(0, TUBE_ROWS), rowH = 34, top = 14;
   const lens = shown.map((piece) => Number(piece.len.replace(",", ".")) || 0), longest = Math.max(1, ...lens);
   let body = "";
@@ -519,9 +547,10 @@ function housingWarn(hs: EtkHousing): string {
   return hs.conf === "high" ? "" : `⚠ нумерация не сверена с чертежом производителя${hs.note ? ` — ${hs.note}` : ""}`;
 }
 
-/** Монтаж в разъём: торец со стороны проводов крупно, рядом вид корпуса и под ним тот же корпус, развёрнутый видом сверху
- *  (только прямоугольные корпуса; владелец, 16.10: «просто развернуть»), ниже легенда «конт. — провод» (etkDrawHousingOp_).
- *  Без распиновки в генераторе — список проводов «контакт по КД». */
+/** Монтаж в разъём — ровно два вида (владелец 17.10: «оставить два вида: сверху и со стороны монтажа»): торец со стороны
+ *  проводов крупно (номера контактов и цвета проводов) и корпус, развёрнутый видом сверху (только прямоугольные корпуса);
+ *  объёмной картинки здесь нет — она только на лице карточки серии в каталоге. Ниже легенда «конт. — провод»
+ *  (etkDrawHousingOp_). Без распиновки в генераторе — список проводов «контакт по КД». */
 export function etkDrawHousingOp(operation: Row): string {
   const hs = operation.housing as EtkHousing, byPin: Record<number, string> = {}, ws = list(obj(operation.fields).wires);
   ws.forEach((w) => (Array.isArray(w.pins) ? w.pins as number[] : []).forEach((p) => { byPin[p] = str(w.art || w.name); }));
@@ -529,20 +558,21 @@ export function etkDrawHousingOp(operation: Row): string {
   const pictureW = 150, faceArea = W - pictureW - 70;
   const round = hs.kind === "round" || hs.kind === "barrel";
   const s = round ? 22 : Math.max(16, Math.min(46, faceArea / connectorFaceUnits(hs) / 1.15));
-  const g = etkHousingSvg(hs, 0, 0, s, byPin), pic = connectorPicture(hs, pictureW, 110, byPin);
+  const g = etkHousingSvg(hs, 0, 0, s, byPin);
   const x0 = Math.max(24, (faceArea - g.w) / 2 + 12);
   let body = `<text x="20" y="16" font-size="11" fill="#5f7470">${housingCaption(hs)}</text>` +
     (warn ? `<text x="20" y="32" font-size="10.5" fill="#b3261e">${esc(warn.length > 110 ? `${warn.slice(0, 109)}…` : warn)}</text>` : "") +
-    `<g transform="translate(${x0},${top + 6})">${g.body}</g>` +
-    `<g transform="translate(${W - pictureW - 20},${top})">${pic.body}</g>` +
-    `<text x="${W - pictureW / 2 - 20}" y="${top + pic.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">${esc(connectorSummary(hs))}</text>`;
-  let right = pic.h + 18;
-  const view = connectorTopView(hs, pictureW, 110, byPin);
+    `<g transform="translate(${x0},${top + 6})">${g.body}</g>`;
+  let right = 0;
+  const view = connectorTopView(hs, pictureW, 130, byPin);
   if (view) {
-    const vy = top + right + 14;
+    const vy = top + 6;
     body += `<g transform="translate(${W - pictureW / 2 - 20 - view.w / 2},${vy})">${view.body}</g>` +
-      `<text x="${W - pictureW / 2 - 20}" y="${vy + view.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">вид сверху, провода снизу</text>`;
-    right += view.h + 32;
+      `<text x="${W - pictureW / 2 - 20}" y="${vy + view.h + 14}" text-anchor="middle" font-size="10" fill="#5f7470">вид сверху, провода снизу</text>` +
+      `<text x="${W - pictureW / 2 - 20}" y="${vy + view.h + 27}" text-anchor="middle" font-size="10" fill="#5f7470">${esc(connectorSummary(hs))}</text>`;
+    right = view.h + 40;
+  } else {
+    body += `<text x="${W - pictureW / 2 - 20}" y="${top + 30}" text-anchor="middle" font-size="10" fill="#5f7470">${esc(connectorSummary(hs))}</text>`;
   }
   let ly = top + Math.max(g.h + 6, right) + 22;
   const pins = Object.keys(byPin).map(Number).sort((a, b) => a - b);
@@ -705,7 +735,14 @@ export function etkDrawHarness(topo: EtkTopologyData | null | undefined, pins: R
     let ty = p.y + bh - (n.housing ? 38 : 26);
     body += `<rect x="${p.x}" y="${p.y}" width="${bw}" height="${bh}" rx="7" fill="#f3f8f7" stroke="#00706a" stroke-width="1.2"/>`;
     if (n.housing) {
-      const hs = n.housing, g = connectorPicture(hs, bw - 40, picH - 6, pins[`${name}::${n.side || ""}`] || null);
+      // Плоский вид (владелец 17.10: объёмной картинки вне карточки серии нет): корпус сверху, без вида сверху — торец.
+      const hs = n.housing, byPin = pins[`${name}::${n.side || ""}`] || null;
+      let g: { w: number; h: number; body: string } | null = connectorTopView(hs, bw - 40, picH - 6, byPin);
+      if (!g) {
+        const fit = (s: number) => connectorFace(hs, 0, 0, s, byPin);
+        const s0 = Math.min(16, (bw - 40) / connectorFaceUnits(hs)), first = fit(s0);
+        g = first.h > picH - 6 ? fit(s0 * (picH - 6) / first.h) : first;
+      }
       body += `<g transform="translate(${p.x + (bw - g.w) / 2},${p.y + 6 + (picH - g.h) / 2})">${g.body}</g>`;
     } else if (n.kind === "splice") {
       const cx = p.x + bw / 2, cy = p.y + (withHs ? picH / 2 + 8 : (bh - 26) / 2 + 4);
