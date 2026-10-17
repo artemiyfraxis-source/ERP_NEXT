@@ -18,7 +18,7 @@ Reference implementation: `scripts/` — the set approved by the owner and Vasil
 | `build.py` | builds DXF + combined PDF; `--preview` → PNG per page; `--out DIR` → 4 PDFs with proper names |
 
 ## Setup (once per machine)
-`python -m venv %USERPROFILE%\.claude\venvs\eskd` → `...\eskd\Scripts\pip install ezdxf==1.4.4 pymupdf==1.28.2`.
+`python -m venv %USERPROFILE%\.claude\venvs\eskd` → `...\eskd\Scripts\pip install ezdxf==1.4.4 pymupdf==1.28.2 pillow==12.3.0 matplotlib==3.11.2` (ezdxf drawing add-on needs Pillow).
 Run with `-X utf8`: `...\eskd\Scripts\python -X utf8 build.py --preview --out "%USERPROFILE%\Downloads"`.
 Fonts: text style GOST = `isocpeur.ttf`; PDF text is drawn as outlines (no embedded font) — files are ~1,2 MB and an
 outside reviewer's OCR may misread glued numbers («10,5 мм²» = pin «1» + «0,5 мм²»). Check the drawing, not the OCR.
@@ -68,5 +68,9 @@ outside reviewer's OCR may misread glued numbers («10,5 мм²» = pin «1» + 
 - **Spec**: Документация (СБ, Э4) → Прочие изделия (connectors grouped by type, contacts with counts, sleeves) →
   Материалы (wires per mark+colour in metres, tubes in metres, braid) → marking sleeves. The СБ tables reference these
   positions — renumbering the spec means re-checking table 1.
+- **Drawing dimensions ≠ cut lengths.** The drawing gives ASSEMBLY dimensions (connector front face → junction, junction →
+  junction); the techcard gives CUT lengths — they add the wire inside the contact/crimp, strip and splice overlap and the
+  twist take-up (713К.4: branch 120 + trunk 30 on СБ, cut 130 / 137 in ERP — both right). Never rescale СБ dimensions from
+  ERP cut lengths. Only tube lengths, braid piece lengths (spec metres), marking distance and twist pitch go 1:1 into the set.
 - **Agreed deviations** are the owner's call (713К.4: НВ4 0,5 in SYM-001T-P0.6) — state them in TT, never «fix» them.
 - **3D connector pictures** are not used on drawings; ETK/ERP keep their own sketches.
