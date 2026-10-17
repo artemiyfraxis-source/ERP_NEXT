@@ -194,8 +194,14 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("hirose-df20", "Hirose DF20 (2 ряда)", r"^DF20A-(\d+)DS-1C", 1.0, rows=2, order="col", latch="mark", conf="high",
             src="Hirose DF20, каталог, Double Row Socket",
             note="по каталогу Hirose DF20: метка ▽ контакта 1 слева на лицевой грани, Contact No.2 за № 1; ▽ сверху — 1 слева вверху, 2 под ним"),
-    _family("hirose-df61", "Hirose DF61", r"^DF61-(\d+)S-2[.,]2C", 2.2, latch="lever",
-            note="в каталоге Hirose DF61 у корпуса номеров и метки контакта 1 нет — сверить по детали"),
+    # DF61 — EDC3-336116-04 (DF61-2S-2.2C(11), hirose.com API drawing_2d, read 17.10.2026, third angle): the front view is
+    # the face with the lock lever along its middle; the side view puts the lever hook at the top, the catalogue's swing-lock
+    # picture puts that hook at the mating end, so the wire end is the bottom of the front view. The perspective view of
+    # the same face carries the ▽ «Contact No.1 marking» at its RIGHT. From the wire side (bottom view, left and right
+    # kept), lever face up: contact 1 on the RIGHT.
+    _family("hirose-df61", "Hirose DF61", r"^DF61-(\d+)S-2[.,]2C", 2.2, start="TR", latch="lever", conf="high",
+            src="Hirose EDC3-336116-04 (DF61-2S-2.2C)",
+            note="по чертежу Hirose EDC3-336116-04: метка ▽ Contact No.1 справа на грани с рычагом замка; со стороны проводов рычагом вверх — контакт 1 справа"),
     # DF1B — catalogue 01.07.2020 (third angle). The sockets' front view has the mating end UP: the top view shows the
     # square pin entries with lead-in chamfers and the anti-mis-insertion bosses, the in-line socket's lock hook sits
     # near that end and engages the plug's lever inside its 7 mm shroud. The wire end is the bottom view, where the
@@ -220,9 +226,14 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("hirose-df1b-p", "Hirose DF1B (штыревой корпус)", r"^DF1B-(\d+)EP-2[.,]5RC$", 2.5, latch="lever", conf="high",
             src=DF1B_SRC.format("Single Row In-line Plug (Full Lock Type)"),
             note="по каталогу Hirose DF1B: цифры 1…n на торце проводов у грани с рычагом замка; рычагом вверх — контакт 1 слева"),
+    # DEP — EDC3-160056-01 (DF1B-*DEP-2.5RC, hirose.com API drawing_2d, read 17.10.2026, third angle): the top view is the
+    # mating shroud, the front view the lever face; the view under it is the wire end with the lever face at its upper
+    # edge and «CONTACT NO.1» in the lower row at the left, «CONTACT NO.2» above it. From the wire side, lever up:
+    # 1 bottom-LEFT, 2 above it, odd contacts in the row away from the lever. Cross-check: the DES socket turned hook up
+    # and mirrored (face to face) reads the same.
     _family("hirose-df1b-p2r", "Hirose DF1B (штыревой корпус, 2 ряда)", r"^DF1B-(\d+)DEP-2[.,]5RC$", 2.5, rows=2,
-            order="col", latch="lever",
-            note="в каталоге Hirose DF1B у корпуса DEP на торце проводов только метка поляризации, номеров нет — сверить по детали"),
+            order="col", start="BL", latch="lever", conf="high", src="Hirose EDC3-160056-01 (DF1B-*DEP-2.5RC)",
+            note="по чертежу Hirose EDC3-160056-01: на торце проводов рычагом вверх CONTACT NO.1 слева внизу, NO.2 над ним"),
     # DF1BA (simple lock, panel mount) numbers the other way: the wire-end view prints 1, 2, 3 from the RIGHT (DEP:
     # 1, 3, 5 over 2, 4, 6) along the front face that carries the «Contact No1. mark».
     _family("hirose-df1ba-p", "Hirose DF1BA (штыревой корпус, простой замок)", r"^DF1BA-(\d+)EP-2[.,]5RC$", 2.5,
@@ -289,8 +300,13 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-mini50-s", "Molex Mini50 (герметичный 34967)", r"^0?34967-?(\d{4})$", 1.8, start="TR", latch="lever",
             color=BLACK, table=MINI50_SEALED, color_by=((r"4006$", "#c9cccf"),), conf="high", src="Molex 349674001 / 349671001 SD",
             note="по чертежам Molex 349674001 и 349671001: со стороны стыковки замком (CPA) вверх «1» слева; со стороны проводов — контакт 1 справа"),
-    _family("molex-mini50-u", "Molex Mini50 (негерметичный 34791)", r"^0?34791-?(\d{4})$", 1.8, latch="lever", color=BLACK,
-            table=MINI50_UNSEALED, note=NO_DRAWING),
+    # Unsealed 34791 — Molex SD-34791-001 rev. L7 (347910040_sd.pdf, Web Archive, read 17.10.2026), sheet 2 «CIRCUIT ID»:
+    # the mating face (the receptacle terminal boxes in the cavities) with the lock up has «1» moulded at the left and
+    # «4» at the right, as the sealed 34967 sheets (both mate the same 34912 / 34792 / 34793 headers, sheet 4). From the
+    # wire side the view mirrors: lock up, contact 1 on the RIGHT.
+    _family("molex-mini50-u", "Molex Mini50 (негерметичный 34791)", r"^0?34791-?(\d{4})$", 1.8, start="TR", latch="lever",
+            color=BLACK, table=MINI50_UNSEALED, conf="high", src="Molex SD-34791-001 rev. L7",
+            note="по чертежу Molex SD-34791-001: со стороны стыковки замком вверх «1» слева; со стороны проводов — контакт 1 справа"),
     # Hsuan Mao (HSM) — drawings on definum.ru (the HSM distributor; hsuanmao.com does not answer), read 16.10.2026.
     # MX 5.08 — H5080-XXPXW000 rev. A: H5080-NN P Y|N W 000 (NN = 02…10, Y — with the locking rib, N — without), white
     # nylon 66, 7.70 thick, 16.0 long; the views carry no circuit numbers. Distributors add «R» (RoHS).
@@ -306,8 +322,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("jr-servo", "Сервоконнектор JR / Futaba", r"^JR-H-(?:FEMALE|MALE)$", 2.54, fixed=3, color=BLACK,
             note="контакт 1 — сигнал (оранжевый или белый провод), 2 — «+» (красный), 3 — «−» (коричневый или чёрный); с какой стороны ключ, производителя нет — сверить по детали"),
     # Samtec ISD2 — «positions per row», two rows: ISD2-05-D = 10 contacts.
+    # Samtec ISD2 / S2SD sheet F-226: the face view of the assembly (wires out at the bottom, mating end up) has the ▽ at
+    # its top RIGHT corner. From the wire side, ▽ face up: contact 1 top-RIGHT; contact 2 under it by Samtec's two-row
+    # numbering (odd / even rows of the T2M header) — the sheet does not draw it, hence "medium".
     _family("samtec-isd2", "Samtec ISD2 (2 ряда)", r"^ISD2-(\d{2})-D-[MS]", 2.0, rows=2, order="col", count_mul=2,
-            latch="lever", color=BLACK, note="на листе Samtec метка ▽ контакта 1 есть, со стороны проводов не сверена"),
+            start="TR", latch="lever", color=BLACK, conf="medium", src="Samtec ISD2 / S2SD, лист F-226",
+            note="по листу Samtec F-226 (S2SD): метка ▽ справа на грани с окнами; ▽ сверху — контакт 1 справа вверху; № 2 под ним — по нумерации Samtec, на листе не показан"),
     # Molex — sales drawings (SD) read from the copies at static.chipdip.ru / datasheet.lcsc.com (13.10.2026, third
     # angle). A view placed directly above / below the front view keeps left and right; a rear view placed beside the
     # side view mirrors them; an isometric view shows the outside. Which end takes the wires: the end with the larger
@@ -338,9 +358,15 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # Micro-Fit+ 206461 — Molex 2064610000-SD rev. C (static.chipdip.ru copy, read 16.10.2026): 206461-NNPC, NN = 02…24
     # circuits, C = polarisation / colour (0 black A, 1 natural B, 2 red C, 3 blue D, 4 yellow E), P = 1 low halogen. Both
     # sheets show the cavities and the keys but no circuit numbers.
-    _family("molex-microfit-plus", "Molex Micro-Fit+ (2 ряда)", r"^206461-?(\d{2})\d{2}$", 3.0, rows=2, latch="lever",
+    # Contact 1 (17.10.2026) from the mating headers (Web Archive copies of molex.com): 2125280000 rev. C (R/A header) —
+    # the front view of the mating face, latch catch up, «LAST CIRCUIT» top-left and the PCB layouts «CIRCUIT 1» bottom-right,
+    # «CIRCUIT 2» left of it; 2068320000-SD rev. C (vertical header) — the PCB layout seen from the top, the same. The
+    # receptacle seen from its wire side looks at that face through itself: latch up, 1 bottom-RIGHT, the row of 1…n/2
+    # away from the latch (as Micro-Fit 3.0 43025).
+    _family("molex-microfit-plus", "Molex Micro-Fit+ (2 ряда)", r"^206461-?(\d{2})\d{2}$", 3.0, rows=2, start="BR", latch="lever",
             color=BLACK, color_by=((r"1$", IVORY), (r"2$", "#c8322d"), (r"3$", "#3b6fb6"), (r"4$", "#e3c13b")),
-            note="на чертеже Molex 2064610000-SD номеров контактов нет — сверить по детали"),
+            conf="high", src="Molex 2125280000 (R/A header) + 2068320000-SD (vertical header)",
+            note="по чертежам ответных вилок Molex 2125280000 и 2068320000-SD: защёлкой вверх CIRCUIT 1 внизу справа, LAST CIRCUIT вверху слева; со стороны проводов розетки — так же, контакт 1 внизу справа"),
     # Mini-Fit TPA2 172708 — the wire-end views («before TPA assembly», latch up) mould 8 7 6 5 over 4 3 2 1: contact 1
     # bottom-right, as Mini-Fit Jr.
     _family("molex-minifit-tpa2", "Molex Mini-Fit TPA2 (2 ряда)", r"^172708-?0[0-2](\d{2})$", 4.2, rows=2, start="BR",

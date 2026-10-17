@@ -311,5 +311,37 @@ def test_jst_el_sides_come_from_the_article_and_picoblade_plug_windows_pair_up()
 
 def test_series_without_a_sheet_for_the_side_get_no_mate():
     assert housing_of("GHR-04V-S")["mate"] is None
-    assert housing_of("DT06-4S")["mate"] is None  # Deutsch DT: te.com sheet not reachable — `male` only, no mating side
+    assert housing_of("QS8-S-M")["mate"] is None  # Amass QS8: no maker sheet — no mating side
     assert housing_of("DS1033-09M")["mate"]["contacts"] == "pin" and housing_of("DS1033-09F")["mate"]["contacts"] == "socket"
+
+
+def test_mating_side_of_round_power_and_sealed_series_comes_from_the_part_number():
+    """17.10.2026: Deutsch DT (DT04 receptacle / DT06 plug drawings), TE Superseal (C-282106 tab / C-282088 plug), Amass
+    XT60 (-M / -F), Weipu SA8 (catalogue P05-03: SA810 cable plug vs SA811/812/815, P/S contacts), CNLINKO LP-12 (C/J,
+    PE/SX/PP by the Linko part-number rules)."""
+    side = lambda article: {k: v for k, v in housing_of(article)["mate"].items() if k != "src"}
+    assert side("DT04-4P") == {"gender": "receptacle", "contacts": "pin", "shell": "outer", "lock": "catch"}
+    assert side("DT06-4S") == {"gender": "plug", "contacts": "socket", "shell": "inner", "lock": "arm"}
+    assert side("282106-1") == {"contacts": "pin", "shell": "outer", "lock": "catch"}
+    assert side("282088-1") == {"gender": "plug", "contacts": "socket", "shell": "inner", "lock": "arm"}
+    assert side("XT60H-M") == {"contacts": "pin", "shell": "outer"} and side("XT60H-F") == {"contacts": "socket", "shell": "inner"}
+    assert side("SA810/P4") == {"gender": "plug", "contacts": "pin", "shell": "outer"}
+    assert side("SA812/S4") == {"gender": "receptacle", "contacts": "socket", "shell": "inner"}
+    assert side("LP-12-C04PE") == {"gender": "plug", "contacts": "pin", "lock": "arm"}
+    assert side("LP-12-J04SX") == {"gender": "receptacle", "contacts": "socket"}
+    assert side("LP-12-J04PP") == {"contacts": "socket"}
+
+
+def test_roof_by_part_number_and_sourced_plain_tops():
+    """A roof that differs inside a family by the part number (FI-X H / HL, Hsuan Mao MX Y / N), and a sheet that shows a
+    plain top — recorded as `roof_plain` with its source instead of a guessed lock."""
+    assert housing_of("FI-X30HL")["roof"]["kind"] == "latch" and housing_of("FI-X30HL")["roof"]["at"] == "ends"
+    assert housing_of("FI-X30H")["roof"]["kind"] == "slots" and housing_of("FI-X30H")["roof_plain"] == ""
+    assert housing_of("H5080-04PYW000")["roof"]["kind"] == "latch"
+    no_rib = housing_of("H5080-04PNW000")
+    assert no_rib["roof"] is None and "Body Option N" in no_rib["roof_plain"]
+    for article in ("SYR-02T", "XT60H-M", "I-DS1070-SCV04", "DF1BA-5EP-2.5RC", "DF1BA-10DEP-2.5RC"):
+        layout = housing_of(article)
+        assert layout["roof"] is None and len(layout["roof_plain"]) > 10, article
+    for article in ("GHR-04V-S", "QS8-S-M", "JR-H-Female", "RA-1011"):
+        assert housing_of(article)["roof_plain"] == "", article

@@ -12,27 +12,16 @@ const items = catalog as unknown as Array<{ family: string; title: string; housi
 const marks = (svg: string) => (svg.match(/data-top="(latch|slots)"/g) || []).length;
 const roofed = items.filter((i) => hasTopView(i.housing) && i.housing.roof);
 const plain = items.filter((i) => hasTopView(i.housing) && !i.housing.roof);
+const unsourced = plain.filter((i) => !i.housing.roof_plain);
 
-// Серии с видом сверху, у которых лист производителя крыши не показал (или не получен): голая крыша, ничего не выдумываем.
-// Закрыть серию = найти лист, записать roof в connector_housings.py (ROOF_EXPLICIT) и убрать её отсюда.
-// Почему ещё без крыши (17.10, второй проход): JST RCY, RA — на листе окно/ничего не видно (RA: eRA недоступен; JWPF T —
-// окно замка по eJWPF с. 2, закрыт третьим проходом);
-// Hirose DF13-2R, DF11, DF1B (гнездо, 2 ряда, ES, DES), DF1BA — по каталогу замок на обратной грани, на крыше только метка ▽
-// (DF1B DEP закрыт 17.10: чертёж EDC3-160056-01 показывает рычаг на грани сверху; DF61 закрыт: EDC3-336116-04, рычаг по центру);
-// DF20 — на листе у колодки замка нет (металл только у вилки на плате);
-// JAE FI-X (в серии и FI-X30H без замка, и FI-X30HL), FI-S («friction lock» без формы); Connfly DS1070/DS1071/-01/1072/1074 —
-// на чертеже корпус гладкий (DS1070 — лист на вилку); Molex SL 2 ряда, Board-in, Milli-Grid 51110 (замки только у 14–32 цепей),
-// Mini50 негерметичный 34791 — лист SD-34791-001 (347910040_sd.pdf, Web Archive 2019) есть, но серия смешивает исполнения
-// (с мостом замка / без, мостовые, ключ A–D, шарнирная крышка «hinge»): общего замка на крыше нет; HSM MX (Y/N: ребро есть не у всех), HSM HC и Samtec ISD2 (M/S: у S винты) —
-// серия смешивает исполнения (в каталоге один id на M и S); Deutsch DT, TE Superseal — te.com не отдаёт лист, в Web Archive его нет; JR servo — листа
-// производителя нет; USB-A, Amass XT/QS8 — замка на крыше нет, прорезей по листу тоже.
-const UNSOURCED = [
-  "jst-rcy", "jst-rcy-p", "molex-sl-2r", "amass-xt", "amass-qs8", "molex-milligrid",
-  "jst-ra", "hirose-df13-2r", "hirose-df20", "hirose-df1b", "hirose-df1b-2r", "hirose-df1b-es",
-  "hirose-df1b-des", "hirose-df1ba-p", "hirose-df1ba-p2r", "hirose-df11", "jae-fix", "jae-fis",
-  "connfly-ds1070", "connfly-ds1072", "connfly-ds1074", "molex-mini50-u", "hsm-mx508", "hsm-hc",
-  "jr-servo", "samtec-isd2", "molex-boardin", "deutsch-dt", "te-superseal", "usb-a",
-];
+// Серии с видом сверху без крыши. Лист производителя показал голую крышу — housing.roof_plain несёт этот лист
+// (connector_housings.py ROOF_EXPLICIT / ROOF_BY_ARTICLE, kind "none"). Остальные — здесь, с причиной: листа нет нигде.
+// Закрыть серию = найти лист, записать roof (или kind "none") в connector_housings.py и убрать её отсюда.
+// 17.10 (вечер, третий проход): закрыты все серии, у которых лист нашёлся. Остались:
+// JST RA — eRA.pdf снят с jst-mfg.com (404), в Web Archive копии нет (CDX пуст);
+// Amass QS8 — в каталогах Amass (china-amass.com, 2026) серии QS8 нет, производитель корпуса неизвестен;
+// сервоконнектор JR / Futaba — у корпусов цеха нет ни производителя, ни артикула.
+const UNSOURCED = ["jst-ra", "amass-qs8", "jr-servo"];
 
 describe("крыша корпуса: замок или прорези — только по листу производителя (владелец 17.10)", () => {
   it("covers every catalog series", () => {
@@ -63,7 +52,12 @@ describe("крыша корпуса: замок или прорези — тол
   });
 
   it("keeps the list of series without a sourced roof explicit", () => {
-    expect([...new Set(plain.map((i) => i.family))].sort()).toEqual([...new Set(UNSOURCED)].sort());
+    expect([...new Set(unsourced.map((i) => i.family))].sort()).toEqual([...new Set(UNSOURCED)].sort());
+  });
+
+  it.each(plain.filter((i) => i.housing.roof_plain).map((i) => [i.family, i] as const))("%s: голая крыша записана по листу производителя", (_family, item) => {
+    expect(item.housing.roof_plain!.trim().length).toBeGreaterThan(10);
+    expect(topFeature(item.housing)).toBeNull();
   });
 
   it("has no roof for round, lug and D-Sub bodies", () => {
@@ -90,11 +84,16 @@ describe("крыша корпуса: замок или прорези — тол
     expect(roof("molex-microfit-plus")).toMatchObject({ kind: "latch", at: "center" });
     expect(roof("molex-picoezmate")).toMatchObject({ kind: "slots", at: "contacts" });
     expect(roof("kls-2-50")).toMatchObject({ kind: "slots", at: "contacts" });
-    expect(roof("hirose-df20")).toBeFalsy();
+    expect(roof("hirose-df20")).toMatchObject({ kind: "slots", at: "contacts" });
     expect(roof("hirose-df61")).toMatchObject({ kind: "latch", at: "center" });
     expect(roof("hirose-df1b-p2r")).toMatchObject({ kind: "latch", at: "center" });
-    expect(roof("molex-mini50-u")).toBeFalsy();
-    expect(roof("samtec-isd2")).toBeFalsy();
+    expect(roof("molex-mini50-u")).toMatchObject({ kind: "latch", at: "center" });
+    expect(roof("samtec-isd2")).toMatchObject({ kind: "slots", at: "contacts" });
+    expect(roof("jae-fix")).toMatchObject({ kind: "latch", at: "ends" });
+    expect(roof("deutsch-dt")).toMatchObject({ kind: "latch", at: "center" });
+    expect(roof("usb-a")).toMatchObject({ kind: "latch", at: "pair" });
+    expect(roof("jst-rcy-p")).toMatchObject({ kind: "slots", at: "contacts" });
+    expect(roof("jst-rcy")).toBeFalsy();
   });
 
   it("draws different geometry for different features", () => {
