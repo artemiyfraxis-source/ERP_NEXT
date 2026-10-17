@@ -19,8 +19,8 @@ export type ConnectorHousing = {
 export type Roof = { kind: "latch" | "slots"; at: "center" | "ends" | "pair" | "contacts" | "keys"; src: string };
 
 /** Сторона пары «вилка — розетка» по листу производителя (connector_housings.py `MATING`, владелец 17.10: «почему
- *  розетка и вилка одинаково выглядят»): `gender` — как корпус называет производитель (receptacle — розетка, plug —
- *  вилка), `contacts` — штыри (pin) или гнёзда (socket), `shell` — outer: кожух принимает ответный корпус, inner: корпус
+ *  розетка и вилка одинаково выглядят»): `gender` — как корпус называет производитель (receptacle, plug; по-русски имя даёт контакт:
+ *  штыри — вилка, гнёзда — розетка), `contacts` — штыри (pin) или гнёзда (socket), `shell` — outer: кожух принимает ответный корпус, inner: корпус
  *  входит в ответный; `lock` — arm: гибкое плечо/рычаг замка, catch: жёсткий упор или зацеп под плечо, window: окно, в
  *  которое входит замок ответной части. Нет поля — лист этого не показывает, и рисунок его не выдумывает. */
 export type Mate = {
@@ -38,7 +38,7 @@ export type HousingBody = {
   lock_len?: number;
   /** Толщина «носа», входящего в кожух ответной части, за фланцем длиной front_len (JST SMP). */
   nose_h?: number;
-  /** Кожух розетки у стыковочного торца — шире и толще корпуса: ширина (колонок−1)·шаг + extra, толщина h, длина len,
+  /** Кожух вилки SMR у стыковочного торца — шире и толще корпуса: ширина (колонок−1)·шаг + extra, толщина h, длина len,
    *  стенка wall (JST SMR: 13 × 7,5 × 8 при корпусе 10,5 для 4 конт.). */
   hood?: { extra: number; h: number; len: number; wall?: number };
   /** Гибкие плечи на торцах ряда (JST SMP: крепление в панель): вылет out, ширина w по толщине, корень в root от
@@ -534,7 +534,7 @@ export function bodySpan(hs: ConnectorHousing, b: HousingBody, pitch: number): {
   return { W, core, off: (W - core) / 2 };
 }
 
-/** Корпус пары с кожухом (розетка JST SMR) или с плечами по торцам (вилка JST SMP) — рисуется своим контуром. */
+/** Корпус пары с кожухом (вилка JST SMR, штыри) или с плечами по торцам (розетка JST SMP, гнёзда) — рисуется своим контуром. */
 export const isPairBody = (b: HousingBody | null | undefined): b is HousingBody => Boolean(b && (b.hood || b.wings));
 
 /** Центры окон по x (мм от левого края корпуса) в порядке колонок сетки. */
@@ -671,8 +671,8 @@ function pinOneArrow(right: boolean, edgeX: number, cy: number, t: number): stri
 }
 
 /** Торец пары по чертежу (JST eSM, владелец 17.10: «так и не решена проблема, почему в базе одинаково выглядят SMP и SMR»).
- *  Розетка SMR: вокруг корпуса — обод кожуха (кожух шире и толще корпуса), над ним рычаг замка с рифлением. Вилка SMP:
- *  корпус без обода, по торцам ряда — плечи крепления в панель со ступенями; упор замка вилки стоит на «носе» за фланцем,
+ *  Вилка SMR (штыри): вокруг корпуса — обод кожуха (кожух шире и толще корпуса), над ним рычаг замка с рифлением. Розетка SMP (гнёзда):
+ *  корпус без обода, по торцам ряда — плечи крепления в панель со ступенями; упор замка розетки SMP стоит на «носе» за фланцем,
  *  со стороны проводов его не видно — показан штрихом. `data-part` — hood (кожух) или wings (плечи): по ним тесты видят,
  *  что контуры половин разные. */
 function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s: number, byPin: Record<number, string> | null, hits?: FaceHit[]): Box {
@@ -704,7 +704,7 @@ function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
   }
   body += `<rect x="${f(X(off))}" y="${f(Y(by))}" width="${f(core * k)}" height="${f(H * k)}" rx="${f(Math.min(2, k * 0.15))}" fill="url(#${gradId(color)})" stroke="${EDGE}" stroke-width="1.2"/>`;
   if (lift) {
-    // Рычаг замка розетки над кожухом: кнопка с продольным рифлением (фото SMR, eSM с. 1).
+    // Рычаг замка вилки SMR над кожухом: кнопка с продольным рифлением (фото SMR, eSM с. 1).
     const lx = X(off + (core - lw) / 2), w = lw * k, top = Y(-lift), h = (lift + by) * k;
     let g = `<rect x="${f(lx)}" y="${f(top)}" width="${f(w)}" height="${f(h)}" rx="${f(Math.min(2, k * 0.2))}" fill="${shade(color, dark ? 0.2 : 0.06)}" stroke="${EDGE}" stroke-width="1.1"/>`;
     for (const t of [0.28, 0.5, 0.72]) g += `<line x1="${f(lx + w * t)}" y1="${f(top + 2)}" x2="${f(lx + w * t)}" y2="${f(top + h - 2)}" stroke="${rib}" stroke-width="1"/>`;
@@ -735,9 +735,9 @@ function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
   return { w: W * k, h: (outerH + lift) * k + 8, body };
 }
 
-/** Объёмная модель пары по чертежу (JST eSM), ракурс «iso» или «top» (вид сверху, провода снизу). Розетка SMR: узкий
+/** Объёмная модель пары по чертежу (JST eSM), ракурс «iso» или «top» (вид сверху, провода снизу). Вилка SMR (штыри): узкий
  *  корпус у торца проводов, за ним кожух шире и толще, по центру крыши — рычаг замка с рифлением от кожуха почти до
- *  торца проводов. Вилка SMP: фланец у торца проводов, «нос» тоньше, на нём у стыковочного торца — упор замка, по торцам
+ *  торца проводов. Розетка SMP (гнёзда): фланец у торца проводов, «нос» тоньше, на нём у стыковочного торца — упор замка, по торцам
  *  ряда — плечи крепления в панель, расходятся от носа к торцу проводов, на концах ступени. */
 export function pairModel(hs: ConnectorHousing, b: HousingBody, maxW: number, maxH: number, view: PictureView = "iso"): Box {
   const pitch = hs.pitch || 1, color = hs.color || "#efe6cf", dark = isDark(color);
@@ -791,7 +791,7 @@ export function pairModel(hs: ConnectorHousing, b: HousingBody, maxW: number, ma
     body += contactGlyph(hs.mate?.contacts, px, py, winW * k / 2, winH * k * SY / 2, false, dark ? "#5d666b" : "#2f3336", SY);
     if (row[c] === 1) {
       const right = c > (hs.cols - 1) / 2;
-      // У вилки — за концами плеч, у розетки — у торца корпуса (кожух за ним дальше по проводу).
+      // У розетки SMP — за концами плеч, у вилки SMR — у торца корпуса (кожух за ним дальше по проводу).
       const edge = wings ? (right ? W : 0) : right ? off + core : off;
       body += pinOneArrow(right, P(edge, 0, 0)[0], py, Math.max(2.5, Math.min(winW, winH) * k * 0.45));
     }

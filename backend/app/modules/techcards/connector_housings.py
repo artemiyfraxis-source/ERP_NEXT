@@ -124,11 +124,11 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # nose (panel hole 5.15 high on p. 1) that goes into the SMR hood, the lock catch on its top at the mating end
     # (top view: the small block on the mating edge), and on BOTH row ends the flexible panel arms flaring out 3.2 with the
     # stepped grips at the wire end (panel thickness 0.5–2.0 → three steps; end view: arms 4 wide).
-    _jst("jst-sm-r", "SM (розетка)", r"^SMR-0*(\d+)V", 2.5, "lever", max=12, start="TL", conf="high", color_by=((r"V-B", BLACK),),
+    _jst("jst-sm-r", "SM (вилка)", r"^SMR-0*(\d+)V", 2.5, "lever", max=12, start="TL", conf="high", color_by=((r"V-B", BLACK),),
          src="JST eSM, Housing", model="hood",
          body={"extra": 3.0, "h": 6.0, "len": 18.2, "win": (1.0, 1.0), "lock_w": 3.8, "lock_h": 1.2, "lock_len": 14.5,
                "hood": {"extra": 5.5, "h": 7.5, "len": 8.0, "wall": 0.8}}),
-    _jst("jst-sm-p", "SM (вилка)", r"^SMP-0*(\d+)V", 2.5, "lever", max=12, start="TR", conf="high", color_by=((r"V-B", BLACK),),
+    _jst("jst-sm-p", "SM (розетка)", r"^SMP-0*(\d+)V", 2.5, "lever", max=12, start="TR", conf="high", color_by=((r"V-B", BLACK),),
          src="JST eSM, Housing", model="arms",
          body={"extra": 3.0, "h": 7.4, "len": 11.7, "win": (1.1, 1.1), "lock_w": 3.0, "lock_h": 0.6, "lock_len": 1.3,
                "nose_h": 5.2, "front_len": 1.4, "wings": {"out": 3.2, "w": 4.0, "root": 4.3, "tip": 1.1}}),
@@ -321,7 +321,7 @@ ROOF_EXPLICIT: dict[str, dict[str, str]] = {
     "molex-cgrid3-1r": {"kind": "slots", "at": "keys", "src": "Molex SD-90123, грань с кнопками поляризации"},
     # Second pass (17.10.2026, sheets read via Web Archive / datasheet.lcsc.com / chipdip): only what the sheet's text or
     # its picture of the housing shows. JST catalogue pages are cited by their first page (feature list + photo).
-    "jst-el": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eEL") + " (с. 1, «Durable arm lock mechanism», рычаг замка на вилке)"},
+    "jst-el": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eEL") + " (с. 1, «Durable arm lock mechanism», рычаг замка на розетке ELP)"},
     "jst-el-n": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eEL") + " (с. 1, «Durable arm lock mechanism»)"},
     "jst-gvh": {"kind": "latch", "at": "center", "src": JST_SHEET.format("eGVH") + " (с. 1, «Secure locking structure», как у GVH side feed)"},
     "jst-lbt": {"kind": "latch", "at": "ends", "src": JST_SHEET.format("eLBT") + " (с. 1, фото вилки: петли замка на обоих торцах)"},
@@ -402,8 +402,8 @@ MATING: dict[str, dict[str, str]] = {
     # eSM p. 3: «Receptacle housing (for pin contact)» SMR — the hood (B = A + 5.5, 7.5 thick) around the pins, with the
     # rocker lock lever on top (p. 1); «Plug housing (for socket contact)» SMP — its nose goes into the hood, the lever
     # hooks the catch on the nose top.
-    "jst-sm-r": _mate("receptacle", "pin", "outer", "arm", ESM_3 + ", с. 1 (рычаг замка на розетке)"),
-    "jst-sm-p": _mate("plug", "socket", "inner", "catch", ESM_3 + ", с. 1 (упор замка на вилке, плечи — крепление в панель)"),
+    "jst-sm-r": _mate("receptacle", "pin", "outer", "arm", ESM_3 + ", с. 1 (рычаг замка на вилке SMR)"),
+    "jst-sm-p": _mate("plug", "socket", "inner", "catch", ESM_3 + ", с. 1 (упор замка на розетке SMP, плечи — крепление в панель)"),
     # eRCY p. 2: SYR (for pin contact) 6.7 high with a 5.9 opening, SYP (for socket contact) 5.3 at the mating part.
     "jst-rcy": _mate("receptacle", "pin", "outer", "", ERCY_2),
     "jst-rcy-p": _mate("plug", "socket", "inner", "", ERCY_2),
@@ -477,6 +477,29 @@ def mate_of(family: Mapping[str, Any], article: str, male: bool | None) -> dict[
 
 
 # The wire-to-wire pairs the catalogue holds both halves of, one sample article per half: (series, one half, other half).
+# Owner, 17.10.2026 («давай по-русски»): the Russian name follows the contacts, not the maker's English «plug» /
+# «receptacle» — вилка is the half with pins (штыри), розетка the half with sockets (гнёзда), in every series. The one
+# place that knows it: titles are re-worded from `contacts` here, never typed by hand where the contacts are known.
+GENDER_WORD = {"pin": "вилка", "socket": "розетка"}
+_GENDER_WORD_RE = re.compile(r"(?<!\w)(вилка|розетка)(?!\w)", flags=re.I)
+
+
+def gender_title(title: str, contacts: str | None) -> str:
+    """The nominative «вилка» / «розетка» in a title set to the word its contacts give; unknown contacts — unchanged."""
+    word = GENDER_WORD.get(contacts or "")
+    if not word:
+        return title
+    return _GENDER_WORD_RE.sub(lambda found: word.capitalize() if found[0][0].isupper() else word, title)
+
+
+def _retitle_families() -> None:
+    for family in FAMILIES:
+        if family["id"] in MATING:
+            family["title"] = gender_title(family["title"], MATING[family["id"]]["contacts"])
+
+
+_retitle_families()
+
 MATING_PAIRS: tuple[tuple[str, str, str], ...] = (
     ("JST SM", "SMR-04V-B", "SMP-04V-BC"),
     ("JST RCY", "SYR-02T", "SYP-02T-1"),

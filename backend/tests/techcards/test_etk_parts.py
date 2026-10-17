@@ -3,7 +3,7 @@ from app.modules.techcards.etk_parts import EtkLot, EtkLots, attach_parts, kit_a
 
 def _names(article: str) -> str:
     # Stand-in for the warehouse article rules (stock05ArtInfo_ with empty БД.ТЕР/БД.КОАКС).
-    return {"SHF-001T-0.8BS": "Контакт SM Female", "SMP-02V-BC": "SM вилка 2pin (однорядный)"}.get(article, "")
+    return {"SHF-001T-0.8BS": "Контакт SM Female", "SMP-02V-BC": "SM розетка 2pin (однорядный)"}.get(article, "")
 
 
 def test_kit_name_code_other_than_article_is_the_article_to_apply():
@@ -35,7 +35,7 @@ def test_component_row_is_article_kd_name_by_article_and_grn_only_from_a_lot():
         row(art="МК26-13 0,35 черный", name="Провод МК 26-13 (цветной МГТФ)"),
     ] == [
         ["SHF-001T-0.8BS", "BL2018TS", "Контакт SM Female", ""],
-        ["SMP-02V-BC", "", "SM вилка 2pin (однорядный)", ""],
+        ["SMP-02V-BC", "", "SM розетка 2pin (однорядный)", ""],
         ["UL1061 30AWG белый", "", "", ""],
         ["МК26-13 0,35 черный", "", "Провод МК 26-13 (цветной МГТФ)", ""],
     ]

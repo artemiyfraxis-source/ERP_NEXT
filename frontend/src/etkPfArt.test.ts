@@ -136,7 +136,7 @@ describe("etkPfArt — эскиз полуфабриката в схеме ПФ"
   });
 
   // 713К.4 КБ1, ветвь X2 «I3»: JST SM на 2, пара красный/чёрный с шагом 20 мм, оплётка XP-3 110 мм, ТТК 8/2, метка «I3».
-  const sm2 = { art: "SMR-02V-B", family: "jst-sm-r", title: "JST SM (розетка)", pitch: 2.5, rows: 1, cols: 2, n: 2, kind: "grid",
+  const sm2 = { art: "SMR-02V-B", family: "jst-sm-r", title: "JST SM (вилка)", pitch: 2.5, rows: 1, cols: 2, n: 2, kind: "grid",
     color: "#2b2b2b", latch: "lever", cavity: "square", grid: [[1, 2]], roof: { kind: "latch", at: "ends" } };
   const i3 = (wires: Array<{ art: string; pins: number[] }>, pairs: string, wrapLen: unknown = 110) => {
     const operations = [
