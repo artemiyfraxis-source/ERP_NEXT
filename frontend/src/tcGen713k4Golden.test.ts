@@ -1,13 +1,13 @@
 // @vitest-environment node
 import { expect, it } from "vitest";
-import golden from "./fixtures/gen713k4Rev12.json";
+import golden from "./fixtures/gen713k4Rev17.json";
 import { restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
 import { ensureSeparateLengths, initState, makeGen, type Comp, type GenData } from "./tcGenLogic";
 import { DSA } from "./tcGenRealHarness.fixture";
 import { etkCutLengths, etkDrawWires } from "./etkDraw";
 
 /*
- * 713К.4 КБ1 с прода (техкарта ревизия 12, 17.10): снимок формы `build_config.gen_state`, состав набора и то, что из них
+ * 713К.4 КБ1 с прода (техкарта ревизия 17, 17.10): снимок формы `build_config.gen_state`, состав набора и то, что из них
  * собрала сборка — операции (подписи, карты библиотеки) и схема ПФ (16 ПФ). Генератор должен пересобрать то же самое
  * из снимка: всё, что владелец набрал в форме, повторяется без ручного порядка операций и без ручного выбора карт.
  * Справочники (карты библиотеки, БД.ТЕР, БД.ОП) — как в рабочей базе (tcGenRealHarness.fixture.ts).
@@ -27,7 +27,7 @@ it("the prod snapshot carries no hand-set operation order and no hand-picked car
   expect(snap.S.manualTemplates ?? []).toEqual([]);
 });
 
-it("rebuilds prod rev 12 from its form snapshot: the same 44 operations, labels and library cards", () => {
+it("rebuilds prod rev 17 from its form snapshot: the same 44 operations, labels and library cards", () => {
   const cfg = rebuilt().buildConfig() as { ops: Array<{ opKey: string; type: string; label: string; templateId: string; opNum: string }> };
   const pick = (o: { opKey: string; type: string; label: string; templateId: string }) => `${o.opKey} | ${o.type} | ${o.label} | ${o.templateId}`;
   expect(cfg.ops).toHaveLength(golden.expected.ops.length);
@@ -50,7 +50,7 @@ it("the X5/X6 cut batch keeps every wire's length: 180 мм ×3 and 200 мм ×1
   expect(sketch).toContain("L = 200 мм ±3 мм · 1 шт.");
 });
 
-it("rebuilds prod rev 12's ПФ schema: 16 ПФ with the same names, operations and links", () => {
+it("rebuilds prod rev 17's ПФ schema: 16 ПФ with the same names, operations and links", () => {
   const route = (rebuilt().buildConfig() as { route: { source: string; blocks: Array<{ key: string; name?: string; ops: number[]; kit?: boolean; final: boolean }>;
     edges: unknown[] } }).route;
   expect(route.source).toBe(golden.expected.route.source);
