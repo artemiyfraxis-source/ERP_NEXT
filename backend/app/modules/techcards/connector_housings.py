@@ -28,6 +28,9 @@ def _jst(identifier: str, series: str, pattern: str, pitch: float, latch: str, *
     }
 
 
+# A series checked by the owner on the real part where the maker's sheet has no circuit-1 mark (17.10.2026).
+OWNER_PART = "сверено владельцем по детали, 17.10.2026"
+
 FAMILIES: tuple[dict[str, Any], ...] = (
     # GH, XH, PH, ZH — checked against the JST catalogue sheets (eGH, eXH, ePH, eZH «Housing», copies of the JST PDFs
     # found on GitHub, 01.10). Each front view has the wire end up; GH and XH show the lock face, PH and ZH the face with
@@ -167,8 +170,9 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # 2.54; the female housing is drawn symmetric — no key, no circuit-1 mark — and the mating headers C-DS1021 / C-DS1022
     # (through-hole) have no mark either (only the SMT sheet 5 of DS1022 marks «No.1» on the header). The housing goes on
     # either way round, so contact 1 is set by the board's marking, not by the housing: the numbering stays unchecked.
-    {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "pattern": r"^I-DS1071-SC[BW]0?(\d)X0?(\d{1,2})", "grid": True, "pitch": 2.54, "order": "col", "start": "TR", "latch": "none", "color": BLACK, "conf": "low",
-     "note": "на чертеже Connfly DS1071 корпус симметричный, без ключа и метки контакта 1, у вилок DS1021/DS1022 метки нет — контакт 1 по маркировке платы"},
+    {"id": "connfly-ds1071", "title": "Connfly DS1071 (Dupont 2,54)", "pattern": r"^I-DS1071-SC[BW]0?(\d)X0?(\d{1,2})", "grid": True, "pitch": 2.54, "order": "col", "start": "TL", "latch": "none", "color": BLACK, "conf": "high",
+     "src": OWNER_PART,
+     "note": "сверено владельцем по детали 17.10.2026: прорезями вверх контакт 1 слева — у стрелки на корпусе"},
     # DS1069 — Connfly C-DS1069-XXXXX-E p. 2 «Female Housing» (connfly.com/static/upload/file//DS1069.pdf): front view =
     # face with the lock, wire end up; the bottom (mating) view puts «Circuit No.1 Mark» at the right end -> from the
     # wire side, lock up, contact 1 on the LEFT, exactly as JST eXH. Same sizes as XH: B = N·2.5 + 2.3, 4.1 thick
@@ -281,6 +285,10 @@ FAMILIES: tuple[dict[str, Any], ...] = (
 JST_SHEET = "JST {0}, https://www.jst-mfg.com/product/pdf/eng/{0}.pdf"
 LCSC_SHEET = "https://datasheet.lcsc.com/datasheet/pdf/{}.pdf?productCode={}"
 ROOF_EXPLICIT: dict[str, dict[str, str]] = {
+    # Connfly Dupont 2,54 / 2,0 (DS1071, DS1071-01): the Connfly sheet draws the housing symmetric, the real part carries a
+    # lance window over every contact on the top face and the circuit-1 arrow at the left end (owner, 17.10.2026, by the part).
+    "connfly-ds1071": {"kind": "slots", "at": "contacts", "src": OWNER_PART},
+    "connfly-ds1071-01": {"kind": "slots", "at": "contacts", "src": OWNER_PART},
     # eSUH / eSHD / eSHL / eSHJ «Housing» (read 17.10.2026 via Web Archive): the front face of the housing carries a lance
     # window at every contact and the ▽ circuit-1 mark, no latch (like SH).
     "jst-suh": {"kind": "slots", "at": "contacts", "src": JST_SHEET.format("eSUH") + " (с. 2, Housing)"},

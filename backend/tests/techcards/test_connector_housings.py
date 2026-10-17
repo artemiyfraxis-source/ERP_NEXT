@@ -208,14 +208,24 @@ def test_connfly_ds1069_and_hirose_follow_the_maker_drawings():
 
 
 def test_series_whose_drawing_has_no_contact_one_say_so():
-    # FI-X and Connfly DS1071 have no circuit-1 mark on any maker drawing reachable — the warning stays.
-    for article in ("FI-X30HL", "I-DS1071-SCB02X5"):
+    # FI-X has no circuit-1 mark on any maker drawing reachable — the warning stays.
+    for article in ("FI-X30HL",):
         layout = housing_of(article)
         assert layout["conf"] == "low" and not layout["src"] and "чертеже" in layout["note"], article
     # CZHR: no mark of its own, but eCZ-F makes it interchangeable with the CZ IDC socket, whose ▽ is on the left of the
     # front face (lock on the back face) — wire side, lock up: 1 left, as drawn before.
     cz = housing_of("CZHR-04V-S")
     assert (cz["grid"], cz["latch"], cz["conf"]) == ([[1, 2, 3, 4]], "ramp", "high") and "eCZ-F" in cz["src"]
+
+
+def test_connfly_dupont_contact_one_is_left_under_the_slots_by_the_owner():
+    # Owner, 17.10.2026, by the real part («стрелочка слева, прорези сверху … так же и у 2.54»): Connfly DS1071 (2,54) and
+    # DS1071-01 (2,0) — wire side, lance windows up: contact 1 on the left at the arrow, a window over every contact.
+    for article, family in (("I-DS1071-SCB01X4", "connfly-ds1071"), ("I-DS1071-01-SCB01X4", "connfly-ds1071-01")):
+        layout = housing_of(article)
+        assert (layout["family"], layout["grid"], layout["conf"]) == (family, [[1, 2, 3, 4]], "high"), article
+        assert layout["roof"] == {"kind": "slots", "at": "contacts", "src": "сверено владельцем по детали, 17.10.2026"}
+    assert housing_of("I-DS1071-SCB02X3")["grid"] == [[1, 3, 5], [2, 4, 6]]
 
 
 def test_eh_pa_vh_phd_picoblade_minifit_and_usb_follow_the_maker_drawings():
