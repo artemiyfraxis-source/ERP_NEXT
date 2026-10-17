@@ -23,7 +23,7 @@ from app.workflows.terminal_crimp import crimp_display
 from .connector_catalog_data import (
     AUTO, BTB, CATALOG_SERIES, IFACE, JST_PDF, LUGS, PLUG, POWER, RF, ROUND, SIDE, SIDE_SMT, TOP, TOP_SMT, WTB, WTW,
 )
-from .connector_housings import CATALOG_SAMPLES, FAMILIES, housing_of, normalize_article
+from .connector_housings import CATALOG_SAMPLES, FAMILIES, gender_title, housing_of, normalize_article
 
 
 def _counts(first: int, last: int, *extra: int) -> tuple[int, ...]:
@@ -76,18 +76,18 @@ JST_SERIES: tuple[dict[str, Any], ...] = (
      "headers": ((TOP, "B{}B-PHDSS", tuple(range(10, 35, 2))), (SIDE, "S{}B-PHDSS", tuple(range(10, 35, 2))))},
     # SM 18 circuits is a two-row housing (12.4 mm across) — the family draws one row up to 12, so it is left out.
     {"id": "jst-sm", "title": "JST SM", "sheet": "eSM", "terminals": ("SMR", "SMP", "SM", "BL2018"),
-     "variants": (("Розетка SMR, чёрная", "jst-sm-r", "SMR-{:02d}V-B", _counts(2, 12)),
-                  ("Розетка SMR, белая", "jst-sm-r", "SMR-{:02d}V-N", _counts(2, 12)),
-                  ("Вилка SMP, чёрная", "jst-sm-p", "SMP-{:02d}V-BC", _counts(2, 12)),
-                  ("Вилка SMP, белая", "jst-sm-p", "SMP-{:02d}V-NC", _counts(2, 12))),
-     # eSM «Contact»: the receptacle SMR takes the pin contact, the plug SMP the socket contact.
-     "contacts": (("SYM-001T-P0.6", "штырь, в розетку SMR, AWG 28–22"), ("SHF-001T-0.8BS", "гнездо, в вилку SMP, AWG 28–22")),
+     "variants": (("Вилка SMR, чёрная", "jst-sm-r", "SMR-{:02d}V-B", _counts(2, 12)),
+                  ("Вилка SMR, белая", "jst-sm-r", "SMR-{:02d}V-N", _counts(2, 12)),
+                  ("Розетка SMP, чёрная", "jst-sm-p", "SMP-{:02d}V-BC", _counts(2, 12)),
+                  ("Розетка SMP, белая", "jst-sm-p", "SMP-{:02d}V-NC", _counts(2, 12))),
+     # eSM «Contact»: SMR (the maker's «receptacle») takes the pin contact — вилка; SMP (the maker's «plug») the socket contact — розетка.
+     "contacts": (("SYM-001T-P0.6", "штырь, в вилку SMR, AWG 28–22"), ("SHF-001T-0.8BS", "гнездо, в розетку SMP, AWG 28–22")),
      "headers": (), "note": "18 конт. — двухрядный корпус, в базе не рисуется"},
     {"id": "jst-rcy", "title": "JST RCY", "sheet": "eRCY", "terminals": ("SYR", "SYP"),
-     "variants": (("Розетка SYR, штыри", "jst-rcy", "SYR-{:02d}T", (2,)),
-                  ("Розетка SYR, белая V-0", "jst-rcy", "SYR-{:02d}TV", (2,)),
-                  ("Вилка SYP, гнёзда", "jst-rcy-p", "SYP-{:02d}T-1", (2,)),
-                  ("Вилка SYP, белая V-0", "jst-rcy-p", "SYP-{:02d}TV-1", (2,))),
+     "variants": (("Вилка SYR, штыри", "jst-rcy", "SYR-{:02d}T", (2,)),
+                  ("Вилка SYR, белая V-0", "jst-rcy", "SYR-{:02d}TV", (2,)),
+                  ("Розетка SYP, гнёзда", "jst-rcy-p", "SYP-{:02d}T-1", (2,)),
+                  ("Розетка SYP, белая V-0", "jst-rcy-p", "SYP-{:02d}TV-1", (2,))),
      "headers": ()},
 )
 
@@ -339,7 +339,8 @@ def _catalog_series(spec: Mapping[str, Any], records: list[Mapping[str, Any]], k
     for variant in spec["variants"]:
         title, family, articles = _variant_articles(variant)
         housings = [h for h in (_housing(article, headers) for article in articles) if h]
-        variants.append({"title": title, "family": family, "housings": housings})
+        mate = housings[0]["housing"].get("mate") if housings else None
+        variants.append({"title": gender_title(title, mate and mate["contacts"]), "family": family, "housings": housings})
     terminals = terminals_for(spec["terminals"], records)
     return _summary({
         "id": spec["id"], "title": spec["title"], "maker": spec["maker"], "category": spec["category"],

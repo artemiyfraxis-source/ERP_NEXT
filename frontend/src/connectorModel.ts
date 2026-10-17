@@ -14,8 +14,8 @@ import {
   type Box, type ConnectorHousing, type PictureView, type Pt,
 } from "./connectorArt";
 
-//  • hood / arms — пара JST SM (eSM): розетка SMR — кожух шире корпуса и рычаг замка с рифлением по центру крыши;
-//    вилка SMP — фланец, «нос» с упором замка и плечи крепления в панель по торцам ряда (connectorArt `pairModel`).
+//  • hood / arms — пара JST SM (eSM): вилка SMR (штыри) — кожух шире корпуса и рычаг замка с рифлением по центру крыши;
+//    розетка SMP (гнёзда) — фланец, «нос» с упором замка и плечи крепления в панель по торцам ряда (connectorArt `pairModel`).
 export const MODEL_TEMPLATES = ["slots", "plate", "frame", "hood", "arms"] as const;
 
 /** Есть ли у корпуса модель, сверенная с чертежом серии. */

@@ -316,3 +316,42 @@ def test_molex_sales_drawing_tables():
     assert [variant["family"] for variant in clik["variants"]] == ["molex-clikmate-20", "molex-clikmate"]
     assert not clik["range_checked"] and _articles(clik, 1) == [f"502578-{n:02d}00" for n in range(2, 16)]
     assert [h["n"] for h in series["molex-clikmate"]["variants"][0]["housings"]] == [*range(2, 11), 12, 13, 14, 15]
+
+
+def _word(text, word):
+    return re.search(rf"(?<!\w){word}(?!\w)", text.lower()) is not None
+
+
+def test_every_housing_with_known_contacts_is_named_by_them_вилка_for_pins_розетка_for_sockets():
+    # Owner 17.10.2026 («давай по-русски»): вилка = pin contacts, розетка = socket contacts, whatever the maker's
+    # «plug» / «receptacle» says (JST: the receptacle SMR takes pins — it is the вилка here).
+    right = {"pin": "вилка", "socket": "розетка"}
+    wrong = {"pin": "розетка", "socket": "вилка"}
+    seen = set()
+    for series in connector_series(()):
+        for variant in series["variants"]:
+            for housing in variant["housings"]:
+                mate = housing["housing"].get("mate")
+                if not mate:
+                    continue
+                for text in (variant["title"], housing["housing"]["title"]):
+                    assert not _word(text, wrong[mate["contacts"]]), (housing["article"], text)
+                    if _word(text, right[mate["contacts"]]):
+                        seen.add(right[mate["contacts"]])
+    assert seen == {"вилка", "розетка"}
+    for family in FAMILIES:
+        layout = housing_of(CATALOG_SAMPLES.get(family["id"], ""))
+        mate = layout and layout.get("mate")
+        if mate:
+            assert not _word(family["title"], wrong[mate["contacts"]]), family["id"]
+
+
+def test_jst_sm_el_rcy_sections_follow_the_contacts():
+    series = _series()
+    assert [v["title"] for v in series["jst-sm"]["variants"]] == [
+        "Вилка SMR, чёрная", "Вилка SMR, белая", "Розетка SMP, чёрная", "Розетка SMP, белая"]
+    assert [v["title"] for v in series["jst-rcy"]["variants"]][::2] == ["Вилка SYR, штыри", "Розетка SYP, гнёзда"]
+    el = [v["title"] for v in series["jst-el"]["variants"]]
+    assert el[0].startswith("Вилка ELR") and el[3].startswith("Розетка ELP")
+    assert housing_of("SMR-04V-B")["title"] == "JST SM (вилка)" and housing_of("SMP-04V-BC")["title"] == "JST SM (розетка)"
+    assert housing_of("43020-0400")["title"].endswith("(вилка)")

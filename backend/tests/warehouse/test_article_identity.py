@@ -157,7 +157,7 @@ def test_article_identity_finds_nine_digit_molex_number_inside_description():
 
 def test_article_identity_takes_plug_or_socket_from_housing_title():
     assert _names("SMR-02V-B@JST", "SMP-02V-BC@JST", "BL2018P-04") == [
-        "SM розетка 2pin (однорядный)", "SM вилка 2pin (однорядный)", "SM вилка 4pin (однорядный)",
+        "SM вилка 2pin (однорядный)", "SM розетка 2pin (однорядный)", "SM розетка 4pin (однорядный)",
     ]
     assert infer_article_identity("SMR-02V-B").series == "SM"
 
