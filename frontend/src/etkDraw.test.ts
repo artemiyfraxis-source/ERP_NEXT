@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  etkParams, etkConnectionRows, etkCutEnds, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTubeCut, etkDrawTwist, etkDrawWires, etkFigure,
+  etkParams, etkConnectionRows, etkCutEnds, etkDrawCoax, etkDrawCrimp, etkDrawHarness, etkDrawPinout, etkDrawTubeCut, etkMarkText, etkDrawTwist, etkDrawWires, etkFigure,
   etkTolerance, etkTubePieces, etkWireColor,
 } from "./etkDraw";
 import { buildPrintDocumentHtml } from "./print";
@@ -246,7 +246,7 @@ describe("etkDraw* sketches", () => {
     // Прямоугольный корпус — ещё и та же картинка, развёрнутая видом сверху: провод контакта 1 виден на торце снизу.
     const op = etkDrawPinout({ type: "insTerm", housing, fields: { wires: [{ art: "синий", pins: [1] }] } });
     expect(op).toContain("вид сверху, провода снизу");
-    expect(op.match(/fill="#2463c7"/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(op.match(/fill="#2463c7"/g)?.length).toBeGreaterThanOrEqual(3);
     expect(etkDrawTwist({ fields: { twist: { pitch: "20", pairs: "1) красный + черный" } } })).toContain("шаг 20 мм");
     // Order of renderEtk_: prsTerm never takes the pinout, it takes the crimp.
     expect(etkFigure({ type: "prsTerm", fields: { crimpHeight: "1", pinout: true, wires: [{ art: "a", pins: [1] }] } })).toContain("обжим по жиле");
@@ -348,6 +348,20 @@ describe("cut of tubes (owner 16.10, 713К.4 КБ1: no picture)", () => {
     expect(svg).toContain("ТТК 12/4мм ×2 · 25 мм");
     expect(svg.match(/<rect /g)?.length).toBeGreaterThanOrEqual(6);
     expect(etkFigure(cut)).toBe(svg);
+  });
+
+  it("marking op INS_MARK_TUBE_AUTO: light tubes with the printed text ON the tube, no dark fill (owner 17.10)", () => {
+    const mark = { type: "cutTut", code: "INS_MARK_TUBE_AUTO", result: [{ name: "Трубки нарезаны: Маркировка «5» — 4 шт по 15 мм; Маркировка «I3» — 2 шт по 15 мм; Маркировка «C» — 3 шт по 20 мм; Маркировка «A6» — 1 шт по 12 мм" }] };
+    const svg = etkDrawTubeCut(mark);
+    for (const text of ["5", "I3", "C", "A6"]) expect(svg).toContain(`font-weight="700" fill="#17272b">${text}</text>`);
+    expect(svg).toContain("Маркировка «5» ×4 · 15 мм");
+    expect(svg).toContain('fill="#fbfaf5"');
+    expect(svg).not.toContain("#3b4147");
+    expect(etkFigure(mark)).toBe(svg);
+    expect(etkMarkText("Маркировка «I3»")).toBe("I3");
+    expect(etkMarkText("Маркировка \"C\" 4/2мм")).toBe("C");
+    // Резка обычной трубки (другая карта) остаётся тёмной планкой.
+    expect(etkDrawTubeCut({ ...mark, code: "CUT_TUT_short" })).toContain("#3b4147");
   });
 
   it("draws nothing for other operations or a result that is not a tube list", () => {

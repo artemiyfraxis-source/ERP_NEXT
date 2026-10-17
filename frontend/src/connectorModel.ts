@@ -9,7 +9,8 @@
 // Серия без шаблона (или без размеров с чертежа) модели не получает — галерея пишет «модель не сверена» и показывает
 // только вид со стороны проводов: лучше честный торец, чем похожий на другую серию «кубик».
 import {
-  EDGE, bodyColumns, bodyWidth, f, gradId, gradient, isDark, lockWidth, poly, prism, shade,
+  slotSpans,
+  EDGE, bodyColumns, bodyWidth, f, gradId, gradient, isDark, lockWidth, poly, prism, roofMark, shade, topFeature,
   type Box, type ConnectorHousing, type PictureView, type Pt,
 } from "./connectorArt";
 
@@ -53,7 +54,7 @@ export function connectorModel(hs: ConnectorHousing, maxW: number, maxH: number,
     const face = below ? H : 0, rearFace = below ? rearH : H - rearH;
     body += box(ears, below ? 0 : H - rearH, W - ears, below ? rearH : H, fl, L, shade(color, -0.03));
     // Прорези фиксаторов: по одной на контакт, от фланца почти до стыковочного торца.
-    columns.forEach((cx) => { body += poly(quad(cx - winW * 0.4, cx + winW * 0.4, rearFace, fl + 0.2, L - 0.45), groove, groove, 0.3); });
+    body += roofMark("slots", columns.map((cx) => poly(quad(cx - winW * 0.4, cx + winW * 0.4, rearFace, fl + 0.2, L - 0.45), groove, groove, 0.3)).join(""));
     body += box(ears, 0, W - ears, H, 0, fl, color);
     if (ears) {
       const el = Math.min(b.ear_len || fl, fl);
@@ -68,21 +69,24 @@ export function connectorModel(hs: ConnectorHousing, maxW: number, maxH: number,
     }
   } else {
     body += box(ears, 0, W - ears, H, 0, L, color);
+    if (topFeature(hs) === "slots") {
+      // Замка у модели нет — прорези ключа на крыше у стороны контакта 1.
+      body += roofMark("slots", slotSpans(hs).map(([a, c]) => poly(quad(a * (W - 2 * ears) + ears, c * (W - 2 * ears) + ears, 0, 0.8, L - 0.6), groove, groove, 0.3)).join(""));
+    }
     if (hs.model === "plate" && lw) {
       // Защёлка-пластина: прорези по её краям в верхней грани, сама пластина и зацеп у торца проводов.
       const x0 = (W - lw) / 2, x1 = (W + lw) / 2, gap = Math.max(0.12, pitch * 0.1);
-      body += poly(quad(x0 - gap, x0, 0, 0, L * 0.85), groove, groove, 0.3) + poly(quad(x1, x1 + gap, 0, 0, L * 0.85), groove, groove, 0.3);
-      body += box(x0, -lockH * 0.55, x1, 0, 0.5, L * 0.85, shade(color, 0.05));
-      body += box(x0, -lockH, x1, 0, 0, 0.5, shade(color, 0.1));
-      body += poly(quad(x0 + lw * 0.42, x1 - lw * 0.42, -lockH * 0.55, 1.2, 1.8), groove, groove, 0.3);
+      body += roofMark("latch", poly(quad(x0 - gap, x0, 0, 0, L * 0.85), groove, groove, 0.3) + poly(quad(x1, x1 + gap, 0, 0, L * 0.85), groove, groove, 0.3) +
+        box(x0, -lockH * 0.55, x1, 0, 0.5, L * 0.85, shade(color, 0.05)) + box(x0, -lockH, x1, 0, 0, 0.5, shade(color, 0.1)) +
+        poly(quad(x0 + lw * 0.42, x1 - lw * 0.42, -lockH * 0.55, 1.2, 1.8), groove, groove, 0.3));
     }
     if (hs.model === "frame" && lw) {
       // Рамка «П»: перемычка у торца проводов, плечи по краям, зацепы на концах плеч; между плечами — окно.
       const x0 = (W - lw) / 2, x1 = (W + lw) / 2, arm = Math.min(1.0, lw * 0.18), end = L * 0.82;
-      body += poly(quad(x0 + arm, x1 - arm, 0, 1.3, end), shade(color, -0.25), EDGE, 0.4);
-      body += box(x0, -lockH * 0.7, x0 + arm, 0, 0, end, shade(color, 0.04)) + box(x1 - arm, -lockH * 0.7, x1, 0, 0, end, shade(color, 0.04));
-      body += box(x0, -lockH, x0 + arm, -lockH * 0.7, end - 1.0, end, shade(color, 0.1)) + box(x1 - arm, -lockH, x1, -lockH * 0.7, end - 1.0, end, shade(color, 0.1));
-      body += box(x0, -lockH, x1, 0, 0, 1.3, shade(color, 0.1));
+      body += roofMark("latch", poly(quad(x0 + arm, x1 - arm, 0, 1.3, end), shade(color, -0.25), EDGE, 0.4) +
+        box(x0, -lockH * 0.7, x0 + arm, 0, 0, end, shade(color, 0.04)) + box(x1 - arm, -lockH * 0.7, x1, 0, 0, end, shade(color, 0.04)) +
+        box(x0, -lockH, x0 + arm, -lockH * 0.7, end - 1.0, end, shade(color, 0.1)) + box(x1 - arm, -lockH, x1, -lockH * 0.7, end - 1.0, end, shade(color, 0.1)) +
+        box(x0, -lockH, x1, 0, 0, 1.3, shade(color, 0.1)));
     }
   }
   // Торец проводов: окна контактов, контакт 1 — красная метка, как на виде со стороны проводов.

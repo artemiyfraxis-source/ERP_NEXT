@@ -27,7 +27,7 @@ describe("connectorArt — рисунки серий", () => {
       body: { extra: 2.0, h: 2.8, rear_h: 2.1, len: 5.0, front_len: 1.8, ear_len: 1.0, win: [0.6, 1.3], ears: 1.0 } };
     const face = connectorFace(sh, 0, 0, 40, { 1: "черный" });
     expect(face.w).toBeCloseTo(5.0 * 40, 5);
-    expect(face.body.match(/<rect/g)?.length).toBe(3 + 2);
+    expect(face.body.match(/<rect/g)?.length).toBe(3 + 2 + 2); // + две выемки ключа на крыше
     expect(connectorFaceUnits(sh)).toBe(5);
     const arrow = face.body.match(/fill="#d7322d"/g);
     expect(arrow?.length).toBe(1);
@@ -43,7 +43,7 @@ describe("connectorArt — рисунки серий", () => {
     expect(face.body.match(/fill="#d7322d"/g)?.length).toBe(1);
     expect(connectorPicture(ghBody, 150, 90).w).toBeLessThanOrEqual(152);
     const ph = { ...gh, art: "PHR-4", family: "jst-ph", pitch: 2.0, latch: "windows", body: { extra: 3.8, h: 4.5, len: 6.85, win: [1.0, 1.6] } };
-    expect(connectorFace(ph, 0, 0, 30, null).body.match(/<rect/g)?.length).toBe(1 + 4 + 4);
+    expect(connectorFace(ph, 0, 0, 30, null).body.match(/<rect/g)?.length).toBe(1 + 4 + 4 + 2);
     const microfit = { ...gh, art: "43025-0600", family: "molex-microfit", pitch: 3.0, rows: 2, cols: 3, n: 6, latch: "lever", color: "#2b2b2b",
       grid: [[6, 5, 4], [3, 2, 1]], body: { extra: 3.85, h: 6.86, len: 14, lock_w: 3.86, lock_h: 1.4, win: [2.2, 2.2] } };
     const mf = connectorFace(microfit, 0, 0, 30, { 1: "красный" });
