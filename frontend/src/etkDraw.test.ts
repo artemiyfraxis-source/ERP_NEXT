@@ -7,7 +7,7 @@ import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
 import type { ProjectTechcard } from "./api";
 
-const housing = { title: "JST XH", art: "XHP-2", rows: 1, cols: 2, n: 2, kind: "grid", color: "#efe6cf", latch: "ramp",
+const housing = { title: "JST XH", art: "XHP-2", rows: 1, cols: 2, n: 2, kind: "grid", color: "#efe6cf", latch: "ramp", roof: { kind: "latch", at: "center", src: "JST eXH, Housing" },
   cavity: "square", labels: null, grid: [[1, 2]], round: null, conf: "medium", note: "", pitch: 2.5 };
 
 describe("etkParams (шапка: Сторона А | Общие | Сторона В)", () => {
