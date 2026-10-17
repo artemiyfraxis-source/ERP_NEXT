@@ -55,8 +55,11 @@ it("a tube cutting step without a length shows «длина не задана» 
     { number: "2", kind: "Контроль", text: "ВИЗУАЛЬНЫЙ КОНТРОЛЬ: надпись на трубке соответствует КД.", tolerance: "Согласно КД" },
   ];
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
-  expect(await screen.findByText("Допуск: длина не задана")).toHaveClass("tone-danger");
-  expect(screen.getByText("Допуск: Согласно КД")).not.toHaveClass("tone-danger");
+  await screen.findByText("Нарезать трубки в размер — станок резки трубок.");
+  const tolerances = Array.from(document.querySelectorAll(".etk-step-tol dd"));
+  expect(tolerances.map((item) => item.textContent)).toEqual(["длина не задана", "Согласно КД"]);
+  expect(tolerances[0].closest("dl")).toHaveClass("tone-danger");
+  expect(tolerances[1].closest("dl")).not.toHaveClass("tone-danger");
   await waitFor(() => expect(fetch).toHaveBeenCalled());
   expect(buildPrintDocumentHtml("ТК", etkPrintPages(card, []))).toContain("⚠ длина не задана");
 });
@@ -150,4 +153,31 @@ it("in a task the inscription shows the task's numbers and «Печать над
     rows: [["11", "КБ1-011", "W1/11"], ["12", "КБ1-012", "W1/12"], ["13", "КБ1-013", "W1/13"], ["14", "КБ1-014", "W1/14"], ["15", "КБ1-015", "W1/15"]],
   } }]);
   expect(buildPrintDocumentHtml("ТК", pages)).toContain("КБ1-{№} → КБ1-011 … КБ1-015");
+});
+
+it("shows the tolerances of the steps in a column of their own, a line per value, numbers bold (owner 17.10: «почему допуски так мелко»)", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({});
+  const operation = (card.document as { operations: Array<{ card: { steps: unknown[] } }> }).operations[0];
+  operation.card.steps = [
+    { number: "1", kind: "Операция", text: "Зачистить провод.", tolerance: "Допуск: Сторона В: 2-3 мм\nЗазор: 0,5 - 1,5 мм" },
+    { number: "2", kind: "Операция", text: "Пропаять.", tolerance: "(+/-) 10 °C; Время: ≤ 2,0 сек" },
+    { number: "3", kind: "Контроль", text: "Осмотреть.", tolerance: "IPC/WHMA-A-620F (Раздел 3)" },
+    { number: "4", kind: "Операция", text: "Уложить в тару.", tolerance: "-" },
+  ];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  await screen.findByText("Зачистить провод.");
+  const steps = Array.from(document.querySelectorAll(".etk-steps > li"));
+  const rows = (index: number) => Array.from(steps[index].querySelectorAll(".etk-step-tol > div")).map((row) =>
+    [row.querySelector("dt")?.textContent, row.querySelector("dd")?.textContent, Array.from(row.querySelectorAll("b")).map((bold) => bold.textContent)]);
+  expect(rows(0)).toEqual([["Сторона В", "2–3 мм", ["2–3 мм"]], ["Зазор", "0,5–1,5 мм", ["0,5–1,5 мм"]]]);
+  expect(rows(1)).toEqual([["Допуск", "± 10 °C", ["± 10 °C"]], ["Время", "≤ 2,0 сек", ["≤ 2,0 сек"]]]);
+  // Ссылка на стандарт — обычным текстом, без выделенных цифр; «-» — допуска нет.
+  expect(rows(2)).toEqual([["Допуск", "IPC/WHMA-A-620F (Раздел 3)", []]]);
+  expect(steps[3].querySelector(".etk-step-tol")).toBeNull();
+  await waitFor(() => expect(fetch).toHaveBeenCalled());
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+  expect(html).toContain("Сторона В: 2–3 мм\nЗазор: 0,5–1,5 мм");
+  expect(html).toContain("± 10 °C\nВремя: ≤ 2,0 сек");
 });

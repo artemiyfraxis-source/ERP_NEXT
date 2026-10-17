@@ -1,6 +1,6 @@
-// Схема полуфабрикатов ЭТК (`document.route`, ARCH-TRACK-1): полоса «Маршрут» на экране и строка в печати. Показывается
-// только у ветвящейся схемы — линейная ЭТК рисуется как раньше. Чистая логика без React: экран и etkPrint.ts берут
-// одни и те же блоки, номера и подписи.
+// Схема полуфабрикатов ЭТК (`document.route`, ARCH-TRACK-1): схема ПФ на экране — навигация ЭТК (EtkRouteDiagram, и у
+// линейной схемы) — и таблица «Полуфабрикаты» в печати. Чистая логика без React: экран и etkPrint.ts берут одни и те же
+// блоки, номера и подписи.
 import type { EtkRoute, EtkRouteBlock } from "./api";
 
 export interface EtkRouteFeed {
@@ -301,17 +301,6 @@ export function etkRouteFeedText(feed: EtkRouteFeed): string {
   return `ПФ ${feed.label} ${feed.name}${feed.times ? ` (${feed.times})` : ""}`;
 }
 
-/** Одна строка для печати под шапкой: та же полоса текстом. Линейная схема и её отсутствие — пустая строка. */
-export function etkRouteLine(route: EtkRoute | null): string {
-  if (!route || !etkRouteBranches(route)) return "";
-  const chips = etkRouteChips(route);
-  return `Маршрут полуфабрикатов (${etkRouteSummary(chips)}): ${chips.map((chip) => {
-    const feeds = chip.feeds.map((feed) => `ПФ ${feed.label}${feed.times ? ` (${feed.times})` : ""}`).join(", ");
-    const meta = [chip.ops ? `${chip.ops} оп.` : "", chip.perUnit, feeds ? `из ${feeds}` : "", chip.final ? "итог" : ""].filter(Boolean).join(" · ");
-    return `ПФ ${chip.label} ${chip.name}${meta ? ` (${meta})` : ""}`;
-  }).join("; ")}`;
-}
-
 /* ── ПФ ЭТК (владелец + Василий 13.10): ЭТК режется на полуфабрикаты; ПФ — это блок схемы (`document.route`), не
    отдельная сущность. Порядок `block.ops` — порядок работы внутри ПФ, номера операций ЭТК не меняются («05, 03» в одном
    ПФ можно). Считается здесь из документа; сервер считает то же (`pf_documents` в techcards/domain/route.py). */
@@ -427,6 +416,15 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
       minutes: own.reduce((sum, operation) => sum + operationMinutes(operation, batch), 0),
     };
   });
+}
+
+/** Что ПФ отдаёт дальше — коротким названием: результат его последней операции, но не накопленная строка
+ *  («Провода нарезаны: …», длиннее 48 знаков) — тогда имя ПФ. Нет результата — пусто. */
+export function etkPfOutName(group: Pick<EtkPfGroup, "name" | "output">): string {
+  const output = group.output[0];
+  if (!output) return "";
+  const name = (output.name ?? "").trim();
+  return name && name.length <= 48 && !name.includes(": ") ? name : group.name || name;
 }
 
 /** Номер операции ЭТК в списке: «01», «05». */

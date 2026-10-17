@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EtkRoute, EtkRouteBlock, Principal, ProjectTechcard } from "./api";
 import { EtkSheet, focusOperations } from "./ProjectEtk";
-import { etkCutCable, pfPayload } from "./EtkPfList";
+import { pfPayload } from "./EtkPfList";
+import { etkCutCable } from "./etkPfArt";
 import { etkPfGroups } from "./etkRoute";
 import { mergeBlocks, placeOp, splitBlock, type Route } from "./routeLogic";
 
@@ -116,41 +117,49 @@ function mockFetch(saved?: (body: Record<string, unknown>) => void) {
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("ETK list by ПФ", () => {
-  it("shows each ПФ with its input, operations in the order of work, output and norm", async () => {
+/** Схема ПФ на экране и правка ПФ по «Править ПФ» в её шапке. */
+async function diagramOf() {
+  return screen.findByRole("region", { name: "Схема полуфабрикатов" });
+}
+
+async function openEditor() {
+  fireEvent.click(within(await diagramOf()).getByRole("button", { name: "Править ПФ" }));
+  return screen.getByRole("navigation", { name: "Правка ПФ" });
+}
+
+describe("ETK navigation by ПФ (схема ПФ)", () => {
+  it("has no ПФ list on the left: each ПФ is a box of the scheme with its input, operations in the order of work, output and norm", async () => {
     mockFetch();
-    render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    const groups = within(nav).getAllByRole("region");
-    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["ПФ 1.1 · Провод отрезанный", "ПФ 2 · Провод с терминалом", "ПФ 3 · Жгут", "ПФ 1.2 · Пара скрученная"]);
-    const mount = groups[2];
-    expect(within(mount).getAllByRole("button", { name: /^\d\d/ }).map((button) => button.textContent?.slice(0, 2))).toEqual(["05", "03"]);
-    // Вход ПФ — одной строкой номеров («Вход: 2 ×2, 1.2»), а не накопленными названиями; название — в подсказке.
-    const feed = within(mount).getByLabelText("Вход ПФ 3");
-    expect(feed).toHaveTextContent(/^Вход: 2 ×2/);
-    expect(feed).not.toHaveTextContent("←");
-    expect(feed).toHaveAttribute("title", expect.stringContaining("ПФ 2 Провод с терминалом ×2"));
-    expect(within(mount).getByRole("list", { name: "Комплектующие ПФ 3" })).toHaveTextContent("T-13,5");
+    const { container } = render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);
+    const diagram = await diagramOf();
+    expect(screen.queryByRole("navigation", { name: "Маршрут ЭТК" })).toBeNull();
+    expect(container.querySelector(".etk-pf, .etk-nav-route")).toBeNull();
+    const boxes = within(diagram).getAllByRole("region");
+    expect(boxes.map((box) => box.getAttribute("aria-label"))).toEqual(["ПФ 1.1 · Провод отрезанный", "ПФ 1.2 · Пара скрученная", "ПФ 2 · Провод с терминалом", "ПФ 3 · Жгут"]);
+    const mount = boxes[3];
+    expect(within(within(mount).getByRole("list", { name: "Операции ПФ 3" })).getAllByRole("button").map((button) => button.textContent?.slice(0, 2))).toEqual(["05", "03"]);
+    expect(within(mount).getByLabelText("Вход")).toHaveTextContent("2 Провод с терминалом ×2");
     expect(within(mount).getByLabelText("Выход ПФ 3")).toHaveTextContent("→ Жгут");
     expect(mount).toHaveTextContent("11,5 мин");
     expect(mount).toHaveTextContent("изделие");
     fireEvent.click(within(mount).getByRole("button", { name: /^05/ }));
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Монтаж");
+    expect(within(mount).getByRole("button", { name: /^05/ })).toHaveAttribute("aria-current", "step");
+    // ПФ открытой операции раскрыт: у операций — код карты.
+    expect(mount).toHaveAttribute("aria-current", "step");
+    expect(within(mount).getByRole("button", { name: /^05/ })).toHaveTextContent("MNT");
+    expect(within(boxes[0]).getByRole("button", { name: /^01/ })).not.toHaveTextContent("CUT");
   });
 
-  it("titles a ПФ with its name, lists the inputs by number on one line and shows the output name instead of a cumulative text", async () => {
+  it("shows the output name instead of a cumulative text", async () => {
     const cumulative = operations.map((operation) => (operation.position === 3
       ? { ...operation, result: [{ name: "Провода нарезаны: НВ4 0,5 красный — 3 шт по 150 мм; НВ4 0,5 черный — 3 шт по 150 мм", norm: "10", unit: "шт" }] } : operation));
     const card = { ...techcard(), document: { ...techcard().document, operations: cumulative } } as ProjectTechcard;
     mockFetch();
     render(<EtkSheet card={card} principal={editor} onChange={() => undefined} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    const mount = within(nav).getByRole("region", { name: "ПФ 3 · Жгут" });
-    expect(mount.querySelector(".etk-pf-name")).toHaveTextContent("ПФ 3 · Жгут");
-    expect(within(mount).getByLabelText("Вход ПФ 3")).toHaveTextContent("Вход: 2 ×2, 1.2");
+    const mount = within(await diagramOf()).getByRole("region", { name: "ПФ 3 · Жгут" });
     expect(within(mount).getByLabelText("Выход ПФ 3")).toHaveTextContent("→ Жгут");
     expect(within(mount).getByLabelText("Выход ПФ 3")).not.toHaveTextContent("нарезаны");
-    expect(within(mount).queryByText(/←/)).toBeNull();
   });
 
   it("moves an operation to another ПФ by drag and by the select, then saves the scheme as a new revision", async () => {
@@ -158,8 +167,8 @@ describe("ETK list by ПФ", () => {
     mockFetch((body) => bodies.push(body));
     const changed = vi.fn();
     render(<EtkSheet card={techcard()} principal={editor} onChange={changed} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    const nav = await openEditor();
+    expect(screen.queryByRole("region", { name: "Схема полуфабрикатов" })).toBeNull();
 
     // Перетащить 03 в ПФ-2 перед 02.
     const source = within(nav).getByRole("button", { name: /^03/ }).closest("li")!;
@@ -183,6 +192,7 @@ describe("ETK list by ПФ", () => {
     expect(saved.blocks.map((item) => [item.key, item.ops, item.final])).toEqual([["cut", [1], false], ["crimp", [3, 2], false], ["mount", [5, 4], true]]);
     expect(saved.edges).toEqual([{ from: "cut", to: "crimp", per_unit: 1 }, { from: "crimp", to: "mount", per_unit: 2 }]);
     expect(await screen.findByText("ПФ сохранены · ревизия 3")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Правка ПФ" })).toBeNull();
   });
 
   it("keeps the kit mark of a ПФ and the items on the arrows through «Сохранить ПФ»", async () => {
@@ -195,8 +205,7 @@ describe("ETK list by ПФ", () => {
     };
     const changed = vi.fn();
     render(<EtkSheet card={techcard(v2)} principal={editor} onChange={changed} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    const nav = await openEditor();
     fireEvent.change(within(nav).getByRole("combobox", { name: "Перенести операцию 04 в ПФ" }), { target: { value: "mount" } });
     fireEvent.click(within(nav).getByRole("button", { name: "Сохранить ПФ · ревизия 3" }));
     await waitFor(() => expect(changed).toHaveBeenCalled());
@@ -208,24 +217,23 @@ describe("ETK list by ПФ", () => {
     expect(saved.edges).toEqual([{ from: "cut", to: "crimp", per_unit: 1, item: "ПВ3 0,5 ×1" }, { from: "crimp", to: "mount", per_unit: 2 }]);
   });
 
-  it("blocks saving a scheme that breaks the rules and says why", async () => {
+  it("blocks saving a scheme that breaks the rules and says why; «Отмена» returns to the scheme", async () => {
     mockFetch();
     render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    const nav = await openEditor();
     // Резка (ПФ-1) — в изделие: стрелка из изделия в «Провод с терминалом» замыкает схему.
     fireEvent.change(within(nav).getByRole("combobox", { name: "Перенести операцию 01 в ПФ" }), { target: { value: "mount" } });
     expect(within(nav).getByRole("status")).toHaveTextContent("Схема полуфабрикатов:");
     expect(within(nav).getByRole("button", { name: /Сохранить ПФ/ })).toBeDisabled();
     fireEvent.click(within(nav).getByRole("button", { name: "Отмена" }));
-    expect(within(nav).getAllByRole("region")).toHaveLength(4);
+    expect(screen.queryByRole("navigation", { name: "Правка ПФ" })).toBeNull();
+    expect(within(await diagramOf()).getAllByRole("region")).toHaveLength(4);
   });
 
-  it("a viewer sees the ПФ but not «Править ПФ»", async () => {
+  it("a viewer sees the scheme but not «Править ПФ»", async () => {
     mockFetch();
     render(<EtkSheet card={techcard()} principal={{ ...editor, permissions: {} }} onChange={() => undefined} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    expect(within(nav).queryByRole("button", { name: "Править ПФ" })).toBeNull();
+    expect(within(await diagramOf()).queryByRole("button", { name: "Править ПФ" })).toBeNull();
   });
 });
 
@@ -262,9 +270,8 @@ describe("«Предложить разбивку на ПФ»", () => {
     mockPropose(false, puts, posts);
     const changed = vi.fn();
     render(<EtkSheet card={techcard()} principal={editor} onChange={changed} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    expect(within(nav).queryByRole("button", { name: "Предложить разбивку на ПФ" })).toBeNull();
-    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    expect(within(await diagramOf()).queryByRole("button", { name: "Предложить разбивку на ПФ" })).toBeNull();
+    const nav = await openEditor();
     fireEvent.click(within(nav).getByRole("button", { name: "Предложить разбивку на ПФ" }));
 
     await waitFor(() => expect(within(nav).getAllByRole("region")).toHaveLength(3));
@@ -292,13 +299,13 @@ describe("«Предложить разбивку на ПФ»", () => {
     const puts: Array<Record<string, unknown>> = [];
     mockPropose(true, puts, []);
     render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} />);
-    const nav = await screen.findByRole("navigation", { name: "Маршрут ЭТК" });
-    fireEvent.click(within(nav).getByRole("button", { name: "Править ПФ" }));
+    const nav = await openEditor();
     fireEvent.click(within(nav).getByRole("button", { name: "Предложить разбивку на ПФ" }));
     expect(await within(nav).findByText("Разбивка уже по ПФ")).toBeInTheDocument();
     expect(within(nav).getAllByRole("region")).toHaveLength(4);
     fireEvent.click(within(nav).getByRole("button", { name: "Отмена" }));
-    expect(within(nav).queryByText("Разбивка уже по ПФ")).toBeNull();
+    expect(screen.queryByText("Разбивка уже по ПФ")).toBeNull();
+    expect(within(await diagramOf()).getAllByRole("region")).toHaveLength(4);
     expect(puts).toHaveLength(0);
   });
 });
@@ -325,7 +332,7 @@ describe("task mode by ПФ", () => {
   });
 });
 
-describe("кабель в оболочке в списке ПФ (рисунок схемы ПФ генератора)", () => {
+describe("кабель в оболочке в эскизе ПФ (рисунок схемы ПФ генератора)", () => {
   // 545К.9 КБ1: UL2527 28AWG на 4 жилы — резка на роторе снимает оболочку с обоих концов.
   const cut = { position: 1, code: "CUT_COAX+2strip", type: "cutWireStrip", title: "Резка с разделкой", result: [{ name: "UL2527 28AWG 400мм", norm: "50", unit: "шт" }],
     fields: { strip: { a: true, b: true, lenA: "20", lenB: "20" }, wires: [{ name: "UL2527 28AWG", art: "UL2527 28AWG", qty: 1, length: 400, pins: [] }] } };
@@ -349,13 +356,13 @@ describe("кабель в оболочке в списке ПФ (рисунок 
     const one: EtkRoute = { source: "generated", final: "cut", blocks: [block("cut", "Нарезанные провода", [1], { final: true })], edges: [] };
     const card = (wires: unknown[]) => ({ ...techcard(one), document: { kit: { part_quantity: "50", name: "Кабель" }, operations: [cut], route: one, build_config: { wires } } }) as unknown as ProjectTechcard;
     const { unmount } = render(<EtkSheet card={card(config.wires)} principal={editor} onChange={() => undefined} />);
-    const thumb = await screen.findByRole("button", { name: "Эскиз операции 01" });
-    expect(thumb).toHaveAttribute("title", "UL2527 28AWG · 4 жилы");
+    const thumb = await screen.findByRole("img", { name: "Эскиз ПФ 1" });
+    expect(thumb.querySelector(".etk-dag-cable")).toHaveAttribute("title", "UL2527 28AWG · 4 жилы");
     expect(thumb.querySelector(".rc-cable-art .rc-jacket")).not.toBeNull();
     expect(thumb.querySelectorAll(".rc-core")).toHaveLength(8); // 4 жилы × 2 конца
     unmount();
     render(<EtkSheet card={card([{ ...config.wires[0], cores: 1 }])} principal={editor} onChange={() => undefined} />);
-    const single = await screen.findByRole("button", { name: "Эскиз операции 01" });
+    const single = await screen.findByRole("img", { name: "Эскиз ПФ 1" });
     expect(single.querySelector(".rc-cable-art")).toBeNull();
     expect(single.querySelector("svg.etk-svg")).not.toBeNull();
   });

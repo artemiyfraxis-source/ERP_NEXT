@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { etkOperationName, parseDefects, solderMode, toolingSections } from "./etkOperation";
+import { etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections } from "./etkOperation";
 
 describe("etkOperationName", () => {
   it("names a coax operation by its kind where the card says only the first word (796К.2 КБ1, owner 15.10)", () => {
@@ -96,4 +96,23 @@ it("reads the one-line and sentence-per-line defect formats (HEAT_TYT, STRIP_WIR
     ["Надрезы, царапины или обрыв проволочек жилы", ""], ["Несоответствие длины зачистки чертежу", ""],
     ["Смятие изоляции от губок", ""], ["Отсутствие юбки втулки", "Приводит к подрезке проволочек."],
   ]);
+});
+
+describe("etkToleranceLines / etkToleranceParts", () => {
+  it("splits a step tolerance into a line per value with its label, normalising ± and ranges", () => {
+    expect(etkToleranceLines("Допуск: Сторона В: 2–3 мм")).toEqual([{ label: "Сторона В", value: "2–3 мм" }]);
+    expect(etkToleranceLines("(+/-) 10 °C")).toEqual([{ label: "", value: "± 10 °C" }]);
+    expect(etkToleranceLines("Время: ≤ 2,0 сек\nЗазор: 0,5 - 1,5 мм")).toEqual([
+      { label: "Время", value: "≤ 2,0 сек" }, { label: "Зазор", value: "0,5–1,5 мм" },
+    ]);
+    expect(etkToleranceLines("ГОСТ 23592-96; КД")).toEqual([{ label: "", value: "ГОСТ 23592-96" }, { label: "", value: "КД" }]);
+    expect(etkToleranceLines("-")).toEqual([]);
+    expect(etkToleranceLines(undefined)).toEqual([]);
+  });
+
+  it("bolds the numbers with their unit and sign, never inside a reference to a standard", () => {
+    expect(etkToleranceParts("± 10 °C")).toEqual([{ text: "± 10 °C", strong: true }]);
+    expect(etkToleranceParts("не более 3 сек")).toEqual([{ text: "не более ", strong: false }, { text: "3 сек", strong: true }]);
+    expect(etkToleranceParts("IPC/WHMA-A-620F (Раздел 3)")).toEqual([{ text: "IPC/WHMA-A-620F (Раздел 3)", strong: false }]);
+  });
 });

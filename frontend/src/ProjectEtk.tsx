@@ -15,10 +15,11 @@ import {
 import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
-import { etkPartSource, etkRouteBranches, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes } from "./etkRoute";
+import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
+import { etkPfArt } from "./etkPfArt";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
-import { ETK_TOOLING_SECTIONS, etkOperationName, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { SAFETY_HEAD, TcCardEditForm, type EditContext } from "./TcCardEditForm";
@@ -281,6 +282,19 @@ function EtkParamBlock({ params }: { params: EtkParams }) {
 /** Допуск шага, которого нет в данных («длина не задана» у нарезки трубок-маркеров) — красным, как «не задано» пайки. */
 const NOT_SET = /не задан/i;
 
+/** Допуск шага — колонкой справа, тем же размером, что текст шага (планшет у станка): строка на значение, подпись
+ *  слева, цифры жирно; ссылка на стандарт — обычным текстом. Допуска нет в данных («не задан») — тоном опасности. */
+function StepTolerance({ text }: { text?: string }) {
+  const lines = etkToleranceLines(text);
+  if (!lines.length) return null;
+  return <dl className={`etk-step-tol${NOT_SET.test(text || "") ? " tone-danger" : ""}`} aria-label="Допуск">
+    {lines.map((line, index) => <div key={index}>
+      <dt>{line.label || "Допуск"}</dt>
+      <dd>{etkToleranceParts(line.value).map((part, at) => part.strong ? <b key={at}>{part.text}</b> : <Fragment key={at}>{part.text}</Fragment>)}</dd>
+    </div>)}
+  </dl>;
+}
+
 /** Номера изделий задания для «№ изделия» в надписях и печать их списка; вне задания — нет (номер «по партии»). */
 const MarkSerialContext = createContext<{ range: MarkSerialRange; print: () => void } | null>(null);
 
@@ -357,7 +371,10 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
     {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>
       {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
       {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
-        <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}{step.tolerance && step.tolerance.trim() !== "-" && <small className={NOT_SET.test(step.tolerance) ? "tone-danger" : undefined}>Допуск: {step.tolerance}</small>}</li>
+        <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>
+          <div className="etk-step"><div className="etk-step-text">{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}</div>
+            <StepTolerance text={step.tolerance} /></div>
+        </li>
       )}</ol> : null}</EtkSection> : null}
     {operation.card?.defects && <DefectsView text={operation.card.defects} code={defectOperationCode(operation.code || "", operation.type)} number={next()} />}
     {(figure || sketch) && <EtkSection label="Эскиз" number={next()}>
@@ -572,7 +589,8 @@ export function focusOperations(list: EtkOperation[], focus?: EtkFocus): number[
   return positions.length > 1 ? positions : [];
 }
 
-/** Электронная ТК: слева маршрут, справа выбранная операция, «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_).
+/** Электронная ТК: сверху схема ПФ (навигация; ЭТК без схемы — список операций слева), под ней выбранная операция,
+ *  «← →» по маршруту и правка операции (SUPPLYMAP renderEtk_).
  *  В задании монтажника (`task`) — только операция задания: без списка операций слева, без «← Назад / Далее» и
  *  полосы маршрута (владелец 13.10: «слева не должно быть следующих операций»). */
 function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sketches, onSketches, sketchUrl, focus, task = false }: {
@@ -584,6 +602,8 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
   const [selected, setSelected] = useState(() => focusIndex(list, focus));
   const [editing, setEditing] = useState(false);
   const [toTemplate, setToTemplate] = useState(false);
+  // «Править ПФ» в шапке схемы ПФ: вместо схемы — правка ПФ, пока не сохранят или не отменят.
+  const [pfEditing, setPfEditing] = useState(false);
   const main = useRef<HTMLDivElement>(null);
   if (!list.length) return null;
   const index = Math.min(selected, list.length - 1);
@@ -611,11 +631,14 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
     })}</div>;
   }
 
-  /** Чип блока: открыть его первую операцию (1-based позиция в ЭТК) и подвести к ней экран. */
+  /** Операция из схемы ПФ (1-based позиция в ЭТК): открыть её; панель операции за краем экрана — подвести к ней. */
   function pick(position: number) {
     setSelected(Math.min(Math.max(position, 1), list.length) - 1);
     setEditing(false);
-    requestAnimationFrame(() => main.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" }));
+    requestAnimationFrame(() => {
+      const panel = main.current;
+      if (panel && panel.getBoundingClientRect().top > window.innerHeight - 160) panel.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    });
   }
 
   async function save(draft: OperationRecordEdit) {
@@ -629,11 +652,22 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
     onSaved(updated);
   }
 
+  // Схема ПФ — навигация ЭТК (владелец 17.10): блок ПФ с эскизом и операциями, щелчок по операции открывает её ниже.
+  // ЭТК без схемы (до версии 3) — прежний список операций слева.
   const grouped = !task && route !== null;
+  const subOf = (item: EtkOperation) => [navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ");
+  const parts = Number(batch.replace(",", ".")) || 1;
+  const pins = grouped ? harnessPins(list) : {};
+  const art = (group: EtkPfGroup, inputs: string[]) => etkPfArt({
+    group, inputs, document: card.document, pins, batch: parts, image: (item) => sketchOf(item as EtkOperation),
+    operations: group.ops.map((position) => list[position - 1]).filter(Boolean) as Array<Record<string, unknown>>,
+  });
+  const navigation = grouped && route ? (pfEditing
+    ? <EtkPfList card={card} list={list} selected={index} onSaved={onRouteSaved} onClose={() => setPfEditing(false)}
+      onPick={(position) => { setSelected(position); setEditing(false); }} title={etkTitle} sub={subOf} />
+    : <EtkRouteDiagram route={route} list={list} batch={parts} current={index + 1} onPick={pick} title={etkTitle} sub={subOf} art={art}
+      actions={canEdit ? <button type="button" className="secondary small" onClick={() => setPfEditing(true)}>Править ПФ</button> : null} />) : null;
   const view = <div className={task ? "etk-wrap etk-wrap-task" : grouped ? "etk-wrap etk-wrap-pf" : "etk-wrap"}>
-    {grouped && <EtkPfList card={card} list={list} selected={index} canEdit={canEdit} onSaved={onRouteSaved}
-      onPick={(position) => { setSelected(position); setEditing(false); }}
-      title={etkTitle} sub={(item) => [navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ")} sketch={sketchOf} />}
     {!task && !grouped && <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>
       <button key={`${etkOperationKey(item)}:${position}`} className={position === index ? "on" : ""} onClick={() => { setSelected(position); setEditing(false); }}>
         <span className="etk-no">{String(item.position || position + 1).padStart(2, "0")}</span>
@@ -667,17 +701,14 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
       </>}
     </div>
   </div>;
-  // Линейная схема (и ЭТК без схемы): тот же элемент, что и раньше, без обёртки.
-  return !task && route && etkRouteBranches(route)
-    ? <><EtkRouteDiagram route={route} current={index + 1} onPick={pick} />{view}</>
-    : view;
+  return navigation ? <>{navigation}{view}</> : view;
 }
 
 function stamp(value: string | null | undefined) {
   return formatDateTime(value);
 }
 
-/** Вкладка «ТК КБn»: одна строка о карте и действия, схема жгута один раз, маршрут слева и операция справа, журнал
+/** Вкладка «ТК КБn»: одна строка о карте и действия, схема жгута один раз, схема ПФ и операция под ней, журнал
     ревизий свёрнут. Правят операции здесь («Править операцию»); пересборка — в «Генераторе». */
 export type EtkSketchSource = { list: () => Promise<{ items: OperationSketch[] }>; url: (operationKey: string, at: string) => string };
 

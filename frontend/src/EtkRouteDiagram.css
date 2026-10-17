@@ -1,0 +1,63 @@
+/* Схема ПФ — навигация ЭТК (EtkRouteDiagram.tsx): полосы колонок, блоки ПФ с эскизом и операциями, стрелки поверх. */
+.etk-route { min-width: 0; max-width: 100%; margin: 14px 0; padding: 8px 12px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.etk-route-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 30px; font-size: 13px; }
+.etk-route-head small { color: var(--muted-foreground); font-size: 12px; }
+.etk-route-actions { display: flex; gap: 6px; margin-left: auto; }
+.etk-route-final { flex: none; align-self: center; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 16%, transparent); color: var(--foreground); font-size: 11px; font-style: normal; font-weight: 700; }
+.etk-dag-scroll { min-width: 0; max-width: 100%; margin-top: 6px; overflow-x: auto; }
+.etk-dag { position: relative; display: grid; justify-content: start; }
+.etk-dag-svg { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 0; overflow: visible; }
+.etk-dag-band { position: relative; z-index: 1; display: flex; align-items: center; }
+.etk-dag-col { display: flex; flex: none; flex-direction: column; gap: 10px; }
+.etk-dag-line { fill: none; stroke: var(--muted-foreground); stroke-width: 1.6; opacity: .75; transition: opacity .12s; }
+.etk-dag-line.kit { stroke-width: 1; opacity: .35; stroke-dasharray: 4 3; }
+.etk-dag-line.on { stroke: var(--primary); stroke-width: 2.2; opacity: 1; }
+.etk-dag-line.dim { opacity: .08; }
+.etk-dag-head { fill: var(--muted-foreground); }
+.etk-dag-item { position: absolute; z-index: 2; padding: 0 4px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--foreground); font-size: 11px; font-weight: 700; line-height: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.etk-dag-item.dim { opacity: .25; }
+
+.etk-dag-box { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 7px 9px 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); color: var(--foreground); font-size: 13px; line-height: 1.3; transition: opacity .12s, border-color .12s; }
+.etk-dag-box:hover, .etk-dag-box:focus-within { border-color: var(--primary); }
+.etk-dag-box.on { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.etk-dag-box.final { border-width: 2px; border-color: var(--primary); }
+.etk-dag-box.kit { border-style: dashed; background: color-mix(in srgb, var(--muted-foreground) 5%, var(--card)); }
+.etk-dag-box.dim { opacity: .35; }
+.etk-dag-box.near { border-color: var(--primary); }
+.etk-dag-title { display: grid; gap: 2px; margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.etk-dag-title:disabled { cursor: default; }
+.etk-dag-title:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.etk-dag-top { display: flex; align-items: center; gap: 6px; }
+.etk-dag-top b { color: var(--primary); font-weight: 800; }
+.etk-dag-top small { color: var(--muted-foreground); font-size: 11px; }
+.etk-dag-time { margin-left: auto; font-size: 12px; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.etk-dag-top .etk-route-final + .etk-dag-time { margin-left: 0; }
+.etk-dag-top .etk-route-final { margin-left: auto; }
+.etk-dag-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-weight: 700; overflow-wrap: anywhere; }
+.etk-dag-ins { display: grid; padding-top: 4px; border-top: 1px solid var(--border); font-size: 12px; }
+.etk-dag-in { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 16px; }
+.etk-dag-box.on .etk-dag-in { white-space: normal; }
+.etk-dag-in b { color: var(--primary); font-weight: 700; font-variant-numeric: tabular-nums; }
+.etk-dag-in i { font-style: normal; font-weight: 700; }
+.etk-dag-in.more { color: var(--muted-foreground); }
+/* Эскиз ПФ: в компактном блоке — узнать полуфабрикат, в раскрытом — прочитать размеры и подписи. */
+.etk-dag-art { display: grid; gap: 4px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.etk-dag-art > div, .etk-dag-art img { max-height: 84px; overflow: hidden; }
+.etk-dag-art svg, .etk-dag-art img { display: block; width: 100%; height: auto; max-height: 84px; object-fit: contain; }
+.etk-dag-box.on .etk-dag-art > div, .etk-dag-box.on .etk-dag-art img, .etk-dag-box.on .etk-dag-art svg { max-height: 360px; }
+.etk-dag-cable .rc-cable-art { width: 100%; height: auto; }
+.etk-dag-ops { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.etk-dag-ops button { display: flex; width: 100%; gap: 7px; align-items: baseline; min-height: 26px; padding: 3px 6px; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--foreground); font-size: 13px; text-align: left; }
+.etk-dag-ops button:hover { border-color: var(--border); background: var(--accent); }
+.etk-dag-ops button.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--card)); font-weight: 600; }
+.etk-dag-ops .etk-no { flex: none; color: var(--primary); font-weight: 800; font-variant-numeric: tabular-nums; }
+.etk-dag-op { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etk-dag-box.on .etk-dag-op { white-space: normal; }
+.etk-dag-op small { display: block; color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.etk-dag-out { display: flex; justify-content: space-between; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); font-weight: 600; }
+.etk-dag-out > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etk-dag-box.on .etk-dag-out > span:first-child { white-space: normal; }
+.etk-dag-out .num { flex: none; font-variant-numeric: tabular-nums; }
+@media (pointer: coarse) {
+  .etk-dag-ops button { min-height: 40px; align-items: center; }
+}
