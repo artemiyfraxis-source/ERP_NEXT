@@ -16,7 +16,7 @@ import { ETK_CONNECTION_COLUMNS, ETK_NOT_SET, etkConnectionRows, etkContactSpecs
 import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
 import { hasMarkSerial, markSerialSpan, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
-import { etkPfArt } from "./etkPfArt";
+import { etkConfigOp, etkPfArt } from "./etkPfArt";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectArt, defectGroupCode, defectOperationCode } from "./etkDefectArt";
 import { ETK_TOOLING_SECTIONS, etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, recordCategory, solderMode, toolingSections, type SolderMode } from "./etkOperation";
@@ -656,6 +656,10 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
   // ЭТК без схемы (до версии 3) — прежний список операций слева.
   const grouped = !task && route !== null;
   const subOf = (item: EtkOperation) => [navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ");
+  // В блоке ПФ операция — своим названием из генератора («Надеть ТТК X4 «A6» — ТТК 12/4»), не именем карты («Монтаж»
+  // дважды); нет строки генератора — название карты (владелец 17.10).
+  const configOp = etkConfigOp(card.document as Record<string, unknown> | null);
+  const pfTitle = (item: EtkOperation) => String(configOp(item as unknown as Record<string, unknown>).label ?? "").trim() || etkTitle(item);
   const parts = Number(batch.replace(",", ".")) || 1;
   const pins = grouped ? harnessPins(list) : {};
   const art = (group: EtkPfGroup, inputs: string[]) => etkPfArt({
@@ -665,7 +669,7 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
   const navigation = grouped && route ? (pfEditing
     ? <EtkPfList card={card} list={list} selected={index} onSaved={onRouteSaved} onClose={() => setPfEditing(false)}
       onPick={(position) => { setSelected(position); setEditing(false); }} title={etkTitle} sub={subOf} />
-    : <EtkRouteDiagram route={route} list={list} batch={parts} current={index + 1} onPick={pick} title={etkTitle} sub={subOf} art={art}
+    : <EtkRouteDiagram route={route} list={list} batch={parts} current={index + 1} onPick={pick} title={pfTitle} sub={subOf} art={art}
       actions={canEdit ? <button type="button" className="secondary small" onClick={() => setPfEditing(true)}>Править ПФ</button> : null} />) : null;
   const view = <div className={task ? "etk-wrap etk-wrap-task" : grouped ? "etk-wrap etk-wrap-pf" : "etk-wrap"}>
     {!task && !grouped && <nav className="etk-nav-route" aria-label="Маршрут ЭТК">{list.map((item, position) =>

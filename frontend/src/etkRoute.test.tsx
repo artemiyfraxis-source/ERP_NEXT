@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EtkRoute, EtkRouteBlock, Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
-import { etkDiagramBands } from "./EtkRouteDiagram";
+import { COLUMN_MAX, COLUMN_MIN, OPEN_MIN, etkDiagramWidths } from "./EtkRouteDiagram";
 import { buildPrintDocumentHtml } from "./print";
 import { etkPrintPages } from "./etkPrint";
 import { etkDiagramCrossings, etkPartSource, etkSourceLines, etkPfGroups, etkRouteBranches, etkRouteChips, etkRouteDiagram, etkRouteLevels, etkRouteOf, etkRouteSummary, etkSemiSource, pluralBlocks } from "./etkRoute";
@@ -280,13 +280,41 @@ describe("ETK scheme of ПФ — the navigation", () => {
     expect(screen.getByRole("heading", { level: 3 })).toHaveTextContent("Операция 5");
   });
 
-  it("splits the columns into bands that fit the frame, evenly, one band before the frame is measured", () => {
-    expect(etkDiagramBands([224, 224, 224], 0)).toEqual([[0, 1, 2]]);
-    expect(etkDiagramBands([224, 224, 224], 1000)).toEqual([[0, 1, 2]]);
-    // 8 колонок, в ширину входят 6 — две полосы по 4, а не 6 и 2.
-    expect(etkDiagramBands(Array(8).fill(224), 6 * 224 + 5 * 48)).toEqual([[0, 1, 2, 3], [4, 5, 6, 7]]);
-    // Раскрытый блок шире — полос по ширине, не по числу.
-    expect(etkDiagramBands([560, 224, 224, 224], 1100)).toEqual([[0, 1], [2, 3]]);
+  it("lays the levels out in one row over the whole frame and scrolls it sideways inside its own frame when it does not fit", async () => {
+    // 27": колонки делят ширину, раскрытая шире; не измерено — минимальные; узкая рамка — не уже минимума, ряд листается.
+    const wide = etkDiagramWidths([false, false, true, false, false], 2300);
+    expect(wide[2]).toBeGreaterThan(wide[0]);
+    expect(wide.reduce((sum, width) => sum + width, 0) + 4 * 56 + 24).toBeLessThanOrEqual(2300);
+    expect(wide[0]).toBeGreaterThan(COLUMN_MIN);
+    expect(etkDiagramWidths([false, true], 0)).toEqual([COLUMN_MIN, OPEN_MIN]);
+    const narrow = etkDiagramWidths([false, false, true, false, false], 1100);
+    expect(narrow).toEqual([COLUMN_MIN, COLUMN_MIN, OPEN_MIN, COLUMN_MIN, COLUMN_MIN]);
+    expect(Math.max(...etkDiagramWidths([false, false], 4000))).toBe(COLUMN_MAX);
+    const { container } = await renderSheet(branched);
+    // Один ряд колонок, без полос ниже; рамка листания своя.
+    expect(container.querySelector(".etk-dag-band")).toBeNull();
+    const frame = container.querySelector(".etk-dag-scroll") as HTMLElement;
+    expect(frame.parentElement).toHaveClass("etk-dag-view");
+    // В рамке — стрелки, подписи «×N» и колонки уровней (1.1 и 1.2 — одна колонка), ничего ниже ряда.
+    expect([...frame.querySelector(".etk-dag")!.children].every((child) => child.matches("svg, .etk-dag-item, .etk-dag-col"))).toBe(true);
+    expect(container.querySelectorAll(".etk-dag-col")).toHaveLength(3);
+  });
+
+  it("shows each operation in its box by its own generator label, the card code only under it in the open box", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    const card = techcard(branched);
+    const labels = ["Резка проводов", "Резка ТУТ", "Надеть ТТК X4 «A6» — ТТК 12/4", "Усадка маркировки X4 «A6» — «A6»", ""];
+    card.document = { ...card.document, build_config: { ops: labels.map((label) => ({ type: "insTut", label })) } };
+    render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+    await screen.findByRole("region", { name: "Схема полуфабрикатов" });
+    const ops = (name: RegExp) => within(within(boxOf(name)).getByRole("list")).getAllByRole("button").map((button) => button.textContent);
+    expect(ops(/Опрессовка/)).toEqual(["03Надеть ТТК X4 «A6» — ТТК 12/4", "04Усадка маркировки X4 «A6» — «A6»"]);
+    // Пустая строка генератора — название карты.
+    expect(ops(/Изделие/)).toEqual(["05Операция 5"]);
+    fireEvent.click(boxOf(/Опрессовка/).querySelector(".etk-dag-title")!);
+    expect(within(boxOf(/Опрессовка/)).getByRole("button", { name: /^03/ }).querySelector("small")).toHaveTextContent("CUT_WIRE_auto");
+    expect(within(boxOf(/Резка провода/)).getByRole("button", { name: /^01/ }).querySelector("small")).toBeNull();
   });
 });
 

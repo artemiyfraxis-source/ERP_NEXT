@@ -58,4 +58,50 @@ describe("etkPfArt — эскиз полуфабриката в схеме ПФ"
     expect(etkPfArt({ group: group(), operations: [plain], document: {}, image: () => "/sketch.png" })?.main).toEqual({ image: "/sketch.png" });
     expect(etkPfArt({ group: group(), operations: [plain], document: {} })).toBeNull();
   });
+
+  it("draws a branch ПФ as the connector with its wires, the twisted pair, the braid with its length, the ТТК and the marking text", () => {
+    const housing = { art: "174047-2", title: "TE Multilock 040", pitch: 2.5, rows: 1, cols: 4, n: 4, kind: "grid", color: "#2b2b2b",
+      grid: [[1, 2, 3, 4]] };
+    const operations = [
+      { position: 1, type: "insTerm", code: "INS_terminal_1.00", connector: "174047-2", connector_article: "174047-2", housing,
+        fields: { wires: [{ name: "ПВАМ 0,35 оранжевый", art: "ПВАМ 0,35 оранжевый", pins: [1] }, { name: "ПВАМ 0,35 белый", art: "ПВАМ 0,35 белый", pins: [2] }] } },
+      { position: 2, type: "twist", code: "TWIST", fields: { twist: { pitch: "25", pairs: "1) ПВАМ 0,35 оранжевый + ПВАМ 0,35 белый", count: 1 } } },
+      { position: 3, type: "insWrap", code: "INS_BRAID", components: [{ art: "Оплетка XS-3", norm: "10", unit: "М." }] },
+      { position: 4, type: "insTut", code: "INS_TUT", components: [] },
+      { position: 5, type: "insTut", code: "INS_TUT", components: [] },
+      { position: 6, type: "heatTut", code: "HEAT_TTK_short", components: [] },
+    ];
+    const config = { ops: [
+      { type: "insTerm", branch: "X4 «A6»" }, { type: "twist" },
+      { type: "insWrap", wrapKind: "braid", wrapArt: "XS-3", wrapLen: 450 },
+      { type: "insTut", tutArt: "ТТК 12/4", label: "Надеть ТТК X4 «A6» — ТТК 12/4" },
+      { type: "insTut", markTube: true, label: "Надеть маркировку X4 «A6» — «A6»" },
+      { type: "heatTut", tutArt: "ТТК 12/4", label: "Усадка ТТК на разъёме X4 «A6» — ТТК 12/4" },
+    ] };
+    const art = etkPfArt({ group: group({ ops: [1, 2, 3, 4, 5, 6] }), operations, document: { operations, build_config: config }, batch: 10 })!;
+    const svg = art.main && "svg" in art.main ? art.main.svg : "";
+    expect(svg).toContain('data-part="connector"');
+    expect(svg).toContain("X4 «A6» · 174047-2");
+    expect(svg).toContain('data-part="braid"');
+    expect(svg).toContain(">XS-3<");
+    expect(svg).toContain(">450 мм<");
+    expect(svg).toContain('data-part="sleeve"');
+    expect(svg).toContain(">ТТК 12/4<");
+    expect(svg).toContain("усажена на разъёме");
+    expect(svg).toContain('data-part="mark"');
+    expect(svg).toContain(">A6<");
+    expect(svg).toContain('data-part="twist"');
+    expect(svg).toContain("шаг 25 мм");
+    // Всё на одном рисунке — полосы слоёв под ним нет.
+    expect(art.layers).toBe("");
+    // Без свивки — ни свитой пары, ни её подписи.
+    const plain = etkPfArt({ group: group({ ops: [1, 3, 4, 5, 6] }), operations: operations.filter((op) => op.position !== 2),
+      document: { operations, build_config: config } })!;
+    const second = plain.main && "svg" in plain.main ? plain.main.svg : "";
+    expect(second).not.toContain('data-part="twist"');
+    expect(second).toContain(">A6<");
+    // Монтаж в разъём без ничего на проводах — рисунок монтажа как был.
+    const bare = etkPfArt({ group: group(), operations: [operations[0]], document: {} })!;
+    expect(bare.main && "svg" in bare.main ? bare.main.svg : "").not.toContain('data-part="connector"');
+  });
 });
