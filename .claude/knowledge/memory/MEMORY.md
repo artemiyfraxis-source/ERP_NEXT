@@ -30,3 +30,5 @@
 - [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
 - [Connector 3D only on card](connector-3d-only-on-card.md) — 3D connector picture only on the catalog series card; ETK sketches: top view + mounting side
 - [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1
+- [Maker docs over shop values](maker-docs-over-shop-values.md) — owner 17.10: the maker's document beats shop values; overwrite, keep the old one in the journal
+- [713К.4 agreed deviations](713k4-accepted-deviations.md) — НВ4 0,5 on SYM-001T-P0.6 and unused НШВ ferrules are owner-agreed; don't flag

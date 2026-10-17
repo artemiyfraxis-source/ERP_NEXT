@@ -16,6 +16,13 @@ What works:
 - Mirrors: datasheets.ibselectronics.com (browser), static.chipdip.ru (curl with Referer chipdip.ru), cdn.eicom.ru.
 - Pin-1 checks: KiCad footprints (gitlab kicad-footprints) + EasyEDA/LCSC footprints, calibrated on families with a maker drawing.
 
+- **GitHub runner fetcher (17.10 evening):** branches `tools-fetch-*` of ERP_NEXT hold only `.github/workflows/fetch-docs.yml`
+  + `urls.txt` (`name<TAB>url`); push → the runner (US Azure) curls each URL → artifact `docs-<sha>` (`gh run download`).
+  From the runner web.archive.org has no 429, mouser/jae answer 200; te.com/amphenolrf direct still 403 (Akamai blocks
+  datacenters), molex.com hangs. Never merge those branches.
+- StealthSurf: the PC's VPN server is in Moscow (37.18.14.201) — that's why geo-blocks hit; the StealthSurf MCP answered
+  401 on 17.10 (token needs refreshing by the owner) — with it, a foreign location/routing rule would fix direct access.
+
 Doesn't work: r.jina.ai (451), Google Translate proxy, device.report, alldatasheet.
 
 Journal: docs/data «БД.ТЕР — где брать спецификации без регистрации 17.10.md». Related: [[crimp-contacts-protocol]], [[prod-reference-write]], [[coax-data-sources]].
