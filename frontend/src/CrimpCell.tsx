@@ -60,8 +60,9 @@ export function crimpText(values: CrimpValues): string {
   return PARTS.map((part) => (values[part.key] ?? "").trim()).filter(Boolean).join(" | ");
 }
 
-export function CrimpCell({ values }: { values: CrimpValues }) {
-  const parsed = PARTS.map((part) => ({ ...part, map: parseCrimp(values[part.key] ?? "") }));
+/** `only` — одна из трёх величин отдельной колонкой (карточка серии правит их по одной): строки «сечение │ значение». */
+export function CrimpCell({ values, only }: { values: CrimpValues; only?: keyof CrimpValues }) {
+  const parsed = PARTS.filter((part) => !only || part.key === only).map((part) => ({ ...part, map: parseCrimp(values[part.key] ?? "") }));
   if (parsed.every((part) => part.map.size === 0)) return <span className="muted">—</span>;
   const keys: string[] = [];
   for (const part of parsed) for (const key of part.map.keys()) if (!keys.includes(key)) keys.push(key);
@@ -70,7 +71,7 @@ export function CrimpCell({ values }: { values: CrimpValues }) {
   if (withAwg) keys.splice(0, keys.length, ...keys.filter((key) => key !== ""));
   // Колонка сечения есть всегда (пустая у записей без AWG), значения — всегда три: столбцы ровные во всей таблице.
   return <span className="crimp">
-    {keys.map((key) => <span key={key} className={withAwg ? "crimp-row has-awg" : "crimp-row"}>
+    {keys.map((key) => <span key={key} className={`${withAwg ? "crimp-row has-awg" : "crimp-row"}${only ? " crimp-one" : ""}`}>
       {withAwg ? <b className="crimp-awg" title={key}>{key}</b> : <span className="crimp-awg-gap" aria-hidden="true" />}
       {parsed.map((part) => {
         const raw = (part.map.get(key) ?? (withAwg ? part.map.get("") : undefined))?.trim() ?? "";

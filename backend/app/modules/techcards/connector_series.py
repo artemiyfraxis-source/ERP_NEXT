@@ -180,6 +180,13 @@ def _number(value: object) -> float | None:
         return None
 
 
+# The card edits the БД.ТЕР record itself: its id and the stored values of the cells it can edit (the old value of each
+# edit is what the record holds, not what the card shows normalised).
+RECORD_ID_KEY = "__id"
+EDITABLE_KEYS = ("terType", "terGender", "awgFrom", "awgTo", "mm2From", "mm2To", "terStrip", "terApplicator",
+                 "terCrimpHeight", "terInsCrimpHeight", "terPullForceMin", "terPullForceMax")
+
+
 def terminals_for(keys: Iterable[str], records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """БД.ТЕР rows whose «Series» names one of the housing prefixes (or whose «Series» / «Product Name» is the key)."""
     wanted = {_key(key) for key in keys}
@@ -194,6 +201,8 @@ def terminals_for(keys: Iterable[str], records: Iterable[Mapping[str, Any]]) -> 
         kind = str(fields.get("terType") or "").strip()
         out.append({
             "article": article,
+            "id": str(fields.get(RECORD_ID_KEY) or ""),
+            "raw": {key: str(fields[key]) for key in EDITABLE_KEYS if key in fields},
             "maker": str(fields.get("terManufacturer") or "").strip(),
             "product": str(fields.get("terComponent") or "").strip(),
             "series": str(fields.get("terSeries") or "").strip(),

@@ -541,7 +541,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
     <div hidden={stockLog}>
 
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
-    {tab === "connectors" && <ConnectorGallery />}
+    {tab === "connectors" && <ConnectorGallery canEdit={canEdit} />}
     {tab === "cov" && <CoveringsTable canEdit={canEdit} onCount={setCoveringCount} />}
 
     {isMapTab(tab) && (() => {
