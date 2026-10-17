@@ -1407,6 +1407,17 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .tcgen .opt-grid > .span2 { grid-column: span 2; }
 .tcgen .opt-grid > .span-all { grid-column: 1 / -1; }
 .tcgen .opt-note { margin: 0; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
+/* «Термоусадка на жгут»: строка на трубку — название, отрезок, штук, убрать; занятая трубка засева — серым с причиной. */
+.tcgen .hs-rows { display: grid; gap: 4px; max-width: 560px; }
+.tcgen .hs-row { display: grid; grid-template-columns: minmax(0, 1fr) 104px 56px 28px; gap: 6px; align-items: center; }
+.tcgen .hs-head { color: var(--muted-foreground); font-size: 12px; }
+.tcgen .hs-head > span:nth-child(3) { text-align: right; }
+.tcgen .hs-name { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.tcgen .hs-name small { display: block; color: var(--muted-foreground); font-size: 11.5px; }
+.tcgen .hs-row.is-off .hs-name { color: var(--muted-foreground); }
+.tcgen .hs-off { display: flex; grid-column: span 2; flex-wrap: wrap; gap: 2px 8px; align-items: center; color: var(--muted-foreground); font-size: 12px; }
+.tcgen .hs-row .num { text-align: right; font-variant-numeric: tabular-nums; }
+.tcgen select.hs-add { justify-self: start; width: auto; margin-top: 4px; color: var(--primary); font-weight: 600; }
 
 /* Сегменты — как .seg-tabs, мельче. */
 .tcgen .gseg { display: inline-flex; flex-wrap: wrap; gap: 2px; justify-self: start; max-width: 100%; padding: 3px; border-radius: 9px; background: var(--seg-bg); }
@@ -1946,6 +1957,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen .gchip { min-height: 40px; align-items: center; }
   .tcgen .btn-link, .tcgen .btn-add { min-height: 40px; }
   .tcgen .btn-remove { width: 40px; height: 40px; }
+  .tcgen .hs-row { grid-template-columns: minmax(0, 1fr) 104px 56px 40px; }
   .tcgen .manual-op-tools button, .tcgen .manual-add button { min-width: 40px; min-height: 40px; }
   .tcgen .manual-op-tools .small { min-width: 40px; min-height: 40px; }
   .tcgen .manual-op-fold, .tcgen .manual-op-norm, .tcgen .manual-summary-pick { min-width: 40px; min-height: 40px; }

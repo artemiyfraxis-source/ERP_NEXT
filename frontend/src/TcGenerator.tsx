@@ -60,6 +60,10 @@ import {
   wireDiaFromRecords,
   WIRE_DIA_MISSING_,
   WIRE_DIA_OLD_,
+  REF_TUBE_,
+  addHsRow,
+  removeHsRow,
+  setHsRow,
   COAX_MACHINES,
   COAX_PIN_COLLET,
   type CableRec,
@@ -547,7 +551,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const [markDrawing, setMarkDrawing] = useState<{ busy: boolean; note: string }>({ busy: false, note: "" });
   const kitMarkArt = () => { const first = gen.markComps_()[0]; return (first && (first.art || first.name)) || MARK_KIND_DEFAULT; };
   const marksByConnectors = () => {
-    const rows = markRowsByConnectors(gen.markConnectors_(), kitMarkArt());
+    const rows = markRowsByConnectors(gen.markConnectors_(), kitMarkArt(), gen.markComps_());
     setMarkDrawing({ busy: false, note: rows.length ? "" : "В форме нет разъёмов — выберите разъёмы сторон А и В." });
     if (rows.length) update((current) => ({ ...current, markRows: mergeMarkRows(current.markRows, rows) }));
   };
@@ -1043,7 +1047,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const splMethod = gen.splMethod_();
   const sleeveComps = gen.spliceSleeveComps_();
   const spliceSlots = gen.spliceSlots_();
-  const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.getCompById(row.compId) }));
+  const hsComps = S.hs.rows.map((row) => ({ row, comp: gen.hsComp_(row.compId), skip: gen.hsRowSkip_(row) }));
+  const hsOptions = gen.hsTubeOptions_();
   const marks = gen.markComps_();
   const kdMarks = S.markRows.filter((row) => row.text.trim() || row.target.trim());
   const typical = S.tab !== "coax" && !manualTab;
@@ -1192,11 +1197,26 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </Toggle>,
     <Toggle key="hs" checked={S.hs.enabled} title="Термоусадка на жгут" hint="концы оплётки — ТТК/ТУТ из состава"
       onChange={(on) => update((current) => ({ ...current, hs: { ...current.hs, enabled: on, manual: true } }))}>
-      {hsComps.length === 0 && <span className="opt-note">В составе проекта нет термоусадки (ТТК/ТУТ) — добавьте её в состав, и здесь появятся отрезки.</span>}
-      {hsComps.map(({ row, comp }, i) => <div className="opt-grid" key={row.compId}>
-        <Field label={`${comp ? comp.art || comp.name : row.compId} — отрезок`} className="span2"><UnitInput unit="мм" value={row.len} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, len: event.target.value } : r)) } }))} /></Field>
-        <Field label="Отрезков на изделие"><input value={row.cnt} onChange={(event) => update((current) => ({ ...current, hs: { ...current.hs, rows: current.hs.rows.map((r, j) => (j === i ? { ...r, cnt: event.target.value } : r)) } }))} /></Field>
-      </div>)}
+      {hsComps.length > 0 && <div className="hs-rows" role="group" aria-label="Трубки на жгут">
+        <div className="hs-row hs-head" aria-hidden="true"><span>Трубка</span><span>Отрезок</span><span>Шт.</span><span /></div>
+        {hsComps.map(({ row, comp, skip }, i) => {
+          const name = comp ? comp.art || comp.name : row.compId;
+          return <div className={skip ? "hs-row is-off" : "hs-row"} key={row.compId}>
+            <span className="hs-name" title={name}>{name}{row.compId.startsWith(REF_TUBE_) && <small>из БД.МАТ, нет в составе</small>}</span>
+            {skip ? <span className="hs-off">{skip}<button type="button" className="btn-link" onClick={() => update((current) => setHsRow(current, i, {}))}>Поставить и на жгут</button></span> : <>
+              <UnitInput unit="мм" aria-label={`${name}: отрезок`} value={row.len} placeholder="по КД" onChange={(event) => update((current) => setHsRow(current, i, { len: event.target.value }))} />
+              <input aria-label={`${name}: отрезков на изделие`} className="num" inputMode="numeric" value={row.cnt} onChange={(event) => update((current) => setHsRow(current, i, { cnt: event.target.value }))} />
+            </>}
+            <button type="button" className="btn-remove" title="Убрать трубку с жгута" aria-label={`Убрать ${name} с жгута`} onClick={() => update((current) => removeHsRow(current, i))}>×</button>
+          </div>;
+        })}
+      </div>}
+      {hsOptions.kit.length + hsOptions.ref.length > 0 ? <select className="hs-add" aria-label="Добавить трубку на жгут" value=""
+        onChange={(event) => update((current) => addHsRow(current, event.target.value))}>
+        <option value="">+ Добавить трубку</option>
+        {hsOptions.kit.length > 0 && <optgroup label="Из состава">{hsOptions.kit.map((c) => <option key={c.id} value={c.id}>{c.art || c.name}</option>)}</optgroup>}
+        {hsOptions.ref.length > 0 && <optgroup label="Из БД.МАТ">{hsOptions.ref.map((m) => <option key={m.name} value={REF_TUBE_ + m.name}>{m.name}</option>)}</optgroup>}
+      </select> : hsComps.length === 0 && <span className="opt-note">В составе проекта нет термоусадки (ТТК/ТУТ) — добавьте её в состав, и здесь появятся отрезки.</span>}
     </Toggle>,
     <Toggle key="wrap" checked={S.wrap.enabled} title="Лента / оплётка на жгут"
       onChange={(on) => update((current) => syncHsWithBraid_(D, { ...current, wrap: { ...current.wrap, enabled: on } }))}>

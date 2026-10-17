@@ -1,6 +1,6 @@
 import { joinSplice, assignPinJoined, setTail } from "./tcGenSplices";
 import {
-  addEndpoint, complexByHand, initState, setSplMethod, setTailMode, toggleLengthMode, updateEndpoint, type Comp, type GenData, type GenState,
+  addEndpoint, complexByHand, initState, setHsRow, setSplMethod, setTailMode, toggleLengthMode, updateEndpoint, type Comp, type GenData, type GenState,
   type OpRec, type SpliceMethod, type TerRec, type Tmpl, type WireEnd,
 } from "./tcGenLogic";
 import { newMarkRow } from "./tcGenMarks";
@@ -139,7 +139,10 @@ export function fullHarness(data: GenData = DSA, method: SpliceMethod = "solder"
   const braid: Record<string, string> = { "5": "120", I3: "110", C: "110", A6: "120" };
   S = { ...S, endpoints: S.endpoints.map((e) => (e.side !== "A" ? e : { ...e, braidLen: braid[e.label],
     ...(e.label === "A6" ? {} : { shrinkOn: true, shrinkMat: "ttk8", shrinkLen: "15" }) })) };
-  S = { ...S, hs: { enabled: true, manual: true, rows: [{ compId: "ttk12", len: "25", cnt: "2" }] } };
+  // Термоусадка на жгут — как в форме: строки засева из состава остаются, владелец правит только ТТК 12/4 (25 мм × 2);
+  // ТТК 8/2 (поверх разъёмов) и ТТК 3/1 (сростки) на ствол сами не идут.
+  S = { ...S, hs: { ...S.hs, enabled: true, manual: true } };
+  S = setHsRow(S, S.hs.rows.findIndex((row) => row.compId === "ttk12"), { len: "25", cnt: "2" });
   const conn: Record<string, string> = { csmr2: "SMR-02V-B", csmp: "SMP-02V-BC", csmr4: "SMR-04V-B" };
   S = { ...S, mark: true, markRows: S.endpoints.filter((e) => e.side === "A").map((e) => newMarkRow({
     target: `Разъём ${e.label} (${conn[e.connId]})`, text: e.label, material: `Маркировка "${e.label}" 4/2мм`,

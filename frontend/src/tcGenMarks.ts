@@ -167,7 +167,7 @@ export function markTargets(connectors: Array<{ name: string; art: string }>, wi
   return [
     WHOLE_HARNESS,
     ...connectors.map((item) => `Разъём ${item.name}${item.art ? ` (${item.art})` : ""}`),
-    ...wires.map((art) => `Провод ${art}`),
+    ...[...new Set(wires)].map((art) => `Провод ${art}`),
   ];
 }
 
@@ -178,10 +178,28 @@ export function productMarkRow(designation: string): MarkRow {
   return newMarkRow({ target: `Изделие ${name}`.trim(), text: name, material: MARK_KIND_ITEM, place: "item", qty: "1" });
 }
 
-export function markRowsByConnectors(connectors: Array<{ name: string; art: string }>, material: string): MarkRow[] {
-  return connectors.map((item) => newMarkRow({
-    target: `Разъём ${item.name}${item.art ? ` (${item.art})` : ""}`, text: item.name, material, place: "conn", qty: "1",
-  }));
+/** Отрезок метки-трубки по умолчанию, мм (713К.4 КБ1: «Маркировка "5" 4/2мм» — 10–15 мм по КД). */
+export const MARK_TUBE_LEN_MM = "15";
+
+/** Надпись, под которую заведена метка состава: «Маркировка "I3" 4/2мм» → «I3»; без кавычек — "". */
+export function markItemText(item: CompLike): string {
+  const match = /["«“„]([^"«»“”„]+)["»”“]/.exec(`${item.name || ""} ${item.art || ""}`);
+  return match ? match[1].trim() : "";
+}
+
+/** `kitMarks` — метки состава: у каждой строки материал — метка со своей надписью в наименовании (713К.4 КБ1:
+ *  «Маркировка "I3" 4/2мм» у разъёма «I3»), а не первая метка состава на всех; своей нет, а метки состава заведены под
+ *  надписи — общий вид «Термотрубка»; иначе — `material`. Трубке — отрезок по умолчанию 15 мм. */
+export function markRowsByConnectors(connectors: Array<{ name: string; art: string }>, material: string, kitMarks: CompLike[] = []): MarkRow[] {
+  const byText = kitMarks.filter((item) => markItemText(item));
+  return connectors.map((item) => {
+    const own = byText.find((mark) => norm(markItemText(mark)) === norm(item.name));
+    const rowMaterial = own ? own.art || own.name || material : byText.length ? MARK_KIND_DEFAULT : material;
+    return newMarkRow({
+      target: `Разъём ${item.name}${item.art ? ` (${item.art})` : ""}`, text: item.name, material: rowMaterial, place: "conn", qty: "1",
+      ...(markIsTube(rowMaterial) ? { len: MARK_TUBE_LEN_MM } : {}),
+    });
+  });
 }
 
 /** «Из чертежа жгута»: разъёмы с обозначением (X1…) и провода с маркировкой (колонка «Маркировка» таблицы
