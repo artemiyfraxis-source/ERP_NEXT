@@ -1,0 +1,31 @@
+{
+ "rows": [
+  {
+   "fields": {
+    "terArticle": "SSHL-002T-P0.2",
+    "terLMinus": "0,7",
+    "Источник L-": "по корпусу: L+ 5 мм оставлен как в базе; L− = GHR 5,7 мм − L+ 5 мм; JST eGH, Housing, https://www.jst-mfg.com/product/pdf/eng/eGH.pdf"
+   },
+   "old": {
+    "terArticle": "SSHL-002T-P0.2",
+    "terLPlus": "5",
+    "terLMinus": "10",
+    "Источник L-": ""
+   }
+  },
+  {
+   "fields": {
+    "terArticle": "8500113",
+    "terLMinus": "5,97",
+    "Источник L-": "по чертежу: L+ = глубина конца жилы от торца корпуса со стороны провода 6,73 мм; L− = KK 254, 2695 12,7 мм − L+ 6,73 мм; Molex 26950000-SD (SD-2695), разрез с контактом: «WIRE INTO HOUSING 6.73 REF» от заднего торца корпуса, https://static.chipdip.ru/lib/879/DOC011879936.pdf",
+    "terLPlus": "6,73"
+   },
+   "old": {
+    "terArticle": "8500113",
+    "terLPlus": "",
+    "terLMinus": "",
+    "Источник L-": ""
+   }
+  }
+ ]
+}

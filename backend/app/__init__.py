@@ -1,0 +1,1 @@
+"""Fraxis ERP Next backend."""

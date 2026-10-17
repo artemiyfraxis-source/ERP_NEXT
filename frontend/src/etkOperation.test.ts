@@ -1,0 +1,118 @@
+import { describe, expect, it } from "vitest";
+import { etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections } from "./etkOperation";
+
+describe("etkOperationName", () => {
+  it("names a coax operation by its kind where the card says only the first word (796К.2 КБ1, owner 15.10)", () => {
+    expect(etkOperationName("Резка", "coaxCut")).toBe("Резка кабеля");
+    expect(etkOperationName("Резка", "coaxCutTut")).toBe("Резка ТУТ");
+    expect(etkOperationName("Монтаж", "coaxInsTut")).toBe("Монтаж ТУТ");
+    expect(etkOperationName("Монтаж", "coaxInsSleeve")).toBe("Монтаж втулки экрана");
+    expect(etkOperationName("Пайка", "coaxPin")).toBe("Пайка центрального контакта");
+    expect(etkOperationName("Опрессовка", "coaxShield")).toBe("Опрессовка втулки экрана");
+    expect(etkOperationName("Усадка", "coaxHeat")).toBe("Усадка ТУТ");
+    // Своё имя карты — как есть; без имени — пусто (дальше заголовок шаблона).
+    expect(etkOperationName("Монтаж корпуса", "coaxHousing")).toBe("Монтаж корпуса");
+    expect(etkOperationName("Автомат резка + опрессовка", "cutWireCrimp")).toBe("Автомат резка + опрессовка");
+    expect(etkOperationName("Резка", "")).toBe("Резка");
+    expect(etkOperationName("", "coaxCut")).toBe("");
+  });
+});
+
+const tooling = (equipment: string, parameters = "") => [
+  { section: "Расходники", name: "Припой Sn63Pb37", parameters: "от 190 °С до 270 °С" },
+  { section: "Оборудование", name: equipment, parameters },
+  { section: "Инструмент", name: "Микроскоп" },
+];
+
+describe("solderMode", () => {
+  it("takes the tip and temperature from the operation steps (SDR_XT60)", () => {
+    const mode = solderMode({ code: "SDR_XT60", card: { name: "Пайка", tooling: tooling("T21(R) | Станция паяльная"), steps: [
+      { text: "Паяльник ≥80 Вт / станция с массивным жалом; t° 350–380 °C", tolerance: "(+/-) 10 °C" },
+      { text: "Прогреть чашку массой жала" },
+    ] } });
+    expect(mode).toMatchObject({ method: "iron", temperature: "350–380 °C", tolerance: "±10 °C", tipAssumed: false, temperatureAssumed: false });
+    expect(mode?.tip).toMatch(/Массивное/);
+  });
+
+  it("falls back to the ERP default when the card has neither (SDR_COAX_pin)", () => {
+    const mode = solderMode({ code: "SDR_COAX_pin", card: { tooling: tooling("T21(R) | Станция паяльная"), steps: [
+      { text: "Выставить рабочую температуру жала (согласно технологической инструкции)" },
+    ] } });
+    expect(mode).toMatchObject({ temperature: "240 °C", tipAssumed: true, temperatureAssumed: true });
+  });
+
+  it("knows a tinning bath and induction need no tip", () => {
+    expect(solderMode({ code: "SDR_tin", card: { tooling: tooling("CT-53D | Ванна паяльная"), steps: [] } }))
+      .toMatchObject({ method: "bath", temperature: "240 °C", temperatureAssumed: true });
+    expect(solderMode({ code: "SDR_tin", card: { tooling: [{ section: "Оборудование", name: "CT-53D | Ванна паяльная", program: "200 °C" }], steps: [] } }))
+      .toMatchObject({ method: "bath", temperature: "200 °C", temperatureAssumed: false });
+    // Резка с обжимом и лужением: станок BZW-5.0+Z лудит погружением, как ванна.
+    expect(solderMode({ code: "CUT_WIRE+1crimp+tin", card: { name: "Автомат резка + опрессовка + лужение",
+      tooling: [{ section: "Оборудование", name: "BZW-5.0+Z | Станок резки/ обжим+лужение", program: "A19" }], steps: [] } }))
+      .toMatchObject({ method: "bath", temperature: "240 °C", temperatureAssumed: true });
+    expect(solderMode({ code: "SDR_COAX_housing", card: { tooling: tooling("DW-OHF-6KW | Установка индукционной пайки"), steps: [] } }))
+      .toMatchObject({ method: "induction", tipAssumed: false });
+  });
+
+  it("ignores non-soldering operations", () => {
+    expect(solderMode({ code: "CUT_WIRE_auto", card: { name: "Резка", steps: [] } })).toBeNull();
+  });
+});
+
+describe("parseDefects", () => {
+  it("splits glued items into groups (SDR_DB)", () => {
+    const parsed = parseDefects("ТИПОВЫЕ ДЕФЕКТЫ (Критерии отбраковки / NG) со ссылками на IPC/WHMA-A-620F:\n" +
+      "1. Дефекты паяного соединения чашечки (Раздел 4.3):Наплывы на наружной поверхности: Избыток припоя вытек наружу.Недолив припоя: Чашечка заполнена менее чем на 75,0% объема.«Холодная» пайка: Рыхлая структура.\n" +
+      "2. Механические дефекты жил:Распушение жил: Проволочки торчат.\n");
+    expect(parsed.intro[0]).toMatch(/^ТИПОВЫЕ ДЕФЕКТЫ/);
+    expect(parsed.groups.map((group) => group.title)).toEqual(["Дефекты паяного соединения чашечки (Раздел 4.3)", "Механические дефекты жил"]);
+    expect(parsed.groups[0].items.map((item) => item.name)).toEqual(["Наплывы на наружной поверхности", "Недолив припоя", "«Холодная» пайка"]);
+    expect(parsed.groups[1].items[0]).toMatchObject({ name: "Распушение жил", text: "Проволочки торчат." });
+  });
+
+  it("keeps items without numbered groups and joins wrapped lines", () => {
+    const parsed = parseDefects("Типовые дефекты (NG):\nНеверная распиновка: Порядок проводов\nне по чертежу.");
+    expect(parsed.groups).toEqual([{ title: "", items: [{ name: "Неверная распиновка", text: "Порядок проводов не по чертежу." }] }]);
+  });
+});
+
+it("orders tooling sections tool → equipment → consumables → other", () => {
+  expect(toolingSections(["Расходники", "Матрицы", "Инструмент", "Оборудование", "Инструмент", "Прочее"]))
+    .toEqual(["Инструмент", "Оборудование", "Расходники", "Матрицы", "Прочее"]);
+});
+
+it("reads the one-line and sentence-per-line defect formats (HEAT_TYT, STRIP_WIRE)", () => {
+  const list = parseDefects("Типовые дефекты (NG): «Недоусадка» (Трубка болтается или проворачивается); прожог ТУТ; смещение ТУТ по длине.");
+  expect(list.intro).toEqual(["Типовые дефекты (NG)"]);
+  expect(list.groups[0].items).toEqual([
+    { name: "«Недоусадка»", text: "Трубка болтается или проворачивается" },
+    { name: "Прожог ТУТ", text: "" },
+    { name: "Смещение ТУТ по длине", text: "" },
+  ]);
+  const lines = parseDefects("ТИПОВЫЕ ДЕФЕКТЫ (NG), IPC/WHMA-A-620F (Раздел 3 «Провода»):\nНадрезы, царапины или обрыв проволочек жилы.\n" +
+    "Несоответствие длины зачистки чертежу. Смятие изоляции от губок.\nОтсутствие юбки втулки. Приводит к подрезке проволочек.");
+  expect(lines.intro).toHaveLength(1);
+  expect(lines.groups[0].items.map((item) => [item.name, item.text])).toEqual([
+    ["Надрезы, царапины или обрыв проволочек жилы", ""], ["Несоответствие длины зачистки чертежу", ""],
+    ["Смятие изоляции от губок", ""], ["Отсутствие юбки втулки", "Приводит к подрезке проволочек."],
+  ]);
+});
+
+describe("etkToleranceLines / etkToleranceParts", () => {
+  it("splits a step tolerance into a line per value with its label, normalising ± and ranges", () => {
+    expect(etkToleranceLines("Допуск: Сторона В: 2–3 мм")).toEqual([{ label: "Сторона В", value: "2–3 мм" }]);
+    expect(etkToleranceLines("(+/-) 10 °C")).toEqual([{ label: "", value: "± 10 °C" }]);
+    expect(etkToleranceLines("Время: ≤ 2,0 сек\nЗазор: 0,5 - 1,5 мм")).toEqual([
+      { label: "Время", value: "≤ 2,0 сек" }, { label: "Зазор", value: "0,5–1,5 мм" },
+    ]);
+    expect(etkToleranceLines("ГОСТ 23592-96; КД")).toEqual([{ label: "", value: "ГОСТ 23592-96" }, { label: "", value: "КД" }]);
+    expect(etkToleranceLines("-")).toEqual([]);
+    expect(etkToleranceLines(undefined)).toEqual([]);
+  });
+
+  it("bolds the numbers with their unit and sign, never inside a reference to a standard", () => {
+    expect(etkToleranceParts("± 10 °C")).toEqual([{ text: "± 10 °C", strong: true }]);
+    expect(etkToleranceParts("не более 3 сек")).toEqual([{ text: "не более ", strong: false }, { text: "3 сек", strong: true }]);
+    expect(etkToleranceParts("IPC/WHMA-A-620F (Раздел 3)")).toEqual([{ text: "IPC/WHMA-A-620F (Раздел 3)", strong: false }]);
+  });
+});

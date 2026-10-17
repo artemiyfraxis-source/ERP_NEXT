@@ -1,0 +1,21 @@
+{
+  "sourceRef": "main",
+  "sourceCommit": "d0a030b37e6364d241fdb827c20e6af54c532085",
+  "sourceFiles": ["Receiving.gs", "Schema.gs", "Config.gs", "DocGen.gs", "SupplierReturn.gs"],
+  "portedInvariants": [
+    "incoming-control order and deterministic verdict",
+    "terminal wrong-item and expiry returns",
+    "document and remediable-defect quarantine",
+    "surplus accepted by factual quantity",
+    "GRN prefix and yearly seven-digit sequence",
+    "accepted and placed line emits one warehouse event",
+    "procurement article follows the receiving line into warehouse stock",
+    "manufacturer series is recorded during incoming control and remains distinct from GRN",
+    "first inspection shortfall of a paid line becomes a -Д procurement backorder",
+    "unit mass weighed at incoming control as 1, 10 or 100 pieces and the expiry date follow the line into warehouse stock",
+    "an accepted line returns to the supplier as one act per line with a shared reason: status «Возврат» or back «В пути» for a replacement, the returned quantity is written off its ГРН + ПАКЕТ lot only when the lot is on stock",
+    "a delivery splits into manufacturer batches before its first inspection, each its own line, ГРН and verdict; the batches' shortfall against the order goes to the backorder",
+    "an accepted line splits into packages sharing its ГРН before placement, the packages summing to КОЛ-ВО ФАКТ",
+    "acts ВК, АН, РК and РИ are numbered per day and issued by the verdict, a missing one on re-inspection; one of the document and factual quantities stands for the other"
+  ]
+}

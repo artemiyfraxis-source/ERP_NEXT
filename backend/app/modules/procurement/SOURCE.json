@@ -1,0 +1,27 @@
+{
+  "sourceRef": "main",
+  "sourceCommit": "d0a030b37e6364d241fdb827c20e6af54c532085",
+  "sourceFiles": [
+    "Config.gs",
+    "Portal.gs",
+    "Schema.gs",
+    "SupplierRequest.gs",
+    "Kp.gs",
+    "Invoices.gs",
+    "Currency.gs"
+  ],
+  "portedInvariants": [
+    "idempotent procurement.requested consumer",
+    "Procurement-owned New status and revision A",
+    "buyer-only take-in-work transition",
+    "buyer ownership of editable facts",
+    "ready status requires supplier delivery point positive actual quantity and unit",
+    "transactional audit and outbox dispatch",
+    "supplier request then invoice then paid-to-in-transit sequence",
+    "paid line emits one receiving.expected snapshot",
+    "invoice and payment require PUR_PAY_REQUIRED fact money",
+    "fact prices follow the leading field and round to kopecks",
+    "foreign currency converts at CBR rate with CURRENCY_MARKUP",
+    "supplier requests group the buyer's ready lines by supplier and task type with prefix-NNN order numbers"
+  ]
+}

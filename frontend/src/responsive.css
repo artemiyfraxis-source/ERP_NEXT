@@ -1,0 +1,238 @@
+/* Телефон и планшет цеха (owner 12.10.2026: «проблемы с телефона в плане визуала, на планшете 12" тоже не всё
+   удобно»). Монтажники и кладовщик — телефон 390 px, мастера — планшет 12" (1366×1024 и 1024×1366, палец).
+   Все правила под узкий экран и палец — здесь, одним файлом после styles.css: экраны не трогаются, а правка
+   не спорит с ветками, которые меняют styles.css. Блоки: палец (pointer: coarse) → телефон (≤ 720 px). */
+
+/* ── Палец: планшет и телефон ─────────────────────────────────────────────────────────────────────────── */
+@media (pointer: coarse) {
+  /* Цель под палец — не меньше 40 px: «.small» в шапках, карточках партий и диалогах тоже. */
+  .small, .secondary.small, .primary.small { min-height: 40px; }
+  .notif-bell { min-width: 40px; min-height: 40px; }
+  /* Диалог не выше видимой части экрана: на телефоне и планшете 100vh включает панель браузера. */
+  .move-dialog, .autoplan-dialog { max-height: calc(100dvh - 32px); overscroll-behavior: contain; }
+  /* Нажатие срабатывает сразу, без ожидания двойного касания (приближение страницы пальцами остаётся). */
+  button, a, summary, label, select, input, [role="button"], [role="tab"] { touch-action: manipulation; }
+  /* Раскрывашки (ЭТК: «1 Вход», «Схема жгута»; «Выполнено», «Недобор по составу») — строка под палец. */
+  details > summary, .mo-finished > summary, .ship-more > summary { box-sizing: border-box; min-height: 40px; padding-top: 10px; padding-bottom: 10px; }
+  /* Заголовок колонки сортирует по нажатию на всю ячейку, а не только на короткое слово («Ед.», «КБ»). */
+  .data-table .sort-head, .stock-table th .th-sort { display: block; width: 100%; min-height: 40px; text-align: inherit; }
+  /* Ссылка в плотной строке (проект в листе, наименование на складе, «Снять резерв») — зона нажатия шире
+     самой строки текста, высота строки таблицы не растёт. */
+  .zg-col-customer .zg-link, td .link-button, .kit-meta .link-button { position: relative; }
+  .zg-col-customer .zg-link::after, td .link-button::after, .kit-meta .link-button::after {
+    content: ""; position: absolute; inset: -10px -4px;
+  }
+  /* Отметка строки таблицы — поле 40 × 40 вокруг флажка. */
+  .data-table .sel-hit { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; }
+  /* «Дни / Недели» листа загрузки — 40 px, как остальные переключатели. */
+  .zg-scale button { min-height: 36px; padding: 0 14px; }
+  .zg-scale { padding: 2px; }
+  /* Неделя монтажников: день — 40 px под палец, как в загрузке по людям. */
+  .mb-people .mb-cell, .mb-people .mb-cell > button { height: 42px; min-height: 42px; }
+  /* Текст на расстоянии вытянутой руки: лист загрузки и подписи маршрута ЭТК не мельче 12 px. */
+  :root { --zg-font: 13px; --zg-font-sm: 12px; --zg-font-xs: 12px; }
+  .etk-nav-route small, .etk-route-text small, .etk-op small { font-size: 12px; }
+}
+
+/* ── Телефон: всё в одну колонку, страница не уезжает вбок ─────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  /* Шапка раздела: заголовок, счётчик и кнопки переносятся строками, а не выталкивают страницу вправо. */
+  .page-head { flex-wrap: wrap; row-gap: 8px; }
+  .page-head h1 { font-size: 20px; }
+  .page-actions { flex-wrap: wrap; margin-left: 0; width: 100%; }
+  .page-actions > button, .page-actions > a { white-space: nowrap; }
+  /* Строка поиска и фильтров таблицы не липнет к верху: на телефоне она занимает треть экрана. */
+  .filters, .data-table .filters { position: static; }
+  /* Сетки, чья колонка растёт по содержимому, держат ширину экрана (комплектация: открытая заявка). */
+  .fulfillment-open { grid-template-columns: minmax(0, 1fr); }
+  .fulfillment-open > * { min-width: 0; max-width: 100%; }
+
+  /* ЭТК (задания монтажника, ТК в проекте): маршрут над операцией, а не рядом — иначе операция 66 px. */
+  .etk-sheet .etk-wrap, .etk-wrap { grid-template-columns: minmax(0, 1fr); }
+  .etk-op { min-width: 0; padding: 12px; }
+  .etk-op-head { flex-wrap: wrap; }
+  .etk-op-head h3 { font-size: 16px; overflow-wrap: anywhere; }
+  .etk-op code, .etk-op-head small { overflow-wrap: anywhere; }
+  .etk-nav { flex-wrap: wrap; }
+  .etk-op table { display: block; max-width: 100%; overflow-x: auto; }
+
+  /* Листы с днями (неделя монтажников, загрузка по людям): дни остаются нажимаемыми, лист листается в своей
+     рамке, имя сотрудника стоит на месте. */
+  :has(> table.mb-week) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table.mb-week { min-width: calc(120px + 7 * 52px); }
+  table.mb-week.pl-table { min-width: calc(120px + 14 * 52px); }
+  table.mb-week thead th:first-child, .mb-people table.mb-week thead th:first-child, .pl-table thead th:first-child { width: 120px; }
+  table.mb-week tbody th { position: sticky; left: 0; z-index: 1; background: var(--card); }
+
+  /* Лист загрузки цеха: обозначения переносятся, а не тянут страницу на 400 px вправо. Закреплён только № проекта:
+     закреплённые «Статус · Готов · №» занимали весь экран, и до полос календаря было не долистать. */
+  .zg-legend { flex-wrap: wrap; white-space: normal; margin-left: 0; row-gap: 4px; }
+  .zg-table .zg-freeze { left: auto; }
+  .zg-table td.zg-col-project { left: 0; z-index: 3; }
+  .zg-table th.zg-col-head[title^="№ проекта"] { left: 0; z-index: 6; }
+  .zg-month-head span { left: 80px; }
+
+  /* «База данных»: таблицы справочника — одной строкой, листаемой пальцем, а не экраном кнопок над таблицей. */
+  .db-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+  .db-tab-group { flex: none; }
+  .db-tab-row { flex-wrap: nowrap; }
+  .db-tab { white-space: nowrap; }
+
+  /* Вход: подписи полей не мельче 12 px. */
+  .login-card { padding: 24px 20px; }
+  .login-card label { font-size: 12px; }
+}
+
+/* iOS приближает страницу, когда поле с текстом мельче 16 px получает фокус, — на телефоне поля 16 px. */
+@media (max-width: 720px) and (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea,
+  .login-card label input { font-size: 16px !important; }
+}
+
+/* ── Телефон: таблица DataTable карточками «колонка: значение» (выключается phoneCards={false}) ───────────
+   Правила ячеек начинаются с полного пути и `tr:nth-child(n)`: так они сильнее зебры, липкой первой колонки
+   и ширины «по содержимому» (1 px) из styles.css, не прибегая к !important. */
+@media (max-width: 720px) {
+  .data-table.dt-cards > .table-wrap { max-height: none; overflow: visible; border: 0; border-radius: 0; background: none; }
+  .data-table.dt-cards > .table-wrap > table.grid { display: block; width: 100%; min-width: 0; table-layout: auto; }
+  .data-table.dt-cards > .table-wrap > table.grid > thead { display: none; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody { display: grid; gap: 8px; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) {
+    position: relative; display: grid; grid-template-columns: minmax(0, 1fr); padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td {
+    position: static; display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+    width: auto; min-width: 0; max-width: none; height: auto; padding: 3px 0; border: 0; box-shadow: none;
+    background: none; color: var(--foreground); font-size: 14px; text-align: right; white-space: normal; overflow-wrap: anywhere;
+  }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td :where(*) { white-space: normal; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td::before {
+    content: attr(data-label); flex: 0 1 auto; max-width: 45%; color: var(--muted-foreground); font-size: 12px;
+    font-weight: 400; text-align: left; overflow-wrap: normal;
+  }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td > .cell-wrap { max-width: none; min-width: 0; }
+  /* Первая колонка — заголовок карточки, без подписи. */
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.key { display: block; padding-right: 36px; font-size: 15px; font-weight: 600; text-align: left; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.key::before { content: none; }
+  /* Пустые ячейки («—») и пустая колонка-заполнитель в карточке не показываются. */
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.dt-fill,
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td:has(> .cell-empty:only-child) { display: none; }
+  /* Отметка строки — в правом верхнем углу карточки. */
+  .data-table.dt-cards > .table-wrap > table.selectable > tbody > tr:nth-child(n):not(.detail):not(.group-row) > td:first-child,
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.key:has(> .sel-hit:only-child) {
+    position: absolute; top: 4px; right: 4px; left: auto; width: auto; padding: 0;
+  }
+  .data-table.dt-cards > .table-wrap > table.selectable > tbody > tr:nth-child(n):not(.detail):not(.group-row) > td:first-child::before,
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.key:has(> .sel-hit:only-child)::before { content: none; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n):has(> td.key > .sel-hit:only-child) { padding-right: 48px; }
+  /* Заголовок группы, раскрытая строка и «Ничего не найдено» — без рамки карточки, на всю ширину. */
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n):is(.group-row, .detail) { padding: 0; border: 0; background: none; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n):is(.group-row, .detail) > td,
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.empty { display: block; text-align: left; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n).group-row > td { padding: 8px 4px 0; font-size: 13px; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.empty { text-align: center; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n):is(.group-row, .detail) > td::before,
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n) > td.empty::before { content: none; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr.detail > td > .detail-body { position: static; max-width: none; }
+  .data-table.dt-cards > .table-wrap > table.grid > tbody > tr:nth-child(n).open { border-color: var(--primary); }
+}
+
+/* ── Телефон: склад — строка партии карточкой (наименование сверху, остальное строкой ниже) ──────────── */
+@media (max-width: 720px) {
+  .stock-page > .table-wrap { max-height: none; overflow: visible; }
+  .stock-page .stock-table { display: block; min-width: 0; width: 100%; padding: 0; table-layout: auto; }
+  .stock-page .stock-table > colgroup, .stock-page .stock-table > thead { display: none; }
+  .stock-page .stock-table > tbody { display: grid; }
+  .stock-page .stock-table > tbody > tr {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .stock-page .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td {
+    position: static; display: block; width: auto; padding: 0; border: 0; background: none; box-shadow: none;
+    white-space: normal; text-align: left; font-size: 13px;
+  }
+  .stock-page .stock-table > tbody > tr > td.stock-name:not([colspan]) { order: -1; flex: 1 1 100%; font-weight: 600; }
+  .stock-page .stock-table td.stock-name .table-link { display: block; white-space: normal; -webkit-line-clamp: unset; }
+  .stock-page .stock-table > tbody > tr:not(.stock-group-row):not(.stock-cards-row) > td.stock-dim { display: none; }
+  .stock-page .table-wrap .stock-table.grid > tbody > tr:nth-child(n):not(.stock-group-row):not(.stock-cards-row) > td { background: none; }
+  .stock-page .stock-table > tbody > tr.stock-group-row,
+  .stock-page .stock-table > tbody > tr.stock-cards-row { display: block; padding: 0; }
+  .stock-page .stock-table > tbody > tr.stock-group-row > td,
+  .stock-page .stock-table > tbody > tr.stock-cards-row > td { display: block; position: static; padding: 8px 12px; white-space: normal; }
+  .stock-page .stock-table .lot-cards { position: static; max-width: none; grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── Палец: чертёж жгута (вкладка «Чертёж КБn») ───────────────────────────────────────────────────────────
+   Стили редактора грузятся позже этого файла, поэтому правила здесь начинаются с `html` — иначе их перекроют.
+   Кнопки панели и переключатели — 40 px, «i» — зона нажатия 40 px вокруг значка, строка масштаба — 11 px. */
+@media (pointer: coarse) {
+  html .harness-root .he-toolbar-tabs button,
+  html .graphic-editor-switcher button:not(.primary-action),
+  html .harness-root .harness-section-navigation button,
+  html .harness-root .he-controls-section .ui-control,
+  html .harness-root .he-document-action,
+  html .harness-root .he-utility-toggle { height: auto; min-height: 40px; }
+  html .harness-root .info-hint > button { position: relative; }
+  html .harness-root .info-hint > button::after { content: ""; position: absolute; inset: -11px; }
+  html .harness-root .he-canvas-status, html .harness-root .he-zoom-select { font-size: 11px; }
+  html .harness-root .he-settings-help { font-size: 11px; }
+}
+
+/* ── Телефон: «Состав» проекта и строки заявки карточками, подписи полей партии склада, подсказка по нажатию ── */
+@media (max-width: 720px) {
+  /* «Состав»: сборка — карточка; КБ и наименование сверху, остальное «подпись: значение». */
+  .kit-sostav { width: auto; max-width: none; }
+  .kit-sostav > table.grid { display: block; width: 100%; min-width: 0; }
+  .kit-sostav > table.grid > thead { display: none; }
+  .kit-sostav > table.grid > tbody { display: grid; gap: 8px; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) {
+    display: grid; grid-template-columns: minmax(0, 1fr); padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: auto; min-width: 0; max-width: none;
+    padding: 3px 0; border: 0; background: none; font-size: 14px; text-align: right; white-space: normal; overflow-wrap: anywhere;
+  }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td::before {
+    content: attr(data-label); flex: 0 1 auto; max-width: 45%; color: var(--muted-foreground); font-size: 12px; text-align: left;
+  }
+  .table-wrap.kit-sostav > table.grid > tbody > tr:nth-child(n):not(.group-row):not(.detail) > td { background: none; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td:first-child { display: block; font-size: 15px; text-align: left; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td:first-child::before { content: none; }
+  .kit-sostav > table.grid > tbody > tr:nth-child(n) > td.wrap { min-width: 0; max-width: none; }
+  .kit-sostav td.num { text-align: right; }
+  .kit-sostav select { min-height: 40px; }
+
+  /* Строки заявки: позиция — карточка, у каждого поля своя подпись над полем; страница не шире экрана. */
+  .rg-common-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rg-common-grid .rg-point { grid-column: 1 / -1; }
+  .rg-common input, .rg-common select, .rg-bulk input, .rg-bulk select { min-width: 0; max-width: 100%; box-sizing: border-box; }
+  .rg-scroll { max-height: none; overflow: visible; border: 0; background: none; }
+  .rg-table { display: block; min-width: 0; width: 100%; }
+  .rg-table > thead { display: none; }
+  .rg-table > tbody { display: grid; gap: 8px; }
+  .rg-table > tbody > tr:nth-child(n) {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 8px; background: var(--card);
+  }
+  .rg-table > tbody > tr.rg-row-bad { border-color: #b91c1c; }
+  .rg-table > tbody > tr:nth-child(n) > td { display: block; width: auto; min-width: 0; border: 0; white-space: normal; }
+  .rg-table > tbody > tr > td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted-foreground); font-size: 12px; }
+  .rg-table > tbody > tr > td.rg-no { grid-column: 1 / -1; padding: 0 !important; text-align: left; font-weight: 600; }
+  .rg-table > tbody > tr > td.rg-no .rg-own { display: inline; margin-left: 8px; }
+  .rg-table > tbody > tr > td.rg-col-name, .rg-table > tbody > tr > td.rg-col-comment, .rg-table > tbody > tr > td.rg-col-link { grid-column: 1 / -1; }
+  .rg-table td input, .rg-table td select { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+  .rg-table > tbody > tr > td.rg-act { grid-column: 1 / -1; padding: 0 !important; text-align: left; }
+  .rg-table tbody .rg-act .rg-link { opacity: 1; }
+
+  /* Склад: подпись поля перед значением, как в остальных карточках. */
+  .stock-page .stock-table > tbody > tr > td[data-label]:not([data-label=""])::before { content: attr(data-label) ": "; color: var(--muted-foreground); font-size: 12px; }
+  .stock-page .stock-table > tbody > tr > td.stock-name[data-label]::before { content: none; }
+}
+
+/* Подсказка по нажатию (tapHint.ts): всплывающая строка рядом с элементом, не перехватывает нажатия. */
+.tap-hint {
+  position: fixed; z-index: 1000; max-width: calc(100vw - 16px); padding: 6px 10px; border-radius: 6px;
+  background: var(--foreground); color: var(--card); font-size: 13px; line-height: 1.35; pointer-events: none; overflow-wrap: anywhere;
+}

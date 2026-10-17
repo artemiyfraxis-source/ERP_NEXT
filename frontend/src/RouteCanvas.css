@@ -1,0 +1,12 @@
+/* Метки связей холста маршрута: число штук видно всегда, «+» и «×» раскрываются при наведении и фокусе, чтобы метки
+   соседних стрелок не слипались в зазоре между рядами. На сенсорном экране кнопки видны сразу. */
+.rc .rc-link-tools { gap: 0; }
+.rc .rc-link-tools:hover, .rc .rc-link-tools:focus-within { z-index: 5; }
+.rc .rc-link-btns { display: flex; gap: 4px; max-width: 0; overflow: hidden; opacity: 0; transition: max-width .12s, opacity .12s; }
+.rc .rc-link-tools:hover .rc-link-btns, .rc .rc-link-tools:focus-within .rc-link-btns { max-width: 64px; margin-left: 4px; padding: 1px; opacity: 1; }
+.rc .rc-link-dot { width: 10px; height: 10px; border: 1px solid var(--border); border-radius: 50%; background: var(--card); }
+.rc .rc-link-tools:hover .rc-link-dot, .rc .rc-link-tools:focus-within .rc-link-dot { display: none; }
+@media (pointer: coarse) {
+  .rc .rc-link-btns { max-width: 100px; margin-left: 4px; opacity: 1; }
+  .rc .rc-link-dot { display: none; }
+}

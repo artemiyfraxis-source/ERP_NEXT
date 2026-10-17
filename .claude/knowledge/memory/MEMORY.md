@@ -1,0 +1,32 @@
+- [ERP_NEXT hub](erp-next-hub.md) — START HERE: map of every note below (Obsidian graph root)
+- [Owner working rules](owner-working-rules.md) — Russian replies, no questions, merge/deploy permissions, one server update per batch of parallel PRs, batch access asks
+- [Owner request queue](owner-request-queue.md) — owner piles requests mid-turn: numbered visible queue, dispatch each via orchestrator at once
+- [Owner goals 05.10](owner-goals-1005.md) — goal 1: minimal chain закупка→приёмка→выдача; goal 2: debug production; receiving answers
+- [Live data protocol](live-data-protocol.md) — no migration to prod without backup → rehearsal on a copy → row-count/integrity check; hold migration PRs until the pipeline exists
+- [Vasily code permission](vasily-code-permission.md) — TECHMAP-GRAPHER code may be ported/copied with attribution (author OK via owner, 06.10)
+- [Screens rules](erp-screens-rules.md) — every UI change: skill erp-screens + design-critique, demo run-demo.sh + shoot.mjs
+- [Edit in windows](edit-in-windows.md) — every record card / edit form opens as a modal PageWindow, never a side panel
+- [Production server](erp-server.md) — shop Ubuntu PC, Docker deploy, LAN + Tailscale, push.ps1
+- [Staff and sites](staff-and-sites.md) — ЦАР/ЖУК fitters, masters, full-access roles, PIN
+- [SUPPLYMAP legacy diffs](supplymap-parity.md) — SUPPLYMAP retired 05.10; deliberate ERP differences, box numbers, out of scope
+- Modules: [projects](module-projects.md) · [techcards](module-techcards.md) · [reference DB](module-reference-db.md) · [warehouse](module-warehouse.md) · [fulfillment](module-fulfillment.md) · [production](module-production.md) · [shipping](module-shipping.md) · [procurement](module-procurement.md)
+- [Google wiring](google-wiring.md) — read-only, being left; service account, KD folder, key location
+- [Deferred by owner](deferred-by-owner.md) — traceability, boxes/defects section
+- [Agent decisions to review](runlog-decisions.md) — «решено агентом — проверить» from RUNLOG, tagged by module
+- [Cloud threads setup](cloud-threads-setup.md) — cwd above three repos, no repo hooks/plugins, manual drift report
+- [Merge gotchas](erp-merge-gotchas.md) — CRLF conflicts, shallow SUPPLYMAP, Python 3.12, parallel merges
+- [Local demo](erp-local-demo.md) — owner's PC demo over Remote Control, ports, Auto-mode limits
+- [Gate red without failures](gate-red-without-failures.md) — pytest-current symlink exit 1 (fixed by conftest basetemp); drift tests blind for 9 of 11 modules
+- [Windows Python CRLF](windows-python-crlf.md) — Python text-mode writes CRLF into the LF-only repo; use newline=""
+- [Techcards per project](techcards-bulk.md) — projects wiped 30.09 (migration 0078); owner creates them, one project from Google only on request
+- [Parallel sessions and worktrees](parallel-sessions-worktrees.md) — never remove a worktree or commit on a branch another session owns
+- [Worktree symlink removal](worktree-symlink-removal.md) — worker worktrees link main node_modules + .venv: rmdir the links before removing a worktree
+- [Resume at limit reset](resume-at-limit-reset.md) — on «session limit» schedule a cron at the reset time and resume workers
+- [Repo public for CI](repo-public-ci.md) — owner made ERP_NEXT public 10.10 after Actions billing block; keep secrets/vuln write-ups out
+- [Crimp contacts protocol](crimp-contacts-protocol.md) — owner's old v5.2 terminal DB rules: keep REEL+BAG in one row, null-spec, N units; ERP keeps Molex hyphens; field gaps vs TerminalRecord
+- [Prod reference write](prod-reference-write.md) — owner wants DB fills written straight to prod: ssh + import_rows by natural key, old="" guard, backup-now
+- [Coax data sources](coax-data-sources.md) — gsm-repiteri / Амел / kroks / vegatel for coax specs and supplier articles; resellers = «Поставщик»
+- [ETK by semi-finished](etk-by-semifinished.md) — 13.10 owner+Vasily: one ETK document per ПФ; fitter's task = a ПФ document; configure in the ETK left list
+- [Applicators by series](applicators-by-series.md) — owner 16.10: all A* applicators of a series on every contact; S/M stay per wire range
+- [Connector 3D only on card](connector-3d-only-on-card.md) — 3D connector picture only on the catalog series card; ETK sketches: top view + mounting side
+- [Maker docs from Russia](maker-docs-from-russia.md) — te.com/molex/mouser 403 by geo; Web Archive in browser, JST guide, chipdip/eicom mirrors, KiCad/LCSC for pin 1

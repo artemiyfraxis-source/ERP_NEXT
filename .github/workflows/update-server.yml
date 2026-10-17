@@ -1,0 +1,70 @@
+# «Обновить сервер» — out-of-schedule server update from anywhere (GitHub web/phone: Actions → Обновить сервер → Run
+# workflow; a Claude thread: `gh workflow run update-server.yml`). Pushes a new commit to the branch `update-request`;
+# the server (deploy/update-request.sh, every 2 min) sees it and runs `erp-update now`: backup, latest main, health check.
+# A destructive migration (DESTRUCTIVE = True) is applied only when its revision id is passed in `approve_migration`:
+# it travels in the commit message («approve=<rev>») and the server writes it to status/migration-approved.
+# The job then waits for the server's /update-result.json (written by deploy/update.sh) and fails when ok=false,
+# so GitHub emails the owner about a failed update.
+name: Обновить сервер
+on:
+  workflow_dispatch:
+    inputs:
+      approve_migration:
+        description: "Номер ревизии разрушительной миграции, которую владелец разрешает применить (пусто — не разрешать)"
+        required: false
+        default: ""
+        type: string
+permissions:
+  contents: write
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      SERVER_URL: https://erp-server.tail811f20.ts.net
+      APPROVE: ${{ inputs.approve_migration }}
+      ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Запрос обновления
+        run: |
+          approve=$(printf '%s' "$APPROVE" | tr -d '[:space:]')
+          if [ -n "$approve" ] && ! printf '%s' "$approve" | grep -Eq '^[0-9a-z_]+$'; then
+            echo "::error::approve_migration должен быть номером ревизии (латиница, цифры, _): $approve"
+            exit 1
+          fi
+          msg="запрос обновления сервера: $ACTOR $(date -u +%FT%TZ)"
+          [ -n "$approve" ] && msg="$msg approve=$approve"
+          date -u +%s > "$RUNNER_TEMP/dispatch-epoch"
+          git config user.name "update-request"
+          git config user.email "update-request@users.noreply.github.com"
+          git commit --allow-empty -q -m "$msg"
+          git push -f origin HEAD:refs/heads/update-request
+          echo "Запрос отправлен. Сервер начнёт обновление в течение 2 минут."
+          [ -n "$approve" ] && echo "Разрешена миграция: $approve"
+          exit 0
+      - name: Ждём результат с сервера
+        run: |
+          start=$(cat "$RUNNER_TEMP/dispatch-epoch")
+          deadline=$((start + 45 * 60))
+          while [ "$(date -u +%s)" -lt "$deadline" ]; do
+            sleep 30
+            body=$(curl -fsS --max-time 20 "$SERVER_URL/update-result.json" 2>/dev/null) || continue
+            fin=$(printf '%s' "$body" | jq -r '.finished_at // empty' 2>/dev/null) || continue
+            [ -n "$fin" ] || continue
+            fin_epoch=$(date -u -d "$fin" +%s 2>/dev/null) || continue
+            [ "$fin_epoch" -gt "$start" ] || continue
+            ok=$(printf '%s' "$body" | jq -r '.ok')
+            echo "ok=$ok step=$(printf '%s' "$body" | jq -r '.step // ""') revision=$(printf '%s' "$body" | jq -r '.revision // ""')"
+            echo "message: $(printf '%s' "$body" | jq -r '.message // ""')"
+            if [ "$ok" = "true" ]; then
+              echo "Сервер обновлён."
+              exit 0
+            fi
+            echo "::error::Обновление сервера не удалось (шаг: $(printf '%s' "$body" | jq -r '.step // "?"'))"
+            exit 1
+          done
+          echo "::error::Сервер не ответил за 45 минут: нет свежего update-result.json"
+          exit 1

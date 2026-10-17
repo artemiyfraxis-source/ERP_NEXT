@@ -1,0 +1,927 @@
+{
+ "schemaVersion": 1,
+ "customWireColors": [
+  "#D7322D",
+  "#222222",
+  "#F4F4F4",
+  "#2E9E4F"
+ ],
+ "connectors": [
+  {
+   "id": "gen-x1",
+   "designation": "XS1",
+   "libraryCode": "JST XH",
+   "partNumber": "PHR-4",
+   "contacts": [
+    {
+     "id": "gen-x1:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 красный",
+     "color": "#D7322D",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x1:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 черный",
+     "color": "#222222",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x1:contact:3",
+     "number": 3,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 белый",
+     "color": "#F4F4F4",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x1:contact:4",
+     "number": 4,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 зеленый",
+     "color": "#2E9E4F",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-right",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 0,
+     "y": 110
+    },
+    "drawing": {
+     "x": 0,
+     "y": 139
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  },
+  {
+   "id": "gen-x2",
+   "designation": "XS2",
+   "libraryCode": "JST XH",
+   "partNumber": "XHP-4",
+   "contacts": [
+    {
+     "id": "gen-x2:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 красный",
+     "color": "#D7322D",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x2:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 черный",
+     "color": "#222222",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x2:contact:3",
+     "number": 3,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "",
+     "color": "",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {}
+    },
+    {
+     "id": "gen-x2:contact:4",
+     "number": 4,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "",
+     "color": "",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {}
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-left",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 689,
+     "y": 0
+    },
+    "drawing": {
+     "x": 700,
+     "y": 40
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  },
+  {
+   "id": "gen-x3",
+   "designation": "XS3",
+   "libraryCode": "JST XH",
+   "partNumber": "XHP-4",
+   "contacts": [
+    {
+     "id": "gen-x3:contact:1",
+     "number": 1,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 белый",
+     "color": "#F4F4F4",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x3:contact:2",
+     "number": 2,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "МГТФ 0,12 зеленый",
+     "color": "#2E9E4F",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {},
+     "wireSection": "0,12 мм²",
+     "colorMode": "manual"
+    },
+    {
+     "id": "gen-x3:contact:3",
+     "number": 3,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "",
+     "color": "",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {}
+    },
+    {
+     "id": "gen-x3:contact:4",
+     "number": 4,
+     "contactType": "",
+     "circuit": "",
+     "terminalArticle": "",
+     "wire": "",
+     "color": "",
+     "secondaryColor": "",
+     "connectionStatus": "available",
+     "customValues": {}
+    }
+   ],
+   "schematic": {
+    "orientation": "contacts-left",
+    "baseColumns": [
+     {
+      "key": "number",
+      "visible": true
+     },
+     {
+      "key": "contactType",
+      "visible": false
+     },
+     {
+      "key": "circuit",
+      "visible": true
+     },
+     {
+      "key": "terminal",
+      "visible": true
+     },
+     {
+      "key": "wire",
+      "visible": true
+     },
+     {
+      "key": "wireSection",
+      "visible": true
+     },
+     {
+      "key": "color",
+      "visible": true
+     }
+    ],
+    "customFields": []
+   },
+   "positions": {
+    "e4": {
+     "x": 689,
+     "y": 220
+    },
+    "drawing": {
+     "x": 700,
+     "y": 238
+    }
+   },
+   "layerIds": {
+    "e4": "connectors",
+    "drawing": "connectors"
+   },
+   "libraryBinding": {
+    "mode": "free"
+   }
+  }
+ ],
+ "wires": [
+  {
+   "id": "gen-w1",
+   "from": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:1"
+   },
+   "to": {
+    "connectorId": "gen-x2",
+    "contactId": "gen-x2:contact:1"
+   },
+   "circuit": "",
+   "color": "#D7322D",
+   "colorSource": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:1"
+   },
+   "lengthMm": 300,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 473,
+     "y": 174
+    },
+    {
+     "x": 473,
+     "y": 64
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-w2",
+   "from": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:2"
+   },
+   "to": {
+    "connectorId": "gen-x2",
+    "contactId": "gen-x2:contact:2"
+   },
+   "circuit": "",
+   "color": "#222222",
+   "colorSource": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:2"
+   },
+   "lengthMm": 300,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 494,
+     "y": 198
+    },
+    {
+     "x": 494,
+     "y": 88
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-w3",
+   "from": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:3"
+   },
+   "to": {
+    "connectorId": "gen-x3",
+    "contactId": "gen-x3:contact:1"
+   },
+   "circuit": "",
+   "color": "#F4F4F4",
+   "colorSource": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:3"
+   },
+   "lengthMm": 300,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 515,
+     "y": 222
+    },
+    {
+     "x": 515,
+     "y": 284
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  },
+  {
+   "id": "gen-w4",
+   "from": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:4"
+   },
+   "to": {
+    "connectorId": "gen-x3",
+    "contactId": "gen-x3:contact:2"
+   },
+   "circuit": "",
+   "color": "#2E9E4F",
+   "colorSource": {
+    "connectorId": "gen-x1",
+    "contactId": "gen-x1:contact:4"
+   },
+   "lengthMm": 300,
+   "endCorrectionFromMm": 0,
+   "endCorrectionToMm": 0,
+   "cutRoundingStepMm": 1,
+   "e4Route": [
+    {
+     "x": 494,
+     "y": 246
+    },
+    {
+     "x": 494,
+     "y": 308
+    }
+   ],
+   "e4RouteMode": "auto",
+   "e4LabelPosition": 0.5,
+   "drawingRoute": [],
+   "layerIds": {
+    "e4": "wires",
+    "drawing": "wires"
+   }
+  }
+ ],
+ "cables": [],
+ "junctions": [],
+ "diffPairs": [
+  {
+   "id": "gen-p1",
+   "wireIds": [
+    "gen-w1",
+    "gen-w2"
+   ],
+   "step": 20,
+   "amplitude": 7,
+   "variant": 1
+  }
+ ],
+ "screens": [],
+ "views": {
+  "e4": {
+   "layers": [
+    {
+     "id": "material-indexes",
+     "name": "Индексы материалов и позиции",
+     "order": 4,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connection-points",
+     "name": "Точки соединения",
+     "order": 3,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "dimensions",
+     "name": "Размеры",
+     "order": 2,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connectors",
+     "name": "Соединители",
+     "order": 1,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "wires",
+     "name": "Провода",
+     "order": 0,
+     "visible": true,
+     "locked": false
+    }
+   ],
+   "wireCrossingStyle": "none",
+   "e4RoutingMode": "orthogonal"
+  },
+  "drawing": {
+   "layers": [
+    {
+     "id": "material-indexes",
+     "name": "Индексы материалов и позиции",
+     "order": 4,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connection-points",
+     "name": "Точки соединения",
+     "order": 3,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "dimensions",
+     "name": "Размеры",
+     "order": 2,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "connectors",
+     "name": "Соединители",
+     "order": 1,
+     "visible": true,
+     "locked": false
+    },
+    {
+     "id": "wires",
+     "name": "Провода",
+     "order": 0,
+     "visible": true,
+     "locked": false
+    }
+   ],
+   "wireCrossingStyle": "none"
+  }
+ },
+ "requiredWriterContractVersion": 1,
+ "physicalTopology": {
+  "snap": true,
+  "nodes": [
+   {
+    "id": "gen-n1",
+    "position": {
+     "x": 238,
+     "y": 191
+    }
+   },
+   {
+    "id": "gen-n1-1",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 28
+    },
+    "wireIds": [
+     "gen-w1"
+    ],
+    "direction": "right"
+   },
+   {
+    "id": "gen-n1-2",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 44
+    },
+    "wireIds": [
+     "gen-w2"
+    ],
+    "direction": "right"
+   },
+   {
+    "id": "gen-n1-3",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 60
+    },
+    "wireIds": [
+     "gen-w3"
+    ],
+    "direction": "right"
+   },
+   {
+    "id": "gen-n1-4",
+    "connectorId": "gen-x1",
+    "position": {
+     "x": 178,
+     "y": 76
+    },
+    "wireIds": [
+     "gen-w4"
+    ],
+    "direction": "right"
+   },
+   {
+    "id": "gen-n2",
+    "connectorId": "gen-x2",
+    "position": {
+     "x": -60,
+     "y": 36
+    },
+    "direction": "left"
+   },
+   {
+    "id": "gen-n3",
+    "connectorId": "gen-x3",
+    "position": {
+     "x": -60,
+     "y": 36
+    },
+    "direction": "left"
+   },
+   {
+    "id": "gen-j1",
+    "position": {
+     "x": 439,
+     "y": 191
+    }
+   }
+  ],
+  "segments": [
+   {
+    "id": "gen-s1",
+    "from": "gen-n1-1",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s2",
+    "from": "gen-n1-2",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s3",
+    "from": "gen-n1-3",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s4",
+    "from": "gen-n1-4",
+    "to": "gen-n1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s5",
+    "from": "gen-n1",
+    "to": "gen-j1",
+    "path": {
+     "kind": "routed",
+     "points": []
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s6",
+    "from": "gen-j1",
+    "to": "gen-n2",
+    "path": {
+     "kind": "routed",
+     "points": []
+    },
+    "opacity": 0
+   },
+   {
+    "id": "gen-s7",
+    "from": "gen-j1",
+    "to": "gen-n3",
+    "path": {
+     "kind": "routed",
+     "points": []
+    },
+    "opacity": 0
+   }
+  ],
+  "routes": [
+   {
+    "wireId": "gen-w1",
+    "steps": [
+     {
+      "segmentId": "gen-s1",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     }
+    ],
+    "automatic": true
+   },
+   {
+    "wireId": "gen-w2",
+    "steps": [
+     {
+      "segmentId": "gen-s2",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s6",
+      "reverse": false
+     }
+    ],
+    "automatic": true
+   },
+   {
+    "wireId": "gen-w3",
+    "steps": [
+     {
+      "segmentId": "gen-s3",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     }
+    ],
+    "automatic": true
+   },
+   {
+    "wireId": "gen-w4",
+    "steps": [
+     {
+      "segmentId": "gen-s4",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s5",
+      "reverse": false
+     },
+     {
+      "segmentId": "gen-s7",
+      "reverse": false
+     }
+    ],
+    "automatic": true
+   }
+  ],
+  "coverings": [
+   {
+    "id": "gen-c1",
+    "name": "ТУТ на пайку XS1 · конт. 1",
+    "kind": "heat-shrink",
+    "width": 0,
+    "color": "#424c53",
+    "lengthMode": "manual",
+    "lengthMm": 15,
+    "spans": [
+     {
+      "segmentId": "gen-s1",
+      "from": 0.1,
+      "to": 0.9
+     }
+    ]
+   },
+   {
+    "id": "gen-c2",
+    "name": "ТУТ на пайку XS1 · конт. 2",
+    "kind": "heat-shrink",
+    "width": 0,
+    "color": "#424c53",
+    "lengthMode": "manual",
+    "lengthMm": 15,
+    "spans": [
+     {
+      "segmentId": "gen-s2",
+      "from": 0.1,
+      "to": 0.9
+     }
+    ]
+   },
+   {
+    "id": "gen-c3",
+    "name": "ТУТ на пайку XS1 · конт. 3",
+    "kind": "heat-shrink",
+    "width": 0,
+    "color": "#424c53",
+    "lengthMode": "manual",
+    "lengthMm": 15,
+    "spans": [
+     {
+      "segmentId": "gen-s3",
+      "from": 0.1,
+      "to": 0.9
+     }
+    ]
+   },
+   {
+    "id": "gen-c4",
+    "name": "ТУТ на пайку XS1 · конт. 4",
+    "kind": "heat-shrink",
+    "width": 0,
+    "color": "#424c53",
+    "lengthMode": "manual",
+    "lengthMm": 15,
+    "spans": [
+     {
+      "segmentId": "gen-s4",
+      "from": 0.1,
+      "to": 0.9
+     }
+    ]
+   }
+  ]
+ },
+ "drawingDocuments": {
+  "tables": [],
+  "leaders": [],
+  "bomOrder": [],
+  "volumeShading": false,
+  "physicalScale": 1.8,
+  "indexOffsets": {
+   "gen-x1": {
+    "x": -173.5,
+    "y": 34.57
+   },
+   "gen-w3": {
+    "x": -71.29,
+    "y": 13
+   },
+   "gen-w4": {
+    "x": -72.45,
+    "y": -19
+   },
+   "gen-w2": {
+    "x": 27.72,
+    "y": -14.39
+   },
+   "gen-w1": {
+    "x": 55.71,
+    "y": 11.46
+   }
+  }
+ }
+}

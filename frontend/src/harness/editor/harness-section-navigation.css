@@ -1,0 +1,71 @@
+/* «Схема Э4 / Чертёж»: переключатель вида в стиле ERP (.seg-tabs), первым в строке инструментов редактора.
+   Разметка — из TECHMAP-GRAPHER (e63befb), вид — токены ERP. */
+.harness-root .harness-section-navigation {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.harness-root .harness-section-links {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--seg-bg);
+}
+
+.harness-root .harness-section-navigation button {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--seg-fg);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 30px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.harness-root .harness-section-navigation button:hover:not(:disabled) { color: var(--foreground); }
+
+.harness-root .harness-section-navigation button.active,
+.harness-root .harness-section-navigation button[aria-current="page"] {
+  background: var(--card);
+  color: var(--primary);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+/* The open view is a disabled button (nothing to switch to): it keeps the active look. */
+.harness-root .harness-section-navigation button:disabled { cursor: default; opacity: 1; }
+
+.harness-root .harness-section-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border) !important;
+  background: var(--card) !important;
+  color: var(--foreground) !important;
+}
+
+.harness-root .he-save-state-utility {
+  align-self: flex-start;
+  width: max-content;
+  min-height: 29px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+@media (pointer: coarse) {
+  .harness-root .harness-section-navigation button { height: 40px; min-height: 40px; line-height: 40px; }
+}

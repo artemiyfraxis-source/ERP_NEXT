@@ -1,0 +1,6 @@
+te_114-1021.pdf	https://www.te.com/commerce/DocumentDelivery/DDEController?Action=srchrtrv&DocNm=114-1021&DocType=Specification%20Or%20Standard&DocLang=English&DocFormat=pdf
+te_home.html	https://www.te.com/en/home.html
+molex_19003.html	https://www.molex.com/en-us/products/part-detail/190030001
+jae_fi.html	https://www.jae.com/en/connectors/series/detail/id=91756
+mouser.html	https://www.mouser.com/
+amphenolrf.html	https://www.amphenolrf.com/

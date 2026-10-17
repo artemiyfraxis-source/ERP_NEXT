@@ -1,0 +1,13 @@
+/* Правка и новая запись БД.ОБ — в правой панели рядом со списком (раскладка .eq-split задана в styles.css). */
+.eq-editor .manual-stock-head { margin: 0; }
+.eq-editor .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.eq-editor .form-grid .half, .eq-editor .form-grid label.wide { grid-column: 1 / -1; }
+.eq-editor .form-actions { display: flex; gap: 8px; }
+
+/* Правка в карточке по щелчку (владелец 17.10.2026): значение — кнопка без рамки, щелчок — поле на его месте. */
+.eq-val { all: unset; box-sizing: border-box; display: inline-block; min-width: 3ch; max-width: 100%; padding: 1px 4px; margin: -1px -4px; border-radius: 4px; cursor: text; white-space: pre-line; }
+.eq-val:hover { background: var(--accent); }
+.eq-val:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.eq-input { width: 100%; min-width: 8ch; box-sizing: border-box; font: inherit; padding: 2px 6px; border: 1px solid var(--primary); border-radius: 4px; background: var(--card); color: var(--foreground); }
+.eq-econ .eq-input { text-align: right; max-width: 16ch; }
+.eq-hint { margin: 6px 0 0; font-size: 12px; color: var(--muted-foreground); }

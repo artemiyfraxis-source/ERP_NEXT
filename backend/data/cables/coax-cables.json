@@ -1,0 +1,4619 @@
+{
+ "source": "Проверка по datasheet производителей, 10.10.2026 (coax-verified.json); исходная таблица владельца — Gemini",
+ "verified": true,
+ "vswr_meaning": "норма приёмки (предложено), не паспорт",
+ "attenuation_rule": "attenuation_datasheet.points — значения как опубликованы (единица, опорная длина, температура, тип nominal/typical/max); db_per_m = пересчёт. В markers: по даташиту / интерполировано (лог-лог, две точки) / экстраполировано / формула производителя — см. attenuation_basis_ru",
+ "fc_formula": "f_c[ГГц] = 190.86 / (√εr·(D_диэл + d_жилы)), εr = (100/Vp%)²",
+ "cables": [
+  {
+   "name": "RG-405",
+   "family": ".086\" полужёсткий, M17/133 (UT-085C, H+S SR_86, EZ M17/133). Hand-formable/«оплётка с заливкой» — другие кабели (напр. SUCOFORM 86), их параметры сюда не входят",
+   "construction": {
+    "core": {
+     "material": "медь посеребрённая",
+     "d_mm": 0.511
+    },
+    "dielectric": {
+     "material": "ПТФЭ сплошной",
+     "d_mm": 1.676
+    },
+    "shield": {
+     "type": "трубка медная",
+     "d_mm": 2.197
+    },
+    "jacket": null
+   },
+   "connectors": [
+    {
+     "family": "1.85 мм (V)",
+     "max_ghz": 67,
+     "note": "67 ГГц (Keysight даёт 70, некоторые 65)"
+    },
+    {
+     "family": "2.4 мм",
+     "max_ghz": 50,
+     "note": "50 ГГц"
+    },
+    {
+     "family": "2.92 мм (K)",
+     "max_ghz": 40,
+     "note": "40 ГГц"
+    },
+    {
+     "family": "SMP",
+     "max_ghz": 40,
+     "note": "Rosenberger SMP: 40 ГГц"
+    },
+    {
+     "family": "SMPM",
+     "max_ghz": 65,
+     "note": "Molex SMPM: 65 ГГц"
+    },
+    {
+     "family": "3.5 мм",
+     "max_ghz": 26.5,
+     "note": "паспорт 26.5 ГГц; без высших мод примерно до 33–34 ГГц"
+    },
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 60,
+    "narrowing": [
+     {
+      "connector": "2.4 мм",
+      "to_ghz": 50
+     },
+     {
+      "connector": "2.92 мм (K)",
+      "to_ghz": 40
+     },
+     {
+      "connector": "SMP",
+      "to_ghz": 40
+     },
+     {
+      "connector": "3.5 мм",
+      "to_ghz": 26.5
+     },
+     {
+      "connector": "SMA",
+      "to_ghz": 18
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.06,
+     "vswr_ref_assembly": 1.35,
+     "note": "строже паспорта сборки на ≥0.2 (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.35, спорный брак сверять с ним",
+     "attenuation_db_m": 0.402,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": 1.35,
+     "note": "строже паспорта сборки на ≥0.2 (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.35, спорный брак сверять с ним",
+     "attenuation_db_m": 0.579,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": 1.35,
+     "note": "строже паспорта сборки на ≥0.2 (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.35, спорный брак сверять с ним",
+     "attenuation_db_m": 0.796,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": 1.35,
+     "note": "строже паспорта сборки на ≥0.2 (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.35, спорный брак сверять с ним",
+     "attenuation_db_m": 1.012,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.14,
+     "vswr_ref_assembly": 1.35,
+     "note": "строже паспорта сборки на ≥0.2 (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.35, спорный брак сверять с ним",
+     "attenuation_db_m": 1.638,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 10000,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": 1.35,
+     "note": "согласуется с паспортом сборки (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35)",
+     "attenuation_db_m": 2.245,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 18000,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": 1.35,
+     "note": "согласуется с паспортом сборки (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35)",
+     "attenuation_db_m": 3.194,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 26500,
+     "vswr_max": 1.28,
+     "vswr_ref_assembly": 1.35,
+     "note": "согласуется с паспортом сборки (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35)",
+     "attenuation_db_m": 4.06,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 40000,
+     "vswr_max": 1.35,
+     "vswr_ref_assembly": 1.35,
+     "note": "согласуется с паспортом сборки (Fairview SKPS086 (.086/UT-85, 2.92 мм): ≤ 1.35)",
+     "attenuation_db_m": 5.284,
+     "attenuation_basis_ru": "формула производителя H+S SR_86: α = 0.58454·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 60000,
+     "vswr_max": 1.45,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 6.935,
+     "attenuation_basis_ru": "формула Smiths дБ/100 ft = 0.569·√f + 0.0012·f (f МГц, 23 °C) / 30.48; H+S формула только до 40 ГГц; у владельца маркер был 65 ГГц"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.45,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 2000,
+     "value": 0.91,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-86-cu-tp-m17-2m/huber-suhner-sr-86-cu-tp-m17-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 4000,
+     "value": 1.33,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-86-cu-tp-m17-2m/huber-suhner-sr-86-cu-tp-m17-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 10000,
+     "value": 2.25,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-86-cu-tp-m17-2m/huber-suhner-sr-86-cu-tp-m17-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 18000,
+     "value": 3.19,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-86-cu-tp-m17-2m/huber-suhner-sr-86-cu-tp-m17-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 20000,
+     "value": 3.41,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-86-cu-tp-m17-2m/huber-suhner-sr-86-cu-tp-m17-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 26000,
+     "value": 4.01,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-86-cu-tp-m17-2m/huber-suhner-sr-86-cu-tp-m17-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 500,
+     "value": 15,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-133-rg405/",
+     "basis": "typical (EZ, по M17/133); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 22,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-133-rg405/",
+     "basis": "typical (EZ, по M17/133); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 5000,
+     "value": 50,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-133-rg405/",
+     "basis": "typical (EZ, по M17/133); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 10000,
+     "value": 80,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-133-rg405/",
+     "basis": "typical (EZ, по M17/133); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 18000,
+     "value": 110,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-133-rg405/",
+     "basis": "typical (EZ, по M17/133); EZ Form, таблица Attenuation"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 60.7,
+   "fc_note": "calc (D 1.676, d 0.511, Vp 69.5 %); Micro-Coax HOM 61.0 ГГц (вторично)",
+   "max_operating_ghz": 60,
+   "max_operating_note": "20 (MIL M17/133) / 40 (H+S TP) / 60 (Smiths); https://www.smithsinterconnect.com/getattachment/57ad32cd-3f1d-4590-90df-7b59c0b01c22/semi-rigid-technical-specs.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 69.5,
+    "capacitance_pf_m": 105,
+    "shielding_db": 165.0,
+    "voltage_max_v": 1500.0,
+    "max_power_w": 130,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 3.18,
+    "temp_min_c": -55,
+    "temp_max_c": 125,
+    "weight_g_m": 23.8
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±1.5",
+    "shielding_db": ">165 (EZ); 120 до 20 ГГц (H+S)",
+    "voltage_max_v": "1500 В RMS непрерывно, 5000 В RMS испыт. (EZ, H+S)",
+    "max_power_w": "CW (EZ): 180 Вт @0.5, 54 @5, 35 @10, 24 @18 ГГц; H+S P=130/√f",
+    "mechanical": "радиус 3.18 мм статический (H+S) / 3.175 (EZ) / 4.27 (Smiths); EZ −40…+125; вес EZ 22.8 г/м"
+   },
+   "notes_ru": "f_c ≈ 61 ГГц, поэтому span 65 ГГц невозможен — потолок 60 ГГц (1.85 мм). Разъём 3.5 мм паспортно до 26.5 ГГц, без высших мод примерно до 33–34 ГГц; выше 32 ГГц с ним не тестировать. С 2.92 мм штатно до 40 ГГц. Маркер 60 ГГц вместо 65.",
+   "sources": [
+    "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-86-cu-tp-m17-2m/huber-suhner-sr-86-cu-tp-m17-coil-datasheet.pdf",
+    "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-133-rg405/",
+    "https://www.smithsinterconnect.com/getattachment/57ad32cd-3f1d-4590-90df-7b59c0b01c22/semi-rigid-technical-specs.pdf",
+    "https://nepp.nasa.gov/npsl/wire/17/17_133.htm"
+   ],
+   "changed": [
+    {
+     "field": "vna_span.to_ghz",
+     "was": 65,
+     "now": 60,
+     "why": "f_c TE11 ≈ 60.7 ГГц (расчёт; Micro-Coax HOM 61 ГГц), Smiths max 60"
+    },
+    {
+     "field": "markers",
+     "was": "65 ГГц",
+     "now": "60 ГГц",
+     "why": "выше f_c измерение бессмысленно"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈65",
+     "now": 60.7,
+     "why": "расчёт по геометрии"
+    },
+    {
+     "field": "connectors.3.5 мм",
+     "was": "26.5–32",
+     "now": "26.5 паспорт (≈33 без мод)",
+     "why": "паспортный предел 3.5 мм — 26.5 ГГц"
+    },
+    {
+     "field": "markers.attenuation_db_m @40 ГГц",
+     "was": 5.05,
+     "now": 5.28,
+     "why": "H+S формула; владелец на 5–7 % ниже выше 26 ГГц"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "RG-402",
+   "family": ".141\" полужёсткий, M17/130 (UT-141C, H+S SR_141, EZ M17/130)",
+   "construction": {
+    "core": {
+     "material": "медь посеребрённая",
+     "d_mm": 0.92
+    },
+    "dielectric": {
+     "material": "ПТФЭ сплошной",
+     "d_mm": 2.985
+    },
+    "shield": {
+     "type": "трубка медная",
+     "d_mm": 3.581
+    },
+    "jacket": null
+   },
+   "connectors": [
+    {
+     "family": "2.92 мм (K)",
+     "max_ghz": 40,
+     "note": "40 ГГц"
+    },
+    {
+     "family": "3.5 мм",
+     "max_ghz": 26.5,
+     "note": "паспорт 26.5 ГГц; без высших мод примерно до 33–34 ГГц"
+    },
+    {
+     "family": "SMA (прецизионный)",
+     "max_ghz": 26.5,
+     "note": "26.5 ГГц у отдельных серий"
+    },
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "N (прецизионный)",
+     "max_ghz": 18,
+     "note": "18 ГГц у прецизионных серий (не подтверждено стандартом)"
+    },
+    {
+     "family": "TNC (прецизионный)",
+     "max_ghz": 18,
+     "note": "18 ГГц у отдельных серий"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 32,
+    "narrowing": [
+     {
+      "connector": "3.5 мм",
+      "to_ghz": 26.5
+     },
+     {
+      "connector": "SMA (прецизионный)",
+      "to_ghz": 26.5
+     },
+     {
+      "connector": "SMA",
+      "to_ghz": 18
+     },
+     {
+      "connector": "N (прецизионный)",
+      "to_ghz": 18
+     },
+     {
+      "connector": "TNC (прецизионный)",
+      "to_ghz": 18
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": 1.15,
+     "note": "согласуется с паспортом сборки (Pasternack PE3931-18 (.141, SMA): ≤ 1.15); ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.231,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.06,
+     "vswr_ref_assembly": 1.15,
+     "note": "согласуется с паспортом сборки (Pasternack PE3931-18 (.141, SMA): ≤ 1.15)",
+     "attenuation_db_m": 0.338,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.07,
+     "vswr_ref_assembly": 1.15,
+     "note": "согласуется с паспортом сборки (Pasternack PE3931-18 (.141, SMA): ≤ 1.15)",
+     "attenuation_db_m": 0.471,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": 1.15,
+     "note": "согласуется с паспортом сборки (Pasternack PE3931-18 (.141, SMA): ≤ 1.15)",
+     "attenuation_db_m": 0.607,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": 1.15,
+     "note": "согласуется с паспортом сборки (Pasternack PE3931-18 (.141, SMA): ≤ 1.15)",
+     "attenuation_db_m": 1.014,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 10000,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": 1.25,
+     "note": "согласуется с паспортом сборки (Pasternack PE3931-18: ≤ 1.25)",
+     "attenuation_db_m": 1.426,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 18000,
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": 1.35,
+     "note": "согласуется с паспортом сборки (Pasternack PE3931-18: ≤ 1.35)",
+     "attenuation_db_m": 2.095,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 26500,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 2.727,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 32000,
+     "vswr_max": 1.35,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 3.11,
+     "attenuation_basis_ru": "формула производителя H+S SR_141: α = 0.32544·√f + 0.03967·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.35,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 1650,
+     "value": 0.48,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-141-cu-tp-2m/huber-suhner-sr-141-cu-tp-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 3300,
+     "value": 0.72,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-141-cu-tp-2m/huber-suhner-sr-141-cu-tp-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 9900,
+     "value": 1.42,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-141-cu-tp-2m/huber-suhner-sr-141-cu-tp-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 18150,
+     "value": 2.11,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-141-cu-tp-2m/huber-suhner-sr-141-cu-tp-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 29700,
+     "value": 2.95,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-141-cu-tp-2m/huber-suhner-sr-141-cu-tp-coil-datasheet.pdf",
+     "basis": "таблица даташита H+S"
+    },
+    {
+     "freq_mhz": 500,
+     "value": 8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-130-rg402/",
+     "basis": "typical (EZ, по M17/130); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 12,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-130-rg402/",
+     "basis": "typical (EZ, по M17/130); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 5000,
+     "value": 29,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-130-rg402/",
+     "basis": "typical (EZ, по M17/130); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 10000,
+     "value": 45,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-130-rg402/",
+     "basis": "typical (EZ, по M17/130); EZ Form, таблица Attenuation"
+    },
+    {
+     "freq_mhz": 18000,
+     "value": 65.5,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-130-rg402/",
+     "basis": "typical (EZ, по M17/130); EZ Form, таблица Attenuation"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 34.0,
+   "fc_note": "calc (D 2.985, d 0.92, Vp 69.5 %)",
+   "max_operating_ghz": 33,
+   "max_operating_note": "20 (MIL) / 33 (H+S) / 35 (Smiths); https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-141-cu-tp-2m/huber-suhner-sr-141-cu-tp-coil-datasheet.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 69.5,
+    "capacitance_pf_m": 98.1,
+    "shielding_db": 165.0,
+    "voltage_max_v": 1900.0,
+    "max_power_w": 450,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 6.35,
+    "temp_min_c": -55,
+    "temp_max_c": 125,
+    "weight_g_m": 52.1
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±1",
+    "shielding_db": ">165 (EZ); 120 до 18 ГГц (H+S); >100 (Smiths)",
+    "voltage_max_v": "1900 В RMS непрерывно, 5000 В RMS испыт.",
+    "max_power_w": "CW при 20 °C (EZ): 600 Вт @0.5, 180 @5, 120 @10, 83 @18 ГГц",
+    "mechanical": "радиус 6.35 мм (EZ, H+S) / 8.13 (Smiths); EZ −40…+125; EZ 51.2 г/м"
+   },
+   "notes_ru": "f_c ≈ 34 ГГц: выше 34 ГГц возникает мода TE11, измерение бессмысленно; разъём 2.92 мм не расширяет диапазон кабеля. Экранирование: производители дают 120 дБ (H+S) / >100 дБ (Smiths); «>110 дБ на Sub-6» владельца как отдельная цифра не подтверждена.",
+   "sources": [
+    "https://nkt.ru/upload/tech_docs/ez-poluzhestkie-svch-kabeli-semi-rigid/kabel-koaksialnyy-h-s-ez-141-cu-tp-2m/huber-suhner-sr-141-cu-tp-coil-datasheet.pdf",
+    "https://ezform.com/products/coaxial-cables/mil-dtl-17/m17-130-rg402/",
+    "https://www.smithsinterconnect.com/getattachment/57ad32cd-3f1d-4590-90df-7b59c0b01c22/semi-rigid-technical-specs.pdf",
+    "https://nepp.nasa.gov/npsl/wire/17/17_130.htm"
+   ],
+   "changed": [
+    {
+     "field": "construction.core.d_mm",
+     "was": 0.91,
+     "now": 0.92,
+     "why": "0.0362\" (EZ), 0.92 (H+S)"
+    },
+    {
+     "field": "construction.dielectric.d_mm",
+     "was": 2.98,
+     "now": 2.985,
+     "why": "0.1175\""
+    },
+    {
+     "field": "markers.attenuation_db_m",
+     "was": "1.38 @10, 1.95 @18, 2.85 @32 ГГц",
+     "now": "1.43, 2.10, 3.11",
+     "why": "H+S формула; владелец занижен на 3–8 % от 10 ГГц"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "RG-142",
+   "family": "M17/60, гибкий PTFE, двойная оплётка, моножила",
+   "construction": {
+    "core": {
+     "material": "сталь омеднённая посеребрённая сплошная",
+     "d_mm": 0.94
+    },
+    "dielectric": {
+     "material": "ПТФЭ сплошной",
+     "d_mm": 2.95
+    },
+    "shield": {
+     "type": "оплётка медь посеребрённая двойная",
+     "d_mm": 4.06
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 4.95
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "TNC",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 у отдельных серий"
+    },
+    {
+     "family": "BNC",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 12.4,
+    "narrowing": [
+     {
+      "connector": "N",
+      "to_ghz": 11
+     },
+     {
+      "connector": "TNC",
+      "to_ghz": 11
+     },
+     {
+      "connector": "BNC",
+      "to_ghz": 4
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.153,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 400 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.278,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.414,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.591,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1000 и 2000 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.774,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2400 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.358,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 5000 и 10000 МГц"
+    },
+    {
+     "freq_mhz": 10000,
+     "vswr_max": 1.28,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.968,
+     "attenuation_basis_ru": "по даташиту (точка 10000 МГц)"
+    },
+    {
+     "freq_mhz": 12400,
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 2.293,
+     "attenuation_basis_ru": "по даташиту (точка 12400 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 100,
+     "value": 3.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 8.1,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 13.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 20.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2400,
+     "value": 23.3,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 26.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 5000,
+     "value": 37.4,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 10000,
+     "value": 60.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 12400,
+     "value": 69.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+     "basis": "таблица Attenuation"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 34.3,
+   "fc_note": "calc (D 2.95, d 0.94, Vp 70 %); рабочий предел 12.4 ГГц (MIL) — это не f_c",
+   "max_operating_ghz": 12.4,
+   "max_operating_note": "12.4 (MIL M17/60, Marmon); https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 69.5,
+    "capacitance_pf_m": 96.5,
+    "shielding_db": 80.0,
+    "voltage_max_v": 1400.0,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 25.4,
+    "temp_min_c": -55,
+    "temp_max_c": 200,
+    "weight_g_m": 64.0
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "shielding_db": "−80 (Marmon)",
+    "voltage_max_v": "1400 В RMS непрерывно (MIL); Marmon 1900 В (основа не указана)",
+    "max_power_w": "источники расходятся: 395–650 Вт @1 ГГц (Pasternack/Allied/Belden, сниппеты) — не внесено"
+   },
+   "notes_ru": "Рабочий предел 12.4 ГГц задан спецификацией MIL (потери/стабильность), а не модой TE11 (f_c ≈ 34 ГГц). Диапазон −55…+200 °C. SMA сам по себе до 18 ГГц — ограничение 12.4 ГГц идёт от кабеля. Утверждение «у RG-400 КСВН на 1–2 % хуже» источниками не подтверждено.",
+   "sources": [
+    "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-60-rg142",
+    "https://belden.com/products/cable/coax-triax-cable/50-ohm-coax-cable/84142"
+   ],
+   "changed": [
+    {
+     "field": "name",
+     "was": "RG-142 / RG-400",
+     "now": "две записи",
+     "why": "разная жила, разное затухание"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈14",
+     "now": "34.3 (calc); рабочий предел 12.4",
+     "why": "f_c по геометрии; 12.4 — предел MIL"
+    },
+    {
+     "field": "connectors.SMA",
+     "was": "до 12.4",
+     "now": "18 (разъём); 12.4 — предел кабеля",
+     "why": "SMA стандарт 18 ГГц"
+    },
+    {
+     "field": "construction.shield",
+     "was": "двойная оплётка SPC 96 %",
+     "now": "двойная SPC оплётка, % покрытия не публикуется",
+     "why": "Marmon"
+    },
+    {
+     "field": "markers.attenuation_db_m",
+     "was": "0.38 @1 ГГц, 1.65 @10, 1.95 @12.4",
+     "now": "0.450, 1.969, 2.293",
+     "why": "Marmon typical; у владельца маркер 1 ГГц вместо 1575 МГц"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "RG-400",
+   "family": "M17/128, гибкий PTFE, двойная оплётка, витая жила",
+   "construction": {
+    "core": {
+     "material": "медь посеребрённая витая",
+     "d_mm": 0.97
+    },
+    "dielectric": {
+     "material": "ПТФЭ сплошной",
+     "d_mm": 2.95
+    },
+    "shield": {
+     "type": "оплётка медь посеребрённая двойная",
+     "d_mm": 3.96
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 4.95
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "TNC",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 у отдельных серий"
+    },
+    {
+     "family": "BNC",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 12.4,
+    "narrowing": [
+     {
+      "connector": "N",
+      "to_ghz": 11
+     },
+     {
+      "connector": "TNC",
+      "to_ghz": 11
+     },
+     {
+      "connector": "BNC",
+      "to_ghz": 4
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.164,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 400 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.295,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.431,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.606,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1000 и 2000 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.784,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2400 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.336,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 5000 и 10000 МГц"
+    },
+    {
+     "freq_mhz": 10000,
+     "vswr_max": 1.28,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.896,
+     "attenuation_basis_ru": "по даташиту (точка 10000 МГц)"
+    },
+    {
+     "freq_mhz": 12400,
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 2.188,
+     "attenuation_basis_ru": "по даташиту (точка 12400 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 100,
+     "value": 4.1,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 8.6,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 14.2,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 21.2,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2400,
+     "value": 23.6,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 27.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 5000,
+     "value": 37.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 10000,
+     "value": 57.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 12400,
+     "value": 66.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+     "basis": "таблица Attenuation"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 34.2,
+   "fc_note": "calc (D 2.95, d 0.97, Vp 70 %)",
+   "max_operating_ghz": 12.4,
+   "max_operating_note": "12.4; https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 70,
+    "capacitance_pf_m": 96.5,
+    "shielding_db": 80.0,
+    "voltage_max_v": 1900.0,
+    "bend_static_mm": 25.4,
+    "temp_min_c": -55,
+    "temp_max_c": 200,
+    "weight_g_m": 74.4
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "shielding_db": "−80 (Marmon)",
+    "voltage_max_v": "1900 В (Marmon, основа не указана)"
+   },
+   "notes_ru": "Отдельная запись: у владельца значения RG-142 переиспользованы. Витая жила — гибче, затухание близко к RG-142 (на 10 ГГц даже чуть ниже по Marmon). «КСВН на 1–2 % хуже» — не подтверждено.",
+   "sources": [
+    "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-128-rg400",
+    "https://www.wiremasters.com/m17-128-rg400"
+   ],
+   "changed": [
+    {
+     "field": "attenuation",
+     "was": "значения RG-142",
+     "now": "собственная таблица Marmon M17/128",
+     "why": "отдельный кабель"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈14",
+     "now": "34.2 (calc)",
+     "why": "по геометрии"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "RG-316",
+   "family": "M17/113, одинарная оплётка",
+   "construction": {
+    "core": {
+     "material": "сталь омеднённая посеребрённая витая",
+     "d_mm": 0.51
+    },
+    "dielectric": {
+     "material": "ПТФЭ сплошной",
+     "d_mm": 1.52
+    },
+    "shield": {
+     "type": "оплётка медь посеребрённая",
+     "d_mm": 1.98
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 2.49
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "MCX",
+     "max_ghz": 6,
+     "note": "6 ГГц"
+    },
+    {
+     "family": "MMCX",
+     "max_ghz": 6,
+     "note": "6 ГГц"
+    },
+    {
+     "family": "SMB",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    },
+    {
+     "family": "SMC",
+     "max_ghz": 4,
+     "note": "4 ГГц стандарт; 10 ГГц у extended-range"
+    },
+    {
+     "family": "BNC",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 3.0,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.06,
+     "vswr_ref_assembly": 1.4,
+     "note": "строже паспорта сборки на ≥0.2 (Pasternack PE3573 (RG-316, SMA): ≤ 1.4) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.4, спорный брак сверять с ним",
+     "attenuation_db_m": 0.31,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 400 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": 1.4,
+     "note": "строже паспорта сборки на ≥0.2 (Pasternack PE3573 (RG-316, SMA): ≤ 1.4) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.4, спорный брак сверять с ним",
+     "attenuation_db_m": 0.548,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": 1.4,
+     "note": "строже паспорта сборки на ≥0.2 (Pasternack PE3573 (RG-316, SMA): ≤ 1.4) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.4, спорный брак сверять с ним",
+     "attenuation_db_m": 0.799,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": 1.4,
+     "note": "строже паспорта сборки на ≥0.2 (Pasternack PE3573 (RG-316, SMA): ≤ 1.4) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.4, спорный брак сверять с ним",
+     "attenuation_db_m": 1.111,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1000 и 2000 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Pasternack PE3573 (RG-316, SMA): ≤ 1.4)",
+     "attenuation_db_m": 1.428,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2400 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 3000,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Pasternack PE3573 (RG-316, SMA): ≤ 1.4)",
+     "attenuation_db_m": 1.604,
+     "attenuation_basis_ru": "по даташиту (точка 3000 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 100,
+     "value": 7.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 16.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 26.3,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 38.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2400,
+     "value": 43.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 48.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+     "basis": "таблица Attenuation"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 65.3,
+   "fc_note": "calc (D 1.52, d 0.51, Vp 69.5 %)",
+   "max_operating_ghz": 3,
+   "max_operating_note": "3 (MIL M17/113, Marmon); https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 69.5,
+    "capacitance_pf_m": 96.5,
+    "shielding_db": 38.0,
+    "voltage_max_v": 1200.0,
+    "max_power_w": 173,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 12.7,
+    "bend_dynamic_mm": 25,
+    "temp_min_c": -55,
+    "temp_max_c": 200,
+    "weight_g_m": 18.2
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "shielding_db": "38 (H+S, до 1 ГГц)",
+    "voltage_max_v": "1200 В (Marmon/AWC, RMS/peak не указано); H+S ≤1.5 кВ RMS",
+    "max_power_w": "AWC: 93 Вт @3 ГГц",
+    "mechanical": "static 12.7 (Marmon) / 15 (H+S); dynamic 25 (H+S)"
+   },
+   "notes_ru": "Паспортный предел 3 ГГц; «до 6 ГГц при L < 30 см» источниками не подтверждено. Одинарная оплётка: экранирование ~38 дБ (H+S), выше 3 ГГц излучает. Разъёмы SMA/MCX/SMB сами работают выше (18/6/4 ГГц) — предел 3 ГГц идёт от кабеля. Владелец завышает затухание на 12–17 %.",
+   "sources": [
+    "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-113-rg316",
+    "https://awcwire.com/userfiles/spec-sheets/rg316-m17-113-rg316-allied-wire-and-cable.pdf"
+   ],
+   "changed": [
+    {
+     "field": "name",
+     "was": "RG-316 / RG-316D",
+     "now": "две записи",
+     "why": "разные экран, затухание, предел"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈9",
+     "now": "65.3 (calc); рабочий предел 3",
+     "why": "по геометрии"
+    },
+    {
+     "field": "vna_span",
+     "was": "3 (до 6 при L<30 см)",
+     "now": "3",
+     "why": "паспорт 3 ГГц"
+    },
+    {
+     "field": "connectors",
+     "was": "SMA до 3/6, MCX 6, SMB/SMC 3–4, BNC 2–3",
+     "now": "SMA 18, MCX 6, SMB 4, SMC 4, BNC 4",
+     "why": "пределы разъёмов, а не кабеля"
+    },
+    {
+     "field": "markers.attenuation_db_m",
+     "was": "1.65 @2.45, 1.90 @3 ГГц",
+     "now": "1.42, 1.60",
+     "why": "Marmon typical"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "RG-316D",
+   "family": "M17/152, двойная оплётка (RG-316DS, H+S Enviroflex 316 D)",
+   "construction": {
+    "core": {
+     "material": "сталь омеднённая посеребрённая витая",
+     "d_mm": 0.51
+    },
+    "dielectric": {
+     "material": "ПТФЭ сплошной",
+     "d_mm": 1.52
+    },
+    "shield": {
+     "type": "оплётка медь посеребрённая двойная",
+     "d_mm": 2.44
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 2.9
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "MCX",
+     "max_ghz": 6,
+     "note": "6 ГГц"
+    },
+    {
+     "family": "MMCX",
+     "max_ghz": 6,
+     "note": "6 ГГц"
+    },
+    {
+     "family": "SMB",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    },
+    {
+     "family": "BNC",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 6.0,
+    "narrowing": [
+     {
+      "connector": "SMB",
+      "to_ghz": 4
+     },
+     {
+      "connector": "BNC",
+      "to_ghz": 4
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.06,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.31,
+     "attenuation_basis_ru": "формула производителя H+S Enviroflex 316 D: α = 0.7648·√f + 0.1301·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.56,
+     "attenuation_basis_ru": "формула производителя H+S Enviroflex 316 D: α = 0.7648·√f + 0.1301·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.825,
+     "attenuation_basis_ru": "формула производителя H+S Enviroflex 316 D: α = 0.7648·√f + 0.1301·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.165,
+     "attenuation_basis_ru": "формула производителя H+S Enviroflex 316 D: α = 0.7648·√f + 0.1301·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.516,
+     "attenuation_basis_ru": "формула производителя H+S Enviroflex 316 D: α = 0.7648·√f + 0.1301·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 3000,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.715,
+     "attenuation_basis_ru": "формула производителя H+S Enviroflex 316 D: α = 0.7648·√f + 0.1301·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.35,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 2.596,
+     "attenuation_basis_ru": "формула производителя H+S Enviroflex 316 D: α = 0.7648·√f + 0.1301·f (дБ/м, f в ГГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.35,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 1000,
+     "value": 0.895,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.mouser.com/datasheet/ (H+S K_02252_D, через поиск)",
+     "basis": "таблица H+S"
+    },
+    {
+     "freq_mhz": 6000,
+     "value": 2.654,
+     "unit": "dB/m",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.mouser.com/datasheet/ (H+S K_02252_D, через поиск)",
+     "basis": "таблица H+S"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 0.54,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.koax24.de/en/product-info/coaxial-cable/koaxialkabel-50-ohm/24-32-mm-size2/rg316d-rd316.html",
+     "basis": "Habia RD316 через koax24 (дистрибьютор)"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 0.86,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.koax24.de/en/product-info/coaxial-cable/koaxialkabel-50-ohm/24-32-mm-size2/rg316d-rd316.html",
+     "basis": "Habia RD316 через koax24 (дистрибьютор)"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 1.35,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.koax24.de/en/product-info/coaxial-cable/koaxialkabel-50-ohm/24-32-mm-size2/rg316d-rd316.html",
+     "basis": "Habia RD316 через koax24 (дистрибьютор)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 64.4,
+   "fc_note": "calc (D 1.52, d 0.54, Vp 69.5 %)",
+   "max_operating_ghz": 6,
+   "max_operating_note": "2.5 (Habia) / 3 (Pasternack DS) / 6 (H+S) / 12.4 (MIL, низкая достоверность); H+S Enviroflex 316 D",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 69.5,
+    "capacitance_pf_m": 95,
+    "shielding_db": 80.0,
+    "voltage_max_v": 1200.0,
+    "max_power_w": 45,
+    "max_power_at_mhz": 6000,
+    "bend_static_mm": 18,
+    "bend_dynamic_mm": 39.88,
+    "temp_min_c": -55,
+    "temp_max_c": 200,
+    "weight_g_m": 24
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "shielding_db": "80 (H+S, 0.05–6 ГГц); 70 (Habia); 85 (Pasternack DS)",
+    "voltage_max_v": "1200 В RMS (Pasternack DS)",
+    "max_power_w": "H+S Enviroflex 316 D, уровень моря, 25 °C; Pasternack DS 375 Вт @100 МГц … 65 Вт @3 ГГц",
+    "mechanical": "static 18 (H+S, поиск) / 14.99 (Pasternack DS); dynamic 39.88 (Pasternack DS); Habia 28 г/м"
+   },
+   "notes_ru": "Двойная оплётка: экранирование 70–85 дБ (формулировка «>60 дБ» верна, но консервативна). Предел 6 ГГц — по H+S; у Habia/Pasternack паспорт 2.5–3 ГГц, поэтому выбор поставщика кабеля важен. Конструкция по MIL-таблице подтверждена слабо.",
+   "sources": [
+    "https://www.koax24.de/en/product-info/coaxial-cable/koaxialkabel-50-ohm/24-32-mm-size2/rg316d-rd316.html",
+    "https://sycor.com/pub/media/wysiwyg/Coaxial_Cable_PDF/MIL-C-17.pdf"
+   ],
+   "changed": [
+    {
+     "field": "attenuation",
+     "was": "общие с RG-316",
+     "now": "собственные (H+S Enviroflex 316 D)",
+     "why": "отдельный кабель"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈9",
+     "now": "64.4 (calc)",
+     "why": "по геометрии"
+    },
+    {
+     "field": "construction.jacket.d_mm",
+     "was": "2.50–2.90",
+     "now": 2.9,
+     "why": "M17/152 0.114\""
+    }
+   ],
+   "confidence": "низкая",
+   "verified": true
+  },
+  {
+   "name": "RG-178",
+   "family": "M17/93, сверхтонкий PTFE",
+   "construction": {
+    "core": {
+     "material": "сталь омеднённая посеребрённая витая",
+     "d_mm": 0.3
+    },
+    "dielectric": {
+     "material": "ПТФЭ сплошной",
+     "d_mm": 0.86
+    },
+    "shield": {
+     "type": "оплётка медь посеребрённая",
+     "d_mm": 1.3
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 1.8
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "MMCX",
+     "max_ghz": 6,
+     "note": "6 ГГц"
+    },
+    {
+     "family": "MCX",
+     "max_ghz": 6,
+     "note": "6 ГГц"
+    },
+    {
+     "family": "U.FL (Hirose)",
+     "max_ghz": 6,
+     "note": "DC–6 ГГц; 30 циклов (испытание)"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 2.5,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.577,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 400 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.019,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.471,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 2.027,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1000 и 2000 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 2.579,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2400 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 3000,
+     "vswr_max": 1.4,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; вне рекомендованного span",
+     "attenuation_db_m": 2.887,
+     "attenuation_basis_ru": "по даташиту (точка 3000 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.4,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 100,
+     "value": 14.5,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 29.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 48.3,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 70.3,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 2400,
+     "value": 77.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 88.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": null,
+     "source": "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 200,
+     "value": 62,
+     "unit": "dB/100 m",
+     "kind": "max",
+     "temp_c": null,
+     "source": "https://dam-media.lapp.com/ (Lapp RG-178 B/U, 2170002)",
+     "basis": "таблица затухания Lapp"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 92,
+     "unit": "dB/100 m",
+     "kind": "max",
+     "temp_c": null,
+     "source": "https://dam-media.lapp.com/ (Lapp RG-178 B/U, 2170002)",
+     "basis": "таблица затухания Lapp"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 152,
+     "unit": "dB/100 m",
+     "kind": "max",
+     "temp_c": null,
+     "source": "https://dam-media.lapp.com/ (Lapp RG-178 B/U, 2170002)",
+     "basis": "таблица затухания Lapp"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 280,
+     "unit": "dB/100 m",
+     "kind": "max",
+     "temp_c": null,
+     "source": "https://dam-media.lapp.com/ (Lapp RG-178 B/U, 2170002)",
+     "basis": "таблица затухания Lapp"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 114.4,
+   "fc_note": "calc (D 0.86, d 0.30, Vp 69.5 %)",
+   "max_operating_ghz": 3,
+   "max_operating_note": "3 (Marmon, H+S 2020, Lapp); https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 70,
+    "capacitance_pf_m": 96.5,
+    "shielding_db": 40.0,
+    "voltage_max_v": 1000.0,
+    "max_power_w": 55,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 10,
+    "bend_dynamic_mm": 18,
+    "temp_min_c": -55,
+    "temp_max_c": 200,
+    "weight_g_m": 9.4
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "shielding_db": "≥40 до 1 ГГц (H+S)",
+    "voltage_max_v": "1000 В (Marmon); Lapp 0.75 кВ RMS / 1 кВ пик ВЧ",
+    "max_power_w": "Pasternack (сниппет)",
+    "mechanical": "dynamic 18 (многократно) / 27 (H+S); H+S 8.4 г/м"
+   },
+   "notes_ru": "Паспортный предел 3 ГГц; рабочий span 2.5 ГГц — разумное сужение. На 5.8 ГГц данных нет (кабель не нормирован); экстраполяция формулы H+S даёт ~4.4 дБ/м, а не «почти 5». При длине свыше 20 см затухание (~2.5 дБ/м на 2.4 ГГц) скрывает дефекты дальнего разъёма. Разъёмы SMA/MMCX/U.FL сами работают выше — предел от кабеля.",
+   "sources": [
+    "https://marmon-ad.com/products/wire-cable/rf-cable/m17-series/m17-93-rg178",
+    "https://dam-media.lapp.com/",
+    "https://www.farnell.com/datasheets/2036673.pdf"
+   ],
+   "changed": [
+    {
+     "field": "fc_ghz",
+     "was": "≈10",
+     "now": "114 (calc); рабочий предел 3",
+     "why": "по геометрии"
+    },
+    {
+     "field": "markers.attenuation_db_m @3 ГГц",
+     "was": 3.3,
+     "now": 2.887,
+     "why": "Marmon typical; Lapp max 2.80 — владелец выше даже максимума"
+    },
+    {
+     "field": "notes_ru",
+     "was": "на 5.8 ГГц почти 5 дБ/м",
+     "now": "не нормировано; экстраполяция ~4.4",
+     "why": "нет данных выше 3 ГГц"
+    },
+    {
+     "field": "connectors",
+     "was": "SMA/MMCX/U.FL до 3",
+     "now": "18/6/6 (разъёмы); 3 — кабель",
+     "why": "пределы разъёмов"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "RF 0.81",
+   "family": "Микрокоаксиал 0.81 мм — под U.FL-LP-040 / MHF 4; производитель кабеля не идентифицирован",
+   "construction": {
+    "core": {
+     "material": "медь посеребрённая витая",
+     "d_mm": 0.15
+    },
+    "dielectric": {
+     "material": "ФЭП",
+     "d_mm": 0.4
+    },
+    "shield": {
+     "type": "оплётка медь посеребрённая",
+     "d_mm": 0.65
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 0.81
+    }
+   },
+   "connectors": [
+    {
+     "family": "U.FL (Hirose)",
+     "max_ghz": 6,
+     "note": "DC–6 ГГц; 30 циклов (испытание)"
+    },
+    {
+     "family": "I-PEX MHF 4 / 4L",
+     "max_ghz": 9,
+     "note": "спецификация PRS-2051 DC~9 ГГц (каталог 12 ГГц); 30 циклов (испытание)"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 6.0,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": 1.3,
+     "note": "строже паспорта сборки на ≥0.2 (Hirose U.FL-LP-040 (0.81 мм): ≤ 1.3) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.3, спорный брак сверять с ним",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": "нет таблицы производителя — не рассчитывается"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-040 (0.81 мм): ≤ 1.3)",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": "нет таблицы производителя — не рассчитывается"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-040 (0.81 мм): ≤ 1.3)",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": "нет таблицы производителя — не рассчитывается"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-040 (0.81 мм): ≤ 1.3)",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": "нет таблицы производителя — не рассчитывается"
+    },
+    {
+     "freq_mhz": 3500,
+     "vswr_max": 1.28,
+     "vswr_ref_assembly": 1.35,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-040: ≤ 1.35)",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": "нет таблицы производителя — не рассчитывается"
+    },
+    {
+     "freq_mhz": 5150,
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": 1.35,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-040: ≤ 1.35)",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": "нет таблицы производителя — не рассчитывается"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.38,
+     "vswr_ref_assembly": 1.35,
+     "note": "мягче паспорта сборки (Hirose U.FL-LP-040: ≤ 1.35) — норму ужесточить",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": "нет таблицы производителя — не рассчитывается"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.38,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 1000,
+     "value": 2.65,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://portal.powertec.com.au/equipment/rf-communications/rf-cable-groups/081-mm-mini-coax",
+     "basis": "страница Powertec (дистрибьютор)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 243,
+   "fc_note": "calc (D 0.40, d 0.15, Vp 70 %), геометрия от дистрибьютора",
+   "max_operating_ghz": 6,
+   "max_operating_note": "6 (Powertec); https://portal.powertec.com.au/equipment/rf-communications/rf-cable-groups/081-mm-mini-coax",
+   "params": {
+    "impedance_ohm": 50,
+    "velocity_pct": 70,
+    "capacitance_pf_m": 96,
+    "voltage_max_v": 1000.0,
+    "bend_static_mm": 3,
+    "temp_min_c": -55,
+    "temp_max_c": 200
+   },
+   "param_notes": {
+    "voltage_max_v": "1000 В RMS (Powertec, дистрибьютор)",
+    "mechanical": "данные дистрибьютора Powertec"
+   },
+   "notes_ru": "Паспорта производителя кабеля не найдено — затухание на маркерах не задаётся (одна точка 2.65 дБ/м на 1 ГГц от дистрибьютора). Перед приёмкой взять паспорт у поставщика кабеля. Спиральный/оплёточный экран чувствителен к перекручиванию.",
+   "sources": [
+    "https://portal.powertec.com.au/equipment/rf-communications/rf-cable-groups/081-mm-mini-coax"
+   ],
+   "changed": [
+    {
+     "field": "name",
+     "was": "0.81 / 1.13 / 1.37 мм",
+     "now": "три записи",
+     "why": "разная конструкция и затухание"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈12",
+     "now": "≈243 (calc)",
+     "why": "по геометрии"
+    }
+   ],
+   "confidence": "низкая",
+   "verified": true
+  },
+  {
+   "name": "RF 1.13",
+   "family": "Микрокоаксиал 1.13 мм — Taoglas 300115B000098A (под U.FL-LP-068 / MHF I)",
+   "construction": {
+    "core": {
+     "material": "медь посеребрённая витая",
+     "d_mm": 0.24
+    },
+    "dielectric": {
+     "material": "ФЭП",
+     "d_mm": 0.68
+    },
+    "shield": {
+     "type": "оплётка медь лужёная 90 %",
+     "d_mm": 0.9
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 1.13
+    }
+   },
+   "connectors": [
+    {
+     "family": "U.FL (Hirose)",
+     "max_ghz": 6,
+     "note": "DC–6 ГГц; 30 циклов (испытание)"
+    },
+    {
+     "family": "I-PEX MHF I",
+     "max_ghz": 6,
+     "note": "каталог DC–6 ГГц, спецификация PRS-1726 DC~9 ГГц; 30 циклов (испытание)"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 6.0,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": 1.3,
+     "note": "строже паспорта сборки на ≥0.2 (Hirose U.FL-LP-068 (1.13 мм): ≤ 1.3) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.3, спорный брак сверять с ним",
+     "attenuation_db_m": 1.255,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.05839, b=9.304e-05, f в МГц), вне диапазона 2000–6000 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-068 (1.13 мм): ≤ 1.3)",
+     "attenuation_db_m": 1.801,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.05839, b=9.304e-05, f в МГц), вне диапазона 2000–6000 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-068 (1.13 мм): ≤ 1.3)",
+     "attenuation_db_m": 2.464,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.05839, b=9.304e-05, f в МГц), вне диапазона 2000–6000 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-068 (1.13 мм): ≤ 1.3)",
+     "attenuation_db_m": 3.135,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2400 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 3500,
+     "vswr_max": 1.28,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-068: ≤ 1.4)",
+     "attenuation_db_m": 3.76,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 3000 и 4000 МГц"
+    },
+    {
+     "freq_mhz": 5150,
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-068: ≤ 1.4)",
+     "attenuation_db_m": 4.678,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 5000 и 6000 МГц"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.38,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-068: ≤ 1.4)",
+     "attenuation_db_m": 5.003,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 5000 и 6000 МГц"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.38,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 2000,
+     "value": 2.8,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 2400,
+     "value": 3.1,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 3.5,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 4000,
+     "value": 4.0,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 5000,
+     "value": 4.6,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 6000,
+     "value": 5.1,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 145,
+   "fc_note": "calc (D 0.68, d 0.24, Vp 70 %)",
+   "max_operating_ghz": 6,
+   "max_operating_note": "6 (Multicomp, Powertec); Taoglas — не указано; https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "capacitance_pf_m": 96,
+    "bend_static_mm": 6.8,
+    "temp_min_c": -60,
+    "temp_max_c": 200,
+    "weight_g_m": 3.0
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±3",
+    "mechanical": "Multicomp: радиус 4.5 мм, −55…+155 °C, Vp 69 %"
+   },
+   "notes_ru": "Лимит задаётся разъёмами U.FL/MHF I (6 ГГц). 30 циклов сочленения — условие испытания у Hirose/I-PEX, а не гарантированный ресурс; ориентир для цеха — не переподключать. Затухание у владельца занижено на 15–25 %. Ниже 2 ГГц у Taoglas точек нет — значения экстраполированы.",
+   "sources": [
+    "https://www.taoglas.com/specifications/300115B000098A_Taoglas.pdf"
+   ],
+   "changed": [
+    {
+     "field": "markers.attenuation_db_m",
+     "was": "0.92…4.15",
+     "now": "≈1.2…4.9 (Taoglas)",
+     "why": "владелец занижен на 15–25 %"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈12",
+     "now": "≈145 (calc)",
+     "why": "по геометрии"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "RF 1.37",
+   "family": "Микрокоаксиал 1.37 мм — Taoglas PRT.001221 (двойной экран) / I-PEX MHF I кабель 1.37 — разные конструкции",
+   "construction": {
+    "core": {
+     "material": "медь посеребрённая витая",
+     "d_mm": 0.31
+    },
+    "dielectric": {
+     "material": "ФЭП",
+     "d_mm": 0.88
+    },
+    "shield": {
+     "type": "оплётка медь лужёная",
+     "d_mm": 1.15
+    },
+    "jacket": {
+     "material": "оболочка ФЭП",
+     "d_mm": 1.37
+    }
+   },
+   "connectors": [
+    {
+     "family": "U.FL (Hirose)",
+     "max_ghz": 6,
+     "note": "DC–6 ГГц; 30 циклов (испытание)"
+    },
+    {
+     "family": "I-PEX MHF I",
+     "max_ghz": 6,
+     "note": "каталог DC–6 ГГц, спецификация PRS-1726 DC~9 ГГц; 30 циклов (испытание)"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 6.0,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": 1.3,
+     "note": "строже паспорта сборки на ≥0.2 (Hirose U.FL-LP-088 (1.37 мм): ≤ 1.3) — допустимо как внутренняя цель; паспорт гарантирует только ≤ 1.3, спорный брак сверять с ним",
+     "attenuation_db_m": 0.942,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.04393, b=6.414e-05, f в МГц), вне диапазона 1000–10000 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-088 (1.37 мм): ≤ 1.3)",
+     "attenuation_db_m": 1.35,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.04393, b=6.414e-05, f в МГц), вне диапазона 1000–10000 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-088 (1.37 мм): ≤ 1.3)",
+     "attenuation_db_m": 1.912,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1000 и 2000 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": 1.3,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-088 (1.37 мм): ≤ 1.3)",
+     "attenuation_db_m": 2.337,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2000 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 3500,
+     "vswr_max": 1.28,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-088: ≤ 1.4)",
+     "attenuation_db_m": 2.807,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 3000 и 4000 МГц"
+    },
+    {
+     "freq_mhz": 5150,
+     "vswr_max": 1.32,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-088: ≤ 1.4)",
+     "attenuation_db_m": 3.447,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 5000 и 6000 МГц"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.38,
+     "vswr_ref_assembly": 1.4,
+     "note": "согласуется с паспортом сборки (Hirose U.FL-LP-088: ≤ 1.4)",
+     "attenuation_db_m": 3.642,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 5000 и 6000 МГц"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.38,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 1000,
+     "value": 1.6,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 2.1,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 2.6,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 4000,
+     "value": 3.0,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 5000,
+     "value": 3.4,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 6000,
+     "value": 3.7,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 7000,
+     "value": 4.1,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 8000,
+     "value": 4.4,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 9000,
+     "value": 4.8,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    },
+    {
+     "freq_mhz": 10000,
+     "value": 5.1,
+     "unit": "dB/m",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+     "basis": "таблица на стр. 1"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 110,
+   "fc_note": "calc 108.6 (Taoglas D 0.92) – 112.6 (I-PEX D 0.88) ГГц",
+   "max_operating_ghz": 6,
+   "max_operating_note": "6 (Powertec); с MHF I по спецификации I-PEX DC~9; https://www.i-pex.com/sites/default/files/downloads/pdf/PRODSPEC_MHF_I_PRS-1726-07EN.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "capacitance_pf_m": 98,
+    "bend_static_mm": 4,
+    "temp_min_c": -55,
+    "temp_max_c": 125,
+    "weight_g_m": 5.0
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±3 (Taoglas); 50 ±2 TDR (I-PEX)",
+    "mechanical": "Taoglas; хранение −40…+85 °C"
+   },
+   "notes_ru": "Значений владельца для 1.37 мм не было — заданы по Taoglas. Ниже 1 ГГц — экстраполяция. Конструкция зависит от производителя (одинарный/двойной экран).",
+   "sources": [
+    "https://www.taoglas.com/specifications/1.37_Micro_Coax_DoubleShielding_001221_Taoglas.pdf",
+    "https://www.i-pex.com/sites/default/files/downloads/pdf/PRODSPEC_MHF_I_PRS-1726-07EN.pdf"
+   ],
+   "changed": [
+    {
+     "field": "attenuation",
+     "was": "нет (только 1.13)",
+     "now": "собственная таблица Taoglas",
+     "why": "отдельный кабель"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈12",
+     "now": "≈110 (calc)",
+     "why": "по геометрии"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "LMR-195",
+   "family": "Times Microwave LMR, вспененный PE",
+   "construction": {
+    "core": {
+     "material": "медь сплошная",
+     "d_mm": 0.94
+    },
+    "dielectric": {
+     "material": "ПЭ вспененный",
+     "d_mm": 2.79
+    },
+    "shield": {
+     "type": "фольга алюминиевая + оплётка медь лужёная",
+     "d_mm": 3.53
+    },
+    "jacket": {
+     "material": "оболочка ПЭ",
+     "d_mm": 4.95
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "TNC",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 у отдельных серий"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 6.0,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.142,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 50 и 150 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.251,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 220 и 450 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.358,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 450 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.488,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1500 и 1800 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.16,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.617,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2000 и 2500 МГц"
+    },
+    {
+     "freq_mhz": 3500,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.747,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2500 и 5800 МГц"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.981,
+     "attenuation_basis_ru": "по даташиту (точка 5800 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 30,
+     "value": 2.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 50,
+     "value": 2.5,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 150,
+     "value": 4.4,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 220,
+     "value": 5.4,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 450,
+     "value": 7.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 11.1,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 1500,
+     "value": 14.5,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 1800,
+     "value": 16.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 16.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 2500,
+     "value": 19.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 5800,
+     "value": 29.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 41,
+   "fc_note": "даташит Times (calc 40.9)",
+   "max_operating_ghz": 6,
+   "max_operating_note": "6 (сниппет Times); https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf",
+   "params": {
+    "impedance_ohm": 50,
+    "velocity_pct": 80,
+    "capacitance_pf_m": 83.3,
+    "shielding_db": 90.0,
+    "voltage_max_v": 1000.0,
+    "max_power_w": 390,
+    "max_power_at_mhz": 150,
+    "bend_static_mm": 12.7,
+    "bend_dynamic_mm": 50.8,
+    "temp_min_c": -40,
+    "temp_max_c": 85,
+    "weight_g_m": 30
+   },
+   "param_notes": {
+    "shielding_db": ">90",
+    "voltage_max_v": "1000 В DC (выдерживаемое); пик. мощность 2.5 кВт",
+    "max_power_w": "60 Вт @5.8 ГГц; 40 °C окр., жила 100 °C"
+   },
+   "notes_ru": "Значений владельца не было (были для LMR-240). f_c 41 ГГц; рабочий предел 6 ГГц задан производителем.",
+   "sources": [
+    "https://www.rfparts.com/old_site/pdf_docs/LMR/LMR-195.pdf"
+   ],
+   "changed": [
+    {
+     "field": "fc_ghz",
+     "was": "≈10–12",
+     "now": 41,
+     "why": "Times"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "LMR-240",
+   "family": "Times Microwave LMR, вспененный PE",
+   "construction": {
+    "core": {
+     "material": "медь сплошная",
+     "d_mm": 1.42
+    },
+    "dielectric": {
+     "material": "ПЭ вспененный",
+     "d_mm": 3.81
+    },
+    "shield": {
+     "type": "фольга алюминиевая + оплётка медь лужёная",
+     "d_mm": 4.52
+    },
+    "jacket": {
+     "material": "оболочка ПЭ",
+     "d_mm": 6.1
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "TNC",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 у отдельных серий"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 6.0,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.097,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 50 и 150 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.171,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 220 и 450 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.245,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 450 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.333,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1500 и 1800 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.16,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.419,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2000 и 2500 МГц"
+    },
+    {
+     "freq_mhz": 3500,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.508,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2500 и 5800 МГц"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.669,
+     "attenuation_basis_ru": "по даташиту (точка 5800 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 30,
+     "value": 1.3,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 50,
+     "value": 1.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 150,
+     "value": 3.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 220,
+     "value": 3.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 450,
+     "value": 5.3,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 7.6,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 1500,
+     "value": 9.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 1800,
+     "value": 10.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 11.5,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 2500,
+     "value": 12.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 5800,
+     "value": 20.4,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 31,
+   "fc_note": "даташит Times через Fairview (calc 30.7)",
+   "max_operating_ghz": null,
+   "max_operating_note": "5.8 / 6 / 8 ГГц в разных копиях Fairview; https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf",
+   "params": {
+    "impedance_ohm": 50,
+    "velocity_pct": 84,
+    "capacitance_pf_m": 79.4,
+    "shielding_db": 90.0,
+    "voltage_max_v": 1500.0,
+    "max_power_w": 660,
+    "max_power_at_mhz": 150,
+    "bend_static_mm": 19.1,
+    "bend_dynamic_mm": 63.5,
+    "temp_min_c": -40,
+    "temp_max_c": 85,
+    "weight_g_m": 50
+   },
+   "param_notes": {
+    "shielding_db": ">90",
+    "voltage_max_v": "1500 В DC (выдерживаемое); пик. мощность 5.6 кВт (чтение таблицы)"
+   },
+   "notes_ru": "Эффективная замена RG-58 с низкими потерями. Радиус изгиба: 19.1 мм при монтаже, 63.5 мм при многократном изгибе; меньше — сминается вспененный диэлектрик и падает импеданс. Затухание владельца совпадает с Times.",
+   "sources": [
+    "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-240.pdf"
+   ],
+   "changed": [
+    {
+     "field": "fc_ghz",
+     "was": "≈10–12",
+     "now": 31,
+     "why": "Times"
+    },
+    {
+     "field": "mechanical.min_bend_radius_mm.dynamic",
+     "was": null,
+     "now": 63.5,
+     "why": "Times: многократный изгиб"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "LMR-400",
+   "family": "Times Microwave LMR, вспененный PE",
+   "construction": {
+    "core": {
+     "material": "алюминий омеднённый сплошной",
+     "d_mm": 2.74
+    },
+    "dielectric": {
+     "material": "ПЭ вспененный",
+     "d_mm": 7.24
+    },
+    "shield": {
+     "type": "фольга алюминиевая + оплётка медь лужёная",
+     "d_mm": 8.13
+    },
+    "jacket": {
+     "material": "оболочка ПЭ",
+     "d_mm": 10.29
+    }
+   },
+   "connectors": [
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "7/16 DIN",
+     "max_ghz": 7.5,
+     "note": "интерфейс 7.5 ГГц; RL нормирован до 6 ГГц"
+    },
+    {
+     "family": "UHF (PL-259)",
+     "max_ghz": 0.3,
+     "note": "~300 МГц, надёжно до ~100 МГц; импеданс непостоянный"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 6.0,
+    "narrowing": [
+     {
+      "connector": "UHF (PL-259)",
+      "to_ghz": 0.3
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.06,
+     "vswr_ref_assembly": 1.2,
+     "note": "согласуется с паспортом сборки (Fairview FMC0101400 (LMR-400, N прямой); угловой — 1.35: ≤ 1.2)",
+     "attenuation_db_m": 0.048,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 50 и 150 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": 1.2,
+     "note": "согласуется с паспортом сборки (Fairview FMC0101400 (LMR-400, N прямой); угловой — 1.35: ≤ 1.2)",
+     "attenuation_db_m": 0.087,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 220 и 450 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": 1.2,
+     "note": "согласуется с паспортом сборки (Fairview FMC0101400 (LMR-400, N прямой); угловой — 1.35: ≤ 1.2)",
+     "attenuation_db_m": 0.126,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 450 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": 1.2,
+     "note": "согласуется с паспортом сборки (Fairview FMC0101400 (LMR-400, N прямой); угловой — 1.35: ≤ 1.2)",
+     "attenuation_db_m": 0.172,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1500 и 1800 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.14,
+     "vswr_ref_assembly": 1.2,
+     "note": "согласуется с паспортом сборки (Fairview FMC0101400 (LMR-400, N прямой); угловой — 1.35: ≤ 1.2)",
+     "attenuation_db_m": 0.221,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2000 и 2500 МГц"
+    },
+    {
+     "freq_mhz": 3500,
+     "vswr_max": 1.16,
+     "vswr_ref_assembly": 1.2,
+     "note": "согласуется с паспортом сборки (Fairview FMC0101400 (LMR-400, N прямой); угловой — 1.35: ≤ 1.2)",
+     "attenuation_db_m": 0.268,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 2500 и 5800 МГц"
+    },
+    {
+     "freq_mhz": 5800,
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": 1.2,
+     "note": "согласуется с паспортом сборки (Fairview FMC0101400 (LMR-400, N прямой); угловой — 1.35: ≤ 1.2)",
+     "attenuation_db_m": 0.354,
+     "attenuation_basis_ru": "по даташиту (точка 5800 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 30,
+     "value": 0.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 50,
+     "value": 0.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 150,
+     "value": 1.5,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 220,
+     "value": 1.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 450,
+     "value": 2.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 3.9,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 1500,
+     "value": 5.1,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 1800,
+     "value": 5.7,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 2000,
+     "value": 6.0,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 2500,
+     "value": 6.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    },
+    {
+     "freq_mhz": 5800,
+     "value": 10.8,
+     "unit": "dB/100 ft",
+     "kind": "typical",
+     "temp_c": 25,
+     "source": "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+     "basis": "таблица Attenuation (копия каталога Times)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 16.2,
+   "fc_note": "Times (через сниппеты; calc 16.26)",
+   "max_operating_ghz": 6,
+   "max_operating_note": "6 (Times bulk, сниппет); 5.8 UltraFlex; https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf",
+   "params": {
+    "impedance_ohm": 50,
+    "velocity_pct": 85,
+    "capacitance_pf_m": 78.4,
+    "shielding_db": 90.0,
+    "voltage_max_v": 2500.0,
+    "max_power_w": 1470,
+    "max_power_at_mhz": 150,
+    "bend_static_mm": 25.4,
+    "bend_dynamic_mm": 101.6,
+    "temp_min_c": -40,
+    "temp_max_c": 85,
+    "weight_g_m": 100
+   },
+   "param_notes": {
+    "shielding_db": ">90",
+    "voltage_max_v": "2500 В DC (выдерживаемое); пик. мощность 16 кВт",
+    "max_power_w": "210 Вт @5.8 ГГц"
+   },
+   "notes_ru": "Фидер с малыми потерями для внешних трасс. N-разъём стандартно до 11 ГГц; предел сборки 6 ГГц задаёт производитель кабеля. С UHF — сужать до 300 МГц. Затухание владельца совпадает с Times.",
+   "sources": [
+    "https://cdn.shopify.com/s/files/1/1182/1008/files/LMR-400.pdf"
+   ],
+   "changed": [
+    {
+     "field": "construction.core.material",
+     "was": "BCCA",
+     "now": "BCCAl",
+     "why": "Times"
+    },
+    {
+     "field": "notes_ru",
+     "was": "выше 6 ГГц N теряют согласование",
+     "now": "предел 6 ГГц — паспорт кабеля; N до 11 ГГц",
+     "why": "пределы разъёмов"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "5D-FB",
+   "family": "японский фидер D-FB (JIS-тип), вспененный PE",
+   "construction": {
+    "core": {
+     "material": "медь отожжённая сплошная",
+     "d_mm": 1.8
+    },
+    "dielectric": {
+     "material": "ПЭ вспененный",
+     "d_mm": 5.0
+    },
+    "shield": {
+     "type": "фольга алюминиевая + оплётка медь лужёная",
+     "d_mm": 5.8
+    },
+    "jacket": {
+     "material": "оболочка ПВХ",
+     "d_mm": 7.7
+    }
+   },
+   "connectors": [
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "7/16 DIN",
+     "max_ghz": 7.5,
+     "note": "интерфейс 7.5 ГГц; RL нормирован до 6 ГГц"
+    },
+    {
+     "family": "UHF (PL-259)",
+     "max_ghz": 0.3,
+     "note": "~300 МГц, надёжно до ~100 МГц; импеданс непостоянный"
+    },
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 3.0,
+    "narrowing": [
+     {
+      "connector": "UHF (PL-259)",
+      "to_ghz": 0.3
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.076,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 200 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.136,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 900 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.196,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1800,
+     "vswr_max": 1.14,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.319,
+     "attenuation_basis_ru": "Shoshin SAA246: интерполировано (лог-лог) между 1700 и 2000 МГц"
+    },
+    {
+     "freq_mhz": 2100,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.349,
+     "attenuation_basis_ru": "Shoshin SAA246: интерполировано (лог-лог) между 2000 и 2400 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.16,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.384,
+     "attenuation_basis_ru": "Shoshin SAA246: интерполировано (лог-лог) между 2400 и 2600 МГц"
+    },
+    {
+     "freq_mhz": 2600,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.399,
+     "attenuation_basis_ru": "Shoshin SAA246: по даташиту (точка 2600 МГц)"
+    },
+    {
+     "freq_mhz": 3000,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.436,
+     "attenuation_basis_ru": "Shoshin SAA246: по даташиту (точка 3000 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 100,
+     "value": 62,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_5D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 200,
+     "value": 90,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_5D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 130,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_5D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 200,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_5D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 1200,
+     "value": 235,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_5D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 22.5,
+   "fc_note": "calc; Vp ≈80 % выведена из ёмкости 83 пФ/м и 50 Ом (в даташитах Vp нет)",
+   "max_operating_ghz": null,
+   "max_operating_note": "не публикуется; Shikoku таблица до 1.2 ГГц; Shoshin до 3 ГГц; https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_5D-FB.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "capacitance_pf_m": 83,
+    "voltage_max_v": 1000.0,
+    "bend_static_mm": 46,
+    "bend_dynamic_mm": 114,
+    "temp_min_c": -20,
+    "temp_max_c": 60,
+    "weight_g_m": 80
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "voltage_max_v": "1000 В AC 1 мин (испытательное)",
+    "mechanical": "Shoshin: 6×D фиксированно / 15×D при прокладке (чтение без шрифтов, средняя достоверность); Koshow 73 г/м; оболочка 7.5–7.7 мм"
+   },
+   "notes_ru": "Предназначены для систем сотовой и радиосвязи. Обжимные узлы разъёмов на толстый кабель выше 3 ГГц вносят рассогласование (оценка, не паспорт). Значений владельца не было. Для ≥1.2 ГГц используется опубликованная таблица Shoshin до 3 ГГц (на ~8 % выше Shikoku).",
+   "sources": [
+    "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_5D-FB.pdf",
+    "https://www.koshow.jp/pdf/products/catalog/KTD_FB.pdf",
+    "https://www.shoshin.co.jp/c/endrun/pdf/L-5DFB.pdf"
+   ],
+   "changed": [
+    {
+     "field": "fc_ghz",
+     "was": "≈12",
+     "now": "≈22.5 (calc)",
+     "why": "по геометрии, Vp≈80 % из ёмкости"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "8D-FB",
+   "family": "японский фидер D-FB (JIS-тип), вспененный PE",
+   "construction": {
+    "core": {
+     "material": "медь отожжённая сплошная",
+     "d_mm": 2.8
+    },
+    "dielectric": {
+     "material": "ПЭ вспененный",
+     "d_mm": 7.8
+    },
+    "shield": {
+     "type": "фольга алюминиевая + оплётка медь лужёная",
+     "d_mm": 8.8
+    },
+    "jacket": {
+     "material": "оболочка ПВХ",
+     "d_mm": 11.0
+    }
+   },
+   "connectors": [
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "7/16 DIN",
+     "max_ghz": 7.5,
+     "note": "интерфейс 7.5 ГГц; RL нормирован до 6 ГГц"
+    },
+    {
+     "family": "UHF (PL-259)",
+     "max_ghz": 0.3,
+     "note": "~300 МГц, надёжно до ~100 МГц; импеданс непостоянный"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 3.0,
+    "narrowing": [
+     {
+      "connector": "UHF (PL-259)",
+      "to_ghz": 0.3
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.049,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 200 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.09,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 900 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.128,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1800,
+     "vswr_max": 1.14,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.201,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00377, b=2.275e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 2100,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.221,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00377, b=2.275e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.16,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.242,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00377, b=2.275e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 2600,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.251,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00377, b=2.275e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 3000,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.275,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00377, b=2.275e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 100,
+     "value": 40,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_8D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 200,
+     "value": 58,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_8D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 86,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_8D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 130,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_8D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 1200,
+     "value": 160,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_8D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 14.4,
+   "fc_note": "calc; Vp ≈80 % выведена из ёмкости 83 пФ/м и 50 Ом (в даташитах Vp нет)",
+   "max_operating_ghz": null,
+   "max_operating_note": "не публикуется; Shikoku таблица до 1.2 ГГц; https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_8D-FB.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "capacitance_pf_m": 83,
+    "voltage_max_v": 1000.0,
+    "weight_g_m": 160
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "voltage_max_v": "1000 В AC 1 мин (испытательное)",
+    "mechanical": "Koshow 166 г/м; оболочка 11.0–11.1 мм"
+   },
+   "notes_ru": "Предназначены для систем сотовой и радиосвязи. Обжимные узлы разъёмов на толстый кабель выше 3 ГГц вносят рассогласование (оценка, не паспорт). Значений владельца не было. Выше 1.2 ГГц — экстраполяция (низкая достоверность).",
+   "sources": [
+    "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_8D-FB.pdf",
+    "https://www.koshow.jp/pdf/products/catalog/KTD_FB.pdf"
+   ],
+   "changed": [
+    {
+     "field": "construction.core.d_mm",
+     "was": 2.6,
+     "now": 2.8,
+     "why": "Shikoku, Koshow"
+    },
+    {
+     "field": "construction.dielectric.d_mm",
+     "was": 7.5,
+     "now": 7.8,
+     "why": "Shikoku, Koshow"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈9",
+     "now": "≈14.4 (calc)",
+     "why": "по геометрии"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "10D-FB",
+   "family": "японский фидер D-FB (JIS-тип), вспененный PE",
+   "construction": {
+    "core": {
+     "material": "медь отожжённая сплошная",
+     "d_mm": 3.5
+    },
+    "dielectric": {
+     "material": "ПЭ вспененный",
+     "d_mm": 10.0
+    },
+    "shield": {
+     "type": "фольга алюминиевая + оплётка медь лужёная",
+     "d_mm": 11.1
+    },
+    "jacket": {
+     "material": "оболочка ПВХ",
+     "d_mm": 13.1
+    }
+   },
+   "connectors": [
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "7/16 DIN",
+     "max_ghz": 7.5,
+     "note": "интерфейс 7.5 ГГц; RL нормирован до 6 ГГц"
+    },
+    {
+     "family": "UHF (PL-259)",
+     "max_ghz": 0.3,
+     "note": "~300 МГц, надёжно до ~100 МГц; импеданс непостоянный"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 3.0,
+    "narrowing": [
+     {
+      "connector": "UHF (PL-259)",
+      "to_ghz": 0.3
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.05,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; ≤1.05 — на уровне погрешности калибровки VNA, норма практически непроверяема",
+     "attenuation_db_m": 0.04,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 200 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.073,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 900 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.108,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1800,
+     "vswr_max": 1.14,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.172,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00301, b=2.442e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 2100,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.189,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00301, b=2.442e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.16,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.209,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00301, b=2.442e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 2600,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.217,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00301, b=2.442e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": 3000,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.238,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.00301, b=2.442e-05, f в МГц), вне диапазона 100–1200 МГц"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 100,
+     "value": 33,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_10D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 200,
+     "value": 48,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_10D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 70,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_10D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 110,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_10D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    },
+    {
+     "freq_mhz": 1200,
+     "value": 135,
+     "unit": "dB/km",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_10D-FB.pdf",
+     "basis": "nominal (max ≤115 %); таблица затухания Shikoku (PDF без шрифтов, чтение по позиции)"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 11.3,
+   "fc_note": "calc; Vp ≈80 % выведена из ёмкости 83 пФ/м и 50 Ом (в даташитах Vp нет)",
+   "max_operating_ghz": null,
+   "max_operating_note": "не публикуется; Shikoku таблица до 1.2 ГГц; https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_10D-FB.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "capacitance_pf_m": 84,
+    "voltage_max_v": 1000.0,
+    "weight_g_m": 230
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "voltage_max_v": "1000 В AC 1 мин (испытательное)",
+    "mechanical": "Koshow 235 г/м; оболочка 13.0–13.1 мм"
+   },
+   "notes_ru": "Предназначены для систем сотовой и радиосвязи. Обжимные узлы разъёмов на толстый кабель выше 3 ГГц вносят рассогласование (оценка, не паспорт). Выше 1.2 ГГц — экстраполяция таблицы Shikoku (Fujikura 10D-FB-LITE: 195 дБ/км @2 ГГц, 220 @2.4 ГГц — согласуется).",
+   "sources": [
+    "https://www.shikokucable.co.jp/themes/main/product/communications/pdf/web_10D-FB.pdf",
+    "https://www.koshow.jp/pdf/products/catalog/KTD_FB.pdf"
+   ],
+   "changed": [
+    {
+     "field": "fc_ghz",
+     "was": "≈7",
+     "now": "≈11.3 (calc)",
+     "why": "по геометрии"
+    },
+    {
+     "field": "markers.attenuation_db_m 1.8–3 ГГц",
+     "was": "0.15…0.20",
+     "now": "≈0.17…0.24",
+     "why": "экстраполяция Shikoku; владелец занижен на 13–19 %"
+    }
+   ],
+   "confidence": "средняя",
+   "verified": true
+  },
+  {
+   "name": "RG-58",
+   "family": "RG-58C/U (Belden 8262, витая луж. жила); RG-58/U — моножила 0.81 мм, отдельного паспорта не найдено",
+   "construction": {
+    "core": {
+     "material": "медь лужёная витая",
+     "d_mm": 0.889
+    },
+    "dielectric": {
+     "material": "ПЭ сплошной",
+     "d_mm": 2.92
+    },
+    "shield": {
+     "type": "оплётка медь лужёная 95 %",
+     "d_mm": null
+    },
+    "jacket": {
+     "material": "оболочка ПВХ",
+     "d_mm": 4.95
+    }
+   },
+   "connectors": [
+    {
+     "family": "BNC",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    },
+    {
+     "family": "TNC",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 у отдельных серий"
+    },
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "UHF (PL-259)",
+     "max_ghz": 0.3,
+     "note": "~300 МГц, надёжно до ~100 МГц; импеданс непостоянный"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 1.0,
+    "narrowing": [
+     {
+      "connector": "UHF (PL-259)",
+      "to_ghz": 0.3
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.08,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.199,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 200 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.12,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.399,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 700 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.18,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.641,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 700 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1000,
+     "vswr_max": 1.22,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.705,
+     "attenuation_basis_ru": "по даташиту (точка 1000 МГц)"
+    },
+    {
+     "freq_mhz": 1500,
+     "vswr_max": 1.3,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено; вне рекомендованного span",
+     "attenuation_db_m": 0.948,
+     "attenuation_basis_ru": "экстраполировано: аппроксимация a·√f+b·f по всем точкам таблицы (a=0.01304, b=2.953e-04, f в МГц), вне диапазона 1–1000 МГц"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.3,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 1,
+     "value": 0.4,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 10,
+     "value": 1.4,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 50,
+     "value": 3.3,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 100,
+     "value": 4.9,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 200,
+     "value": 7.3,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 11.5,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 700,
+     "value": 17.0,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 20.0,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 21.5,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+     "basis": "таблица Attenuation"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 33,
+   "fc_note": "calc (D 2.92, d 0.889, Vp 66 %)",
+   "max_operating_ghz": null,
+   "max_operating_note": "не публикуется; Belden даёт затухание до 1 ГГц; https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262",
+   "params": {
+    "impedance_ohm": 50,
+    "velocity_pct": 66,
+    "capacitance_pf_m": 101,
+    "voltage_max_v": 1400.0,
+    "max_power_w": 55,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 51,
+    "temp_min_c": -40,
+    "temp_max_c": 85,
+    "weight_g_m": 35.7
+   },
+   "param_notes": {
+    "voltage_max_v": "1400 В (Mil-Spec, Belden)",
+    "max_power_w": "Belden: 300 Вт @50, 200 @100, 90 @400 МГц",
+    "mechanical": "51 мм — монтажный радиус"
+   },
+   "notes_ru": "Сплошной PE: выше 1 ГГц быстро растут потери; на 2.45 ГГц ~1.37 дБ/м (экстраполяция — утверждение «>1 дБ/м» верно). Оплётка 95 %, не 70–85 %; цифра экранирования «<45 дБ» в паспортах не найдена. Разъёмы BNC/TNC/N/SMA сами работают до 4/11/11/18 ГГц — сужение 1–1.5 ГГц идёт от кабеля.",
+   "sources": [
+    "https://belden.com/en/products/cable/coax-triax-cable/50-ohm-coax-cable/8262"
+   ],
+   "changed": [
+    {
+     "field": "construction.shield",
+     "was": "70–85 %",
+     "now": "95 %",
+     "why": "Belden 8262"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈5",
+     "now": "33 (calc)",
+     "why": "по геометрии"
+    },
+    {
+     "field": "markers.attenuation_db_m",
+     "was": "0.16/0.32/0.50/0.56/0.75",
+     "now": "0.199/0.399/0.641/0.705/0.945",
+     "why": "Belden 8262; владелец занижен на 20–25 %"
+    },
+    {
+     "field": "connectors",
+     "was": "BNC/TNC/N/SMA до 1.5",
+     "now": "BNC 4, TNC 11, N 11, SMA 18 (разъёмы)",
+     "why": "пределы разъёмов"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "RG-174",
+   "family": "M17/119, Belden 8216 (H+S RG_174_/U — близкий, но другой кабель)",
+   "construction": {
+    "core": {
+     "material": "сталь омеднённая витая",
+     "d_mm": 0.48
+    },
+    "dielectric": {
+     "material": "ПЭ сплошной",
+     "d_mm": 1.52
+    },
+    "shield": {
+     "type": "оплётка медь лужёная 90 %",
+     "d_mm": null
+    },
+    "jacket": {
+     "material": "оболочка ПВХ",
+     "d_mm": 2.79
+    }
+   },
+   "connectors": [
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    },
+    {
+     "family": "SMB",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    },
+    {
+     "family": "BNC",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    },
+    {
+     "family": "FAKRA",
+     "max_ghz": 6,
+     "note": "Rosenberger/USCAR-18/ISO 20860: 6 ГГц"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 1.0,
+    "narrowing": [],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.341,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 100 и 200 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.15,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.655,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 700 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.997,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 700 и 900 МГц"
+    },
+    {
+     "freq_mhz": 1000,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 1.115,
+     "attenuation_basis_ru": "по даташиту (точка 1000 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 1,
+     "value": 1.9,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 10,
+     "value": 3.3,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 50,
+     "value": 5.8,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 100,
+     "value": 8.4,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 200,
+     "value": 12.5,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 19.0,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 700,
+     "value": 27.0,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 900,
+     "value": 31.0,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 34.0,
+     "unit": "dB/100 ft",
+     "kind": "nominal",
+     "temp_c": null,
+     "source": "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+     "basis": "таблица Attenuation"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 63,
+   "fc_note": "calc (D 1.52, d 0.48, Vp 66 %)",
+   "max_operating_ghz": 1,
+   "max_operating_note": "1 (H+S, MIL M17/119); https://nkt.ru/upload/tech_docs/gibkie-vch-kabeli-do-6-ggts/kabel-koaksialnyy-h-s-rg-174-u/huber-suhner-rg-174-u-datasheet.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 66,
+    "capacitance_pf_m": 101,
+    "shielding_db": 40.0,
+    "voltage_max_v": 1100.0,
+    "max_power_w": 108,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 15,
+    "bend_dynamic_mm": 26,
+    "temp_min_c": -40,
+    "temp_max_c": 75,
+    "weight_g_m": 12.5
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "shielding_db": "40 до 1 ГГц (H+S)",
+    "voltage_max_v": "1100 В RMS (Belden, military)",
+    "max_power_w": "Belden; H+S 37 Вт @1 ГГц (40 °C)",
+    "mechanical": "H+S 15/26 мм; Belden монтажный 25.4; температура Belden −40…+75, H+S −25…+85"
+   },
+   "notes_ru": "Приборный и автомобильный тонкий кабель; паспортный предел 1 ГГц, затухание на 1 ГГц ~1.1 дБ/м (Belden). Значения владельца совпадают с Belden. FAKRA как разъём рассчитан до 6 ГГц — ограничение 1 ГГц идёт от кабеля.",
+   "sources": [
+    "https://assets.rs-online.com/v1698679479/Datasheets/cf0db0b902c064b814b01cdd01f567c3.pdf",
+    "https://nkt.ru/upload/tech_docs/gibkie-vch-kabeli-do-6-ggts/kabel-koaksialnyy-h-s-rg-174-u/huber-suhner-rg-174-u-datasheet.pdf"
+   ],
+   "changed": [
+    {
+     "field": "fc_ghz",
+     "was": "≈7",
+     "now": "63 (calc); рабочий предел 1",
+     "why": "по геометрии"
+    },
+    {
+     "field": "connectors.FAKRA",
+     "was": "до 1.5",
+     "now": "6 (разъём)",
+     "why": "Rosenberger FAKRA spec"
+    },
+    {
+     "field": "connectors.SMA/SMB/BNC",
+     "was": "до 1",
+     "now": "18 / 4 / 4 (разъёмы)",
+     "why": "пределы разъёмов"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  },
+  {
+   "name": "RG-223",
+   "family": "M17/84, двойная посеребрённая оплётка (Prysmian/Draka hf29e, Belden MRG223)",
+   "construction": {
+    "core": {
+     "material": "медь посеребрённая сплошная",
+     "d_mm": 0.9
+    },
+    "dielectric": {
+     "material": "ПЭ сплошной",
+     "d_mm": 2.95
+    },
+    "shield": {
+     "type": "оплётка медь посеребрённая двойная",
+     "d_mm": null
+    },
+    "jacket": {
+     "material": "оболочка ПВХ",
+     "d_mm": 5.4
+    }
+   },
+   "connectors": [
+    {
+     "family": "BNC",
+     "max_ghz": 4,
+     "note": "4 ГГц"
+    },
+    {
+     "family": "N",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 ГГц у прецизионных/улучшенных серий"
+    },
+    {
+     "family": "TNC",
+     "max_ghz": 11,
+     "note": "11 ГГц стандарт; 18 у отдельных серий"
+    },
+    {
+     "family": "SMA",
+     "max_ghz": 18,
+     "note": "18 ГГц стандарт; 26.5 ГГц только у прецизионных серий"
+    }
+   ],
+   "vna_span": {
+    "from_mhz": 10,
+    "to_ghz": 3.0,
+    "narrowing": [
+     {
+      "connector": "BNC",
+      "to_ghz": 3.0
+     }
+    ],
+    "note": ""
+   },
+   "markers": [
+    {
+     "freq_mhz": 145,
+     "vswr_max": 1.06,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.169,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 50 и 400 МГц"
+    },
+    {
+     "freq_mhz": 433,
+     "vswr_max": 1.1,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.296,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 868,
+     "vswr_max": 1.14,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.426,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 400 и 1000 МГц"
+    },
+    {
+     "freq_mhz": 1575,
+     "vswr_max": 1.16,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.587,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1000 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 2450,
+     "vswr_max": 1.2,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.745,
+     "attenuation_basis_ru": "интерполировано (лог-лог) между 1000 и 3000 МГц"
+    },
+    {
+     "freq_mhz": 3000,
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": null,
+     "note": "паспортной нормы КСВН сборки этого класса не найдено",
+     "attenuation_db_m": 0.831,
+     "attenuation_basis_ru": "по даташиту (точка 3000 МГц)"
+    },
+    {
+     "freq_mhz": "peak",
+     "vswr_max": 1.25,
+     "vswr_ref_assembly": null,
+     "note": "предложение: худшая точка во всём span не выше нормы верхнего маркера",
+     "attenuation_db_m": null,
+     "attenuation_basis_ru": ""
+    }
+   ],
+   "attenuation": [
+    {
+     "freq_mhz": 50,
+     "value": 9.8,
+     "unit": "dB/100 m",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+     "basis": "таблица затухания"
+    },
+    {
+     "freq_mhz": 400,
+     "value": 28.4,
+     "unit": "dB/100 m",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+     "basis": "таблица затухания"
+    },
+    {
+     "freq_mhz": 1000,
+     "value": 45.9,
+     "unit": "dB/100 m",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+     "basis": "таблица затухания"
+    },
+    {
+     "freq_mhz": 3000,
+     "value": 83.1,
+     "unit": "dB/100 m",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+     "basis": "таблица затухания"
+    },
+    {
+     "freq_mhz": 5200,
+     "value": 112.7,
+     "unit": "dB/100 m",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+     "basis": "таблица затухания"
+    },
+    {
+     "freq_mhz": 5800,
+     "value": 120.6,
+     "unit": "dB/100 m",
+     "kind": "nominal",
+     "temp_c": 20,
+     "source": "https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+     "basis": "таблица затухания"
+    }
+   ],
+   "attenuation_temp_c": null,
+   "fc_ghz": 32.7,
+   "fc_note": "calc (D 2.95, d 0.90, Vp 66 %)",
+   "max_operating_ghz": 12.4,
+   "max_operating_note": "12.4 (Prysmian, MIL); https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+   "params": {
+    "impedance_ohm": 50.0,
+    "velocity_pct": 66,
+    "capacitance_pf_m": 100,
+    "voltage_max_v": 1.4,
+    "max_power_w": 50,
+    "max_power_at_mhz": 1000,
+    "bend_static_mm": 27,
+    "bend_dynamic_mm": 54,
+    "temp_min_c": -40,
+    "temp_max_c": 85,
+    "weight_g_m": 56.4
+   },
+   "param_notes": {
+    "impedance_ohm": "50 ±2",
+    "voltage_max_v": "1.4 кВ RMS рабочее, 5.0 кВ RMS испыт. (Prysmian)",
+    "max_power_w": "Prysmian, 25 °C: 350 Вт @50 МГц, 86 @400, 32 @3000, 22 @5800",
+    "mechanical": "5×D без нагрузки / 10×D с нагрузкой (Prysmian); монтаж −15…+55 °C"
+   },
+   "notes_ru": "Двойная посеребрённая оплётка (96 % каждая); экранирование в дБ производители не публикуют («>85 дБ» не подтверждено). PE не ограничивает кабель частотой 3 ГГц: паспорт до 12.4 ГГц, затухание опубликовано до 5.8 ГГц (1.21 дБ/м). Span 3 ГГц — выбор цеха, можно расширить до 5.8 ГГц с N/TNC/SMA.",
+   "sources": [
+    "https://www.prysmian.com/sites/www.prysmian.com/files/media/documents/hf29e.pdf",
+    "https://catalog.belden.com/techdata/EN/MRG223_techdata.pdf"
+   ],
+   "changed": [
+    {
+     "field": "construction.shield",
+     "was": "двойная SPC 98 %",
+     "now": "две оплётки по 96 % (Belden 95+90 %)",
+     "why": "Prysmian, Belden"
+    },
+    {
+     "field": "fc_ghz",
+     "was": "≈5",
+     "now": "32.7 (calc); паспорт до 12.4",
+     "why": "по геометрии"
+    },
+    {
+     "field": "notes_ru",
+     "was": "PE ограничивает диапазон 3 ГГц",
+     "now": "паспорт до 12.4 ГГц",
+     "why": "Prysmian hf29e"
+    },
+    {
+     "field": "markers.attenuation_db_m @3 ГГц",
+     "was": 0.95,
+     "now": 0.831,
+     "why": "Prysmian; владелец выше на ~14 %"
+    }
+   ],
+   "confidence": "высокая",
+   "verified": true
+  }
+ ]
+}

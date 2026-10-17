@@ -1,0 +1,228 @@
+/*
+ * «Маркировка жгута» генератора: какие метки требует КД — одна строка на метку (что маркируем, надпись, материал,
+ * где, сколько на изделие). Строки уходят в операцию insMark (`op.marks`), etk_builder кладёт их в ЭТК списком меток,
+ * материалы — в комплектующие операции, норма времени — по числу меток (БД.ОП, на штуку). Пустой список — прежнее
+ * поведение: бирки из состава. Надпись может нести «№ изделия» — `{№}` или `{№:3}` (3 цифры, 001): номер изделия
+ * в партии, его разворачивает задание (markSerial.ts).
+ */
+
+/** Где метка: у разъёма, на обоих концах провода, на расстоянии от конца, по КД, своё место. */
+export type MarkPlace = "conn" | "ends" | "dist" | "kd" | "item" | "free";
+export type MarkRow = { target: string; text: string; material: string; place: MarkPlace; mm: string; where: string; qty: string;
+  /** Длина отрезка трубки, мм (только для термоусадочной и ПВХ-трубки); пусто — не задана. */
+  len?: string };
+/** Материал маркировки из БД.МАТ: наименование (оно же ключ строки), группа, единица. */
+export type MarkMat = { name: string; group: string; unit: string };
+/** Метка в конфиге операции insMark: art/name/qty — как у бирок из состава (комплектующие), остальное — для ЭТК. */
+export type MarkSpec = {
+  art: string; name: string; qty: number; target: string; text: string; place: string; placeKind: MarkPlace; placeMm: string;
+  /** Длина отрезка трубки, мм — только у трубок и только если задана. */
+  lengthMm?: number;
+};
+
+export const MARK_PLACES: ReadonlyArray<readonly [MarkPlace, string]> = [
+  ["conn", "У разъёма"], ["ends", "На концах"], ["dist", "От конца, мм"], ["kd", "По КД"], ["item", "На изделии"], ["free", "Своё место"],
+];
+/** Вид маркировки: термотрубка (на разъёмы и провода) или хлястик (на изделие). Старые сохранённые значения показываются как есть. */
+export const MARK_KINDS = ["Термотрубка", "Хлястик"] as const;
+export const MARK_KIND_DEFAULT = MARK_KINDS[0];
+export const MARK_KIND_ITEM = MARK_KINDS[1];
+
+export const WHOLE_HARNESS = "Жгут целиком";
+
+const MARK_GROUP_RE = /бирк|маркир|кембрик|этикет|маркер/i;
+const TUBE_GROUP_RE = /^(тут|ттк)$/i;
+
+export function newMarkRow(patch: Partial<MarkRow> = {}): MarkRow {
+  return { target: "", text: "", material: "", place: "conn", mm: "", where: "", qty: "1", ...patch };
+}
+
+/** Место метки словами — как его прочтёт монтажник в ЭТК. */
+export function markPlaceText(row: Pick<MarkRow, "place" | "mm" | "where">): string {
+  if (row.place === "conn") return "у разъёма";
+  if (row.place === "ends") return "на обоих концах";
+  if (row.place === "dist") return row.mm.trim() ? `${row.mm.trim()} мм от конца` : "от конца, мм по КД";
+  if (row.place === "kd") return "по КД";
+  if (row.place === "item") return "на изделии";
+  return row.where.trim() || "по КД";
+}
+
+/** Термоусадочная трубка по размеру «4/2мм» (диаметр до/после усадки): «Маркировка "5" 4/2мм» из состава 713К.4 КБ1. */
+const TUBE_SIZE_RE = /\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?\s*мм/i;
+
+/** Метка-трубка (термоусадочная или ПВХ): у неё есть длина отрезка. Те же признаки, что `mark_kind` в etk_marking.py. */
+export function markIsTube(material: string): boolean {
+  const text = String(material || "");
+  if (/хляст|флаж|флаш/i.test(text)) return false;
+  return markTubeShrinks(text) || /кембрик|пвх|трубк/i.test(text);
+}
+
+/** Трубка метки усаживается: термоусадочная (ТУТ, ТТК, «4/2мм»), не ПВХ-кембрик. */
+export function markTubeShrinks(material: string): boolean {
+  const text = String(material || "");
+  return !/хляст|флаж|флаш/i.test(text) && (/термо|\bтут|\bттк|усаж|tms-?sce/i.test(text) || TUBE_SIZE_RE.test(text));
+}
+
+/** Длина из поля: «25», «25,5» → число > 0; диапазон по КД «10–15» — верхнее значение; пусто или мусор → undefined. */
+export function markLength(value: string | undefined): number | undefined {
+  const text = String(value ?? "").trim().replace(/,/g, ".");
+  const range = /^(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)$/.exec(text);
+  const number = range ? Math.max(Number(range[1]), Number(range[2])) : Number(text);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function qtyOf(value: string): number {
+  const number = Number(String(value || "").replace(",", "."));
+  return Number.isFinite(number) && number > 0 ? number : 1;
+}
+
+/** Строка в работе: есть что или какая надпись. */
+export function markRowActive(row: MarkRow): boolean {
+  return Boolean(row.text.trim() || row.target.trim());
+}
+
+/** Материалы маркировки из записей БД.МАТ: бирки, кембрики, этикетки — сначала, затем термоусадочные трубки. */
+export function markMatsFromRecords(records: Array<Record<string, string>>): MarkMat[] {
+  const all = records.map((fields) => ({
+    name: String(fields["Наименование"] || "").trim(), group: String(fields["Группа"] || "").trim(), unit: String(fields["Ед. изм."] || "").trim(),
+  })).filter((item) => item.name);
+  const marks = all.filter((item) => MARK_GROUP_RE.test(item.group) || MARK_GROUP_RE.test(item.name));
+  const tubes = all.filter((item) => !marks.includes(item) && TUBE_GROUP_RE.test(item.group));
+  return [...marks, ...tubes];
+}
+
+type CompLike = { art?: string; name?: string };
+const norm = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** Материал строки в справочнике или в составе; null — «нет в справочнике». Пустой материал — не проверяется. */
+export function markMaterialSource(material: string, mats: MarkMat[], comps: CompLike[]): "ref" | "kit" | null {
+  const key = norm(material);
+  if (!key || MARK_KINDS.some((kind) => norm(kind) === key)) return "ref";
+  if (comps.some((comp) => norm(comp.art || "") === key || norm(comp.name || "") === key)) return "kit";
+  return mats.some((mat) => norm(mat.name) === key) ? "ref" : null;
+}
+
+/** Строки → метки операции insMark. Материал из состава отдаёт свой артикул и наименование. */
+export function markSpecs(rows: MarkRow[], comps: CompLike[]): MarkSpec[] {
+  return rows.filter(markRowActive).map((row) => {
+    const material = row.material.trim();
+    const comp = material ? comps.find((item) => norm(item.art || "") === norm(material) || norm(item.name || "") === norm(material)) : undefined;
+    const lengthMm = markIsTube(comp ? (comp.name || comp.art || material) : material) ? markLength(row.len) : undefined;
+    return {
+      art: comp ? (comp.art || comp.name || material) : material, name: comp ? (comp.name || comp.art || material) : material,
+      qty: qtyOf(row.qty), target: row.target.trim(), text: row.text.trim(), place: markPlaceText(row), placeKind: row.place, placeMm: row.mm.trim(),
+      ...(lengthMm !== undefined ? { lengthMm } : {}),
+    };
+  });
+}
+
+/** Метка-трубка из состава: строка, её позиция состава, усаживается ли и длина отрезка (мм, "" — не задана). */
+export type MarkTube = { spec: MarkSpec; art: string; name: string; shrink: boolean; len: string };
+
+/** Метки «Сложной сборки» (владелец 16.10, 713К.4 КБ1 «Маркировка "5" 4/2мм»): трубки из состава режутся с прочими
+ *  трубками, надеваются до монтажа разъёмов и усаживаются с прочими усадками; остальные метки (бирки, хлястики, трубка
+ *  из справочника, которую ещё печатают) — операция «Маркировка», как раньше. */
+export function markTubeSplit(rows: MarkRow[], comps: CompLike[]): { tubes: MarkTube[]; rest: MarkSpec[] } {
+  const tubes: MarkTube[] = [], rest: MarkSpec[] = [];
+  rows.filter(markRowActive).forEach((row) => {
+    const [spec] = markSpecs([row], comps);
+    const material = row.material.trim();
+    const comp = material ? comps.find((item) => norm(item.art || "") === norm(material) || norm(item.name || "") === norm(material)) : undefined;
+    const text = comp ? `${comp.name || ""} ${comp.art || ""}` : "";
+    if (!comp || !markIsTube(text)) { rest.push(spec); return; }
+    const len = markLength(row.len);
+    tubes.push({ spec, art: comp.art || comp.name || material, name: comp.name || comp.art || material, shrink: markTubeShrinks(text),
+      len: len === undefined ? "" : String(len) });
+  });
+  return { tubes, rest };
+}
+
+/** Подпись операции: «Маркировка — X1, X2, W1 и ещё 3». */
+export function markLabel(specs: MarkSpec[]): string {
+  const names = specs.map((spec) => spec.text || spec.target);
+  const head = names.slice(0, 4).join(", ");
+  return `Маркировка — ${head}${names.length > 4 ? ` и ещё ${names.length - 4}` : ""}`;
+}
+
+/** Сохранённая сборка → строки меток (форма генератора открывается с ними). Старая конфигурация — пусто. */
+export function markRowsFromConfig(config: unknown): MarkRow[] {
+  const ops = config && typeof config === "object" ? (config as { ops?: unknown }).ops : null;
+  if (!Array.isArray(ops)) return [];
+  const op = ops.find((item) => item && typeof item === "object" && (item as { type?: unknown }).type === "insMark") as { marks?: unknown } | undefined;
+  const marks = Array.isArray(op?.marks) ? op!.marks as Array<Record<string, unknown>> : [];
+  if (!marks.some((mark) => mark && (mark.text || mark.target))) return [];
+  const str = (value: unknown) => (value === undefined || value === null ? "" : String(value));
+  return marks.map((mark) => {
+    const kind = MARK_PLACES.some(([key]) => key === mark.placeKind) ? mark.placeKind as MarkPlace : "free";
+    return newMarkRow({
+      target: str(mark.target), text: str(mark.text), material: str(mark.art || mark.name), place: kind,
+      mm: str(mark.placeMm), where: kind === "free" ? str(mark.place) : "", qty: str(mark.qty) || "1",
+      ...(markLength(str(mark.lengthMm)) !== undefined ? { len: str(mark.lengthMm).replace(".", ",") } : {}),
+    });
+  });
+}
+
+/** Варианты «Что маркируем»: жгут, разъёмы сторон, провода из формы. */
+export function markTargets(connectors: Array<{ name: string; art: string }>, wires: string[]): string[] {
+  return [
+    WHOLE_HARNESS,
+    ...connectors.map((item) => `Разъём ${item.name}${item.art ? ` (${item.art})` : ""}`),
+    ...[...new Set(wires)].map((art) => `Провод ${art}`),
+  ];
+}
+
+/** «По разъёмам»: метка у каждого разъёма, надпись — его обозначение. */
+/** «Маркировать изделие»: одна метка на само изделие — хлястик с обозначением позиции. */
+export function productMarkRow(designation: string): MarkRow {
+  const name = designation.trim();
+  return newMarkRow({ target: `Изделие ${name}`.trim(), text: name, material: MARK_KIND_ITEM, place: "item", qty: "1" });
+}
+
+/** Отрезок метки-трубки по умолчанию, мм (713К.4 КБ1: «Маркировка "5" 4/2мм» — 10–15 мм по КД). */
+export const MARK_TUBE_LEN_MM = "15";
+
+/** Надпись, под которую заведена метка состава: «Маркировка "I3" 4/2мм» → «I3»; без кавычек — "". */
+export function markItemText(item: CompLike): string {
+  const match = /["«“„]([^"«»“”„]+)["»”“]/.exec(`${item.name || ""} ${item.art || ""}`);
+  return match ? match[1].trim() : "";
+}
+
+/** `kitMarks` — метки состава: у каждой строки материал — метка со своей надписью в наименовании (713К.4 КБ1:
+ *  «Маркировка "I3" 4/2мм» у разъёма «I3»), а не первая метка состава на всех; своей нет, а метки состава заведены под
+ *  надписи — общий вид «Термотрубка»; иначе — `material`. Трубке — отрезок по умолчанию 15 мм. */
+export function markRowsByConnectors(connectors: Array<{ name: string; art: string }>, material: string, kitMarks: CompLike[] = []): MarkRow[] {
+  const byText = kitMarks.filter((item) => markItemText(item));
+  return connectors.map((item) => {
+    const own = byText.find((mark) => norm(markItemText(mark)) === norm(item.name));
+    const rowMaterial = own ? own.art || own.name || material : byText.length ? MARK_KIND_DEFAULT : material;
+    return newMarkRow({
+      target: `Разъём ${item.name}${item.art ? ` (${item.art})` : ""}`, text: item.name, material: rowMaterial, place: "conn", qty: "1",
+      ...(markIsTube(rowMaterial) ? { len: MARK_TUBE_LEN_MM } : {}),
+    });
+  });
+}
+
+/** «Из чертежа жгута»: разъёмы с обозначением (X1…) и провода с маркировкой (колонка «Маркировка» таблицы
+ *  соединений = `circuit`). Провод метят на обоих концах — 2 шт. на изделие. */
+export function markRowsFromHarness(design: unknown, material: string): MarkRow[] {
+  const doc = design && typeof design === "object" ? design as Record<string, unknown> : {};
+  const content = doc.content && typeof doc.content === "object" ? doc.content as Record<string, unknown> : doc;
+  const list = (value: unknown) => (Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>> : []);
+  const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+  const connectors = list(content.connectors).filter((item) => text(item.designation)).map((item) => newMarkRow({
+    target: `Разъём ${text(item.designation)}${text(item.partNumber) ? ` (${text(item.partNumber)})` : ""}`,
+    text: text(item.designation), material, place: "conn", qty: "1",
+  }));
+  const wires = list(content.wires).map((item, index) => ({ item, index })).filter(({ item }) => text(item.circuit)).map(({ item, index }) => newMarkRow({
+    target: `Провод W${index + 1}`, text: text(item.circuit), material, place: "ends", qty: "2",
+  }));
+  return [...connectors, ...wires];
+}
+
+/** Быстрое заполнение дописывает строки, которых ещё нет (та же цель и надпись), пустые строки заменяет. */
+export function mergeMarkRows(current: MarkRow[], extra: MarkRow[]): MarkRow[] {
+  const kept = current.filter(markRowActive);
+  const key = (row: MarkRow) => `${norm(row.target)}|${norm(row.text)}`;
+  const seen = new Set(kept.map(key));
+  return [...kept, ...extra.filter((row) => !seen.has(key(row)))];
+}

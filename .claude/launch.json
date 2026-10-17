@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "erp-api",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-Command", ".\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8021"],
+      "cwd": "backend",
+      "env": {
+        "ERP_DATABASE_URL": "sqlite+pysqlite:///preview.db",
+        "ERP_COOKIE_SECURE": "0"
+      },
+      "port": 8021
+    },
+    {
+      "name": "erp-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "frontend",
+      "port": 5176
+    }
+  ]
+}

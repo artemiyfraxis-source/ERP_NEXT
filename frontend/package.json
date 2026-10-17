@@ -1,0 +1,28 @@
+{
+  "name": "fraxis-erp-next-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5176",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "check": "npm run test && npm run build && npm run build:tcgen",
+    "build:tcgen": "vite build --ssr src/tcGenBatchCli.ts --outDir dist-tools --emptyOutDir"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.3",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}

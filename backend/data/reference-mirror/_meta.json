@@ -1,0 +1,37 @@
+{
+ "БД.ОБ": {
+  "headerRow": 2,
+  "rows": 216,
+  "pulledAt": "2026-09-28T18:19"
+ },
+ "БД.ОП": {
+  "headerRow": 2,
+  "rows": 172,
+  "pulledAt": "2026-09-28T18:19"
+ },
+ "БД.ТЕР": {
+  "headerRow": 1,
+  "rows": 555,
+  "pulledAt": "2026-09-29T08:25"
+ },
+ "БД.КОАКС": {
+  "headerRow": 2,
+  "rows": 183,
+  "pulledAt": "2026-09-29T09:23"
+ },
+ "БД.ПРОВ": {
+  "headerRow": 1,
+  "rows": 66,
+  "pulledAt": "2026-09-28T19:03"
+ },
+ "БД.МАТ": {
+  "headerRow": 1,
+  "rows": 81,
+  "pulledAt": "2026-09-28T19:03"
+ },
+ "СПР.КАБ": {
+  "headerRow": 1,
+  "rows": 56,
+  "pulledAt": "2026-09-29T08:52"
+ }
+}

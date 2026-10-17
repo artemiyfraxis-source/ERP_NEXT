@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Stub of pg_restore for test/deploy: `pg_restore --list <file>` accepts the fake archive of stubs/pg_dump.
+set -u
+file=${*: -1}
+grep -q '^PGDMP' "$file"
