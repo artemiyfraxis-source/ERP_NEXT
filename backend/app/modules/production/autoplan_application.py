@@ -63,6 +63,7 @@ from .autoplan import (
 from .dispatch import localize
 from .domain import ProductionStatus, ProductionTask, ProductionValidationError
 from .launchable import ReadyCard, launch_operations, stage_name
+from .machine_load import MachineStep, task_steps
 from .plan import kit_stage_key
 from .scheduling import work_seconds_between
 
@@ -378,6 +379,7 @@ def _prepare(
     holidays = uow.calendar.holidays()
     shift = _shift(uow.calendar)
     keys: dict[UUID, SetupKey] = {}
+    steps: dict[UUID, tuple[MachineStep, ...]] = {}
     used_cards: dict[str, int] = {}
     free_tasks = {task.id for task in planned_tasks if any(operation.id in free for operation in task.operations)}
     for task in planned_tasks:
@@ -389,17 +391,19 @@ def _prepare(
             used_cards[str(card.id)] = card.version
         task_keys, task_warnings = operation_keys(task, card.document if card is not None else None)
         keys.update(task_keys)
+        # Станки по операциям ЭТК; код, разошедшийся с техкартой, уже в предупреждениях наладки.
+        steps.update(task_steps(task, card.document if card is not None else None)[0])
         if task.id in free_tasks:
             warnings.extend(task_warnings)
-    machines = sorted({key.machine for key in keys.values() if key.limited})
+    machines = machine_names(keys, steps)
     capacity = {machine: max(1, int(units.get(machine, 0)) or 1) for machine in machines}
-    needed = {keys[operation_id].machine for operation_id in free if keys[operation_id].limited}
+    needed = machine_names({item: keys[item] for item in free}, {item: steps[item] for item in free if item in steps})
     for machine in machines:
         if machine in needed and machine not in units:
             warnings.append(f"Станок {machine} не найден в БД.ОБ — считаю, что он один")
     data = AutoplanInput(
         tasks=planned_tasks, free=frozenset(free), keys=keys, team=team, skills=skills, busy=busy,
-        capacity=capacity, start=start, end=end, holidays=holidays, shift=shift,
+        capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps,
     )
     result = plan(data)
     fingerprint = _fingerprint({
@@ -434,6 +438,14 @@ def _prepare(
         batches=batches(result.placements),
         period=(start, _last_day(command, start, end, result.placements, [*scope.eligible, *(item.task for item in scope.new_tasks.values())])),
         scope=(len([task for task in scope.eligible if task.id in free_tasks]), len(scope.new_tasks), len(team)),
+    )
+
+
+def machine_names(keys: Mapping[UUID, SetupKey], steps: Mapping[UUID, Sequence[MachineStep]]) -> list[str]:
+    """Учётные станки работы: каждой операции ЭТК со станком, у операции без шагов — станок ключа наладки."""
+    return sorted(
+        {step.machine for own in steps.values() for step in own}
+        | {key.machine for operation_id, key in keys.items() if key.limited and operation_id not in steps}
     )
 
 

@@ -7,9 +7,21 @@ from decimal import Decimal
 
 from app.modules.production.autoplan import fallback_key
 from app.modules.production.backward_plan import backward_plan, due_moment
-from app.modules.production.domain import DEFAULT_SHIFT, BusyInterval, OperatorSkill, clock_between
+from app.modules.production.domain import DEFAULT_SHIFT, BusyInterval, OperationShare, OperatorSkill, clock_between
 from app.modules.production.first_delivery import DeliveryVariant, Lot, first_delivery_variants, pareto
-from tests.production.test_autoplan import ANNA, BORIS, MONDAY, data, operation, task
+from tests.production.test_autoplan import (
+    ANNA,
+    BORIS,
+    MONDAY,
+    PF_CARD,
+    VERA,
+    data,
+    machine_days,
+    operation,
+    semifinished,
+    task,
+    with_steps,
+)
 
 FRIDAY = date(2026, 10, 9)
 
@@ -155,3 +167,39 @@ def test_first_delivery_of_nothing_is_empty():
     current = task(1, [operation(1, "PRS")])
 
     assert first_delivery_variants(data([current], keys_of(current), free=())) == ()
+
+
+# --- станки по операциям ЭТК ------------------------------------------------------------------------------------
+
+
+def test_two_semifinished_on_one_machine_the_other_moves_earlier_until_the_machines_are_free():
+    tasks = [task(number, [semifinished()]) for number in (1, 2)]
+
+    result = backward_plan(with_steps(tasks, PF_CARD, team=(ANNA, BORIS)), FRIDAY)
+
+    later, earlier = by_position(result, tasks[1])[1], by_position(result, tasks[0])[1]
+    assert result.fits and not result.warnings
+    assert later.finish == datetime(2026, 10, 9, 17, 30) and earlier.operator_id != later.operator_id
+    # Уходит раньше ровно настолько, чтобы освободить станки, а не на весь соседний ПФ.
+    assert later.start < earlier.finish < later.finish
+    load = machine_days(tasks, {slot.operation_id: (slot.operator_id, slot.start, slot.finish) for slot in result.slots}, PF_CARD)
+    assert load and all(peak == 1 and not over for peak, over in load.values())
+    # Без шагов ЭТК станки не ограничивают: оба кончаются к концу смены.
+    blind = backward_plan(data(tasks, keys_of(*tasks), team=(ANNA, BORIS)), FRIDAY)
+    assert {slot.finish for slot in blind.slots} == {datetime(2026, 10, 9, 17, 30)}
+
+
+def test_machine_busy_the_whole_ship_day_pushes_the_semifinished_before_now_and_warns():
+    busy_day = task(9, [semifinished()], quantity=4000)
+    busy_day = replace(busy_day, operations=(busy_day.operations[0].with_shares(
+        (OperationShare(VERA, None, MONDAY, datetime(2026, 10, 5, 17, 30)),), "Мастер",
+    ),))
+    current = task(1, [semifinished()])
+
+    result = backward_plan(with_steps([busy_day, current], PF_CARD, team=(ANNA,)), date(2026, 10, 5))
+
+    slot = by_position(result, current)[1]
+    assert not result.fits and slot.late(MONDAY)
+    assert result.warnings == (
+        "Станок ОБ.027 Пресс занят 05.10: ПЗ-0001 · этап 1 «ПФ 1» уходит раньше «сейчас» — к отгрузке не успевает",
+    )

@@ -22,11 +22,13 @@ from .autoplan_application import (
     _horizon,
     _scope,
     card_key,
+    machine_names,
 )
 from .backward_plan import BackwardResult, backward_plan
 from .domain import ProductionTask, ProductionValidationError
 from .first_delivery import DeliveryVariant, first_delivery_variants
 from .launchable import ReadyCard, stage_name
+from .machine_load import MachineStep, task_steps
 
 
 @dataclass(frozen=True)
@@ -85,6 +87,7 @@ def _input(
     team = tuple(item.id for item in scope.team_rows)
     busy = _with_absences(_busy(tasks, UUID(int=0), UUID(int=0), now), tuple(uow.calendar.absences()), team, now.tzinfo)
     keys: dict[UUID, SetupKey] = {}
+    steps: dict[UUID, tuple[MachineStep, ...]] = {}
     warnings = list(scope.warnings)
     for task in tasks:
         if not any(operation.id in free or operation.planned_start for operation in task.operations):
@@ -92,11 +95,11 @@ def _input(
         card = cards.get(card_key(task.project, task.item))
         task_keys, _ = operation_keys(task, card.document if card is not None else None)
         keys.update(task_keys)
-    machines = sorted({key.machine for key in keys.values() if key.limited})
+        steps.update(task_steps(task, card.document if card is not None else None)[0])
     data = AutoplanInput(
         tasks=tasks, free=frozenset(free), keys=keys, team=team, skills=_skills(uow), busy=busy,
-        capacity={machine: max(1, int(units.get(machine, 0)) or 1) for machine in machines},
-        start=start, end=end, holidays=uow.calendar.holidays(), shift=_shift(uow.calendar),
+        capacity={machine: max(1, int(units.get(machine, 0)) or 1) for machine in machine_names(keys, steps)},
+        start=start, end=end, holidays=uow.calendar.holidays(), shift=_shift(uow.calendar), steps=steps,
     )
     return data, scope, warnings, frozenset(done_ops)
 
