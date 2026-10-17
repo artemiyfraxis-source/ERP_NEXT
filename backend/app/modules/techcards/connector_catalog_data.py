@@ -860,7 +860,7 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
             (("Корпус, прозрачный", "connfly-ds1072", "I-DS1072-SCT0{:02d}", _counts(2, 13)),),
             (("Connfly C-DS1072-XXXXX-D", CONNFLY_PDF.format("DS1072")),),
             contacts=(("T-DS1072-SC600", "AWG 24–18"),)),
-    _series("connfly-ds1073", "Connfly DS1073 (серия MF)", "Connfly", WTB, ("I-DS1073", "DS1073"),
+    _series("connfly-ds1073", "Connfly DS1073 (тип VH, шаг 3,96)", "Connfly", WTB, ("I-DS1073", "DS1073"),
             (("Корпус, белый", "connfly-ds1073", "I-DS1073-SCW0{:02d}", _counts(2, 13)),),
             (("Connfly C-DS1073-XXXXX-E", CONNFLY_PDF.format("DS1073")),),
             contacts=(("T-DS1073-SC600", "AWG 22–18"),), note="шаг 3,96, тип VH"),
@@ -896,9 +896,10 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
             (("Корпус, 1 ряд", "connfly-ds1071-01", "I-DS1071-01-SCB01X{}", _counts(1, 40)),
              ("Корпус, 2 ряда", "connfly-ds1071-01", "I-DS1071-01-SCB02X{}", _counts(2, 40))),
             (("Connfly C-DS1071-01-XXXXX-A", "https://en.connfly.com/static/upload/file/DS1071-01.pdf"),),
-            contacts=(("T-DS1071-01-SC000", "выборочное золото, AWG 30–26, 0,05–0,12 мм², изоляция Ø 0,9–1,35"),
-                      ("T-DS1071-01-SC600", "олово, AWG 30–26, 0,05–0,12 мм², изоляция Ø 0,9–1,35"),
-                      ("T-DS1071-01-SC800", "золото, AWG 30–26, 0,05–0,12 мм², изоляция Ø 0,9–1,35")),
+            # AWG — страница серии Connfly (en.connfly.com/list_65/528.html: «AWG#28~#24»); на чертеже провода нет (17.10.2026).
+            contacts=(("T-DS1071-01-SC000", "выборочное золото, AWG 28–24"),
+                      ("T-DS1071-01-SC600", "олово, AWG 28–24"),
+                      ("T-DS1071-01-SC800", "золото, AWG 28–24")),
             note="шаг 2,0; номер корпуса по чертежу: ряды × контактов в ряду (1×1…1×40, 2×2…2×40)"),
     # --- Samtec, TE -------------------------------------------------------------------------------------------------
     _series("samtec-isd2", "Samtec ISD2", "Samtec", WTB, ("ISD2, ITD2", "ISD2"),
