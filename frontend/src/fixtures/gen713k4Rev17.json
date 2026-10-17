@@ -1,5 +1,5 @@
 {
- "source": "прод, 713К.4 КБ1, техкарта ревизия 12 (17.10.2026): build_config.gen_state, состав набора (generator_bom) и собранные операции/схема ПФ — только чтение",
+ "source": "прод, 713К.4 КБ1, техкарта ревизия 17 (17.10.2026): build_config.gen_state, состав набора (generator_bom) и собранные операции/схема ПФ — только чтение",
  "components": [
   {
    "id": "kit-0",
@@ -344,31 +344,31 @@
     {
      "idx": 4,
      "compId": "kit-15",
-     "length": 120,
+     "length": 130,
      "qty": 1
     },
     {
      "idx": 5,
      "compId": "kit-15",
-     "length": 70,
+     "length": 137,
      "qty": 1
     },
     {
      "idx": 6,
      "compId": "kit-14",
-     "length": 70,
+     "length": 137,
      "qty": 1
     },
     {
      "idx": 7,
      "compId": "kit-10",
-     "length": 120,
+     "length": 130,
      "qty": 1
     },
     {
      "idx": 8,
      "compId": "kit-11",
-     "length": 120,
+     "length": 130,
      "qty": 1
     },
     {
@@ -447,7 +447,7 @@
      "shrinkOn": true,
      "shrinkMat": "kit-21",
      "shrinkLen": "15",
-     "braidLen": "120"
+     "braidLen": "110"
     },
     {
      "id": "b1",
@@ -555,7 +555,7 @@
      "shrinkOn": true,
      "shrinkMat": "kit-22",
      "shrinkLen": "15",
-     "braidLen": "120"
+     "braidLen": "110"
     },
     {
      "id": "e5",
@@ -618,7 +618,7 @@
     "enabled": true,
     "count": "4",
     "wires": "4,4,3,3",
-    "tut": "15",
+    "tut": "10",
     "tutMat": "kit-19",
     "strip": "",
     "fold": false,
@@ -642,7 +642,7 @@
      "text": "5",
      "material": "Маркировка \"5\" 4/2мм",
      "place": "conn",
-     "mm": "",
+     "mm": "50",
      "where": "",
      "qty": "1",
      "len": "15"
@@ -652,7 +652,7 @@
      "text": "I3",
      "material": "Маркировка \"I3\" 4/2мм",
      "place": "conn",
-     "mm": "",
+     "mm": "50",
      "where": "",
      "qty": "1",
      "len": "15"
@@ -662,7 +662,7 @@
      "text": "C",
      "material": "Маркировка \"C\" 4/2мм",
      "place": "conn",
-     "mm": "",
+     "mm": "50",
      "where": "",
      "qty": "1",
      "len": "15"
@@ -672,7 +672,7 @@
      "text": "A6",
      "material": "Маркировка \"A6\" 4/2мм",
      "place": "conn",
-     "mm": "",
+     "mm": "50",
      "where": "",
      "qty": "1",
      "len": "15"
@@ -979,14 +979,14 @@
    {
     "opKey": "cutTubes",
     "type": "cutTut",
-    "label": "Резка трубок — ТТК 8/2 3×15 мм, ТТК 12/4 1×15 мм, ТТК 12/4 1×30 мм, ТТК 3/1 4×15 мм",
+    "label": "Резка трубок — ТТК 8/2 3×15 мм, ТТК 12/4 1×15 мм, ТТК 12/4 1×30 мм, ТТК 3/1 4×10 мм",
     "templateId": "cut-tut-short-резка",
     "opNum": "CUT_TUT_short"
    },
    {
     "opKey": "cutBraid",
     "type": "cutTut",
-    "label": "Резка оплётки XP-3 — X1 «5» 120 мм, X2 «I3» 110 мм, X3 «C» 110 мм, X4 «A6» 120 мм",
+    "label": "Резка оплётки XP-3 — X1 «5» 110 мм, X2 «I3» 110 мм, X3 «C» 110 мм, X4 «A6» 110 мм",
     "templateId": "cut-neylon-резка-линейных-материалов",
     "opNum": "CUT_NEYLON"
    },
@@ -1007,7 +1007,7 @@
    {
     "opKey": "braidA1",
     "type": "insWrap",
-    "label": "Надеть оплётку X1 «5» — XP-3, 120 мм",
+    "label": "Надеть оплётку X1 «5» — XP-3, 110 мм",
     "templateId": "ins-braid-монтаж-оплётки",
     "opNum": "INS_BRAID"
    },
@@ -1147,7 +1147,7 @@
    {
     "opKey": "braidA4",
     "type": "insWrap",
-    "label": "Надеть оплётку X4 «A6» — XP-3, 120 мм",
+    "label": "Надеть оплётку X4 «A6» — XP-3, 110 мм",
     "templateId": "ins-braid-монтаж-оплётки",
     "opNum": "INS_BRAID"
    },
@@ -1533,7 +1533,7 @@
      "from": "pf-braid",
      "to": "pf-A1",
      "per_unit": 1,
-     "item": "Оплётка XP-3 120 мм — 1 шт"
+     "item": "Оплётка XP-3 110 мм — 1 шт"
     },
     {
      "from": "pf-braid",
@@ -1551,7 +1551,7 @@
      "from": "pf-braid",
      "to": "pf-A4",
      "per_unit": 1,
-     "item": "Оплётка XP-3 120 мм — 1 шт"
+     "item": "Оплётка XP-3 110 мм — 1 шт"
     },
     {
      "from": "pf-mark",
