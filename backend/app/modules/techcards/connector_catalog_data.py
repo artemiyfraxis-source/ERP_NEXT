@@ -267,7 +267,13 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # Molex Pico-EZmate 78172 — 78172-0002…0005 (Molex part sheets 78172-0002 / -0004, Farnell, Heilind) and 78172-5006 /
     # -5007 (6 and 7 circuits, Molex series chart 78172; drawing SD-78172-001). The part sheets print no circuit numbers and
     # the sales drawing SD-78172-007 did not open, so the numbering stays unchecked.
-    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?[05]00(\d)$", 1.2, color=BLACK, note=NO_DRAWING),
+    # 781720000-SD rev. A (Web Archive copy of 781720004_sd.pdf, third angle, read 17.10.2026): the main view is the top
+    # face (the open slots, «CIRCUIT 1 INDICATOR MARK» ▽ and «MXL 1A» on the strip at the far end); the view under it is the
+    # end with the contact cavities (the wire end, the top face at its upper edge) — CIRCUIT 1 at the left, CIRCUIT N at the
+    # right; 781720001-SD (6 and 7 circuits, 781725006 copy) draws the same. Top face up -> contact 1 on the LEFT.
+    _family("molex-picoezmate", "Molex Pico-EZmate", r"^0?78172-?[05]00(\d)$", 1.2, color=BLACK, conf="high",
+            src="Molex 781720000-SD / 781720001-SD",
+            note="по чертежам Molex 781720000-SD (2–5 конт.) и 781720001-SD (6–7): на торце проводов верхней гранью (с прорезями и меткой ▽ CIRCUIT 1) вверх — CIRCUIT 1 слева"),
     # Molex Mini50 (CTX50 terminals), 1.80 mm: the circuit count is not a plain digit of the part number, so each housing a
     # distributor listing names is in the table. Sealed 34967 with CPA (Heilind / element14 349672001 «2 Circuits,
     # Polarization Option A, Black», RS 34967-4001 «4 way», RS 34967-1001 «10 way», Mouser 0349671131 «10 Circuits»,
@@ -438,8 +444,19 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-kk396", "Molex KK 396 (41695)", r"^(?:00)?09-?50-?8(\d{2})\d$", 3.96, start="TR", latch="ramp", conf="high",
             src="Molex SD-41695",
             note="по чертежу Molex SD-41695: цифра «1» на грани, противоположной рампе; со стороны проводов рампой вверх — контакт 1 справа"),
-    _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", note=NO_DRAWING),
-    _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, latch="ramp", color=BLACK, note=NO_DRAWING),
+    # Mini-Lock 51163 — 511630000-SD rev. B (Web Archive copy of 511630400_sd.pdf, read 17.10.2026): the front view is the
+    # mating face (the square pin entries); the view at the far right is the wire end with the terminals in, the lock up,
+    # «CIRCUIT 1 INDICATOR MARK» and CIRCUIT 1 at the left, CIRCUIT N at the right.
+    _family("molex-minilock", "Molex Mini-Lock", r"^0?51163-?(\d{2})00$", 2.5, latch="lever", conf="high",
+            src="Molex 511630000-SD",
+            note="по чертежу Molex 511630000-SD: на торце проводов замком вверх CIRCUIT 1 слева"),
+    # SL 70066 — SD-70066-0176-0199 rev. M (Web Archive copy of molex.com/pdm_docs/sd/050579404_sd.pdf, third angle, read
+    # 17.10.2026): the top view is the mating end (the square pin entries) with the latch arm on the far face; the side
+    # view puts that arm on the back face; the front (plain) face carries «CIRCUIT NO. 1 IDENTIFICATION» ▽ at its left.
+    # From the wire end, plain face up: 1 on the left -> latch face up: contact 1 on the RIGHT.
+    _family("molex-sl-1r", "Molex SL (1 ряд)", r"^0?50-?57-?94(\d{2})$", 2.54, start="TR", latch="ramp", color=BLACK,
+            conf="high", src="Molex SD-70066-0176-0199",
+            note="по чертежу Molex SD-70066-0176-0199: метка ▽ CIRCUIT NO. 1 слева на гладкой грани, защёлка на обратной; со стороны проводов защёлкой вверх — контакт 1 справа"),
     # iGrid 501646 — Molex 5016460000-SD rev. A1 (datasheet.lcsc.com copy of 5016462400, read 16.10.2026): the view of the
     # wire end (CIRCUIT No.1 ▽, trade mark and cavity numbers moulded on it) has the latch plate at its BOTTOM, circuit 1
     # at the top-left, 2 under it, N-1 top-right, N bottom-right (columns of two, odd numbers on top). Turned latch up
