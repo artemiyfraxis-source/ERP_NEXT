@@ -157,7 +157,14 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             note="на листе JST eZND у корпуса ZNDP метки контакта 1 нет — сверить по детали"),
     # JWPF — eJWPF «Housing»: tab (T) and receptacle (R) housings, 2–4 contacts in one row, 6 and 8 in two; the sheet
     # prints no contact numbers.
-    _family("jst-jwpf", "JST JWPF", r"^0?(\d)[TR]-JWPF-VSLE-[SD]$", 2.0, rows_by={6: 2, 8: 2}, order="col", latch="lever",
+    # The receptacle housing (R) mates the PCB header B0xB-JWPF-SK-R: KiCad Connector_JST:JST_JWPF_B04B-JWPF-SK-R and the
+    # LCSC/EasyEDA footprint C2983882 (read 17.10.2026) both put pad 1 at the end of the row next to the header's latch
+    # notch; seen from above (= the housing's wire side) with the latch up, contact 1 is on the RIGHT, the two-row
+    # housings number across the rows (1-2-3 in the row at the latch, 4-5-6 below). The tab housing (T) is not on a header.
+    _family("jst-jwpf-r", "JST JWPF (гнездовой корпус)", r"^0?(\d)R-JWPF-VSLE-[SD]$", 2.0, rows_by={6: 2, 8: 2}, start="TR",
+            order="row", latch="lever", conf="high", src="KiCad JST_JWPF_B04B-JWPF-SK-R, EasyEDA C2983882",
+            note="по посадочному месту вилки B04B-JWPF-SK-R (KiCad Connector_JST и LCSC C2983882, совпадают): со стороны проводов защёлкой вверх контакт 1 справа"),
+    _family("jst-jwpf", "JST JWPF", r"^0?(\d)T-JWPF-VSLE-[SD]$", 2.0, rows_by={6: 2, 8: 2}, order="col", latch="lever",
             note="лист JST eJWPF номеров контактов не показывает — сверить по детали"),
     # SHJ — eSHJ «Socket housing»: front view (wire end up) has «Mark of No. 1 circuit» ▽ at the RIGHT of the face ->
     # from the wire side, ▽ face up, contact 1 on the LEFT.
@@ -436,7 +443,7 @@ CATALOG_FAMILY_SAMPLES: dict[str, str] = {
     "jst-pud": "PUDP-10V-S", "jst-pad": "PADP-10V-1-S", "jst-pnd": "PNDP-10V-Z", "jst-sqs": "SQSR-02H-1A-K",
     "jst-zpd": "ZPDR-10V-S", "jst-nshd": "NSHDR-16V-Z", "jst-shj": "SHJP-06V-S", "jst-ra": "RA-1011",
     "jst-shd": "SHDR-20V-S-B", "jst-shl": "SHLP-06V-S-B", "jst-apsh": "APSHR-03V-S", "jst-nv": "NVR-03", "jst-vb": "VBR-3",
-    "jst-ghd": "GHDR-20V-S-1(F)", "jst-znd": "ZNDP-16V-A-S", "jst-jwpf": "04R-JWPF-VSLE-S",
+    "jst-ghd": "GHDR-20V-S-1(F)", "jst-znd": "ZNDP-16V-A-S", "jst-jwpf": "04T-JWPF-VSLE-S", "jst-jwpf-r": "04R-JWPF-VSLE-S",
     "hirose-df13-2r": "DF13-10DS-1.25C", "hirose-df19": "DF19-8S-1C", "hirose-df20": "DF20A-10DS-1C", "hirose-df61": "DF61-2S-2.2C",
     "hirose-df1b": "DF1B-4S-2.5R", "hirose-df1b-2r": "DF1B-18DS-2.5RC", "hirose-df1b-es": "DF1B-4ES-2.5RC",
     "hirose-df1b-des": "DF1B-10DES-2.5RC", "hirose-df1b-p": "DF1B-5EP-2.5RC",
@@ -762,8 +769,8 @@ CATALOG_SERIES: tuple[dict[str, Any], ...] = (
     _jst("jst-wp", "JST JWPF", "eJWPF", AUTO, ("JWPF", "WP (JWPF)"),
          (("Корпус под штыри (Tab), 1 ряд", "jst-jwpf", "{:02d}T-JWPF-VSLE-S", (2, 3, 4)),
           ("Корпус под штыри (Tab), 2 ряда", "jst-jwpf", "{:02d}T-JWPF-VSLE-D", (6, 8)),
-          ("Корпус под гнёзда, 1 ряд", "jst-jwpf", "{:02d}R-JWPF-VSLE-S", (2, 3, 4)),
-          ("Корпус под гнёзда, 2 ряда", "jst-jwpf", "{:02d}R-JWPF-VSLE-D", (6, 8))),
+          ("Корпус под гнёзда, 1 ряд", "jst-jwpf-r", "{:02d}R-JWPF-VSLE-S", (2, 3, 4)),
+          ("Корпус под гнёзда, 2 ряда", "jst-jwpf-r", "{:02d}R-JWPF-VSLE-D", (6, 8))),
          (), (("SWPT-001T-P025", "штырь (Tab), AWG 26–22"), ("SWPR-001T-P025", "гнездо, AWG 26–22")),
          note="герметичный провод — провод; шаг 2,0 мм"),
     _series("jst-ra", "JST RA", "JST", WTB, ("RA",),
