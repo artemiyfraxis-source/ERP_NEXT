@@ -9,6 +9,7 @@ import { ActualDateCell, ExpectedDateCell, NoteCell, type LineEditing } from "./
 import { RowActions, type MenuItem } from "./ProcurementRowMenu";
 import { waitsForGrn } from "./ProcurementStockPicker";
 import { formatAmount } from "./ProcurementSheetColumns";
+import { LoadMore } from "./LoadMore";
 
 /* «Мои позиции» листа закупки — раздельные блоки, каждый сворачивается щелчком по заголовку (владелец, 05.10:
    «блоки раздельные и их можно сворачивать, чтобы не засран был экран»; выбор помнится в браузере):
@@ -637,11 +638,7 @@ export function OrderList({
         />
       )}
       {groups.length > limit && (
-        <div className="stage-more">
-          <button type="button" className="secondary small" onClick={() => setLimit((current) => current + ORDERS_PAGE)}>
-            Показать ещё {Math.min(ORDERS_PAGE, groups.length - limit)} · показано {limit} из {groups.length}
-          </button>
-        </div>
+        <LoadMore className="stage-more" token={limit} onMore={() => setLimit((current) => current + ORDERS_PAGE)} />
       )}
       {panel.node}
       {doc && docGroup && docLines.length > 0 && (

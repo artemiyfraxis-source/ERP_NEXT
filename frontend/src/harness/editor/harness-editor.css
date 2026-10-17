@@ -403,9 +403,6 @@
 .harness-root .he-catalog-empty.error { color: var(--tone-danger); }
 .harness-root .he-catalog-empty.unpublished { color: var(--muted-foreground); }
 .harness-root .he-catalog-empty button { padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--card); color: var(--muted-foreground); font-size: 9px; cursor: pointer; }
-.harness-root .he-catalog-more { width: 105px; min-height: 60px; align-self: stretch; border: 1px dashed var(--muted-foreground); border-radius: 7px; background: var(--panel-soft); color: var(--primary); font-size: 10px; font-weight: 750; cursor: pointer; }
-.harness-root .he-catalog-more:hover:not(:disabled) { border-color: var(--muted-foreground); background: var(--sheet-selected); }
-.harness-root .he-catalog-more:disabled { opacity: .62; cursor: progress; }
 .harness-root .he-catalog.collapsed .he-catalog-header { grid-template-columns: auto; }
 
 @media (max-width: 1050px) {
@@ -1086,11 +1083,8 @@
 .harness-root .he-catalog-add { color: var(--muted-foreground); font-size: 15px; text-align: center; opacity: 0; }
 .harness-root .he-catalog-card:hover .he-catalog-add,
 .harness-root .he-catalog-card:focus-visible .he-catalog-add { color: var(--primary); opacity: 1; }
-.harness-root .he-catalog-more {
-  grid-column: 1 / -1; justify-self: start; width: auto; min-height: 30px; margin-top: 6px; padding: 0 12px;
-  border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--card); color: var(--foreground); font-size: 13px; font-weight: 500;
-}
-.harness-root .he-catalog-more:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: var(--accent); }
+/* Подгрузка в конце каталога (LoadMore): метка на всю строку, «Загружаем…» — пока идёт порция. */
+.harness-root .he-catalog-more { grid-column: 1 / -1; min-height: 1px; padding: 2px 0; color: var(--muted-foreground); font-size: 12px; }
 .harness-root .he-catalog-empty,
 .harness-root .he-catalog-empty button { font-size: 13px; }
 .harness-root .he-catalog-empty { grid-column: 1 / -1; }

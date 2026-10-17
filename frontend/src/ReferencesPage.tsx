@@ -591,7 +591,6 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         toolbar={canEdit && !editing ? <button type="button" className="primary small" disabled={!fieldColumns.length} onClick={() => startCreate()}>+ Новая запись</button> : undefined}
       /> : techReady !== techTab || (matTab && !coverIds) ? <div className="empty">Загрузка…</div> : coaxTab ? <CoaxConnectors
         records={tech.records}
-        cableOf={cableOf}
         canEdit={canEdit}
         onEdit={startEdit}
         ownColumns={tech.custom_columns}
@@ -626,7 +625,7 @@ export function ReferencesPage({ principal, initialTab }: { principal: Principal
         </> : undefined}
       /></div>{terminal && <TerminalCard record={terminal} canEdit={canEdit} onEdit={startEdit} onClose={() => openTerminal("")} />}</div>}
       {techRemoval.dialog}
-      {coaxTab && <p className="page-sub">D1–D3 — диаметры кабеля из колонки «Провод»; у разъёма только длины разделки. Диаметры правятся во вкладке «Коаксиальные кабели».</p>}
+      {coaxTab && <p className="page-sub">У разъёма — подходящий кабель, разделка L1–L3 и HEX обжима; D1–D3 и Ø — у кабеля, во вкладке «Коаксиальные кабели».</p>}
     </>}
 
     {(cableKind || tab === "gauges") && cables === null && <div className="empty">Загрузка…</div>}

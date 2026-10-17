@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type C
 import { selectRange } from "./bulk";
 import { EMPTY, displayCell, formatNumber } from "./format";
 import { matchesSearch, searchRows } from "./searchText";
+import { LoadMore } from "./LoadMore";
 
 /* Общая таблица разделов — то, что в SUPPLYMAP давал лист Google и портальные таблицы (portalGetView,
    portalSaveUserCols): поиск по всем словам, фильтр по значениям колонки, сортировка по заголовку,
@@ -1194,13 +1195,13 @@ export function DataTable<T>({
             {!shown.length && <tr><td colSpan={span} className="empty">{emptyText}</td></tr>}
           </tbody>
         </table>
+        {filtered.length > shown.length && <LoadMore token={shown.length} onMore={() => setLimit((current) => current + pageSize)} />}
       </div>
       {!compact && (
         <div className="table-footer">
           <span>Показано {shown.length} из {filtered.length}{filtered.length !== rows.length ? ` (всего ${rows.length})` : ""}</span>
           {note && <span className={`dt-edit-note tone-${note.tone}`} role="status">{note.text}</span>}
           {!note && hasEditing && <span className="dt-edit-hint">Щелчок по ячейке и ввод — правка · Enter — записать · Esc — отмена · Tab — дальше · Ctrl+V — вставить столбец · Ctrl+D — заполнить вниз</span>}
-          {filtered.length > shown.length && <button type="button" className="secondary small" onClick={() => setLimit((current) => current + pageSize)}>Показать ещё</button>}
         </div>
       )}
     </section>
