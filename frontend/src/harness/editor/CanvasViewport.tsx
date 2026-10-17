@@ -51,6 +51,7 @@ import {
 import { resolveWireColorHex } from "./wire-reference-catalog";
 import {
   buildWireStripProfileGeometry,
+  scaleWireStripProfileGeometry,
   type WireStripProfileGeometry,
 } from "./wire-strip-profile-geometry";
 import { collectStripCallouts, drawStripCallouts, drawStripNotes, stripNotesLine } from "./strip-callouts";
@@ -954,8 +955,22 @@ export function getDrawingWireStripProfileGeometries(
   if (view !== "drawing" || object.kind !== "wire" || !object.stripProfiles) return [];
   return (["from", "to"] as const).flatMap((end) => {
     const profile = object.stripProfiles?.[end];
-    const geometry = profile && buildWireStripProfileGeometry(object.points ?? [], end, profile);
-    return geometry ? [geometry] : [];
+    const built = profile && buildWireStripProfileGeometry(object.points ?? [], end, profile);
+    if (!built) return [];
+    // Полоса — в масштабе чертежа: длина зачистки / длина провода × длина его трассы (провода без длины — как были).
+    // Не короче 3 и не длиннее исходной доли; на сростке — лишь короткая метка у узла, длину несёт подпись «зач. N мм».
+    const points = object.points ?? [];
+    const route = points.slice(1).reduce((sum, p, i) => sum + Math.hypot(p.x - points[i]!.x, p.y - points[i]!.y), 0);
+    const wireMm = Number(object.metadata?.lengthMm);
+    if (!(wireMm > 0) || !(route > 0)) return [built];
+    const side = end === "from" ? "From" : "To";
+    const atSplice = object.metadata?.[`splice${side}`] === "true";
+    const stripMm = built.primitives.at(-1)!.cumulativeLengthMm;
+    const axial = Math.min(built.totalLength, Math.max(4, stripMm * route / wireMm), atSplice ? 4 : Infinity);
+    const width = Math.max(3.5,Number(object.metadata?.drawingWidth ?? 3));
+    // Конец в узле или свободный конец закрыт точкой узла — полоса начинается сразу за ней.
+    const dotted = atSplice || object.metadata?.[`open${side}`] !== undefined;
+    return [scaleWireStripProfileGeometry(built, axial, width, dotted ? 5 : 0)];
   });
 }
 

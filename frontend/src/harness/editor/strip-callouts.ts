@@ -14,7 +14,56 @@ export interface StripCallout {
   /** Конец провода на чертеже и направление внутрь провода. */
   readonly tip: { readonly x: number; readonly y: number };
   readonly direction: { readonly x: number; readonly y: number };
+  /** Где стоит текст (после обхода подписей проводов и разъёмов). */
+  readonly x: number;
+  readonly y: number;
+  readonly align: "left" | "right";
+  readonly baseline: "top" | "middle" | "bottom";
 }
+
+interface Box { readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number }
+const CHAR_PX = 6, TEXT_H = 13;
+
+const textBox = (text: string, x: number, y: number, align: StripCallout["align"], baseline: StripCallout["baseline"]): Box => {
+  const w = text.length * CHAR_PX;
+  const x0 = align === "left" ? x : x - w;
+  const y0 = baseline === "bottom" ? y - TEXT_H : baseline === "middle" ? y - TEXT_H / 2 : y;
+  return { x0, y0, x1: x0 + w, y1: y0 + TEXT_H };
+};
+const overlaps = (a: Box, b: Box) => a.x0 < b.x1 + 2 && a.x1 + 2 > b.x0 && a.y0 < b.y1 + 2 && a.y1 + 2 > b.y0;
+
+/** То, что подпись зачистки не должна закрывать: метки проводов и позиций, разъёмы, подписи длины хвостов. */
+function obstacles(objects: readonly EditorSceneObject[]): Box[] {
+  const result: Box[] = [];
+  for (const o of objects) {
+    if (o.kind === "object-index" || o.kind === "connector") result.push({ x0: o.x, y0: o.y, x1: o.x + o.width, y1: o.y + o.height });
+    if (o.kind !== "wire") continue;
+    const points = o.points ?? [];
+    for (const [key, tip, next] of [["openFrom", points[0], points[1]], ["openTo", points.at(-1), points.at(-2)]] as const) {
+      const label = o.metadata?.[key];
+      if (label === undefined || !tip || !next) continue;
+      const len = Math.hypot(tip.x - next.x, tip.y - next.y) || 1, dx = (tip.x - next.x) / len, dy = (tip.y - next.y) / len;
+      const cx = tip.x + dx * 8, cy = tip.y + dy * 8, w = label.length * CHAR_PX;
+      result.push(Math.abs(dx) >= Math.abs(dy)
+        ? { x0: dx >= 0 ? cx : cx - w, y0: cy - 7, x1: dx >= 0 ? cx + w : cx, y1: cy + 7 }
+        : { x0: cx - w / 2, y0: dy > 0 ? cy : cy - 13, x1: cx + w / 2, y1: dy > 0 ? cy + 13 : cy });
+    }
+  }
+  return result;
+}
+
+type Slot = readonly [dx: number, dy: number, align: StripCallout["align"], baseline: StripCallout["baseline"]];
+const SPLICE_SLOTS: readonly Slot[] = [[9, -9, "left", "bottom"], [9, 9, "left", "top"], [-9, -9, "right", "bottom"], [-9, 9, "right", "top"],
+  [9, -24, "left", "bottom"], [9, 24, "left", "top"], [-9, -24, "right", "bottom"], [-9, 24, "right", "top"], [30, -9, "left", "bottom"], [-30, 9, "right", "top"]];
+
+const slotsFor = (kind: StripCallout["kind"], direction: { x: number; y: number }): readonly Slot[] => {
+  if (kind === "splice") return SPLICE_SLOTS;
+  const away = { x: -direction.x, y: -direction.y };
+  const horizontal = Math.abs(away.x) >= Math.abs(away.y);
+  // Хвост: длина провода — на его оси за концом, подпись зачистки — сбоку от конца.
+  const first: Slot = horizontal ? [away.x * 8, -9, away.x >= 0 ? "left" : "right", "bottom"] : [12, 0, "left", "middle"];
+  return [first, ...(horizontal ? [[first[0], 9, first[2], "top"] as Slot] : [[-12, 0, "right", "middle"] as Slot]), ...SPLICE_SLOTS];
+};
 
 const mmText = (mm: number) => `${String(Math.round(mm * 100) / 100).replace(".", ",")} мм`;
 const TIN_PATTERN = /луж|хвост/i;
@@ -36,6 +85,7 @@ export function stripEndMetadata(wire: Pick<WireInstance, "from" | "to" | "strip
 /** Подписи зачистки по сцене чертежа: сросток — один раз на узел, хвост и прочий конец — у каждого. */
 export function collectStripCallouts(objects: readonly EditorSceneObject[]): StripCallout[] {
   const result: StripCallout[] = [];
+  const pending: Array<Omit<StripCallout, "x" | "y" | "align" | "baseline">> = [];
   const seen = new Set<string>();
   for (const object of objects) {
     const points = object.points ?? [];
@@ -54,8 +104,18 @@ export function collectStripCallouts(objects: readonly EditorSceneObject[]): Str
       const length = inward ? Math.hypot(inward.x - tip.x, inward.y - tip.y) : 1;
       const direction = inward ? { x: (inward.x - tip.x) / length, y: (inward.y - tip.y) / length } : { x: 1, y: 0 };
       const tinned = object.metadata?.[`strip${key}Tin`] === "true";
-      result.push({ key: id, kind, lengthMm, tinned, text: `зач. ${mmText(lengthMm)}${tinned && kind !== "splice" ? ", луж." : ""}`, tip: { x: tip.x, y: tip.y }, direction });
+      const text = `зач. ${mmText(lengthMm)}${tinned && kind !== "splice" ? ", луж." : ""}`;
+      pending.push({ key: id, kind, lengthMm, tinned, text, tip: { x: tip.x, y: tip.y }, direction });
     }
+  }
+  // Место подписи: первое свободное — не поверх меток W1, позиций, разъёмов, длин хвостов и других подписей зачистки.
+  const taken = obstacles(objects);
+  for (const c of pending) {
+    const slots = slotsFor(c.kind, c.direction);
+    const fits = (slot: Slot) => !taken.some((box) => overlaps(textBox(c.text, c.tip.x + slot[0], c.tip.y + slot[1], slot[2], slot[3]), box));
+    const [dx, dy, align, baseline] = slots.find(fits) ?? slots[0]!;
+    taken.push(textBox(c.text, c.tip.x + dx, c.tip.y + dy, align, baseline));
+    result.push({ ...c, x: c.tip.x + dx, y: c.tip.y + dy, align, baseline });
   }
   return result;
 }
@@ -84,19 +144,8 @@ export function drawStripCallouts(context: CanvasRenderingContext2D, callouts: r
   context.lineJoin = "round";
   context.lineWidth = 3;
   for (const c of callouts) {
-    let x = c.tip.x + 9, y = c.tip.y - 9;
-    context.textAlign = "left"; context.textBaseline = "bottom";
-    if (c.kind !== "splice") {
-      const away = { x: -c.direction.x, y: -c.direction.y };
-      if (Math.abs(away.x) >= Math.abs(away.y)) {
-        x = c.tip.x + away.x * 8;
-        context.textAlign = away.x >= 0 ? "left" : "right";
-      } else {
-        // Вертикальный хвост: длина провода — на его оси за концом, подпись зачистки — правее, на уровне конца.
-        x = c.tip.x + 12; y = c.tip.y;
-        context.textBaseline = "middle";
-      }
-    }
+    context.textAlign = c.align; context.textBaseline = c.baseline;
+    const { x, y } = c;
     context.strokeStyle = "rgba(255,255,255,.95)";
     context.strokeText(c.text, x, y);
     context.fillStyle = CALLOUT_COLOR;
