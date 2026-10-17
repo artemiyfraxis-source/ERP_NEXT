@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime
 from uuid import UUID, uuid4
 
@@ -351,6 +352,24 @@ class SqlAlchemyOperationCardRepository:
     def get(self, source_id: str) -> OperationCardTemplate | None:
         row = self.session.get(OperationCardTemplateRow, source_id)
         return self._domain(row) if row is not None else None
+
+    def matching(self, ids: Iterable[str], codes: Iterable[str]) -> list[OperationCardTemplate]:
+        """The templates with one of the ids or codes, in the order of `list` (how a build picks a card by code) —
+        what the live cards of the ETKs being read need, without parsing the whole library."""
+        ids, codes = list(ids), list(codes)
+        if not ids and not codes:
+            return []
+        rows = self.session.scalars(
+            select(OperationCardTemplateRow)
+            .where(or_(OperationCardTemplateRow.id.in_(ids), OperationCardTemplateRow.code.in_(codes)))
+            .order_by(
+                OperationCardTemplateRow.category,
+                OperationCardTemplateRow.code,
+                OperationCardTemplateRow.side,
+                OperationCardTemplateRow.id,
+            )
+        )
+        return [self._domain(row) for row in rows]
 
     def edit(self, code: str, edit: OperationRecordEdit, *, changed_at: datetime, changed_by: str) -> int:
         """One record = one operation code (SUPPLYMAP tcRecordsByCode_): the edit lands on every (A)/(B) block of the

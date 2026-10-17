@@ -11,10 +11,12 @@ from uuid import UUID
 from .application import UnitOfWork
 from .connector_housings import attach_housings
 from .etk_builder import attach_route, fill_generator_chain
+from .etk_live import live_document, load_templates
 from .etk_parts import EtkLot, EtkLots, attach_parts
 from .harness import application as harness
 from .harness.application import HarnessNotFound
 from .kitsets import Kitset, project_key
+from .operation_cards import OperationCardTemplate
 from .project_cards import ProjectTechcard, TechcardStatus
 
 # The lots handed to the shop per (project, item index) as the ETK names them — the fulfillment read port
@@ -60,9 +62,13 @@ def card_lots(uow: Any, cards: Sequence[ProjectTechcard], issued: IssuedLots | N
 
 def card_view(
     card: ProjectTechcard, identify: Callable[[str], str] | None = None, lots: EtkLots | None = None,
+    templates: Sequence[OperationCardTemplate] = (),
 ) -> dict[str, Any]:
     """The card as the screens read it: the document enriched with parts (ГРН by the current `lots` bindings),
-    housings and the route scheme."""
+    housings and the route scheme; operation cards nobody edited by hand come from their `templates` as they are now
+    (etk_live), each operation says where its card came from."""
+    document = live_document(card.document, manual_keys=card.manual_operation_keys, templates=templates,
+                             built_at=card.updated_at)
     return {
         "id": str(card.id),
         "version": card.version,
@@ -73,7 +79,7 @@ def card_view(
         "deadline": card.deadline.isoformat() if card.deadline else None,
         "status": card.status.value,
         "revision": card.revision,
-        "document": attach_route(attach_housings(attach_parts(fill_generator_chain(card.document), identify, lots))),
+        "document": attach_route(attach_housings(attach_parts(fill_generator_chain(document), identify, lots))),
         "manual_operation_keys": list(card.manual_operation_keys),
         "created_at": card.created_at.isoformat(),
         "updated_at": card.updated_at.isoformat(),
@@ -85,9 +91,11 @@ def card_views(
     uow: Any, cards: Sequence[ProjectTechcard], identify: Callable[[str], str] | None = None,
     issued: IssuedLots | None = None,
 ) -> list[dict[str, Any]]:
-    """`card_view` of several cards with their current ГРН bindings read in one go (`card_lots`)."""
+    """`card_view` of several cards with their current ГРН bindings (`card_lots`) and the library templates their
+    operations name read in one go."""
     lots = card_lots(uow, cards, issued) if cards else {}
-    return [card_view(card, identify, lots.get(card.id)) for card in cards]
+    templates = load_templates(getattr(uow, "operation_cards", None), [card.document for card in cards])
+    return [card_view(card, identify, lots.get(card.id), templates) for card in cards]
 
 
 def _item_index(project: str, item: str) -> str:

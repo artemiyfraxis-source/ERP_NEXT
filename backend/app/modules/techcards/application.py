@@ -21,6 +21,9 @@ from .operation_cards import (
     parse_operation_template,
 )
 from .etk_builder import _route_ops, build_etk
+from .etk_live import (
+    VIEW_KEYS, fresh_card, load_templates, seen_versions, stamp_templates, template_for, template_record,
+)
 from .domain.route import RouteError, parse_route, route_json, route_totals
 from .project_cards import operation_key
 from .scheme_corrections import EVENT as SCHEME_CORRECTED, scheme_correction
@@ -101,6 +104,9 @@ class AutoBuildProjectTechcardCommand(ChangeProjectTechcardCommand):
 class EditTechcardOperationCommand(ChangeProjectTechcardCommand):
     operation_key: str
     operation: dict[str, Any]
+    # «Сохранить также в шаблон»: the edited card goes into the operation's template too (every ETK with this
+    # operation shows it), and the operation stays live — it follows its template, not a hand-edited copy.
+    to_template: bool = False
 
 
 @dataclass(frozen=True)
@@ -256,13 +262,14 @@ def auto_build_project_techcard(command: AutoBuildProjectTechcardCommand, uow: U
         metadata = uow.operation_cards.metadata()
         if metadata is None:
             raise TechcardValidationError("Библиотека операционных карт не загружена")
+        library = uow.operation_cards.list()
         try:
-            document = build_etk(
+            document = stamp_templates(build_etk(
                 command.config,
-                uow.operation_cards.list(),
+                library,
                 operation_library_commit=metadata["source_commit"],
                 technology_source=command.technology_source,
-            )
+            ), library)
         except ValueError as error:
             raise TechcardValidationError(str(error)) from error
         updated = current.rebuild(_keep_hand_route(current.document, document), command.now)
@@ -332,9 +339,12 @@ def import_issued_techcard(command: ImportIssuedTechcardCommand, uow: UnitOfWork
         return issued
 
 
-def _edited_operation(operation: dict[str, Any], actor: Actor, now: datetime) -> dict[str, Any]:
+def _edited_operation(operation: dict[str, Any], actor: Actor, now: datetime, *, stamp: bool = True) -> dict[str, Any]:
     """SUPPLYMAP TcBuild.gs etkApplyOpEdit_: the operation's card (steps, tooling, safety, defects) goes through the
-    same normalization as a library record; the operation is stamped as edited (at, by). The card name stays."""
+    same normalization as a library record; the operation is stamped as edited (at, by) — not when the edit goes into
+    the template too (`stamp` False: the operation stays live). The card name stays; the view-only keys of the read
+    (`card_source`…) are not stored."""
+    operation = {key: value for key, value in operation.items() if key not in VIEW_KEYS and (stamp or key != "edited")}
     card = operation.get("card")
     if not isinstance(card, dict):
         raise TechcardValidationError(
@@ -353,7 +363,7 @@ def _edited_operation(operation: dict[str, Any], actor: Actor, now: datetime) ->
             "steps": [{**step.__dict__, "tolerance": "" if step.tolerance == "-" else step.tolerance} for step in record.steps],
             "tooling": [tool.__dict__ for tool in record.tooling],
         },
-        "edited": {"at": now.strftime("%d.%m.%Y %H:%M"), "by": actor.name},
+        **({"edited": {"at": now.strftime("%d.%m.%Y %H:%M"), "by": actor.name}} if stamp else {}),
     }
 
 
@@ -377,18 +387,58 @@ def discard_project_techcard_draft(command: ChangeProjectTechcardCommand, uow: U
         return updated
 
 
+def _card_to_template(
+    current: ProjectTechcard, command: EditTechcardOperationCommand, card: dict[str, Any], uow: UnitOfWork,
+) -> dict[str, Any]:
+    """«Сохранить также в шаблон»: the edited card written into the operation's template (one record per operation
+    code — every (A)/(B) block of it, as «Шаблоны техкарт» saves it), in the same unit of work. What the technologist
+    left as shown goes back with the template's placeholders (etk_live.template_record). Returns the ETK document
+    stamped with the template versions its cards were filled from before the edit, so every operation of this
+    template — this one included — is filled anew from the edited template on read."""
+    document = current.document or {}
+    stored = next(item for item in document.get("operations") or [] if operation_key(item) == command.operation_key)
+    templates = load_templates(uow.operation_cards, [document])
+    template = template_for(stored, {item.source_id: item for item in templates}, templates)
+    if template is None:
+        raise TechcardValidationError("У операции нет шаблона в библиотеке — сохранить правку в шаблон нельзя")
+    # What the template gives this operation now: what the technologist left of it goes back with the placeholders.
+    filled = fresh_card(document, command.operation_key, templates)
+    try:
+        edit = normalize_record_edit(template_record(template, filled, card))
+    except ValueError as error:
+        raise TechcardValidationError(str(error)) from error
+    uow.operation_cards.edit(template.code, edit, changed_at=command.now, changed_by=command.actor.name)
+    uow.audit.add(AuditEvent(
+        id=uuid4(),
+        aggregate_id=UUID("00000000-0000-0000-0000-000000000018"),
+        event_type="techcards.operation_record_edited",
+        actor=command.actor,
+        occurred_at=command.now,
+        details={"code": template.code, "steps": str(len(edit.steps)), "tooling": str(len(edit.tooling)),
+                 "from_etk": f"{current.project} {current.item_index}"},
+    ))
+    source = document.get("source") if isinstance(document.get("source"), dict) else {}
+    return {**document, "source": {**source, "templates": seen_versions(document, templates, current.updated_at)}}
+
+
 def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
-        operation = _edited_operation(command.operation, command.actor, command.now)
-        updated = current.edit_operation(command.operation_key, operation, command.now)
+        operation = _edited_operation(command.operation, command.actor, command.now, stamp=not command.to_template)
+        updated = current.edit_operation(command.operation_key, operation, command.now, live=command.to_template)
+        reason = _edit_reason(operation)
+        if command.to_template:
+            stamped = _card_to_template(current, command, operation["card"], uow)
+            updated = replace(updated, document={**updated.document, "source": stamped["source"]})
+            reason = f"{reason} — и в шаблон"
         uow.techcards.save(updated)
         if updated.revision > current.revision:
-            uow.techcards.add_revision(_revision(updated, _edit_reason(operation), command.actor, command.now))
+            uow.techcards.add_revision(_revision(updated, reason, command.actor, command.now))
         uow.audit.add(AuditEvent(
             id=uuid4(), aggregate_id=updated.id, event_type="techcards.operation_edited",
             actor=command.actor, occurred_at=command.now,
-            details={"operation_key": command.operation_key, "revision": updated.revision},
+            details={"operation_key": command.operation_key, "revision": updated.revision,
+                     **({"to_template": True} if command.to_template else {})},
         ))
         uow.commit()
         return updated

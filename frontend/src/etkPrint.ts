@@ -11,6 +11,7 @@ import {
 } from "./etkDraw";
 import { ETK_TOOLING_SECTIONS, etkOperationName, solderMode, toolingSections } from "./etkOperation";
 import { formatDateTime, unitLabel } from "./format";
+import { etkCardSourceNote } from "./etkCardSource";
 import { etkPartSource, etkRouteLine, etkRouteOf, etkSemiSource } from "./etkRoute";
 import { hasMarkSerial, markSerialList, markSerialText, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
@@ -201,7 +202,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     const time = numbered(rows(operation.time), (item) => [text(item.name), text(item.norm), ""]);
     return {
       title: `Операция ${text(operation.position || index + 1)}. ${etkOperationTitle(operation)}${operation.connector ? ` — ${text(operation.connector)}` : ""}`,
-      subtitle: "",
+      subtitle: etkCardSourceNote({ card_source: text(operation.card_source), card_changed_at: text(operation.card_changed_at) }),
       blocks: [
         ...head(kit, revision, text(operation.code)),
         ...paramsTable(operation),

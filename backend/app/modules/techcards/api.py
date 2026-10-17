@@ -132,6 +132,8 @@ class AutoBuildTechcardPayload(VersionPayload):
 
 class EditOperationPayload(VersionPayload):
     operation: dict[str, Any]
+    # «Сохранить также в шаблон» — правка уходит и в шаблон операции (нужна правка «Шаблонов техкарт»).
+    to_template: bool = False
 
 
 class RoutePayload(VersionPayload):
@@ -790,6 +792,8 @@ def edit_project_etk_operation(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
     etk: Annotated[EtkCards, Depends(etk_cards)],
 ) -> dict:
+    if payload.to_template and not section_allowed(principal, ("erptctpl",), "edit"):
+        raise HTTPException(status_code=403, detail="Сохранить правку в шаблон: раздел «Шаблоны техкарт» открыт вам только на просмотр.")
     card = _run(lambda: edit_project_operation(EditTechcardOperationCommand(
         card_id=card_id,
         expected_version=payload.version,
@@ -797,6 +801,7 @@ def edit_project_etk_operation(
         now=now,
         operation_key=operation_key,
         operation=payload.operation,
+        to_template=payload.to_template,
     ), uow_factory()))
     return etk.one(card)
 

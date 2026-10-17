@@ -131,7 +131,12 @@ class ProjectTechcard:
             issued_at=now, updated_at=now, version=self.version + 1,
         )
 
-    def edit_operation(self, key: str, operation: dict[str, Any], now: datetime) -> ProjectTechcard:
+    def edit_operation(
+        self, key: str, operation: dict[str, Any], now: datetime, *, live: bool = False,
+    ) -> ProjectTechcard:
+        """A hand edit of one operation — a new revision. The operation is kept through rebuilds as edited
+        (`manual_operation_keys`); `live` — the edit went into the template too, so the operation follows its template
+        again (etk_live) and leaves the hand-edited ones."""
         if self.document is None:
             raise TechcardValidationError("Электронная техкарта ещё не собрана")
         if self.status is not TechcardStatus.ISSUED:
@@ -149,7 +154,10 @@ class ProjectTechcard:
         document["operations"] = operations
         return replace(
             self, document=document, revision=self.revision + 1,
-            manual_operation_keys=tuple(dict.fromkeys((*self.manual_operation_keys, key))),
+            manual_operation_keys=(
+                tuple(item for item in self.manual_operation_keys if item != key) if live
+                else tuple(dict.fromkeys((*self.manual_operation_keys, key)))
+            ),
             version=self.version + 1, updated_at=now,
         )
 
