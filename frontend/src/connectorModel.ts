@@ -9,12 +9,14 @@
 // Серия без шаблона (или без размеров с чертежа) модели не получает — галерея пишет «модель не сверена» и показывает
 // только вид со стороны проводов: лучше честный торец, чем похожий на другую серию «кубик».
 import {
-  slotSpans,
+  slotSpans, isPairBody, pairModel,
   EDGE, bodyColumns, bodyWidth, f, gradId, gradient, isDark, lockWidth, poly, prism, roofMark, shade, topFeature,
   type Box, type ConnectorHousing, type PictureView, type Pt,
 } from "./connectorArt";
 
-export const MODEL_TEMPLATES = ["slots", "plate", "frame"] as const;
+//  • hood / arms — пара JST SM (eSM): розетка SMR — кожух шире корпуса и рычаг замка с рифлением по центру крыши;
+//    вилка SMP — фланец, «нос» с упором замка и плечи крепления в панель по торцам ряда (connectorArt `pairModel`).
+export const MODEL_TEMPLATES = ["slots", "plate", "frame", "hood", "arms"] as const;
 
 /** Есть ли у корпуса модель, сверенная с чертежом серии. */
 export function hasModel(hs: ConnectorHousing): boolean {
@@ -27,6 +29,7 @@ export function hasModel(hs: ConnectorHousing): boolean {
  *  контактов, порядок контактов слева направо тот же, торец проводов — снизу, вверх ногами. */
 export function connectorModel(hs: ConnectorHousing, maxW: number, maxH: number, view: PictureView = "iso"): Box | null {
   if (!hasModel(hs) || !hs.body) return null;
+  if (hs.model === "hood" || hs.model === "arms") return isPairBody(hs.body) ? pairModel(hs, hs.body, maxW, maxH, view) : null;
   const b = hs.body, pitch = hs.pitch || 1, color = hs.color || "#efe6cf", dark = isDark(color);
   const W = bodyWidth(hs, b, pitch), H = b.h, L = b.len, ears = b.ears || 0;
   const below = hs.model === "slots" && hs.latch === "windows"; // грань с прорезями снизу — смотрим снизу

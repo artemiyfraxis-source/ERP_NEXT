@@ -545,8 +545,10 @@ function roofCaption(hs: EtkHousing): string {
     // Сторона пары по листу (hs.mate.lock): у вилки и розетки одной серии на крыше разное — плечо, упор или окно.
     const lock = hs.mate?.lock, ends = roof.at === "ends", two = roof.at === "pair";
     const what = lock === "catch" ? (ends ? "упоры замка по торцам" : "упор замка") : lock === "window" ? (two ? "окна замка" : "окно замка")
-      : ends ? "замок-плечи по торцам" : "защёлка";
-    return `, ${what} сверху${mark}`;
+      : ends ? "замок-плечи по торцам" : hs.body?.hood ? "рычаг замка" : "защёлка";
+    // JST SMP: плечи по торцам ряда — крепление в панель, не замок пары (eSM с. 1).
+    const wings = hs.body?.wings ? ", плечи крепления в панель по торцам" : "";
+    return `, ${what} сверху${wings}${mark}`;
   }
   if (roof?.kind === "slots") return `${roof.at === "keys" ? ", кнопки поляризации сверху" : ", окна фиксаторов сверху"}${mark}`;
   return mark || (hs.latch === "windows" ? ", окна фиксаторов снизу" : "");
