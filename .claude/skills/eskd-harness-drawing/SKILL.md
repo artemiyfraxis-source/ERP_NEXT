@@ -68,9 +68,10 @@ outside reviewer's OCR may misread glued numbers («10,5 мм²» = pin «1» + 
 - **Spec**: Документация (СБ, Э4) → Прочие изделия (connectors grouped by type, contacts with counts, sleeves) →
   Материалы (wires per mark+colour in metres, tubes in metres, braid) → marking sleeves. The СБ tables reference these
   positions — renumbering the spec means re-checking table 1.
-- **Drawing dimensions ≠ cut lengths.** The drawing gives ASSEMBLY dimensions (connector front face → junction, junction →
-  junction); the techcard gives CUT lengths — they add the wire inside the contact/crimp, strip and splice overlap and the
-  twist take-up (713К.4: branch 120 + trunk 30 on СБ, cut 130 / 137 in ERP — both right). Never rescale СБ dimensions from
-  ERP cut lengths. Only tube lengths, braid piece lengths (spec metres), marking distance and twist pitch go 1:1 into the set.
+- **Drawing dimensions ≠ ERP wire lengths.** The СБ gives ASSEMBLY dimensions (connector front face → junction, junction →
+  junction). The ERP generator form holds wire lengths (after twisting) and the techcard cut adds the twist allowance, the
+  wire inside the contact/crimp, strip and splice overlap. 713К.4 (owner 18.10, «чертёж не менять»): СБ branch 120 + trunk
+  А–Б 30 stay, while ERP form says 130 (X1/X2) / 137 (X3) and cuts 130–140. Never rescale СБ dimensions from ERP lengths
+  unless the owner gives new assembly dimensions. Only tube lengths, braid piece lengths (spec metres), marking distance and twist pitch go 1:1 into the set.
 - **Agreed deviations** are the owner's call (713К.4: НВ4 0,5 in SYM-001T-P0.6) — state them in TT, never «fix» them.
 - **3D connector pictures** are not used on drawings; ETK/ERP keep their own sketches.
