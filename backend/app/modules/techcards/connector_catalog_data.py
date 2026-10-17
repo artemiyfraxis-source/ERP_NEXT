@@ -232,9 +232,22 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
             2.5, rows=2, order="col", start="TR", latch="mark", conf="high",
             src=DF1B_SRC.format("Double Row In-line Plug (Simple Lock Type)"),
             note="по каталогу Hirose DF1B: у DF1BA на торце проводов 1, 3, 5 справа у грани с меткой контакта 1, 2, 4, 6 под ними — 1 справа вверху"),
-    # JAE
-    _family("jae-fis", "JAE FI-S", r"^FI-S(\d+)S$", 1.25, latch="ramp", color="#b9c0c6", note=UNCHECKED),
-    _family("jae-fir", "JAE FI-R", r"^FI-RE(\d+)HL$", 0.5, latch="ramp", color="#b9c0c6", note=UNCHECKED),
+    # JAE — housing drawings from products.jae.com (product records → drawingSj PDF, third-angle projection), read
+    # 17.10.2026. FI-S — SJ031451 rev. 4 «FI-S※※S HOUSING»: the right-side view puts the 1.8 mm block at the face of the
+    # front view (the wire end, the thin 1.32 mm part mates into the header); that face carries the contact numbers in
+    # raised letters (NOTE 1) — «N» at the left, «1» at the right — with the top view (the face with a window over every
+    # contact) above it. The housing has no latch (friction lock), so the face cue is the window face: up -> contact 1
+    # on the RIGHT.
+    _family("jae-fis", "JAE FI-S", r"^FI-S(\d+)S$", 1.25, start="TR", color="#b9c0c6", conf="high",
+            src="JAE SJ031451 (FI-S※※S Housing)",
+            note="по чертежу JAE SJ031451: номера контактов отлиты на торце проводов, «1» справа при грани с окнами сверху; замка нет — гранью с окнами вверх контакт 1 справа"),
+    # FI-R — SJ103279 rev. 3 «FI-RE※※HL»: the main view is the top face (the windows over the contacts, the 0.5 mm comb of
+    # the mating tongue at its bottom, the lock buttons at the rear ends); the view above it is the wire end with the top
+    # face at its lower edge: NO.1 top-left, NO.2 under it half a pitch on, N top-right, N-1 under it — two staggered rows.
+    # Turned top face up: 1 bottom-RIGHT, 2 above it, the columns run right to left (odd contacts in the lower row).
+    _family("jae-fir", "JAE FI-R", r"^FI-RE(\d+)HL$", 0.5, rows=2, order="col", start="BR", latch="ramp",
+            color="#b9c0c6", conf="high", src="JAE SJ103279 (FI-RE※※HL)",
+            note="по чертежу JAE SJ103279: на торце проводов два ряда в шахматку, NO.1 и нечётные — в ряду дальше от верхней грани; верхней гранью вверх — 1 справа внизу, 2 над ним"),
     # Connfly (drawings C-DS10xx: the female housing is drawn without a circuit-1 mark that can be placed)
     _family("connfly-ds1070", "Connfly DS1070", r"^I-DS1070-SC[A-Z](\d{2})$", 2.54, latch="ramp", note=UNCHECKED),
     _family("connfly-ds1072", "Connfly DS1072", r"^I-DS1072-SC[A-Z]0(\d{2})$", 3.96, latch="ramp", color="#e6e8ea", note=UNCHECKED),

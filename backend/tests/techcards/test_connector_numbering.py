@@ -98,7 +98,17 @@ CASES = [
     ("06R-JWPF-VSLE-D", "jst-jwpf-r", [[3, 2, 1], [6, 5, 4]], "lever", "high", "KiCad JST_JWPF"),
     ("03R-JWPF-VSLE-S", "jst-jwpf-r", [[3, 2, 1]], "lever", "high", "EasyEDA C2983882"),
     ("06T-JWPF-VSLE-D", "jst-jwpf", [[1, 3, 5], [2, 4, 6]], "lever", "low", ""),
+    # JAE housing drawings from products.jae.com (17.10.2026)
+    ("FI-S10S", "jae-fis", [[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]], "none", "high", "SJ031451"),
 ]
+
+
+def test_jae_fi_r_wire_end_is_two_staggered_rows_with_contact_1_bottom_right():
+    """JAE SJ103279: from the wire side, top face up — 1 bottom-right, 2 above it, odd contacts in the lower row."""
+    layout = housing_of("FI-RE21HL")
+    assert (layout["family"], layout["rows"], layout["cols"], layout["n"], layout["conf"]) == ("jae-fir", 2, 11, 21, "high")
+    assert "SJ103279" in layout["src"] and "сверить" not in layout["note"]
+    assert layout["grid"] == [[0] + list(range(20, 0, -2)), list(range(21, 0, -2))]
 
 
 @pytest.mark.parametrize(("article", "family", "grid", "latch", "conf", "source"), CASES, ids=[case[0] for case in CASES])
