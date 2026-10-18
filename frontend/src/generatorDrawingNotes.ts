@@ -55,7 +55,8 @@ export function zoneAnnotations(input: ZoneNotesInput): Pick<DrawingDocuments, "
   };
   topology.segments.forEach((segment) => { const [a, b] = ends(segment.id); sample(a, b); });
   const boxes = new Map<string, Box>();
-  designToScene(doc, "drawing").filter((o) => o.kind === "connector").forEach((o) => {
+  const scene = designToScene(doc, "drawing");
+  scene.filter((o) => o.kind === "connector").forEach((o) => {
     boxes.set(o.id, { x: o.x, y: o.y, width: o.width, height: o.height });
     taken.push({ x: o.x - 4, y: o.y - 4, width: o.width + 8, height: o.height + 8 });
   });
@@ -68,6 +69,8 @@ export function zoneAnnotations(input: ZoneNotesInput): Pick<DrawingDocuments, "
     const [a, b] = ends(segmentId);
     const geometry = dimensionGeometry(a, b, mode, offset);
     sample(geometry[1]!, geometry[2]!);
+    sample(a, geometry[1]!);
+    sample(b, geometry[2]!);
     const mid = { x: (geometry[1]!.x + geometry[2]!.x) / 2, y: (geometry[1]!.y + geometry[2]!.y) / 2 };
     const width = `${lengthMm} мм`.length * 7 + 6;
     taken.push({ x: mid.x - width / 2, y: mid.y - 22, width, height: 26 });
@@ -121,7 +124,7 @@ export function zoneAnnotations(input: ZoneNotesInput): Pick<DrawingDocuments, "
       // Жгут свободных концов — третья ветвь веера, размер от центра ветвления до концов проводов отвода, под нижним разъёмом В.
       dim(part.tail.segmentId, "horizontal", 34, visible(longest(members.flatMap((sp) => sp.tails.map((t) => t.lengthMm)))));
       // Подпись — справа от конца жгута, выше подписи зачистки хвоста (strip-callouts.ts): жгут подходит слева сверху.
-      text({ x: tip.x + 14, y: tip.y - 32 }, `Своб. концы от ${label}`, 12);
+      text({ x: tip.x + 14, y: tip.y - 40 }, `Своб. концы от ${label}`, 12);
     }
     // Точка «Б» — на нижней кромке зоны, у общей трубки («ТУТ на месте Б» по КД).
     if (tube) {
@@ -133,61 +136,128 @@ export function zoneAnnotations(input: ZoneNotesInput): Pick<DrawingDocuments, "
     }
   });
 
-  // Выноски оболочек: одинаковые на нескольких ветвях — одна выноска «Трубка ТТК 8/2, 3 места» с линиями к каждому месту (СБ).
-  // Текст — на лучшем месте по цене: наложение на занятое и на линии — дорого, выноска поперёк линий — дорого, длинные
-  // выноски и сторона против «наружу от ствола» — немного.
+  // Выноски оболочек. Одинаковые на нескольких ветвях — одна выноска «Трубка ТТК 8/2, 3 места» с короткими прямыми линиями к
+  // каждому месту из общей точки на краю подписи (веер). Линии не пересекают ветви, провода, размеры, другие линии и подписи:
+  // подпись ставится туда, откуда чистые линии идут к наибольшему числу мест (между ветвями — в просвете между разъёмами);
+  // места, до которых из этой точки чисто не достать (ветвь закрыта соседней), берёт следующая подпись той же оболочки.
+  const wirePaths = scene.filter((o) => o.kind === "wire" && (o.points?.length ?? 0) > 1).map((o) => o.points as readonly Point[]);
+  const branchSegs: Array<[Point, Point]> = topology.segments.map((segment) => ends(segment.id));
+  const wireSegs: Array<[Point, Point]> = wirePaths.flatMap((path) => path.slice(1).map((p, i): [Point, Point] => [path[i]!, p]));
+  const placedLeaders: Array<[Point, Point]> = [];
+  // Сетка точек занятых линий (участки, размеры): проверка «рядом ли линия» — по соседним ячейкам, а не по всем точкам.
+  const CELL = 12;
+  const grid = new Map<string, Point[]>();
+  lines.forEach((l) => { const key = `${Math.floor(l.x / CELL)},${Math.floor(l.y / CELL)}`; grid.set(key, [...(grid.get(key) ?? []), l]); });
+  const lineNear = (x0: number, y0: number, x1: number, y1: number, skip?: Point, skipR = 0) => {
+    for (let cx = Math.floor(x0 / CELL); cx <= Math.floor(x1 / CELL); cx++) for (let cy = Math.floor(y0 / CELL); cy <= Math.floor(y1 / CELL); cy++) {
+      const cell = grid.get(`${cx},${cy}`);
+      if (cell?.some((l) => l.x >= x0 && l.x <= x1 && l.y >= y0 && l.y <= y1 && !(skip && Math.hypot(l.x - skip.x, l.y - skip.y) < skipR))) return true;
+    }
+    return false;
+  };
+  // Узлы (вход, выход зоны, концы жгута, сход ветвей) — с запасом под подписи зачистки, которые рисует поле (strip-callouts.ts).
+  topology.nodes.filter((n) => !n.connectorId).forEach((n) => { const at = nodeAt(n.id); taken.push({ x: at.x + 4, y: at.y - 30, width: 104, height: 26 }); });
+  const leaderThrough = (box: Box) => placedLeaders.some(([a, b]) => {
+    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 4));
+    for (let i = 0; i <= steps; i++) {
+      const x = a.x + ((b.x - a.x) * i) / steps, y = a.y + ((b.y - a.y) * i) / steps;
+      if (x > box.x - 2 && x < box.x + box.width + 2 && y > box.y - 2 && y < box.y + box.height + 2) return true;
+    }
+    return false;
+  });
+  const cross = (a: Point, b: Point, c: Point, d: Point) => {
+    const o = (p: Point, q: Point, r: Point) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+    const d1 = o(a, b, c), d2 = o(a, b, d), d3 = o(c, d, a), d4 = o(c, d, b);
+    return d1 * d2 < -1e-9 && d3 * d4 < -1e-9;
+  };
+  const distToSeg = (p: Point, a: Point, b: Point) => {
+    const dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+    return Math.hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+  };
+  const near = (a: Point, b: Point, within: number) => Math.hypot(a.x - b.x, a.y - b.y) < within;
+  /** Линия K → P чистая: не пересекает ветви и провода (кроме как у своей точки P), размеры, чужие линии и занятые места. */
+  const clean = (k: Point, p: Point, own: string) => {
+    const cut = (from: Point, to: Point) => { const len = Math.hypot(to.x - from.x, to.y - from.y) || 1, t = Math.max(0, 1 - 2 / len); return { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t }; };
+    const end = cut(k, p);
+    if (branchSegs.some(([a, b]) => cross(k, end, a, b))) return false;
+    // Провода идут пучком по ветви: у самой точки P (в пределах пучка) линия подходит к ним сбоку — это не пересечение.
+    if (wireSegs.some(([a, b]) => cross(k, end, a, b) && distToSeg(p, a, b) > 12)) return false;
+    if (placedLeaders.some(([a, b]) => cross(k, end, a, b))) return false;
+    const steps = Math.max(1, Math.ceil(Math.hypot(end.x - k.x, end.y - k.y) / 6));
+    for (let i = 0; i <= steps; i++) {
+      const q = { x: k.x + ((end.x - k.x) * i) / steps, y: k.y + ((end.y - k.y) * i) / steps };
+      if (!near(q, p, 14) && taken.some((box) => q.x > box.x && q.x < box.x + box.width && q.y > box.y && q.y < box.y + box.height)) return false;
+      if (i > 1 && lineNear(q.x - 3, q.y - 3, q.x + 3, q.y + 3, p, 16)) return false;
+    }
+    return true;
+  };
+  const edgePoint = (box: Box, from: Point): Point => ({ x: Math.max(box.x, Math.min(from.x, box.x + box.width)), y: Math.max(box.y, Math.min(from.y, box.y + box.height)) });
   const groups = new Map<string, Array<(typeof callouts)[number]>>();
   callouts.forEach((callout) => groups.set(callout.text, [...(groups.get(callout.text) ?? []), callout]));
-  groups.forEach((members) => {
-    const many = members.length > 1;
-    const text = many ? `${members[0]!.label}, ${members.length} ${members.length < 5 ? "места" : "мест"}` : members[0]!.text;
-    const width = text.length * CHAR + 4;
-    const geometry = members.map((m) => {
-      const [a, b] = ends(m.segmentId);
-      const length = Math.hypot(b.x - a.x, b.y - a.y) || 1, dir = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
-      const at = (t: number) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-      const away = Math.abs(at(m.at).y - trunkY) > 8 ? Math.sign(at(m.at).y - trunkY) : -1;
-      let normal = { x: -dir.y, y: dir.x };
-      if (Math.abs(normal.y) < 0.2 ? normal.x < 0 : normal.y * away < 0) normal = { x: -normal.x, y: -normal.y };
-      return { at, normal, t0: m.at };
-    });
-    const nearOf = (box: Box, from: Point) => ({ x: Math.max(box.x, Math.min(from.x, box.x + box.width)), y: from.y < box.y ? box.y : from.y > box.y + box.height ? box.y + box.height : from.y });
-    const legCost = (box: Box, from: Point) => {
-      const near = nearOf(box, from);
-      let crossings = 0;
-      const steps = Math.max(1, Math.ceil(Math.hypot(near.x - from.x, near.y - from.y) / 5));
-      for (let i = 3; i <= steps; i++) {
-        const p = { x: from.x + ((near.x - from.x) * i) / steps, y: from.y + ((near.y - from.y) * i) / steps };
-        if (lines.some((l) => Math.hypot(l.x - p.x, l.y - p.y) < 5 && Math.hypot(l.x - from.x, l.y - from.y) > 12)) crossings++;
-      }
-      return crossings * 25 + Math.hypot(near.x - from.x, near.y - from.y) * 0.15;
-    };
-    let best: { box: Box; cost: number } | null = null;
-    geometry.forEach((g, primary) => {
-      for (const flip of [1, -1]) {
-        for (const d of [20, 34, 50, 68, 90, 116]) {
-          for (const shift of [0, 0.1, -0.1, 0.2, -0.2, 0.3, -0.3, 0.4, -0.4]) {
-            const t = Math.min(0.97, Math.max(0.03, g.t0 + shift));
-            const from = g.at(t), nx = g.normal.x * flip, ny = g.normal.y * flip, q = { x: from.x + nx * d, y: from.y + ny * d };
-            const box: Box = { x: nx < -0.35 ? q.x - width : nx < 0.35 ? q.x - width / 2 : q.x, y: ny > 0.35 ? q.y : ny < -0.35 ? q.y - LINE : q.y - LINE / 2, width, height: LINE };
-            let cost = taken.filter((other) => overlaps(box, other)).length * 100 +
-              lines.filter((p) => p.x > box.x - 3 && p.x < box.x + box.width + 3 && p.y > box.y - 3 && p.y < box.y + box.height + 3).length * 3 +
-              Math.abs(shift) * 30 + (flip < 0 ? 12 : 0) + (primary > 0 ? 6 : 0);
-            geometry.forEach((other, i) => { cost += legCost(box, other.at(i === primary ? t : other.t0)); });
-            if (!best || cost < best.cost) best = { box, cost };
-          }
+  const REACH = 230;
+  const T_STEPS = [0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9];
+  groups.forEach((all) => {
+    let rest = [...all];
+    while (rest.length) {
+      const memberSeg = rest.map((m) => ends(m.segmentId));
+      const mids = rest.map((m, i) => ({ x: memberSeg[i]![0].x + (memberSeg[i]![1].x - memberSeg[i]![0].x) * m.at, y: memberSeg[i]![0].y + (memberSeg[i]![1].y - memberSeg[i]![0].y) * m.at }));
+      const cx = mids.reduce((s, p) => s + p.x, 0) / mids.length, cy = mids.reduce((s, p) => s + p.y, 0) / mids.length;
+      const spread = Math.max(120, ...mids.map((p) => Math.hypot(p.x - cx, p.y - cy)));
+      let best: { box: Box; text: string; picked: Array<{ index: number; p: Point }>; k: Point; cost: number } | null = null;
+      const textFor = (n: number, one: (typeof callouts)[number]) => (n > 1 ? `${one.label}, ${n} ${n < 5 ? "места" : "мест"}` : one.text);
+      for (let gx = cx - spread - 120; gx <= cx + spread + 120; gx += 26) {
+        for (let gy = cy - spread - 100; gy <= cy + spread + 100; gy += 16) {
+          // Размер подписи зависит от числа мест; оцениваем по самому длинному варианту (все места).
+          // Только рядом с местами: короткие линии (дальше REACH от ближайшего места подпись не ставится).
+          if (!mids.some((m) => Math.hypot(m.x - gx, m.y - gy) < REACH)) continue;
+          const width = textFor(rest.length, rest[0]!).length * CHAR + 4;
+          const box: Box = { x: gx, y: gy, width, height: LINE };
+          if (taken.some((other) => overlaps(box, other)) || leaderThrough(box)) continue;
+          // Пучок проводов шире оси участка (до 10 px в сторону) — подпись держится от линий на этот запас.
+          if (lineNear(box.x - 10, box.y - 12, box.x + box.width + 10, box.y + box.height + 12)) continue;
+          // Места, до которых из общей точки k на краю подписи чистая линия: по одной точке на ветви (ближайшая чистая).
+          const reach = (at: Box) => {
+            const k = edgePoint(at, { x: cx, y: cy });
+            const found: Array<{ index: number; p: Point; len: number }> = [];
+            rest.forEach((m, index) => {
+              const [a, b] = memberSeg[index]!;
+              let bestAnchor: { p: Point; len: number } | null = null;
+              for (const t of [m.at, ...T_STEPS]) {
+                const p = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+                const len = Math.hypot(p.x - k.x, p.y - k.y);
+                if (len < 4 || (bestAnchor && len >= bestAnchor.len)) continue;
+                if (clean(k, p, m.segmentId)) bestAnchor = { p, len };
+              }
+              if (bestAnchor) found.push({ index, ...bestAnchor });
+            });
+            return { k, found };
+          };
+          // Подпись по ширине своего числа мест: сначала оценка по самой длинной, потом проверка по точной ширине.
+          const rough = reach(box);
+          if (!rough.found.length) continue;
+          const exact: Box = { ...box, width: textFor(rough.found.length, rest[rough.found[0]!.index]!).length * CHAR + 4 };
+          if (taken.some((other) => overlaps(exact, other))) continue;
+          const final = reach(exact);
+          if (final.found.length !== rough.found.length) continue;
+          const picked = final.found, k = final.k;
+          if (!picked.length) continue;
+          const cost = -picked.length * 1000 + picked.reduce((s, x) => s + x.len, 0);
+          if (!best || cost < best.cost) best = { box: exact, text: "", picked, k, cost };
         }
       }
-    });
-    if (!best) return;
-    const { box } = best as { box: Box };
-    taken.push(box);
-    geometry.forEach((g) => {
-      const from = g.at(g.t0), near = nearOf(box, from);
-      graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "line", points: [{ x: Math.round(from.x), y: Math.round(from.y) }, { x: Math.round(near.x), y: Math.round(near.y) }],
-        color: LEADER, width: 1 });
-    });
-    graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "text", points: [{ x: Math.round(box.x + 2), y: Math.round(box.y + LINE - 3) }], text, fontSize: 12, color: NOTE });
+      if (!best) { rest = []; break; }
+      const chosen = best.picked.map((x) => x.index);
+      const label = textFor(chosen.length, rest[chosen[0]!]!);
+      const box = best.box;
+      taken.push(box);
+      best.picked.forEach(({ p }) => {
+        const from = best!.k;
+        placedLeaders.push([from, p]);
+        graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "line", points: [{ x: Math.round(from.x), y: Math.round(from.y) }, { x: Math.round(p.x), y: Math.round(p.y) }], color: LEADER, width: 1 });
+      });
+      graphics.push({ id: `gen-g${graphics.length + 1}`, view: "drawing", kind: "text", points: [{ x: Math.round(box.x + 2), y: Math.round(box.y + LINE - 3) }], text: label, fontSize: 12, color: NOTE });
+      rest = rest.filter((_, index) => !chosen.includes(index));
+    }
   });
 
   return { showDimensions: true, dimensions, graphics, hideObjectIndices: true };
