@@ -20,7 +20,7 @@ import {
 import { TcTemplateSheets } from "./TcTemplateSheets";
 import { AddColumnButton, filledIn, ownCellEdit, useColumnRemoval } from "./CustomColumn";
 import { groupModels, operationField } from "./equipmentModel";
-import { OP_TYPES } from "./opFields";
+import { CYCLE_COLUMNS, changedFields, cycleTimes, OP_TYPES, opFieldKey, timeByLength, withCycleTimes } from "./opFields";
 
 const CATEGORY_ORDER = [...new Set([...RECORD_CATEGORIES.map(([, name]) => name), "Прочее"])];
 // Где стороны (A)/(B) расходятся, чья сторона — запись (backend operation_cards.RECORD_SIDE_PICK).
@@ -51,7 +51,6 @@ type OpEditing = { canEdit: boolean; equipment: TechOperationRecord[] };
 
 const findKey = (pattern: RegExp) => (fields: Record<string, string>) => Object.keys(fields).find((key) => pattern.test(key.trim()));
 const TIME_KEY = findKey(/^время операции/i);
-const PREP_KEY = findKey(/^время подготовки/i);
 
 /** Ячейка поля строки БД.ОП: старое значение сверяется, как в окне записи; поля нет у строки — не правится. */
 function opCell(keyOf: (fields: Record<string, string>) => string | undefined, options?: (entry: OperationEntry) => DataCellOption[]): DataCellEdit<OperationEntry> {
@@ -66,6 +65,24 @@ function opCell(keyOf: (fields: Record<string, string>) => string | undefined, o
     options,
   };
 }
+
+/** Ячейка циклограммы: вместе с ней пишутся пересчитанные «Время Чел» / «Время машины» / «Время операции» (как
+    формулы листа). */
+function cycleCell(label: string): DataCellEdit<OperationEntry> {
+  const keyOf = (fields: Record<string, string>) => opFieldKey(fields, label);
+  return {
+    enabled: (entry) => Boolean(entry.record && keyOf(entry.record.fields)),
+    value: (entry) => (entry.record ? entry.record.fields[keyOf(entry.record.fields) ?? ""] ?? "" : ""),
+    save: async (entry, value) => {
+      const key = entry.record && keyOf(entry.record.fields);
+      if (!entry.record || !key) throw new Error("Нет строки БД.ОП");
+      const edits = changedFields(entry.record.fields, withCycleTimes({ ...entry.record.fields, [key]: value }));
+      if (edits.length) await referencesApi.editRecord(entry.record.id, edits);
+    },
+  };
+}
+
+const cycleSeconds = (value: number) => value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Варианты оборудования для колонки БД.ОП: модели БД.ОБ того типа, что идёт в эту колонку, плюс стоящее значение. */
 function equipmentChoices(equipment: TechOperationRecord[], column: string) {
@@ -87,13 +104,13 @@ function OperationsTable({ entries, onOpen, toolbar, own, editing }: { entries: 
   const seconds = (entry: OperationEntry) => entry.op?.tOp || entry.template?.norms?.operation_seconds || "";
   const can = Boolean(editing?.canEdit);
   const equipment = editing?.equipment ?? [];
-  const choices = useMemo(() => Object.fromEntries(["Машина", "Инструмент", "Апликаторы / модули"]
-    .map((column) => [column, equipmentChoices(equipment, column)])), [equipment]);
-  const equipColumn = (key: string, column: string, title: string): DataColumn<OperationEntry> => ({
-    key, title, value: (entry) => entry.op?.[column]?.trim() ?? "",
-    render: (entry) => entry.op?.[column]?.trim() ? <span className="db-clip" title={entry.op[column]}>{entry.op[column].trim()}</span> : <span className="cell-empty">—</span>,
-    edit: can ? opCell((fields) => (column in fields ? column : undefined), choices[column]) : undefined,
-  });
+  // «Инструмент» и «Апликаторы / модули» в таблице не показываем (владелец, 18.10: пустые) — привязка в карточке операции.
+  const machineChoices = useMemo(() => equipmentChoices(equipment, "Машина"), [equipment]);
+  const machineColumn: DataColumn<OperationEntry> = {
+    key: "machine", title: "Машина", value: (entry) => entry.op?.["Машина"]?.trim() ?? "",
+    render: (entry) => entry.op?.["Машина"]?.trim() ? <span className="db-clip" title={entry.op["Машина"]}>{entry.op["Машина"].trim()}</span> : <span className="cell-empty">—</span>,
+    edit: can ? opCell((fields) => ("Машина" in fields ? "Машина" : undefined), machineChoices) : undefined,
+  };
   const columns: DataColumn<OperationEntry>[] = [
     { key: "name", title: "Операция", value: (entry) => entry.name || recordCategory(entry.code) },
     { key: "code", title: "Код", value: (entry) => entry.code, render: (entry) => <span className="tr-code">{entry.code}</span> },
@@ -106,17 +123,30 @@ function OperationsTable({ entries, onOpen, toolbar, own, editing }: { entries: 
     { key: "steps", title: "Шагов", numeric: true, value: (entry) => entry.template?.steps ?? "" },
     { key: "controls", title: "Контролей", numeric: true, value: (entry) => entry.template ? entry.template.controls ?? 0 : "" },
     { key: "tooling", title: "Оснастки", numeric: true, value: (entry) => entry.template?.tooling ?? "" },
-    { key: "seconds", title: "Время, с", numeric: true, value: (entry) => seconds(entry),
-      render: (entry) => seconds(entry) ? seconds(entry)
-        : entry.template && entry.template.norms_known && !entry.template.norms ? <b className="danger-text">нет норм</b> : <span className="cell-empty">—</span>,
-      edit: can ? opCell(TIME_KEY) : undefined },
-    { key: "prep", title: "Подготовка, с", numeric: true, hidden: true, value: (entry) => entry.op?.tPrep ?? "", edit: can ? opCell(PREP_KEY) : undefined },
-    equipColumn("machine", "Машина", "Машина"),
-    equipColumn("tool", "Инструмент", "Инструмент"),
-    equipColumn("apl", "Апликаторы / модули", "Аппликаторы / модули"),
+    machineColumn,
     { key: "type", title: "Тип операции", value: (entry) => entry.op?.["Тип операции"]?.trim() ?? "",
       edit: can ? opCell((fields) => ("Тип операции" in fields ? "Тип операции" : undefined),
         () => [{ value: "", label: "не задано" }, ...OP_TYPES.map((type) => ({ value: type.value, label: `${type.value} — ${type.hint}` }))]) : undefined },
+    // Циклограмма (лист БД.ОП, владелец 18.10): открыта в таблице, правится в ячейках; «Время, с» считается из неё.
+    ...CYCLE_COLUMNS.map((item): DataColumn<OperationEntry> => ({
+      key: item.id === "prep" ? "prep" : `cycle:${item.id}`, title: item.title, hint: item.hint, numeric: true,
+      value: (entry) => (entry.op ? entry.op[opFieldKey(entry.op, item.label) ?? ""] ?? "" : ""),
+      edit: can ? cycleCell(item.label) : undefined,
+    })),
+    { key: "seconds", title: "Время, с", numeric: true, hint: "Из циклограммы: большее из ручных работ (взять + ручные + снять ПФ) и машины (ход × ходов)",
+      value: (entry) => seconds(entry),
+      render: (entry) => {
+        const cycle = entry.op ? cycleTimes(entry.op) : null;
+        const stored = seconds(entry);
+        if (cycle && Math.abs(cycle.operation - (Number(String(stored).replace(",", ".")) || 0)) > 0.005) {
+          return <b className="danger-text" title={`По циклограмме ${cycleSeconds(cycle.operation)} с — поправьте ячейку циклограммы`}>{stored || "—"}</b>;
+        }
+        if (entry.op && timeByLength(entry.op)) return <span className="muted" title="В ЭТК — по длине провода: большее из ручных работ и (длина / прокат + ход × ходов)">по длине</span>;
+        return stored ? stored
+          : entry.template && entry.template.norms_known && !entry.template.norms ? <b className="danger-text">нет норм</b> : <span className="cell-empty">—</span>;
+      },
+      // Есть циклограмма — время только из неё (как формула листа); нет — вводится руками.
+      edit: can ? { ...opCell(TIME_KEY), enabled: (entry) => Boolean(entry.record && TIME_KEY(entry.record.fields) && !cycleTimes(entry.record.fields)) } : undefined },
     { key: "template", title: "Шаблон ТК", filter: true, value: (entry) => entry.template ? "есть" : "нет шаблона",
       render: (entry) => entry.template ? <span className="muted">есть</span> : <StatusChip status="нет шаблона" tone="warning" /> },
     { key: "changed", title: "Правка", value: (entry) => entry.template?.changed_at ?? "",

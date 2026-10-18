@@ -759,15 +759,18 @@ def _output_norm(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
 
 
 def linear_seconds(timing: object, length_m: Decimal) -> Decimal | None:
-    """Время резки одной штуки «Погонной» операции по узлам станка (расчётный лист цеха, владелец 15.10.2026):
-    подача L / «Скорость проката» (м/с) + «Скорость работы инструмента» × «Кол-во операций инструмента». None — узлов
-    нет или подача не > 0: время, как раньше, из «Время операции». Ручные работы сюда не входят (лист их не прибавляет)."""
+    """Время одной штуки «Погонной» операции по циклограмме (расчётный лист цеха, владелец 15.10 и 18.10.2026): большее
+    из машины — подача L / «Скорость проката» (м/с) + «Скорость работы инструмента» × «Кол-во операций инструмента» —
+    и ручных работ (взять + работы + снять ПФ), как «Время операции» листа. None — узлов нет или подача не > 0: время,
+    как раньше, из «Время операции»."""
     if not isinstance(timing, Mapping):
         return None
     roll = _decimal(timing.get("rollSpeed"))
     if roll <= 0:
         return None
-    return length_m / roll + _decimal(timing.get("toolSeconds")) * _decimal(timing.get("toolOps"))
+    machine = length_m / roll + _decimal(timing.get("toolSeconds")) * _decimal(timing.get("toolOps"))
+    hands = sum((_decimal(timing.get(key)) for key in ("takeSeconds", "manualSeconds", "putSeconds")), Decimal(0))
+    return max(machine, hands)
 
 
 def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) -> list[dict[str, str]]:

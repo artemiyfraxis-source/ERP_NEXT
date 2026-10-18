@@ -34,7 +34,7 @@ export const OP_TYPES: Array<{ value: string; hint: string }> = [
 export const opTypeHint = (type: string) => OP_TYPES.find((item) => item.value === type.trim())?.hint ?? "";
 
 const ROLL_HINT = "Подача провода: время подачи = длина / скорость. В листе подписано «сек/м», считается как м/с.";
-export const NODES_NOTE = "Ручные работы — справочно: в расчётное время ЭТК не входят.";
+export const NODES_NOTE = "Время — большее из ручных работ (взять + работы + снять ПФ) и машины (ход инструмента × ходов; у погонной ещё длина / прокат).";
 
 // Колонки, которые не заполнены ни в одной строке или не несут смысла (владелец 14.10): на экране скрыты.
 const DEAD_EXACT = new Set(["программа", "провод", "разъем", "разъём", "инструкция", "отказы", "полуфабрикат"]);
@@ -90,21 +90,79 @@ function column(fields: Record<string, string>, prefix: string): string {
 
 const number = (value: string) => { const parsed = Number(String(value ?? "").trim().replace(",", ".")); return Number.isFinite(parsed) ? parsed : 0; };
 
-/** Время на штуку «Погонной» операции по узлам станка, как считает ЭТК: подача L / скорость проката + инструмент
- *  (время хода × ходы). null — тип не «Погонный» или скорость проката не задана: тогда время из «Время операции». */
-export function linearPiece(fields: Record<string, string>, lengthMm: number): { feed: number; tool: number; total: number } | null {
-  if (normBasis(column(fields, "тип операции")) !== "meter") return null;
-  const roll = number(column(fields, NODE_PREFIX.roll));
-  if (roll <= 0) return null;
-  const feed = Math.max(0, lengthMm) / 1000 / roll;
+/** Время на штуку «Погонной» операции, как считает ЭТК: большее из машины — подача L / скорость проката + инструмент
+ *  (время хода × ходы) — и ручных работ. null — тип не «Погонный» или скорость проката не задана: тогда время из
+ *  «Время операции». */
+export function linearPiece(fields: Record<string, string>, lengthMm: number): { feed: number; tool: number; hands: number; total: number } | null {
+  if (!timeByLength(fields)) return null;
+  const { roll, take, manual, put } = cycleNumbers(fields);
+  const feed = Math.max(0, lengthMm) / 1000 / number(roll);
   const tool = number(column(fields, NODE_PREFIX.tool)) * number(column(fields, NODE_PREFIX.toolOps));
-  return { feed, tool, total: feed + tool };
+  const hands = number(take) + number(manual) + number(put);
+  return { feed, tool, hands, total: Math.max(feed + tool, hands) };
+}
+
+/** Циклограмма строки БД.ОП (лист «Циклограмма операций», владелец 18.10): подготовка первой, затем ручные работы и узлы
+ *  станка. `label` — подпись поля карточки (spec), `title` — заголовок столбца таблицы. */
+export const CYCLE_COLUMNS: Array<{ id: string; label: string; title: string; hint?: string }> = [
+  { id: "prep", label: "Время подготовки", title: "Подготовка, с" },
+  { id: "take", label: "Ручные работы: взять ПФ", title: "Взять ПФ, с" },
+  { id: "manual", label: "Ручные работы", title: "Ручные, с" },
+  { id: "put", label: "Ручные работы: снять ПФ", title: "Снять ПФ, с" },
+  { id: "roll", label: "Скорость проката", title: "Прокат, м/с", hint: "Подача провода у погонной операции: время подачи = длина / прокат" },
+  { id: "tool", label: "Скорость работы инструмента", title: "Ход инстр., с", hint: "Скорость работы инструмента, с на ход" },
+  { id: "toolOps", label: "Кол-во операций инструмента", title: "Ходов", hint: "Кол-во операций инструмента на штуку" },
+];
+
+/** Ключ поля строки по подписи карточки (заголовки листа пишутся по-разному). */
+export function opFieldKey(fields: Record<string, string>, label: string): string | undefined {
+  return Object.keys(fields).find((key) => !OP_SCHEMA_KEYS.has(key) && spec(key)?.label === label);
+}
+
+const cycleValue = (fields: Record<string, string>, label: string) => fields[opFieldKey(fields, label) ?? ""] ?? "";
+const sheetNumber = (value: number) => value.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: false });
+
+const cycleNumbers = (fields: Record<string, string>) => Object.fromEntries(CYCLE_COLUMNS
+  .map((item) => [item.id, cycleValue(fields, item.label)])) as Record<string, string>;
+
+/** Погонная операция с прокатом: время зависит от длины провода — его считает ЭТК (`linearPiece`), не одна цифра. */
+export function timeByLength(fields: Record<string, string>): boolean {
+  return normBasis(column(fields, "тип операции")) === "meter" && number(cycleNumbers(fields).roll) > 0;
+}
+
+/** Время из циклограммы, как считает лист (сверено со всеми 139 строками БД.ОП): руки — взять ПФ + ручные + снять ПФ,
+ *  машина — ход инструмента × ходов, операция — большее из двух. Прокат у статичной/переменной не читается. null —
+ *  циклограмма пуста (время вводится руками) или время зависит от длины (`timeByLength`). */
+export function cycleTimes(fields: Record<string, string>): { human: number; machine: number; operation: number } | null {
+  if (timeByLength(fields)) return null;
+  const { take, manual, put, tool, toolOps } = cycleNumbers(fields);
+  if (![take, manual, put, tool, toolOps].some((value) => String(value ?? "").trim())) return null;
+  const human = number(take) + number(manual) + number(put);
+  const machine = number(tool) * number(toolOps);
+  return { human, machine, operation: Math.max(human, machine) };
+}
+
+/** Строка с пересчитанными «Время Чел» / «Время машины» / «Время операции» — как формулы листа после правки ячейки. */
+export function withCycleTimes(fields: Record<string, string>): Record<string, string> {
+  const times = cycleTimes(fields);
+  if (!times) return fields;
+  const next = { ...fields };
+  const put = (prefix: string, value: number) => {
+    const key = Object.keys(fields).find((item) => !OP_SCHEMA_KEYS.has(item) && norm(item).startsWith(prefix));
+    if (key) next[key] = sheetNumber(value);
+  };
+  put("время чел", times.human);
+  put("время машины", times.machine);
+  put("время операции", times.operation);
+  return next;
 }
 
 /** Поля строки по группам. Скрытые (мёртвые колонки, дубли схемы) не возвращаются; пустые группы тоже. */
 export function groupOpFields(fields: Record<string, string>): OpGroup[] {
   const type = Object.entries(fields).find(([key]) => spec(key)?.opType)?.[1] ?? "";
   const linear = normBasis(type) === "meter";
+  // Есть циклограмма — «Время операции» и «Время машины» считаются из неё, руками не правятся.
+  const fromCycle = Boolean(cycleTimes(fields));
   const groups = new Map<OpGroupId, OpField[]>();
   for (const [key, raw] of Object.entries(fields)) {
     if (OP_SCHEMA_KEYS.has(key)) continue;
@@ -113,7 +171,7 @@ export function groupOpFields(fields: Record<string, string>): OpGroup[] {
     const group: OpGroupId = found?.group ?? "other";
     const label = found?.label ?? headerLabel(key);
     const field: OpField = {
-      key, value: String(raw ?? ""), label, readOnly: found?.readOnly, opType: found?.opType, hint: found?.hint,
+      key, value: String(raw ?? ""), label, readOnly: found?.readOnly || (fromCycle && ["Время операции", "Время машины"].includes(label)), opType: found?.opType, hint: found?.hint,
       unit: found?.basisUnit ? timeUnit(type) : found?.unit,
       keep: linear && group === "nodes" && !label.startsWith("Ручные") && label !== "Расход на настройку",
     };

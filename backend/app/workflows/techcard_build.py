@@ -202,9 +202,11 @@ def enrich_marking(
 # «Погонная» операция БД.ОП (владелец 15.10.2026): время резки считается по узлам станка, как в расчётном листе цеха —
 # на штуку L / «Скорость проката» + «Скорость работы инструмента» × «Кол-во операций инструмента». «Скорость проката»
 # подписана в листе «сек/м», но делится на неё длина, т. е. это подача в м/с; ключ БД не переименовывается.
+# Циклограмма (владелец 18.10): время — большее из ручных работ (взять + работы + снять ПФ) и машины, как в листе.
 _LINEAR_COLUMNS = {
     "rollSpeed": "скорость проката", "toolSeconds": "скорость работы инструмента", "toolOps": "кол-во операций инструмента",
 }
+_MANUAL_COLUMNS = {"takeSeconds": "время ручных работ для взятия", "putSeconds": "время ручных работ для снятия"}
 
 
 def _column(fields: Mapping[str, Any], prefix: str) -> str:
@@ -221,7 +223,14 @@ def operation_linear_timing(fields: Mapping[str, Any]) -> dict[str, str] | None:
         return None
     timing = {name: _column(fields, prefix) for name, prefix in _LINEAR_COLUMNS.items()}
     roll = decimal_or_none(timing["rollSpeed"])
-    return timing if roll is not None and roll > 0 else None
+    if roll is None or roll <= 0:
+        return None
+    manual = {name: _column(fields, prefix) for name, prefix in _MANUAL_COLUMNS.items()}
+    # «Время ручных работ» без «для взятия / для снятия» — сами работы.
+    manual["manualSeconds"] = next((str(value or "").strip() for key, value in fields.items()
+                                    if str(key).strip().lower().startswith("время ручных работ")
+                                    and not any(word in str(key).lower() for word in ("взяти", "сняти"))), "")
+    return {**timing, **{name: value for name, value in manual.items() if value}}
 
 
 def enrich_linear_timing(config: Mapping[str, Any], operations: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
