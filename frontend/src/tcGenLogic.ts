@@ -912,6 +912,10 @@ export function makeGen(D: GenData, S: GenState) {
   // ── Концы, сростки, заделка ──
   function spliceSizes_() {
     if (!isComplex_() || !S.spl.enabled) return [];
+    // Сростки нарисованы на схеме — размеры берутся с неё (концов в сростке, не меньше 2); набранные числа их не переопределяют.
+    const drawn = (S.splices || []).filter((s) => s.ends.length >= 2);
+    // Сростки ответвлений (S.branches, режим «сросток») точки на схеме не имеют — это сростки из двух проводов, идут следом.
+    if (drawn.length) return [...drawn.map((s) => s.ends.length), ...(S.branches || []).filter((b) => b.mode === "splice").map(() => 2)];
     const list = String(S.spl.wires || "").split(/[,;\s]+/).map((s) => parseInt(s, 10)).filter((n) => n > 0).map((n) => Math.max(2, n));
     if (list.length > 1) return list;
     const cnt = Math.max(0, parseInt(S.spl.count, 10) || 0);
@@ -1003,6 +1007,29 @@ export function makeGen(D: GenData, S: GenState) {
     if (rest > 0) slots.push({ key: SPLICE_REST_, label: drawn.length ? "остальные" : "все сростки", count: rest, wires: 0 });
     return slots;
   }
+  /** Сростки схемы по строкам для формы: «С1», сколько проводов и откуда каждый (разъём и контакт противоположного конца
+   *  провода; конец, ушедший в другой сросток или хвост, — «к С2» / «к хвосту»). Пусто — на схеме сростков нет. */
+  function spliceRows_(): Array<{ id: string; label: string; size: number; wires: Array<{ art: string; from: string }> }> {
+    const all = S.splices || [];
+    return all.filter((sp) => sp.ends.length >= 2).map((sp) => ({
+      id: sp.id, label: `С${all.indexOf(sp) + 1}`, size: sp.ends.length,
+      wires: sp.ends.map((e) => {
+        const w = activeWires_().find((x) => x.idx === e.idx);
+        const c = w ? getCompById(w.compId) : null;
+        const art = c ? c.art || c.name || "" : "";
+        const other: Side = e.side === "A" ? "B" : "A";
+        if (!w) return { art, from: "" };
+        const ep = unitEndpoint_(w, e.unit, other);
+        if (ep) {
+          const pin = corePinsOf_(ep, e.idx)[e.unit];
+          return { art, from: `${(ep.label || "").trim() || endKey_(ep)}${pin != null ? ` конт. ${pin}` : ""}` };
+        }
+        const next = all.find((x) => x !== sp && x.ends.some((y) => y.idx === e.idx && y.unit === e.unit && y.side === other));
+        if (next) return { art, from: `к С${all.indexOf(next) + 1}` };
+        return { art, from: endJoined(S, e.idx, e.unit, other) === "tail" ? "к хвосту" : "" };
+      }),
+    }));
+  }
   /** Гильза места: выбор технолога (и «— нет —»), иначе единственная гильза состава. */
   function spliceSleeveOf_(key: string): Comp | null {
     const picked = S.spl.sleeves?.[key];
@@ -1033,7 +1060,7 @@ export function makeGen(D: GenData, S: GenState) {
       const set = new Set(routedWireIdxs_(e));
       activeWires_().forEach((w) => { if (set.has(w.idx)) n += endUnits_(e, w); });
     });
-    if (S.spl.fold) n += spliceEnds_();
+    if (S.spl.fold && splMethod_() === "sleeve") n += spliceEnds_();
     return n ? [{ type: "foldCore", opKey: "foldCore", tmplHint: "PREP_FOLD", cat: "Подготовка", tutCount: n,
       label: `Складывание жилы — ${n} конц.` }] : [];
   }
@@ -3169,7 +3196,7 @@ export function makeGen(D: GenData, S: GenState) {
     capTubes: () => byTubeDia_(shrinkCandidates_()),
     /** Трубка заделки, которую засев ставит сам: только ТУТ (как до 16.10 — засев старых карт не меняется). */
     capSeedTubes_: () => byTubeDia_(comps().filter((c) => /тут|термоусад/i.test(`${c.type || ""} ${c.name || ""} ${c.art || ""}`))),
-    splMethod_, spliceSleeveComps_, spliceSlots_, spliceSleeveOf_, spliceSleeves_, tailEnds_, bomWarnings_,
+    splMethod_, spliceSleeveComps_, spliceSlots_, spliceRows_, spliceSizes_, spliceSleeveOf_, spliceSleeves_, tailEnds_, bomWarnings_,
     braidEp_, braidLenDefault_,
     /** Схема ПФ «Сложной сборки» по текущему списку операций (до номеров ЭТК); другие вкладки — null. */
     pfGraph: (): PfGraph | null => { if (!isComplex_()) return null; getActiveOps(); return graph_; },
