@@ -496,13 +496,15 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   }
   // Ветвь — разъём с проводами и всем, что на них надето, одним рисунком (слоёв под ним нет: они на рисунке).
   const source = etkConfigOp(document);
-  // ПФ «ТУТ на месте Б» — трубка на жгуте (операции с флагом `harness`): ветви сходятся под одну трубку.
-  if (!group.final && !kinds.includes("splice") && operations.some((operation) => source(operation).harness)) {
+  const branch = group.final || kinds.includes("splice") ? null : pfBranch(operations, source, config, batch);
+  if (branch) return { main: { svg: pfBranchSvg(branch) }, layers: "" };
+  // ПФ «ТУТ на месте Б» — трубка на жгуте (операции с флагом `harness`): ветви сходятся под одну трубку. Проверяется после
+  // ветви: у ветви (монтаж в разъём) ТТК тоже с флагом `harness` — её ПФ рисуется ветвью, как раньше (владелец 18.10).
+  if (!group.final && !kinds.includes("splice") && operations.some((operation) => source(operation).harness)
+    && !operations.some((operation) => str(source(operation).type) === "insTerm")) {
     const tubes = harnessTubeArt(operations, source, config, batch);
     if (tubes) return { main: { svg: tubes }, layers: "" };
   }
-  const branch = group.final || kinds.includes("splice") ? null : pfBranch(operations, source, config, batch);
-  if (branch) return { main: { svg: pfBranchSvg(branch) }, layers: "" };
   if (!main && kinds.includes("splice")) main = { svg: spliceArt(operations, source, config, inputs, topology) };
   // Иначе — рисунок последней операции, у которой он есть: состояние ПФ на выходе.
   for (let index = operations.length - 1; !main && index >= 0; index -= 1) {
