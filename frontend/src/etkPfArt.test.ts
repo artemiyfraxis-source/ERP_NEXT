@@ -17,7 +17,7 @@ describe("etkPfArt — эскиз полуфабриката в схеме ПФ"
     expect(art.layers).toBe("");
   });
 
-  it("draws a splice group as wires joined under the tube of its input, with the count from the harness scheme", () => {
+  it("draws a splice group without the form snapshot as one sketch per splice under the tube of its input", () => {
     const ops = [
       { position: 3, type: "insTut", code: "INS_TUT", semis },
       { position: 4, type: "splice", code: "US_WELD", semis },
@@ -26,8 +26,9 @@ describe("etkPfArt — эскиз полуфабриката в схеме ПФ"
     const art = etkPfArt({ group: group({ ops: [3, 4, 5] }), operations: ops, inputs: ["ПВАМ 0,5 черный ×3", "ТТК 4,8/1,6 ×3"],
       document: { topology: { nodes: [{ id: "s", conn: "Сростки ×3", kind: "splice" }] } } })!;
     const svg = art.main && "svg" in art.main ? art.main.svg : "";
-    expect(svg).toContain("сросток ×3");
-    expect(svg).toContain("под ТТК 4,8/1,6");
+    expect(svg.match(/data-part="splice-tube"/g)).toHaveLength(3);
+    expect(svg).toContain("С3 · 2 провода");
+    expect(svg).toContain("ТТК 4,8/1,6");
     expect(svg).toContain("#d7322d"); // красный провод входа
     // Трубки сростка уже на рисунке — слоями на пучке не повторяются.
     expect(art.layers).toBe("");
