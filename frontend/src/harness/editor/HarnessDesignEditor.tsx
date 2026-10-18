@@ -462,13 +462,13 @@ export function designToScene(
     }
     // Чертёж генератора: торец разъёма, из гнёзд которого идут провода (цвета жил — на гнёздах); иначе вид сверху корпуса.
     const faceColors = Object.fromEntries(connector.contacts.filter((contact) => contact.color).map((contact) => [contact.number, contact.color]));
-    const face = view === "drawing" && connector.housing && connector.housingView === "face" ? housingFace(connector.housing, faceColors) : null;
+    const face = view === "drawing" && connector.housing && connector.housingView === "face" ? housingFace(connector.housing, faceColors, connector.schematic.orientation === "contacts-left") : null;
     const topView = view === "drawing" && connector.housing && !face ? housingTopViewSvg(connector.housing) : null;
     if (face) {
       metadata.faceSvg = face.svg;
       const left = connector.schematic.orientation === "contacts-left", direction = left ? "left" : "right";
       metadata.materializedContactPoints = JSON.stringify(connector.contacts.map((contact) => {
-        const pin = housingFaceEntry(face, contact.number, left);
+        const pin = housingFaceEntry(face, contact.number);
         return pin ? { x: pin.x, y: pin.y, direction, status: contact.connectionStatus } : null;
       }));
     }

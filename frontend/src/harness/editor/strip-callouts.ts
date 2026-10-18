@@ -158,10 +158,10 @@ export function drawStripCallouts(context: CanvasRenderingContext2D, callouts: r
   context.restore();
 }
 
-/** Строка требований под чертежом: слева, ниже нижнего провода. */
+/** Строка требований под чертежом: слева, ниже нижнего провода и нижней линии размера. */
 export function drawStripNotes(context: CanvasRenderingContext2D, objects: readonly EditorSceneObject[], line: string): void {
   if (!line) return;
-  const points = objects.filter((o) => o.kind === "wire").flatMap((o) => o.points ?? []);
+  const points = objects.filter((o) => o.kind === "wire" || o.kind === "dimension").flatMap((o) => o.points ?? []);
   if (!points.length) return;
   context.save();
   context.font = "600 12px Inter, Arial, sans-serif";

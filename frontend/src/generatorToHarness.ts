@@ -80,6 +80,8 @@ export interface PlanConnector {
   readonly braid?: { readonly name: string; readonly lengthMm: number | null };
   /** Маркировка у разъёма (строки «Маркировка» с местом «У разъёма»): текст, материал, длина отрезка, мм. */
   readonly marks?: readonly { readonly text: string; readonly name: string; readonly lengthMm: number | null }[];
+  /** «Ветвь по КД, мм» формы: размер ветви на схеме жгута как на СБ; нет — по длинам проводов. */
+  readonly kdBranchMm?: number;
 }
 
 export interface PlanWire {
@@ -213,7 +215,7 @@ export function planFromGenerator(D: GenData, S: GenState): GeneratorDrawingPlan
     return { key: ep.id, side: ep.side, designation, article: compText(ep.connId), terminal: record?.article ?? "", ...tut,
       ...(sh ? { shrink: { name: sh.comp.art || sh.comp.name || "", lengthMm: positive(sh.len) } } : {}),
       ...(braidComp ? { braid: { name: braidComp.art || braidComp.name || "", lengthMm: braidLen } } : {}),
-      ...(marks.length ? { marks } : {}) };
+      ...(marks.length ? { marks } : {}), ...(positive(ep.kdBranch) ? { kdBranchMm: positive(ep.kdBranch)! } : {}) };
   });
 
   const active = gen.activeWires_();
@@ -432,7 +434,7 @@ export interface GeneratorDrawing {
 const FREE_WIDTH = 118;
 const freeHeight = (contacts: number) => Math.max(72, 44 + contacts * 16);
 /** Корпус из базы разъёмов (торец с гнёздами) — размеры рисунка; обычная рамка — null. */
-const faceOf = (connector: ConnectorInstance) => (connector.housing && connector.housingView === "face" ? housingFace(connector.housing) : null);
+const faceOf = (connector: ConnectorInstance) => (connector.housing && connector.housingView === "face" ? housingFace(connector.housing, null, connector.schematic.orientation === "contacts-left") : null);
 /** Выход провода от торца разъёма из базы: короче, чем от рамки (провода уже идут из гнёзд). */
 const FACE_EXIT = 56;
 /** Раскладка Э4: колонка А слева, колонка В справа (просвет — по ступеньке на провод), между разъёмами по вертикали — 48.
@@ -913,7 +915,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   };
   const endSpan = (key: string, share: number) => spanOf(key, 0, share);
   /** Выноски поверх чертежа: текст → участок и доля его длины, где лежит оболочка. */
-  const callouts: Array<{ text: string; segmentId: string; at: number }> = [];
+  const callouts: Array<{ text: string; label: string; segmentId: string; at: number }> = [];
   const tubeShort = (name: string) => { const m = /^(.*?\d+(?:[.,]\d+)?\s*\/\s*\d+(?:[.,]\d+)?)/.exec(name); return (m ? m[1] : name).replace(/\s+/g, " ").trim(); };
   const mmText = (mm: number | null) => (mm === null ? "" : `, ${String(mm).replace(".", ",")} мм`);
   const stacked = new Map<string, number>();
@@ -928,7 +930,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
       const zone = parts.zones.find((z) => z.index === zonePlan.findIndex((p) => p.index === covering.zone));
       if (!zone) return;
       coverings.push({ ...common(), spans: [{ segmentId: zone.segmentId, from: 0, to: 1 }] });
-      callouts.push({ text: `Трубка ${tubeShort(covering.name)}${mmText(covering.lengthMm)}`, segmentId: zone.segmentId, at: 0.5 });
+      callouts.push({ text: `Трубка ${tubeShort(covering.name)}${mmText(covering.lengthMm)}`, label: `Трубка ${tubeShort(covering.name)}`, segmentId: zone.segmentId, at: 0.5 });
       return;
     }
     if (!covering.at || !ids.has(covering.at)) return;
@@ -943,17 +945,17 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
     if (span) coverings.push({ ...common(), spans: [span] });
   });
   used.forEach((c) => {
-    const lay = (name: string, kind: CoveringKind, lengthMm: number | null, from: number, to: number, text: string) => {
+    const lay = (name: string, kind: CoveringKind, lengthMm: number | null, from: number, to: number, label: string) => {
       const span = spanOf(c.key, from, to);
       if (!span) return;
       const length = lengthMm === null ? { lengthMode: "auto" as const, lengthMm: null } : { lengthMode: "manual" as const, lengthMm };
       coverings.push({ id: `gen-c${coverings.length + 1}`, name: `${name} · ${c.designation}`, kind, width: 0, color: COVER_COLOR[kind], ...length, spans: [span] });
-      callouts.push({ text, segmentId: span.segmentId, at: (span.from + span.to) / 2 });
+      callouts.push({ text: `${label}${lengthMm === null || label.startsWith("Маркировка") ? "" : mmText(lengthMm)}`, label, segmentId: span.segmentId, at: (span.from + span.to) / 2 });
     };
     const marks = c.marks ?? [];
     marks.forEach((mark, i) => lay(mark.name || "Маркировка", "heat-shrink", mark.lengthMm, 0.03 + i * 0.07, 0.09 + i * 0.07, `Маркировка «${mark.text}»`));
-    if (c.shrink) lay(c.shrink.name, "heat-shrink", c.shrink.lengthMm, 0.11 + marks.length * 0.07, 0.3 + marks.length * 0.07, `Трубка ${tubeShort(c.shrink.name)}${mmText(c.shrink.lengthMm)}`);
-    if (c.braid) lay(c.braid.name, "braid", c.braid.lengthMm, 0.14, 0.97, `Оплётка ${c.braid.name}${mmText(c.braid.lengthMm)}`);
+    if (c.shrink) lay(c.shrink.name, "heat-shrink", c.shrink.lengthMm, 0.11 + marks.length * 0.07, 0.3 + marks.length * 0.07, `Трубка ${tubeShort(c.shrink.name)}`);
+    if (c.braid) lay(c.braid.name, "braid", c.braid.lengthMm, 0.14, 0.97, `Оплётка ${c.braid.name}`);
   });
   if (coverings.length) doc = run(doc, { type: "set-physical-topology", topology: { ...doc.physicalTopology!, coverings } });
 
@@ -970,7 +972,7 @@ export function buildHarnessDocument(plan: GeneratorDrawingPlan, sources: Readon
   // Пустые документы чертежа: без них редактор рисует «старые» размеры каждого провода косыми линиями через поле.
   let documents: DrawingDocuments = { tables: [], leaders: [], bomOrder: [], ...strands };
   if (zonePlan.length && parts.zones.length) {
-    documents = { ...documents, ...zoneAnnotations({ doc, plan, zones: zonePlan, parts, trunkY: geometry!.trunkY, callouts,
+    documents = { ...documents, ...zoneAnnotations({ doc, plan, zones: zonePlan, parts, trunkY: geometry!.trunkY, callouts, depthMm: (c) => { const src = sources[c.key]; return src?.kind === "free" ? src.housing?.body?.len ?? null : null; },
       connectorAt: (exitNode) => used.find((c) => nodeOf.get(c.key) === exitNode) }) };
   } else if (trunk && lengths.length === 1 && lengths[0] !== null) {
     const dimension: DrawingDimension = {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import golden from "./fixtures/gen713k4Rev17.json";
 import catalog from "./fixtures/connectorCatalog.json";
 import { restoreFromSnapshot, snapshotFromConfig } from "./genBuildState";
-import { ensureSeparateLengths, initState, type Comp, type GenData } from "./tcGenLogic";
+import { ensureSeparateLengths, initState, makeGen, type Comp, type GenData } from "./tcGenLogic";
 import { DSA } from "./tcGenRealHarness.fixture";
 import { buildHarnessDocument, planFromGenerator, type ConnectorSource } from "./generatorToHarness";
 import type { ConnectorHousing } from "./connectorArt";
@@ -64,7 +64,12 @@ describe("713К.4 КБ1: схема жгута как на СБ", () => {
     expect(topology.nodes.filter((n) => n.id.endsWith("-tail"))).toHaveLength(1);
     expect(topology.nodes.filter((n) => n.id.startsWith("gen-n-gen-w"))).toEqual([]);
     const bundle = topology.segments.find((s) => s.to === "gen-z1-tail")!;
-    expect(bundle.from).toBe("gen-z1-out");
+    // Жгут свободных концов идёт вправо вместе с ветвями к разъёмам В: третья ветвь веера от конца ствола, ниже нижнего разъёма В.
+    expect(bundle.from).toBe("gen-j1");
+    const exits = topology.nodes.filter((n) => n.connectorId && doc.connectors.find((c) => c.id === n.connectorId)?.schematic.orientation === "contacts-left");
+    const tip = physicalNodePoint(doc, topology.nodes.find((n) => n.id === "gen-z1-tail")!);
+    expect(tip.y).toBeGreaterThan(Math.max(...exits.map((n) => physicalNodePoint(doc, n).y)));
+    expect(tip.x).toBeGreaterThan(Math.max(...exits.map((n) => physicalNodePoint(doc, n).x)));
     const dimension = doc.drawingDocuments!.dimensions!.find((d) => d.segmentId === bundle.id)!;
     expect([dimension.lengthMm, dimension.auxiliary]).toEqual([50, true]);
     const texts = doc.drawingDocuments!.graphics!.filter((g) => g.kind === "text").map((g) => g.text);
@@ -97,7 +102,9 @@ describe("713К.4 КБ1: схема жгута как на СБ", () => {
     const labels = scene.filter((o) => o.kind === "object-index");
     expect(labels.map((o) => o.label).sort()).toEqual(["X1", "X2", "X3", "X4", "X5", "X6"]);
     const callouts = doc.drawingDocuments!.graphics!.filter((g) => g.kind === "text").map((g) => g.text!);
-    expect(callouts).toEqual(expect.arrayContaining(["Трубка ТТК 8/2, 15 мм", "Трубка ТТК 12/4, 30 мм", "Оплётка XP-3, 110 мм", "Маркировка «5»", "Маркировка «A6»"]));
+    // Одинаковые оболочки на нескольких ветвях — одна выноска с линиями к каждому месту (СБ: «Трубка ТТК 8/2, 3 места»).
+    expect(callouts).toEqual(expect.arrayContaining(["Трубка ТТК 8/2, 3 места", "Трубка ТТК 12/4, 30 мм", "Трубка ТТК 12/4, 15 мм", "Оплётка XP-3, 4 места", "Маркировка «5»", "Маркировка «A6»"]));
+    expect(doc.drawingDocuments!.graphics!.filter((g) => g.kind === "line")).toHaveLength(3 + 4 + 1 + 1 + 4);
   });
 
   it("callouts and notes do not overlap each other or the connectors", () => {
@@ -125,28 +132,100 @@ describe("713К.4 КБ1: схема жгута как на СБ", () => {
   });
 });
 
-describe("разъёмы из базы разъёмов вместо пустых рамок", () => {
-  it("a connector of the catalog is drawn by the shared face drawer: wires enter at its edge at the height of their pin", () => {
+describe("разъёмы из базы разъёмов — вид сверху, как в ПФ 2", () => {
+  it("every connector of the scheme is a top view; side A leaves its wires to the right, side B mirrored to the left", () => {
+    const { document: doc } = build(true);
+    expect(doc.connectors.every((c) => c.housingView === "face" && c.housing)).toBe(true);
+    const scene = designToScene(doc, "drawing");
+    for (const connector of doc.connectors) {
+      const left = connector.schematic.orientation === "contacts-left";
+      const object = scene.find((o) => o.id === connector.id)!;
+      const svg = object.metadata!.faceSvg!;
+      const face = housingFace(connector.housing!, null, left)!;
+      expect(face.top).toBe(true);
+      // Тот же рисунок, что в ПФ 2 (connectorTopView): сторона А — оси меняются местами, сторона В — поворот на 90° по часовой.
+      expect(svg).toContain('data-view="top"');
+      expect(svg).toContain(left ? 'transform="matrix(0,1,-1,0,' : 'transform="matrix(0,1,1,0,0,0)"');
+      expect([object.width, object.height]).toEqual([face.width, face.height]);
+      // Провода встают на край торца со стороны жгута: А — справа, В — слева; контакт 1 — сверху, дальше вниз.
+      const entries = connector.contacts.map((contact) => connectorContactPosition(connector, contact.id, "drawing")!);
+      expect(new Set(entries.map((p) => p.x))).toEqual(new Set([connector.positions.drawing.x + (left ? 0 : face.width)]));
+      const byNumber = [...connector.contacts].sort((a, b) => a.number - b.number).map((contact) => entries[connector.contacts.indexOf(contact)]!.y);
+      expect(byNumber).toEqual([...byNumber].sort((a, b) => a - b));
+    }
+    // Зеркало: тот же корпус на стороне А и В — рисунок отражён по горизонтали, ряд контактов — на тех же высотах.
+    const housing = housingOf("SMR-04V-B");
+    const [a, b] = [housingFace(housing, null, false)!, housingFace(housing, null, true)!];
+    expect([a.width, a.height]).toEqual([b.width, b.height]);
+    expect(a.contacts.get(1)!.x + b.contacts.get(1)!.x).toBe(a.width);
+    expect([...a.contacts].map(([pin, p]) => [pin, p.y])).toEqual([...b.contacts].map(([pin, p]) => [pin, p.y]));
+    expect(a.contacts.get(1)!.y).toBeLessThan(a.contacts.get(4)!.y);
+  });
+
+  it("the wire colours of the form reach the connector's top view", () => {
     const { document: doc } = build(true);
     const x5 = doc.connectors.find((c) => c.designation === "X5")!;
-    const x1 = doc.connectors.find((c) => c.designation === "X1")!;
-    expect([x1.housingView, x5.housingView]).toEqual(["face", "face"]);
-    const face = housingFace(x5.housing!)!;
-    const origin = x5.positions.drawing;
-    // Сторона В — провод входит у левого края, по высоте гнезда; сторона А — у правого.
-    const left = connectorContactPosition(x5, x5.contacts[0]!.id, "drawing")!;
-    expect([left.x, left.y]).toEqual([origin.x, origin.y + face.contacts.get(x5.contacts[0]!.number)!.y]);
-    const right = connectorContactPosition(x1, x1.contacts[0]!.id, "drawing")!;
-    expect(right.x).toBe(x1.positions.drawing.x + housingFace(x1.housing!)!.width);
     const scene = designToScene(doc, "drawing").find((o) => o.id === x5.id)!;
-    expect(scene.metadata?.faceSvg).toContain("<svg");
-    expect(scene.width).toBe(face.width);
-    // Цвета жил — на гнёздах торца.
-    expect(scene.metadata?.faceSvg).toContain("#d7322d");
+    expect(scene.metadata?.faceSvg?.toLowerCase()).toContain("#d7322d");
   });
 
   it("a connector without a catalog body stays a plain frame", () => {
     const { document: doc } = build(false);
     expect(doc.connectors.every((c) => c.housingView === undefined && c.housing === undefined)).toBe(true);
+  });
+});
+
+describe("размеры ветвей по КД и точка «Б»", () => {
+  const withKd = (kd: Record<string, string>) => {
+    const S = form();
+    const plan = planFromGenerator(data, { ...S, endpoints: S.endpoints.map((e) => ({ ...e, kdBranch: kd[e.label] ?? "" })) });
+    const sources = Object.fromEntries(plan.connectors.map((c) => [c.key, { kind: "free", contactCount: null, libraryCode: null } as ConnectorSource]));
+    return { S, plan, ...buildHarnessDocument(plan, sources) };
+  };
+
+  it("«Ветвь по КД» sets the branch dimension exactly: 120 / 30 / 150 / 170 / 50 as on the СБ", () => {
+    const { document: doc } = withKd({ X1: "120", X2: "120", X3: "120", X4: "120", X5: "150", X6: "170" });
+    const dimensions = doc.drawingDocuments!.dimensions!;
+    expect(dimensions.map((d) => d.lengthMm).sort((a, b) => a! - b!)).toEqual([30, 50, 120, 150, 170]);
+    expect(dimensions.every((d) => d.auxiliary === true)).toBe(true);
+  });
+
+  it("the field only draws: cut lengths, operations and the form stay as they were", () => {
+    const base = build();
+    const { plan, document: doc } = withKd({ X1: "120", X5: "150", X6: "170" });
+    expect(doc.wires.map((w) => w.lengthMm)).toEqual(base.document.wires.map((w) => w.lengthMm));
+    expect(plan.wires.map((w) => w.lengthMm)).toEqual(base.plan.wires.map((w) => w.lengthMm));
+    const ops = (state: ReturnType<typeof form>) => JSON.stringify((makeGen(data, state).buildConfig() as { ops: unknown[] }).ops);
+    const S = form();
+    expect(ops({ ...S, endpoints: S.endpoints.map((e) => ({ ...e, kdBranch: "999" })) })).toBe(ops(S));
+  });
+
+  it("without the field the branch is measured to the face the СБ names: B side loses the housing depth when the catalog knows it", () => {
+    const plan = planFromGenerator(data, form());
+    const withDepth = Object.fromEntries(plan.connectors.map((c) => [c.key, { kind: "free", contactCount: null, libraryCode: null,
+      housing: c.side === "B" ? { ...housingOf("SMR-04V-B"), n: 6, cols: 6, grid: [[1, 2, 3, 4, 5, 6]] } : undefined } as ConnectorSource]));
+    const { document: doc } = buildHarnessDocument(plan, withDepth);
+    const lengths = doc.drawingDocuments!.dimensions!.map((d) => d.lengthMm!).sort((a, b) => a - b);
+    // Глубина корпуса — body.len серии (JST SM, 18,2 мм); сторона А и жгут хвостов её не вычитают.
+    expect(lengths).toEqual([30, 50, 122, 146.8, 166.8]);
+  });
+
+  it("point «Б» sits on the lower edge of the zone, taken from the «ТУТ на месте Б» step", () => {
+    const { document: doc } = build();
+    const graphics = doc.drawingDocuments!.graphics!;
+    const dot = graphics.find((g) => g.kind === "ellipse")!;
+    expect(graphics.some((g) => g.kind === "text" && g.text === "Б")).toBe(true);
+    const topology = doc.physicalTopology!;
+    const point = (id: string) => physicalNodePoint(doc, topology.nodes.find((n) => n.id === id)!);
+    const [left, right] = [point("gen-z1-in"), point("gen-z1-out")];
+    const x = (dot.points[0]!.x + dot.points[1]!.x) / 2, y = (dot.points[0]!.y + dot.points[1]!.y) / 2;
+    expect(x).toBeGreaterThan(left.x);
+    expect(x).toBeLessThan(right.x);
+    expect(y).toBeGreaterThan(left.y);
+    // Нет общей трубки на жгуте — нет шага «ТУТ на месте Б» и нет точки.
+    const S = form();
+    const without = planFromGenerator(data, { ...S, hs: { ...S.hs, enabled: false } });
+    const sources = Object.fromEntries(without.connectors.map((c) => [c.key, { kind: "free", contactCount: null, libraryCode: null } as ConnectorSource]));
+    expect(buildHarnessDocument(without, sources).document.drawingDocuments!.graphics!.some((g) => g.kind === "ellipse")).toBe(false);
   });
 });
