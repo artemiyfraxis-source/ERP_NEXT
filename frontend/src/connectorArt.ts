@@ -37,7 +37,12 @@ export type HousingBody = {
   extra: number; h: number; rear_h?: number; len: number; front_len?: number; ears?: number; ear_len?: number;
   win?: [number, number] | number[];
   /** Центр окон контактов от верхней грани торца, мм (по умолчанию — середина корпуса; JST SUH: окна в нижней части). */
-  win_y?: number; lock_w?: number; lock_inset?: number; lock_h?: number;
+  win_y?: number;
+  /** Вид полости на торце проводов по чертежу: funnel — квадратная воронка с внутренним отверстием со срезанными углами у стороны
+   *  «от защёлки» (Molex Mini-Fit Jr, SD-5557-003: w × h воронки, отверстие hole, срез chamfer, мм); bevel — двойной квадрат окна
+   *  и трапеция окна фиксатора под ним (JST XH); slot — паз со скруглённым верхом (JST PH). */
+  cav?: { kind: "funnel" | "bevel" | "slot"; w: number; h: number; hole?: [number, number]; chamfer?: number };
+  lock_w?: number; lock_inset?: number; lock_h?: number;
   /** Длина замка вдоль корпуса от стыковочного торца, мм (JST SM: рычаг SMR 14,5, упор SMP 1,3). */
   lock_len?: number;
   /** Толщина «носа», входящего в кожух ответной части, за фланцем длиной front_len (JST SMP). */
@@ -553,6 +558,31 @@ export function lockWidth(b: HousingBody, W: number): number {
   return b.lock_w ? Math.min(b.lock_w, W) : Math.max(1.5, W - 2 * (b.lock_inset || 0));
 }
 
+/** Полость на торце проводов по чертежу производителя (`body.cav`), мм → пиксели k. Центр (cx, cy); защёлка сверху. */
+function cavityShape(c: NonNullable<HousingBody["cav"]>, cx: number, cy: number, k: number, color: string, dark: boolean): string {
+  const w = c.w * k, h = c.h * k, x0 = cx - w / 2, y0 = cy - h / 2, rim = shade(color, dark ? 0.22 : -0.16), hole = dark ? "#0f1315" : "#2a2e30";
+  if (c.kind === "funnel") {
+    // Воронка: квадрат с фасками к отверстию (на чертеже виден и тёмный квадрат, и скошенные грани), отверстие со срезанными нижними углами.
+    const [hw, hh] = (c.hole || [c.w * 0.5, c.h * 0.55]).map((v) => v * k), cut = (c.chamfer ?? 0.7) * k;
+    const ix = cx - hw / 2, iy = cy - hh / 2 - h * 0.03;
+    const pts = [[ix, iy], [ix + hw, iy], [ix + hw, iy + hh - cut], [ix + hw - cut, iy + hh], [ix + cut, iy + hh], [ix, iy + hh - cut]];
+    const d = pts.map(([px, py]) => `${f(px)},${f(py)}`).join(" ");
+    return `<g data-cavity="funnel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${rim}" stroke="${EDGE}" stroke-width="1"/>` +
+      [[x0, y0, ix, iy], [x0 + w, y0, ix + hw, iy], [x0 + w, y0 + h, ix + hw - cut, iy + hh], [x0, y0 + h, ix + cut, iy + hh]].map(([ax, ay, bx, by]) =>
+        `<line x1="${f(ax)}" y1="${f(ay)}" x2="${f(bx)}" y2="${f(by)}" stroke="${EDGE}" stroke-width=".8"/>`).join("") +
+      `<polygon points="${d}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/></g>`;
+  }
+  if (c.kind === "bevel") {
+    // XH: окно ввода — квадрат с внутренним квадратом (скос), под ним трапеция окна фиксатора контакта.
+    const ix = w * 0.2, iy = h * 0.2, ty = y0 + h + k * 0.28, tw = w * 1.05, th = k * 0.5;
+    return `<g data-cavity="bevel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>` +
+      `<rect x="${f(x0 + ix)}" y="${f(y0 + iy)}" width="${f(w - 2 * ix)}" height="${f(h - 2 * iy)}" fill="${rim}" stroke="${EDGE}" stroke-width=".8"/>` +
+      `<path d="M${f(cx - tw / 2)},${f(ty + th)} L${f(cx - tw * 0.38)},${f(ty)} L${f(cx + tw * 0.38)},${f(ty)} L${f(cx + tw / 2)},${f(ty + th)} z" fill="${hole}" stroke="${EDGE}" stroke-width=".8"/></g>`;
+  }
+  const r = w / 2;
+  return `<path data-cavity="slot" d="M${f(x0)},${f(y0 + h)} L${f(x0)},${f(y0 + r)} A${f(r)},${f(r)} 0 0 1 ${f(x0 + w)},${f(y0 + r)} L${f(x0 + w)},${f(y0 + h)} z" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>`;
+}
+
 /** Торец корпуса по чертежу (JST SH, GH, XH, PH, ZH, Micro-Fit): прямоугольник B × h, выступы по бокам, защёлка на
  *  верхней грани, прямоугольные окна контактов по сетке, у PH/ZH — окна фиксаторов на нижней грани, у SH — метка ▽
  *  над контактом 1; красная стрелка у контакта 1. */
@@ -597,8 +627,9 @@ function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
     if (!pin) return;
     const cx = X(cxMm), cy = Y((b.win_y ?? H / 2) + (r - (rows - 1) / 2) * pitch), wn = byPin && byPin[pin];
     hits?.push({ pin, x: cx, y: cy, r: s * 0.5 });
-    body += contactGlyph(hs.mate?.contacts, cx, cy, winW * k / 2, winH * k / 2, false, dark ? "#5d666b" : "#2f3336", 1, Math.min(2, k * 0.06));
-    const rad = Math.min(winW, winH) * k * 0.46;
+    body += (b.cav && cavityShape(b.cav, cx, cy, k, color, dark)) ||
+      contactGlyph(hs.mate?.contacts, cx, cy, winW * k / 2, winH * k / 2, false, dark ? "#5d666b" : "#2f3336", 1, Math.min(2, k * 0.06));
+    const rad = (b.cav?.kind === "funnel" ? Math.min(b.cav.w, b.cav.h) * 0.34 : Math.min(winW, winH) * 0.46) * k;
     if (wn) {
       const wc = wireColor(wn);
       body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(rad)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +

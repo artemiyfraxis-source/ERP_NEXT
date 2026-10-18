@@ -26,6 +26,9 @@ PLUG, LUGS, RF = "Питание и штекеры", "Наконечники и 
 TOP, SIDE = "Вилка на плату, вертикальная", "Вилка на плату, угловая"
 TOP_SMT, SIDE_SMT = "Вилка на плату SMD, вертикальная", "Вилка на плату SMD, угловая"
 IVORY, BLACK = "#efe6cf", "#2b2b2b"
+# Mini-Fit Jr (Molex SD-5557-003, wire-end view): a 3.6 mm square funnel per contact (pitch 4.2), the opening 1.9 × 2.1 with
+# the corners cut 0.7 on the side away from the latch. The mating-face polarisation chamfers are not on the wire end.
+MINIFIT_CAV = {"kind": "funnel", "w": 3.6, "h": 3.6, "hole": (1.9, 2.1), "chamfer": 0.7}
 
 JST_PDF = "https://www.jst-mfg.com/product/pdf/eng/{}.pdf"
 CONNFLY_PDF = "https://www.connfly.com/static/upload/file/pdf/{}.pdf"
@@ -341,7 +344,7 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-minifit-jr-bk", "Molex Mini-Fit Jr. (чёрный)", r"^39-?03-?9(\d{2})2$", 4.2, rows=2, start="BR",
             latch="lever", color=BLACK, conf="high", src="Molex SD-5557-003",
             note="по чертежу Molex SD-5557-003: защёлка сверху, контакт 1 внизу справа, ряд 1…n дальше от защёлки",
-            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4)}),
+            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4), "cav": MINIFIT_CAV}),
     # Nano-Fit 105307 — the front view (latch face, towers of the mating end up) has «CIRCUIT 1» at its right on the
     # wire-end edge; the bottom view (wire end) keeps it there -> latch up, contact 1 on the RIGHT.
     _family("molex-nanofit-1r", "Molex Nano-Fit", r"^105307-?[12]2(\d{2})$", 2.5, start="TR", latch="lever", color=BLACK,

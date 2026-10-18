@@ -7,7 +7,7 @@ import math
 import re
 from typing import Any, Mapping
 
-from .connector_catalog_data import CATALOG_FAMILIES, CATALOG_FAMILY_SAMPLES
+from .connector_catalog_data import CATALOG_FAMILIES, CATALOG_FAMILY_SAMPLES, MINIFIT_CAV
 
 
 IVORY = "#efe6cf"
@@ -60,10 +60,10 @@ FAMILIES: tuple[dict[str, Any], ...] = (
          body_by=((r"^NSHR-0*2V", {"extra": 4.0}),)),
     _jst("jst-xh", "XH", r"^XHP-(\d+)", 2.5, "ramp", conf="high", src="JST eXH, Housing", model="frame",
          note="по чертежу JST eXH: защёлка сверху, контакт 1 слева",
-         body={"extra": 4.8, "h": 4.1, "len": 7.75, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.6)}),
+         body={"extra": 4.8, "h": 4.1, "len": 7.75, "lock_inset": 1.8, "lock_h": 1.6, "win": (1.2, 1.2), "cav": {"kind": "bevel", "w": 1.2, "h": 1.2}}),
     _jst("jst-ph", "PH", r"^PHR-(\d+)", 2.0, "windows", conf="high", src="JST ePH, Housing", model="slots",
          note="по чертежу JST ePH: окна фиксаторов снизу, контакт 1 слева",
-         body={"extra": 3.8, "h": 4.5, "len": 6.85, "win": (1.0, 1.6)}),
+         body={"extra": 3.8, "h": 4.5, "len": 6.85, "win": (0.9, 2.1), "cav": {"kind": "slot", "w": 0.9, "h": 2.1}}),
     # EH — JST eEH «Housing»: front view with the wire end up shows the face with the contact windows and the moulded
     # circuit numbers (2, 3, … left to right; No. 1 circuit on the left); the locks are ramps on the ends (side view and
     # the header's end-wall hooks), not on a face. Turned to the wire side with that face down: contact 1 on the LEFT,
@@ -152,7 +152,7 @@ FAMILIES: tuple[dict[str, Any], ...] = (
     # 19.6 long, latch 5.4 wide and 2.8 proud (measured on the 4:1 drawing); `win` is a sketch size.
     {"id": "molex-minifit-jr", "title": "Molex Mini-Fit Jr.", "pattern": r"^39-?01-?2(\d{2})\d$|^5557-(\d{2})R", "count_groups": (1, 2), "pitch": 4.2, "rows": 2, "order": "row", "start": "BR", "latch": "lever", "color": IVORY, "conf": "high",
      "src": "Molex SD-5557-003", "note": "по чертежу Molex SD-5557-003: защёлка сверху, контакт 1 внизу справа, ряд 1…n дальше от защёлки",
-     "body": {"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4)}},
+     "body": {"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4), "cav": MINIFIT_CAV}},
     # Micro-Fit 43025 — Molex sales drawing SDA-43025: mating view (top view, latch up) has circuit 1 bottom-left and the
     # last circuit top-right; from the wire side that mirrors to 1 bottom-right, rows counted right to left (as before).
     # Width (A) = 3.00 per column + 0.85, 6.86 across the rows, 14.0 long, latch 3.86 wide.

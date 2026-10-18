@@ -212,6 +212,22 @@ describe("вилка и розетка одной серии нарисован�
     expect(Number(holes[0][3]) / Number(holes[0][2])).toBeCloseTo(1.7 / 0.6, 1);
   });
 
+  it("draws wire-end cavities by the maker drawings: Mini-Fit Jr funnel, XH bevelled window with a lance trapezoid, PH slot with a round top", () => {
+    const of = (id: string) => items.find((i) => i.family === id)!.housing;
+    const mj = of("molex-minifit-jr"), xh = of("jst-xh"), ph = of("jst-ph");
+    // Molex SD-5557-003: воронка 3,6 мм при шаге 4,2 (0,86 шага), отверстие 1,9 × 2,1 со срезанными углами.
+    expect(mj.body!.cav).toMatchObject({ kind: "funnel", w: 3.6, h: 3.6, chamfer: 0.7 });
+    const funnel = connectorFace(mj, 0, 0, 42, null).body;
+    expect(funnel.match(/data-cavity="funnel"/g)).toHaveLength(mj.cols * mj.rows);
+    expect(funnel).toMatch(/<polygon points="(?:[\d.-]+,[\d.-]+ ){5}[\d.-]+,[\d.-]+"/); // шестиугольник: два среза
+    const side = Number(/data-cavity="funnel"><rect x="[\d.-]+" y="[\d.-]+" width="([\d.]+)"/.exec(funnel)![1]);
+    expect(side / 42 * 4.2 / 4.2).toBeCloseTo(3.6 / 4.2, 1);
+    // JST eXH: окно ввода + трапеция окна фиксатора; JST ePH: паз 0,9 × 2,1 со скруглённым верхом.
+    expect(connectorFace(xh, 0, 0, 30, null).body.match(/data-cavity="bevel"/g)).toHaveLength(xh.cols);
+    expect(connectorFace(ph, 0, 0, 30, null).body.match(/data-cavity="slot"[^>]* d="[^"]* A/g)).toHaveLength(ph.cols);
+    expect(ph.body!.win).toEqual([0.9, 2.1]);
+  });
+
   it("draws Molex Micro-Fit by the Molex sheets: 43025 — гнёзда и защёлка, 43020 — штыри в кожухе с упором", () => {
     const mf = pairs.find((p) => p.series === "Molex Micro-Fit 3.0 (2 ряда)")!;
     expect(mf.a!.mate).toMatchObject({ gender: "receptacle", contacts: "socket", shell: "inner", lock: "arm" });
