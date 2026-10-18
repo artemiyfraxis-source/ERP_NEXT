@@ -227,7 +227,7 @@ def _time_rows(counts: Mapping[str, Decimal], op: Mapping[str, Any], batch: Deci
             missing = str(norm.get("code") or "") if norm else ""
             warnings.append(f"Операция {position} ({code}): нет нормы времени «{label}»{f' ({missing})' if missing else ''} — в расчётное время не вошла")
             continue
-        minutes = (seconds * pieces * batch + _amount(norm.get("setup_seconds"))) / 60
+        minutes = seconds * pieces * batch / 60
         rows.append({"name": label, "norm": _format(minutes)})
     return rows
 

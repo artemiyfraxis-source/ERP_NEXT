@@ -238,7 +238,7 @@ def test_master_launches_route_snapshot_assigns_multiple_people_and_preserves_ca
     assert task["number"] == "ПЗ-0001"
     assert (task["project"], task["item"], task["name"]) == ("591K.3", "КБ1", "Жгут")
     assert task["operations"][0]["code"] == "OP-01"
-    assert task["operations"][0]["norm_seconds"] == 720
+    assert task["operations"][0]["norm_seconds"] == 600  # 60 с × 10 шт., подготовка 120 с в плане не считается
     assert assigned.status_code == 200, assigned.text
     assert assigned_task["operations"][0]["operator_ids"] == [str(operator_id)]
     assert cancelled.status_code == 200, cancelled.text

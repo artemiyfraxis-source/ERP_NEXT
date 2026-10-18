@@ -101,9 +101,9 @@ def test_a_drawn_scheme_launches_one_task_operation_per_semifinished():
     assert task.operations[0].etk_positions == (2, 1)
     # Норма ПФ — сумма норм его операций; ПФ-1 идёт 2 шт на изделие — его штук вдвое больше тиража.
     assert [(item.seconds_per_unit, item.setup_seconds) for item in task.operations] == [
-        (Decimal(15), Decimal(90)), (Decimal(20), Decimal(120)), (Decimal(40), Decimal(0)),
+        (Decimal(15), Decimal(0)), (Decimal(20), Decimal(0)), (Decimal(40), Decimal(0)),
     ]
-    assert [item.norm_seconds for item in task.operations] == [90 + 15 * 20, 120 + 20 * 10, 40 * 10]
+    assert [item.norm_seconds for item in task.operations] == [15 * 20, 20 * 10, 40 * 10]
     # Входы — предыдущие ПФ с per_unit схемы; финал — ПФ-3.
     assert _inputs(task) == {1: [], 2: [], 3: [(1, Decimal(2)), (2, Decimal(1))]}
     assert task.final_operation.position == 3
@@ -157,7 +157,7 @@ def test_a_kit_semifinished_feeding_several_others_is_planned_once_per_product(c
     shares = [edge.per_unit for item in task.operations for edge in item.inputs if edge.input_operation_id == cut.id]
     assert len(shares) == consumers and sum(shares, Decimal(0)) == 1
     assert task.unit_factors[cut.id] == 1 and task.operation_units(cut.id) == 10
-    assert cut.norm_seconds == 60 + 10 * 10
+    assert cut.norm_seconds == 10 * 10
     # Без отметки «kit» резка, как прежде, идёт на каждого потребителя.
     plain, _ = _kit_route(consumers, kit=False)
     again = _task(launch_operations(launch_route(_document(plain, ops)).steps, 10))
@@ -190,7 +190,8 @@ def test_without_a_drawn_scheme_the_task_goes_by_etk_operations(route):
 
 @pytest.mark.parametrize("name", KITS)
 def test_launch_without_a_scheme_matches_the_snapshot_taken_before_launch_by_semifinished(name: str):
-    """Снимок запуска по операциям ЭТК, снятый кодом до заданий по ПФ (13.10): поле в поле."""
+    """Снимок запуска по операциям ЭТК, снятый кодом до заданий по ПФ (13.10): поле в поле. С 18.10 подготовка в плане
+    равна 0 (снимок пересобран: setup_seconds → 0, norm_seconds без неё, секунды на штуку те же)."""
     expected = json.loads(SNAPSHOT.read_text(encoding="utf-8"))[name]
     operations = launch_operations(launch_route(_build(_config(name))).steps, 250)
     position = {item.id: item.position for item in operations}

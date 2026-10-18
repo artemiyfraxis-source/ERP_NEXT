@@ -478,7 +478,7 @@ export function documentMinutes(document: Record<string, unknown> | null | undef
     const rows = (Array.isArray(item.time) ? item.time : []).filter((row) => row && typeof row === "object") as Array<Record<string, unknown>>;
     if (rows.length) return rows.reduce((sum, row) => sum + num(row.norm), 0);
     const times = (item.times && typeof item.times === "object" ? item.times : {}) as Record<string, unknown>;
-    return (num(times.operation_seconds) * batch + num(times.setup_seconds)) / 60;
+    return (num(times.operation_seconds) * batch) / 60;
   });
   return { minutes, quantity: batch };
 }

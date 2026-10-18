@@ -353,12 +353,13 @@ function resultNameOf(block: { ops: number[] }, operations: EtkPfOperation[]): s
   return list.length === 1 ? (list[0].name ?? "").trim() : "";
 }
 
-/** Норма операции ЭТК, мин на партию (как `_operation_minutes` на сервере): Σ строк времени, без них — секунды карты. */
+/** Норма операции ЭТК, мин на партию (как `_operation_minutes` на сервере): Σ строк времени, без них — секунды карты
+ *  на штуку × партия; подготовка в норму не входит (владелец 18.10). */
 export function operationMinutes(operation: EtkPfOperation | null | undefined, batch: number): number {
   const time = (Array.isArray(operation?.time) ? operation.time : []).map(record);
   if (time.length) return time.reduce((sum, row) => sum + num(row.norm), 0);
   const times = record(operation?.times);
-  return (num(times.operation_seconds) * (batch > 0 ? batch : 1) + num(times.setup_seconds)) / 60;
+  return (num(times.operation_seconds) * (batch > 0 ? batch : 1)) / 60;
 }
 
 /** Сложить строки одного артикула (без артикула — названия) и единицы; строка без числа остаётся своей. */

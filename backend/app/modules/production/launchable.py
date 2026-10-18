@@ -9,7 +9,7 @@ from datetime import date
 from typing import Any, Iterable, Mapping, Sequence
 from uuid import UUID
 
-from app.modules.techcards.etk_builder import operation_norms
+from app.modules.techcards.etk_builder import norms_include_setup, operation_norms
 
 from .domain import (
     EtkOperation, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, link_inputs,
@@ -252,15 +252,19 @@ def _route_blocks(route: object, count: int, op_keys: Sequence[Iterable[object]]
 _MICRO = Decimal("0.000001")  # production_operations.seconds_per_unit is Numeric(18, 6)
 
 
-def _step_seconds(norm_minutes: Decimal | None, batch: Decimal, op_seconds: Decimal, setup: Decimal) -> tuple[Decimal, Decimal]:
-    """(seconds per unit, setup seconds) of a step. With the ETK's norm of the operation (minutes per batch) the plan
-    counts exactly what the ETK shows: setup = the card's tPrep, per unit = (norm − setup) / batch, so the task of the
-    ETK's batch takes the ETK norm (a setup larger than the whole norm is cut to it). Without one — the card's tOp."""
+def _step_seconds(
+    norm_minutes: Decimal | None, batch: Decimal, op_seconds: Decimal, setup: Decimal, *, setup_in_norm: bool,
+) -> tuple[Decimal, Decimal]:
+    """(seconds per unit, setup seconds) of a step. The plan counts no setup (owner 18.10: the operator starts a task
+    only once everything is ready), so the setup is always 0. With the ETK's norm of the operation (minutes per batch)
+    per unit = norm / batch; an ETK built before ETK_VERSION 4 has the card's tPrep inside the norm, so it is taken out
+    first (a setup larger than the whole norm is cut to it). Without a norm — the card's tOp."""
     if norm_minutes is None:
-        return op_seconds, setup
+        return op_seconds, Decimal(0)
     total = norm_minutes * 60
-    setup = min(setup, total)
-    return ((total - setup) / batch).quantize(_MICRO, rounding=ROUND_HALF_UP), setup
+    if setup_in_norm:
+        total -= min(setup, total)
+    return (total / batch).quantize(_MICRO, rounding=ROUND_HALF_UP), Decimal(0)
 
 
 @dataclass(frozen=True)
@@ -276,8 +280,8 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
 
     The generator config (build_config.ops) is the SUPPLYMAP source of stage/code; the built ETK operation fills what
     the config lacks (a card code resolved from the operation library, a title). Times are the ETK's own: its norm of
-    the operation (time rows: wires × cores × batch, «на изделие» of «Ручная сборка»…) split into the card's setup and
-    seconds per unit — one source of truth with what the ETK and its block scheme show.
+    the operation (time rows: wires × cores × batch, «на изделие» of «Ручная сборка»…) per unit, no setup — one
+    source of truth with what the ETK and its block scheme show.
 
     Each step also carries its block of the semi-finished scheme (block, block_name, final, inputs) — from
     a hand-drawn document.route when the card has one, otherwise a linear chain derived from the step order. The block
@@ -306,6 +310,7 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
                     f"цепочкой по порядку операций. Поправьте схему в техкарте и выпустите её заново.",)
     blocks = blocks or _derived_blocks(count)
     batch, norms = operation_norms(document)
+    setup_in_norm = norms_include_setup(document)
     steps: list[RouteStep] = []
     for index in range(count):
         op = config_ops[index] if index < len(config_ops) else {}
@@ -321,6 +326,7 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
             norms[index] if index < len(norms) else None, batch,
             _seconds(op.get("tOp") if op else times.get("operation_seconds")),
             _seconds(op.get("tPrep") if op else times.get("setup_seconds")),
+            setup_in_norm=setup_in_norm,
         )
         steps.append(RouteStep(
             position=index + 1,

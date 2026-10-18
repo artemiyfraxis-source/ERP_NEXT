@@ -79,7 +79,7 @@ def test_720_etk_keeps_supplymap_codes_material_norms_times_and_final_product():
     assert operations[2]["components"][0] == {
         "art": "Molex 39012140", "name": "Molex 39012140", "norm": "100", "unit": "Шт.",
     }
-    assert operations[2]["time"][0]["norm"] == "235,33"
+    assert operations[2]["time"][0]["norm"] == "233,33"
     assert operations[-1]["result_label"] == "Изделие"
     assert operations[-1]["result"][0]["name"] == kit("720К.-КБ1")["config"]["assemblyName"]
 
@@ -226,7 +226,7 @@ def test_cut_and_crimp_operation_tracks_terminal_material_strip_and_applicator()
     assert operation["fields"]["applicator"] == "A16"
     # SUPPLYMAP etkResult_: резка с обжимом отдаёт каждый провод отдельной строкой, количество = провода × партия.
     assert operation["result"] == [{"name": "ПВ3 250мм, обжатый терминал SXH-001T-P0.6", "norm": "200", "unit": "Шт."}]
-    assert operation["time"] == [{"name": "ПВ3 250мм, обжатый терминал SXH-001T-P0.6", "norm": "7,67"}]
+    assert operation["time"] == [{"name": "ПВ3 250мм, обжатый терминал SXH-001T-P0.6", "norm": "6,67"}]
     # Комбинированная карта несёт и дефекты опрессовки, а не только резки и зачистки.
     defects = operation["card"]["defects"]
     assert "Подрезка жил:" in defects
@@ -677,8 +677,8 @@ def test_bare_marking_toggle_keeps_the_old_etk_composition_tags_without_a_mark_l
         {"art": "Децимальный номер изделия", "name": "Децимальный номер изделия", "norm": "38", "unit": "Шт."},
     ]
     assert "marks" not in op["fields"]
-    # 20 с на метку × (20 + 3 + 1) метки × 38 шт + 120 с подготовки = 306 мин.
-    assert [row["norm"] for row in op["time"]] == ["306"]
+    # 20 с на метку × (20 + 3 + 1) метки × 38 шт = 304 мин (подготовка 120 с в норму не входит с ETK 4).
+    assert [row["norm"] for row in op["time"]] == ["304"]
 
 
 def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their_count():
@@ -704,8 +704,8 @@ def test_marks_by_kd_list_every_mark_group_materials_and_scale_the_norm_by_their
         {"art": tag, "name": tag, "norm": "76", "unit": "Шт."},
         {"art": "Маркировка отводов", "name": "Маркировка отводов", "norm": "76", "unit": "Шт."},
     ]
-    # Норма БД.ОП на штуку × 5 меток на изделие × 38 шт + подготовка: 20 × 5 × 38 / 60 + 2 = 65,33 мин.
-    assert [row["norm"] for row in op["time"]] == ["65,33"]
+    # Норма БД.ОП на штуку × 5 меток на изделие × 38 шт: 20 × 5 × 38 / 60 = 63,33 мин (без подготовки).
+    assert [row["norm"] for row in op["time"]] == ["63,33"]
     assert op["result"][0]["name"].endswith("; маркировка нанесена")
     assert op["card"]["steps"]
 

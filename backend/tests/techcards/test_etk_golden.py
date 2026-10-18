@@ -1,7 +1,8 @@
 """Golden ETK output: every config the builder tests use builds exactly what it built before the block scheme.
 
 ETK version 3 only adds `document.route`; everything else must stay byte-identical. The digests in
-`fixtures/etk-golden.json` were taken from the version-2 builder. When an ETK change is intended, regenerate them:
+`fixtures/etk-golden.json` were taken from the version-2 builder and retaken from version 4 (18.10: time norms
+without the card's setup — only the time rows changed, by exactly tPrep). When an ETK change is intended, regenerate them:
 `.venv/Scripts/python.exe -m tests.techcards.test_etk_golden` (from `backend/`), and review the diff of the fixture.
 """
 
@@ -179,7 +180,7 @@ def test_golden_cases_are_pinned_to_the_library_commit():
 
 
 @pytest.mark.parametrize("case", sorted(_cases()))
-def test_etk_is_byte_identical_to_the_version_2_builder_except_the_route(case: str):
+def test_etk_is_byte_identical_to_the_pinned_builder_except_the_route(case: str):
     document = _cases()[case]()
     assert document["schema_version"] == ETK_VERSION
     assert _fingerprint(document) == _golden()["cases"][case]

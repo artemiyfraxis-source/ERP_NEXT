@@ -109,9 +109,9 @@ def test_semifinished_with_two_machines_occupies_each_in_etk_order_inside_the_sh
     assert [(item.machine, item.machine_label, item.etk_position, item.etk_stage) for item in items] == [
         ("ОБ.010", "ОБ.010 Автомат резки", 1, "Резка"), ("ОБ.027", "ОБ.027 Пресс", 3, "Опрессовка"),
     ]
-    # Подготовка карты + машинное время × 100 шт, без экономии наладки; вторая — сразу за первой.
-    assert items[0].start == at(9) and items[0].finish == work(at(9), 600 + 3 * 100)
-    assert items[1].start == items[0].finish and items[1].finish == work(items[0].finish, 1200 + 6 * 100)
+    # Машинное время × 100 шт; подготовка карты (tPrep) станок не занимает (владелец 18.10); вторая — сразу за первой.
+    assert items[0].start == at(9) and items[0].finish == work(at(9), 3 * 100)
+    assert items[1].start == items[0].finish and items[1].finish == work(items[0].finish, 6 * 100)
     assert all(item.operator_ids == (ANNA,) and item.task_number == "ПЗ-0001" for item in items)
 
 
@@ -124,7 +124,7 @@ def test_operation_without_machine_time_holds_the_machine_for_its_piece_time_and
     items = task_occupancies(task, steps, NO_HOLIDAYS, DEFAULT_SHIFT)
 
     assert [item.machine for item in items] == ["ОБ.048"]
-    assert items[0].finish == work(at(9), 300 + 12 * 100)
+    assert items[0].finish == work(at(9), 12 * 100)
 
 
 def test_split_shares_occupy_the_machine_with_their_own_pieces_and_brigade_with_the_whole_task():
@@ -135,9 +135,9 @@ def test_split_shares_occupy_the_machine_with_their_own_pieces_and_brigade_with_
     together = task_occupancies(brigade, task_steps(brigade, etk(CRIMP))[0], NO_HOLIDAYS, DEFAULT_SHIFT)
 
     assert [(item.operator_ids, item.start, item.finish) for item in items] == [
-        ((ANNA,), at(9), work(at(9), 1200 + 6 * 30)), ((BORIS,), at(13, 30), work(at(13, 30), 1200 + 6 * 70)),
+        ((ANNA,), at(9), work(at(9), 6 * 30)), ((BORIS,), at(13, 30), work(at(13, 30), 6 * 70)),
     ]
-    assert [(item.operator_ids, item.finish) for item in together] == [((ANNA, BORIS), work(at(9, 0, 6), 1200 + 6 * 100))]
+    assert [(item.operator_ids, item.finish) for item in together] == [((ANNA, BORIS), work(at(9, 0, 6), 6 * 100))]
 
 
 def test_steps_longer_than_the_window_are_squeezed_into_it_in_order():
@@ -178,7 +178,7 @@ def test_nothing_is_laid_out_in_an_empty_window():
 
 def test_day_load_is_busy_shift_seconds_over_all_units_and_two_at_once_overload_a_single_machine():
     first, steps = crimp_task(1, OperationShare(ANNA, None, at(9), at(17, 30)))
-    second, _ = crimp_task(2, OperationShare(BORIS, None, at(9), at(17, 30)), quantity=4000)
+    second, _ = crimp_task(2, OperationShare(BORIS, None, at(9), at(17, 30)), quantity=4200)
     items = [*task_occupancies(first, steps, NO_HOLIDAYS, DEFAULT_SHIFT),
              *task_occupancies(second, task_steps(second, etk(CRIMP))[0], NO_HOLIDAYS, DEFAULT_SHIFT)]
     days = [date(2026, 10, 5), date(2026, 10, 10)]
@@ -189,7 +189,7 @@ def test_day_load_is_busy_shift_seconds_over_all_units_and_two_at_once_overload_
     monday, saturday = one.days
     assert (one.machine, one.label, one.units, one.known) == ("ОБ.027", "ОБ.027 Пресс", 1, True)
     assert monday.capacity_seconds == 7 * 3600 and monday.peak == 2
-    # Вторая задача — вся смена (1200 + 6 × 4000 с), с первой (1200 + 600 с) — больше смены одного станка.
+    # Вторая задача — вся смена (6 × 4200 с), с первой (6 × 100 с) — больше смены одного станка.
     assert monday.busy_seconds > monday.capacity_seconds and one.over(monday) and monday.percent > 100
     assert two.days[0].capacity_seconds == 2 * 7 * 3600 and not two.over(two.days[0]) and two.days[0].percent < 100
     assert saturday.capacity_seconds == 0 and saturday.percent is None and saturday.busy_seconds == 0
@@ -207,13 +207,13 @@ def test_overlap_on_a_single_machine_warns_and_the_next_window_does_not():
     task, own = crimp_task(2)
     operation = task.operations[0]
 
-    overlap = operation_occupancies(task, operation, own[operation.id], [((BORIS,), 10, at(9, 15), at(11))], NO_HOLIDAYS, DEFAULT_SHIFT)
-    after = operation_occupancies(task, operation, own[operation.id], [((BORIS,), 10, finish, at(13))], NO_HOLIDAYS, DEFAULT_SHIFT)
+    overlap = operation_occupancies(task, operation, own[operation.id], [((BORIS,), 100, at(9, 5), at(11))], NO_HOLIDAYS, DEFAULT_SHIFT)
+    after = operation_occupancies(task, operation, own[operation.id], [((BORIS,), 100, finish, at(13))], NO_HOLIDAYS, DEFAULT_SHIFT)
 
     found = conflicts(overlap, existing, {"ОБ.027": 1})
     assert len(found) == 1 and found[0].busy == tuple(existing)
     assert conflict_text(found[0], {ANNA: "Анна"}) == (
-        f"ОБ.027 занят 05.10 09:15–{finish:%H:%M}: ПЗ-0001 · КБ1, этап 1 «Опрессовка терминалов» 05.10 09:00–{finish:%H:%M} (Анна)"
+        f"ОБ.027 занят 05.10 09:05–{finish:%H:%M}: ПЗ-0001 · КБ1, этап 1 «Опрессовка терминалов» 05.10 09:00–{finish:%H:%M} (Анна)"
     )
     assert conflicts(after, existing, {"ОБ.027": 1}) == ()
 

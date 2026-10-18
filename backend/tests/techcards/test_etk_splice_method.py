@@ -111,7 +111,7 @@ def test_every_method_keeps_the_splice_time_and_the_card_of_its_template(method)
     document = build(config(method))
     operation = op_by_key(document, "splice")
     assert operation["card"] is not None
-    assert operation["time"][0]["norm"] == "11"  # 0,5 мин × 4 сростка × 5 + 1 мин подготовки
+    assert operation["time"][0]["norm"] == "10"  # 0,5 мин × 4 сростка × 5, подготовка в норму не входит
     assert not document["warnings"]
 
 
@@ -122,7 +122,7 @@ def test_config_without_method_builds_the_splice_as_before():
     assert (operation["code"], operation["connector"], operation["components"]) == ("SDR_W_W", "3", [])
     assert operation["result"] == [{"name": CUT, "norm": "", "unit": "Шт."}]
     assert operation["semis"] == [{"name": CUT, "norm": "", "unit": "Шт."}]
-    assert operation["time"] == [{"name": CUT, "norm": "11"}]
+    assert operation["time"] == [{"name": CUT, "norm": "10"}]
     # A stray `sleeves` list without `method` is not issued either.
     stray = config(None)
     stray["ops"][2]["sleeves"] = deepcopy(SLEEVES)
