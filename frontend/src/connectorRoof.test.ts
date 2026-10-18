@@ -233,6 +233,28 @@ describe("вилка и розетка одной серии нарисован�
     }
   });
 
+  it("marks where the wire-end geometry came from and draws DF11 / DF13 / Micro-Fit by the wire-end photos", () => {
+    const of = (id: string) => items.find((i) => i.family === id)!.housing;
+    // Серии с нарисованным торцом проводов несут источник: drawing — чертёж производителя, photo — снято с фото детали.
+    const sourced: Record<string, "drawing" | "photo"> = {
+      "jst-sm-r": "drawing", "jst-sm-p": "drawing", "jst-suh": "drawing", "molex-minifit-jr": "drawing", "molex-minifit-jr-bk": "drawing",
+      "connfly-ds1070": "drawing", "connfly-ds1072": "drawing", "hirose-df11": "photo", "hirose-df13": "photo", "molex-microfit": "photo",
+    };
+    for (const [id, kind] of Object.entries(sourced)) {
+      const b = of(id).body!;
+      expect(b.geom, id).toBe(kind);
+      expect(b.geom_url, id).toMatch(/^https:\/\//);
+    }
+    // DF11: на торце проводов — крупные квадратные полости ~1,7 мм при шаге 2,0 (а не мелкие входы под штырь 1,2 мм).
+    expect(of("hirose-df11").body!.win).toEqual([1.7, 1.7]);
+    // DF13: гребёнка высоких пазов, а не квадраты.
+    const [w, h] = of("hirose-df13").body!.win as number[];
+    expect(h / w).toBeGreaterThan(2.5);
+    expect(connectorFace(of("hirose-df13"), 0, 0, 44, null).body).toContain('data-top="latch"');
+    // Micro-Fit 43025: полость ~0,8 шага 3,0 мм.
+    expect((of("molex-microfit").body!.win as number[])[0] / 3.0).toBeCloseTo(0.8, 5);
+  });
+
   it("draws Molex Micro-Fit by the Molex sheets: 43025 — гнёзда и защёлка, 43020 — штыри в кожухе с упором", () => {
     const mf = pairs.find((p) => p.series === "Molex Micro-Fit 3.0 (2 ряда)")!;
     expect(mf.a!.mate).toMatchObject({ gender: "receptacle", contacts: "socket", shell: "inner", lock: "arm" });
