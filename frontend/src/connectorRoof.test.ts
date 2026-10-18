@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, topFeature, type ConnectorHousing } from "./connectorArt";
+import { connectorFace, connectorFaceUnits, connectorPicture, connectorSummary, pairCavity, topFeature, type ConnectorHousing } from "./connectorArt";
 import { connectorModel, hasModel } from "./connectorModel";
 import { connectorTopView, hasTopView } from "./connectorTopView";
 import { etkDrawHarness, etkDrawPinout } from "./etkDraw";
@@ -179,6 +179,53 @@ describe("вилка и розетка одной серии нарисован�
     expect(ratio(r.top)).toBeLessThan(0.9);
     expect(ratio(p.top)).toBeGreaterThan(1.1);
     expect(r.top.body).not.toBe(p.top.body);
+  });
+
+  it("draws the SM cavities to scale against the housing and the SMP catch as a solid key (owner 18.10: «маленькие дырки», «у SMP не понятен ключ»)", () => {
+    const sm = pairs.find((p) => p.series === "JST SM")!;
+    for (const hs of [sm.a!, sm.b!]) {
+      const [cw, ch] = pairCavity(hs), pitch = hs.pitch!;
+      // Полость — вход обжимного контакта: 0,8 × 1,04 шага (2,0 × 2,6 мм), а не окно штыря 1,0 мм.
+      expect(cw / pitch).toBeCloseTo(0.8, 5);
+      expect(ch / pitch).toBeCloseTo(1.04, 5);
+      expect(cw).toBeGreaterThan(hs.body!.win![0] * 1.5);
+      const svg = connectorFace(hs, 0, 0, 44, null).body, k = 44 / pitch;
+      const rects = [...svg.matchAll(/<rect x="[\d.-]+" y="[\d.-]+" width="([\d.]+)" height="([\d.]+)" rx="[\d.]+" fill="none" stroke="#(?:aeb7bc|7d878c)"/g)];
+      expect(rects).toHaveLength(hs.cols);
+      expect(Number(rects[0][1])).toBeCloseTo(cw * k, 1);
+      expect(Number(rects[0][2])).toBeCloseTo(ch * k, 1);
+    }
+    // Ключ SMP виден: сплошной скошенный упор над корпусом (не штриховой контур), у SMR — рычаг с рифлением; оба в <g data-top="latch">.
+    const smp = connectorFace(sm.b!, 0, 0, 44, null).body, smr = connectorFace(sm.a!, 0, 0, 44, null).body;
+    for (const svg of [smp, smr]) expect(marks(svg)).toBe(1);
+    expect(smp).not.toContain("stroke-dasharray");
+    expect(smp).toMatch(/data-lock="catch"><path d="M[^"]+ z"/);
+    expect(smr).toMatch(/data-lock="arm"><rect/);
+  });
+
+  it("draws JST SUH by eSUH: tall lance cavities in the lower part of the 3.1 mm face, not squares", () => {
+    const hs = items.find((i) => i.family === "jst-suh")!.housing;
+    expect(hs.body).toMatchObject({ h: 3.1, win: [0.6, 1.7], win_y: 2.25 });
+    const svg = connectorFace(hs, 0, 0, 44, null).body;
+    const holes = [...svg.matchAll(/<rect x="[\d.-]+" y="([\d.-]+)" width="([\d.]+)" height="([\d.]+)"[^>]*fill="#2f3336"/g)];
+    expect(holes).toHaveLength(hs.cols);
+    expect(Number(holes[0][3]) / Number(holes[0][2])).toBeCloseTo(1.7 / 0.6, 1);
+  });
+
+  it("draws wire-end cavities by the maker drawings: Mini-Fit Jr funnel, XH bevelled window with a lance trapezoid, PH slot with a round top", () => {
+    const of = (id: string) => items.find((i) => i.family === id)!.housing;
+    const mj = of("molex-minifit-jr"), xh = of("jst-xh"), ph = of("jst-ph");
+    // Molex SD-5557-003: воронка 3,6 мм при шаге 4,2 (0,86 шага), отверстие 1,9 × 2,1 со срезанными углами.
+    expect(mj.body!.cav).toMatchObject({ kind: "funnel", w: 3.6, h: 3.6, chamfer: 0.7 });
+    const funnel = connectorFace(mj, 0, 0, 42, null).body;
+    expect(funnel.match(/data-cavity="funnel"/g)).toHaveLength(mj.cols * mj.rows);
+    expect(funnel).toMatch(/<polygon points="(?:[\d.-]+,[\d.-]+ ){5}[\d.-]+,[\d.-]+"/); // шестиугольник: два среза
+    const side = Number(/data-cavity="funnel"><rect x="[\d.-]+" y="[\d.-]+" width="([\d.]+)"/.exec(funnel)![1]);
+    expect(side / 42 * 4.2 / 4.2).toBeCloseTo(3.6 / 4.2, 1);
+    // JST eXH: окно ввода + трапеция окна фиксатора; JST ePH: паз 0,9 × 2,1 со скруглённым верхом.
+    expect(connectorFace(xh, 0, 0, 30, null).body.match(/data-cavity="bevel"/g)).toHaveLength(xh.cols);
+    expect(connectorFace(ph, 0, 0, 30, null).body.match(/data-cavity="slot"[^>]* d="[^"]* A/g)).toHaveLength(ph.cols);
+    expect(ph.body!.win).toEqual([0.9, 2.1]);
   });
 
   it("draws Molex Micro-Fit by the Molex sheets: 43025 — гнёзда и защёлка, 43020 — штыри в кожухе с упором", () => {

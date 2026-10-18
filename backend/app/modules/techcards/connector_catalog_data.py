@@ -26,6 +26,9 @@ PLUG, LUGS, RF = "Питание и штекеры", "Наконечники и 
 TOP, SIDE = "Вилка на плату, вертикальная", "Вилка на плату, угловая"
 TOP_SMT, SIDE_SMT = "Вилка на плату SMD, вертикальная", "Вилка на плату SMD, угловая"
 IVORY, BLACK = "#efe6cf", "#2b2b2b"
+# Mini-Fit Jr (Molex SD-5557-003, wire-end view): a 3.6 mm square funnel per contact (pitch 4.2), the opening 1.9 × 2.1 with
+# the corners cut 0.7 on the side away from the latch. The mating-face polarisation chamfers are not on the wire end.
+MINIFIT_CAV = {"kind": "funnel", "w": 3.6, "h": 3.6, "hole": (1.9, 2.1), "chamfer": 0.7}
 
 JST_PDF = "https://www.jst-mfg.com/product/pdf/eng/{}.pdf"
 CONNFLY_PDF = "https://www.connfly.com/static/upload/file/pdf/{}.pdf"
@@ -99,7 +102,12 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     # SUH — eSUH «Housing» is drawn as eSH: the wire end with the protrusions at the top, «Circuit No.1» ▽ on the left
     # of that face -> from the wire side, ▽ face up, contact 1 on the RIGHT (as SH).
     _family("jst-suh", "JST SUH", r"^SUHR-0*(\d+)V-S", 0.8, start="TR", latch="mark", conf="high",
-            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа"),
+            src="JST eSUH, Housing", note="по чертежу JST eSUH: метка ▽ контакта 1 — со стороны проводов ▽ сверху, контакт 1 справа",
+            # eSUH p. 2 «Housing»: B = (n−1)·0.8 contact span, A = B + 1.6 (no protrusions), C = A + 2.0 with the -B protrusions;
+            # 3.1 high at the wire end, the open lance cavities are 1.7 tall in its lower part (the top 1.4 carries the ▽ mark)
+            # and ~0.6 wide between 0.2 walls; 1.25 deep.
+            body={"extra": 1.6, "h": 3.1, "len": 1.25, "win": (0.6, 1.7), "win_y": 2.25},
+            body_by=((r"V-S-B", {"ears": 1.0}),)),
     _family("jst-lbt", "JST LBT (2 силовых + сигнальные)", r"^LBTAR-0*(\d+)V-2K-K", 1.0, latch="ramp",
             note="2 силовых контакта по краям и сигнальные с шагом 1,0 — рисунок условный; метка контакта 1 на лицевой грани (JST eLBT)"),
     # PUD, ZPD, NSHD (sheets read 16.10.2026 from jst-mfg.com): the housing front view is the lock face with the flanged
@@ -336,7 +344,7 @@ CATALOG_FAMILIES: tuple[dict[str, Any], ...] = (
     _family("molex-minifit-jr-bk", "Molex Mini-Fit Jr. (чёрный)", r"^39-?03-?9(\d{2})2$", 4.2, rows=2, start="BR",
             latch="lever", color=BLACK, conf="high", src="Molex SD-5557-003",
             note="по чертежу Molex SD-5557-003: защёлка сверху, контакт 1 внизу справа, ряд 1…n дальше от защёлки",
-            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4)}),
+            body={"extra": 5.4, "h": 11.6, "len": 19.6, "lock_w": 5.4, "lock_h": 2.8, "win": (3.4, 3.4), "cav": MINIFIT_CAV}),
     # Nano-Fit 105307 — the front view (latch face, towers of the mating end up) has «CIRCUIT 1» at its right on the
     # wire-end edge; the bottom view (wire end) keeps it there -> latch up, contact 1 on the RIGHT.
     _family("molex-nanofit-1r", "Molex Nano-Fit", r"^105307-?[12]2(\d{2})$", 2.5, start="TR", latch="lever", color=BLACK,

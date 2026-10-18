@@ -35,7 +35,14 @@ export type Mate = {
  *  B − 2·lock_inset. Есть у JST SH, GH, XH, PH, ZH и Molex Micro-Fit 43025. */
 export type HousingBody = {
   extra: number; h: number; rear_h?: number; len: number; front_len?: number; ears?: number; ear_len?: number;
-  win?: [number, number] | number[]; lock_w?: number; lock_inset?: number; lock_h?: number;
+  win?: [number, number] | number[];
+  /** Центр окон контактов от верхней грани торца, мм (по умолчанию — середина корпуса; JST SUH: окна в нижней части). */
+  win_y?: number;
+  /** Вид полости на торце проводов по чертежу: funnel — квадратная воронка с внутренним отверстием со срезанными углами у стороны
+   *  «от защёлки» (Molex Mini-Fit Jr, SD-5557-003: w × h воронки, отверстие hole, срез chamfer, мм); bevel — двойной квадрат окна
+   *  и трапеция окна фиксатора под ним (JST XH); slot — паз со скруглённым верхом (JST PH). */
+  cav?: { kind: "funnel" | "bevel" | "slot"; w: number; h: number; hole?: [number, number]; chamfer?: number };
+  lock_w?: number; lock_inset?: number; lock_h?: number;
   /** Длина замка вдоль корпуса от стыковочного торца, мм (JST SM: рычаг SMR 14,5, упор SMP 1,3). */
   lock_len?: number;
   /** Толщина «носа», входящего в кожух ответной части, за фланцем длиной front_len (JST SMP). */
@@ -551,6 +558,31 @@ export function lockWidth(b: HousingBody, W: number): number {
   return b.lock_w ? Math.min(b.lock_w, W) : Math.max(1.5, W - 2 * (b.lock_inset || 0));
 }
 
+/** Полость на торце проводов по чертежу производителя (`body.cav`), мм → пиксели k. Центр (cx, cy); защёлка сверху. */
+function cavityShape(c: NonNullable<HousingBody["cav"]>, cx: number, cy: number, k: number, color: string, dark: boolean): string {
+  const w = c.w * k, h = c.h * k, x0 = cx - w / 2, y0 = cy - h / 2, rim = shade(color, dark ? 0.22 : -0.16), hole = dark ? "#0f1315" : "#2a2e30";
+  if (c.kind === "funnel") {
+    // Воронка: квадрат с фасками к отверстию (на чертеже виден и тёмный квадрат, и скошенные грани), отверстие со срезанными нижними углами.
+    const [hw, hh] = (c.hole || [c.w * 0.5, c.h * 0.55]).map((v) => v * k), cut = (c.chamfer ?? 0.7) * k;
+    const ix = cx - hw / 2, iy = cy - hh / 2 - h * 0.03;
+    const pts = [[ix, iy], [ix + hw, iy], [ix + hw, iy + hh - cut], [ix + hw - cut, iy + hh], [ix + cut, iy + hh], [ix, iy + hh - cut]];
+    const d = pts.map(([px, py]) => `${f(px)},${f(py)}`).join(" ");
+    return `<g data-cavity="funnel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${rim}" stroke="${EDGE}" stroke-width="1"/>` +
+      [[x0, y0, ix, iy], [x0 + w, y0, ix + hw, iy], [x0 + w, y0 + h, ix + hw - cut, iy + hh], [x0, y0 + h, ix + cut, iy + hh]].map(([ax, ay, bx, by]) =>
+        `<line x1="${f(ax)}" y1="${f(ay)}" x2="${f(bx)}" y2="${f(by)}" stroke="${EDGE}" stroke-width=".8"/>`).join("") +
+      `<polygon points="${d}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/></g>`;
+  }
+  if (c.kind === "bevel") {
+    // XH: окно ввода — квадрат с внутренним квадратом (скос), под ним трапеция окна фиксатора контакта.
+    const ix = w * 0.2, iy = h * 0.2, ty = y0 + h + k * 0.28, tw = w * 1.05, th = k * 0.5;
+    return `<g data-cavity="bevel"><rect x="${f(x0)}" y="${f(y0)}" width="${f(w)}" height="${f(h)}" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>` +
+      `<rect x="${f(x0 + ix)}" y="${f(y0 + iy)}" width="${f(w - 2 * ix)}" height="${f(h - 2 * iy)}" fill="${rim}" stroke="${EDGE}" stroke-width=".8"/>` +
+      `<path d="M${f(cx - tw / 2)},${f(ty + th)} L${f(cx - tw * 0.38)},${f(ty)} L${f(cx + tw * 0.38)},${f(ty)} L${f(cx + tw / 2)},${f(ty + th)} z" fill="${hole}" stroke="${EDGE}" stroke-width=".8"/></g>`;
+  }
+  const r = w / 2;
+  return `<path data-cavity="slot" d="M${f(x0)},${f(y0 + h)} L${f(x0)},${f(y0 + r)} A${f(r)},${f(r)} 0 0 1 ${f(x0 + w)},${f(y0 + r)} L${f(x0 + w)},${f(y0 + h)} z" fill="${hole}" stroke="${EDGE}" stroke-width="1"/>`;
+}
+
 /** Торец корпуса по чертежу (JST SH, GH, XH, PH, ZH, Micro-Fit): прямоугольник B × h, выступы по бокам, защёлка на
  *  верхней грани, прямоугольные окна контактов по сетке, у PH/ZH — окна фиксаторов на нижней грани, у SH — метка ▽
  *  над контактом 1; красная стрелка у контакта 1. */
@@ -593,10 +625,11 @@ function bodyFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
   hs.grid.forEach((row, r) => columns.forEach((cxMm, c) => {
     const pin = row[c];
     if (!pin) return;
-    const cx = X(cxMm), cy = Y(H / 2 + (r - (rows - 1) / 2) * pitch), wn = byPin && byPin[pin];
+    const cx = X(cxMm), cy = Y((b.win_y ?? H / 2) + (r - (rows - 1) / 2) * pitch), wn = byPin && byPin[pin];
     hits?.push({ pin, x: cx, y: cy, r: s * 0.5 });
-    body += contactGlyph(hs.mate?.contacts, cx, cy, winW * k / 2, winH * k / 2, false, dark ? "#5d666b" : "#2f3336", 1, Math.min(2, k * 0.06));
-    const rad = Math.min(winW, winH) * k * 0.46;
+    body += (b.cav && cavityShape(b.cav, cx, cy, k, color, dark)) ||
+      contactGlyph(hs.mate?.contacts, cx, cy, winW * k / 2, winH * k / 2, false, dark ? "#5d666b" : "#2f3336", 1, Math.min(2, k * 0.06));
+    const rad = (b.cav?.kind === "funnel" ? Math.min(b.cav.w, b.cav.h) * 0.34 : Math.min(winW, winH) * 0.46) * k;
     if (wn) {
       const wc = wireColor(wn);
       body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(rad)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
@@ -672,6 +705,17 @@ function pinOneArrow(right: boolean, edgeX: number, cy: number, t: number): stri
   return `<path d="M${f(ex + d * t * 1.5)},${f(cy - t)} L${f(ex + d * t * 1.5)},${f(cy + t)} L${f(ex)},${f(cy)} z" fill="#d7322d"/>`;
 }
 
+/** Полость контакта на торце проводов пары JST SM, мм: вход обжимного контакта 0,8 × шаг по ширине и 1,04 × шаг по высоте
+ *  (2,0 × 2,6 при шаге 2,5). В чертеже eSM размер входа не проставлен, а окно штыря `win` (1,0) — размер штыря, не полости;
+ *  размер взят по обжимному контакту SHF-001T-0.8BS. */
+export function pairCavity(hs: ConnectorHousing): [number, number] {
+  const pitch = hs.pitch || 1;
+  return [pitch * 0.8, pitch * 1.04];
+}
+
+/** Высота упора замка розетки над корпусом на рисунке торца, мм: по чертежу 0,6 — в масштабе не видно, поэтому не меньше 1,2. */
+const CATCH_MIN = 1.2;
+
 /** Торец пары по чертежу (JST eSM, владелец 17.10: «так и не решена проблема, почему в базе одинаково выглядят SMP и SMR»).
  *  Вилка SMR (штыри): вокруг корпуса — обод кожуха (кожух шире и толще корпуса), над ним рычаг замка с рифлением. Розетка SMP (гнёзда):
  *  корпус без обода, по торцам ряда — плечи крепления в панель со ступенями; упор замка розетки SMP стоит на «носе» за фланцем,
@@ -679,12 +723,12 @@ function pinOneArrow(right: boolean, edgeX: number, cy: number, t: number): stri
  *  что контуры половин разные. */
 function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s: number, byPin: Record<number, string> | null, hits?: FaceHit[]): Box {
   const pitch = hs.pitch || 1, k = s / pitch, color = hs.color || "#efe6cf", dark = isDark(color);
-  const fs = Math.max(6.5, Math.min(s * 0.34, 15));
+  const fs = Math.max(6.5, Math.min(s * 0.4, 16));
   const { W, core, off } = bodySpan(hs, b, pitch), hood = b.hood, wings = b.wings;
   const outerH = hood ? hood.h : b.h, H = b.h, by = (outerH - H) / 2;
-  const lw = hs.roof?.kind === "latch" ? lockWidth(b, core) : 0, lift = hood && lw ? b.lock_h || 0 : 0;
+  const lw = hs.roof?.kind === "latch" ? lockWidth(b, core) : 0, lift = lw ? (hood ? b.lock_h || 0 : Math.max(b.lock_h || 0, CATCH_MIN)) : 0;
   const X = (mm: number) => x + mm * k, Y = (mm: number) => y + 1 + (mm + lift) * k;
-  const [winW, winH] = b.win && b.win.length === 2 ? b.win : [pitch * 0.6, H * 0.45];
+  const [winW, winH] = pairCavity(hs);
   const rib = shade(color, dark ? 0.42 : -0.38);
   let body = gradient(gradId(color), color);
   if (hood) {
@@ -699,21 +743,26 @@ function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
     const side = (edge: number, dir: number) => {
       const a = X(edge), b2 = X(edge + dir * wings.out), lx = Math.min(a, b2), wpx = Math.abs(b2 - a);
       let g = `<rect x="${f(lx)}" y="${f(Y(wy))}" width="${f(wpx)}" height="${f(wings.w * k)}" rx="${f(Math.min(2, k * 0.2))}" fill="${fill}" stroke="${EDGE}" stroke-width="1.1"/>`;
-      for (const t of [0.35, 0.6, 0.82]) g += `<line x1="${f(a + (b2 - a) * t)}" y1="${f(Y(wy) + 2)}" x2="${f(a + (b2 - a) * t)}" y2="${f(Y(wy + wings.w) - 2)}" stroke="${rib}" stroke-width="1"/>`;
+      // Ступени хвата — одна кромка у конца плеча, не полосы по всей длине (иначе плечо читается как замок).
+      const tx = b2 - dir * Math.min(wpx * 0.28, k * 0.8);
+      g += `<line x1="${f(tx)}" y1="${f(Y(wy) + 1)}" x2="${f(tx)}" y2="${f(Y(wy + wings.w) - 1)}" stroke="${rib}" stroke-width="1"/>`;
       return g;
     };
     body += `<g data-part="wings">${side(off, -1)}${side(off + core, 1)}</g>`;
   }
   body += `<rect x="${f(X(off))}" y="${f(Y(by))}" width="${f(core * k)}" height="${f(H * k)}" rx="${f(Math.min(2, k * 0.15))}" fill="url(#${gradId(color)})" stroke="${EDGE}" stroke-width="1.2"/>`;
-  if (lift) {
+  if (hood && lift) {
     // Рычаг замка вилки SMR над кожухом: кнопка с продольным рифлением (фото SMR, eSM с. 1).
     const lx = X(off + (core - lw) / 2), w = lw * k, top = Y(-lift), h = (lift + by) * k;
     let g = `<rect x="${f(lx)}" y="${f(top)}" width="${f(w)}" height="${f(h)}" rx="${f(Math.min(2, k * 0.2))}" fill="${shade(color, dark ? 0.2 : 0.06)}" stroke="${EDGE}" stroke-width="1.1"/>`;
     for (const t of [0.28, 0.5, 0.72]) g += `<line x1="${f(lx + w * t)}" y1="${f(top + 2)}" x2="${f(lx + w * t)}" y2="${f(top + h - 2)}" stroke="${rib}" stroke-width="1"/>`;
     body += roofMark("latch", lockMark(hs, g));
-  } else if (lw && b.nose_h) {
-    const ny = by + (H - b.nose_h) / 2, lh = b.lock_h || 0.5;
-    body += roofMark("latch", lockMark(hs, `<rect x="${f(X(off + (core - lw) / 2))}" y="${f(Y(ny - lh))}" width="${f(lw * k)}" height="${f(lh * k)}" fill="none" stroke="${rib}" stroke-width="1" stroke-dasharray="3 2"/>`));
+  } else if (lift) {
+    // Упор замка розетки SMP — сплошной скошенный выступ посередине верха корпуса (над ним в паре встаёт рычаг вилки SMR):
+    // верх читается так же, как у вилки — замок сверху, плечи по бокам.
+    const lx = X(off + (core - lw) / 2), w = lw * k, top = Y(by - lift), bot = Y(by), ramp = Math.min(w * 0.18, 5);
+    const g = `<path d="M${f(lx)},${f(bot + 1)} L${f(lx + ramp)},${f(top)} L${f(lx + w - ramp)},${f(top)} L${f(lx + w)},${f(bot + 1)} z" fill="${shade(color, dark ? 0.24 : -0.3)}" stroke="${EDGE}" stroke-width="1.2"/>`;
+    body += roofMark("latch", lockMark(hs, g));
   }
   const row = hs.grid[0] || [];
   bodyColumns(hs, b, pitch).forEach((cxMm, c) => {
@@ -721,7 +770,12 @@ function pairFace(hs: ConnectorHousing, b: HousingBody, x: number, y: number, s:
     if (!pin) return;
     const cx = X(off + cxMm), cy = Y(by + H / 2), wn = byPin && byPin[pin];
     hits?.push({ pin, x: cx, y: cy, r: s * 0.5 });
-    body += contactGlyph(hs.mate?.contacts, cx, cy, winW * k / 2, winH * k / 2, false, dark ? "#5d666b" : "#2f3336", 1, Math.min(2, k * 0.06));
+    // Полость читается на тёмном корпусе: чёрное дно и светлая кромка (на чёрном SM «V-B» без неё полости не видно).
+    const hole = dark ? "#0f1315" : "#1b1f21", rx = Math.min(3, k * 0.1), cw = winW * k, ch = winH * k;
+    body += `<g data-cavity="${hs.mate?.contacts || "open"}">${windowMark(cx, cy, cw, ch, hole, rx)}` +
+      `<rect x="${f(cx - cw / 2)}" y="${f(cy - ch / 2)}" width="${f(cw)}" height="${f(ch)}" rx="${f(rx)}" fill="none" stroke="${dark ? "#aeb7bc" : "#7d878c"}" stroke-width="1.2"/></g>`;
+    body += hs.mate?.contacts === "pin" ? contactGlyph("pin", cx, cy, cw * 0.27, ch * 0.21, false, hole, 1, 1)
+      : contactGlyph(hs.mate?.contacts, cx, cy, cw * 0.4, ch * 0.4, false, hole, 1, rx);
     if (wn) {
       const wc = wireColor(wn);
       body += `<circle cx="${f(cx)}" cy="${f(cy)}" r="${f(Math.min(winW, winH) * k * 0.46)}" fill="${wc}" stroke="#e9eef0" stroke-width="1"/>` +
